@@ -321,14 +321,16 @@ describe("useChat — generated title reaches the open conversation", () => {
     expect(mockAttachChatStream).not.toHaveBeenCalled();
   });
 
-  // (C9) A deferred payload without a usable title changes nothing.
-  it.each([
-    ["null", null],
-    ["whitespace", "   "],
-  ])("leaves the authoritative snapshot untouched for a %s deferred title", async (_label, deferredTitle) => {
+  /*
+   * (C9) Bounding negative control, rewritten by FN-524. A payload with NO `title` field asserts
+   * nothing about the name, so the authoritative snapshot keeps its own title — and still nothing
+   * but `title` may ever cross the deferred reapplication.
+   */
+  it("leaves the authoritative snapshot untouched when the payload carries no title field", async () => {
     const { result, pending } = await renderWithSelectionInFlight();
 
-    emitSessionUpdated(makeSession({ title: deferredTitle as string | null, pinnedAt: "2026-09-16T01:00:00.000Z" }));
+    const { title: _omitted, ...withoutTitle } = makeSession({ pinnedAt: "2026-09-16T01:00:00.000Z" });
+    emitSessionUpdated(withoutTitle);
 
     await act(async () => {
       pending.resolve(makeSession({ title: "Titre autoritaire", pinnedAt: null }));
@@ -337,5 +339,75 @@ describe("useChat — generated title reaches the open conversation", () => {
 
     await waitFor(() => expect(result.current.activeSession?.title).toBe("Titre autoritaire"));
     expect(result.current.activeSession?.pinnedAt).toBeNull();
+  });
+
+  /*
+   * (b) FN-524: the authoritative read resolves for a DIFFERENT session id than the selection.
+   * That early-exit branch used to discard the deferred title outright, so the list row carried the
+   * new name while the open conversation header kept the old one — the reported divergence.
+   */
+  it("applies the deferred title when the authoritative read resolves for another session id", async () => {
+    const { result, pending } = await renderWithSelectionInFlight();
+
+    emitSessionUpdated(makeSession({ title: "Titre reporté" }));
+
+    await act(async () => {
+      pending.resolve(makeSession({ id: "session-autre", title: "Titre étranger" }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions[0]?.title).toBe("Titre reporté");
+      expect(result.current.activeSession?.title).toBe("Titre reporté");
+    });
+    expect(result.current.activeSession?.id).toBe("session-001");
+  });
+
+  /*
+   * (c) FN-524: the authoritative read resolves without a boolean `isGenerating` (legacy/malformed
+   * response). That early-exit branch also dropped the deferred title on the floor.
+   */
+  it("applies the deferred title when the authoritative read omits the isGenerating boolean", async () => {
+    const { result, pending } = await renderWithSelectionInFlight();
+
+    emitSessionUpdated(makeSession({ title: "Titre reporté" }));
+
+    await act(async () => {
+      const { isGenerating: _omitted, ...legacy } = makeSession({ title: null });
+      pending.resolve(legacy);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions[0]?.title).toBe("Titre reporté");
+      expect(result.current.activeSession?.title).toBe("Titre reporté");
+    });
+  });
+
+  /*
+   * (d) FN-524: a CLEARED title is a real rename. The deferral used to be armed only for a non-empty
+   * trimmed string, so an erased name left the list row empty while the header resurrected the old
+   * one. Both sides must converge on the cleared value.
+   */
+  it.each([
+    ["empty string", ""],
+    ["whitespace", "   "],
+    ["null", null],
+  ])("applies a title cleared to %s while the authoritative snapshot is in flight", async (_label, clearedTitle) => {
+    const named = makeSession({ title: "Ancien titre" });
+    const { result, pending } = await renderWithSelectionInFlight(named);
+
+    emitSessionUpdated(makeSession({ title: clearedTitle as string | null }));
+
+    await act(async () => {
+      pending.resolve(makeSession({ title: "Ancien titre" }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions[0]?.title ?? "").toBe(clearedTitle ?? "");
+      expect(result.current.activeSession?.title ?? "").toBe(clearedTitle ?? "");
+    });
+    expect(result.current.activeSession?.title?.trim() || null).toBeNull();
   });
 });

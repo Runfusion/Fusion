@@ -638,7 +638,13 @@ export function useChat(
   stored as a bare string rather than the session object so no out-of-allowlist field can ever
   leak through a future type change. Cursor/generation ownership stays with the snapshot.
   */
-  const deferredSessionTitleRef = useRef<{ sessionId: string; version: number; title: string } | null>(null);
+  /*
+  FNXC:ChatWindows 2026-09-18-01:28:
+  FN-524: `title` is `string | null` because an ERASED name is a real rename. Arming the deferral
+  only for a non-empty string let a cleared title be dropped, so the list row went blank while the
+  window header resurrected the old name. Absence of the field (undefined) still defers nothing.
+  */
+  const deferredSessionTitleRef = useRef<{ sessionId: string; version: number; title: string | null } | null>(null);
   sessionsRef.current = sessions;
   activeSessionRef.current = activeSession;
   messagesRef.current = messages;
@@ -1225,6 +1231,32 @@ export function useChat(
       setActiveSession(session || null);
       activeSessionRef.current = session || null;
 
+      /*
+      FNXC:ChatWindows 2026-09-18-01:28:
+      FN-524: the ACTIVE conversation's title write must be exactly as reliable as the list write.
+      Every authoritative-refresh exit path — divergent identity, missing `isGenerating` boolean, and
+      transport failure — goes through this single seam instead of discarding the deferred value, so
+      the header can never diverge from the list row. The allowlist stays closed on `title`: the
+      snapshot keeps sovereignty over the cursor, generation state, and every other field (FN-455).
+      */
+      const applyDeferredTitleToActiveSession = () => {
+        const deferredTitle = deferredSessionTitleRef.current;
+        deferredSessionTitleRef.current = null;
+        if (
+          !deferredTitle
+          || deferredTitle.sessionId !== id
+          || deferredTitle.version !== selectionVersion
+          || activeSessionSelectionRef.current !== selectionVersion
+        ) {
+          return;
+        }
+        const current = activeSessionRef.current;
+        if (!current || current.id !== id) return;
+        const withTitle = { ...current, title: deferredTitle.title };
+        activeSessionRef.current = withTitle;
+        setActiveSession(withTitle);
+      };
+
       if (id) {
         void fetchChatSession(id, projectId)
           .then(({ session: refreshedSession }) => {
@@ -1238,7 +1270,7 @@ export function useChat(
                 && authoritativeSelectionRefreshRef.current?.version === selectionVersion
               ) {
                 authoritativeSelectionRefreshRef.current = null;
-                deferredSessionTitleRef.current = null;
+                applyDeferredTitleToActiveSession();
                 if (session?.isGenerating && !streamRef.current) {
                   attachIfGenerating(id, session.inFlightGeneration, { silent: true });
                 }
@@ -1253,7 +1285,7 @@ export function useChat(
               must include the boolean and therefore cannot bypass snapshot reconciliation.
               */
               authoritativeSelectionRefreshRef.current = null;
-              deferredSessionTitleRef.current = null;
+              applyDeferredTitleToActiveSession();
               if (session?.isGenerating && !streamRef.current) {
                 attachIfGenerating(id, session.inFlightGeneration, { silent: true });
               }
@@ -1276,6 +1308,7 @@ export function useChat(
                 ? { ...authoritativeSession, title: deferredTitle.title }
                 : authoritativeSession;
             deferredSessionTitleRef.current = null;
+            activeSessionRef.current = reconciledSession;
             setActiveSession(reconciledSession);
 
             /*
@@ -1310,16 +1343,7 @@ export function useChat(
             authoritativeSelectionRefreshRef.current = null;
             // A transport failure leaves the deferred title as the only fresh data available;
             // apply that single field over the current active session and nothing else.
-            const deferredTitle = deferredSessionTitleRef.current;
-            deferredSessionTitleRef.current = null;
-            if (deferredTitle?.sessionId === id && deferredTitle.version === selectionVersion) {
-              const current = activeSessionRef.current;
-              if (current) {
-                const withTitle = { ...current, title: deferredTitle.title };
-                activeSessionRef.current = withTitle;
-                setActiveSession(withTitle);
-              }
-            }
+            applyDeferredTitleToActiveSession();
             // A transport failure is not an idle verdict. Retain the prior recovery behavior,
             // but only for this still-current selection incarnation.
             if (session?.isGenerating && !streamRef.current) {
@@ -2648,16 +2672,22 @@ export function useChat(
       } else if (awaitingAuthoritativeSnapshot) {
         /*
         FNXC:ChatWindows 2026-09-16-05:29:
-        Remember ONLY the title (and only when it is a usable non-empty string) so the pending
-        authoritative snapshot cannot silently discard a freshly generated conversation name.
-        The payload object itself is deliberately not retained.
+        Remember ONLY the title so the pending authoritative snapshot cannot silently discard a
+        freshly generated conversation name. The payload object itself is deliberately not retained.
+
+        FNXC:ChatWindows 2026-09-18-01:28:
+        FN-524: arm the deferral whenever the payload ASSERTS a title, including an erased one
+        (`""`, whitespace, or `null`) — clearing a name is a rename like any other and the header
+        must fall back to "Untitled conversation" instead of resurrecting the old name. Only an
+        ABSENT `title` field asserts nothing and defers nothing. The verbatim payload value is
+        stored so the active conversation and the list row converge on the exact same string.
         */
-        const deferredTitle = typeof updatedSession.title === "string" ? updatedSession.title.trim() : "";
-        if (deferredTitle && pendingRefresh) {
+        const assertsTitle = Object.prototype.hasOwnProperty.call(updatedSession, "title");
+        if (assertsTitle && pendingRefresh) {
           deferredSessionTitleRef.current = {
             sessionId: pendingRefresh.sessionId,
             version: pendingRefresh.version,
-            title: updatedSession.title as string,
+            title: typeof updatedSession.title === "string" ? updatedSession.title : null,
           };
         }
       }

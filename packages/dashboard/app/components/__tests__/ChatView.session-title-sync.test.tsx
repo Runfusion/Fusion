@@ -1,3 +1,11 @@
+/*
+FNXC:ChatWindows 2026-09-18-01:28:
+This suite mocks `useChat`, so its list rows and its active session come from ONE fixture: it pins
+the RENDERING contract (which surfaces paint the live session identity on each host and breakpoint),
+not the convergence of the two title writers inside the hook. FN-524 proves that convergence in
+`ChatView.session-title-sync-live.test.tsx`, which mounts the real hook and drives real events.
+*/
+
 import { describe, expect, it, vi } from "vitest";
 import { act, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
