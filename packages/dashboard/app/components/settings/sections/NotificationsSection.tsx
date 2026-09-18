@@ -316,11 +316,12 @@ export function NotificationsSection({ form, setForm, testNotificationLoading, t
                 options: [
                   { value: "slack", label: t("settings.notifications.slack", "Slack") },
                   { value: "discord", label: t("settings.notifications.discord", "Discord") },
+                  { value: "feishu", label: t("settings.notifications.feishu", "Feishu / Lark") },
                   { value: "generic", label: t("settings.notifications.generic", "Generic") },
                 ],
               }}
               value={form.webhookFormat || "generic"}
-              onChange={(v) => setForm((f) => ({ ...f, webhookFormat: (v ?? "generic") as "slack" | "discord" | "generic" }))}
+              onChange={(v) => setForm((f) => ({ ...f, webhookFormat: (v ?? "generic") as "slack" | "discord" | "feishu" | "generic" }))}
             />
             <div className="form-group">
               <label>{t("settings.notifications.notifyOnEvents", "Notify on events")}</label>

@@ -6640,6 +6640,7 @@
       "dashboardHostname": "",
       "discord": "",
       "enable": "",
+      "feishu": "Feishu / Lark",
       "failureNotificationDelayMs": "",
       "failureNotificationMode": "",
       "format": "",
