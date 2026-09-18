@@ -1735,12 +1735,19 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       );
       /* FNXC:GitHubImportTranslate 2026-07-16-23:30: Later durable-task migrations run after this historical 0000 fixture, so retain their required task table surface. */
       /*
+      FNXC:PgSchemaApplier 2026-09-18-08:56:
+      Migration 0082 (FN-509) builds its partial Boost index on tasks(project_id, "column").
+      Real 0000 databases have "column" from 0000_initial.sql, so this historical fixture must
+      retain it too — otherwise the upgrade-from-0000 run dies on the index instead of reaching
+      the automation-isolation assertion it exists to test. Same rule the 0059/0061 notes record.
+      */
+      /*
       FNXC:PgSchemaApplier 2026-08-15-22:10:
       Migration 0059 (FN-9037) builds a partial index on tasks(project_id, source_agent_id).
       Real 0000 databases have source_agent_id (baseline since the PG cutover), so this
       historical fixture must retain it; project_id arrives via the 0006 ownership migration.
       */
-      CREATE TABLE project.tasks (id text PRIMARY KEY, source_agent_id text);
+      CREATE TABLE project.tasks (id text PRIMARY KEY, source_agent_id text, "column" text NOT NULL DEFAULT 'todo');
       /*
       FNXC:Ideation 2026-07-18-13:25:
       FN-8295 migration 0022 FKs ideation rows to missions/mission_features on (project_id, id).
