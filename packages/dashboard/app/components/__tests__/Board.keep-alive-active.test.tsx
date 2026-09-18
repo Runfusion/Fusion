@@ -137,6 +137,41 @@ describe("Board active keep-alive gate", () => {
     expect(source).toContain("const renderedWorkflowToolbar = shouldRelocateWorkflowToolbar ? relocatedWorkflowToolbar : workflowToolbar");
   });
 
+  /*
+  FNXC:BoardNavigation 2026-09-18-02:12:
+  FN-522 — reprendre le slot « à terme » ne suffisait pas : le commit de réactivation lui-même peignait le repli en
+  ligne, ce qui poussait le tableau de la hauteur de cette bande. Ce cas n'attend RIEN après la réactivation.
+  */
+  it("reprend le slot dès le commit de réactivation, sans repli en ligne intermédiaire", async () => {
+    const slot = createHeaderSlot();
+    const { container, rerender } = render(<Board {...boardProps({ active: true, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot.querySelector(".board-workflow-toolbar")).not.toBeNull());
+
+    rerender(<Board {...boardProps({ active: false, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(slot).toBeEmptyDOMElement());
+
+    rerender(<Board {...boardProps({ active: true, workflowControlsInHeader: true })} />);
+    expect(slot.querySelector(".board-workflow-toolbar")).not.toBeNull();
+    expect(container.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+    expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+  });
+
+  it("adopte un slot remplacé pendant l'inactivité dès la réactivation", async () => {
+    const first = createHeaderSlot();
+    const { container, rerender } = render(<Board {...boardProps({ active: true, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(first.querySelector(".board-workflow-toolbar")).not.toBeNull());
+
+    rerender(<Board {...boardProps({ active: false, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(first).toBeEmptyDOMElement());
+    first.remove();
+    const second = createHeaderSlot();
+
+    rerender(<Board {...boardProps({ active: true, workflowControlsInHeader: true })} />);
+    expect(second.querySelector(".board-workflow-toolbar")).not.toBeNull();
+    expect(container.querySelector(".board-workflow-view > .board-workflow-toolbar")).toBeNull();
+    expect(document.querySelectorAll(".board-workflow-toolbar")).toHaveLength(1);
+  });
+
   it("keeps its toolbar inline while inactive without a header relocation target", async () => {
     const slot = createHeaderSlot();
     const { container } = render(<Board {...boardProps({ active: false, workflowControlsInHeader: false })} />);

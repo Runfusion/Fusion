@@ -145,4 +145,25 @@ describe("ListView active keep-alive gate", () => {
     expect(container.querySelector(".list-workflow-control")).toBeNull();
     expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(1);
   });
+
+  /*
+  FNXC:BoardNavigation 2026-09-18-02:12:
+  FN-522 — même contrat de réactivation que le Board : la reprise appartient au commit, pas à un effet ultérieur,
+  sinon la vue conservée peint un contrôle hors du Header et déplace sa propre disposition.
+  */
+  it("reprend le slot dès le commit de réactivation, y compris après remplacement du nœud", async () => {
+    const first = createHeaderSlot();
+    const { container, rerender } = render(<ListView {...listProps({ active: true, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(first.querySelector(".list-workflow-control")).not.toBeNull());
+
+    rerender(<ListView {...listProps({ active: false, workflowControlsInHeader: true })} />);
+    await waitFor(() => expect(first).toBeEmptyDOMElement());
+    first.remove();
+    const second = createHeaderSlot();
+
+    rerender(<ListView {...listProps({ active: true, workflowControlsInHeader: true })} />);
+    expect(second.querySelector(".list-workflow-control")).not.toBeNull();
+    expect(container.querySelector(".list-workflow-control")).toBeNull();
+    expect(document.querySelectorAll(".list-workflow-control")).toHaveLength(1);
+  });
 });

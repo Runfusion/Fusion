@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useViewportMode } from "./useViewportMode";
 
 /*
@@ -17,12 +17,32 @@ changes, retries on a bounded 20 × 250ms timer while no slot exists, and watche
 late-mounted or replaced slot. A cached node is abandoned as soon as `isConnected` is false. The inline
 fallback is preserved ONLY for a genuinely absent slot; it must never be the resting state of a slot
 that simply had not mounted yet.
+
+FNXC:BoardNavigation 2026-09-18-02:12:
+FN-522 — « en revenant de Planning ou Missions le board n'apparaît pas comme je l'ai laissé, comme s'il était
+poussé par le header des éléments des autres vues ». Le `useState` initial ne couvre que le PREMIER montage : une
+vue conservée reste montée, donc sa réactivation repart de l'état `null` publié quand `enabled` est passé à faux.
+Avec un `useEffect` passif la résolution arrivait APRÈS la peinture, si bien que la première frame du retour
+rendait le repli en ligne `.board-workflow-toolbar` sous le Header — mesuré dans un vrai Chromium : `#board` à
+top=116/h=684 puis top=75/h=725 à la frame suivante, soit une bande parasite et un tableau raccourci.
+
+La résolution appartient donc au cycle de LAYOUT : `useLayoutEffect` s'exécute après les mutations DOM du même
+commit — le slot que le Header vient de monter est déjà là — et avant la peinture, donc aucune frame n'expose le
+repli. La désactivation devient symétriquement synchrone : la cible est inutilisable avant la peinture suivante.
+Aucun timer supplémentaire n'est introduit ; la reprise bornée et l'observation des remplacements tardifs restent
+inchangées. `useEffect` reste utilisé hors navigateur, où les effets de layout n'existent pas.
 */
 
 export const HEADER_WORKFLOW_SLOT_ID = "header-workflow-slot";
 
 const RESOLVE_RETRY_INTERVAL_MS = 250;
 const RESOLVE_MAX_ATTEMPTS = 20;
+
+/**
+ * Layout-phase resolution in the browser (pre-paint, so no frame can expose the inline fallback of a
+ * reactivated keep-alive view); plain effect elsewhere, where layout effects do not run.
+ */
+const useResolveSlotEffect = typeof document === "undefined" ? useEffect : useLayoutEffect;
 
 function readSlot(): HTMLElement | null {
   if (typeof document === "undefined") return null;
@@ -45,7 +65,7 @@ export function useHeaderWorkflowSlot({ enabled }: UseHeaderWorkflowSlotOptions)
   // fires on every unrelated body mutation, and a no-op setState would still schedule React work.
   const slotRef = useRef<HTMLElement | null>(slot);
 
-  useEffect(() => {
+  useResolveSlotEffect(() => {
     if (!enabled || typeof document === "undefined") {
       if (slotRef.current !== null) {
         slotRef.current = null;

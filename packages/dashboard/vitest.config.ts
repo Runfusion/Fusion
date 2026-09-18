@@ -424,6 +424,13 @@ const browserTouchTests = [
   une seule fois dans cette lane, avec auto-clôture sur la présence d'un Chromium local.
   */
   "src/__tests__/task-search-browser.test.ts",
+  /*
+  FNXC:BoardNavigation 2026-09-18-02:12:
+  FN-522 : la bande parasite et la hauteur utile réduite du tableau au retour de Planning/Missions sont des
+  géométries rendues, et le défaut ne durait qu'un commit — seule une mesure par frame dans un vrai moteur peut
+  le prouver. Collectée une seule fois dans cette lane, avec auto-clôture sur la présence d'un Chromium local.
+  */
+  "src/__tests__/board-return-browser.test.ts",
 ];
 
 const qualityApiTests = [
