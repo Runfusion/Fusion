@@ -85,6 +85,33 @@ describe("useListItemContextMenu", () => {
     unregister();
   });
 
+  /*
+  FNXC:LongPressTextSelection 2026-09-18-01:13:
+  FN-521 : la suppression du surlignement au long press est portée par le CSS (`user-select`/
+  `-webkit-touch-callout` sur `[data-drawer-dismiss-row]`), JAMAIS par un `preventDefault` au `pointerdown`.
+  Ce cas pine la règle n°1 du geste partagé : ni la ligne ni son libellé ne voient leur événement annulé,
+  ni avant ni après l'expiration du délai, sinon le défilement natif et le geste de tiroir seraient perdus.
+  */
+  it("never prevents the touch pointerdown, before or after the long-press delay", () => {
+    render(<Host />);
+    const row = screen.getByTestId("row");
+
+    for (const target of [row, screen.getByTestId("row-label")]) {
+      const event = new Event("pointerdown", { bubbles: true, cancelable: true });
+      Object.assign(event, { pointerType: "touch", pointerId: 1, isPrimary: true, clientX: 30, clientY: 40 });
+      fireEvent(target, event);
+      expect(event.defaultPrevented).toBe(false);
+      act(() => { vi.advanceTimersByTime(LIST_ITEM_LONG_PRESS_DELAY_MS); });
+      expect(event.defaultPrevented).toBe(false);
+      // Le geste a bien été pris en charge : sans cette preuve le cas passerait trivialement.
+      expect(screen.getByTestId("anchor").textContent).toBe("p1:note:a@30,40");
+      fireEvent.pointerUp(target, { pointerType: "touch", pointerId: 1 });
+      fireEvent.click(screen.getByTestId("close"));
+    }
+
+    expect(screen.getByTestId("anchor").textContent).toBe("none");
+  });
+
   it("cancels the long press when the finger moves past the threshold before the delay", () => {
     render(<Host />);
     const row = screen.getByTestId("row");

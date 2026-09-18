@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
 import { readAppFile } from "../../test/cssFixture";
+import { LIST_ITEM_LONG_PRESS_DELAY_MS } from "../../utils/listItemGesture";
 import { NotesView } from "../NotesView";
 
 const api = vi.hoisted(() => ({
@@ -119,6 +120,63 @@ describe("NotesView — actions par ligne de liste", () => {
     expect(screen.queryByRole("button", { name: /^Save$/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Preview$/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Edit$/ })).toBeNull();
+  });
+
+  /*
+  FNXC:NotesRowActions 2026-09-18-01:13:
+  FN-521 : l'opérateur atteint le renommage et la suppression d'une note AU DOIGT, exactement comme sur une
+  conversation de planification. Le chemin tactile réel — `pointerdown` de type `touch`, expiration du délai
+  d'appui long, puis sélection dans le menu — n'était couvert par aucun cas : seuls le clic droit et
+  l'en-tête l'étaient. Le clic de compatibilité qui suit l'appui long ne doit pas ouvrir la note.
+  */
+  const longPressRow = async (index: number) => {
+    const triggers = await rowTriggers();
+    const row = triggers[index];
+    fireEvent.pointerDown(row, { pointerType: "touch", pointerId: 1, isPrimary: true, clientX: 24, clientY: 24 });
+    act(() => { vi.advanceTimersByTime(LIST_ITEM_LONG_PRESS_DELAY_MS); });
+    fireEvent.pointerUp(row, { pointerType: "touch", pointerId: 1 });
+    /* Le navigateur synthétise un clic après l'appui long ; il doit être avalé, pas ouvrir la note. */
+    fireEvent.click(row);
+    return row;
+  };
+
+  it("renomme une note par appui long tactile sans l'ouvrir", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderNotes();
+      await longPressRow(1);
+
+      const menu = await screen.findByTestId("notes-list-item-context-menu");
+      fireEvent.click(within(menu).getByTestId("notes-menu-rename"));
+      const input = screen.getByTestId("notes-list-item-rename-input");
+      fireEvent.change(input, { target: { value: "Renommée" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => expect(api.updateNote).toHaveBeenCalledWith("p", noteB.id, { title: "Renommée", expectedRevision: 1 }));
+      // Le clic de compatibilité n'a pas sélectionné la note.
+      expect(api.fetchNote).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText("Markdown editor")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("supprime une note par appui long tactile après confirmation", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderNotes();
+      await longPressRow(1);
+
+      const menu = await screen.findByTestId("notes-list-item-context-menu");
+      fireEvent.click(within(menu).getByTestId("notes-menu-delete"));
+      const dialog = await screen.findByRole("dialog", { name: "Delete note?" });
+      fireEvent.click(within(dialog).getByRole("button", { name: /^Delete$/ }));
+
+      await waitFor(() => expect(api.deleteNote).toHaveBeenCalledWith("p", noteB.id, noteB.revision));
+      expect(api.fetchNote).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ne laisse aucune coquille de barre d'édition dans le DOM ni dans la feuille de style", async () => {

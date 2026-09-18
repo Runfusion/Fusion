@@ -4,8 +4,16 @@ FN-486 : chrome du menu de ligne partagé par Planning, Notes, Missions et Mailb
 existants, et une hauteur bornée défilable pour qu'un menu riche (hiérarchie Missions) reste entièrement
 atteignable sur téléphone sans déborder du viewport ni créer de zone vide capturant les gestes.
 */
+/*
+FNXC:ContextMenuLayering 2026-09-18-01:13:
+FN-521 : le calque vient du plafond VIVANT `--fusion-max-z` (palier « panneau de menu d'action éphémère »,
+`+ 6`, documenté dans `styles.css`) et non plus d'une réclamation figée au montage. Une réclamation issue du
+compteur de fenêtres est toujours ≤ au plafond publié, donc elle perdait contre `.dashboard-tool-popover`
+(`+ 3`) qui HÉBERGE la cible du menu — c'est exactement le menu « … » des notes peint derrière son hôte.
+*/
 .list-item-context-menu {
   position: fixed;
+  z-index: calc(var(--fusion-max-z) + 6);
   display: flex;
   flex-direction: column;
   min-inline-size: calc(var(--space-xl) * 5);

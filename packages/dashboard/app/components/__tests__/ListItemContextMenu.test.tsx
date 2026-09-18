@@ -29,6 +29,20 @@ describe("ListItemContextMenu", () => {
     expect(isInsidePortalSafeSurface(menu)).toBe(true);
   });
 
+  /*
+  FNXC:ContextMenuLayering 2026-09-18-01:13:
+  FN-521 : le menu ne fige plus de calque au montage. Un `zIndex` inline issu du compteur de fenêtres est
+  toujours ≤ au plafond publié, donc il perdait contre l'hôte déclaré à `calc(var(--fusion-max-z) + 3)`.
+  Le calque vient désormais du CSS de `.list-item-context-menu`, dérivé du plafond vivant.
+  */
+  it("renders without an inline layer so the ceiling-derived CSS step owns stacking", () => {
+    render(<ListItemContextMenu anchor={anchor} ariaLabel="Note actions" actions={actions()} onClose={vi.fn()} />);
+    const menu = screen.getByRole("menu", { name: "Note actions" });
+    expect(menu.style.zIndex).toBe("");
+    expect(menu.getAttribute("style")).not.toContain("z-index");
+    expect(menu.classList.contains("list-item-context-menu")).toBe(true);
+  });
+
   it("selects an action once, closes first, and never runs a disabled action", () => {
     const list = actions([{}, { disabled: true }]);
     const onClose = vi.fn();

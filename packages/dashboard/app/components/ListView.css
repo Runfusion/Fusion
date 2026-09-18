@@ -233,9 +233,14 @@ View options was oversized (full-width stacked button). Render it as a compact i
 FNXC:ListContextMenu 2026-06-29-00:00:
 List rows and mobile cards expose the same task lifecycle menu as Board cards from right-click or mobile long-press. The popover is portal-positioned so table rows, split-pane sizing, and mobile card layout do not gain new in-flow width or height.
 */
+/*
+FNXC:ContextMenuLayering 2026-09-18-01:13:
+FN-521 : palier « panneau de menu d'action éphémère » dérivé du plafond vivant, documenté dans `styles.css`.
+Le littéral 1000 perdait contre la bande des fenêtres (10100+) et contre tout panneau transitoire.
+*/
 .list-context-menu-popover {
   position: fixed;
-  z-index: 1000;
+  z-index: calc(var(--fusion-max-z) + 6);
 }
 
 .list-context-menu {

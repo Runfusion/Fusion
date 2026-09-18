@@ -863,10 +863,16 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
 }
 
 /* File Browser Context Menu */
+/*
+FNXC:ContextMenuLayering 2026-09-18-01:13:
+FN-521 : paliers « capteur de clic » (`+ 5`) et « panneau » (`+ 6`) du menu d'action éphémère, dérivés du
+plafond vivant et documentés dans `styles.css`. Les littéraux 1000/1001 se situaient sous la bande des
+fenêtres (10100+) et sous tout panneau transitoire hébergeant l'explorateur de fichiers.
+*/
 .context-menu-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: calc(var(--fusion-max-z) + 5);
 }
 
 .file-browser-context-menu {
@@ -880,7 +886,7 @@ Narrow Files windows use the same single-pane list/editor behavior as mobile eve
   display: flex;
   flex-direction: column;
   gap: calc(var(--space-xs) * 0.5);
-  z-index: 1001;
+  z-index: calc(var(--fusion-max-z) + 6);
 }
 
 .file-browser-context-menu__item {

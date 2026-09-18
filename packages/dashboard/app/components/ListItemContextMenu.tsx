@@ -3,7 +3,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { UiMenu, UiMenuItem } from "./ui";
-import { nextFloatingZ } from "./floatingWindowStack";
 import {
   LIST_ITEM_MENU_PORTAL_SURFACE,
   LIST_ITEM_MENU_VIEWPORT_MARGIN,
@@ -39,12 +38,17 @@ d'un seul endroit. Le menu est portalisé dans `document.body` et positionné en
 que ses hôtes (tiroir téléphone, fenêtre flottante, popover de dock, colonne défilante) rognent tous leur
 contenu. Il se ferme sur Escape, sur un vrai appui extérieur, sur un défilement et lorsque son hôte retire
 sa cible ; une liste d'actions vide ne rend RIEN, de sorte qu'aucune ligne sans action n'ouvre un menu vide.
+
+FNXC:ContextMenuLayering 2026-09-18-01:13:
+FN-521 : le menu ne réclame PLUS de calque au montage (`nextFloatingZ()`). Une réclamation est figée à la
+valeur du compteur au moment du montage, donc tout hôte réhausé ensuite — ou déclaré au-dessus du plafond,
+comme `.dashboard-tool-popover` à `calc(var(--fusion-max-z) + 3)` — peignait par-dessus le menu. Le calque
+est désormais porté par le CSS, dérivé du plafond VIVANT (`+ 6`), donc il domine toujours l'hôte de sa cible.
 */
 export function ListItemContextMenu({ anchor, ariaLabel, actions, onClose, className, "data-testid": testId }: ListItemContextMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const touchSelectedRef = useRef<{ id: string; at: number } | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const [layer] = useState(() => nextFloatingZ());
   const hasActions = actions.length > 0;
   const anchorKey = anchor?.key ?? null;
   const anchorX = anchor?.x ?? 0;
@@ -121,7 +125,7 @@ export function ListItemContextMenu({ anchor, ariaLabel, actions, onClose, class
       data-portal-surface={LIST_ITEM_MENU_PORTAL_SURFACE}
       data-testid={testId ?? "list-item-context-menu"}
       className={["list-item-context-menu", className].filter(Boolean).join(" ")}
-      style={{ left: position.x, top: position.y, zIndex: layer }}
+      style={{ left: position.x, top: position.y }}
       onContextMenu={(event) => event.preventDefault()}
     >
       {actions.map((action) => (

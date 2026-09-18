@@ -97,9 +97,15 @@ The tile selectors remain at (0,3,0), and the text-entry carve-out is (0,3,1), b
   background: color-mix(in srgb, var(--todo) 8%, transparent);
 }
 
+/*
+FNXC:ContextMenuLayering 2026-09-18-01:13:
+FN-521 : palier « panneau de menu d'action éphémère » dérivé du plafond vivant, documenté dans `styles.css`.
+Le littéral 1000 se situait sous la bande des fenêtres (10100+) et sous tout panneau transitoire, donc le menu
+disparaissait dès que sa cible était hébergée par une fenêtre ou un popover d'outil.
+*/
 .task-card-context-menu-popover {
   position: fixed;
-  z-index: 1000;
+  z-index: calc(var(--fusion-max-z) + 6);
 }
 
 .task-card-context-menu-popover .task-context-menu {

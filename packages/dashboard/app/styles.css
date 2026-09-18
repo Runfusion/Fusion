@@ -423,6 +423,18 @@ est `.visually-hidden` ci-dessus — la classe `.sr-only` n'a JAMAIS été défi
   The ceiling is only ever CONSUMED here; FUSION_MAX_Z_FLOOR and the stack counter are never redefined
   from CSS. Ties with other ceiling-derived consumers resolve by DOM order, which is acceptable because
   these surfaces are mutually exclusive in practice and close on outside click/Escape/selection.
+
+  FNXC:ContextMenuLayering 2026-09-18-01:13:
+  FN-521 adds the EPHEMERAL ACTION MENU steps, above every transient panel:
+    ephemeral action-menu click catcher : calc(var(--fusion-max-z) + 5)
+    ephemeral action-menu panel         : calc(var(--fusion-max-z) + 6)
+  Rationale: an action menu must dominate the transient panel that HOSTS its own target. The Notes "..."
+  menu was painted BEHIND `.dashboard-tool-popover` (`+ 3`), because a portaled menu that claims a layer
+  from the window counter can never exceed the published ceiling (`syncFusionMaxZ` publishes
+  `Math.max(topZ, FUSION_MAX_Z_FLOOR)`), so `+ 3` structurally won. Such a menu is legitimately allowed
+  above the window-visibility control because it is STRICTLY ephemeral — it closes on an outside pointer,
+  on Escape and on any scroll — so it can never durably hide that escape hatch the way an opaque panel can.
+  The `+ 4` step stays RESERVED for #dashboard-window-toggle-root and is never reused here.
   */
 
   --shadow-glow: var(--ui-shadow-glow-geometry) color-mix(in srgb, var(--todo) 30%, transparent);
@@ -1598,6 +1610,36 @@ selection independently of CSS import order.
 }
 
 :is([role="tablist"], .mailbox-tabs, .mailbox-agent-subtabs, .terminal-tabs, .terminal-mobile-tabs, .settings-sidebar, .agent-detail-tabs, .wf-mobile-tabs, .prompt-manager-tabs, .project-filter-tabs) :is(input, textarea, select, [contenteditable="true"]) {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/*
+FNXC:LongPressTextSelection 2026-09-18-01:13:
+FN-521 : sur toute surface où un APPUI LONG ouvre un menu contextuel, ce geste est réservé au menu et ne doit
+jamais démarrer une sélection native ni le « callout » iOS (« Copier / Tout sélectionner »). Les trois familles
+concernées sont les lignes du hook partagé `useListItemContextMenu` (qualifiées par `data-drawer-dismiss-row`
+via `listRowGestureAttributes()`, donc Notes, Planning, Missions, Mailbox et Agent Detail d'un seul crochet),
+les cartes de `ListView` et les nœuds de `FileBrowser`.
+La suppression est une règle de BASE, jamais média-scopée : l'invariant vaut à l'identique sur ordinateur,
+tablette et téléphone, et le geste ne dépend d'aucun breakpoint.
+Elle passe par le CSS et NON par un `preventDefault` au `pointerdown` : la règle n°1 de `useListItemGesture`
+(aucune capture ni annulation au démarrage du geste) préserve le défilement natif et le geste de tiroir.
+Les cartes du board gardent leur propre règle dans `TaskCard.css` (FNXC:TaskCardMobileSelection) parce qu'elle
+est couplée à `touch-action: pan-x pan-y` et à l'état `.card-editing`.
+Grammaire, spécificité et ordre source copient `FNXC:TabStripTextSelection` littéralement : suppression large
+d'abord, puis dérogation éditable PLUS SPÉCIFIQUE juste après, de sorte qu'un champ de renommage posé dans une
+ligne conserve la sélection native indépendamment de l'ordre d'import des feuilles de composant.
+*/
+:is([data-drawer-dismiss-row], .list-card, .file-node),
+:is([data-drawer-dismiss-row], .list-card, .file-node) * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+:is([data-drawer-dismiss-row], .list-card, .file-node) :is(input, textarea, select, [contenteditable="true"]) {
   user-select: text;
   -webkit-user-select: text;
   -webkit-touch-callout: default;
