@@ -2074,9 +2074,27 @@ Planner rewrote mission without the raw request.
         } as Partial<Task>),
       ];
       const tasksById = new Map(tasks.map((task) => [task.id, { ...task, attachments: [], comments: [] }]));
+      /*
+      FNXC:EventDrivenDispatch 2026-09-18-00:40:
+      FN-519 — this fixture must MODEL THE DURABLE `status: "planning"` WRITE that the assertions
+      below already require the processor to perform. Previously `listTasks` returned a frozen
+      snapshot whose statuses never changed, so the same three rows stayed eligible for planning
+      discovery forever; that was invisible only because the wake carried a deliberate 150 ms
+      debounce, which made the release -> re-poll -> re-admit cycle slow enough for `waitFor` to
+      observe exactly three planners before it ran again. With the wake immediate (FN-519) the same
+      unpersisted fixture admits a planner per turn. Production cannot do this: planning discovery
+      filters on the PERSISTED `status !== "planning"` plus the in-memory owner set, and the real
+      store persists that write — so the loop was a fixture artefact, and modelling the write is the
+      fixture stating the intent it always had rather than a weakened assertion.
+      */
       const triageStore = createMockStore({
-        listTasks: vi.fn().mockResolvedValue(tasks),
+        listTasks: vi.fn().mockImplementation(async () => [...tasksById.values()]),
         getTask: vi.fn().mockImplementation(async (id: string) => tasksById.get(id) ?? null),
+        updateTask: vi.fn().mockImplementation(async (id: string, patch: Partial<Task>) => {
+          const live = tasksById.get(id);
+          if (live) tasksById.set(id, { ...live, ...patch } as any);
+          return undefined;
+        }),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
           pollIntervalMs: 10_000,

@@ -117,14 +117,26 @@ describe("continuation-drain guard release invariant", () => {
     await Promise.resolve();
     expect(runtime.workflowContinuationDrainGeneration).toBe(2);
     const successorProgress = runtime.workflowContinuationDrainProgressAt;
-    const successorPhase = runtime.workflowContinuationDrainPhase;
     expect(runtimeLog.warn).toHaveBeenCalledWith(expect.stringContaining("last phase: settings"));
 
     firstDue.resolve([]);
     await first;
+    /*
+    FNXC:EventDrivenDispatch 2026-09-18-00:40:
+    FN-519 — the invariant here is that a LATE-COMPLETING superseded pass cannot reset the
+    successor's guard, not that the successor is frozen at one named phase. A phase snapshot taken
+    before `await first` had become an accidental pin on the drain's phase SEQUENCE: FN-514 inserted
+    a `human-merge-holds` phase between `settings` and `list-due`, so the successor legitimately
+    advanced past the captured value while the old pass unwound, and the case went red without any
+    change to the fencing it exists to prove. Assert the reset that must not happen — an unclaimed
+    guard, a zeroed progress mark, an `idle` phase, or a regressed progress timestamp — rather than
+    a specific phase name.
+    */
     expect(runtime.workflowContinuationDrainActive).toBe(true);
-    expect(runtime.workflowContinuationDrainProgressAt).toBe(successorProgress);
-    expect(runtime.workflowContinuationDrainPhase).toBe(successorPhase);
+    expect(runtime.workflowContinuationDrainGeneration).toBe(2);
+    expect(runtime.workflowContinuationDrainProgressAt).toBeGreaterThanOrEqual(successorProgress);
+    expect(runtime.workflowContinuationDrainPhase).not.toBe("idle");
+    expect(runtime.workflowContinuationDrainSince).not.toBe(0);
 
     vi.advanceTimersByTime(CONTINUATION_DRAIN_STALL_MS);
     const replacement = runtime.drainWorkflowContinuations();

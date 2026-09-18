@@ -28,6 +28,8 @@ import { randomUUID } from "node:crypto";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 import { projectScopeFor, recordRunAuditEventWithinTransaction } from "../../postgres/data-layer.js";
+// FNXC:EventDrivenDispatch 2026-09-18-00:40: FN-519 commit-correct advisory wake for continuations.
+import { notifyDispatchWakeWithinTransaction } from "../../postgres/dispatch-wake.js";
 import { taskQueueOrderBy } from "../task-queue-order-ops.js";
 import { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "../../types.js";
 import type {
@@ -263,6 +265,24 @@ export async function upsertWorkflowWorkItem(
 
     const row = await getWorkflowWorkItem(tx, id, layer.projectId);
     if (!row) throw new Error(`Failed to upsert workflow work item ${id}`);
+
+    /*
+    FNXC:EventDrivenDispatch 2026-09-18-00:40:
+    FN-519 — a continuation that a consumer can actually claim must wake that consumer, otherwise
+    the row waits for the runtime's periodic relève (2 s). Published on THIS handle so the
+    server's own NOTIFY semantics supply commit-correctness: nothing is delivered before an
+    external caller's transaction commits, and nothing at all after a rollback.
+
+    Restricted to claimable states: a row written `held`, `running`, or terminal gives its consumer
+    nothing to do, and waking for it would be a wake per lease renewal.
+    */
+    if (row.state === "runnable" || row.state === "retrying") {
+      await notifyDispatchWakeWithinTransaction(tx, {
+        projectId: layer.projectId ?? "",
+        reason: "continuation",
+        taskId: row.taskId,
+      });
+    }
 
     // Run-audit event inside the same transaction (commits/rolls back together).
     await recordRunAuditEventWithinTransaction(tx, {
@@ -566,6 +586,20 @@ export async function transitionWorkflowWorkItem(
       updated = currentRows[0] as WorkflowWorkItemRow | undefined;
       if (!updated) throw new Error(`Workflow work item ${id} disappeared`);
       return rowToWorkflowWorkItem(updated);
+    }
+
+    /*
+    FNXC:EventDrivenDispatch 2026-09-18-00:40:
+    FN-519 — same commit-correct wake as the upsert above. Reached only past the compare-and-set:
+    the lost-CAS path returns from the re-read branch before this point, so a wake can never
+    advertise a claim this transition did not actually win.
+    */
+    if (state === "runnable" || state === "retrying") {
+      await notifyDispatchWakeWithinTransaction(tx, {
+        projectId: layer.projectId ?? "",
+        reason: "continuation",
+        taskId: updated.taskId,
+      });
     }
 
     // Run-audit event inside the same transaction.

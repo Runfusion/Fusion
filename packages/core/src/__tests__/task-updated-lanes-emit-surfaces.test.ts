@@ -40,6 +40,22 @@ const PRODUCERS = {
   "packages/core/src/task-store/update-task-deps.ts": ["safe"],
   "packages/core/src/task-store/workflow-integrity.ts": ["safe"],
   "packages/core/src/task-store/workflow-task-create-ops.ts": ["emit", "safe"],
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — three safe-route producers joined the seam after the inventory above was last updated and
+  had drifted out of the census (which is why this assertion was failing before this change):
+  FN-514's human merge-approval decision publication, the overlap-wait reconciliation publication,
+  and FN-509's queue-order/boost publication. All three go through
+  `emitTaskLifecycleEventSafely("task:updated", ...)`.
+
+  Registering them rather than relaxing the census matters more now than before: this inventory is
+  the authority proving that BOTH emission paths are decorated, and FN-519's advisory dispatch wake
+  is published from both. A producer missing from the census is a producer whose wake nobody has
+  shown to be published.
+  */
+  "packages/core/src/task-store/human-merge-approval-ops.ts": ["safe"],
+  "packages/core/src/task-store/overlap-wait-reconciliation.ts": ["safe"],
+  "packages/core/src/task-store/task-queue-order-ops.ts": ["safe"],
 } as const satisfies Record<string, readonly ProducerRoute[]>;
 
 const EMIT_SURFACES = Object.keys(PRODUCERS) as Array<keyof typeof PRODUCERS>;

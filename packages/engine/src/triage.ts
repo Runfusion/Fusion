@@ -408,8 +408,17 @@ export interface TriageProcessorOptions {
   */
   onSpecifyComplete?: (task: Task, report: PlanningHandoffReport) => void;
   onSpecifyError?: (task: Task, error: Error) => void;
-  /** Advisory execution-lane nudge after an admitted planning promise returns its slot. */
-  onPlanningSlotReleased?: () => void;
+  /**
+   * Advisory execution-lane nudge after an admitted planning promise returns its slot.
+   *
+   * FNXC:EventDrivenDispatch 2026-09-18-00:40:
+   * FN-519 — the finished card's id is carried because the subscriber's real job is to release
+   * THAT card's `planner-live` continuation deferral: the Plan Review row is legitimately seeded
+   * while the planner still owns the task, so the drain defers it by
+   * PLANNER_LIVE_CONTINUATION_DEFER_MS (15 s) and a bare wake cannot help — the row is no longer
+   * due. The id is optional so an existing zero-argument subscriber keeps compiling.
+   */
+  onPlanningSlotReleased?: (taskId?: string) => void;
   onAgentText?: (taskId: string, delta: string) => void;
   /** AgentStore for resolving per-agent custom instructions. */
   agentStore?: import("@fusion/core").AgentStore;
@@ -575,11 +584,21 @@ export class TriageProcessor {
   Event-wake state for requestImmediatePoll(). Planning discovery is timer-driven, so pressing
   Start on an Ideas card (which only writes a column change) used to wait out the remainder of the
   poll interval — up to pollIntervalMs, 15s by default — before anything even looked at the card.
-  `nudgeTimer` debounces a burst of moves into one poll; `nudgeDuringPoll` remembers a nudge that
-  arrived while a poll was already in flight, since that poll may have snapshotted the task list
-  before the move landed and would otherwise drop the wake entirely.
+  `nudgeDuringPoll` remembers a nudge that arrived while a poll was already in flight, since that
+  poll may have snapshotted the task list before the move landed and would otherwise drop the wake
+  entirely.
+
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — the burst coalescer is now a PENDING FLAG drained in a microtask, not a 150 ms time
+  window. Coalescing only needs "at most one pass is pending", which a flag expresses exactly; the
+  former `setTimeout(..., NUDGE_DEBOUNCE_MS)` additionally charged every single-card Start the full
+  window, and that added wait is the latency operators actually see ("la carte reste en queue").
+  The N-moves-to-one-pass property is preserved: every wake published before the microtask runs
+  collapses into the same pending pass. `nudgeGeneration` fences a queued microtask against
+  stop()/start(), so a wake published before shutdown can never open a pass afterwards.
   */
-  private nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+  private nudgePending = false;
+  private nudgeGeneration = 0;
   private nudgeDuringPoll = false;
   private processing = new Set<string>();
   /** Synchronous ownership fence shared with advanced-triage self-healing. */
@@ -868,8 +887,15 @@ export class TriageProcessor {
      * the call if a poll-based pass is already in flight.
      */
     store.on("settings:updated", ({ settings, previous }) => {
+      /*
+      FNXC:EventDrivenDispatch 2026-09-18-00:40:
+      FN-519 — route the resume through the coalescing pump instead of calling `poll()` directly.
+      A direct call is DROPPED by `poll()`'s re-entrance guard when a pass is already in flight,
+      and only `requestImmediatePoll()` records `nudgeDuringPoll`, so an unpause landing mid-pass
+      previously had no effect until the next tick (up to pollIntervalMs).
+      */
       if (previous.globalPause && !settings.globalPause && this.running) {
-        this.poll();
+        this.requestImmediatePoll();
       }
     });
 
@@ -880,8 +906,9 @@ export class TriageProcessor {
      * unpause handler above.
      */
     store.on("settings:updated", ({ settings, previous }) => {
+      // FNXC:EventDrivenDispatch 2026-09-18-00:40: same lossless pump as the globalPause resume above.
       if (previous.enginePaused && !settings.enginePaused && this.running) {
-        this.poll();
+        this.requestImmediatePoll();
       }
     });
 
@@ -1226,11 +1253,13 @@ export class TriageProcessor {
       this.pollInterval = null;
       this.activePollMs = null;
     }
-    // FNXC:CodingIdeasWorkflow 2026-07-25-11:20: a debounced wake must not fire past shutdown.
-    if (this.nudgeTimer) {
-      clearTimeout(this.nudgeTimer);
-      this.nudgeTimer = null;
-    }
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-25-11:20: a pending wake must not fire past shutdown.
+    FNXC:EventDrivenDispatch 2026-09-18-00:40: bumping the generation fences an ALREADY QUEUED
+    microtask, which (unlike the former timer handle) cannot be cleared.
+    */
+    this.nudgePending = false;
+    this.nudgeGeneration += 1;
     this.nudgeDuringPoll = false;
     if (this.taskDeletedHandler && typeof this.store.off === "function") {
       this.store.off("task:deleted", this.taskDeletedHandler);
@@ -2277,6 +2306,13 @@ export class TriageProcessor {
    * existing poll runs — every pause, seed-prompt, dependency, and concurrency gate still applies,
    * so a nudge on a capacity-blocked card is a no-op rather than an admission bypass. Returns false
    * when the processor is not running.
+   *
+   * FNXC:EventDrivenDispatch 2026-09-18-00:40:
+   * FN-519 — no time window. The pass is opened in a microtask so a burst of moves published in the
+   * same turn still produces ONE pass, while a single Start is no longer charged a deliberate
+   * 150 ms before anything looks at the card. The microtask (rather than a synchronous call) also
+   * preserves the existing ordering contract: a caller inside a store emit or a release `finally`
+   * finishes returning capacity before dispatch begins.
    */
   requestImmediatePoll(): boolean {
     if (!this.running) return false;
@@ -2285,12 +2321,15 @@ export class TriageProcessor {
       this.nudgeDuringPoll = true;
       return true;
     }
-    if (this.nudgeTimer) return true; // Already coalescing a burst of moves.
-    this.nudgeTimer = setTimeout(() => {
-      this.nudgeTimer = null;
+    if (this.nudgePending) return true; // Already coalescing a burst of moves into one pass.
+    this.nudgePending = true;
+    const generation = this.nudgeGeneration;
+    queueMicrotask(() => {
+      // A stop() (or a restart) between publication and drain invalidates this wake outright.
+      if (generation !== this.nudgeGeneration || !this.running) return;
+      this.nudgePending = false;
       void this.poll();
-    }, TriageProcessor.NUDGE_DEBOUNCE_MS);
-    this.nudgeTimer.unref?.();
+    });
     return true;
   }
 
@@ -2319,25 +2358,32 @@ export class TriageProcessor {
         planLog.error(`${task.id}: admitted planning promise rejected:`, error);
         await this.parkPlanningRecoveryWriteFailure(task, message, error);
       })
-      .finally(() => this.notifyPlanningSlotReleased());
+      /*
+      FNXC:EventDrivenDispatch 2026-09-18-00:40:
+      FN-519 — this `finally` runs after `specifyTask` has fully settled, INCLUDING its own
+      finally block: the planning work item is terminal, capacity is returned, and the task is out
+      of `processing`/`coordinatorAdmittedTaskIds`. That ordering is what makes the release signal
+      safe to act on — a subscriber that clears the `planner-live` deferral here cannot have the
+      re-dispatched review meet the same live planner again. Rejections release too (a parked
+      planner still returned its slot).
+      */
+      .finally(() => this.notifyPlanningSlotReleased(task.id));
   }
 
   /*
   FNXC:ConcurrencyAdmission 2026-08-28-21:24:
   A settled planning promise returns shared project capacity. Pull the next queued planning card immediately and nudge execution at that event rather than waiting for a timer; this is advisory only, so the next poll still applies pause, seed-prompt, dependency, worktree, and admission-coordinator gates.
   */
-  private notifyPlanningSlotReleased(): void {
+  private notifyPlanningSlotReleased(taskId?: string): void {
     if (!this.running) return;
     this.requestImmediatePoll();
     try {
-      this.options.onPlanningSlotReleased?.();
+      this.options.onPlanningSlotReleased?.(taskId);
     } catch (error) {
       planLog.warn(`Planning-slot release listener failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  /** Coalescing window for requestImmediatePoll, so a multi-card drag causes one poll, not N. */
-  private static readonly NUDGE_DEBOUNCE_MS = 150;
   /** FNXC:TriagePollWatchdog 2026-08-01-01:25: a poll marked in-flight past this long is treated as hung. */
   private static readonly POLL_WATCHDOG_MS = 120_000;
 

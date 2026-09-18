@@ -271,6 +271,83 @@ describe("Plan Review cannot overlap a live planning session", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — the two handoff orders, which is where the seconds-scale wait actually lived.
+
+  A Plan Review continuation is legitimately seeded BEFORE `specifyTask`'s finally removes the task
+  from the planning-owner set, so the drain correctly refuses it and pushes `retryAfter` out by
+  PLANNER_LIVE_CONTINUATION_DEFER_MS (15 s). Non-concurrency is the invariant and is asserted
+  unchanged below; what must NOT survive is the card still waiting out those 15 s after the planner
+  is gone. Both orders are covered because only one of them was ever the reported symptom:
+    1. seed while the planner lives, then cleanup — the deferral exists and must be lifted;
+    2. cleanup first, then seed — no deferral is ever taken and dispatch is immediate.
+  No clock is advanced in either case; a version that needed one would be proving the backstop.
+  */
+  it("lifts the planner-live deferral once the planner is gone, with no clock advance", async () => {
+    const h = raceHarness();
+    h.forceItem(planItem({ id: "wi-review", nodeId: "plan-review", state: "runnable", waitReason: "planning", leaseOwner: null }));
+
+    // ORDER 1, first half: the review is seeded while the planner still owns the card.
+    const deferredPass = await drain(h, true);
+    expect(deferredPass.dispatched).toEqual([]);
+    expect(deferredPass.deferred).toEqual([expect.objectContaining({ itemId: "wi-review" })]);
+
+    // Apply the deferral the drain asked for, so the row genuinely leaves the due window.
+    const retryAfter = deferredPass.deferred[0]!.retryAfter;
+    expect(Date.parse(retryAfter)).toBeGreaterThan(NOW);
+    h.forceItem({ ...h.item, retryAfter } as typeof h.item);
+
+    // A bare wake cannot help here — the row is no longer due — which is exactly why the release
+    // must CLEAR the deferral rather than merely kick the consumer.
+    const { wakePlannerLiveDeferredContinuations } = await import("../runtimes/in-process-runtime.js");
+    const kick = vi.fn();
+    const released = await wakePlannerLiveDeferredContinuations({
+      taskId: h.currentTask.id,
+      list: async () => [h.item],
+      transition: (itemId, state, patch) => h.transitionWorkflowWorkItem(itemId, state, patch as Record<string, unknown>),
+      kick,
+      warn: () => undefined,
+    });
+
+    expect(released).toBe(1);
+    expect(h.item.retryAfter).toBeNull();
+    expect(kick).toHaveBeenCalledTimes(1);
+
+    // ORDER 1, second half: with the planner gone the review dispatches on this pass.
+    const resumed = await drain(h, false);
+    expect(resumed.deferred).toEqual([]);
+    expect(resumed.dispatched).toContain("plan-review");
+  });
+
+  it("takes no deferral at all when cleanup precedes the seed", async () => {
+    const h = raceHarness();
+    h.forceItem(planItem({ id: "wi-review", nodeId: "plan-review", state: "runnable", waitReason: "planning", leaseOwner: null }));
+
+    // ORDER 2: the planner is already gone when the review row lands.
+    const immediate = await drain(h, false);
+
+    expect(immediate.deferred).toEqual([]);
+    expect(immediate.dispatched).toContain("plan-review");
+    expect(h.item.retryAfter).toBeNull();
+  });
+
+  it("still refuses to dispatch a review while the planner is live, deferral or not", async () => {
+    /*
+    The guard this change must NOT weaken. Clearing a deferral makes the row due again; it does not
+    license dispatch. With the planner live the drain refuses on every pass, so a cleared deferral
+    can only ever mean "look again", never "run now".
+    */
+    const h = raceHarness();
+    h.forceItem(planItem({ id: "wi-review", nodeId: "plan-review", state: "runnable", waitReason: "planning", leaseOwner: null, retryAfter: null }));
+
+    const first = await drain(h, true);
+    const second = await drain(h, true);
+
+    expect(first.dispatched).toEqual([]);
+    expect(second.dispatched).toEqual([]);
+  });
+
   it("evicts a stale owner with no live session so planner deferral remains bounded", () => {
     const processor = new TriageProcessor({ on: vi.fn(), off: vi.fn() } as unknown as TaskStore, "/repo");
     const internals = processor as unknown as {

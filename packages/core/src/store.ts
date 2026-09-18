@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
 import type { TaskMoveLanes } from "./workflows/workflow-lifecycle-traits.js";
 import { TaskLaneCache } from "./task-lane-cache.js";
+// FNXC:EventDrivenDispatch 2026-09-18-00:40: FN-519 advisory dispatch-wake classification.
+import { classifyDispatchWakeReason, resolveDispatchWakeTaskId } from "./task-store/dispatch-wake.js";
+import { resolveDispatchWakeProjectKey } from "./dispatch-wake.js";
 import { randomUUID } from "node:crypto";
 import { WEDGE_RENOTIFY_COOLDOWN_MS } from "./types/task/task-core.js";
 import { clearTerminalFailureAutoRecoveryBudget } from "./tasks/terminal-failure-auto-recovery.js";
@@ -594,6 +597,69 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public taskCache: Map<string, Task> = new Map();
   /** Per-store, bounded answer cache used only to decorate synchronous task:updated events. */
   public readonly laneCache = new TaskLaneCache();
+
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — the advisory dispatch-wake signal for this store, when a consumer installed one.
+
+  Opt-in (null by default) on purpose: a store with no engine attached — the CLI, a dashboard
+  process, a test harness — must not pay for a signal nobody consumes, and installing one must be
+  an explicit act by the runtime that owns the consumers and their cleanup. The signal is advisory
+  and is NEVER consulted to decide whether work may run.
+  */
+  private dispatchWakeSignal: import("./dispatch-wake.js").DispatchWakeSignal | null = null;
+
+  /**
+   * Install (or clear, with `null`) the advisory dispatch-wake signal this store publishes to.
+   * Returns a disposer that clears only THIS installation, so a stopped runtime cannot detach a
+   * successor's signal.
+   */
+  public setDispatchWakeSignal(
+    signal: import("./dispatch-wake.js").DispatchWakeSignal | null,
+  ): () => void {
+    this.dispatchWakeSignal = signal;
+    return () => {
+      if (this.dispatchWakeSignal === signal) this.dispatchWakeSignal = null;
+    };
+  }
+
+  public getDispatchWakeSignal(): import("./dispatch-wake.js").DispatchWakeSignal | null {
+    return this.dispatchWakeSignal;
+  }
+
+  /**
+   * Publish one advisory wake for a canonical publication.
+   *
+   * Called from BOTH emission paths (`emit` and `emitTaskLifecycleEventSafely`); a duplicate for
+   * one logical change is harmless because the signal coalesces on (project, reason, taskId).
+   * Absorbs every failure: a wake is telemetry-grade, so it must never be able to fail, delay, or
+   * alter the mutation that published it.
+   */
+  private publishDispatchWake(event: string, args: readonly unknown[]): void {
+    const signal = this.dispatchWakeSignal;
+    if (!signal) return;
+    try {
+      const reason = classifyDispatchWakeReason(event);
+      if (!reason) return;
+      const taskId = resolveDispatchWakeTaskId(args);
+      signal.publish({
+        /*
+        FNXC:EventDrivenDispatch 2026-09-18-14:27:
+        FN-519 — the SAME routing key the cross-process publisher and the runtime subscription use.
+        Publishing under `rootDir` here while the transport published the partition identity is what
+        made remote wakes unroutable; see `resolveDispatchWakeProjectKey`.
+        */
+        projectId: resolveDispatchWakeProjectKey({
+          projectId: this.getProjectId(),
+          rootDir: this.rootDir,
+        }),
+        reason,
+        ...(taskId ? { taskId } : {}),
+      });
+    } catch {
+      /* an advisory wake must never break a mutation */
+    }
+  }
   /*
   FNXC:IncompletePgPorts 2026-07-26-20:35:
   Sync getDatabaseHealth/healthCheck cannot await PostgreSQL. Cache the last
@@ -744,6 +810,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   existing resolved lanes decoration and cold-cache updates must preserve absent metadata.
   */
   public emitTaskLifecycleEventSafely( event: "task:created" | "task:updated" | "task:deleted", args: TaskStoreEvents["task:created"] | TaskStoreEvents["task:updated"] | TaskStoreEvents["task:deleted"], ): boolean {
+    /*
+    FNXC:EventDrivenDispatch 2026-09-18-00:40:
+    FN-519 — publish the advisory dispatch wake here too, BEFORE the early return below.
+    `emitTaskLifecycleEventSafelyImpl` returns `false` without calling anything when there is no
+    local subscriber, so decorating only `TaskStore.emit` would leave a store with no local
+    listener (a CLI process, a second store) publishing no wake at all — which is precisely the
+    cross-process case the wake exists for. The publish never changes this method's return value
+    and never blocks: listener isolation and deferral live in the signal.
+    */
+    this.publishDispatchWake(event, args as readonly unknown[]);
     if (event === "task:updated") {
       const task = args[0] as Task;
       const metadata = args[1] as TaskStoreEvents["task:updated"][1] | undefined;
@@ -2865,6 +2941,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     // event: unknown keeps the decorator assignable to EventEmitter<TaskStoreEvents>'s
     // generic `emit<E extends string|symbol>(name: K|E, ...)` signature while still
     // forwarding arbitrary non-typed keys (agent:log, settings:updated, …).
+    // FNXC:EventDrivenDispatch 2026-09-18-00:40: FN-519 — the second of the two emission paths.
+    if (typeof event === "string") this.publishDispatchWake(event, args as readonly unknown[]);
     if (event === "task:updated" && args.length === 1) {
       const task = args[0] as Task;
       const lanes = this.laneCache.get(task.id);

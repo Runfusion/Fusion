@@ -35,6 +35,69 @@ The conservative stranded-shape recovery claims only a complete non-seed prompt 
 <!-- FNXC:TaskReset 2026-08-22-18:15: Reset holds this non-reentrant lock while it cancels planner ownership and clears discarded output, so planner publications re-check their attempt generation inside the authoritative lock-held mutation. The reset disposer only aborts/disposes and unregisters its own planning paths; it never waits for a finalizer that needs this lock. -->
 A task Reset is therefore a planner-inclusive but lock-free cancellation fence. A surviving self-owned worktree registration is reconciled only after normal live-owner and idle checks, while live or foreign holders remain conflicts rather than force-removal candidates.
 
+## Event-driven dispatch wake (FN-519)
+
+Nominal progress is event-driven: an authorized mutation wakes the consumer that owns the next step,
+with no added waiting window and no dependency on a periodic tick. Periodic sweeps are retained as
+the **recovery backstop** for a lost notification, a reconnection, or a crash — event-driven does not
+mean unrepairable.
+
+**The signal is advisory, never an authorization.** A wake decides WHEN an existing admission or
+drain pass looks; every pause, approval, dependency, lease, capacity, and `autoMerge:false` gate
+still runs at the dispatch point. The durable row (task, workflow work item) remains the single
+source of truth, so a lost wake can only delay, never lose. A wake is not a re-emission of
+`task:moved`/`task:updated` and must never replay integrations, user notifications, or write effects.
+
+**Publication.** `TaskStore` publishes for canonical task and settings publications through BOTH
+emission paths — `emit` and `emitTaskLifecycleEventSafely`, the latter before its no-subscriber early
+return, because a store with no local listener is exactly the cross-process case. Log lines, token
+usage, comments, artifacts, heartbeats, and bare lease renewals publish nothing. Deliveries are
+coalesced per `(project, reason, taskId)`: distinct cards never swallow each other's wake.
+
+**One routing key per project.** Publishers and subscribers resolve the project key with the same
+function (`resolveDispatchWakeProjectKey`), which prefers the partition identity
+(`AsyncDataLayer.projectId`) and falls back to the project root only for an unscoped store: two
+processes of one project share the partition identity and never the checkout path. Canonical task and
+settings publications additionally leave the process through a fire-and-forget transport on the data
+layer's pooled handle, so a card created or moved by the CLI wakes other engines instead of waiting
+for their sweep. A remote delivery naming an identity the runtime answers to is remapped onto its
+subscription key; a foreign project keeps its own id and is filtered by project scoping. Remote
+deliveries are never re-published onto the transport, so two engines cannot bounce one wake.
+
+**Commit correctness.** Workflow work-item writes publish through the CALLER'S OWN transaction
+handle using `pg_notify`. PostgreSQL delivers `NOTIFY` only after that transaction commits and
+discards it on rollback, so a wake can never advertise a row a peer cannot yet read — including when
+an external transaction commits much later — and a rolled-back write or a lost compare-and-set
+publishes nothing. This is why no after-commit callback is threaded through the nested-transaction
+callers.
+
+**Cross-process listening.** One dedicated `LISTEN` connection per (runtime, project), taken from the
+proven direct session target (`ResolvedBackend.directSessionUrl`, the same provenance the planning
+lifecycle lock requires) — never a pooler, which can move a session between statements, and never the
+runtime mutation pool, whose budget is 3. `LISTEN` is registered first and a catch-up read follows
+registration and every reconnect, because nothing is delivered for the disconnected window. A
+missing direct target or a failed `LISTEN` degrades to a NAMED diagnostic and leaves the durable rows
+and periodic recovery intact; it never falls back to the pooler and never fails startup. The listen
+session is disposed on stop, on drain, and on failed startup.
+
+**Payloads are ids and bounded enums only.** `NOTIFY` payloads are visible to every user of the
+database, so they carry a project id, a reason enum, and an optional task id — never a prompt, title,
+task content, connection URL, or secret. The channel is not a security boundary.
+
+**Handoffs.** A released planning owner publishes AFTER its work item is closed, capacity is
+returned, and the owner sets are cleared, and it carries the finished card's id. That ordering is
+what lets the runtime clear that card's `planner-live` continuation deferral under compare-and-set:
+the Plan Review row is legitimately seeded while the planner still owns the card, so the drain defers
+it and a bare wake cannot reach it. Returning a shared reservation publishes a separate
+project-scoped release signal; the two are distinct because a reservation can be returned before the
+owning session disappears.
+
+**Explaining a remaining wait.** `task:dispatch-latency-observed` records the wake origin, phase,
+outcome, one in-process duration, and a fixed refusal reason code. It is emitted through
+`emitBoundedRunAudit`, deduplicated on a stable signature, and never awaited before a claim or a
+handoff. Cross-process times are reported as observations, not as durations computed between
+unsynchronized clocks.
+
 ## 1) Overview
 
 Fusion is an AI-orchestrated task board. It takes tasks through a structured lifecycle (`planning → todo → in-progress → in-review → done`) and automates planning, execution, review, merge, and operational recovery.

@@ -323,7 +323,13 @@ export function resolveParkedContinuationDeferral(
   resolution: PlanningContinuationResolution,
   nowMs: number,
   deferMs: number = PARKED_CONTINUATION_DEFER_MS,
-): { itemId: string; expectedState: WorkflowWorkItemState; retryAfter: string } | null {
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — `reason` is carried on the returned deferral (additively) so the diagnostic can name
+  WHICH gate produced the wait from a fixed set, instead of the operator seeing an unexplained
+  delay. It is descriptive only: nothing branches on it, so a new reason cannot change routing.
+  */
+): { itemId: string; expectedState: WorkflowWorkItemState; retryAfter: string; reason: "awaiting-approval" | "paused" | "planner-live" } | null {
   if (resolution.kind !== "skip") return null;
   if (resolution.reason !== "awaiting-approval" && resolution.reason !== "paused" && resolution.reason !== "planner-live") return null;
   const selectedDeferMs = resolution.reason === "planner-live"
@@ -342,6 +348,7 @@ export function resolveParkedContinuationDeferral(
     */
     expectedState: resolution.item.state,
     retryAfter: new Date(nowMs + selectedDeferMs).toISOString(),
+    reason: resolution.reason,
   };
 }
 
@@ -376,6 +383,59 @@ export async function wakeApprovedPlanningContinuations(deps: {
     }
   } catch (error) {
     deps.warn(`Failed to inspect approval-deferred workflow work for ${deps.taskId}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    deps.kick();
+  }
+  return released;
+}
+
+/*
+FNXC:EventDrivenDispatch 2026-09-18-00:40:
+FN-519 — release a `planner-live` continuation deferral once the planner that CAUSED it is gone.
+
+The Plan Review continuation is legitimately seeded before `specifyTask`'s finally removes the task
+from the planning-owner set, so the drain correctly meets `planner-live` and pushes `retryAfter`
+out by PLANNER_LIVE_CONTINUATION_DEFER_MS. Nothing lifted that deferral when the planner actually
+finished, and a bare wake cannot help because the row has left the due window — that is the single
+seconds-scale wait behind "planning finished but the review did not start".
+
+Same shape and same guarantees as `wakeApprovedPlanningContinuations`, which serves the operator's
+approval decision; both are kept separate because they answer different causes and the caller in
+each case knows which one disappeared. The write is a compare-and-set on the observed state, so it
+cannot resurrect a terminal row or steal a `running` claim from another node. Fail-soft: inspection
+or CAS failure warns and falls back to the existing deadline, and the consumer is kicked either way
+so the normal classifier stays authoritative.
+*/
+export async function wakePlannerLiveDeferredContinuations(deps: {
+  taskId: string;
+  list: (taskId: string) => Promise<WorkflowWorkItem[]>;
+  transition: (
+    itemId: string,
+    state: WorkflowWorkItemState,
+    patch: { expectedState: WorkflowWorkItemState; retryAfter: null },
+  ) => Promise<unknown>;
+  kick: () => void;
+  warn: (message: string) => void;
+}): Promise<number> {
+  let released = 0;
+  try {
+    const items = await deps.list(deps.taskId);
+    for (const item of items) {
+      // `runnable` only: a `running` row is another owner's live claim, and a terminal row is done.
+      if (item.state !== "runnable" || item.waitReason !== "planning" || !item.retryAfter) continue;
+      try {
+        await deps.transition(item.id, item.state, { expectedState: item.state, retryAfter: null });
+        released += 1;
+      } catch (error) {
+        deps.warn(
+          `Failed to clear planner-live deferral for workflow work item ${item.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  } catch (error) {
+    deps.warn(
+      `Failed to inspect planner-live-deferred workflow work for ${deps.taskId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   } finally {
     deps.kick();
   }
@@ -1230,6 +1290,17 @@ export class InProcessRuntime
   private missionAutopilot?: MissionAutopilot;
   private triageProcessor?: TriageProcessor;
   private workflowContinuationTimer?: ReturnType<typeof setInterval>;
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — advisory dispatch-wake state. Each field is cleared in `stopDispatchWakes()`; the store
+  installation is identity-guarded so a stopping runtime cannot detach a successor's signal.
+  */
+  private dispatchWakeSignal?: import("@fusion/core").DispatchWakeSignal;
+  private unsetDispatchWakeSignal?: () => void;
+  private dispatchWakeListener?: import("@fusion/core").DispatchWakeListenerHandle;
+  private dispatchWakeWiring?: import("./dispatch-wakes.js").DispatchWakeWiring;
+  /** FNXC:EventDrivenDispatch 2026-09-18-00:40: FN-519 bounded "why did this card wait?" recorder. */
+  private dispatchLatency?: import("../util/dispatch-latency.js").DispatchLatencyRecorder;
   private workflowContinuationDrainActive = false;
   private workflowContinuationDrainSince = 0;
   private workflowContinuationDrainProgressAt = 0;
@@ -2074,9 +2145,30 @@ export class InProcessRuntime
           onSpecifyError: (t, e) => {
             runtimeLog.error(`Triage failed for ${t.id}: ${e.message}`);
           },
-          // Planning and execution share project admission capacity; this callback only nudges discovery.
-          onPlanningSlotReleased: () => {
+          /*
+          FNXC:EventDrivenDispatch 2026-09-18-00:40:
+          FN-519 — a released planning owner must wake THREE consumers, not one:
+            1. the execution lane (as before);
+            2. the durable continuation consumer, so a Plan Review row published during the
+               handoff is picked up now instead of on the 2 s interval;
+            3. that card's own `planner-live` deferral, which no other owner lifts and which a
+               bare wake cannot reach because the row has left the due window.
+          Advisory throughout: the drain re-applies pause, approval, orphan, and capacity guards,
+          so this decides WHEN the existing pass looks, never WHETHER the card may run.
+          */
+          onPlanningSlotReleased: (taskId?: string) => {
             void this.scheduler?.schedule();
+            if (!taskId) {
+              this.kickWorkflowContinuationProcessor();
+              return;
+            }
+            void wakePlannerLiveDeferredContinuations({
+              taskId,
+              list: (id) => this.taskStore.listWorkflowWorkItemsForTask(id, { kinds: ["task"] }),
+              transition: (itemId, state, patch) => this.taskStore.transitionWorkflowWorkItem(itemId, state, patch),
+              kick: () => this.kickWorkflowContinuationProcessor(),
+              warn: (message) => runtimeLog.warn(message),
+            });
           },
         },
       );
@@ -2379,10 +2471,17 @@ export class InProcessRuntime
       }
 
       this.setStatus("active");
+      /*
+      FNXC:EventDrivenDispatch 2026-09-18-00:40:
+      FN-519 — the interval STAYS, demoted from mechanism to backstop. Normal progress now comes
+      from the wakes wired just below; the timer is what recovers a lost NOTIFY, a reconnection
+      window, or a crash. Removing it would trade an explained wait for an unrecoverable stall.
+      */
       this.workflowContinuationTimer = setInterval(() => {
         this.kickWorkflowContinuationProcessor();
       }, 2_000);
       this.workflowContinuationTimer.unref?.();
+      await this.startDispatchWakes();
       this.kickWorkflowContinuationProcessor();
       runtimeLog.log(`InProcessRuntime started for project ${this.config.projectId}`);
     } catch (error) {
@@ -2418,6 +2517,14 @@ export class InProcessRuntime
       clearInterval(this.workflowContinuationTimer);
       this.workflowContinuationTimer = undefined;
     }
+    /*
+    FNXC:EventDrivenDispatch 2026-09-18-00:40:
+    FN-519 — a drain closes every process-local ADMISSION source, and an event wake is one. Leaving
+    it subscribed would let a mutation re-open admission on a draining runtime, which is exactly
+    what the drain exists to prevent. Fire-and-forget because beginDrain is synchronous by contract;
+    the subscriptions are dropped synchronously inside and only the connection close is awaited.
+    */
+    void this.stopDispatchWakes();
     const admissionStops: Array<readonly [string, () => void]> = [
       ["self-healing manager", () => this.selfHealingManager?.stop()],
       ["routine scheduler", () => this.routineScheduler?.stop()],
@@ -2484,6 +2591,9 @@ export class InProcessRuntime
         clearInterval(this.workflowContinuationTimer);
         this.workflowContinuationTimer = undefined;
       }
+      // FNXC:EventDrivenDispatch 2026-09-18-00:40: FN-519 — release wakes before the consumers they
+      // would otherwise reach after shutdown, and close the dedicated LISTEN connection.
+      await this.stopDispatchWakes();
       // 2. Stop self-healing manager
       if (this.selfHealingManager) {
         this.selfHealingManager.stop();
@@ -3056,6 +3166,162 @@ export class InProcessRuntime
    * Wake the durable task-continuation consumer in a microtask so triage can
    * release its own execution slot before continuation dispatch begins.
    */
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — install the advisory wake signal, its cross-process transport, and the subscriptions
+  that bind it to this runtime's existing consumers.
+
+  Order matters and is the server's contract, not a preference: LISTEN is registered first, and the
+  catch-up kick runs only AFTER registration succeeds, because nothing is delivered for the window
+  before LISTEN (https://www.postgresql.org/docs/15/sql-listen.html). A degraded transport is NAMED
+  in the log and leaves the durable rows plus the periodic backstop intact — it never falls back to
+  the pooler and never fails startup.
+  */
+  private async startDispatchWakes(): Promise<void> {
+    if (!this.taskStore) return;
+    try {
+      const {
+        createDispatchWakeSignal,
+        notifyDispatchWakeWithinTransaction,
+        resolveDispatchWakeProjectKey,
+        startDispatchWakeListener,
+      } = await import("@fusion/core");
+      const {
+        createDispatchWakeTransport,
+        resolveRemoteWakeProjectId,
+        wireDispatchWakes,
+      } = await import("./dispatch-wakes.js");
+
+      const projectId = this.taskStore.getRootDir();
+      const layer = this.taskStore.getAsyncLayer?.() ?? null;
+      /*
+      FNXC:EventDrivenDispatch 2026-09-18-14:27:
+      FN-519 — subscribe under the SAME key the publishers name. The admission coordinator keeps its
+      own root-directory key space (`projectId`); only the wake routing uses the partition identity.
+      */
+      const wakeProjectId = resolveDispatchWakeProjectKey({
+        projectId: layer?.projectId ?? this.taskStore.getProjectId?.() ?? null,
+        rootDir: projectId,
+      });
+      const { createDispatchLatencyRecorder } = await import("../util/dispatch-latency.js");
+      this.dispatchLatency = createDispatchLatencyRecorder({
+        host: this.taskStore as unknown as import("../util/emit-bounded-run-audit.js").RunAuditSinkHost,
+      });
+      /*
+      FNXC:EventDrivenDispatch 2026-09-18-14:27:
+      FN-519 — canonical task/settings publications must also reach OTHER processes, not only the
+      local consumers. Without this transport a card created or moved by the CLI, or a settings
+      change written by a second store, woke nothing remotely and waited for a periodic sweep.
+
+      Fire-and-forget on the layer's pooled handle: `notifyDispatchWakeWithinTransaction` absorbs
+      its own failures, so a publish can never delay, fail, or roll back the mutation that caused
+      it. Remote deliveries are never re-published (the signal itself refuses `remote` events), so
+      two engines cannot bounce the same wake between them.
+      */
+      const transport = layer
+        ? createDispatchWakeTransport({
+          execute: (query: unknown) =>
+            (layer.db as unknown as { execute(q: unknown): Promise<unknown> }).execute(query),
+          notify: notifyDispatchWakeWithinTransaction,
+          warn: (message: string) => runtimeLog.debug(message),
+        })
+        : undefined;
+      const signal = createDispatchWakeSignal({
+        transport,
+        warn: (message) => runtimeLog.warn(message),
+      });
+      this.dispatchWakeSignal = signal;
+      this.unsetDispatchWakeSignal = this.taskStore.setDispatchWakeSignal(signal);
+
+      this.dispatchWakeWiring = wireDispatchWakes({
+        projectId,
+        wakeProjectId,
+        kickContinuations: () => this.kickWorkflowContinuationProcessor(),
+        kickScheduler: () => { void this.scheduler?.schedule(); },
+        kickPlanning: () => { this.triageProcessor?.requestImmediatePoll(); },
+        dispatchWake: signal,
+        warn: (message) => runtimeLog.warn(message),
+      });
+
+      const backend = (this.taskStore as unknown as {
+        getAsyncLayer?: () => { backend?: { directSessionUrl?: string | null; directSessionProvenance?: string | null } } | null;
+      }).getAsyncLayer?.()?.backend;
+      if (!backend) {
+        runtimeLog.debug("dispatch-wake: no async backend descriptor; local wakes only");
+        return;
+      }
+      const started = await startDispatchWakeListener({
+        target: backend,
+        projectId: wakeProjectId,
+        // A remote delivery is republished into the LOCAL signal (never back onto the transport),
+        // so it reaches exactly the same coalescing and the same subscriber set as a local wake.
+        // Its project id is remapped onto this runtime's subscription key when it names an identity
+        // this runtime answers to; a foreign project keeps its own id and stays filtered out.
+        onWake: (event) => signal.publish({
+          ...event,
+          projectId: resolveRemoteWakeProjectId(event.projectId, {
+            wakeProjectId,
+            aliases: [projectId],
+          }),
+          remote: true,
+        }),
+        onCatchUp: (origin) => {
+          // The disconnected window delivered nothing, so re-read authoritatively.
+          runtimeLog.debug(`dispatch-wake catch-up (${origin})`);
+          this.triageProcessor?.requestImmediatePoll();
+          void this.scheduler?.schedule();
+          this.kickWorkflowContinuationProcessor();
+        },
+        warn: (message) => runtimeLog.warn(message),
+      });
+      if ("degraded" in started) {
+        runtimeLog.warn(
+          `dispatch-wake cross-process transport degraded (${started.degraded}) — durable rows and periodic recovery remain authoritative`,
+        );
+        /*
+        FNXC:EventDrivenDispatch 2026-09-18-00:40:
+        FN-519 — a degraded transport must be NAMED, not silent. Without this row, a cross-process
+        write whose wake never arrives is indistinguishable from an engine that simply did not look,
+        and the operator sees only the periodic backstop's latency with no explanation.
+        */
+        this.dispatchLatency?.record({
+          wakeOrigin: "periodic-backstop",
+          phase: "admission",
+          outcome: "no-candidate",
+          reasonCode: "transport-degraded",
+        });
+        return;
+      }
+      this.dispatchWakeListener = started;
+    } catch (error) {
+      // A wake is advisory: failing to install one must never fail runtime startup.
+      runtimeLog.warn(
+        `dispatch-wake wiring failed (${error instanceof Error ? error.message : String(error)}) — periodic recovery remains authoritative`,
+      );
+    }
+  }
+
+  /** Release every dispatch-wake subscription, the store installation, and the LISTEN session. */
+  private async stopDispatchWakes(): Promise<void> {
+    try {
+      this.dispatchWakeWiring?.dispose();
+    } catch { /* disposer isolation lives in the wiring */ }
+    this.dispatchWakeWiring = undefined;
+    try {
+      this.unsetDispatchWakeSignal?.();
+    } catch { /* identity-guarded: never detaches a successor's signal */ }
+    this.unsetDispatchWakeSignal = undefined;
+    try {
+      this.dispatchWakeSignal?.dispose();
+    } catch { /* ignore */ }
+    this.dispatchWakeSignal = undefined;
+    this.dispatchLatency = undefined;
+    const listener = this.dispatchWakeListener;
+    this.dispatchWakeListener = undefined;
+    // A leaked LISTEN session is a permanent connection held for a dead runtime.
+    await listener?.dispose().catch(() => undefined);
+  }
+
   private kickWorkflowContinuationProcessor(): void {
     queueMicrotask(() => {
       void this.drainWorkflowContinuations().catch((error) => {
@@ -3174,6 +3440,21 @@ export class InProcessRuntime
         },
         defer: (deferral) => {
           this.markWorkflowContinuationDrainProgress(drainGeneration, "defer");
+          /*
+          FNXC:EventDrivenDispatch 2026-09-18-00:40:
+          FN-519 — a deferral IS a wait the operator can see, so record its named cause. Fire and
+          forget: the recorder never awaits its sink, so telemetry cannot delay the drain.
+          */
+          const reason = (deferral as { reason?: string }).reason;
+          this.dispatchLatency?.record({
+            taskId: (deferral as { taskId?: string }).taskId,
+            wakeOrigin: "local-publication",
+            phase: "admission",
+            outcome: "refused",
+            ...(reason === "awaiting-approval" || reason === "paused" || reason === "planner-live"
+              ? { reasonCode: reason } as const
+              : {}),
+          });
           return this.deferParkedWorkflowWorkItem(deferral);
         },
         dispatch: (task, item) => {

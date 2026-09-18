@@ -132,11 +132,52 @@ export class ProjectAdmissionCoordinator {
     this.reservations.set(projectId, tasks);
   }
 
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — project-scoped subscribers woken when a shared reservation is actually returned.
+
+  Returning the last slot is the moment ANOTHER card becomes admissible, and that card has no
+  other owner: the departing lane only ran a pass of its own lane, and the continuation dispatcher
+  kicks after settlement only when ITS OWN item became runnable again. So a waiting peer used to
+  sit until a periodic tick. Subscribers are advisory (they trigger an existing admission pass,
+  which re-applies every pause/dependency/capacity gate), project-scoped so no foreign project is
+  woken, and isolated — a throwing subscriber must never be able to break the release itself,
+  because a retained reservation is a permanent capacity leak.
+  */
+  private releaseListeners = new Map<string, Set<(taskId: string) => void>>();
+
+  /** Subscribe to reservation releases for one project. Returns a disposer. */
+  onReservationReleased(projectId: string, listener: (taskId: string) => void): () => void {
+    const set = this.releaseListeners.get(projectId) ?? new Set<(taskId: string) => void>();
+    set.add(listener);
+    this.releaseListeners.set(projectId, set);
+    return () => {
+      const live = this.releaseListeners.get(projectId);
+      if (!live) return;
+      live.delete(listener);
+      if (live.size === 0) this.releaseListeners.delete(projectId);
+    };
+  }
+
   releaseReservation(taskId: string): void {
     for (const [projectId, tasks] of this.reservations) {
       if (!tasks.delete(taskId)) continue;
       if (tasks.size === 0) this.reservations.delete(projectId);
+      // Notified once per real release: a duplicate call finds nothing to delete and returns above.
+      this.notifyReservationReleased(projectId, taskId);
       return;
+    }
+  }
+
+  private notifyReservationReleased(projectId: string, taskId: string): void {
+    for (const listener of [...(this.releaseListeners.get(projectId) ?? [])]) {
+      try {
+        listener(taskId);
+      } catch (error) {
+        concurrencyLog.warn(
+          `Reservation-release listener failed for ${projectId}/${taskId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 
@@ -151,6 +192,7 @@ export class ProjectAdmissionCoordinator {
     this.reservations.clear();
     this.draining.clear();
     this.providers.clear();
+    this.releaseListeners.clear();
   }
 
   inspectProjectStateForTests(projectId: string): {

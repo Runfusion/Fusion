@@ -889,6 +889,49 @@ Each week, copy the `Post to #leads` block from `docs/test-velocity-baseline.md`
 
 The baseline document is generated; never hand-edit it. Attach a durable measurement verdict with `pnpm test:velocity -- --note "<text>" [--note-target <capturedAt|ISO-cycle>]`. Notes are persisted on their history entries and the report renders all annotated cycles newest first with no history window cap, so an old investigation remains visible after later weekly appends. `--note-target` must match exactly one entry; use its `capturedAt` timestamp when an ISO week would be ambiguous.
 
+## Event-driven dispatch: no clock advance in a healthy path (FN-519)
+
+Dispatch-wake regressions have one hard rule: **a healthy-path case may not advance a clock.** The
+only settling primitive is a bounded microtask drain (`for (let i = 0; i < 12; i++) await
+Promise.resolve()`), and a controlled promise or barrier is used where real ordering matters.
+
+The reason is not style. Every consumer still has a periodic backstop — triage's poll interval, the
+runtime's 2 s continuation relève, the deferral deadlines — so a case that calls
+`advanceTimersByTime` or `runAllTimers` will pass through the BACKSTOP and prove nothing about the
+event path it claims to cover. That is precisely how a 150 ms deliberate wait and a 15 s unreleased
+deferral survived a green suite. Concretely:
+
+- Do not advance a clock in a case asserting that an admissible card reaches planning, that a review
+  starts after its planner is released, or that a freed slot admits a waiting card.
+- DO advance a clock (or use a bounded failure deadline) in a case whose subject IS the backstop:
+  lost-notification recovery, reconnection catch-up, or a genuinely temporal deadline.
+- Assert a CLAIM or a session/node entry, not a spy on `poll()`/`kick()`. A wake function having
+  been called is not evidence that a card started.
+- Prove no busy loop explicitly. Removing a timed window also removes the accidental rate limit it
+  provided, so a no-progress pass must be asserted to publish no new wake.
+- Model durable persistence in store doubles. A fixture whose `listTasks` returns a frozen snapshot
+  while the code under test persists `status: "planning"` keeps the same rows eligible forever; with
+  an immediate wake that becomes an admission per turn. Modelling the write is the fixture stating
+  the intent it already had.
+
+Cross-process behaviour is proven against a REAL PostgreSQL server, because the guarantees are the
+server's: `NOTIFY` after commit, nothing on rollback, nothing for the window before `LISTEN`. Use
+`createSharedPgTaskStoreTestHarness` with an explicit bound `projectId` (the wake payload is
+project-scoped, and an unscoped store deliberately publishes nothing), and set
+`FUSION_PG_TEST_URL_BASE=postgresql://postgres:postgres@localhost:5432` so the embedded server is
+reached as the right role. A negative assertion needs a committed CONTROL wake to bound it, otherwise
+it also passes against a dead subscription.
+
+```bash
+pnpm --filter @fusion/engine exec vitest run src/__tests__/event-driven-dispatch.test.ts \
+  src/__tests__/dispatch-wake-wiring.test.ts src/__tests__/dispatch-latency.test.ts \
+  --silent=passed-only --reporter=dot
+
+FUSION_PG_TEST_URL_BASE=postgresql://postgres:postgres@localhost:5432 \
+  pnpm --filter @fusion/core exec vitest run --config vitest.pg.config.ts \
+  src/__tests__/postgres/dispatch-wake.pg.test.ts --silent=passed-only --reporter=dot
+```
+
 ## Targeted commands
 
 ```bash

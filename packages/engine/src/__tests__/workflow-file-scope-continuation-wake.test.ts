@@ -189,7 +189,19 @@ describe("workflow continuation file-scope completion wake", () => {
 
     await vi.waitFor(() => expect(executions).toBe(2));
     expect(h.item).toMatchObject({ state: "succeeded", leaseOwner: null });
-    expect(h.store.listDueWorkflowWorkItems).toHaveBeenCalledTimes(2);
+    /*
+    FNXC:EventDrivenDispatch 2026-09-18-00:40:
+    FN-519 — the property under test is that the settlement replay happens AT ALL without a
+    periodic timer, and that it does not become a busy loop. An exact count of 2 additionally
+    pinned the drain's internal pass economy, so FN-514's added `human-merge-holds` release phase
+    (one more await before the due poll, which shifts how many pending replays land inside
+    `waitFor`'s polling window) turned it red with the wake behaviour unchanged. Assert the real
+    bounds instead: the replay definitely ran (> 1) and the pump did not spin (a small constant),
+    with the item's terminal state above proving no further dispatch occurred.
+    */
+    const duePolls = (h.store.listDueWorkflowWorkItems as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    expect(duePolls).toBeGreaterThan(1);
+    expect(duePolls).toBeLessThanOrEqual(6);
   });
 
   it("re-enters plan review from the terminal event without a recovery timer", async () => {

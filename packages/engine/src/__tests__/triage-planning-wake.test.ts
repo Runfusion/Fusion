@@ -82,12 +82,17 @@ function createTask(overrides: Partial<Task> = {}): Task {
 
 /*
 FNXC:EngineTests 2026-07-25-11:20:
-Fake timers, not real waits — the wake is debounced (NUDGE_DEBOUNCE_MS) and the poll interval is
-600s, so a real-time sleep would either be flaky or slow. advanceTimersByTimeAsync also flushes the
-microtasks between timers, which is what lets the start()-triggered poll settle before the assert.
+Fake timers, not real waits — the poll interval is 600s here, so a real-time sleep would either be
+flaky or slow.
+
+FNXC:EventDrivenDispatch 2026-09-18-00:40:
+FN-519 — the wake is no longer debounced by a 150 ms window (NUDGE_DEBOUNCE_MS is deleted); it is a
+pending flag drained in a microtask. So settling is now a bounded MICROTASK DRAIN with NO clock
+advance: advancing 500 ms would let the 600 s interval be irrelevant but would also mask a
+regression that reintroduced a timed wait. Every assertion below is unchanged.
 */
 async function settleWake(): Promise<void> {
-  await vi.advanceTimersByTimeAsync(500);
+  for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
 describe("TriageProcessor planning wake (immediate poll on move)", () => {
@@ -108,7 +113,13 @@ describe("TriageProcessor planning wake (immediate poll on move)", () => {
     const poll = vi.spyOn(processor as any, "poll").mockResolvedValue(undefined);
 
     emit("task:updated", createTask({ column: "todo" }));
-    expect(poll).not.toHaveBeenCalled(); // debounced, not synchronous
+    /*
+    FNXC:EventDrivenDispatch 2026-09-18-00:40:
+    Still not synchronous — the pass is opened in a microtask so a caller inside a store emit or a
+    capacity-release `finally` finishes returning its slot before dispatch begins — but it no longer
+    waits out a deliberate 150 ms window.
+    */
+    expect(poll).not.toHaveBeenCalled();
     await settleWake();
 
     expect(poll).toHaveBeenCalledTimes(1);

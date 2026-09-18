@@ -670,6 +670,16 @@ export {
 export type { PluginGateVerdict, ColumnPluginGate } from "./plugins/plugin-gate-verdict.js";
 // ── U6: workflow capacity (WIP) resolution shared by store + sweep ───────────
 export { resolveColumnCapacity, resolveWipBudgetColumns, DEFAULT_WORKFLOW_POOL_ID, resolveCapacityPoolId, resolveWorktreeCapacityLimit, resolveMaxConcurrentSetting, resolveEffectiveConcurrency, DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_WORKTREES } from "./workflows/workflow-capacity.js";
+// FNXC:EventDrivenDispatch 2026-09-18-00:40: FN-519 advisory dispatch-wake signal (not a work queue).
+export { createDispatchWakeSignal, resolveDispatchWakeProjectKey } from "./dispatch-wake.js";
+export type {
+  DispatchWakeEvent,
+  DispatchWakeListener,
+  DispatchWakeReason,
+  DispatchWakeSignal,
+  DispatchWakeTransport,
+  CreateDispatchWakeSignalOptions,
+} from "./dispatch-wake.js";
 export { createWorkflowEventBus, getWorkflowEventBus, emitWorkflowLifecycleEvent, resetWorkflowEventBusForTesting } from "./workflow-events.js";
 export { IMPLEMENTATION_EXITS } from "./types/workflow-events.js";
 export type { ImplementationExit } from "./types/workflow-events.js";
@@ -3305,3 +3315,26 @@ export * from "./cloud-link/index.js";
 export { TASK_LOG_READ_ONLY_SUFFIX, buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage, isTaskLogWriteRefusal } from "./task-store/task-log-write-refusal.js";
 
 export { OVERLAP_DELIVERY_UNAVAILABLE_ERROR, isRecoverableOverlapWaitFailure } from "./tasks/overlap-wait-release.js";
+
+/*
+FNXC:EventDrivenDispatch 2026-09-18-00:40:
+FN-519 — PostgreSQL LISTEN/NOTIFY transport for the advisory dispatch wake. Exported so the engine
+runtime can own the listening session's lifecycle (and its disposal) without importing a deep path.
+*/
+export {
+  DISPATCH_WAKE_CHANNEL,
+  DISPATCH_WAKE_MAX_PAYLOAD_BYTES,
+  decodeDispatchWakePayload,
+  dispatchWakeTransportAvailability,
+  encodeDispatchWakePayload,
+  notifyDispatchWakeWithinTransaction,
+  startDispatchWakeListener,
+} from "./postgres/dispatch-wake.js";
+export type {
+  DispatchWakeListenClient,
+  DispatchWakeListenerHandle,
+  DispatchWakeTransportAvailability,
+  DispatchWakeTransportTarget,
+  StartDispatchWakeListenerOptions,
+} from "./postgres/dispatch-wake.js";
+export { classifyDispatchWakeReason, resolveDispatchWakeTaskId } from "./task-store/dispatch-wake.js";

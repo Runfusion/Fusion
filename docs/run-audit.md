@@ -81,6 +81,35 @@ Events that make durable-agent error states and their recovery inspectable.
 | `agent:error-parked-unrecoverable` | An operator-actionable durable-agent error parks the agent `paused` with pauseReason `error-unrecoverable` for human repair. |
 | `agent:heartbeat-move-skipped-soft-delete` | A heartbeat move races a soft-deleted task and is skipped without parking the durable agent. |
 
+## Event-driven dispatch latency
+
+`task:dispatch-latency-observed` (FN-519) answers "why did this card wait?" after the fact. Before
+it, the binding gate existed only in a log line persisted nowhere, so a stall could not be attributed
+to any of its five possible causes: a deliberate added wait, necessary I/O, real contention, a
+missing signal, or provider latency.
+
+Metadata is ids, bounded enums, and one duration only: optional `taskId` and `nodeId`, plus
+`wakeOrigin` (`local-publication`, `remote-notification`, `capacity-release`, `owner-cleanup`,
+`catch-up`, `periodic-backstop`), `phase` (`admission`, `claim`, `session-preparation`,
+`node-entry`), `outcome` (`claimed`, `refused`, `no-candidate`), an optional rounded `observedMs`,
+and an optional fixed `reasonCode` (`capacity`, `worktree-capacity`, `paused`, `awaiting-approval`,
+`dependency`, `external-block`, `planner-live`, `deferred-deadline`, `lost-claim`,
+`transport-degraded`). It never contains prompts, titles, task content, reviewer prose, error text,
+blocker prose, connection URLs, or secrets.
+
+Two reading notes. A `wakeOrigin` of `periodic-backstop` in a row means the EVENT path did not
+deliver, which is the signal that a wake was lost or a transport is degraded; a `reasonCode` of
+`transport-degraded` names that condition explicitly rather than leaving it silent. `observedMs` is a
+wall-clock observation within ONE process and is never a duration computed between unsynchronized
+clocks, so cross-process figures are presented as observations rather than measured latencies.
+
+Emission uses the FN-9175 bounded engine seam (`emitBoundedRunAudit`) and is deduplicated on a
+stable `(task, node, phase, outcome, reasonCode)` signature — deliberately excluding the duration, so
+a persisting refusal collapses to one row while a CHANGED refusal reason is always reported and a
+claim is never suppressed. It is never awaited before a claim or a handoff: the diagnostic that
+measures dispatch latency must not be able to create any. Hostile-sink behaviour at the owning call
+site is covered by `packages/engine/src/__tests__/dispatch-latency.test.ts`.
+
 ## Maintenance contract
 
 Adding a new catalogued run-audit event requires updating **both** the typed catalogue module (`packages/engine/src/run-audit/run-audit-catalogue.ts`) **and** this doc together — the parity test (`packages/engine/src/__tests__/run-audit-catalogue.test.ts`) fails if the documented event set and the catalogue module's set ever diverge, keeping the observability surface truthful as the real `DatabaseMutationType` union evolves. Removing an event likewise requires updating both in the same change.

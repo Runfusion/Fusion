@@ -56,6 +56,19 @@ function createHarness() {
   return { processor, candidate, onPlanningSlotReleased };
 }
 
+/*
+FNXC:EventDrivenDispatch 2026-09-18-00:40:
+FN-519 — the rejection case's settling was hand-counted as three `await Promise.resolve()`, but the
+rejection path runs `parkPlanningRecoveryWriteFailure`, which awaits a `getTask` and an `updateTask`
+before the `finally` that publishes the release. Three turns is not enough for that chain, so the
+case was failing on insufficient settling rather than on the behaviour it asserts. Drain a bounded
+number of microtask turns instead; the ASSERTIONS are unchanged, and no timer is advanced, so the
+case still cannot pass through the periodic backstop.
+*/
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -147,9 +160,7 @@ describe("planning-slot release wakes", () => {
 
     await (processor as any).poll();
     completion.reject(new Error("planner transport failed"));
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(planLog.error).toHaveBeenCalledWith(
       "FN-242: admitted planning promise rejected:",
@@ -176,24 +187,32 @@ describe("planning-slot release wakes", () => {
     await Promise.resolve();
 
     // The notifier fires once; because this early return lands before poll() unwinds,
-    // the existing mid-poll replay invokes requestImmediatePoll again to schedule the debounced pass.
+    // the existing mid-poll replay invokes requestImmediatePoll again to schedule the pending pass.
     expect(requestImmediatePoll).toHaveBeenCalled();
     expect(onPlanningSlotReleased).toHaveBeenCalledTimes(1);
     (processor as any).processing.delete(candidate.id);
     processor.stop();
   });
 
-  it("coalesces a burst of returned slots into one debounced poll", async () => {
+  /*
+  FNXC:EventDrivenDispatch 2026-09-18-00:40:
+  FN-519 — coalescing is now a pending flag drained in a microtask rather than a 150 ms window, so
+  this case settles with a microtask drain and NO clock advance. The coalescing property under test
+  (N returned slots produce one pass) is unchanged; what is gone is the deliberate wait.
+  */
+  it("coalesces a burst of returned slots into one immediate poll with no clock advance", async () => {
     const { processor, onPlanningSlotReleased } = createHarness();
     const poll = vi.spyOn(processor as any, "poll").mockResolvedValue(undefined);
 
-    (processor as any).notifyPlanningSlotReleased();
-    (processor as any).notifyPlanningSlotReleased();
-    (processor as any).notifyPlanningSlotReleased();
-    await vi.advanceTimersByTimeAsync(150);
+    (processor as any).notifyPlanningSlotReleased("FN-242");
+    (processor as any).notifyPlanningSlotReleased("FN-242");
+    (processor as any).notifyPlanningSlotReleased("FN-242");
+    await flushMicrotasks();
 
     expect(poll).toHaveBeenCalledTimes(1);
     expect(onPlanningSlotReleased).toHaveBeenCalledTimes(3);
+    // The finished card's id travels with every release so the review deferral can be targeted.
+    expect(onPlanningSlotReleased).toHaveBeenCalledWith("FN-242");
     processor.stop();
   });
 
