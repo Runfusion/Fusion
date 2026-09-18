@@ -2370,6 +2370,13 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           payload = { text: "Fusion test notification — your webhook notifications are working!" };
         } else if (resolvedFormat === "discord") {
           payload = { content: "Fusion test notification — your webhook notifications are working!" };
+        } else if (resolvedFormat === "feishu") {
+          /*
+           * FNXC:WebhookFeishu 2026-09-18-07:09:
+           * Feishu custom bots reject payloads without msg_type (code 19002) while
+           * still answering HTTP 200, so the test must send the bot's native shape.
+           */
+          payload = { msg_type: "text", content: { text: "Fusion test notification — your webhook notifications are working!" } };
         } else {
           payload = {
             event: "test",
@@ -2388,6 +2395,28 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
         if (!response.ok) {
           throw new ApiError(502, `webhook server returned ${response.status}: ${response.statusText}`);
+        }
+
+        /*
+         * FNXC:WebhookFeishu 2026-09-18-07:30:
+         * Mirror the provider: Feishu answers HTTP 200 with a non-zero body code
+         * when it rejects a payload, and "test successful" for a rejected message
+         * is exactly the failure that sent this feature into development.
+         */
+        if (resolvedFormat === "feishu") {
+          let data: unknown = null;
+          try {
+            data = await response.json();
+          } catch {
+            data = null;
+          }
+          if (data && typeof data === "object" && "code" in data) {
+            const code = data.code;
+            if (typeof code === "number" && code !== 0) {
+              const msgValue = "msg" in data ? data.msg : undefined;
+              throw new ApiError(502, `Feishu rejected the webhook payload: code ${code}${typeof msgValue === "string" ? ` (${msgValue})` : ""}`);
+            }
+          }
         }
 
         res.json({ success: true });

@@ -6683,6 +6683,7 @@
       "customNtfyServerURLOptional": "",
       "dashboardHostname": "",
       "discord": "",
+      "feishu": "",
       "enable": "",
       "failureNotificationDelayMs": "",
       "failureNotificationMode": "",
