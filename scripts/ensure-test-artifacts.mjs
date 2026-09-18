@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   computeContentHash,
@@ -518,7 +519,12 @@ export function seedArtifactCache(rootDir = process.cwd(), existsFn = existsSync
   return present.map((pkg) => pkg.name);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+export function isMainModule(moduleUrl, argvPath, windows = undefined) {
+  if (!argvPath) return false;
+  return moduleUrl === pathToFileURL(argvPath, { windows }).href;
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
   const argv = process.argv.slice(2);
   if (argv.includes("--print-source-hash")) {
     const hash = computeCombinedSourceHash();
