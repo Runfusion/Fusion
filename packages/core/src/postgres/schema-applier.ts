@@ -287,7 +287,7 @@ export const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION = "0086";
 export const PULL_REQUEST_READINESS_VERSION = "0087";
 /** FN-9512: privacy-safe route code for a recovery owner that has reseeded work. */
 export const RECOVERY_DISPOSITION_VERSION = "0088";
-/** FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205): upgraded projects need the live-reviewer-run partial unique index before the dispatch sweep can claim one attempt per card. */
+/** FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205): upgraded projects need the live-reviewer-run partial unique index before the dispatch sweep can claim one attempt per card. */
 /* FNXC:ReviewLaneDispatch 2026-10-05-01:35 (PR rebase onto current main): renumbered 0086 -> 0088 -> 0089 (upstream took 0088 for FN-9512 while this PR was open). Bookkeeping keys on the version string, so reusing a slot main already recorded would report the ledger as applied, never run its SQL, and leave the sweep without its one-live-attempt-per-card index and no error to show. */
 export const REVIEW_LANE_LEDGER_VERSION = "0089";
 
@@ -1695,13 +1695,13 @@ export async function applySchemaBaseline(
     }
 
     /*
-    FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+    FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
     Registered after the highest released migration so it sorts after every released schema change.
     The probe checks the two enforceable facts the dispatch sweep depends on instead of trusting the
     bookkeeping row alone: a database that already carries both objects records the version without
     redundant SQL, and a database missing either object gets the migration even if an earlier
     partial run recorded the version.
-    FNXC:ReviewLaneDispatch 2026-09-14 (clean-rebase-v2 replay):
+    FNXC:ReviewLaneDispatch 2026-09-14-00:00 (clean-rebase-v2 replay):
     The drift check only makes sense where the product tables exist, so it is gated on their
     presence. A recorded marker in a database without `task_reviewer_runs`/`task_lifecycle_events`
     is either a fresh/empty fixture (the baseline path owns it) or a corrupt install whose real
@@ -1752,7 +1752,7 @@ export async function applySchemaBaseline(
     `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
     if (!reviewLaneLedgerAlreadyApplied || reviewLaneLedgerMissing) {
       /*
-      FNXC:ReviewLaneDispatch 2026-09-15 (STAS-205 upstream port): this block's
+      FNXC:ReviewLaneDispatch 2026-09-15-00:00 (STAS-205 upstream port): this block's
       bookkeeping marker is written by the migration SQL itself (see
       0089_stas_205_review_lane_ledger.sql), atomically with the DDL, instead of
       the inline parameterized-INSERT template every sibling block uses —

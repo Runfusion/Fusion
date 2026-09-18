@@ -1,5 +1,5 @@
 /*
-FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205 Step 6 — CLI entry path, proven on a real store):
+FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205 Step 6 — CLI entry path, proven on a real store):
 
 `fn task move` never asks the daemon for anything. `packages/cli/src/commands/task.ts` resolves a
 ProjectContext whose store boots through the PostgreSQL startup factory (`createLocalStore`) and

@@ -1,5 +1,5 @@
 /*
-FNXC:ReviewLaneDispatch 2026-09-09 (STAS-205):
+FNXC:ReviewLaneDispatch 2026-09-09-00:00 (STAS-205):
 The dispatch invariant is only auditable if a card's arrival in the review lane is a committed
 fact, whichever path wrote the column. These tests pin the store-chokepoint write against real
 PostgreSQL: exactly one `task:entered-review` row per genuine crossing (the `moveSource: "user"`
