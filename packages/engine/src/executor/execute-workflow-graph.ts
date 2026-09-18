@@ -73,6 +73,7 @@ import {
   admitWorkflowPrincipalBeforeNode,
   type ActiveWorkflowAuthority,
 } from "./workflow-principal-before-node.js";
+import { resolvePendingOverlapWaits } from "../workflows/overlap-plan-revalidation.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror TaskExecutor method/map surface
 type AnyFn = (...args: any[]) => any;
@@ -657,6 +658,20 @@ export async function executeWorkflowGraph(
       workflowGraphExecutor graduated from Experimental. Every task routes through the graph runner by default, and stale persisted experimentalFeatures.workflowGraphExecutor=false values are ignored so the product no longer has a user-facing or runtime graph-engine kill switch.
       */
       settings = { ...settings };
+      /*
+      FNXC:OverlapWaitSynchronization 2026-09-17-01:00:
+      A blocker landing wakes this task's continuation eligible to run again, but eligibility is
+      not authorization: resolve every pending file-scope wait episode BEFORE any graph node runs
+      so a resumed session either proceeds clean ("resume"), carries a factual delivery briefing
+      ("briefing"), or is held `revalidation-pending` for a targeted repair ("revalidate") — see
+      workflows/overlap-plan-revalidation.ts. Best-effort: a store without the overlap-wait
+      methods (older test doubles) or a transient failure here must not block ordinary graph entry.
+      */
+      if (typeof deps.store.listTaskOverlapWaits === "function") {
+        await resolvePendingOverlapWaits({ store: deps.store, task, owner: `graph:${task.id}` }).catch((err) => {
+          executorLog.debug(`[workflow-graph] ${task.id} overlap-wait resolution failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
       /*
        * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
        * Capture a count cursor without reading the task log. Failure handling receives this
