@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { resolveFileReferences } from "../chat.js";
+import { resolveFileReferences, __testCreateTaskVerificationTools } from "../chat.js";
 
 // Use vi.hoisted for proper hoisting with ES modules
 const { mockReadFile, mockStat } = vi.hoisted(() => ({
@@ -281,5 +281,69 @@ describe("resolveFileReferences", () => {
     const result = await resolveFileReferences(content, "/project");
 
     expect(result).toBe(content);
+  });
+});
+/*
+FNXC:VerificationWriteAhead 2026-08-31-00:00 (EXAM-010):
+Status-tool semantics: with executor write-ahead persistence in place, a task that
+issued verification calls ALWAYS has a record — including stale rows reclaimed to
+terminal `failed` with a rejectionReason. "No verification request exists" is
+reserved for the true never-issued case; it must never be a symptom of a dropped
+record (the EXAM-002/EXAM-007 live defect).
+*/
+describe("fn_task_verification_status read semantics", () => {
+  type VerificationRecord = {
+    taskId: string; requestId: string; status: string; profile: string; command: string;
+    scope: string; requestedBy: string; requestedAt: string; startedAt?: string; completedAt?: string;
+    result?: unknown; rejectionReason?: string;
+  };
+
+  function statusToolWith(record: VerificationRecord | null) {
+    const store = {
+      getTask: vi.fn(async () => null),
+      getSettings: vi.fn(async () => ({})),
+      getTaskVerificationRequestAsync: vi.fn(async () => record),
+      createTaskVerificationRequest: vi.fn(async () => ({})),
+    };
+    const tools = __testCreateTaskVerificationTools(store as never);
+    return tools.find((tool) => tool.name === "fn_task_verification_status")!;
+  }
+
+  it("returns the latest persisted record verbatim for a task with prior executor calls", async () => {
+    const reclaimed: VerificationRecord = {
+      taskId: "EXAM-002", requestId: "req-exec-9", status: "failed", profile: "test-command",
+      command: "pnpm --filter @x exec vitest run src/a.test.ts", scope: "package", requestedBy: "executor",
+      requestedAt: "2026-08-31T01:45:03.000Z", startedAt: "2026-08-31T01:45:03.000Z",
+      completedAt: "2026-08-31T01:55:03.000Z",
+      rejectionReason: "executor lost: running verification reclaimed after 600000ms without completion",
+    };
+    const tool = statusToolWith(reclaimed);
+    const result = await tool.execute!("call", { task_id: "EXAM-002" });
+    const text = result.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
+    expect(text).not.toContain("No verification request exists");
+    const parsed = JSON.parse(text) as VerificationRecord;
+    expect(parsed.status).toBe("failed");
+    expect(parsed.rejectionReason).toContain("executor lost");
+    expect(parsed.requestedBy).toBe("executor");
+  });
+
+  it("returns a running executor write-ahead record (mid-verification inspectability)", async () => {
+    const running: VerificationRecord = {
+      taskId: "EXAM-007", requestId: "req-exec-live", status: "running", profile: "test-command",
+      command: "pnpm lint", scope: "workspace", requestedBy: "executor",
+      requestedAt: "2026-08-31T03:46:11.000Z", startedAt: "2026-08-31T03:46:11.000Z",
+    };
+    const tool = statusToolWith(running);
+    const result = await tool.execute!("call", { task_id: "EXAM-007" });
+    const text = result.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
+    expect(text).toContain("running");
+    expect(text).not.toContain("No verification request exists");
+  });
+
+  it("keeps 'No verification request exists' ONLY for the true never-issued case", async () => {
+    const tool = statusToolWith(null);
+    const result = await tool.execute!("call", { task_id: "EXAM-999" });
+    const text = result.content.map((entry) => ("text" in entry ? entry.text : "")).join("\n");
+    expect(text).toContain("No verification request exists for EXAM-999.");
   });
 });
