@@ -527,9 +527,10 @@ export interface GlobalSettings {
   /** Format of the webhook payload.
    *  - "slack": Slack incoming webhook format ({ text: message })
    *  - "discord": Discord webhook format ({ content: message })
+   *  - "feishu": Feishu/Lark custom bot format ({ msg_type, content })
    *  - "generic": Structured JSON with event/task/timestamp fields
    *  Default: "generic". */
-  webhookFormat?: "slack" | "discord" | "generic";
+  webhookFormat?: "slack" | "discord" | "feishu" | "generic";
   /** List of notification events to send via webhook.
    *  When webhookEnabled is true, only events in this list trigger webhooks.
    *  If undefined or empty when webhookEnabled is true, all events are sent.
