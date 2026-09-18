@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -107,6 +108,15 @@ const DEFAULT_HEIGHT = 560;
 const DEFAULT_MIN_WIDTH = 360;
 const DEFAULT_MIN_HEIGHT = 280;
 const VIEWPORT_PADDING = 16;
+/*
+FNXC:ModalTouchGeometry 2026-09-17-08:00:
+FN-9311: tablet touch corner handles carry a 44px hit target. At the plain 16px VIEWPORT_PADDING
+clamp, a maximally-sized southeast/northeast/etc. handle can paint partly past the visible
+viewport edge and become unreachable by touch. Reserve one additional shared inset on every edge
+for tablet touch geometry only (desktop mouse geometry keeps the tighter VIEWPORT_PADDING clamp)
+so the clamped panel always leaves room for its own resize handles.
+*/
+const TABLET_TOUCH_GEOMETRY_INSET = 16;
 
 /*
 FNXC:FloatingWindow 2026-06-22-21:30:
@@ -136,19 +146,29 @@ function cascadeIndexFor(windowKey: string): number {
   return Math.abs(hash) % 6;
 }
 
-function clampSize(size: FloatingWindowSize, minSize: FloatingWindowSize): FloatingWindowSize {
+/*
+FNXC:ModalTouchGeometry 2026-09-17-08:00:
+`extraInset` widens the clamp padding beyond the default VIEWPORT_PADDING without changing the
+desktop mouse contract (callers pass 0, the default, off tablet touch geometry). Callers clamp
+against `window.innerWidth`/`window.innerHeight` directly rather than a tracked bounds object:
+every clamp call already re-reads live viewport dimensions at call time, so no separate reactive
+bounds hook is needed to stay in sync with a resize.
+*/
+function clampSize(size: FloatingWindowSize, minSize: FloatingWindowSize, extraInset = 0): FloatingWindowSize {
   if (typeof window === "undefined") return size;
+  const padding = VIEWPORT_PADDING + extraInset;
   return {
-    width: Math.min(Math.max(size.width, minSize.width), Math.max(minSize.width, window.innerWidth - VIEWPORT_PADDING * 2)),
-    height: Math.min(Math.max(size.height, minSize.height), Math.max(minSize.height, window.innerHeight - VIEWPORT_PADDING * 2)),
+    width: Math.min(Math.max(size.width, minSize.width), Math.max(minSize.width, window.innerWidth - padding * 2)),
+    height: Math.min(Math.max(size.height, minSize.height), Math.max(minSize.height, window.innerHeight - padding * 2)),
   };
 }
 
-function clampPosition(position: FloatingWindowPosition, size: FloatingWindowSize): FloatingWindowPosition {
+function clampPosition(position: FloatingWindowPosition, size: FloatingWindowSize, extraInset = 0): FloatingWindowPosition {
   if (typeof window === "undefined") return position;
+  const padding = VIEWPORT_PADDING + extraInset;
   return {
-    x: Math.min(Math.max(position.x, VIEWPORT_PADDING), Math.max(VIEWPORT_PADDING, window.innerWidth - size.width - VIEWPORT_PADDING)),
-    y: Math.min(Math.max(position.y, VIEWPORT_PADDING), Math.max(VIEWPORT_PADDING, window.innerHeight - size.height - VIEWPORT_PADDING)),
+    x: Math.min(Math.max(position.x, padding), Math.max(padding, window.innerWidth - size.width - padding)),
+    y: Math.min(Math.max(position.y, padding), Math.max(padding, window.innerHeight - size.height - padding)),
   };
 }
 
@@ -229,12 +249,13 @@ export function resolveFloatingWindowCascade(
 FNXC:FloatingWindow 2026-06-22-20:45:
 Default position cascades by windowKey so opening several windows in a row visibly offsets each one from a roughly-centered origin instead of stacking them pixel-perfect on top of one another.
 */
-function defaultPositionFor(windowKey: string, size: FloatingWindowSize): FloatingWindowPosition {
-  if (typeof window === "undefined") return { x: VIEWPORT_PADDING, y: VIEWPORT_PADDING };
+function defaultPositionFor(windowKey: string, size: FloatingWindowSize, extraInset = 0): FloatingWindowPosition {
+  if (typeof window === "undefined") return { x: VIEWPORT_PADDING + extraInset, y: VIEWPORT_PADDING + extraInset };
   const cascade = cascadeIndexFor(windowKey) * FLOATING_WINDOW_CASCADE_STEP_PX;
   return clampPosition(
     { x: (window.innerWidth - size.width) / 2 + cascade, y: (window.innerHeight - size.height) / 2 + cascade },
-    size
+    size,
+    extraInset
   );
 }
 
@@ -248,6 +269,7 @@ function readPersistedGeometry(
   fallbackSize: FloatingWindowSize,
   fallbackPosition: FloatingWindowPosition,
   minSize: FloatingWindowSize,
+  extraInset = 0,
 ): { size: FloatingWindowSize; position: FloatingWindowPosition } {
   if (!persistGeometryKey || typeof window === "undefined") {
     return { size: fallbackSize, position: fallbackPosition };
@@ -261,12 +283,12 @@ function readPersistedGeometry(
       width: typeof parsed.size?.width === "number" ? parsed.size.width : fallbackSize.width,
       height: typeof parsed.size?.height === "number" ? parsed.size.height : fallbackSize.height,
     };
-    const size = clampSize(persistedSize, minSize);
+    const size = clampSize(persistedSize, minSize, extraInset);
     const persistedPosition = {
       x: typeof parsed.position?.x === "number" ? parsed.position.x : fallbackPosition.x,
       y: typeof parsed.position?.y === "number" ? parsed.position.y : fallbackPosition.y,
     };
-    return { size, position: clampPosition(persistedPosition, size) };
+    return { size, position: clampPosition(persistedPosition, size, extraInset) };
   } catch {
     return { size: fallbackSize, position: fallbackPosition };
   }
@@ -298,7 +320,17 @@ export function FloatingWindow({
   ariaLabelledBy,
 }: FloatingWindowProps) {
   const { t } = useTranslation("app");
-  const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
+  /*
+  FNXC:FloatingWindow 2026-09-17-08:00:
+  FN-9311: callers pass `minSize` as an inline object literal, so rebuilding this per render gave
+  every geometry-dependent effect (identity persistence, resize handler, geometry-change signal) a
+  new dependency identity on every render regardless of whether the requested extents actually
+  changed. Memoize on the primitive width/height extents so those effects only re-run when the
+  caller's requested minimum size actually changes.
+  */
+  const minWidth = minSize?.width ?? DEFAULT_MIN_WIDTH;
+  const minHeight = minSize?.height ?? DEFAULT_MIN_HEIGHT;
+  const resolvedMinSize: FloatingWindowSize = useMemo(() => ({ width: minWidth, height: minHeight }), [minWidth, minHeight]);
   const viewportMode = useViewportMode();
   /*
   FNXC:ModalTouchGeometry 2026-07-26-12:19:
@@ -307,6 +339,13 @@ export function FloatingWindow({
   mouse geometry; a known touch tablet at 768px is the one surface that receives enlarged targets.
   */
   const hasTabletTouchGeometry = isTabletTouchViewport(viewportMode);
+  /*
+  FNXC:ModalTouchGeometry 2026-09-17-08:00:
+  FN-9311: reserve the shared TABLET_TOUCH_GEOMETRY_INSET on every clamp call only while tablet
+  touch geometry is active, so a clamped panel's corner/edge resize handle never paints past the
+  visible viewport edge and becomes unreachable by touch. Desktop mouse geometry is unaffected.
+  */
+  const geometryInset = hasTabletTouchGeometry ? TABLET_TOUCH_GEOMETRY_INSET : 0;
   /*
   FNXC:ModalTouchGeometry 2026-08-01-04:23:
   NAMING CONTRACT — FloatingWindow has two distinct tablet markers; do not conflate them:
@@ -351,11 +390,11 @@ export function FloatingWindow({
   };
 
   if (!initialGeometry.current) {
-    const fallbackSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize);
-    const fallbackPosition = defaultPosition ? clampPosition(defaultPosition, fallbackSize) : defaultPositionFor(windowKey, fallbackSize);
+    const fallbackSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize, geometryInset);
+    const fallbackPosition = defaultPosition ? clampPosition(defaultPosition, fallbackSize, geometryInset) : defaultPositionFor(windowKey, fallbackSize, geometryInset);
     const baseGeometry = geometryPersistenceSuspended
       ? { size: fallbackSize, position: fallbackPosition }
-      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize);
+      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize, geometryInset);
     initialGeometry.current = applyCascadeOffset(baseGeometry);
   }
 
@@ -379,17 +418,17 @@ export function FloatingWindow({
       && previousIdentity.cascadeOffsetIndex === cascadeOffsetIndex
     ) return;
 
-    const fallbackSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize);
-    const fallbackPosition = defaultPosition ? clampPosition(defaultPosition, fallbackSize) : defaultPositionFor(windowKey, fallbackSize);
+    const fallbackSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize, geometryInset);
+    const fallbackPosition = defaultPosition ? clampPosition(defaultPosition, fallbackSize, geometryInset) : defaultPositionFor(windowKey, fallbackSize, geometryInset);
     const baseGeometry = geometryPersistenceSuspended
       ? { size: fallbackSize, position: fallbackPosition }
-      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize);
+      : readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize, geometryInset);
     const nextGeometry = applyCascadeOffset(baseGeometry);
     geometryIdentityRef.current = { windowKey, persistGeometryKey, cascadeOffsetIndex };
     initialGeometry.current = nextGeometry;
     setSize(nextGeometry.size);
     setPosition(nextGeometry.position);
-  }, [cascadeOffsetIndex, defaultPosition, defaultSize, geometryPersistenceSuspended, persistGeometryKey, resolvedMinSize, windowKey]);
+  }, [cascadeOffsetIndex, defaultPosition, defaultSize, geometryInset, geometryPersistenceSuspended, persistGeometryKey, resolvedMinSize, windowKey]);
 
   const claimFrontZ = useCallback(() => (layer === "task-detail" ? nextTaskDetailFloatingZ() : nextFloatingZ()), [layer]);
   const readCurrentZ = useCallback(() => (layer === "task-detail" ? currentTaskDetailFloatingZ() : currentFloatingZ()), [layer]);
@@ -584,7 +623,8 @@ export function FloatingWindow({
             width: startSize.width + (direction.includes("e") ? dx : direction.includes("w") ? -dx : 0),
             height: startSize.height + (direction.includes("s") ? dy : direction.includes("n") ? -dy : 0),
           },
-          resolvedMinSize
+          resolvedMinSize,
+          geometryInset
         );
         const nextPosition = {
           x: startPosition.x + (direction.includes("w") ? startSize.width - nextSize.width : 0),
@@ -596,7 +636,7 @@ export function FloatingWindow({
         frame = requestAnimationFrame(() => {
           frame = 0;
           setSize(latestSize);
-          setPosition(clampPosition(latestPosition, latestSize));
+          setPosition(clampPosition(latestPosition, latestSize, geometryInset));
         });
       };
       const detachListeners = () => {
@@ -610,7 +650,7 @@ export function FloatingWindow({
         upEvent.preventDefault();
         if (frame) cancelAnimationFrame(frame);
         setSize(latestSize);
-        setPosition(clampPosition(latestPosition, latestSize));
+        setPosition(clampPosition(latestPosition, latestSize, geometryInset));
         document.body.style.userSelect = previousUserSelect;
         detachListeners();
         dragTeardownRef.current = null;
@@ -627,7 +667,7 @@ export function FloatingWindow({
       captureTarget.addEventListener("pointerup", handlePointerUp);
       captureTarget.addEventListener("pointercancel", handlePointerUp);
     },
-    [bringToFront, position, resolvedMinSize, size]
+    [bringToFront, geometryInset, position, resolvedMinSize, size]
   );
 
   // FNXC:FloatingWindow 2026-06-22-20:45: Run any active drag/resize teardown on unmount so captured-element listeners + a pending rAF never outlive the window.
@@ -707,16 +747,16 @@ export function FloatingWindow({
       const canonicalSize = clampSize({
         width: size.width + cascadeSizeReductionRef.current.width,
         height: size.height + cascadeSizeReductionRef.current.height,
-      }, resolvedMinSize);
+      }, resolvedMinSize, geometryInset);
       const canonicalPosition = clampPosition({
         x: position.x - cascadeOffsetRef.current.x,
         y: position.y - cascadeOffsetRef.current.y,
-      }, canonicalSize);
+      }, canonicalSize, geometryInset);
       localStorage.setItem(persistGeometryKey, JSON.stringify({ size: canonicalSize, position: canonicalPosition }));
     } catch {
       // Ignore storage failures; geometry persistence is a convenience only.
     }
-  }, [geometryPersistenceSuspended, hidden, persistGeometryKey, position, resolvedMinSize, size]);
+  }, [geometryInset, geometryPersistenceSuspended, hidden, persistGeometryKey, position, resolvedMinSize, size]);
 
   /*
   FNXC:ModalTouchGeometry 2026-07-26-18:42:
