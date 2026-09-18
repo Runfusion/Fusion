@@ -559,10 +559,28 @@ async function buildPushOriginStatus(input: {
 }): Promise<PushOriginStatus> {
   const rootDir = input.scopedStore.getRootDir();
   const settings = await input.scopedStore.getSettingsFast();
+  const branchSource = parseBranchSourceFromSettings(settings);
+
+  if (!(await input.isGitRepo(rootDir))) {
+    return {
+      integrationBranch: "main",
+      branchSource,
+      hasOriginRemote: false,
+      hasUpstream: false,
+      localSha: null,
+      remoteSha: null,
+      aheadCount: 0,
+      behindCount: 0,
+      mergeActive: false,
+      canPush: false,
+      disabledReason: "not-a-git-repo",
+    };
+  }
+
   const integrationBranch = await input.resolveIntegrationBranch(rootDir, settings);
   const baseStatus: PushOriginStatus = {
     integrationBranch,
-    branchSource: parseBranchSourceFromSettings(settings),
+    branchSource,
     hasOriginRemote: false,
     hasUpstream: false,
     localSha: null,
@@ -572,10 +590,6 @@ async function buildPushOriginStatus(input: {
     mergeActive: false,
     canPush: false,
   };
-
-  if (!(await input.isGitRepo(rootDir))) {
-    return { ...baseStatus, disabledReason: "not-a-git-repo" };
-  }
 
   const selfHealing = input.resolveSelfHealingManager(input.scopedStore);
   const mergeActive = Boolean(selfHealing?.getActiveMergeTaskId?.());

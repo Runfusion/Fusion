@@ -48,6 +48,12 @@ const allowlist: AllowlistEntry[] = [
   */
   { file: "src/merge/integration-branch.ts", line: 146, primitive: "execSync", signature: "const stdout = execSync(`git for-each-ref --format=%(refname:short) ${refPrefix}`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/integration-branch.ts", line: 203, primitive: "execSync", signature: "const stdout = execSync(\"git symbolic-ref --quiet --short HEAD\", {", reason: SHORT_GIT_PLUMBING },
+  // FNXC:IntegrationBranchValidation 2026-09-04-09:12: settings-branch existence guard — argv-based (no shell), fixed literal argv, bounded timeout.
+  { file: "src/merge/integration-branch.ts", line: 67, primitive: "execFileSync", signature: 'execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {', reason: SHORT_GIT_PLUMBING },
+  // FNXC:IntegrationBranchValidation 2026-09-14-00:55: fallback materialization — probe refs/remotes/origin/<name>, then `git branch <name> <remoteRef>` (never --track, FN-183 contract), argv-based, bounded timeout; a failed write is rechecked against refs/heads (lost-race absorb) and otherwise rethrown.
+  { file: "src/merge/integration-branch.ts", line: 134, primitive: "execFileSync", signature: 'execFileSync("git", ["show-ref", "--verify", "--quiet", remoteRef], {', reason: SHORT_GIT_PLUMBING },
+  { file: "src/merge/integration-branch.ts", line: 146, primitive: "execFileSync", signature: 'execFileSync("git", ["branch", branch, remoteRef], {', reason: SHORT_GIT_PLUMBING },
+  { file: "src/merge/integration-branch.ts", line: 154, primitive: "execFileSync", signature: 'execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {', reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/merger-git-parse.ts", line: 102, primitive: "execFileSync", signature: "const output = execFileSync(", reason: BOUNDED_GIT_DIFF },
   { file: "src/merge/merger-workspace-test-commands.ts", line: 204, primitive: "execSync", signature: "changedFilesOutput = execSync(", reason: BOUNDED_GIT_DIFF },
   { file: "src/merge/merger-workspace-test-commands.ts", line: 301, primitive: "execSync", signature: "changedFilesOutput = execSync(", reason: BOUNDED_GIT_DIFF },
@@ -223,7 +229,7 @@ describe("engine blocking-shellout static guard", () => {
     const sites = scanSource(file, source);
     const { unmatched } = classifySites(sites);
 
-    expect(sites).toHaveLength(4);
+    expect(sites).toHaveLength(8);
     expect(unmatched).toEqual([]);
   });
 
