@@ -11,11 +11,30 @@ import {
   isFastExecutionMode,
 } from "@fusion/core";
 import { resolvePlannerLanesForTaskAsync } from "../execution/replan-target.js";
+import type { PlannerLanes } from "../execution/replan-target.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { isTaskWorkComplete } from "./task-predicates.js";
 import { areEnabledPreMergeWorkflowStepsSatisfied } from "./workflow-step-satisfaction.js";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-09-19-07:22:
+The promotion decision consumes a lane answer and a column, and those come from two independent
+store reads (the task's workflow SELECTION, and the task ROW). This is the equality the decision
+needs to know they describe the same board: role ids and the provenance flag, which are the whole
+of what `promotedFromPlannerColumn` and the hop targets read. Comparing the structs is deliberately
+cheaper and stricter than re-deriving an answer — two structurally identical answers are
+interchangeable for this decision whether or not they came from the same object.
+*/
+function samePlannerLanes(a: PlannerLanes, b: PlannerLanes): boolean {
+  return a.hold === b.hold
+    && a.intake === b.intake
+    && a.wip === b.wip
+    && a.review === b.review
+    && a.complete === b.complete
+    && a.resolvedFromWorkflow === b.resolvedFromWorkflow;
+}
 
 export type RecoverCompletedTaskDeps = {
   store: TaskStore;
@@ -248,9 +267,33 @@ export async function recoverCompletedTask(
     between that read and the moves it feeds. Seed BOTH `originColumn` and `completionTask`
     from this freshest read. A failed read returns via the outer catch: recovery retries on
     the next sweep rather than acting on known-stale state.
+
+    FNXC:WorkflowLifecycleColumns 2026-09-19-07:22 (one coherent snapshot):
+    RESOLVING THE LANES AND READING THE COLUMN ARE TWO INDEPENDENT READS, so as written above
+    they can straddle a workflow-selection change: the lanes would describe the workflow the
+    card was on and `originColumn` the row it is on now. Recovery then either skips a required
+    promotion or moves toward a lane the card's own workflow does not declare — and because
+    the intake -> hold re-home runs FIRST, a rejected later hop leaves the completed card
+    parked in an intermediate lane.
+
+    Both halves are closed here. The lanes are resolved ON BOTH SIDES of the row read, and two
+    structurally identical answers prove no selection change landed inside the window — the
+    only change the sandwich cannot see is one whose lanes are identical, which cannot alter
+    this decision. A disagreement withholds recovery with a log and retries on the next sweep,
+    because acting on a board that is being re-selected under us is exactly the move that
+    would relocate a card the new board does not own. The hop chain is then verified after it
+    runs: a rejected or silently-dropped hop must not leave the card half-re-homed without
+    that outcome being explicit.
     */
-    const plannerLanes = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
+    const lanesBeforeSnapshotRead = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
     const prePromotionTask = await deps.store.getTask(task.id);
+    const plannerLanes = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
+    if (!samePlannerLanes(lanesBeforeSnapshotRead, plannerLanes)) {
+      const message = `Auto-recovery withheld: the task's planner lanes changed while the promotion snapshot was being read — the lane target and the origin column would come from two different workflow selections`;
+      executorLog.warn(`${task.id}: ${message}`);
+      await deps.store.logEntry(task.id, message).catch(() => undefined);
+      return false;
+    }
     const originColumn = prePromotionTask.column;
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (Phase C convergence):
@@ -317,18 +360,59 @@ export async function recoverCompletedTask(
       column, so `hold === intake` and the hop correctly collapses to the single move below;
       a board that still separates them (pre-U11, or a custom lineage) keeps the re-home.
       */
-      if (originColumn === plannerLanes.intake && plannerLanes.hold !== plannerLanes.intake) {
-        completionTask = await deps.store.moveTask(task.id, plannerLanes.hold, {
-          moveSource: "engine",
-          recoveryRehome: true,
-          bypassGuards: true,
-          preserveProgress: true,
-          preserveWorktree: true,
-          preserveResumeState: true,
-        });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-09-19-07:22 (no silent partial re-home):
+      THE TRAP THIS SEQUENCE SETS. The intake -> hold re-home runs FIRST, so when the
+      promotion into wip is then rejected the card is already one lane off where it started
+      — half-re-homed, with its work finished, and the outer catch reporting only a generic
+      failure. The same is true when a move resolves without moving the row: the card stays
+      in the hold lane and recovery still claims success.
+
+      So the chain is verified against the row rather than against the call it made. A hop
+      that throws, or a chain that reports success without landing the card in
+      `plannerLanes.wip`, withholds the handoff and records exactly where the card is and
+      where it was going. Recovery then reports false, and the next sweep re-enters from the
+      lane the card is actually in — which is the honest recovery, not a mutation of a row
+      whose move the board rejected. The ownership entry is released here because the outer
+      catch is no longer what unwinds this case.
+      */
+      let hopFailure: string | undefined;
+      try {
+        if (originColumn === plannerLanes.intake && plannerLanes.hold !== plannerLanes.intake) {
+          await deps.store.moveTask(task.id, plannerLanes.hold, {
+            moveSource: "engine",
+            recoveryRehome: true,
+            bypassGuards: true,
+            preserveProgress: true,
+            preserveWorktree: true,
+            preserveResumeState: true,
+          });
+        }
+        // Non-undefined: the guard above returned early when this workflow declares no WIP lane.
+        await deps.store.moveTask(task.id, plannerLanes.wip as string);
+      } catch (error: unknown) {
+        hopFailure = error instanceof Error ? error.message : String(error);
       }
-      // Non-undefined: the guard above returned early when this workflow declares no WIP lane.
-      completionTask = await deps.store.moveTask(task.id, plannerLanes.wip as string);
+      const landed = await deps.store.getTask(task.id).catch(() => undefined);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-09-19-07:22 (one coherent snapshot, part 3):
+      VERIFY THE LANDING AGAINST THE WORKFLOW IN FORCE, not the snapshot's. Comparing to
+      `plannerLanes.wip` answered with the lane the DECISION wanted, so a selection change that
+      landed after the snapshot and before these hops would still validate a move toward a lane
+      the card's workflow no longer calls WIP — the check would agree with the stale answer it
+      was meant to catch. Re-resolving here answers the question the handoff actually depends
+      on: is the card in WIP for the board it is on NOW. A change that arrives after this read
+      is caught by the landing it contradicts, not silently accepted.
+      */
+      const lanesAtLanding = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
+      if (landed === undefined || landed.column !== lanesAtLanding.wip) {
+        const message = `Auto-recovery withheld: promotion of completed work from '${originColumn}' did not land in '${lanesAtLanding.wip}' — the card is in '${landed?.column ?? "unreadable"}' (${hopFailure ?? "both hops reported success"})`;
+        executorLog.warn(`${task.id}: ${message}`);
+        await deps.store.logEntry(task.id, message).catch(() => undefined);
+        deps.recoveringCompleted.delete(task.id);
+        return false;
+      }
+      completionTask = landed;
     }
     await deps.handoffTaskToReview(completionTask, "completed-task-recovered");
     if (promotedFromPlannerColumn) {

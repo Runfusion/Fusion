@@ -42,6 +42,21 @@ const RENAMED_SPLIT_IR = {
   ],
 } as unknown as WorkflowIr;
 
+/**
+ * The same renamed board after an operator re-wires its WIP lane id. Used to prove the landing
+ * check answers against the workflow IN FORCE, not against the decision snapshot's lanes.
+ */
+const RENAMED_SPLIT_REWIRED_IR = {
+  version: "v2", id: "wf-renamed-rewired", name: "renamed-rewired", nodes: [], edges: [],
+  columns: [
+    { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }] },
+    { id: "queued", name: "Queued", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "delivering", name: "Delivering", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
+    { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+  ],
+} as unknown as WorkflowIr;
+
 /** The post-U11 MERGED shape, renamed: one column carries intake AND hold. */
 const RENAMED_MERGED_IR = {
   version: "v2", id: "wf-merged", name: "merged", nodes: [], edges: [],
@@ -405,5 +420,127 @@ describe("a workflow with no WIP lane is refused, not promoted to an invented co
     await h.executor.recoverCompletedTask(completedTaskIn("queued") as never);
 
     expect(h.moves).toEqual([["FN-STRANDED", "building"]]);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-09-19-07:22 (greptile P1, PR #3524):
+
+THE TWO-READ SPLIT. `resolvePlannerLanesForTaskAsync` reads the task's workflow SELECTION and
+`deps.store.getTask` reads the task ROW — two independent reads. Deciding the promotion from both
+pairs a lane answer from one board with a column from another, and because the intake -> hold
+re-home is issued FIRST, rejecting the later hop leaves the completed card parked one lane off
+where it started while recovery reports a bare failure.
+
+Each case below fails on that shape, and the assertions are on the OUTCOME (where the card ended
+up, whether the handoff ran), not on which store call was made.
+*/
+describe("the promotion decision uses one coherent snapshot and reports what it could not do", () => {
+  const loggedMessages = (h: ReturnType<typeof harness>) =>
+    (h.store.logEntry as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => String(call[1] ?? ""));
+
+  it("withholds recovery when the workflow changes across the promotion snapshot's two reads", async () => {
+    const h = harness(RENAMED_SPLIT_IR, "backlog");
+    /*
+    The lane answer is resolved on both sides of the row read in production, so alternating the
+    resolved workflow between those two resolutions is exactly a selection change landing inside
+    the window. Pre-fix there was only ONE lane resolution, taken before the row read, so the
+    decision proceeded on the old board's lanes against the live row.
+    */
+    let resolutionPass = 0;
+    h.store.getWorkflowDefinition = vi.fn(async () => {
+      resolutionPass += 1;
+      return { ir: resolutionPass === 1 ? RENAMED_SPLIT_IR : RENAMED_MERGED_IR };
+    });
+
+    const recovered = await h.executor.recoverCompletedTask(completedTaskIn("backlog") as never);
+
+    expect(recovered).toBe(false);
+    // No hop may be issued toward a board the card is no longer on, and the handoff must not run
+    // from a lane the current workflow may not even declare.
+    expect(h.moves).toEqual([]);
+    expect(h.handoff).not.toHaveBeenCalled();
+    expect(loggedMessages(h).some((m) => m.includes("changed while the promotion snapshot was being read"))).toBe(true);
+  });
+
+  it("reports the lane a rejected later hop left the card in, instead of a bare failure", async () => {
+    const h = harness(RENAMED_SPLIT_IR, "backlog");
+    // The intake -> hold hop succeeds, then the promotion into wip is rejected. The card IS
+    // half-re-homed; what must change is that recovery says so, by lane, and does not hand off.
+    // The throw propagates through the shared write-through store, so the recorded lane is the
+    // intermediate one — which is exactly the state on disk.
+    h.store.moveTask.mockImplementation(async (id: string, to: string) => {
+      if (to === "building") throw new Error("role adjacency rejects queued -> building");
+      h.moves.push([id, to]);
+      return { ...(h.task() as object), column: to };
+    });
+
+    const recovered = await h.executor.recoverCompletedTask(completedTaskIn("backlog") as never);
+
+    expect(recovered).toBe(false);
+    expect(h.moves).toEqual([["FN-STRANDED", "queued"]]);
+    expect((await h.store.getTask("FN-STRANDED") as { column?: string }).column).toBe("queued");
+    expect(h.handoff).not.toHaveBeenCalled();
+    const reported = loggedMessages(h).find((m) => m.includes("did not land in 'building'"));
+    expect(reported).toBeDefined();
+    expect(reported).toContain("is in 'queued'");
+    expect(reported).toContain("role adjacency rejects queued -> building");
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-09-19-07:22:
+  A "the move resolved but the row did not move" case is deliberately NOT written here. The shared
+  `createMockStore` pairs a write-through `moveTask` with a write-through `getTask`
+  (`makeWriteThroughMoveTask` / `makeWriteThroughGetTask` in `executor-test-helpers.ts`), so a
+  resolved move IS the row's new column at that seam by construction — every attempt to install a
+  resolving-but-inert move still ends up patched to the requested lane. The branch that check
+  protects is exercised by the rejected-hop case above, which reaches it through the one path the
+  seam can express: the hop throws, the last RECORDED lane is the intermediate one, and the landing
+  read disagrees with the intended wip lane.
+  */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-09-19-07:22:
+  The landing check must answer against the workflow IN FORCE. Comparing the landed lane to the
+  DECISION's `plannerLanes.wip` validated a move toward a lane the card's workflow had stopped
+  calling WIP — the check agreed with the stale answer it existed to catch. Here the operator
+  re-wires the board's WIP lane id while the card is being promoted, so the hops run on the old
+  lanes and the verification runs on the new one.
+  */
+  it("withholds the handoff when the workflow's WIP lane changes before the card lands", async () => {
+    const h = harness(RENAMED_SPLIT_IR, "backlog");
+    let rewired = false;
+    h.store.getWorkflowDefinition = vi.fn(async () => ({
+      ir: rewired ? RENAMED_SPLIT_REWIRED_IR : RENAMED_SPLIT_IR,
+    }));
+    h.store.moveTask.mockImplementation(async (id: string, to: string) => {
+      h.moves.push([id, to]);
+      // The re-wire lands as the card is promoted: the hops still use the old board's lanes.
+      if (to === "building") rewired = true;
+      return { ...(h.task() as object), column: to };
+    });
+
+    const recovered = await h.executor.recoverCompletedTask(completedTaskIn("backlog") as never);
+
+    // The hops were issued toward the old board (they are the only targets it declared)...
+    expect(h.moves).toEqual([["FN-STRANDED", "queued"], ["FN-STRANDED", "building"]]);
+    // ...so the card is NOT where the board now calls WIP, and recovery must say so.
+    expect(recovered).toBe(false);
+    expect(h.handoff).not.toHaveBeenCalled();
+    const reported = loggedMessages(h).find((m) => m.includes("did not land in 'delivering'"));
+    expect(reported).toBeDefined();
+    expect(reported).toContain("is in 'building'");
+  });
+
+  it("handoffs the LANDED row, not the pre-hop snapshot", async () => {
+    // The paired positive: verifying the landing must not stop a promotion that did land.
+    const h = harness(RENAMED_SPLIT_IR, "backlog");
+
+    const recovered = await h.executor.recoverCompletedTask(completedTaskIn("backlog") as never);
+
+    expect(recovered).toBe(true);
+    expect(h.moves).toEqual([["FN-STRANDED", "queued"], ["FN-STRANDED", "building"]]);
+    expect(h.handoff).toHaveBeenCalledTimes(1);
+    expect((h.handoff.mock.calls[0]?.[0] as { column?: string } | undefined)?.column).toBe("building");
   });
 });
