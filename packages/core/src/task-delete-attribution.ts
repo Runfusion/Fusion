@@ -19,6 +19,7 @@ human. It exists so forensics has a starting hypothesis, not a verdict.
 Scope note: this is observability only. No delete-blocking, gating, or permission logic is added or
 implied here; whether agents should hold `fn_task_delete` at all is a separate operator policy call.
 */
+import type { RunMutationContext } from "./types/task/task-log.js";
 
 /**
  * FNXC:TaskDeleteAttribution 2026-08-20-18:40:
@@ -56,11 +57,24 @@ export type TaskDeleteCallerKind = (typeof TASK_DELETE_CALLER_KINDS)[number];
  * It doubles as the self-delete guard input (`auditContext.taskId === id` is refused) and, from
  * this change on, is persisted as `callerTaskId`.
  */
-export interface TaskDeleteAuditContext {
-  agentId: string;
-  runId: string;
+/*
+FNXC:Identity 2026-08-09-03:04:
+Unified onto `RunMutationContext` (KTD2) so the delete path stops being a second, differently-shaped
+mutation-context seam — it had `agentId`/`runId` in common with `RunMutationContext` and diverged
+from there, which is how an authenticated actor could have been threaded through one path and not
+the other.
+
+R21 — `actor` (inherited, required) and `callerKind` (below, optional) are DIFFERENT KINDS OF CLAIM
+and are deliberately kept as separate fields. `actor` is authenticated. `callerKind` is derived from
+the self-reported `x-fusion-client` header; anything can send it. Read the module trust-model note
+above before touching either: `callerKind` must never gate a permission, and no code may fall back
+to it when `actor` is missing — that fallback is exactly how a self-reported header would become an
+authorization input.
+*/
+export interface TaskDeleteAuditContext extends RunMutationContext {
   sessionId?: string;
   taskId?: string;
+  /** ATTRIBUTION ONLY, self-reported, never authoritative. See the module trust model. */
   callerKind?: TaskDeleteCallerKind;
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 
 import { computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, findSameAgentDuplicates, flagSameAgentDuplicate } from "../duplicates/duplicate-intake.js";
 import type { TaskStore } from "../store.js";
@@ -298,9 +299,16 @@ describe("flagSameAgentDuplicate (FN-7658)", () => {
     });
 
     expect(updateTask).toHaveBeenCalledTimes(1);
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    The mutation context is asserted positionally rather than waved through, so the day U9/U11/U13
+    hand this path a real actor the assertion fails and names the line instead of quietly accepting
+    whatever arrived. Duplicate intake runs inside the create path, so its actor is the creating
+    caller's - it is a census entry, not a permanent marker.
+    */
     expect(updateTask).toHaveBeenCalledWith("FN-2", {
       sourceMetadataPatch: { nearDuplicateOf: "FN-1", nearDuplicateScore: 0.9 },
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
 
     // Must NOT call moveTask — flagSameAgentDuplicate leaves the task's column alone.
     expect((store as unknown as { moveTask?: unknown }).moveTask).toBeUndefined();
@@ -313,7 +321,7 @@ describe("flagSameAgentDuplicate (FN-7658)", () => {
 
     expect(updateTask).toHaveBeenCalledWith("FN-3", {
       sourceMetadataPatch: { nearDuplicateOf: "FN-1", nearDuplicateScore: 0.8 },
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });
 
@@ -322,7 +330,7 @@ describe("flagTriageDuplicate", () => {
     const { flagTriageDuplicate } = await import("../duplicates/duplicate-intake.js");
     const store = { logEntry: vi.fn(), recordActivity: vi.fn(), updateTask: vi.fn() } as any;
     await flagTriageDuplicate(store, "FN-2", "FN-1");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-2", { sourceMetadataPatch: { nearDuplicateOf: "FN-1", nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: false } });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-2", { sourceMetadataPatch: { nearDuplicateOf: "FN-1", nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: false } }, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ source: "triage-marker-flagged", canonicalTaskId: "FN-1" }) }));
     expect(store.deleteTask).toBeUndefined();
   });
@@ -340,6 +348,6 @@ describe("flagTriageDuplicate", () => {
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-2", {
       sourceMetadataPatch: expect.objectContaining({ nearDuplicateDismissed: true, nearDuplicateOf: "FN-1" }),
-    });
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 });

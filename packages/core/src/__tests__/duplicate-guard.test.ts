@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 
 import type { Column, Task } from "../types.js";
 import type { TaskStore } from "../store.js";
@@ -354,13 +355,20 @@ describe("reconcileDeterministicDuplicate", () => {
 
     const result = await reconcileDeterministicDuplicate(store, { createdTask: created, fingerprint: "fp" });
     expect(result).toEqual({ outcome: "archived", canonical });
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18):
+    The mutation context is asserted positionally rather than waved through, so the day U9/U11/U13
+    hand this path a real actor the assertion fails and names the line instead of quietly accepting
+    whatever arrived. Duplicate intake runs inside the create path, so its actor is the creating
+    caller's - it is a census entry, not a permanent marker.
+    */
     expect(store.updateTask).toHaveBeenCalledWith("FN-2", {
       sourceMetadataPatch: {
         contentFingerprint: "fp",
         deterministicDuplicateOf: "FN-1",
       },
-    });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-2", "archived");
+    }, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-2", "archived", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({
       type: "task:auto-archived-deterministic-duplicate",
       metadata: { canonicalTaskId: "FN-1", contentFingerprint: "fp" },
@@ -408,8 +416,8 @@ describe("reconcileDeterministicDuplicate", () => {
     const result = await reconcileDeterministicDuplicate(store, { createdTask: created, fingerprint: "fp" });
 
     expect(result).toEqual({ outcome: "archived", canonical });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-2", "boxed");
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-2", "archived");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-2", "boxed", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-2", "archived", undefined, UNATTRIBUTED_MUTATION_CONTEXT);
   });
 
   it("fails open when archive move throws", async () => {

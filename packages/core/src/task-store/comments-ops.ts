@@ -1,4 +1,5 @@
 import { createLogger } from "../process/logger.js";
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "../identity/mutation-context.js";
 import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
 
 const severityAuditLog = createLogger("core-comments-ops");
@@ -303,7 +304,8 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
         let transitioned = false;
 
         try {
-          await store.updateTask(id, { status: "needs-replan" });
+          // FNXC:Identity 2026-08-09-03:04 (U18): DERIVED - the commenter caused this re-triage, so it inherits the comment actor.
+          await store.updateTask(id, { status: "needs-replan" }, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
           transitioned = true;
         } catch (err) {
           storeLog.warn("Best-effort post-comment re-triage failed", {
@@ -317,7 +319,7 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
 
         if (transitioned) {
           try {
-            await store.logEntry(id, action, text, runContext);
+            await store.logEntry(id, action, text, runContext ?? UNATTRIBUTED_MUTATION_CONTEXT);
           } catch (err) {
             storeLog.warn("Best-effort post-comment re-triage failed", {
               ...commentContextBase,

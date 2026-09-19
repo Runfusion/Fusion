@@ -35,6 +35,57 @@ export class TaskSelfDeleteError extends Error {
   }
 }
 
+/*
+FNXC:Authorization 2026-08-09-03:04:
+Authorization had no typed error anywhere in @fusion/core. A denial was an HTTP status at the edge and a REGEX OVER ERROR STRINGS in the engine (see isOperatorActionableAgentError in packages/engine/src/errors/transient-error-detector.ts), so nothing downstream could tell a permission denial apart from any other failure.
+Two concrete consequences this class exists to fix. First, `handleGraphFailure` in packages/engine/src/executor.ts replaces a node failure's message with a generic "Workflow graph terminated with failure at node '<n>'" string, which erased the reason an operator needs. Second, the dashboard could not distinguish "you may not do this" (403) from "your session expired" (401), so a denial fired the token-recovery flow and told the user to re-authenticate for a permission they simply do not hold.
+The `code` discriminant is what makes both fixable without string matching. Shape mirrors AgentTaskRoutingPolicyError (packages/core/src/agents/agent-role-policy.ts), the existing typed-policy-error precedent in this codebase.
+*/
+/*
+FNXC:Authorization 2026-08-09-03:04:
+The discriminant is exported as a constant because it must survive SERIALIZATION, not just a
+type check. A node handler's thrown error is flattened to `error.message` by the workflow graph
+executor before the executor's terminal park ever sees it (packages/engine/src/workflows/workflow-graph-executor.ts,
+`node:<id>:error` context patch), so the receiving side compares a plain string against this
+constant rather than calling `isPermissionDeniedError` on a live Error instance.
+*/
+export const PERMISSION_DENIED_ERROR_CODE = "PERMISSION_DENIED" as const;
+
+export class PermissionDeniedError extends Error {
+  readonly code = PERMISSION_DENIED_ERROR_CODE;
+
+  constructor(
+    /** The actor that was denied. `null` when no actor could be resolved at all. */
+    public readonly actorId: string | null,
+    /** The catalog permission that was required, e.g. `tasks:delete`. */
+    public readonly permission: string,
+    /** Optional resource the permission was evaluated against. */
+    public readonly resource?: string,
+    /** Why the denial happened, when it is not simply "grant absent". */
+    public readonly reason?: string,
+  ) {
+    const who = actorId ?? "unresolved actor";
+    const where = resource ? ` on ${resource}` : "";
+    const why = reason ? ` (${reason})` : "";
+    super(`${who} is not permitted to ${permission}${where}${why}`);
+    this.name = "PermissionDeniedError";
+  }
+}
+
+/**
+ * Structural type guard for `PermissionDeniedError`.
+ *
+ * FNXC:Authorization 2026-08-09-03:04: Matches on the `code` discriminant rather than
+ * `instanceof`, because the error crosses package boundaries (core -> engine -> dashboard)
+ * where duplicate module instances would defeat a prototype check.
+ */
+export function isPermissionDeniedError(error: unknown): error is PermissionDeniedError {
+  return (
+    error instanceof Error &&
+    (error as { code?: unknown }).code === PERMISSION_DENIED_ERROR_CODE
+  );
+}
+
 /**
  * FNXC:TaskLookup404 2026-07-26-11:20:
  * Requirement: a task-detail read for a task that does not exist must surface as

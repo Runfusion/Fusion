@@ -89,7 +89,14 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
 /* FNXC:OverlapWaitSynchronization 2026-09-17-00:22: advance the ceiling so an upgraded project has the durable wait table before any overlap-marker transition tries to record into it. Renumbered 0074->0084 (2026-09-18): upstream's own migrations 0074 (FN-323 project notes) through 0083 (FN-514) are absent from this branch by design (it excludes their source commits), but the numeric slots are real and must not be reused, or a database that ran the real 0074..0083 would be misread as compatible with this branch's different 0074. */
-export const SCHEMA_BASELINE_VERSION = "0085";
+/*
+FNXC:Identity 2026-09-19-00:00:
+Identity actors/credentials/sessions/grants (FN-8821 stack 1/5) cannot reuse 0060-0066 — this rebase onto
+the post-force-push main already claims through 0085 (the excluded-upstream-feature-schema relocation).
+Renumbered 0047->0059->0060->0061->0066->0086 across every rebase because each prior number was claimed
+by a landed main migration by the time this slice rebased. Ceiling is 0086.
+*/
+export const SCHEMA_BASELINE_VERSION = "0086";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -279,6 +286,20 @@ export const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION = "0085";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
+
+/**
+ * FNXC:Identity 2026-08-15-22:52:
+ * The identity schema's own immutable bookkeeping identity. Renumbered 0047 -> 0059 -> 0060 -> 0061
+ * across refreshes from main, each time because main had landed its own migration at the number this
+ * branch was holding. Two migrations sharing one identity means whichever check runs first records
+ * the version and marks the OTHER already-applied, so the identity tables would silently never be
+ * created on an upgraded database while a fresh one looked fine. A per-migration identity is
+ * immutable only once RELEASED; this one has not been.
+ * FNXC:Identity 2026-08-23-22:39: main shipped 0061-0065 after this slice, so identity is 0066.
+ * FNXC:Identity 2026-09-19-00:00: rebased onto the post-force-push main, which claims 0060-0085 for its
+ * own landed migrations (including the excluded-upstream-feature-schema relocation at 0085); identity is 0086.
+ */
+export const IDENTITY_ACTORS_VERSION = "0086";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -545,6 +566,8 @@ const TASK_PLANNING_FAILURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_9273_
 const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_fn_9275_chat_messages_session_recency_index.sql");
 const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0084_fn_332_overlap_sync.sql");
 const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0085_drop_excluded_upstream_feature_schema.sql");
+/* FNXC:Identity 2026-09-19-00:00: renumbered 0066->0086 rebasing FN-8821 stack 1/5 onto the post-force-push main, which claims every slot through 0085. */
+const IDENTITY_ACTORS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0086_fn_identity_actors.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -690,6 +713,7 @@ export async function applySchemaBaseline(
     const chatMessagesSessionRecencyIndexAlreadyApplied = applied.includes(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION);
     const overlapWaitSyncAlreadyApplied = applied.includes(OVERLAP_WAIT_SYNC_VERSION);
     const dropExcludedUpstreamFeatureSchemaAlreadyApplied = applied.includes(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION);
+    const identityActorsAlreadyApplied = applied.includes(IDENTITY_ACTORS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1631,6 +1655,19 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:Identity 2026-09-19-00:00:
+    Identity storage is additive: it never touches the dead-looking project_auth_* tables, whose live
+    writer is the SQLite→Postgres cutover migrator (a missing target there is a fail-closed startup
+    error, so dropping them would brick legacy upgrades). Apply LAST (0086) so upgraded databases that
+    already recorded every other slot through 0085 still receive the identity tables.
+    */
+    if (!identityActorsAlreadyApplied) {
+      const migrationSql = await readFile(IDENTITY_ACTORS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${IDENTITY_ACTORS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
