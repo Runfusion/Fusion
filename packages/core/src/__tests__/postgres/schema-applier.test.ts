@@ -116,6 +116,7 @@ import {
   PATCHNODE_ENTRIES_VERSION,
   TASK_PLANNING_FAILURE_VERSION,
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+  OVERLAP_WAIT_SYNC_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -1918,6 +1919,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2017,6 +2019,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
     ]);
   });
 
@@ -2249,6 +2252,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
     ]);
   });
 
@@ -2362,6 +2366,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
     ]);
   });
 
@@ -2475,6 +2480,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
+      OVERLAP_WAIT_SYNC_VERSION,
     ]);
   });
 });
