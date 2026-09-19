@@ -501,6 +501,8 @@ export interface ServerOptions {
   /** Daemon mode configuration with bearer token authentication.
    *  When provided, all API requests (except /api/health) require valid bearer token. */
   daemon?: { token: string };
+  /** Host/project-scoped SHA-256 collector credentials. Omit to disable external ingestion; env fallback is FUSION_EXTERNAL_SESSION_COLLECTORS. */
+  externalSessionCollectors?: readonly import("./routes/external-session-collector-auth.js").ExternalSessionCollectorCredential[];
   /** Explicitly disable bearer-token auth, ignoring FUSION_DAEMON_TOKEN /
    *  FUSION_DASHBOARD_TOKEN env vars. Used by `fn dashboard --no-auth` so a
    *  stale token in a project .env doesn't silently override the flag. */

@@ -1597,6 +1597,25 @@ describe("AgentsView", () => {
   });
 
   describe("view toggle (list/board)", () => {
+    it("loads a saved remote view without managed-agent requests and resumes them in list view", async () => {
+      localStorage.setItem("fn-agent-view", "remote");
+      renderView(<AgentsView addToast={mockAddToast} />);
+      expect(await screen.findByRole("button", { name: "Remote agents" })).toHaveAttribute("aria-pressed", "true");
+      expect(mockFetchAgents).not.toHaveBeenCalled();
+      expect(mockFetchAgentStats).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTitle("List view"));
+      await waitFor(() => expect(mockFetchAgents).toHaveBeenCalled());
+      expect(mockFetchAgentStats).toHaveBeenCalled();
+    });
+
+    it("limits the remote view to monitoring and feedback without local agent controls", async () => {
+      renderView(<AgentsView addToast={mockAddToast} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Remote agents" }));
+      expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Controls" })).toBeNull();
+      expect(screen.getAllByRole("button", { name: "Refresh" })).toHaveLength(1);
+    });
     it("can toggle between list and board view", async () => {
       renderView(<AgentsView addToast={mockAddToast} />);
 
