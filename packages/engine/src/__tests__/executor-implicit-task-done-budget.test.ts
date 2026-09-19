@@ -3,6 +3,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { executorLog } from "../logger.js";
 import { createMockStore, mockedCreateFnAgent, resetExecutorMocks } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 function refusal() {
   return {
@@ -51,8 +53,8 @@ describe("FN-4946 implicit refusal budget handling", () => {
       paused: false,
       pausedByAgentId: null,
       sessionFile: null,
-    }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4946-B", "todo", { preserveProgress: true });
+    }), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4946-B", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
     expect(executorLog.error).toHaveBeenCalledWith(expect.stringContaining("(implicit completion)"));
   });
 
@@ -69,9 +71,9 @@ describe("FN-4946 implicit refusal budget handling", () => {
     // terminal + self-healing-exemption marker; the legacy FN-1284 move-to-in-review escalation was
     // superseded. The protected invariant — budget exhaustion is terminal, not another requeue — holds
     // via the failed parking + persisted token usage.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4946-B", expect.objectContaining({ status: "failed", worktree: null, branch: null }));
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B", "in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B", "todo", { preserveProgress: true });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4946-B", expect.objectContaining({ status: "failed", worktree: null, branch: null }), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B", "in-review", undefined, ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
     expect(persistSpy).toHaveBeenCalledWith("FN-4946-B");
   });
 
@@ -108,7 +110,7 @@ describe("FN-4946 implicit refusal budget handling", () => {
     // move-to-in-review — the legacy FN-1284 escalation was superseded by the failure-in-place model). The
     // budget-sharing invariant is proven by the terminal failed update carrying no further taskDoneRetryCount
     // bump, and by the absence of a second todo requeue for the implicit refusal.
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B2", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B2", "in-review", undefined, ANY_MUTATION_CONTEXT);
     const implicitEscalationUpdate = store.updateTask.mock.calls.find(
       ([id, patch]: [string, Record<string, unknown>]) =>
         id === "FN-4946-B2" && patch.status === "failed" && !("taskDoneRetryCount" in patch),
@@ -170,7 +172,7 @@ describe("FN-4946 implicit refusal budget handling", () => {
         preserveProgress: true,
         workflowMoveSource: "workflow-graph",
         workflowMoveMetadata: expect.objectContaining({ fromColumn: "in-progress" }),
-      }),
+      }), ANY_MUTATION_CONTEXT,
     );
     const retryBumpCalls = store.updateTask.mock.calls.filter(([, patch]: [string, Record<string, unknown>]) => typeof patch.taskDoneRetryCount === "number" && patch.taskDoneRetryCount > 1);
     expect(retryBumpCalls).toHaveLength(0);

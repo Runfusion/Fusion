@@ -1,4 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../../self-healing.js";
@@ -99,7 +107,7 @@ describe("FN-5704: reclaim self-owned resume limbo escalation", () => {
       preserveWorktree: true,
       preserveProgress: true,
       preserveResumeState: true,
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(task.resumeLimboCount).toBe(0);
     const limboEvent = (store.recordRunAuditEvent as any).mock.calls.find((call: any[]) => call[0].mutationType === "task:resume-limbo-escalated")?.[0];
     expect(limboEvent).toBeTruthy();

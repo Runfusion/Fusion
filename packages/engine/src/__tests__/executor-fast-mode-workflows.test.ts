@@ -6,6 +6,7 @@
 // standard / undefined executionMode data states, and the executor tool
 // injection surface (fn_review_step is deleted in both modes) vs mandatory fn_task_done.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import "./executor-test-helpers.js";
 import { FAST_LANE_STEP_NAME, getBuiltinWorkflow } from "@fusion/core";
 import { TaskExecutor } from "../executor.js";
@@ -287,7 +288,7 @@ describe("fast mode workflow/runtime invariants", () => {
       "FN-6226",
       "Fast mode — custom graph node 'custom-review' skipped",
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -877,7 +878,7 @@ describe("fast mode workflow/runtime invariants", () => {
       "FN-7271",
       expect.stringContaining("Workflow merge boundary blocked: no pre-merge node result recorded"),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
   });
 
@@ -951,9 +952,9 @@ describe("fast mode workflow/runtime invariants", () => {
       "FN-1165-NOOP",
       expect.stringContaining("implementation did not run"),
       undefined,
-      undefined,
+      ANY_MUTATION_CONTEXT,
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }), ANY_MUTATION_CONTEXT);
   });
 
   it("fast builtin:coding ignores plan headings and executes one synthetic occurrence", async () => {

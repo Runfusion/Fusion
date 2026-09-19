@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -165,7 +173,7 @@ describe("FN-6736: phantom executor binding reclaim", () => {
       recoveryRehome: true,
       preserveProgress: true,
       preserveWorktree: true,
-    }));
+    }), UNATTRIBUTED_MUTATION_CONTEXT);
     expect(h.task.column).toBe("todo");
     expect(h.task.userPaused).toBe(false);
     expect(h.task.paused).toBe(false);

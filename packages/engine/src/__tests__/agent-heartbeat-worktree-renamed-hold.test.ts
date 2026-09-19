@@ -22,6 +22,7 @@ three consecutive failures — still writing the literal.
 Written against the literal implementation and observed FAILING first.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { Agent, AgentHeartbeatRun, WorkflowIr } from "@fusion/core";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
 import * as worktreeAcquisition from "../worktree/worktree-acquisition.js";
@@ -106,7 +107,7 @@ describe("heartbeat worktree-acquisition requeue under a renamed hold column", (
 
     await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
 
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "drafting", { preserveProgress: true });
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "drafting", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
     expect(taskStore.moveTask).not.toHaveBeenCalledWith("FN-1", "todo", expect.anything());
   });
 
@@ -137,7 +138,7 @@ describe("heartbeat worktree-acquisition requeue under a renamed hold column", (
     expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "drafting", {
       preserveProgress: true,
       preserveStatus: true,
-    });
+    }, ANY_MUTATION_CONTEXT);
     expect(taskStore.moveTask).not.toHaveBeenCalledWith("FN-1", "todo", expect.anything());
   });
 
@@ -153,6 +154,6 @@ describe("heartbeat worktree-acquisition requeue under a renamed hold column", (
 
     await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
 
-    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true });
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true }, ANY_MUTATION_CONTEXT);
   });
 });

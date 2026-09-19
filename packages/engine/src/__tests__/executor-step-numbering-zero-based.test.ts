@@ -10,6 +10,8 @@ import {
   mockedExistsSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than dropping the argument. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const mockedReviewStep = vi.mocked(mockedReviewStepFn);
 
@@ -121,7 +123,7 @@ describe("executor tool step numbering is 0-based", () => {
     expect(store.updateStep).toHaveBeenCalledWith("FN-6607-R", 1, "done");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-6607-R",
-      expect.stringContaining("Step 1 (First) recovered as done on resume"),
+      expect.stringContaining("Step 1 (First) recovered as done on resume"), undefined, ANY_MUTATION_CONTEXT,
     );
   });
 

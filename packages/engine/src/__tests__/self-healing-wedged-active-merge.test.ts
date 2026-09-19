@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Settings, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 import { DEFAULT_MERGING_PHASE_SILENCE_FLOOR_MS } from "../merge/merge-reclaim-policy.js";
@@ -118,7 +126,7 @@ describe("SelfHealingManager wedged active merge recovery", () => {
     expect(tasks.get("FN-WEDGE")?.status).toBeNull();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-WEDGE",
-      expect.stringContaining("wedged active merge reclaimed"),
+      expect.stringContaining("wedged active merge reclaimed"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(auditEvents).toEqual(
       expect.arrayContaining([

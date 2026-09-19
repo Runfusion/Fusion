@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 import type { Settings, Task, TaskDetail, TaskStore } from "@fusion/core";
 import { TaskDeletedError } from "@fusion/core";
 
@@ -166,7 +167,7 @@ describe("triage soft-delete write abort", () => {
     const processor = new TriageProcessor(store, "/tmp/root");
     await expect(processor.specifyTask(createTask())).resolves.toBeUndefined();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-5208", { status: "planning" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-5208", { status: "planning" }, ANY_MUTATION_CONTEXT);
     expect(mockPromptWithFallback).toHaveBeenCalled();
     expect(dispose).toHaveBeenCalledTimes(1);
   });

@@ -1,4 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2):
+These call-arg assertions now include the mutation context the converted sweep passes.
+Adding it is what keeps them load-bearing: left at the old arity every
+`toHaveBeenCalledWith` here would fail, and every `.not.toHaveBeenCalledWith` would pass
+vacuously — an assertion that can no longer fail is worse than one that is red.
+*/
+import { UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { Task, TaskStore } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { SelfHealingManager } from "../../self-healing.js";
@@ -107,7 +115,7 @@ describe("reliability interactions: self-healing", () => {
     expect(tasks.get(taskId)?.branch ?? null).toBeNull();
     expect(store.logEntry).toHaveBeenCalledWith(
       taskId,
-      expect.stringContaining("Auto-recovered (no-progress): session-start refused unusable worktree"),
+      expect.stringContaining("Auto-recovered (no-progress): session-start refused unusable worktree"), undefined, UNATTRIBUTED_MUTATION_CONTEXT,
     );
     expect(tasks.get(taskId)?.worktreeSessionRetryCount).toBe(1);
   });

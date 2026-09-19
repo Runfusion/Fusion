@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
@@ -420,7 +421,7 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("merge aborts when build fails via fn_report_build_failure tool", async () => {
@@ -483,8 +484,7 @@ describe("aiMergeTask — build verification", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       "Build verification failed during merge",
-      "Type error in src/utils.ts",
-    );
+      "Type error in src/utils.ts", ANY_MUTATION_CONTEXT);
   });
 
   it("logs warning when git reset --merge fails during build-verification rollback", async () => {
@@ -559,7 +559,7 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("merge proceeds when buildCommand is empty string (treated as undefined)", async () => {
@@ -583,7 +583,7 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
   });
 
   function setupDependencySyncVerificationScenario({
@@ -670,8 +670,7 @@ describe("aiMergeTask — build verification", () => {
     expect(installCall).toBeDefined();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      "Syncing dependencies before merge verification: pnpm install --frozen-lockfile",
-    );
+      "Syncing dependencies before merge verification: pnpm install --frozen-lockfile", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("syncs dependencies before test verification when install state is missing", async () => {
@@ -709,8 +708,7 @@ describe("aiMergeTask — build verification", () => {
     ).toBe(false);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      "Syncing dependencies before merge verification: pnpm run setup:merge",
-    );
+      "Syncing dependencies before merge verification: pnpm run setup:merge", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("runs the configured worktree init command before verification when install state is missing", async () => {
@@ -1051,8 +1049,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("Deterministic test verification failed"),
-      "VerificationError",
-    );
+      "VerificationError", ANY_MUTATION_CONTEXT);
 
     // Verify log entry contains summary (not raw output) with engine logs reference
     const logCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls;
@@ -1108,11 +1105,10 @@ describe("aiMergeTask — deterministic merge verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      expect.stringMatching(/^\[timing\] \[verification\] test command succeeded \(exit 0(?:, output exceeded buffer)?\) in \d+ms$/),
-    );
+      expect.stringMatching(/^\[timing\] \[verification\] test command succeeded \(exit 0(?:, output exceeded buffer)?\) in \d+ms$/), undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("fails merge when buildCommand fails and does not move task to done", async () => {
@@ -1909,7 +1905,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(verificationCalls).toContain("pnpm test");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
   });
 
   it("logs that test command was inferred from project files", async () => {
@@ -1999,8 +1995,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("test verification failed"),
-      "VerificationError",
-    );
+      "VerificationError", ANY_MUTATION_CONTEXT);
   });
 
   it("explicit settings.testCommand takes precedence over inferred command", async () => {
@@ -2086,7 +2081,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     expect(verificationCalls).toHaveLength(0);
     // Merge should still succeed
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", undefined, ANY_MUTATION_CONTEXT);
   });
 });
 

@@ -42,7 +42,15 @@ describe("claimDueWorkflowWorkItem", () => {
     }, { leaseOwner: "worker", leaseDurationMs: 1000 });
     expect(result).toBeNull();
     expect(acquireWorkflowWorkItemLease).not.toHaveBeenCalled();
-    expect(logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("mission lineage blocked"));
+    /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): the seam now RESTATES the required mutation
+       context, so the refusal breadcrumb is asserted at the canonical store arity — including that
+       an unattributed admission refusal is marked as such rather than silently attributed. */
+    expect(logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("mission lineage blocked"),
+      undefined,
+      expect.objectContaining({ actor: expect.objectContaining({ actor: expect.objectContaining({ id: "system:unattributed" }) }) }),
+    );
   });
 
   it("claims a rehomed task through its canonical feature instead of stale follow-up lineage", async () => {

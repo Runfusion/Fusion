@@ -5,6 +5,7 @@
  * must persist an explicit advisor-off override and clear live advisor state.
  */
 import { describe, expect, it, vi } from "vitest";
+import { ANY_MUTATION_CONTEXT, UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { resolveTaskSessionAdvisorEnabled, type Task } from "@fusion/core";
 import { ProjectEngine } from "../project-engine.js";
 
@@ -58,7 +59,7 @@ describe("ProjectEngine.stopOverseerTask session advisor cleanup", () => {
     expect(updateTask).toHaveBeenCalledWith(task.id, {
       plannerOversightLevel: "off",
       sessionAdvisorEnabled: false,
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(result.task?.sessionAdvisorEnabled).toBe(false);
     expect(clear).toHaveBeenCalledWith(task.id);
     expect(cursor.has(task.id)).toBe(false);

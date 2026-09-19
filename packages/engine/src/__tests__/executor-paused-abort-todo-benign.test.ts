@@ -3,6 +3,8 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 import type { TaskDetail } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage C): the executor threads a real mutation context to every store call, so these assertions pin it rather than accepting `undefined`. */
+import { ANY_MUTATION_CONTEXT } from "./mutation-context-matchers.js";
 
 const now = "2026-06-20T00:00:00.000Z";
 
@@ -691,7 +693,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       graphResumeRetryCount: 1,
       status: null,
       error: null,
-    }, undefined);
+    }, ANY_MUTATION_CONTEXT);
     expect((executor as any).pausedAborted.has(task.id)).toBe(false);
     expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -727,7 +729,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       graphResumeRetryCount: 1,
       status: null,
       error: null,
-    }, undefined);
+    }, ANY_MUTATION_CONTEXT);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:retry-stale-in-review-parse-pause-abort-replay",
       metadata: expect.objectContaining({ nodeId: "parse", clearedStaleFailure: true }),

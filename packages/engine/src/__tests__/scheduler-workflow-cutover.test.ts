@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeTransitionRejection, TransitionRejectionError, buildBootstrapPrompt, type Task, type TaskStore, type WorkflowIr } from "@fusion/core";
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Scheduler } from "../scheduler.js";
@@ -260,7 +261,7 @@ describe("Scheduler workflow cutover", () => {
       mergeRetries: 0,
       effectiveNodeId: null,
       effectiveNodeSource: "local",
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-100", column: "in-progress" }));
   });
 
@@ -410,10 +411,12 @@ describe("Scheduler workflow cutover", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-202", expect.objectContaining({
       status: null,
       effectiveNodeSource: "local",
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-202",
       "Node routing resolved: local (source: local)",
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -573,12 +576,51 @@ describe("Scheduler workflow cutover", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
       expect.stringContaining("gate=maxWorktrees; effectiveLimit=1 (bindingKnob=maxWorktrees); maxConcurrent used=1/4"),
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-002",
       expect.stringContaining("maxWorktrees used=1/1"),
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }));
+    expect(ready.column).toBe("todo");
+  });
+
+  it.each<[string, Partial<Task>]>([
+    ["singular", { worktree: "/tmp/project/.worktrees/fn-replan" }],
+    ["workspace", {
+      workspaceWorktrees: {
+        "packages/core": {
+          worktreePath: "/tmp/project/.worktrees/fn-replan/core",
+          branch: "fusion/fn-replan-core",
+        },
+      },
+    }],
+  ])("keeps a retained needs-replan %s checkout in scheduler worktree capacity", async (_kind, checkout) => {
+    const retainedReplan = task({
+      id: "FN-REPLAN",
+      status: "needs-replan",
+      ...checkout,
+    });
+    const ready = task({ id: "FN-READY", status: "queued" });
+    const store = storeWith([retainedReplan, ready], { maxConcurrent: 4, maxWorktrees: 1 });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-READY", "in-progress", expect.anything(), expect.anything());
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-READY",
+      expect.stringContaining("maxWorktrees used=1/1"),
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
+    );
+    expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-READY" }));
     expect(ready.column).toBe("todo");
   });
 
@@ -593,14 +635,18 @@ describe("Scheduler workflow cutover", () => {
     await scheduler.schedule();
 
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-200", "in-progress", expect.anything(), expect.anything());
-    expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: "queued" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-200", { status: "queued" }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
       expect.stringContaining("gate=maxWorktrees; effectiveLimit=4 (bindingKnob=maxWorktrees); maxConcurrent used=5/10"),
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-200",
       expect.stringContaining("maxWorktrees used=5/4"),
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
@@ -747,6 +793,8 @@ describe("Scheduler workflow cutover", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-402",
       expect.stringContaining("gate=maxWorktrees; effectiveLimit=4 (bindingKnob=maxWorktrees); maxConcurrent used=4/10"),
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(onSchedule).toHaveBeenCalledTimes(1);
   });
@@ -878,6 +926,8 @@ describe("Scheduler workflow cutover", () => {
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-002",
       expect.stringContaining("Node routing resolved"),
+      undefined,
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");

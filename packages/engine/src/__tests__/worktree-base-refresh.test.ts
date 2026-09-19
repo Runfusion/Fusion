@@ -1,3 +1,5 @@
+/* FNXC:Identity 2026-08-09-03:04 (U18 Stage B): the refresh helper now requires a mutation context; supply the executor lane and assert it reaches the store rather than dropping the argument from the expectation. */
+import { mutationContextForAgent } from "@fusion/core";
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,11 +36,11 @@ describe("refreshReusedWorktreeBase", () => {
     const { root, worktree, c0, c1 } = fixture();
     const store = { updateTask: vi.fn().mockResolvedValue(undefined) } as any;
     const result = await refreshReusedWorktreeBase({
-      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {},
+      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {}, runContext: mutationContextForAgent("executor"),
     });
     expect(result).toMatchObject({ kind: "reset-to-base", executionSafe: true, baseSha: c1 });
     expect(git(worktree, "rev-parse HEAD")).toBe(c1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { baseCommitSha: c1 });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { baseCommitSha: c1 }, mutationContextForAgent("executor"));
   });
 
   it("uses the workspace baseline port without writing the singular task baseline", async () => {
@@ -66,20 +68,20 @@ describe("refreshReusedWorktreeBase", () => {
     git(worktree, "add implementation.ts && git commit -m C2");
     const store = { updateTask: vi.fn().mockResolvedValue(undefined) } as any;
     const result = await refreshReusedWorktreeBase({
-      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {},
+      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {}, runContext: mutationContextForAgent("executor"),
     });
     const c2 = git(worktree, "rev-parse HEAD");
     expect(result).toMatchObject({ kind: "rebased", executionSafe: true, baseSha: c1, observedHead: c2 });
     expect(c2).not.toBe(c1);
     expect(git(worktree, `merge-base --is-ancestor ${c1} ${c2}; echo $?`)).toBe("0");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { baseCommitSha: c1 });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { baseCommitSha: c1 }, mutationContextForAgent("executor"));
   });
 
   it("returns the compensated persistence failure after restoring C0", async () => {
     const { root, worktree, c0 } = fixture();
     const store = { updateTask: vi.fn().mockRejectedValue(new Error("database unavailable")) } as any;
     const result = await refreshReusedWorktreeBase({
-      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {},
+      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {}, runContext: mutationContextForAgent("executor"),
     });
     expect(result.kind).toBe("base-persistence-failed-compensated");
     expect(git(worktree, "rev-parse HEAD")).toBe(c0);
@@ -90,10 +92,10 @@ describe("refreshReusedWorktreeBase", () => {
     git(worktree, `reset --hard ${c1}`);
     const store = { updateTask: vi.fn().mockResolvedValue(undefined) } as any;
     const result = await refreshReusedWorktreeBase({
-      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {},
+      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {}, runContext: mutationContextForAgent("executor"),
     });
     expect(result).toMatchObject({ kind: "up-to-date", executionSafe: true, baseSha: c1 });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { baseCommitSha: c1 });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", { baseCommitSha: c1 }, mutationContextForAgent("executor"));
   });
 
   it("skips a dirty checkout without changing the durable baseline, and stays execution-safe", async () => {
@@ -101,7 +103,7 @@ describe("refreshReusedWorktreeBase", () => {
     writeFileSync(join(worktree, "dirty.txt"), "keep me\n");
     const store = { updateTask: vi.fn().mockResolvedValue(undefined) } as any;
     const result = await refreshReusedWorktreeBase({
-      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {},
+      task: { id: "FN-1", baseCommitSha: c0 } as any, rootDir: root, worktreePath: worktree, store, settings: {}, runContext: mutationContextForAgent("executor"),
     });
     expect(result).toMatchObject({ kind: "dirty-worktree", executionSafe: true, skipped: true });
     expect(store.updateTask).not.toHaveBeenCalled();
