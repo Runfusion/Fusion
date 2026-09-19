@@ -51,6 +51,8 @@ const dashboardClientDest = join(__dirname, "dist", "client");
 // the migration SQL must be staged into dist/migrations to remain resolvable.
 const pgMigrationsSrc = join(__dirname, "..", "core", "src", "postgres", "migrations");
 const pgMigrationsDest = join(__dirname, "dist", "migrations");
+const remoteAgentAssetsSrc = join(workspaceRoot, "scripts", "remote-agents");
+const remoteAgentAssetsDest = join(__dirname, "dist", "remote-agents");
 const piClaudeCliSrc = join(__dirname, "..", "pi-claude-cli");
 const piClaudeCliDest = join(__dirname, "dist", "pi-claude-cli");
 const droidCliSrc = join(__dirname, "..", "droid-cli");
@@ -491,6 +493,11 @@ const cliBuildConfig = {
       mkdirSync(pgMigrationsDest, { recursive: true });
       cpSync(pgMigrationsSrc, pgMigrationsDest, { recursive: true });
       console.log("Copied PostgreSQL migrations to dist/migrations/");
+      // FNXC:RemoteAgents 2026-09-18-06:04: Ship independent host tools with Fusion. Explicit source names prevent private tokens/spools or parser caches from entering an artifact.
+      mkdirSync(remoteAgentAssetsDest, { recursive: true });
+      for (const asset of ["collector.py", "native_parser.py", "opaque_records.py", "feedback_hook.py", "install_hooks.py", "README.md"]) {
+        cpSync(join(remoteAgentAssetsSrc, asset), join(remoteAgentAssetsDest, asset));
+      }
     } else {
       console.warn(
         `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply schema migrations.`,

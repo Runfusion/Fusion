@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
+import { pgTable, text } from "drizzle-orm/pg-core";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 import { acquireSchemaMutationLocks } from "./advisory-locks.js";
 import { createLogger } from "../process/logger.js";
@@ -89,7 +90,15 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
 /* FNXC:OverlapWaitSynchronization 2026-09-17-00:22: advance the ceiling so an upgraded project has the durable wait table before any overlap-marker transition tries to record into it. Renumbered 0074->0084 (2026-09-18): upstream's own migrations 0074 (FN-323 project notes) through 0083 (FN-514) are absent from this branch by design (it excludes their source commits), but the numeric slots are real and must not be reused, or a database that ran the real 0074..0083 would be misread as compatible with this branch's different 0074. */
-export const SCHEMA_BASELINE_VERSION = "0085";
+/**
+ * FNXC:ExternalSessions 2026-09-19-00:00: Register additive standalone remote-agent observation
+ * storage on fresh databases and upgrades. Renumbered 0084->0086 (2026-09-19): origin/main's own
+ * migrations 0084 (FN-332 overlap sync) and 0085 (excluded-upstream-feature relocation) already
+ * claim those slots on this rebase target, so external-session ingestion and its feedback queue
+ * move to 0086/0087 rather than colliding with them.
+ */
+export const SCHEMA_BASELINE_VERSION = "0087";
+export const EXTERNAL_SESSIONS_VERSION = "0086";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -354,6 +363,7 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
+const migrationBookkeeping = pgTable(MIGRATION_BOOKKEEPING_TABLE, { version: text("version").primaryKey() });
 
 /*
 FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
@@ -397,6 +407,8 @@ function resolveMigrationsDir(): string {
 }
 
 const MIGRATIONS_DIR = resolveMigrationsDir();
+const EXTERNAL_SESSIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0086_external_sessions.sql");
+const EXTERNAL_SESSION_FEEDBACK_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_external_session_feedback.sql");
 const BASELINE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0000_initial.sql");
 const AUTOMATION_ISOLATION_MIGRATION_PATH = join(
   MIGRATIONS_DIR,
@@ -1631,6 +1643,52 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    // FNXC:ExternalSessions 2026-09-19-00:00: Probe the full column contract; a ledger row alone cannot prove a restored schema is usable.
+    const externalSessionsMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.tasks') IS NOT NULL AND EXISTS (
+        SELECT 1 FROM (VALUES
+          ('external_session_hosts', 'project_id'),
+          ('external_session_hosts', 'host_id'),
+          ('external_session_hosts', 'collector_version'),
+          ('external_session_hosts', 'last_heartbeat_at'),
+          ('external_session_streams', 'project_id'),
+          ('external_session_streams', 'host_id'),
+          ('external_session_streams', 'stream_id'),
+          ('external_session_streams', 'acknowledged_sequence'),
+          ('external_session_streams', 'last_event_id'),
+          ('external_session_streams', 'last_event_digest'),
+          ('external_session_streams', 'acknowledged_at'),
+          ('external_sessions', 'project_id'),
+          ('external_sessions', 'id'),
+          ('external_sessions', 'host_id'),
+          ('external_sessions', 'provider'),
+          ('external_sessions', 'native_session_id'),
+          ('external_sessions', 'origin'),
+          ('external_sessions', 'revision'),
+          ('external_sessions', 'observation'),
+          ('external_sessions', 'observation_digest'),
+          ('external_sessions', 'received_at')
+        ) AS required(table_name, column_name)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM information_schema.columns actual
+          WHERE actual.table_schema = 'project' AND actual.table_name = required.table_name
+            AND actual.column_name = required.column_name
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSIONS_VERSION) || externalSessionsMissing) {
+      const migrationSql = await readFile(EXTERNAL_SESSIONS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.insert(migrationBookkeeping).values({ version: EXTERNAL_SESSIONS_VERSION }).onConflictDoNothing();
+      schemaChanged = true;
+    }
+    // FNXC:RemoteAgents 2026-09-19-00:00: Feedback has its own forward identity after this rebase's 0084/0085 renumber; never reuse the overlap-sync/excluded-feature-schema bookkeeping IDs.
+    const feedbackMissing = ((await tx.execute(sql`SELECT to_regclass('project.external_session_feedback') IS NULL AS missing`)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes("0087") || feedbackMissing) {
+      await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_FEEDBACK_MIGRATION_PATH, "utf8")));
+      await tx.insert(migrationBookkeeping).values({ version: "0087" }).onConflictDoNothing();
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
