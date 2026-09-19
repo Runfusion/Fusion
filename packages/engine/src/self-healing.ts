@@ -3214,7 +3214,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       for (const task of stale) {
         if ((this.autoArchiveFailures.get(task.id)?.count ?? 0) >= MAX_STARVATION_DROPS) continue;
         try {
-          await this.store.archiveTaskAndCleanup(task.id);
+          await this.store.archiveTaskAndCleanup(task.id, {
+            /*
+            FNXC:ArchiveLogAttribution 2026-09-04-11:50:
+            Retention sweeps used to write the same anonymous "Task archived" entry an operator's
+            manual archive wrote. Tag the sweep as `engine` (self-healing) so the cold snapshot
+            distinguishes automated retention from a human action.
+            */
+            agentId: "engine",
+            runId: `auto-archive-${task.id}-${Date.now()}`,
+            callerKind: "engine",
+          });
           this.autoArchiveFailures.delete(task.id);
           archived++;
           const ts = task.columnMovedAt || task.updatedAt;

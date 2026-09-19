@@ -2956,6 +2956,8 @@ export default function kbExtension(pi: ExtensionAPI) {
         const task = await store.archiveTask(params.id, {
           removeLineageReferences: params.removeLineageReferences === true,
           liveExecutionGuard: "refuse",
+          // FNXC:ArchiveLogAttribution: agent principal calling the extension tool.
+          auditContext: { agentId: "pi-extension", runId: `ext-archive-${params.id}-${Date.now()}`, taskId: params.id, callerKind: "agent-tool" },
         });
         return {
           content: [{ type: "text", text: `Archived ${task.id} → ${columnLabel(task.column)}` }],

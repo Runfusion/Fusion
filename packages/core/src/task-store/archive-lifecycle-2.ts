@@ -40,7 +40,46 @@ import {disposeArchivedWorkspaceWorktrees, disposeArchivedWorktree, prepareArchi
 import {resolveArchiveLivenessWipLanes, TaskIsLiveError} from "../tasks/task-archive-liveness.js";
 import {writePromptFileAtomic} from "./prompt-file.js";
 
-export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
+/**
+ * FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+ * THE ONE PLACE the cold-log action string is formatted. The initial entry build and the
+ * in-transaction re-anchor must produce byte-identical lines for the same column, so the format
+ * lives here instead of being restated at the second call site, where it could silently drift.
+ */
+export function archiveLogActionForOriginColumn(column: string, auditContext?: TaskDeleteAuditContext): string {
+  return `Task archived from ${column} by ${auditContext?.callerKind ?? "api-unattributed"} (${auditContext?.agentId ?? "system"})`;
+}
+
+/**
+ * FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+ * RE-ANCHOR A SNAPSHOT ONTO THE ROW THE ARCHIVE TRANSACTION READ. `entry` was built from a
+ * `getTask` taken before the transaction, so its origin column can name a lane the card had
+ * already left by the time the archive committed. `archiveParentTaskWithLineageGate` hands back
+ * that in-transaction column through `entryForOriginColumn`, and this rebuilds the two fields that
+ * carry the origin: the action string, and `preArchiveColumn` (the restore destination). `column`
+ * is the archive marker and is never touched.
+ *
+ * `reanchorPreArchiveColumn` is FALSE for a card that already carries captured history — that value
+ * is the lane the card was FIRST archived from and must not be overwritten by this archive's
+ * origin. A fresh archive passes TRUE, because its value is a copy of the pre-transaction read:
+ * exactly the copy this re-anchor exists to replace.
+ */
+export function withAuthoritativeArchiveOriginColumn(
+  entry: ArchivedTaskEntry,
+  originColumn: string,
+  auditContext: TaskDeleteAuditContext | undefined,
+  options: { reanchorPreArchiveColumn: boolean },
+): ArchivedTaskEntry {
+  return {
+    ...entry,
+    preArchiveColumn: options.reanchorPreArchiveColumn
+      ? originColumn as ArchivedTaskEntry["preArchiveColumn"]
+      : entry.preArchiveColumn,
+    log: [{ timestamp: entry.archivedAt, action: archiveLogActionForOriginColumn(originColumn, auditContext) }],
+  };
+}
+
+export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string, auditContext?: TaskDeleteAuditContext): Promise<ArchivedTaskEntry> {
     const settings = await store.getSettingsFast();
     const agentLogMode = settings.archiveAgentLogMode ?? "compact";
     const [prompt, agentLogFields] = await Promise.all([
@@ -103,7 +142,23 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       reviewState: task.reviewState,
       prompt,
       ...agentLogFields,
-      log: [{ timestamp: archivedAt, action: "Task archived" }],
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-04-11:50:
+      The single entry said only "Task archived" — no actor, no origin column, no caller class — so an
+      engine auto-archive sweep and an operator's manual archive produced byte-identical log lines and
+      the cold snapshot could not answer who or why. Reuses the TaskDeleteAttribution vocabulary; that
+      module's trust model applies unchanged (attribution, NOT authentication). Legacy snapshots keep
+      the plain action string, and log consumers render entries as free-form action strings, so both
+      shapes remain valid.
+
+      FNXC:ArchiveLogAttribution 2026-09-19-07:22: `task.column` here is the CALLER's read of the
+      row, not the row the archive transaction commits under. This is the initial value only;
+      `withAuthoritativeArchiveOriginColumn` re-anchors it inside the transaction.
+      */
+      log: [{
+        timestamp: archivedAt,
+        action: archiveLogActionForOriginColumn(task.column, auditContext),
+      }],
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       columnMovedAt: task.columnMovedAt,
@@ -475,11 +530,12 @@ async function archivedLanesForTask(store: TaskStore, taskId: string): Promise<R
   return lanes;
 }
 
-export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off" },): Promise<Task> {
+export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off"; auditContext?: TaskDeleteAuditContext },): Promise<Task> {
     const layer = store.asyncLayer!;
     const cleanup = typeof optionsOrCleanup === "boolean" ? optionsOrCleanup : optionsOrCleanup.cleanup !== false;
     const removeLineageRefs = typeof optionsOrCleanup === "object" && optionsOrCleanup.removeLineageReferences === true;
     const liveExecutionGuard = typeof optionsOrCleanup === "object" ? optionsOrCleanup.liveExecutionGuard ?? "off" : "off";
+    const auditContext = typeof optionsOrCleanup === "object" ? optionsOrCleanup.auditContext : undefined;
 
     // Read the task (forensic: include deleted for idempotency check).
     const task = await store.getTask(id);
@@ -499,7 +555,26 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     const archivedAt = new Date().toISOString();
 
     // Build the archive entry for cold storage.
-    const entry = await store.taskToArchiveEntry(task, archivedAt);
+    const entry = await store.taskToArchiveEntry(task, archivedAt, auditContext);
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+    `task` above is the archive REQUEST's read — taken before the transaction, before the workspace
+    disposal preparation, and before the lineage machinery, any of which can outlive a concurrent
+    move. The entry therefore goes into `archiveParentTaskWithLineageGate` as the initial value
+    only: the gate re-reads the row under the per-task advisory lock and hands that column back
+    through `entryForOriginColumn`, so the snapshot committed to cold storage names the lane the
+    commit actually landed under. Everything after the commit that derives from the entry — the
+    returned task, whose `preArchiveColumn` is the restore destination — uses the same re-anchored
+    copy.
+    */
+    const entryForOriginColumn = (originColumn: string) => withAuthoritativeArchiveOriginColumn(
+      entry,
+      originColumn,
+      auditContext,
+      /* A card that already carries captured history keeps it: `preArchiveColumn` is then the lane it
+         was FIRST archived from, not a copy of this request's stale read. */
+      { reanchorPreArchiveColumn: task.preArchiveColumn === undefined },
+    );
 
     /*
     FNXC:SelfHealing 2026-08-21-15:11:
@@ -521,6 +596,7 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
           removeLineageReferences: removeLineageRefs,
           now: archivedAt,
           archivedColumns: archiveLineageArchivedLanes,
+          entryForOriginColumn,
           ...(livenessWipLanes ? {livenessWipLanes} : {}),
           ...(context ? {
             revalidateAgainst: context.candidateIds,
@@ -575,8 +651,34 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     if (!result.archived) {
       if (preparedWorkspace) await releasePreparedWorkspaceArchiveDisposal(preparedWorkspace);
       if ("liveVerdict" in result) throw new TaskIsLiveError(id, result.liveVerdict.reasons);
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+      THE ROW THIS ARCHIVE WAS GOING TO FILE IS GONE. The transaction's authoritative read found
+      no live row, so there is no origin column to re-anchor to and no row for the soft-delete to
+      claim — a concurrent delete won the race. Reporting success here would put a phantom
+      snapshot in cold storage for a task this archive never owned, so it surfaces as the same
+      class of refusal as the lineage and liveness gates: a conflict the caller must see.
+
+      THE PHRASING IS LOAD-BEARING, and deliberately mirrors the pre-existing "already archived"
+      guard above. `POST /tasks/:id/archive` classifies this call by message — it maps
+      `TaskHasLineageChildrenError` to 409 and the "must be in" / "already archived" refusals to
+      400, and everything else to 500. A concurrent delete is a client-visible conflict, not an
+      internal failure, so the refusal has to land in an arm that route already understands;
+      `TaskNotFoundError`'s "not found" text would be answered 500 there. Changing this sentence
+      without changing the route changes the status code.
+      */
+      if ("missingRow" in result) {
+        throw new Error(`Cannot archive ${id}: task is already archived or was deleted before the archive transaction committed`);
+      }
       throw new TaskHasLineageChildrenError(id, result.liveChildIds);
     }
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+    The snapshot the committed transaction actually stored. `entry` is the pre-transaction copy and
+    is never returned to a caller from here — its origin column may name a lane the card left before
+    the archive landed.
+    */
+    const storedEntry = result.entry;
 
     // File-system cleanup if requested.
     const dir = store.taskDir(id);
@@ -637,7 +739,7 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
       reason: "archived",
     });
 
-    return store.archiveEntryToTask(entry, false);
+    return store.archiveEntryToTask(storedEntry, false);
   }
 
 /**

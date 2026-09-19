@@ -240,9 +240,9 @@ export async function archiveParentTaskWithLineageGate(
   layer: AsyncDataLayer,
   taskId: string,
   entry: ArchivedTaskEntry,
-  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void>; beforeLineageGate?: () => void | Promise<void>; archivedColumns?: ReadonlySet<string>; revalidateAgainst?: readonly string[]; promptByChildId?: ReadonlyMap<string, string>; evidenceTargetVersionForTest?: (childId: string, computed: number, attempt: number) => number; livenessWipLanes?: ReadonlySet<string> } = {},
+  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void>; beforeLineageGate?: () => void | Promise<void>; archivedColumns?: ReadonlySet<string>; revalidateAgainst?: readonly string[]; promptByChildId?: ReadonlyMap<string, string>; evidenceTargetVersionForTest?: (childId: string, computed: number, attempt: number) => number; livenessWipLanes?: ReadonlySet<string>; entryForOriginColumn?: (originColumn: string) => ArchivedTaskEntry } = {},
 
-): Promise<{ archived: true; lineageOutcome?: LineageRemovalOutcome } | { archived: false; liveChildIds: string[] } | { archived: false; liveVerdict: ArchiveLivenessVerdict }> {
+): Promise<{ archived: true; lineageOutcome?: LineageRemovalOutcome; entry: ArchivedTaskEntry } | { archived: false; liveChildIds: string[] } | { archived: false; liveVerdict: ArchiveLivenessVerdict } | { archived: false; missingRow: true }> {
   const now = options.now ?? new Date().toISOString();
 
   return layer.transactionImmediate(async (tx) => {
@@ -251,12 +251,42 @@ export async function archiveParentTaskWithLineageGate(
     Admission writers take this same advisory key before changing a task's lane. Re-read and decide
     under it so a CLI archive cannot win a todo-to-WIP race and destroy an executor's live worktree.
     */
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+    THE ROW THAT DECIDES, AND THE ROW THAT GETS RECORDED, ARE THE SAME READ. The archived snapshot
+    used to be built by the caller from a `getTask` taken OUTSIDE this transaction, while the guard
+    only re-read the row when `livenessWipLanes` was set — so a card that moved in between was filed
+    under a lane it had already left: the entry's `preArchiveColumn` (its restore destination) and
+    its `Task archived from <column> by ...` line both named the stale column, permanently, in cold
+    storage. `entryForOriginColumn` is the caller's re-anchor for that read.
+
+    The lock is now taken UNCONDITIONALLY, not only when the guard is configured. Attribution must
+    not depend on whether live-execution refusal is switched on, and the read below is only
+    authoritative because lane writers take this same key first: without it, READ COMMITTED lets a
+    concurrent move commit between this read and the soft-delete that follows.
+    */
+    await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
+    const live = await readTaskRowInTransaction(tx, taskId, undefined, layer.projectId);
     if (options.livenessWipLanes) {
-      await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
-      const live = await readTaskRowInTransaction(tx, taskId, undefined, layer.projectId);
       const verdict = decideArchiveLiveness({column: String(live?.column ?? ""), status: live?.status as string | null | undefined, wipLanes: options.livenessWipLanes});
       if (verdict.live) return {archived: false as const, liveVerdict: verdict};
     }
+    const originColumn = typeof live?.column === "string" ? live.column : undefined;
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-19-07:22 (a re-anchor needs a row to anchor to):
+    A CALLER THAT ASKED FOR THE AUTHORITATIVE COLUMN MUST NOT BE HANDED THE STALE ONE BACK. The
+    row read above is filtered to live rows, so a concurrent delete that commits after the
+    archive request's own read makes it absent — and falling back to `entry` would write the very
+    pre-transaction snapshot this re-anchor exists to stop writing, for a task that is gone, then
+    report success on a soft-delete that updated nothing. That is a CONFLICT, not a degraded
+    success, so it is reported as one; callers without a re-anchor keep their entry untouched.
+    */
+    if (originColumn === undefined && options.entryForOriginColumn) {
+      return {archived: false as const, missingRow: true as const};
+    }
+    const archivedEntry = originColumn !== undefined && options.entryForOriginColumn
+      ? options.entryForOriginColumn(originColumn)
+      : entry;
     // Test-only barrier is before this operation's single in-transaction lineage read.
     await options.beforeLineageGate?.();
     // 1. Lineage gate — check for live children inside the transaction.
@@ -281,7 +311,7 @@ export async function archiveParentTaskWithLineageGate(
 
     // 3. Archive snapshot to cold storage (VAL-CROSS-015 — preserves for restore).
     // FNXC:MultiProjectIsolation 2026-07-12: stamped with the bound project.
-    await upsertArchivedTaskEntry(tx, entry, layer.projectId);
+    await upsertArchivedTaskEntry(tx, archivedEntry, layer.projectId);
 
     // 4. Soft-delete the project row. Documents/artifacts are retained because
     //    this is an UPDATE, not a DELETE — the ON DELETE CASCADE FK does not
@@ -296,9 +326,12 @@ export async function archiveParentTaskWithLineageGate(
 
     // Preserve the public legacy success shape for direct callers; only the serialized boundary
     // supplies revalidation and needs the actual-clear outcome for post-commit reconciliation.
+    // FNXC:ArchiveLogAttribution 2026-09-19-07:22: `entry` is the snapshot this commit actually
+    // stored — the caller's re-anchored copy when it supplied one — so post-commit work cannot
+    // fall back to the pre-transaction read it was fixed to stop using.
     return options.revalidateAgainst === undefined
-      ? { archived: true as const }
-      : { archived: true as const, lineageOutcome };
+      ? { archived: true as const, entry: archivedEntry }
+      : { archived: true as const, lineageOutcome, entry: archivedEntry };
   });
 }
 

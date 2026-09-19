@@ -59,8 +59,15 @@ pgDescribe("archive project isolation", () => {
 
     await insertTaskRow(projectA, task("project A"), { lineageId: "lineage-a" });
     await insertTaskRow(projectB, task("project B"), { lineageId: "lineage-b" });
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+    The success shape now carries the snapshot the transaction actually stored, so the entry it was
+    handed is part of the committed result — these assertions are updated in the same change that
+    added the field, per the repository directive that a behaviour change updates every test that
+    pins the old shape.
+    */
     await expect(archiveParentTaskWithLineageGate(projectA, id, entry("project A"), { now }))
-      .resolves.toEqual({ archived: true });
+      .resolves.toEqual({ archived: true, entry: entry("project A") });
     /*
     FNXC:ArchiveProjectIsolation 2026-07-14-21:48:
     Comment, log, document, and artifact state gates must distinguish duplicate task IDs by project. Project A is archived here while project B remains live, making an unscoped first-row lookup observably wrong.
@@ -68,7 +75,7 @@ pgDescribe("archive project isolation", () => {
     await expect(getLiveTaskColumn(h.layer().db, id, projectA.projectId)).resolves.toBe("archived");
     await expect(getLiveTaskColumn(h.layer().db, id, projectB.projectId)).resolves.toBe("todo");
     await expect(archiveParentTaskWithLineageGate(projectB, id, entry("project B"), { now }))
-      .resolves.toEqual({ archived: true });
+      .resolves.toEqual({ archived: true, entry: entry("project B") });
 
     expect((await findArchivedTaskEntry(h.layer().db, id, projectA.projectId))?.description)
       .toBe("project A");

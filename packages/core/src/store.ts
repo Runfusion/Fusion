@@ -846,8 +846,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   public async buildArchivedAgentLogFields( taskId: string, mode: ArchiveAgentLogMode, ): Promise<Pick<ArchivedTaskEntry, "agentLogMode" | "agentLogSummary" | "agentLogSnapshot" | "agentLogFull">> {    return buildArchivedAgentLogFieldsImpl(this, taskId, mode);
   }
-  public async taskToArchiveEntry(task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
-    return taskToArchiveEntryImpl(this, task, archivedAt);
+  public async taskToArchiveEntry(task: Task, archivedAt: string, auditContext?: TaskDeleteAuditContext): Promise<ArchivedTaskEntry> {
+    return taskToArchiveEntryImpl(this, task, archivedAt, auditContext);
   }
 
   /**
@@ -3430,23 +3430,23 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async mergeTask(id: string): Promise<MergeResult> {
     return mergeTaskImpl(this, id);
   }
-  async archiveAllDone(options?: { removeLineageReferences?: boolean }): Promise<Task[]> {
+  async archiveAllDone(options?: { removeLineageReferences?: boolean; auditContext?: TaskDeleteAuditContext }): Promise<Task[]> {
     return archiveAllDoneImpl(this, options);
   }
-  async archiveTask( id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off" } = true, ): Promise<Task> {
+  async archiveTask( id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off"; auditContext?: TaskDeleteAuditContext } = true, ): Promise<Task> {
     return archiveTaskImpl(this, id, optionsOrCleanup);
   }
 
   /**
    * FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:55:
    */
-  public async archiveTaskBackend( id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off" }, ): Promise<Task> {
+  public async archiveTaskBackend( id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean; liveExecutionGuard?: "refuse" | "off"; auditContext?: TaskDeleteAuditContext }, ): Promise<Task> {
     return archiveTaskBackendImpl(this, id, optionsOrCleanup);
   }
 
 /** Archive a task and immediately clean up its directory. */
-  async archiveTaskAndCleanup(id: string): Promise<Task> {
-    return this.archiveTask(id, true);
+  async archiveTaskAndCleanup(id: string, auditContext?: TaskDeleteAuditContext): Promise<Task> {
+    return this.archiveTask(id, { cleanup: true, auditContext });
   }
   /* FNXC:WorkflowLifecycleColumns 2026-08-02-16:30 (fleet): async because the restore destination is resolved
      from the task's workflow; `taskId` is optional so any caller that has not been updated keeps the legacy
