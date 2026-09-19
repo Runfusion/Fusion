@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { ChatView } from "../ChatView";
 import { loadAllAppCss } from "../../test/cssFixture";
 import * as useChatModule from "../../hooks/useChat";
+import type { UseChatReturn } from "../../hooks/useChat";
 import * as useChatRoomsModule from "../../hooks/useChatRooms";
 import {
   activeSessionFixture,
@@ -47,17 +48,20 @@ afterEach(() => {
   document.head.innerHTML = "";
 });
 
-async function renderChat(props: Partial<React.ComponentProps<typeof ChatView>> = {}) {
+async function renderChat(
+  props: Partial<React.ComponentProps<typeof ChatView>> = {},
+  chatOverrides: Partial<UseChatReturn> = {},
+) {
   const style = document.createElement("style");
   style.textContent = css;
   document.head.append(style);
   // Start without a selected session so selecting this row changes activeSession, matching the
   // production transition that re-runs the viewport writer after the thread ref has mounted.
-  setupMockChat({ ...defaultChatState, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture], activeSession: undefined });
+  setupMockChat({ ...defaultChatState, ...chatOverrides, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture], activeSession: undefined });
   setupMockRooms(defaultRoomsState);
   const view = render(<ChatView projectId="proj-123" addToast={vi.fn()} {...props} />);
   await act(async () => { screen.getByTestId(`chat-session-${activeSessionFixture.id}`).click(); });
-  setupMockChat({ ...defaultChatState, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture], activeSession: activeSessionFixture });
+  setupMockChat({ ...defaultChatState, ...chatOverrides, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture], activeSession: activeSessionFixture });
   view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} {...props} />);
   return screen.getByTestId("chat-input") as HTMLTextAreaElement;
 }
@@ -128,17 +132,28 @@ describe("FN-9195 Chat composer visual viewport", () => {
     } finally { mode.mockRestore(); viewport.restore(); }
   });
 
-  it("keeps the keyboard-active composer flush above the covered bottom inset", async () => {
+  it.each([
+    ["empty", {}],
+    ["populated", { messages: [{ id: "message-001", sessionId: activeSessionFixture.id, role: "assistant" as const, content: "Hello", createdAt: "2026-09-19T00:00:00.000Z" }] }],
+    ["streaming", { isStreaming: true, streamingText: "Replying" }],
+  ] satisfies [string, Partial<UseChatReturn>][])("keeps the %s Direct composer gap-free above the keyboard", async (_state, chatOverrides) => {
     const viewport = mockVisualViewport({ width: 375, height: 812 });
     const mode = mockViewportMode("mobile");
     try {
-      const input = await renderChat();
+      const input = await renderChat({}, chatOverrides);
       await openKeyboard(input, viewport.vv, 400);
 
-      expect(getThread()).toHaveClass("chat-thread--keyboard-active");
+      const thread = getThread();
+      expect(thread).toHaveClass("chat-thread--keyboard-active");
+      expect(thread.style.getPropertyValue("--vv-height")).toBe("400px");
+      expect(thread.style.getPropertyValue("--chat-keyboard-accessory-clearance")).toBe("");
       const inputRule = css.match(/\.chat-thread--keyboard-active \.chat-input-area\s*\{([^}]*)\}/m);
-      expect(inputRule?.[1]).toContain("var(--chat-keyboard-accessory-clearance, 0px)");
+      expect(inputRule?.[1]).toContain("padding-bottom: var(--space-md)");
+      expect(inputRule?.[1]).not.toContain("chat-keyboard-accessory-clearance");
       expect(inputRule?.[1]).not.toContain("env(safe-area-inset-bottom");
+
+      await act(async () => setVisualViewportHeight(viewport.vv, 390));
+      expect(thread.style.getPropertyValue("--chat-keyboard-accessory-clearance")).toBe("");
     } finally { mode.mockRestore(); viewport.restore(); }
   });
 
@@ -181,6 +196,7 @@ describe("FN-9195 Chat composer visual viewport", () => {
       const input = await renderChat(props);
       await openKeyboard(input, viewport.vv, 500);
       expect(getThread()).toHaveClass("chat-thread--keyboard-active");
+      expect(getThread().style.getPropertyValue("--chat-keyboard-accessory-clearance")).toBe("");
       if (props.floating) expect(document.querySelector(".chat-view")).toHaveClass("chat-view--narrow");
     } finally { viewport.restore(); restoreHost(); }
   });
@@ -300,11 +316,11 @@ describe("FN-9195 Chat composer visual viewport", () => {
       await act(async () => input.blur());
       await act(async () => setVisualViewportHeight(viewport.vv, 400));
       expect(thread).not.toHaveClass("chat-thread--keyboard-active");
-      expect(thread.style.getPropertyValue("--chat-keyboard-accessory-clearance")).toBe("0px");
+      expect(thread.style.getPropertyValue("--chat-keyboard-accessory-clearance")).toBe("");
       expect(thread.style.transform).toBe("");
       cleanup();
       expect(thread).not.toHaveClass("chat-thread--keyboard-active");
-      expect(thread.style.getPropertyValue("--chat-keyboard-accessory-clearance")).toBe("0px");
+      expect(thread.style.getPropertyValue("--chat-keyboard-accessory-clearance")).toBe("");
       expect(thread.style.willChange).toBe("");
     } finally { viewport.restore(); mode.mockRestore(); }
   });

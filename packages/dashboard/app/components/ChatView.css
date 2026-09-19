@@ -331,13 +331,12 @@ measured thread top accounts for host chrome above Chat instead of assuming only
 }
 
 /*
-FNXC:ChatComposer 2026-09-01-05:36:
-When the keyboard covers the bottom gesture region, the composer must not reserve that
-safe-area inset again. Keep the accessory clearance because Safari does not subtract the
-input-assistant bar from visualViewport.height.
+FNXC:ChatComposer 2026-09-19-20:19:
+Keyboard-open Direct Chat uses its normal composer spacing at the visible keyboard boundary.
+The active viewport clamp supplies visibility; an extra accessory reservation creates a blank band.
 */
 .chat-thread--keyboard-active .chat-input-area {
-  padding-bottom: calc(var(--space-md) + var(--chat-keyboard-accessory-clearance, 0px));
+  padding-bottom: var(--space-md);
 }
 
 .chat-thread-header {

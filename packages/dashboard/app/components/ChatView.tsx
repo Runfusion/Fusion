@@ -1271,7 +1271,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     const apply = () => {
       if (suppressVvShrinkRef.current) {
         thread.classList.remove("chat-thread--keyboard-active");
-        thread.style.setProperty("--chat-keyboard-accessory-clearance", "0px");
         thread.style.removeProperty("--chat-thread-viewport-top");
         thread.style.transform = "";
         thread.style.willChange = "";
@@ -1296,13 +1295,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       const keyboardActive = (overlap > 0 || offsetTop > 0) && isKeyboardTrackingFocusable(document.activeElement);
       thread.classList.toggle("chat-thread--keyboard-active", keyboardActive);
       /*
-      FNXC:ChatComposer 2026-07-04-09:42:
-      Mobile Chat's composer must stay fully visible above the soft keyboard and the iOS input-assistant/autofill bar, which Safari does not subtract from visualViewport.height. Keep the clearance ChatView-local and keyed to iOS keyboard-active state so the shared keyboard hook contract stays stable, .chat-thread does not gain a persistent transform (anti-blur invariant), and Android resizes-content does not regain an empty reserved gap.
+      FNXC:ChatComposer 2026-09-19-20:19:
+      Keyboard-open Direct Chat must stay flush to the visible keyboard boundary. The viewport clamp,
+      focus gate, drift-only transform, anchoring, and iOS lock already keep the composer visible, so
+      this writer must not add an artificial iOS accessory reservation that leaves a blank band.
       */
-      thread.style.setProperty(
-        "--chat-keyboard-accessory-clearance",
-        keyboardActive && isIOS() ? "calc(var(--space-2xl) + var(--space-md))" : "0px",
-      );
 
       // Drift compensation is applied here (not in CSS) so .chat-thread —
       // an ancestor of the focused composer textarea — only gets a
@@ -1338,7 +1335,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       window.removeEventListener("pageshow", apply);
       document.removeEventListener("visibilitychange", apply);
       thread.classList.remove("chat-thread--keyboard-active");
-      thread.style.setProperty("--chat-keyboard-accessory-clearance", "0px");
       thread.style.removeProperty("--chat-thread-viewport-top");
       thread.style.transform = "";
       thread.style.willChange = "";
