@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { stripGeneratedOriginalDescription } from "../tasks/original-description-region.js";
 
-export const SPEC_LOCK_PARSER_VERSION = 1;
+export const SPEC_LOCK_PARSER_VERSION = 2;
 
 export type SpecLockSection = "mission" | "file-scope" | "steps" | "acceptance-criteria" | "non-goals" | "dependencies" | "lineage";
 export type SpecParseReason = "mission-missing" | "mission-empty" | "mission-duplicate" | "section-missing" | "section-duplicate";
@@ -109,6 +109,46 @@ const normalizedSection = (key: SpecLockSection, value: string): string => {
  * FN-8845 compares only a fixed structural contract. Mission prose is normalized as text and
  * hashed, never interpreted, so whitespace is cosmetic while a narrative rewrite is observable.
  */
+interface PlanHeading { name: string; start: number; end: number; }
+
+const headingLinePattern = /^##\s+(.+?)\s*$/;
+const fenceOpenLinePattern = /^ {0,3}(`{3,}|~{3,})/;
+const fenceCloseLinePattern = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+
+/*
+FNXC:SpecLock 2026-09-19-03:39:
+A level-2 heading declares a lock section only when it sits outside a balanced code fence: planner
+prompts legitimately embed example blocks whose text contains headings, and reading those as
+declarations either refused an approved plan as `section-duplicate` or ended an enclosing section body
+at the example's first line. Fenced text stays content of the section that encloses it, while the
+retained semantics are unchanged — distinct spellings of one section still combine into a single
+canonical body, and repeating the exact same heading outside fences is still refused, because two
+identical headings are a genuinely ambiguous boundary and that refusal is now reserved for that case
+only. A fence left open at end of file falls back to the pre-change declaration set, so this scan can
+never introduce a refusal the previous reader would not have produced.
+*/
+function collectPlanDeclarations(normalized: string): PlanHeading[] {
+  const declarations: PlanHeading[] = [];
+  const everyHeading: PlanHeading[] = [];
+  let fence: { char: string; length: number } | null = null;
+  let offset = 0;
+  for (const line of normalized.split("\n")) {
+    const heading = headingLinePattern.exec(line);
+    if (heading) {
+      const entry: PlanHeading = { name: heading[1].trim().toLowerCase(), start: offset, end: offset + heading[0].length };
+      everyHeading.push(entry);
+      if (!fence) declarations.push(entry);
+    }
+    const fenceToken: string | undefined = (fence === null ? fenceOpenLinePattern : fenceCloseLinePattern).exec(line)?.[1];
+    if (fenceToken) {
+      if (!fence) fence = { char: fenceToken[0], length: fenceToken.length };
+      else if (fenceToken[0] === fence.char && fenceToken.length >= fence.length) fence = null;
+    }
+    offset += line.length + 1;
+  }
+  return fence ? everyHeading : declarations;
+}
+
 export function canonicalizePlan(prompt: string, bindings?: PlanEvidenceBindings): CanonicalPlan {
   /*
   FNXC:SpecLock 2026-09-07-05:09:
@@ -118,7 +158,7 @@ export function canonicalizePlan(prompt: string, bindings?: PlanEvidenceBindings
   matching approval fingerprints; their deterministic failures are handled by lifecycle recovery.
   */
   const normalized = stripGeneratedOriginalDescription(prompt.replace(/\r\n?/g, "\n"));
-  const headings = [...normalized.matchAll(/^##\s+(.+?)\s*$/gmi)].map((match) => ({ name: match[1].trim().toLowerCase(), start: match.index!, end: match.index! + match[0].length }));
+  const headings = collectPlanDeclarations(normalized);
   const result = {} as Record<SpecLockSection, CanonicalPlanSection>;
   for (const definition of sections) {
     const matches = headings.filter((heading) => definition.headings.includes(heading.name));
