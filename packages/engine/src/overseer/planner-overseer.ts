@@ -14,7 +14,7 @@
  * the seam every later planner-oversight subtask reads from.
  */
 
-import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task, type TraitFlags } from "@fusion/core";
+import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, UNATTRIBUTED_MUTATION_CONTEXT, type PlannerOversightLevel, type PrInfo, type RunMutationContext, type Task, type TraitFlags } from "@fusion/core";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet — inline fallback arms):
@@ -425,9 +425,16 @@ function deriveSignalAndSources(
 }
 
 /** Minimal store seam the monitor records best-effort observations through —
- *  mirrors `fallback-model-observer.ts`'s `FallbackLogStore` seam. */
+ *  mirrors `fallback-model-observer.ts`'s `FallbackLogStore` seam.
+ *
+ *  FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
+ *  Hand-declared rather than `Pick<TaskStore, "logEntry">`, so it does not inherit U18's
+ *  canonical/deprecated overload pair and would otherwise keep accepting unattributed writes after
+ *  the engine sweep. `logEntry` here mirrors the CANONICAL store arity — explicit `outcome`,
+ *  required trailing `runContext` — which both closes the hole and is what keeps a real `TaskStore`
+ *  assignable (the deprecated overload cannot take a `RunMutationContext` in the `outcome` slot). */
 export interface OverseerLogStore {
-  logEntry?(taskId: string, action: string): Promise<unknown>;
+  logEntry?(taskId: string, action: string, outcome: string | undefined, runContext: RunMutationContext): Promise<unknown>;
   appendAgentLog?(
     taskId: string,
     text: string,
@@ -544,8 +551,15 @@ export class PlannerOverseerMonitor {
           FNXC:PlannerOversight 2026-07-19-00:00:
           Activity feed label is short "planner" (not "planner-overseer") so operators scanning the task feed can tell this is planner lifecycle observation without the longer overseer product name.
           */
+          /*
+          FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — marker, not a derived actor):
+          The monitor is constructed once at engine startup and observes every in-flight task; it
+          holds no run, no session, and no agent id of its own, so there is nothing here to derive
+          from. Whether an unattended observer gets a real system actor is U13's decision, and
+          minting one here would bury that semantic choice inside a mechanical conversion.
+          */
           await this.store
-            .logEntry(task.id, `[planner] stage=${stage} signal=${signal}: ${reason}`)
+            .logEntry(task.id, `[planner] stage=${stage} signal=${signal}: ${reason}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT)
             .catch(() => undefined);
         }
       }

@@ -7,6 +7,8 @@ import {
   type FollowUpDraft,
   type TaskStore,
 } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent } from "@fusion/core";
 import { resolveTerminalColumnsFor } from "../executor.js";
 import type { resolveWorkflowIrForTask } from "@fusion/core";
 
@@ -296,7 +298,7 @@ export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsIn
           dedupeKey: followUp.dedupeKey,
         },
       },
-    })).id;
+    }, undefined, mutationContextForAgent("eval", runId))).id;
 
     created.push({
       ...followUp,

@@ -1,4 +1,6 @@
 import type { AgentRole, RunMutationContext, TaskStore, TaskTokenUsage, TaskTokenUsagePerModel } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../logger.js";
 import { enforceTaskTokenBudgetForPersist } from "../concurrency/token-budget-enforcer.js";
@@ -182,7 +184,16 @@ export async function accumulateSessionTokenUsage(
       hitRatio: computeCacheHitRatio(tokenUsage.inputTokens, tokenUsage.cachedTokens),
     }));
 
-    await store.updateTask(taskId, { tokenUsage }, options?.runContext);
+    /*
+    FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
+    Prefer the caller's run context; fall back to the agent/role the accounting is ALREADY keyed on
+    (both are recorded on the usage row a few lines above), and only mark when the caller gave neither.
+    */
+    const usageRunContext = options?.runContext
+      ?? (options?.agentId ? mutationContextForAgent(options.agentId) : undefined)
+      ?? (options?.role ? mutationContextForAgent(options.role) : undefined)
+      ?? UNATTRIBUTED_MUTATION_CONTEXT;
+    await store.updateTask(taskId, { tokenUsage }, usageRunContext);
     await enforceTaskTokenBudgetForPersist(store, taskId, options?.runContext);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

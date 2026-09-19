@@ -1,8 +1,17 @@
-import { resolveTaskOutputLanguage, type ResolvedTaskOutputLanguage, type Settings, type TaskDetail } from "@fusion/core";
+import { resolveTaskOutputLanguage, type ResolvedTaskOutputLanguage, type RunMutationContext, type Settings, type TaskDetail } from "@fusion/core";
+
+/*
+FNXC:Identity 2026-08-09-03:04 (U18/KTD2 — the seam restates the required context):
+Both members are hand-declared rather than picked off `TaskStore`, so neither inherits U18's
+canonical/deprecated overload pair. At their old arities this summary write — a REAL task mutation
+on the completion boundary — would stay unattributed after the engine call-site sweep, and the
+census would report the package converted. Both now mirror the CANONICAL store arity, which is also
+what keeps a real `TaskStore` structurally assignable here.
+*/
 
 export interface WorkflowCompletionSummaryStore {
-  updateTask?: (taskId: string, updates: { summary: string }) => Promise<unknown> | unknown;
-  logEntry?: (taskId: string, action: string, detail?: string) => Promise<unknown> | unknown;
+  updateTask?: (taskId: string, updates: { summary: string }, runContext: RunMutationContext) => Promise<unknown> | unknown;
+  logEntry?: (taskId: string, action: string, detail: string | undefined, runContext: RunMutationContext) => Promise<unknown> | unknown;
 }
 
 export interface WorkflowCompletionSummaryInput {
@@ -117,6 +126,9 @@ export async function ensureWorkflowCompletionSummary(
   store: WorkflowCompletionSummaryStore,
   task: TaskDetail,
   input: WorkflowCompletionSummaryInput,
+  /* FNXC:Identity 2026-08-09-03:04 (U18/KTD2): required — the completion boundary's caller owns the
+     run, so attribution is answered at each call site rather than defaulted inside the helper. */
+  runContext: RunMutationContext,
 ): Promise<void> {
   if (task.summary?.trim()) return;
   if (!store.updateTask) return;
@@ -131,7 +143,7 @@ export async function ensureWorkflowCompletionSummary(
    * remain authoritative.
    */
   const summary = buildWorkflowCompletionSummary(task, input);
-  await store.updateTask(task.id, { summary });
+  await store.updateTask(task.id, { summary }, runContext);
   await store.logEntry?.(
     task.id,
     "Workflow completion summary recorded",
@@ -140,5 +152,6 @@ export async function ensureWorkflowCompletionSummary(
       workflowId: input.workflowId,
       runId: input.runId,
     }),
+    runContext,
   );
 }
