@@ -14,6 +14,7 @@ import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner
 import { FOREACH_ACTIVE_CONTEXT_KEY } from "../workflows/workflow-node-handlers.js";
 import {
   createMockStore,
+  createWorkflowRoutingAgentStore,
   mockedCreateFnAgent,
   mockedExistsSync,
   mockedExec,
@@ -80,7 +81,8 @@ describe("fast mode workflow/runtime invariants", () => {
     resetExecutorMocks();
     mockedResolveExternalExecutionCheckoutRoute.mockReset();
     mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({ configured: false });
-    mockedExistsSync.mockReturnValue(true);
+    // FNXC:TaskPinnedWorktrees 2026-09-19-22:20: Native acquisition derives an absent task-id-pinned destination before creation.
+    mockedExistsSync.mockReturnValue(false);
   });
 
   /*
@@ -194,7 +196,7 @@ describe("fast mode workflow/runtime invariants", () => {
     { name: "no commands", configured: false },
     { name: "a passing command", configured: true },
   ])("keeps production implementation completion honest with $name", async ({ configured }) => {
-    const worktree = "/tmp/test/.worktrees/fn-226";
+    const worktree = "/tmp/test/.fusion/worktrees/fn-226";
     const liveTask = task({
       id: "FN-226",
       executionMode: "standard",
@@ -1162,6 +1164,8 @@ describe("fast mode workflow/runtime invariants", () => {
       },
     });
     const staleSnapshot = { ...liveTask, sourceMetadata: undefined };
+    // FNXC:ExternalExecutionCheckout 2026-09-19-22:20: This recovery test intentionally reads the populated live path.
+    mockedExistsSync.mockReturnValue(true);
     const { executor } = makeExecutorForTask(liveTask);
     mockedResolveExternalExecutionCheckoutRoute.mockResolvedValue({
       configured: true,
@@ -1335,7 +1339,9 @@ describe("fast mode workflow/runtime invariants", () => {
     }));
     const store = createMockStore();
     store.getTask.mockResolvedValue(task({ id: "FN-TOOLS", executionMode: "fast" }));
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = new TaskExecutor(store, "/tmp/test", {
+      agentStore: createWorkflowRoutingAgentStore(store).agentStore,
+    });
 
     await executor.execute(task({ id: "FN-TOOLS", executionMode: "fast" }));
 
@@ -1359,7 +1365,9 @@ describe("fast mode workflow/runtime invariants", () => {
     }));
     const store = createMockStore();
     store.getTask.mockResolvedValue(task({ id: "FN-TOOLS", executionMode: "standard" }));
-    const executor = new TaskExecutor(store, "/tmp/test");
+    const executor = new TaskExecutor(store, "/tmp/test", {
+      agentStore: createWorkflowRoutingAgentStore(store).agentStore,
+    });
 
     await executor.execute(task({ id: "FN-TOOLS", executionMode: "standard" }));
 

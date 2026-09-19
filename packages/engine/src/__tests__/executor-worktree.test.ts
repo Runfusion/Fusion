@@ -212,6 +212,7 @@ describe("worktree workflow routing fixture", () => {
 describe("TaskExecutor with semaphore", () => {
   beforeEach(() => {
     resetExecutorMocks();
+    mockedExistsSync.mockReturnValue(false);
   });
 
   it("acquires semaphore before creating agent and releases after", async () => {
@@ -731,35 +732,27 @@ describe("TaskExecutor worktree recovery", () => {
     });
   });
 
-  it("recovers from already checked out worktree conflict and retries", async () => {
+  /*
+   * FNXC:TaskPinnedWorktrees 2026-09-19-22:20:
+   * Native acquisition no longer retries a branch conflict through a generated directory. An executor
+   * with no usable checkout recovers at its one task-id-derived destination.
+   */
+  it("creates a fresh canonical pinned worktree when in-progress metadata has no checkout", async () => {
     const store = createMockStore();
-    let callCount = 0;
-
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command.includes("git worktree add") && callCount++ === 0) {
-        const error: any = new Error(
-          "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
-        );
-        error.stderr = Buffer.from(
-          "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
-        );
-        throw error;
-      }
-      return Buffer.from("");
-    });
-
+    mockedExistsSync.mockReturnValue(false);
     const executor = createWorktreeExecutor(store, "/tmp/test");
+
     await executor.execute(makeTask());
 
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      expect.stringContaining("Cleaned up conflicting worktree, retrying"),
-      "/tmp/test/.worktrees/swift-falcon",
+      "Drift detected: in-progress with no worktree — creating fresh worktree to recover",
+      undefined,
+      expect.anything(),
     );
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-050",
-      expect.objectContaining({ worktree: expect.any(String) }),
+      expect.objectContaining({ worktree: "/tmp/test/.fusion/worktrees/fn-050", branch: "fusion/fn-050" }),
     );
   });
 
@@ -837,42 +830,24 @@ describe("TaskExecutor worktree recovery", () => {
     },
   );
 
-  it("normalizes an out-of-root branch-conflict reclaim before persisting it", async () => {
+  it("re-derives out-of-root persisted metadata to the canonical pinned target", async () => {
     const store = createMockStore();
-    store.getSettings.mockResolvedValue({ worktreesDir: ".worktrees" } as any);
+    const legacyPath = "/tmp/legacy-worktrees/recover-fn-8400";
+    mockedExistsSync.mockReturnValue(false);
+    store._setRow("FN-8400", { worktree: legacyPath, branch: "fusion/fn-8400" });
     const executor = createWorktreeExecutor(store, "/tmp/test");
-    const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
-    const targetPath = "/tmp/test/.worktrees/recover-fn-8400";
-    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
-      kind: "reclaimable",
-      livePath: conflictPath,
-      tipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
-      taskAttributedCommitCount: 1,
-      strandedCommits: [{ sha: "70b47804bc6f27659638e17ac7cf279ed343ff6f", subject: "fix(FN-8400): preserve implementation" }],
-    } as any);
-    const normalize = vi.spyOn(executor as any, "normalizeReclaimableWorktreePath").mockResolvedValue(targetPath);
 
-    const result = await (executor as any).handleBranchConflict(
-      { ...makeTask("FN-8400"), branch: "fusion/fn-8400", worktree: conflictPath },
-      new BranchConflictError({
-        branchName: "fusion/fn-8400",
-        conflictingWorktreePath: conflictPath,
-        existingTipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
-        strandedCommits: [],
-        startPoint: "main",
-        recommendedAction: "reclaim",
-      }),
+    await executor.execute({ ...makeTask("FN-8400"), worktree: legacyPath, branch: "fusion/fn-8400" });
+
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8400",
+      "Re-derived task-pinned worktree path from task id",
+      `${legacyPath} -> /tmp/test/.fusion/worktrees/fn-8400`,
+      expect.anything(),
     );
-
-    expect(result).toBe("reclaimed");
-    expect(normalize).toHaveBeenCalledWith(conflictPath, targetPath, "FN-8400", expect.objectContaining({ worktreesDir: ".worktrees" }));
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-8400",
-      expect.objectContaining({
-        worktree: targetPath,
-        branch: "fusion/fn-8400",
-        branchWriteOrigin: "engine",
-      }),
+      expect.objectContaining({ worktree: "/tmp/test/.fusion/worktrees/fn-8400" }),
     );
   });
 
@@ -920,37 +895,6 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
-  it("uses the task-pinned target when normalizing a branch-conflict reclaim", async () => {
-    const store = createMockStore();
-    store.getSettings.mockResolvedValue({ worktreesDir: ".worktrees", worktreeNaming: "task-id" } as any);
-    const executor = createWorktreeExecutor(store, "/tmp/test");
-    const conflictPath = "/tmp/legacy-worktrees/recover-fn-8400";
-    const pinnedPath = "/tmp/test/.worktrees/fn-8400";
-    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValueOnce({
-      kind: "reclaimable",
-      livePath: conflictPath,
-      tipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
-      taskAttributedCommitCount: 1,
-      strandedCommits: [{ sha: "70b47804bc6f27659638e17ac7cf279ed343ff6f", subject: "fix(FN-8400): preserve implementation" }],
-    } as any);
-    const normalize = vi.spyOn(executor as any, "normalizeReclaimableWorktreePath").mockResolvedValue(pinnedPath);
-
-    const result = await (executor as any).handleBranchConflict(
-      { ...makeTask("FN-8400"), branch: "fusion/fn-8400", worktree: conflictPath },
-      new BranchConflictError({
-        branchName: "fusion/fn-8400",
-        conflictingWorktreePath: conflictPath,
-        existingTipSha: "70b47804bc6f27659638e17ac7cf279ed343ff6f",
-        strandedCommits: [],
-        startPoint: "main",
-        recommendedAction: "reclaim",
-      }),
-    );
-
-    expect(result).toBe("reclaimed");
-    expect(normalize).toHaveBeenCalledWith(conflictPath, pinnedPath, "FN-8400", expect.objectContaining({ worktreeNaming: "task-id" }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-8400", expect.objectContaining({ worktree: pinnedPath }));
-  });
 
   it("records recovery context when handling a branch conflict (FN-4847: now discards + requeues instead of pausing)", async () => {
     // FN-4847: branch-conflict-unrecoverable previously paused the task with
@@ -1135,61 +1079,22 @@ describe("TaskExecutor worktree recovery", () => {
     void onError;
   });
 
-  it("refuses to create a worktree nested inside another worktree (FN-2165 guard)", async () => {
+  it("re-derives nested persisted metadata without creating a nested checkout (FN-2165 guard)", async () => {
     const store = createMockStore();
+    const nestedPath = "/tmp/test/.worktrees/green-finch/.worktrees/amber-panda";
+    mockedExistsSync.mockReturnValue(false);
+    store._setRow("FN-050", { worktree: nestedPath });
+    const executor = createWorktreeExecutor(store, "/tmp/test");
 
-    // Simulate `git worktree list --porcelain` returning a non-root worktree
-    // that would be an ancestor of the target path.
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command === "git worktree list --porcelain") {
-        return Buffer.from(
-          [
-            "worktree /tmp/test",
-            "HEAD abc123",
-            "branch refs/heads/main",
-            "",
-            "worktree /tmp/test/.worktrees/green-finch",
-            "HEAD def456",
-            "branch refs/heads/fusion/fn-007",
-            "",
-          ].join("\n"),
-        );
-      }
-      return Buffer.from("");
-    });
+    await executor.execute({ ...makeTask(), worktree: nestedPath });
 
-    const onError = vi.fn();
-    const executor = createWorktreeExecutor(store, "/tmp/test", { onError });
-    /*
-    FNXC:EngineTests 2026-07-19-16:35 (U10b):
-    The nested-worktree refusal guards the PERSISTED worktree path. The graph re-reads the row,
-    so the nested path has to be stored for the guard to see it — otherwise the executor treats
-    the task as having no worktree and happily creates a fresh (non-nested) one.
-    */
-    store._setRow("FN-050", {
-      worktree: "/tmp/test/.worktrees/green-finch/.worktrees/amber-panda",
-    });
-    // Task has a worktree path nested inside green-finch — must be refused
-    await executor.execute({
-      ...makeTask(),
-      worktree: "/tmp/test/.worktrees/green-finch/.worktrees/amber-panda",
-    });
-
-    // Should NEVER attempt a git worktree add for the nested path
-    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
-      (c) =>
-        typeof c[0] === "string" &&
-        c[0].includes("git worktree add") &&
-        c[0].includes("green-finch/.worktrees/amber-panda"),
-    );
-    expect(worktreeAddCalls).toHaveLength(0);
-
-    // Should log the refusal with both the target and ancestor paths
+    const worktreeAddCalls = mockedExecSync.mock.calls.map((call) => String(call[0]));
+    expect(worktreeAddCalls.some((command) => command.includes(nestedPath))).toBe(false);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      "Refusing to create nested worktree",
-      expect.stringContaining("green-finch"),
+      "Re-derived task-pinned worktree path from task id",
+      `${nestedPath} -> /tmp/test/.fusion/worktrees/fn-050`,
+      expect.anything(),
     );
   });
 
@@ -1235,378 +1140,6 @@ describe("TaskExecutor worktree recovery", () => {
     expect(onError).toHaveBeenCalled();
   });
 
-  it("recovers from 'already used by worktree' error in createFromExistingBranch fallback", async () => {
-    const store = createMockStore();
-    let callCount = 0;
-
-    // First createWithBranch fails with "branch already exists" (not "already used")
-    // Then createFromExistingBranch fails with "already used by worktree"
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command.includes("git worktree add")) {
-        callCount++;
-        if (command.includes("-b")) {
-          // First attempt: createWithBranch fails with branch already exists
-          const error: any = new Error(
-            "fatal: A branch named 'fusion/fn-050' already exists.",
-          );
-          error.stderr = Buffer.from(
-            "fatal: A branch named 'fusion/fn-050' already exists.",
-          );
-          throw error;
-        } else {
-          // Fallback createFromExistingBranch fails with already used
-          const error: any = new Error(
-            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-          );
-          error.stderr = Buffer.from(
-            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-          );
-          throw error;
-        }
-      }
-      if (command.includes("git worktree remove")) {
-        return Buffer.from("");
-      }
-      if (command.includes("git branch -D")) {
-        return Buffer.from("");
-      }
-      return Buffer.from("");
-    });
-
-    const executor = createWorktreeExecutor(store, "/tmp/test");
-
-    // Mock the second call to tryCreateWorktree to succeed
-    // by making subsequent calls succeed after cleanup
-    let secondAttempt = false;
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command.includes("git worktree add")) {
-        if (secondAttempt) {
-          return Buffer.from(""); // Second attempt succeeds
-        }
-        if (command.includes("-b")) {
-          const error: any = new Error(
-            "fatal: A branch named 'fusion/fn-050' already exists.",
-          );
-          error.stderr = Buffer.from(
-            "fatal: A branch named 'fusion/fn-050' already exists.",
-          );
-          throw error;
-        } else {
-          const error: any = new Error(
-            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-          );
-          error.stderr = Buffer.from(
-            "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-          );
-          throw error;
-        }
-      }
-      if (command.includes("git worktree remove")) {
-        secondAttempt = true; // After cleanup, next add will succeed
-        return Buffer.from("");
-      }
-      if (command.includes("git branch -D")) {
-        return Buffer.from("");
-      }
-      return Buffer.from("");
-    });
-
-    await executor.execute(makeTask());
-
-    // Should have cleaned up the conflicting worktree
-    expect(mockedExecSync).toHaveBeenCalledWith(
-      expect.stringContaining('git worktree remove --force "/tmp/test/.worktrees/green-sage"'),
-      expect.any(Object),
-    );
-
-    // Should have logged the cleanup
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-050",
-      expect.stringContaining("Cleaned up conflicting worktree, retrying"),
-      expect.any(String),
-    );
-
-    // Task should eventually succeed
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-050",
-      expect.objectContaining({ worktree: expect.any(String) }),
-    );
-  });
-
-  it("falls back to a fresh worktree when same-task workflow-step cleanup is refused", async () => {
-    const store = createMockStore();
-    store.getSettings.mockResolvedValue({
-      maxConcurrent: 2,
-      maxWorktrees: 4,
-      pollIntervalMs: 15000,
-      groupOverlappingFiles: false,
-      autoMerge: false,
-      executorAllowSiblingBranchRename: true,
-    });
-    store.listTasks.mockResolvedValue([]);
-
-    const conflictPath = "/tmp/test/.worktrees/keen-eagle";
-    const freshPath = "/tmp/test/.worktrees/maple-delta";
-    activeSessionRegistry.registerPath(conflictPath, { taskId: "FN-050", kind: "workflow-step", ownerKey: "FN-050/workflow-step" });
-    mockedGenerateWorktreeName
-      .mockReturnValueOnce("swift-falcon")
-      .mockReturnValueOnce("maple-delta");
-    mockedExistsSync.mockImplementation((path) => path === conflictPath);
-
-    const removeSpy = vi.spyOn(worktreePoolModule, "removeWorktree").mockRejectedValue(
-      new ActiveSessionWorktreeRemovalError({
-        worktreePath: conflictPath,
-        taskId: "FN-050",
-        kind: "workflow-step",
-        ownerKey: "FN-050/workflow-step",
-        reason: worktreePoolModule.RemovalReason.ExecutorDispose,
-      }),
-    );
-
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      // Exact branch only — `"fusion/fn-050"` is a prefix of `"fusion/fn-050-2"`, so a naive
-      // includes() would fail every sibling-rename attempt and recurse forever.
-      if (command.includes('git worktree add -b "fusion/fn-050"') && !command.includes('fusion/fn-050-')) {
-        const error: any = new Error(
-          `fatal: 'fusion/fn-050' is already used by worktree at '${conflictPath}'`,
-        );
-        error.stderr = Buffer.from(error.message);
-        throw error;
-      }
-      return Buffer.from("");
-    });
-
-    const executor = createWorktreeExecutor(store, "/tmp/test");
-    await executor.execute(makeTask());
-
-    expect(removeSpy).toHaveBeenCalledTimes(1);
-    expect(activeSessionRegistry.lookupByPath(conflictPath)?.taskId).toBe("FN-050");
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-050",
-      expect.objectContaining({ worktree: freshPath, branch: "fusion/fn-050-2" }),
-    );
-    expect(store.updateTask).not.toHaveBeenCalledWith(
-      "FN-050",
-      expect.objectContaining({ error: expect.stringContaining("automatic cleanup failed") }),
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-050",
-      expect.stringContaining("Preserved active conflicting worktree"),
-      `${conflictPath} -> ${freshPath}`,
-    );
-  });
-
-  it("falls back to a fresh worktree when existing-branch add hits an active conflict", async () => {
-    const store = createMockStore();
-    store.getSettings.mockResolvedValue({
-      maxConcurrent: 2,
-      maxWorktrees: 4,
-      pollIntervalMs: 15000,
-      groupOverlappingFiles: false,
-      autoMerge: false,
-      executorAllowSiblingBranchRename: true,
-    });
-    store.listTasks.mockResolvedValue([]);
-
-    const conflictPath = "/tmp/test/.worktrees/keen-eagle";
-    const freshPath = "/tmp/test/.worktrees/opal-otter";
-    activeSessionRegistry.registerPath(conflictPath, { taskId: "FN-050", kind: "workflow-step", ownerKey: "FN-050/workflow-step" });
-    mockedGenerateWorktreeName
-      .mockReturnValueOnce("swift-falcon")
-      .mockReturnValueOnce("opal-otter");
-    mockedExistsSync.mockImplementation((path) => path === conflictPath);
-
-    vi.spyOn(worktreePoolModule, "removeWorktree").mockRejectedValue(
-      new ActiveSessionWorktreeRemovalError({
-        worktreePath: conflictPath,
-        taskId: "FN-050",
-        kind: "workflow-step",
-        ownerKey: "FN-050/workflow-step",
-        reason: worktreePoolModule.RemovalReason.ExecutorDispose,
-      }),
-    );
-
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      // Exact branch only — avoid matching sibling rename branches (fusion/fn-050-2, …).
-      if (command.includes('git worktree add -b "fusion/fn-050"') && !command.includes("fusion/fn-050-")) {
-        const error: any = new Error("fatal: A branch named 'fusion/fn-050' already exists.");
-        error.stderr = Buffer.from(error.message);
-        throw error;
-      }
-      if (command.includes(`git worktree add "/tmp/test/.worktrees/swift-falcon" "fusion/fn-050"`)) {
-        const error: any = new Error(
-          `fatal: 'fusion/fn-050' is already used by worktree at '${conflictPath}'`,
-        );
-        error.stderr = Buffer.from(error.message);
-        throw error;
-      }
-      return Buffer.from("");
-    });
-
-    const executor = createWorktreeExecutor(store, "/tmp/test");
-    await executor.execute(makeTask());
-
-    expect(activeSessionRegistry.lookupByPath(conflictPath)?.kind).toBe("workflow-step");
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-050",
-      expect.objectContaining({ worktree: freshPath, branch: "fusion/fn-050-2" }),
-    );
-    const logMessages = store.logEntry.mock.calls.map((call: any[]) => String(call[1] ?? ""));
-    expect(logMessages.some((message: string) => message.includes("automatic cleanup failed"))).toBe(false);
-  });
-
-  it("generates new worktree name when conflicting worktree belongs to active task in legacy rename mode (FN-4811: refuses force-removal of active worktree)", async () => {
-    // FN-4811: When the conflicting worktree is bound to a live in-progress task, the
-    // executor MUST NOT force-remove it (doing so yanks the active session's filesystem
-    // and produces FN-4781/FN-4804-style cascade failures). Instead, with sibling-rename
-    // enabled, it falls through to the suffix-rename path so the requesting task gets a
-    // fresh worktree name without disturbing the live owner.
-    const store = createMockStore();
-    store.getSettings.mockResolvedValue({
-      maxConcurrent: 2,
-      maxWorktrees: 4,
-      pollIntervalMs: 15000,
-      groupOverlappingFiles: false,
-      autoMerge: false,
-      executorAllowSiblingBranchRename: true,
-    });
-    store.listTasks.mockResolvedValue([
-      {
-        id: "FN-049",
-        title: "Other Task",
-        description: "Other task",
-        column: "in-progress",
-        worktree: "/tmp/test/.worktrees/green-sage",
-        paused: false,
-        dependencies: [],
-        steps: [],
-        currentStep: 0,
-        log: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ]);
-
-    mockedFindWorktreeUser.mockResolvedValue("FN-049");
-    mockedExistsSync.mockImplementation((path) => path === "/tmp/test/.worktrees/green-sage");
-
-    let callCount = 0;
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      // First attempt fails with conflict, subsequent attempts (suffix-rename path) succeed.
-      if (command.includes("git worktree add") && callCount++ === 0) {
-        const error: any = new Error(
-          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-        );
-        error.stderr = Buffer.from(
-          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-        );
-        throw error;
-      }
-      return Buffer.from("");
-    });
-
-    // Second generated name for the suffix-rename path.
-    mockedGenerateWorktreeName.mockReturnValueOnce("jade-finch");
-
-    const executor = createWorktreeExecutor(store, "/tmp/test");
-    /*
-    FNXC:EngineTests 2026-07-19-16:38 (U10b):
-    The suffix-rename retry must reuse the task's persisted start point, so `executionStartBranch`
-    has to live on the stored row the graph re-reads — the literal passed to `execute()` is not
-    what the worktree creator consults.
-    */
-    store._setRow("FN-050", { executionStartBranch: "fusion/fn-049" });
-    await executor.execute({ ...makeTask(), executionStartBranch: "fusion/fn-049" });
-
-    // FN-4811 contract: the active worktree must NOT have been force-removed.
-    const removeCalls = mockedExecSync.mock.calls
-      .map((call) => String(call[0]))
-      .filter((command) => command.includes("git worktree remove"));
-    expect(
-      removeCalls.some((command) => command.includes("/tmp/test/.worktrees/green-sage")),
-    ).toBe(false);
-
-    // The legacy "Removed foreign conflicting worktree and retrying" log must NOT fire
-    // for the actively-owned worktree (that path is the bug FN-4811 fixes).
-    const removalLogCalls = store.logEntry.mock.calls.map((c: any[]) => String(c[1] ?? ""));
-    expect(
-      removalLogCalls.some((m: string) => m.includes("Removed foreign conflicting worktree")),
-    ).toBe(false);
-
-    // The suffix-rename path was taken instead.
-    expect(mockedGenerateWorktreeName).toHaveBeenCalled();
-    const worktreeAddCalls = mockedExecSync.mock.calls
-      .map((call) => String(call[0]))
-      .filter((command) => command.includes("git worktree add -b"));
-    expect(
-      worktreeAddCalls.some(
-        (command) =>
-          command.includes('git worktree add -b "fusion/fn-050"') &&
-          command.endsWith('"fusion/fn-049"'),
-      ),
-    ).toBe(true);
-    expect(worktreeAddCalls.length).toBeGreaterThan(0);
-  });
-
-  describe("index.lock stale recovery", () => {
-    it("recovers stale lock and succeeds", async () => {
-      const store = createMockStore();
-      let addCalls = 0;
-      mockedClassifyStaleLock.mockResolvedValue({ kind: "stale", reason: "old-lock", ageMs: 60000 } as any);
-      mockedTryRemoveStaleLock.mockResolvedValue({ removed: true });
-
-      mockedExecSync.mockImplementation((cmd: string | string[]) => {
-        const command = typeof cmd === "string" ? cmd : cmd[0];
-        if (command.includes("git worktree add") && addCalls++ === 0) {
-          const error: any = new Error("fatal: unable to create '/tmp/test/.git/worktrees/swift-falcon/index.lock': File exists");
-          error.stderr = Buffer.from("fatal: unable to create '/tmp/test/.git/worktrees/swift-falcon/index.lock': File exists");
-          throw error;
-        }
-        return Buffer.from("");
-      });
-
-      const executor = createWorktreeExecutor(store, "/tmp/test");
-      await executor.execute(makeTask());
-
-      expect(mockedClassifyStaleLock).toHaveBeenCalled();
-      expect(mockedTryRemoveStaleLock).toHaveBeenCalled();
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-050",
-        expect.stringContaining("Recovered stale worktree index.lock and retrying"),
-        expect.any(String),
-        expect.anything(),
-      );
-    });
-
-    it("refuses fresh lock and fails with actionable error", async () => {
-      const store = createMockStore();
-      mockedClassifyStaleLock.mockResolvedValue({ kind: "active-session", reason: "active-session-owns-worktree", owningWorktreePath: "/tmp/test/.worktrees/swift-falcon" } as any);
-
-      mockedExecSync.mockImplementation((cmd: string | string[]) => {
-        const command = typeof cmd === "string" ? cmd : cmd[0];
-        if (command.includes("git worktree add")) {
-          const error: any = new Error("fatal: unable to create '/tmp/test/.git/worktrees/swift-falcon/index.lock': File exists");
-          error.stderr = Buffer.from("fatal: unable to create '/tmp/test/.git/worktrees/swift-falcon/index.lock': File exists");
-          throw error;
-        }
-        return Buffer.from("");
-      });
-
-      const executor = createWorktreeExecutor(store, "/tmp/test");
-      await executor.execute(makeTask());
-
-      expect(store.updateTask).toHaveBeenCalledWith(
-        "FN-050",
-        expect.objectContaining({ status: "failed", error: expect.stringContaining("index.lock") }),
-      );
-      expect(mockedTryRemoveStaleLock).not.toHaveBeenCalled();
-    });
-  });
 
   describe("stale registration recovery", () => {
     it("recovers stale registration and retries git worktree add", async () => {
@@ -2002,46 +1535,6 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
-  it("removes existing directory that is not a registered worktree", async () => {
-    const store = createMockStore();
-    const fs = await import("node:fs/promises");
-    const { tmpdir } = await import("node:os");
-    const rootDir = await fs.mkdtemp(`${tmpdir()}/executor-worktree-`);
-    const staleWorktreePath = `${rootDir}/.worktrees/swift-falcon`;
-
-    try {
-      // Directory exists but is not registered
-      mockedExistsSync.mockImplementation((path) => String(path) === staleWorktreePath);
-
-      await fs.mkdir(staleWorktreePath, { recursive: true });
-      await fs.writeFile(`${staleWorktreePath}/marker.txt`, "stale");
-
-      // Mock git worktree list to not include our path
-      mockedExecSync.mockImplementation((cmd: string | string[]) => {
-        const command = typeof cmd === "string" ? cmd : cmd[0];
-        if (command.includes("git worktree list")) {
-          return Buffer.from("/other/path/.git/worktrees/other\n");
-        }
-        return Buffer.from("");
-      });
-
-      const executor = createWorktreeExecutor(store, rootDir);
-      await executor.execute(makeTask());
-
-      expect(
-        mockedExecSync.mock.calls.some((call) =>
-          typeof call[0] === "string" && call[0].includes("rm -rf"),
-        ),
-      ).toBe(false);
-      await expect(fs.access(staleWorktreePath)).rejects.toThrow();
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-050",
-        expect.stringContaining("Removing existing directory (not a registered worktree)"),
-      );
-    } finally {
-      await fs.rm(rootDir, { recursive: true, force: true });
-    }
-  });
 
   it("handles locked worktree by unlocking before removal", async () => {
     vi.useRealTimers();
@@ -2180,46 +1673,23 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     expect(logCalls[0][1]).toContain("based on main");
   });
 
-  it("retries worktree creation after cleaning up conflicting worktree", async () => {
+  it("creates at the canonical task-pinned path after drift recovery", async () => {
     const store = createMockStore();
     const executor = createWorktreeExecutor(store, "/tmp/test");
-    const conflictingPath = "/tmp/test/.worktrees/sharp-stone";
-    const removeWorktreeSpy = vi.spyOn(worktreePoolModule, "removeWorktree");
-
-    let firstAttempt = true;
-    mockedExecSync.mockImplementation((cmd: any) => {
-      if (typeof cmd === "string" && cmd.includes("git worktree add") && cmd.includes("-b") && firstAttempt) {
-        firstAttempt = false;
-        const err: any = new Error(
-          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
-        );
-        err.stderr = Buffer.from(
-          `fatal: 'fusion/fn-064' is already used by worktree at '${conflictingPath}'`,
-        );
-        throw err;
-      }
-      return Buffer.from("");
-    });
+    mockedExistsSync.mockReturnValue(false);
 
     await executor.execute(makeTask({ id: "FN-064" }));
 
-    expect(removeWorktreeSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        worktreePath: conflictingPath,
-        rootDir: "/tmp/test",
-        taskId: "FN-064",
-        settings: expect.any(Object),
-      }),
-    );
-    const worktreeCreateCalls = mockedExecSync.mock.calls.filter(
-      (call) => typeof call[0] === "string" && call[0].includes('git worktree add') && call[0].includes("-b"),
-    );
-    expect(worktreeCreateCalls).toHaveLength(2);
+    const worktreeCreateCalls = mockedExecSync.mock.calls
+      .map((call) => String(call[0]))
+      .filter((command) => command.includes("git worktree add"));
+    expect(worktreeCreateCalls).toHaveLength(1);
+    expect(worktreeCreateCalls[0]).toContain('"/tmp/test/.fusion/worktrees/fn-064"');
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-064",
-      expect.stringContaining("Worktree created at /tmp/test/.worktrees/swift-falcon"),
+      "Drift detected: in-progress with no worktree — creating fresh worktree to recover",
       undefined,
-      expect.objectContaining({ agentId: "executor" }),
+      expect.anything(),
     );
   });
 
@@ -2490,14 +1960,19 @@ describe("worktree DB hydration", () => {
     expect(mockedHydrateWorktreeDb).toHaveBeenCalledTimes(1);
   });
 
-  it("runs hydration path when executor reassigns unusable root worktree", async () => {
-    mockedIsUsableTaskWorktree.mockResolvedValueOnce(false);
-    mockedClassifyTaskWorktree.mockResolvedValueOnce({ ok: false, classification: "incomplete", reason: "missing or invalid .git metadata" } as any);
-    mockedExistsSync.mockReturnValue(true);
+  it("runs hydration after re-deriving unusable root metadata to a fresh pinned worktree", async () => {
+    mockedExistsSync.mockReturnValue(false);
     const store = createMockStore();
+    store._setRow("FN-HYD", { worktree: "/tmp/test" });
     const executor = createWorktreeExecutor(store, "/tmp/test");
+
     await executor.execute(makeTask({ worktree: "/tmp/test" }));
+
     expect(mockedHydrateWorktreeDb).toHaveBeenCalledTimes(1);
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-HYD",
+      expect.objectContaining({ worktree: "/tmp/test/.fusion/worktrees/fn-hyd" }),
+    );
   });
 
   it("logs degraded hydration reason and continues execution", async () => {

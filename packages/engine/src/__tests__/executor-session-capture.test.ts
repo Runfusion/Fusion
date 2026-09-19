@@ -17,35 +17,30 @@ import {
 } from "../executor/memory-capture.js";
 import { TaskExecutorGraphFacades } from "../executor/task-executor-graph-facades.js";
 
-/**
- * Partial mock: keep every real @fusion/core symbol except `captureMemory`, which becomes a
- * deterministic spy so capture paths never attempt a real (or dangling-url) network write.
- */
 const { mockCaptureMemory, mockHandleGraphFailureImpl } = vi.hoisted(() => ({
   mockCaptureMemory: vi.fn(),
   mockHandleGraphFailureImpl: vi.fn(),
 }));
-vi.mock("@fusion/core", async (importOriginal) => {
-  const mod = await importOriginal<Record<string, unknown>>();
-  return { ...mod, captureMemory: mockCaptureMemory };
+
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  captureMemory: mockCaptureMemory,
+}));
+
+vi.mock("../executor/impl-bindings.js", async () => {
+  const { triggerTaskMemoryCapture } = await vi.importActual<typeof import("../executor/memory-capture.js")>("../executor/memory-capture.js");
+  return {
+    handleGraphFailureImpl: mockHandleGraphFailureImpl,
+    triggerTaskMemoryCaptureImpl: triggerTaskMemoryCapture,
+  };
 });
 
 /*
-FNXC:StashSessionCapture 2026-08-19-06:55:
-(RUFU-122 Step 4) The handleGraphFailure facade is the choke point for every
-GRAPH-LEVEL terminal failure (drift parks, settings-load failures,
-non-execute-node failures) that terminalizes the task `status: "failed"` OUTSIDE
-runImplementation's post-loop finally. The facade must re-read the task and fire
-the shared triggerTaskMemoryCapture exactly once when the fresh row is terminally
-failed — and a completion-seam fire on the SAME capturedMemoryTaskIds Set after
-that must be a no-op (at most once per task across seams). The impl's parking
-behavior itself is covered by the handle-graph-failure tests, so only
-handleGraphFailureImpl is stubbed here; captureMemory stays the @fusion/core spy.
+FNXC:StashSessionCapture 2026-09-19-22:20:
+Graph facade tests retain the real facade and core module while replacing only the terminal-failure
+implementation seam. Do not import the implementation barrel here: it owns runtime wiring that
+re-enters the executor during facade initialization.
 */
-vi.mock("../executor/impl-bindings.js", async (importOriginal) => {
-  const mod = await importOriginal<Record<string, unknown>>();
-  return { ...mod, handleGraphFailureImpl: mockHandleGraphFailureImpl };
-});
 
 const TASK = { id: "FN-99", title: "Ship feature", status: "done" } as any;
 const PROJECT = { project: "proj-123", project_name: "proj-alpha" };
