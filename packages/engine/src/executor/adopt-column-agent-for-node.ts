@@ -11,6 +11,7 @@ import { buildAgentPersona } from "./agent-binding-pure.js";
 export type AdoptColumnAgentForNodeDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   agentStore?: AgentStore | null;
 };
 
@@ -28,7 +29,7 @@ export async function adoptColumnAgentForNode(
         live.id,
         `Workflow node '${node.id}': column agent '${columnAgentId}' not found — falling back to node/default resolution`,
         undefined,
-        deps.getRunContextFor(live.id),
+        deps.runContextFor(live.id),
       );
       return undefined;
     }
@@ -37,7 +38,7 @@ export async function adoptColumnAgentForNode(
       live.id,
       `Workflow node '${node.id}': running as column agent '${columnAgentId}' (${mode})`,
       undefined,
-      deps.getRunContextFor(live.id),
+      deps.runContextFor(live.id),
     );
     return {
       modelProvider: rc.executorProvider,
@@ -53,7 +54,7 @@ export async function adoptColumnAgentForNode(
         live.id,
         `Workflow node '${node.id}': column agent '${columnAgentId}' lookup failed — falling back to node/default resolution`,
         undefined,
-        deps.getRunContextFor(live.id),
+        deps.runContextFor(live.id),
       );
     } catch (logErr: unknown) {
       executorLog.warn(`${live.id}: failed to log column-agent lookup failure: ${logErr instanceof Error ? logErr.message : String(logErr)}`);

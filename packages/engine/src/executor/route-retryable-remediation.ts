@@ -19,6 +19,7 @@ import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 export type RouteRetryableRemediationDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   isPreMergeRemediationGraphNode: (taskId: string, failedNode: string | undefined) => Promise<boolean>;
   isLiveSharedBranchGroupMember: (live: Pick<TaskDetail, "branchContext">) => Promise<boolean>;
   resolveFailedPreMergeWorkflowStepBudget: (
@@ -56,12 +57,17 @@ export async function routeRetryableRemediationGraphFailureToPreMergeFix(
 
   const nextCount = budget.attempts + 1;
   const totalFixCount = (live.postReviewFixCount ?? 0) + 1;
-  await deps.store.updateTask(live.id, { postReviewFixCount: totalFixCount }, deps.getRunContextFor(live.id));
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Retryable remediation increments `postReviewFixCount` and logs through `runContextFor` so the
+  pre-merge fix handoff is attributable to the live graph run.
+  */
+  await deps.store.updateTask(live.id, { postReviewFixCount: totalFixCount }, deps.runContextFor(live.id));
   await deps.store.logEntry(
     live.id,
     `Auto-recovered retryable remediation node '${failedNode ?? "unknown"}' for failed pre-merge workflow step (attempt ${nextCount}/${budget.label})`,
     optionalStepRevisionLogOutcome(`Step: ${budget.stepName ?? budget.key}${failureValue ? `\nGraph value: ${failureValue}` : ""}`, budget.key),
-    deps.getRunContextFor(live.id),
+    deps.runContextFor(live.id),
   );
   const sentBack = await deps.recoverFailedPreMergeWorkflowStep(live);
   if (!sentBack) return false;

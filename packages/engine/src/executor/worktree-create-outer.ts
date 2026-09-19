@@ -14,11 +14,17 @@ import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { executorLog } from "../logger.js";
 import { quoteShellArg } from "./shell-quote.js";
 import { NonRetryableWorktreeError } from "./worktree-registry-helpers.js";
+import { runContextForTotal } from "./run-context-for.js";
 
 const execAsync = promisify(exec);
 
 export type WorktreeOuterStore = {
-  updateTask: (taskId: string, patch: Record<string, unknown>) => Promise<unknown>;
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Outer create/rebase/squash writes share this store. `updateTask` must accept the run carrier so
+  clearing a missing start-point and other worktree-create mutations stay attributable.
+  */
+  updateTask: (taskId: string, patch: Record<string, unknown>, runContext?: RunMutationContext) => Promise<unknown>;
   getSettings: () => Promise<Settings | Partial<Settings>>;
   /** Mirrors TaskStore.logEntry so safe breadcrumbs match main (action, outcome?, runContext?). */
   logEntry: (
@@ -55,12 +61,26 @@ export type WorktreeOuterCreateDeps = {
     taskId: string,
     depTip: string,
     label: string,
+    runContext?: RunMutationContext,
   ) => Promise<void>;
+  /*
+  FNXC:Identity 2026-08-14-08:10 (review finding — the remote-rebase breadcrumbs were unattributed):
+  The dep type stopped at `settingsOverride`, so the sole production caller COULD NOT pass a run
+  context even though `createWorktree` resolves one for its other writes. That silently sent the
+  skip/fetch/success/failure breadcrumbs through `safeLog` with `runContext === undefined`.
+  */
+  /**
+   * FNXC:Identity 2026-08-16-05:10: the partial run getter this bag's writes attribute through.
+   * Dropped by the rebase, which left the caller below referencing `deps.getRunContextFor` against a
+   * type that no longer declared it.
+   */
+  getRunContextFor: (taskId: string) => import("../util/run-audit.js").EngineRunContext | undefined;
   rebaseNewWorktreeOntoRemote: (
     worktreePath: string,
     branch: string,
     taskId: string,
     settingsOverride?: Settings,
+    runContext?: RunMutationContext,
   ) => Promise<void>;
 };
 
@@ -110,6 +130,12 @@ export async function squashImportDepIntoWorktree(
   taskId: string,
   depTip: string,
   label: string,
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  PR 3430 review: squash-import breadcrumbs must receive the same total carrier `createWorktree`
+  already resolves for remote-rebase. Omitting it left the import log on the deprecated overload.
+  */
+  runContext?: RunMutationContext,
 ): Promise<void> {
   // No-op when dep is already represented in the worktree's history.
   try {
@@ -173,6 +199,8 @@ export async function squashImportDepIntoWorktree(
   await store.logEntry(
     taskId,
     `Squash-imported dependency content from ${label} into worktree (single import commit instead of inheriting raw commits)`,
+    undefined,
+    runContext,
   );
 }
 
@@ -200,6 +228,16 @@ export async function rebaseNewWorktreeOntoRemote(
   branch: string,
   taskId: string,
   settingsOverride?: Settings,
+  /*
+  FNXC:Identity 2026-08-15-22:52:
+  The run making these breadcrumb writes. This previously claimed to be "REQUIRED so an unwired
+  caller is a compile error" while being declared OPTIONAL — and the one production caller was in
+  fact unwired, which is exactly the failure the claim promised to prevent. It stays optional
+  because the U18 conversion keeps the context optional until the final stage makes it required
+  everywhere at once; the comment now describes the code instead of contradicting it. The caller in
+  `createWorktree` passes a resolved context.
+  */
+  runContext?: RunMutationContext,
 ): Promise<void> {
   let settings: Settings | Partial<Settings> | undefined = settingsOverride;
   if (!settings) {
@@ -218,7 +256,9 @@ export async function rebaseNewWorktreeOntoRemote(
   */
   const safeLog = (action: string) => {
     try {
-      void Promise.resolve(store.logEntry(taskId, action, undefined, undefined)).catch(() => undefined);
+      // FNXC:Identity 2026-08-16-05:10: the rebase replaced the carrier with `undefined`, re-opening the
+      // very finding this parameter exists to close (unattributed remote-rebase breadcrumbs).
+      void Promise.resolve(store.logEntry(taskId, action, undefined, runContext)).catch(() => undefined);
     } catch {
       // best-effort breadcrumb
     }
@@ -299,13 +339,14 @@ export async function createWorktree(
   // Track the worktree path we're attempting to use (may change during recovery)
   const currentPath = path;
   let resolvedStartPoint: string | undefined;
+  const runContext = runContextForTotal(deps.getRunContextFor, taskId);
   if (startPoint) {
     const resolved = await deps.resolveWorktreeStartPoint(startPoint, taskId);
     if (resolved === null) {
       // Stored baseBranch no longer exists (e.g., upstream dep merged and branch
       // deleted while this task sat queued/stuck). Clear it on the task so any
       // subsequent retry branches from the default base, and proceed from HEAD.
-      await deps.store.updateTask(taskId, { executionStartBranch: null });
+      await deps.store.updateTask(taskId, { executionStartBranch: null }, runContext);
     } else {
       resolvedStartPoint = resolved;
     }
@@ -356,6 +397,7 @@ export async function createWorktree(
           taskId,
           squashImport.depTip,
           squashImport.label,
+          runContext,
         ).catch((importErr: unknown) => {
           executorLog.warn(
             `Squash-import of ${squashImport.label} into ${result.branch} failed for ${taskId} (continuing without): ${importErr instanceof Error ? importErr.message : String(importErr)}`,
@@ -367,7 +409,13 @@ export async function createWorktree(
        * Fetch and rebase the just-created task branch only when the setting is enabled.
        * Failures here never abort task setup.
        */
-      await deps.rebaseNewWorktreeOntoRemote(result.path, result.branch, taskId).catch((err: unknown) => {
+      await deps.rebaseNewWorktreeOntoRemote(
+        result.path,
+        result.branch,
+        taskId,
+        undefined,
+        runContext,
+      ).catch((err: unknown) => {
         executorLog.warn(
           `Post-create worktree rebase failed for ${taskId} (continuing): ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -384,6 +432,7 @@ export async function createWorktree(
           taskId,
           `Worktree creation failed after ${deps.maxWorktreeRetries} attempts`,
           errorMessage,
+          runContext,
         );
         if (isBranchConflict) {
           throw error;

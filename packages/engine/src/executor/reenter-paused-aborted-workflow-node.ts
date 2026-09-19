@@ -19,6 +19,7 @@ const TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS = process.env.VITEST || process.en
 export type ReenterPausedAbortedWorkflowNodeDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
   clearPausedAborted: (taskId: string) => void;
   activeWorktrees: Map<string, Set<string>>;
@@ -56,10 +57,10 @@ export async function reenterPausedAbortedWorkflowNode(
     deps.activeWorktrees.delete(live.id);
     const message = `Workflow graph node '${nodeId}' was interrupted by engine pause/resume — re-entering workflow graph (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
     executorLog.log(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
-    await deps.store.logEntry(live.id, `Auto-recovered: re-entering paused-aborted workflow graph node '${nodeId}' — failure notification suppressed`, undefined, deps.getRunContextFor(live.id));
-    await deps.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, deps.getRunContextFor(live.id));
-      await emitBoundedRunAudit(deps.store, {
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
+    await deps.store.logEntry(live.id, `Auto-recovered: re-entering paused-aborted workflow graph node '${nodeId}' — failure notification suppressed`, undefined, deps.runContextFor(live.id));
+    await deps.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, deps.runContextFor(live.id));
+    await emitBoundedRunAudit(deps.store, {
         taskId: live.id,
         agentId: "executor",
         runId: generateSyntheticRunId("workflow-node-reentry", live.id),

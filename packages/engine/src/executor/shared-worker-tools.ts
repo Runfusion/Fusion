@@ -47,10 +47,12 @@ export type SharedWorkerToolsDeps = {
   rootDir: string;
   messageStore?: import("@fusion/core").MessageStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export function createTaskLogTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
-  return sharedCreateTaskLogTool(deps.store, taskId);
+  // FNXC:Identity 2026-08-16-05:10: the shared tool takes the run carrier; the rebase dropped the argument.
+  return sharedCreateTaskLogTool(deps.store, taskId, deps.runContextFor(taskId));
 }
 
 export function createTaskLogsReadTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
@@ -85,11 +87,11 @@ export function createTaskDocumentReadTool(deps: SharedWorkerToolsDeps, taskId: 
 }
 
 export function createTaskPromptWriteTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
-  return sharedCreateTaskPromptWriteTool(deps.store, taskId, deps.getRunContextFor(taskId));
+  return sharedCreateTaskPromptWriteTool(deps.store, taskId, deps.runContextFor(taskId));
 }
 
 export function createTaskFileScopeAddTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
-  return sharedCreateTaskFileScopeAddTool(deps.store, taskId, deps.getRunContextFor(taskId));
+  return sharedCreateTaskFileScopeAddTool(deps.store, taskId, deps.runContextFor(taskId));
 }
 
 export function createArtifactRegisterTool(

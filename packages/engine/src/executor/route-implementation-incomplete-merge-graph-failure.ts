@@ -15,6 +15,7 @@ import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
 export type RouteImplementationIncompleteMergeGraphFailureDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearPausedAborted: (taskId: string) => void;
   activeWorktrees: Map<string, Set<string>>;
   routeGraphFailureToExecutionResume: (
@@ -45,7 +46,7 @@ export async function routeImplementationIncompleteMergeGraphFailure(
       await deps.store.updateTask(live.id, {
         paused: false,
         pausedReason: null,
-      }, deps.getRunContextFor(live.id));
+      }, deps.runContextFor(live.id));
       resumeLive = { ...live, paused: false, pausedReason: undefined };
     }
     if (hasNonTerminalWorkflowSteps(resumeLive) && await deps.routeGraphFailureToExecutionResume(resumeLive, failedNode, "implementation-incomplete")) {
@@ -55,9 +56,14 @@ export async function routeImplementationIncompleteMergeGraphFailure(
     deps.activeWorktrees.delete(live.id);
     const message = `Workflow graph merge blocked at node '${failedNode}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`;
     executorLog.warn(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Fail-closed incomplete-merge recovery (log + failed-status write) uses `runContextFor` so the
+    park is attributable to the live graph run.
+    */
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     if (!(await resolveTerminalColumnsFor(deps.store, live.id)).includes(live.column) && live.error == null) {
-      await deps.store.updateTask(live.id, { error: message, status: "failed" }, deps.getRunContextFor(live.id));
+      await deps.store.updateTask(live.id, { error: message, status: "failed" }, deps.runContextFor(live.id));
     }
     await deps.persistTokenUsage(live.id);
     return true;

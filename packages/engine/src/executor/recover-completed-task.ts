@@ -20,6 +20,7 @@ import { areEnabledPreMergeWorkflowStepsSatisfied } from "./workflow-step-satisf
 export type RecoverCompletedTaskDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   executing: Set<string>;
   activeSessions: { has(taskId: string): boolean };
   activeStepExecutors: { has(taskId: string): boolean };
@@ -105,7 +106,7 @@ export async function recoverCompletedTask(
         task.id,
         "Auto-promotion withheld: steps were skipped after a bulk-step-completion refusal with no accepted fn_task_done — requires reviewer or operator sign-off",
         undefined,
-        deps.getRunContextFor(task.id),
+        deps.runContextFor(task.id),
       ).catch(() => undefined);
       return false;
     }
@@ -293,6 +294,11 @@ export async function recoverCompletedTask(
       hold/archived — never wip. Post-U11 the default lineage merges the two roles onto one
       column, so `hold === intake` and the hop correctly collapses to the single move below;
       a board that still separates them (pre-U11, or a custom lineage) keeps the re-home.
+      */
+      /*
+      FNXC:Identity 2026-08-24-02:18:
+      Completed-task recovery rehomes through store.moveTask. Attributed executor writes in this
+      slice pass `runContextFor`; these planner-lane hops keep the existing store arity.
       */
       if (originColumn === plannerLanes.intake && plannerLanes.hold !== plannerLanes.intake) {
         completionTask = await deps.store.moveTask(task.id, plannerLanes.hold, {

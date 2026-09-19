@@ -30,6 +30,7 @@ import type { ResumeLanes } from "./resolve-resume-lanes.js";
 export type RouteGraphFailureToExecutionResumeDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (
     taskId: string,
     memo?: { lanes?: ResumeLanes },
@@ -136,8 +137,8 @@ export async function routeGraphFailureToExecutionResume(
 
     const message = `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} with incomplete work — resuming in place in '${live.column}'`;
     executorLog.warn(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
-    await deps.store.updateTask(live.id, { status: null, error: null }, deps.getRunContextFor(live.id));
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
+    await deps.store.updateTask(live.id, { status: null, error: null }, deps.runContextFor(live.id));
     /*
     FNXC:ReviewConvergence 2026-08-22-05:00:
     Graph-failure recovery is automatic remediation, not an explicit operator retry. Archive its

@@ -11,6 +11,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 export type ExecuteReviewHandoffDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   persistTokenUsage: (taskId: string) => Promise<void>;
   handoffTaskToReview: (task: Task, reason: string) => Promise<unknown>;
   activeSessions: Map<string, { session: AgentSession }>;
@@ -31,7 +32,7 @@ export async function executeReviewHandoff(
       task.id,
       "Review handoff requested by agent — moving to in-review for user review",
       undefined,
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
 
     await deps.store.updateTask(
@@ -40,7 +41,7 @@ export async function executeReviewHandoff(
         status: "awaiting-user-review",
         assigneeUserId: "requesting-user",
       },
-      deps.getRunContextFor(task.id),
+      deps.runContextFor(task.id),
     );
 
     await deps.persistTokenUsage(task.id);

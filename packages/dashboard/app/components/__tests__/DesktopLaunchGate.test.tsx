@@ -77,6 +77,32 @@ describe("DesktopLaunchGate — local handoff", () => {
   });
 
   /*
+  FNXC:DesktopHostAuth 2026-08-09-03:04:
+  The embedded desktop server used to serve `/api/*` — shell-capable terminal WebSocket included —
+  with no token, bound to every network interface. It is now loopback-bound and bearer-gated, which
+  makes this handoff load-bearing: the gate must replay the runtime's published token as `?token=`
+  (the carrier app/auth.ts's captureTokenFromUrl already understands) or the desktop app renders
+  and then 401s on every API call.
+  */
+  it("carries the runtime's bearer token into the runtime-origin navigation", async () => {
+    const location = stubLocation("file:///C:/app/index.html");
+    stubShell({
+      ...localReadyState,
+      localRuntime: { ...localReadyState.localRuntime, authToken: ["fn", "test", "token"].join("_") },
+    });
+
+    render(
+      <DesktopLaunchGate>
+        <div data-testid="app-loaded">app</div>
+      </DesktopLaunchGate>,
+    );
+
+    await waitFor(() => expect(location.replace).toHaveBeenCalledTimes(1));
+    const target = new URL(location.replace.mock.calls[0][0] as string);
+    expect(target.searchParams.get("token")).toBe(["fn", "test", "token"].join("_"));
+  });
+
+  /*
    * Regression for the reload loop ("rapid Starting Fusion flashing"): once the page is served over
    * http by the runtime, the gate must render the app and NOT navigate again.
    */

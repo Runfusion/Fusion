@@ -3,7 +3,6 @@
  * Active-session / step / CLI / configured-command bookkeeping facades peeled from
  * TaskExecutor (U4). Sits above pure worktree facades so executor.ts stays impl/bags thin.
  */
-import { toRunMutationContext } from "@fusion/core";
 import * as impl from "./impl-bindings.js";
 import * as bags from "./deps-bags.js";
 import * as constants from "./executor-constants.js";
@@ -13,6 +12,7 @@ import { getTaskCompletionBlockerForStore } from "../execution/task-completion.j
 import { buildWorkflowFailureScopeGuard } from "./workflow-failure-scope-guard.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
+import { runContextForTotal } from "./run-context-for.js";
 import { ChatSessionMemoryCapture, createStashChatMemoryCaptureSink, type ChatEventEmitter, type RuntimeProjectIdentity } from "./memory-capture.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
@@ -36,9 +36,16 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected registerSubagentSession(taskId: string, session: Parameters<typeof impl.registerSubagentSessionImpl>[2]): void { impl.registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   protected unregisterSubagentSession(taskId: string, session: Parameters<typeof impl.unregisterSubagentSessionImpl>[2]): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   protected disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
-  protected getRunContextFor(taskId: string) {
-    const ctx = this.currentRunContexts.get(taskId);
-    return ctx ? toRunMutationContext(ctx) : undefined;
+  protected getRunContextFor(taskId: string) { return this.currentRunContexts.get(taskId); }
+  /*
+  FNXC:Identity 2026-08-15-22:52 (U18/KTD2 Stage C — the executor's run carrier):
+  `getRunContextFor` is PARTIAL and must stay that way: ~20 call sites use `?.runId` / `?.agentId`
+  as a liveness probe. Collapsing the two forms would turn those probes into unconditional truths.
+  `runContextFor` is the TOTAL form every store mutation should pass. The fallback is DERIVED from
+  the same `"executor"` lane id this class already stamps on its own run context and audit rows.
+  */
+  protected runContextFor(taskId: string, fallbackAgentId?: string | null) {
+    return runContextForTotal((id) => this.currentRunContexts.get(id), taskId, fallbackAgentId);
   }
   protected safeLogEntry(taskId: string, message: string): void { impl.safeLogEntryImpl(bags.buildStoreRunContextDeps(this), taskId, message); }
   protected markPausedAborted(...args: FacadeRestArgs<typeof impl.markPausedAbortedImpl>): void { impl.markPausedAbortedImpl(bags.buildMarkPausedAbortedDeps(this), ...args); }
@@ -167,7 +174,7 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected async evaluateTaskDoneScopeLeak(...args: FacadeRestArgs<typeof impl.evaluateTaskDoneScopeLeakImpl>): ReturnType<typeof impl.evaluateTaskDoneScopeLeakImpl> { return impl.evaluateTaskDoneScopeLeakImpl(bags.buildEvaluateTaskDoneScopeLeakDeps(this), ...args); }
   protected async handleImplicitTaskDoneRefusal(...args: FacadeRestArgs<typeof impl.handleImplicitTaskDoneRefusalImpl>): ReturnType<typeof impl.handleImplicitTaskDoneRefusalImpl> { return impl.handleImplicitTaskDoneRefusalImpl(bags.buildHandleImplicitTaskDoneRefusalDeps(this), ...args); }
   protected createTaskDoneTool(...args: FacadeRestArgs<typeof impl.createTaskDoneToolImpl>): ReturnType<typeof impl.createTaskDoneToolImpl> { return impl.createTaskDoneToolImpl(bags.buildCreateTaskDoneToolDeps(this), ...args); }
-  protected createReviewDisputeTool(...args: FacadeRestArgs<typeof impl.createReviewDisputeToolImpl>): ReturnType<typeof impl.createReviewDisputeToolImpl> { return impl.createReviewDisputeToolImpl({ store: this.store, getRunContextFor: this.getRunContextFor.bind(this) }, ...args); }
+  protected createReviewDisputeTool(...args: FacadeRestArgs<typeof impl.createReviewDisputeToolImpl>): ReturnType<typeof impl.createReviewDisputeToolImpl> { return impl.createReviewDisputeToolImpl({ store: this.store, getRunContextFor: this.getRunContextFor.bind(this), runContextFor: this.runContextFor.bind(this) }, ...args); }
   /*
   FNXC:CodeOrganization 2026-08-09-22:15:
   Instance method mirrors main's private helper so tests/callers that touch the executor instance keep working.

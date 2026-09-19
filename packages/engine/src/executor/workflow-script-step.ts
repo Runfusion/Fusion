@@ -24,6 +24,7 @@ export type RunConfiguredCommandFn = (
 export type ScriptWorkflowStepDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   registerConfiguredCommandController: (taskId: string, controller: AbortController) => void;
   unregisterConfiguredCommandController: (taskId: string, controller: AbortController) => void;
   runConfiguredCommand: RunConfiguredCommandFn;

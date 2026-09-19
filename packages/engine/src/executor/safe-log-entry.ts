@@ -19,6 +19,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 export type SafeLogEntryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export function safeLogEntry(
@@ -27,7 +28,7 @@ export function safeLogEntry(
   message: string,
 ): void {
   try {
-    const result = deps.store.logEntry(taskId, message, undefined, deps.getRunContextFor(taskId));
+    const result = deps.store.logEntry(taskId, message, undefined, deps.runContextFor(taskId));
     void Promise.resolve(result).catch((error) => {
       executorLog.warn(`${taskId}: failed to write task-log breadcrumb: ${error instanceof Error ? error.message : String(error)}`);
     });

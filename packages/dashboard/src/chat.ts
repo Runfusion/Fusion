@@ -38,6 +38,7 @@ import {
   resolveTaskOutputLanguage,
   summarizeTitle,
   FUSION_RUNTIME_SELF_AWARENESS,
+  mutationContextForAgent,
   createLogger,
   resolvePermanentAgentEffectiveModel,
   resolvePermanentAgentEffectiveThinkingLevel,
@@ -703,13 +704,14 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
     lanes bind those with a concrete current-task id.
     */
     if (actionGateContext) {
+      const chatMutationContext = mutationContextForAgent(agentId ?? "chat");
       tools.push(
         createTaskArchiveTool(taskStore),
         createTaskUnarchiveTool(taskStore),
-        createTaskDeleteTool(taskStore),
-        createTaskRetryTool(taskStore),
-        createTaskPauseTool(taskStore),
-        createTaskUnpauseTool(taskStore),
+        createTaskDeleteTool(taskStore, chatMutationContext),
+        createTaskRetryTool(taskStore, chatMutationContext),
+        createTaskPauseTool(taskStore, chatMutationContext),
+        createTaskUnpauseTool(taskStore, chatMutationContext),
         createTaskDuplicateTool(taskStore),
         createTaskMergeTool(taskStore, ""),
       );

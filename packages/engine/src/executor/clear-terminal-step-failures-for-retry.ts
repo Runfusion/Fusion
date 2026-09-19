@@ -21,6 +21,7 @@ export type TerminalFailureRetryMode = "archive" | "clear";
 export type ClearTerminalStepFailuresForRetryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
 };
 
 export async function clearTerminalStepFailuresForRetry(
@@ -34,6 +35,6 @@ export async function clearTerminalStepFailuresForRetry(
     ? archiveTerminalWorkflowStepFailures(live.workflowStepResults)
     : clearTerminalWorkflowStepFailures(live.workflowStepResults);
   if (cleared !== live.workflowStepResults) {
-    await deps.store.updateTask(taskId, { workflowStepResults: cleared }, deps.getRunContextFor(taskId));
+    await deps.store.updateTask(taskId, { workflowStepResults: cleared }, deps.runContextFor(taskId));
   }
 }

@@ -7,7 +7,7 @@ Gate suite calls the free function with an injected store — no TaskExecutor me
 */
 import { captureBaseCommitSha } from "../executor/worktree-git-refs.js";
 import { executorLog } from "../logger.js";
-import type { Task } from "@fusion/core";
+import { mutationContextForAgent, type Task } from "@fusion/core";
 import { createMockStore, mockedExec, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -140,5 +140,19 @@ describe("captureBaseCommitSha", () => {
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-4383", { baseCommitSha: "head777" });
     expect(vi.mocked(executorLog.warn)).toHaveBeenCalledWith(expect.stringContaining("falling back to HEAD"));
+  });
+
+  it("attributes a supplied live run context instead of the executor fallback", async () => {
+    mockedExec.mockImplementation(((cmd: any, _opts: any, cb: any) => {
+      cb(null, cmd.includes("merge-base") ? "abc1234\n" : "");
+      return {} as any;
+    }) as any);
+    const store = createMockStore();
+    const audit = { git: vi.fn().mockResolvedValue(undefined) };
+    const live = mutationContextForAgent("agent-live", "run-live");
+
+    await captureBaseCommitSha(store, makeTask(), "worktree-fn-4383", audit, { isResume: false }, live);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4383", { baseCommitSha: "abc1234" }, live);
   });
 });
