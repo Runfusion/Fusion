@@ -1745,7 +1745,14 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       Real 0000 databases have source_agent_id (baseline since the PG cutover), so this
       historical fixture must retain it; project_id arrives via the 0006 ownership migration.
       */
-      CREATE TABLE project.tasks (id text PRIMARY KEY, source_agent_id text);
+      /*
+      FNXC:WorkspaceWorktree 2026-09-19-00:00:
+      Migration 0087 builds a partial unique index on tasks(project_id, workspace_worktree_dir_segment)
+      WHERE ... deleted_at IS NULL. Real 0000 databases have deleted_at (baseline since the PG
+      cutover), so this historical fixture must retain it too, or the 0087 upgrade fails with
+      "column deleted_at does not exist" on this synthetic legacy tasks table.
+      */
+      CREATE TABLE project.tasks (id text PRIMARY KEY, source_agent_id text, deleted_at text);
       /*
       FNXC:Ideation 2026-07-18-13:25:
       FN-8295 migration 0022 FKs ideation rows to missions/mission_features on (project_id, id).
@@ -1926,6 +1933,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      "0085",
+      WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
+      WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2026,6 +2036,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      "0085",
+      WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
+      WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
     ]);
   });
 
@@ -2259,6 +2272,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      "0085",
+      WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
+      WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
     ]);
   });
 
@@ -2373,6 +2389,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      "0085",
+      WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
+      WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
     ]);
   });
 
@@ -2487,6 +2506,9 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      "0085",
+      WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION,
+      WORKSPACE_WORKTREE_DIR_SEGMENT_UNIQUE_VERSION,
     ]);
   });
 });

@@ -205,7 +205,7 @@ describe("workspace late repository acquisition tiers", () => {
     // Bound the slice by the next statement in start(), not by a character count: the claim is that
     // the providers are re-applied AT construction, and the same calls also appear in the setters.
     const constructionStart = runtimeSource.indexOf("this.executor = new TaskExecutor(");
-    const constructionEnd = runtimeSource.indexOf("this.worktreePool.setInvariantViolationHandler(", constructionStart);
+    const constructionEnd = runtimeSource.indexOf("await yieldEventLoop();", constructionStart);
     expect(constructionStart).toBeGreaterThan(-1);
     expect(constructionEnd).toBeGreaterThan(constructionStart);
     const constructionBlock = runtimeSource.slice(constructionStart, constructionEnd);

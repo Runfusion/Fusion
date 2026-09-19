@@ -11,7 +11,7 @@
  */
 import { existsSync } from "node:fs";
 import type { Settings, TaskDetail, TaskStore, WorkspaceConfig } from "@fusion/core";
-import { resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
+import { resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import { executorLog, formatError } from "../logger.js";
 import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 
@@ -51,7 +51,7 @@ export async function ensureTaskWorktreeForPlanning(
       if (!Object.keys(acquired.workspaceWorktrees ?? {}).length) {
         throw new Error(`Workspace planning could not acquire configured task worktrees for ${taskId}`);
       }
-      return resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, taskId);
+      return resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, resolveWorkspaceTaskDirSegment(acquired));
     }
     return acquired.worktree || null;
   } catch (error) {

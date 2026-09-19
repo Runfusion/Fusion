@@ -65,6 +65,7 @@ import {
   matchStepHeadings,
   loadWorkspaceConfig,
   isLegacyWorkspaceWorktreeLayout,
+  resolveWorkspaceTaskDirSegment,
   resolveWorkspaceTaskWorktreeDir,
   isUnavailablePlanLockError,
   type NearDuplicateCandidate,
@@ -3398,7 +3399,7 @@ export class TriageProcessor {
             throw new Error("Workspace planning requires a private task directory, not the workspace root");
           }
           const planningTask = await this.store.getTask(task.id);
-          const taskDir = resolveWorkspaceTaskWorktreeDir(this.rootDir, settings, task.id);
+          const taskDir = resolveWorkspaceTaskWorktreeDir(this.rootDir, settings, resolveWorkspaceTaskDirSegment(planningTask));
           planningSessionBoundary = resolveGraphNodeSessionBoundary({
             isWorkspace: true,
             writeCapable: true,

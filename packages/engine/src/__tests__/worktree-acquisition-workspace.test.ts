@@ -1099,6 +1099,15 @@ describeIfGit("workspace task directory segment pin (R15)", { timeout: 60_000 },
     fixture = await createWorkspaceFixture(["repo-a"]);
     const legacy = makeTask("FN-PIN-4");
     const legacyPath = join(fixture.repoPath("repo-a"), ".worktrees", "fn-pin-4");
+    /*
+    FNXC:WorkspaceWorktree 2026-09-19-00:00:
+    The recorded legacy path is only preserved by the early `isRememberedWorkspaceWorktreeLive`
+    check when it is a real, classifiable git worktree — a merely-recorded-but-absent path is
+    dropped and re-acquired at the CURRENT default layout instead. Create a genuine linked
+    worktree at the legacy location so this test exercises preservation, not a coincidental
+    match between the fixture literal and today's default single-repo layout root.
+    */
+    fixture.git("repo-a", `git worktree add -b fusion/fn-pin-4 "${legacyPath}" HEAD`);
     (legacy as Task).workspaceWorktrees = { "repo-a": { worktreePath: legacyPath, branch: "fusion/fn-pin-4" } } as Task["workspaceWorktrees"];
     const { store, current } = makeFakeStore(legacy);
     const acquired = await acquireWorkspaceRepoWorktree({

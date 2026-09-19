@@ -4,6 +4,7 @@ import {
   assertWorkspaceRepoRelPath,
   isLegacyWorkspaceWorktreeLayout,
   resolveWorktreesDirLayout,
+  resolveWorkspaceTaskDirSegment,
   resolveWorkspaceTaskWorktreeDir,
 } from "./worktree-layout.js";
 
@@ -83,7 +84,7 @@ export function buildTaskResetWorktreePlan(
     };
   }
 
-  const workspaceTaskDir = resolveWorkspaceTaskWorktreeDir(rootDir, settings, task.id);
+  const workspaceTaskDir = resolveWorkspaceTaskWorktreeDir(rootDir, settings, resolveWorkspaceTaskDirSegment(task));
   const legacy = isLegacyWorkspaceWorktreeLayout(task, workspaceTaskDir);
   const targetsByCanonical = new Map<string, TaskResetWorktreeTarget>();
   for (const [repoRel, entry] of Object.entries(task.workspaceWorktrees ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
