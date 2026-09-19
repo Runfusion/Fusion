@@ -116,6 +116,7 @@ import {
   TASK_PLANNING_FAILURE_VERSION,
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
   OVERLAP_WAIT_SYNC_VERSION,
+  DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -172,7 +173,7 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0073");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0085");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -658,15 +659,9 @@ pgDescribe("schema-applier: VAL-SCHEMA-008 three-database topology", () => {
 
   it("ensures schemas before hooks when all migration markers are already recorded", async () => {
     ctx = await setupFreshDb();
-    await ctx.db.execute(sql.raw(`
-      CREATE TABLE public.fusion_schema_migrations (
-        version text PRIMARY KEY,
-        applied_at timestamptz NOT NULL DEFAULT now()
-      );
-      INSERT INTO public.fusion_schema_migrations (version)
-      SELECT lpad(n::text, 4, '0')
-      FROM generate_series(0, ${Number(SCHEMA_BASELINE_VERSION)}) AS migration(n);
-    `));
+    // The applier also re-runs a migration whose table is absent even when its marker exists, so
+    // a marker-only database cannot model "fully migrated"; apply for real, then re-run with hooks.
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
 
     const observedSchemas: string[] = [];
     const assertSchemasHook: PluginSchemaInitHook = {
@@ -729,10 +724,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
-    0060 adds workspace coordination leases and land intents (→ 115). Plugin tables are added separately
+    0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Plugin tables are added separately
     by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(115);
+    expect(bySchema.project).toBe(117);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1919,8 +1914,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_REQUIRE_PLAN_APPROVAL_VERSION,
       PATCHNODE_ENTRIES_VERSION,
       TASK_PLANNING_FAILURE_VERSION,
-      CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2021,6 +2016,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
     ]);
   });
 
@@ -2254,6 +2250,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
     ]);
   });
 
@@ -2368,6 +2365,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
     ]);
   });
 
@@ -2482,6 +2480,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
+      DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
     ]);
   });
 });

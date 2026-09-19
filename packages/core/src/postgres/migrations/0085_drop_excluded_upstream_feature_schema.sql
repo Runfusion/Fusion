@@ -64,3 +64,23 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+/*
+FNXC:ForkedProductLine 2026-09-19-20:10:
+Migration 0084 first shipped its task_overlap_waits owner FK without ON UPDATE CASCADE / DEFERRABLE, unlike every task-owned FK 0006 rebuilds.
+Project-partition promotion refuses such an FK (unsafe-fk-update-graph), so repair databases that already applied the original 0084.
+*/
+DO $$
+BEGIN
+  IF to_regclass('project.task_overlap_waits') IS NOT NULL AND EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_task_overlap_wait_owner'
+      AND conrelid = 'project.task_overlap_waits'::regclass
+      AND (confupdtype <> 'c' OR NOT condeferrable)
+  ) THEN
+    ALTER TABLE project.task_overlap_waits DROP CONSTRAINT fk_task_overlap_wait_owner;
+    ALTER TABLE project.task_overlap_waits ADD CONSTRAINT fk_task_overlap_wait_owner
+      FOREIGN KEY (project_id, task_id) REFERENCES project.tasks(project_id, id)
+      ON UPDATE CASCADE ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
+  END IF;
+END $$;

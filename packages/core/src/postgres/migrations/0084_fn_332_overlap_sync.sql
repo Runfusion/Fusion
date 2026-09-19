@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS project.task_overlap_waits (
   updated_at text NOT NULL,
   PRIMARY KEY (project_id, task_id, episode_id),
   CONSTRAINT fk_task_overlap_wait_owner FOREIGN KEY (project_id, task_id)
-    REFERENCES project.tasks(project_id, id) ON DELETE CASCADE,
+    REFERENCES project.tasks(project_id, id) ON UPDATE CASCADE ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
   CONSTRAINT ck_task_overlap_wait_phase CHECK (phase IN ('observed','analyzing','freshness-pending','revalidation-pending','repair-required','ready','delivered','cancelled'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_task_overlap_wait_open_blocker
