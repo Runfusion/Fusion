@@ -25,6 +25,7 @@ import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
+import { TASK_QUEUE_ORDER_VERSION, TASK_HUMAN_MERGE_APPROVAL_VERSION } from "../../postgres/schema-applier.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -32,6 +33,7 @@ import {
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
   TASK_PAUSE_ACCOUNTING_VERSION,
+  EXTERNAL_SESSIONS_VERSION,
   TASK_HUMAN_PLAN_APPROVAL_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   assertBinaryNotOlderThanDatabase,
@@ -191,14 +193,18 @@ describe("schema-applier: immutable migration identities", () => {
     // FNXC:TaskPauseAccounting 2026-09-16-06:16: FN-457's durable paused-time columns are migration 0081 and the new ceiling.
     expect(TASK_PAUSE_ACCOUNTING_VERSION).toBe("0081");
     // FNXC:TaskQueueOrder 2026-09-17-12:07: FN-509's durable Boost column is migration 0082.
-    expect(SCHEMA_BASELINE_VERSION >= "0082").toBe(true);
+    expect(TASK_QUEUE_ORDER_VERSION).toBe("0082");
     /*
     FNXC:HumanMergeApproval 2026-09-17-18:09:
-    FN-514's per-card delivery-lock column is migration 0083 and the new ceiling. Every identity above
+    FN-514's per-card delivery-lock column is migration 0083 and its published identity. Every identity above
     stays pinned: this assertion exists so a renumbering of an ALREADY-PUBLISHED migration fails here
     rather than silently skipping it on an upgraded database.
     */
-    expect(SCHEMA_BASELINE_VERSION).toBe("0083");
+    expect(TASK_HUMAN_MERGE_APPROVAL_VERSION).toBe("0083");
+    // FNXC:RemoteAgents 2026-09-18-19:35: Preserve published upstream migration identities; observations and feedback advance the ceiling additively.
+    expect(EXTERNAL_SESSIONS_VERSION).toBe("0084");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0085");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(TASK_PAUSE_ACCOUNTING_VERSION));
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -733,7 +739,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 120 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all project, central and archive tables", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -764,7 +770,8 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     FNXC:WorkflowIdentity 2026-09-14-19:06:
     Migration 0079 adds separate recovery archives for displaced workflow settings and prompt overrides, bringing the project total to 122.
     */
-    expect(bySchema.project).toBe(122);
+    // FNXC:ExternalSessions 2026-09-17-04:00: Migration 0082 adds three project-isolated metadata tables.
+    expect(bySchema.project).toBe(125);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1770,7 +1777,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       Real 0000 databases have source_agent_id (baseline since the PG cutover), so this
       historical fixture must retain it; project_id arrives via the 0006 ownership migration.
       */
-      CREATE TABLE project.tasks (id text PRIMARY KEY, source_agent_id text);
+      /* FNXC:RemoteAgents 2026-09-18-21:11: Real 0000 tasks already have column; retain it so current-main 0082 can build its project/column Boost index during this legacy upgrade. */
+      CREATE TABLE project.tasks (id text PRIMARY KEY, source_agent_id text, "column" text NOT NULL);
       /*
       FNXC:Ideation 2026-07-18-13:25:
       FN-8295 migration 0022 FKs ideation rows to missions/mission_features on (project_id, id).
@@ -1959,6 +1967,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      EXTERNAL_SESSIONS_VERSION,
+      "0085",
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2068,6 +2078,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      EXTERNAL_SESSIONS_VERSION,
+      "0085",
     ]);
   });
 
@@ -2310,6 +2322,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      EXTERNAL_SESSIONS_VERSION,
+      "0085",
     ]);
   });
 
@@ -2433,6 +2447,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      EXTERNAL_SESSIONS_VERSION,
+      "0085",
     ]);
   });
 
@@ -2556,6 +2572,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
+      EXTERNAL_SESSIONS_VERSION,
+      "0085",
     ]);
   });
 });

@@ -1,8 +1,9 @@
+import { RemoteAgentsPanel } from "./RemoteAgentsPanel";
 import "./AgentsView.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useState, useEffect, useCallback, useRef, useMemo, useId, useLayoutEffect, lazy, Suspense, type CSSProperties, type ReactNode, type MutableRefObject, type RefObject, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2, Move, Info } from "lucide-react";
+import { Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Server, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2, Move, Info } from "lucide-react";
 import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTreeNode } from "../api";
 import { fetchAgents, updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings, isAgentHeartbeatEnabled, withAgentHeartbeatEnabled } from "../api";
 
@@ -483,10 +484,16 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   );
   const viewportMode = useViewportMode();
   const isMobileViewport = viewportMode === "mobile";
+  const [agentView, setAgentView] = useState<"list" | "board" | "org" | "remote">(() => {
+    if (typeof window === "undefined") return "list";
+    const saved = getScopedItem("fn-agent-view", projectId);
+    return (saved === "list" || saved === "board" || saved === "org" || saved === "remote") ? saved : "list";
+  });
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const { agents, stats, isLoading, loadAgents, refreshAgents } = useAgents(projectId, {
     filterState,
     showSystemAgents,
+    enabled: agentView !== "remote",
   });
   const [isCreating, setIsCreating] = useState(false);
   const [onboardingDraft, setOnboardingDraft] = useState<AgentOnboardingSummary | null>(null);
@@ -497,11 +504,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [selectedAgentInitialTab, setSelectedAgentInitialTab] = useState<"dashboard" | "runs">("dashboard");
   const [selectedAgentInitialRunId, setSelectedAgentInitialRunId] = useState<string | null>(null);
   const [selectedAgentPreferActiveRun, setSelectedAgentPreferActiveRun] = useState(false);
-  const [agentView, setAgentView] = useState<"list" | "board" | "org">(() => {
-    if (typeof window === "undefined") return "list";
-    const saved = getScopedItem("fn-agent-view", projectId);
-    return (saved === "list" || saved === "board" || saved === "org") ? saved : "list";
-  });
   const [orgChartLayoutPreference, setOrgChartLayoutPreference] = useState<OrgChartLayoutPreference>(() => {
     if (typeof window === "undefined") return "auto";
     const saved = getScopedItem(ORG_CHART_LAYOUT_STORAGE_KEY, projectId);
@@ -535,7 +537,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
   useEffect(() => {
     const saved = getScopedItem("fn-agent-view", projectId);
-    if (saved === "list" || saved === "board" || saved === "org") {
+    if (saved === "list" || saved === "board" || saved === "org" || saved === "remote") {
       setAgentView(saved);
       return;
     }
@@ -715,6 +717,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   // This ensures health badges stay current while the view is open.
   // SSE refreshes are handled by useAgents.
   useEffect(() => {
+    if (agentView === "remote") return;
     const pollInterval = setInterval(() => {
       void loadAgents();
     }, 30_000);
@@ -722,10 +725,10 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
     return () => {
       clearInterval(pollInterval);
     };
-  }, [loadAgents]);
+  }, [agentView, loadAgents]);
 
   useEffect(() => {
-    if (!isControlsPanelOpen) return;
+    if (agentView === "remote" || !isControlsPanelOpen) return;
 
     let cancelled = false;
     setIsBulkEligibilityLoading(true);
@@ -783,7 +786,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       document.removeEventListener("touchstart", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [addToast, isControlsPanelOpen, projectId]);
+  }, [addToast, agentView, isControlsPanelOpen, projectId]);
 
   const handleBulkStateChange = async (targetState: "paused" | "active") => {
     if (isBulkActionRunning) return;
@@ -1259,7 +1262,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
     setOrgChartTransform(clampTransform({ scale, x, y }));
   }, [clampScale, clampTransform]);
 
-  const handleAgentViewChange = useCallback((nextView: "list" | "board" | "org") => {
+  const handleAgentViewChange = useCallback((nextView: "list" | "board" | "org" | "remote") => {
     setAgentView(nextView);
     if (nextView !== "org") {
       setOrgChartTransform({ scale: 1, x: 0, y: 0 });
@@ -1458,7 +1461,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
       <ViewHeader
         icon={Bot}
         title={t("agents.title", "Agents")}
-        backAction={selectedAgentId && (isMobileViewport || agentView === "org") ? {
+        backAction={agentView !== "remote" && selectedAgentId && (isMobileViewport || agentView === "org") ? {
           label: agentView === "org" ? t("agents.backToOrgChart", "Back to org chart") : t("agents.backToAgents", "Back to agents"),
           onClick: handleCloseDetail,
           "data-testid": "agents-detail-back",
@@ -1470,12 +1473,13 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
           Overview is a view-level disclosure, so its trigger sits with the other header actions. The rail keeps only the
           agent collection and the expanded overview drops in as a sibling section beneath the header.
           */}
-          <AgentsOverviewToggle
+          {agentView !== "remote" && <AgentsOverviewToggle
             activeAgents={displayActiveAgents}
             isOpen={isOverviewOpen}
             onToggle={() => setIsOverviewOpen((open) => !open)}
-          />
+          />}
           <div className="view-toggle">
+            <button className={`view-toggle-btn${agentView === "remote" ? " active" : ""}`} onClick={() => handleAgentViewChange("remote")} title="Remote agents" aria-label="Remote agents" aria-pressed={agentView === "remote"}><Server size={16} /></button>
             <button
               className={`view-toggle-btn${agentView === "list" ? " active" : ""}`}
               onClick={() => handleAgentViewChange("list")}
@@ -1504,7 +1508,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               <Network size={16} />
             </button>
           </div>
-          <div className={`agents-view-primary-actions${isControlsPanelOpen ? " agents-view-primary-actions--controls-open" : ""}`}>
+          {agentView !== "remote" && <div className={`agents-view-primary-actions${isControlsPanelOpen ? " agents-view-primary-actions--controls-open" : ""}`}>
             <button
               ref={controlsTriggerRef}
               className={`btn-icon agent-controls-trigger${isControlsPanelOpen ? " agent-controls-trigger--active" : ""}`}
@@ -1727,7 +1731,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                 <AgentTokenStatsPanel agents={displayAgents} />
               </div>
             )}
-          </div>
+          </div>}
         </div>
         }
       />
@@ -1759,12 +1763,12 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         stats={stats}
         activeAgents={displayActiveAgents}
         projectId={projectId}
-        isOpen={isOverviewOpen}
+        isOpen={agentView !== "remote" && isOverviewOpen}
         onSelectAgent={handleOverviewAgentSelect}
         onOpenTaskLogs={onOpenTaskLogs}
       />
 
-      {agentView === "org" ? (
+      {agentView === "remote" ? <RemoteAgentsPanel projectId={projectId} /> : agentView === "org" ? (
         <div className="agents-org-full-view">
           <div className="agents-view-content agents-view-content--org-full">
             {selectedAgentId ? (
