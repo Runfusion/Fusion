@@ -72,17 +72,38 @@ describe("TaskResetDialog", () => {
     expect(props.onReset.mock.calls[0]).toEqual(["FN-233"]);
   });
 
-  it("keeps the dialog open and reports a rejected reset", async () => {
+  it("dismisses immediately while reset continues in the background", async () => {
+    const user = userEvent.setup();
+    let resolveReset!: () => void;
+    const onReset = vi.fn(() => new Promise<void>((resolve) => {
+      resolveReset = resolve;
+    }));
+    const { props } = renderDialog({ onReset });
+
+    await user.click(screen.getByTestId("task-reset-submit"));
+
+    expect(props.onClose).toHaveBeenCalledOnce();
+    expect(props.addToast).not.toHaveBeenCalled();
+    expect(props.onResetCompleted).not.toHaveBeenCalled();
+
+    resolveReset();
+    await waitFor(() => expect(props.addToast).toHaveBeenCalledWith(
+      "Reset FN-233 — fresh run will be allocated",
+      "success",
+    ));
+    expect(props.onResetCompleted).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the dialog dismissed and reports a rejected background reset", async () => {
     const user = userEvent.setup();
     const { props } = renderDialog({ onReset: vi.fn().mockRejectedValue(new Error("cleanup failed")) });
 
     await user.click(screen.getByTestId("task-reset-submit"));
 
+    expect(props.onClose).toHaveBeenCalledOnce();
     await waitFor(() => expect(props.addToast).toHaveBeenCalledWith("cleanup failed", "error"));
-    expect(screen.getByTestId("task-reset-dialog")).toBeInTheDocument();
     expect(props.addToast).not.toHaveBeenCalledWith(expect.anything(), "success");
     expect(props.onResetCompleted).not.toHaveBeenCalled();
-    expect(props.onClose).not.toHaveBeenCalled();
   });
 
   it("does not cap or truncate a long description", () => {

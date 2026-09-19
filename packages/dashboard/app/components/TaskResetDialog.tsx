@@ -1,7 +1,7 @@
 import "./TaskResetDialog.css";
 
 import { getErrorMessage } from "@fusion/core";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ToastType } from "../hooks/useToast";
@@ -29,31 +29,37 @@ export function TaskResetDialog({
 }: TaskResetDialogProps) {
   const { t } = useTranslation("app");
   const [description, setDescription] = useState(initialDescription ?? "");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const resetStartedRef = useRef(false);
   const trimmedDescription = description.trim();
   const trimmedInitialDescription = (initialDescription ?? "").trim();
   const titleId = `task-reset-title-${taskId}`;
   const helpId = `task-reset-help-${taskId}`;
 
-  const submit = async () => {
-    if (!trimmedDescription || isSubmitting) return;
-    setIsSubmitting(true);
-    try {
-      if (trimmedDescription === trimmedInitialDescription) {
-        await onReset(taskId);
-      } else {
-        await onReset(taskId, { description: trimmedDescription });
+  /*
+  FNXC:TaskReset 2026-09-19-20:16:
+  Reset cleanup can take several seconds, so confirmation dismisses the dialog immediately and reports the background result by toast. Keep the one-shot ref because the dialog may not unmount until React processes the close state update.
+  */
+  const submit = () => {
+    if (!trimmedDescription || resetStartedRef.current) return;
+    resetStartedRef.current = true;
+    onClose();
+
+    void (async () => {
+      try {
+        if (trimmedDescription === trimmedInitialDescription) {
+          await onReset(taskId);
+        } else {
+          await onReset(taskId, { description: trimmedDescription });
+        }
+        addToast(
+          t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: taskId }),
+          "success",
+        );
+        onResetCompleted?.();
+      } catch (error) {
+        addToast(getErrorMessage(error), "error");
       }
-      addToast(
-        t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: taskId }),
-        "success",
-      );
-      onResetCompleted?.();
-      onClose();
-    } catch (error) {
-      setIsSubmitting(false);
-      addToast(getErrorMessage(error), "error");
-    }
+    })();
   };
 
   return (
@@ -65,7 +71,7 @@ export function TaskResetDialog({
       data-testid="task-reset-dialog"
       onClick={(event) => {
         event.stopPropagation();
-        if (event.target === event.currentTarget && !isSubmitting) onClose();
+        if (event.target === event.currentTarget) onClose();
       }}
     >
       <div className="modal modal-md task-reset-dialog" onClick={(event) => event.stopPropagation()}>
@@ -75,7 +81,6 @@ export function TaskResetDialog({
             type="button"
             className="modal-close"
             onClick={onClose}
-            disabled={isSubmitting}
             aria-label={t("common.close", "Close")}
           >
             &times;
@@ -100,7 +105,6 @@ export function TaskResetDialog({
             aria-describedby={helpId}
             rows={8}
             autoFocus
-            disabled={isSubmitting}
           />
           <p
             id={helpId}
@@ -117,7 +121,6 @@ export function TaskResetDialog({
             className="btn btn-sm"
             data-testid="task-reset-cancel"
             onClick={onClose}
-            disabled={isSubmitting}
           >
             {t("common.cancel", "Cancel")}
           </button>
@@ -125,12 +128,10 @@ export function TaskResetDialog({
             type="button"
             className="btn btn-danger btn-sm"
             data-testid="task-reset-submit"
-            onClick={() => void submit()}
-            disabled={!trimmedDescription || isSubmitting}
+            onClick={submit}
+            disabled={!trimmedDescription}
           >
-            {isSubmitting
-              ? t("taskDetail.reset.submitting", "Resetting…")
-              : t("taskDetail.reset.btn", "Reset")}
+            {t("taskDetail.reset.btn", "Reset")}
           </button>
         </div>
       </div>
