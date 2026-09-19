@@ -4,6 +4,7 @@ import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { readAppFile } from "../../test/cssFixture";
 import { TaskResetDialog } from "../TaskResetDialog";
+import { currentFloatingZ } from "../floatingWindowStack";
 
 function renderDialog(overrides: Partial<ComponentProps<typeof TaskResetDialog>> = {}) {
   const props = {
@@ -20,6 +21,52 @@ function renderDialog(overrides: Partial<ComponentProps<typeof TaskResetDialog>>
 }
 
 describe("TaskResetDialog", () => {
+  it("portals above a host stacking context using the shared floating stack", () => {
+    const priorZ = currentFloatingZ();
+    const { container } = render(
+      <div style={{ containerType: "inline-size", zIndex: 1 }}>
+        <TaskResetDialog
+          taskId="FN-233"
+          initialDescription="Original request"
+          onReset={vi.fn().mockResolvedValue(undefined)}
+          addToast={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </div>,
+    );
+
+    const overlay = screen.getByTestId("task-reset-dialog");
+    expect(overlay.parentElement).toBe(document.body);
+    expect(container).not.toContainElement(overlay);
+    expect(Number(overlay.style.zIndex)).toBeGreaterThan(priorZ);
+  });
+
+  it("contains portaled interaction events within its React host", () => {
+    const onPointerDown = vi.fn();
+    const onClick = vi.fn();
+    const onFocus = vi.fn();
+    render(
+      <div onPointerDown={onPointerDown} onClick={onClick} onFocus={onFocus}>
+        <TaskResetDialog
+          taskId="FN-233"
+          initialDescription="Original request"
+          onReset={vi.fn().mockResolvedValue(undefined)}
+          addToast={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </div>,
+    );
+
+    const textarea = screen.getByTestId("task-reset-description");
+    fireEvent.pointerDown(textarea);
+    fireEvent.click(textarea);
+    fireEvent.focus(textarea);
+
+    expect(onPointerDown).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+
   it("pre-fills the textarea with the current description", () => {
     renderDialog({ initialDescription: "Build the corrected workflow" });
 

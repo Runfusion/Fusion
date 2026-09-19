@@ -1,10 +1,12 @@
 import "./TaskResetDialog.css";
 
 import { getErrorMessage } from "@fusion/core";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import type { ToastType } from "../hooks/useToast";
+import { nextFloatingZ } from "./floatingWindowStack";
 
 export interface TaskResetDialogProps {
   taskId: string;
@@ -30,6 +32,14 @@ export function TaskResetDialog({
   const { t } = useTranslation("app");
   const [description, setDescription] = useState(initialDescription ?? "");
   const resetStartedRef = useRef(false);
+  /*
+  FNXC:TaskResetOverlay 2026-09-19-20:20:
+  The reset dialog is shared by Board cards, ListView, and task details, whose local stacking contexts can paint over an inline overlay. Portal it to the application root and claim the established floating stack so every host opens the blocking reset flow above its launcher rather than adding a Board-specific z-index.
+  */
+  const [overlayZ, setOverlayZ] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    setOverlayZ(nextFloatingZ());
+  }, []);
   const trimmedDescription = description.trim();
   const trimmedInitialDescription = (initialDescription ?? "").trim();
   const titleId = `task-reset-title-${taskId}`;
@@ -62,13 +72,24 @@ export function TaskResetDialog({
     })();
   };
 
-  return (
+  return createPortal(
     <div
       className="modal-overlay open task-reset-overlay"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
       data-testid="task-reset-dialog"
+      style={overlayZ ? { zIndex: overlayZ } : undefined}
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerMove={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+      onPointerCancel={(event) => event.stopPropagation()}
+      onTouchStart={(event) => event.stopPropagation()}
+      onTouchMove={(event) => event.stopPropagation()}
+      onTouchEnd={(event) => event.stopPropagation()}
+      onTouchCancel={(event) => event.stopPropagation()}
+      onFocus={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.stopPropagation();
         if (event.target === event.currentTarget) onClose();
@@ -135,6 +156,7 @@ export function TaskResetDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

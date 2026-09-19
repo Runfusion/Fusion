@@ -584,7 +584,10 @@ describe("TaskCard", () => {
       await waitFor(() => expectBoardContextMenuPortaled());
       fireEvent.click(screen.getByRole("menuitem", { name: "Reset" }));
 
-      expect(await screen.findByTestId("task-reset-dialog")).toBeInTheDocument();
+      const resetOverlay = await screen.findByTestId("task-reset-dialog");
+      expect(resetOverlay).toBeInTheDocument();
+      expect(resetOverlay.parentElement).toBe(document.body);
+      expect(Number(resetOverlay.style.zIndex)).toBeGreaterThan(1_000);
       expect(mockConfirm).not.toHaveBeenCalled();
       expect(screen.getByTestId("task-reset-description")).toHaveValue("Original request");
       fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected board request" } });

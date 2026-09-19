@@ -1331,7 +1331,10 @@ describe("ListView", () => {
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-901"]') as HTMLElement, { clientX: 40, clientY: 50 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reset" }));
 
-    expect(await screen.findByTestId("task-reset-dialog")).toBeInTheDocument();
+    const resetOverlay = await screen.findByTestId("task-reset-dialog");
+    expect(resetOverlay).toBeInTheDocument();
+    expect(resetOverlay.parentElement).toBe(document.body);
+    expect(Number(resetOverlay.style.zIndex)).toBeGreaterThan(1_000);
     expect(mockConfirm).not.toHaveBeenCalled();
     expect(screen.getByTestId("task-reset-description")).toHaveValue("Original list request");
     fireEvent.change(screen.getByTestId("task-reset-description"), { target: { value: "Corrected list request" } });
