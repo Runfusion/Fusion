@@ -7051,7 +7051,11 @@
       "worktrunkIntegration": "",
       "worktreesPickerNote": "",
       "showWorktreeGroupingHelp": "",
-      "copyFilesHelp": ""
+      "copyFilesHelp": "",
+      "namingStyleNotApplicableWhenRecycling": "",
+      "howToNameFreshWorktreeDirectories": "",
+      "recycleNotApplicableWithTaskIdNaming": "",
+      "branchTicketEGPRD1234MySlug": ""
     },
     "fileBrowser": {
       "currentDirectory": "",

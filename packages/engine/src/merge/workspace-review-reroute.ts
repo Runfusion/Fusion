@@ -3,6 +3,7 @@ import {
   resolveWorkflowIrForTask,
   type Task,
   type TaskStore,
+  type WorkflowIr,
   type WorkflowIrNode,
 } from "@fusion/core";
 
@@ -14,6 +15,39 @@ function isCodeReviewNode(node: WorkflowIrNode): boolean {
     || /code review/i.test(name);
 }
 
+/*
+FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+R10/KTD7: a late acquisition that will force Code Review re-entry must prove the route exists
+BEFORE it acquires, because an unwind after a successful acquire would tear down a worktree a live
+session may already be using. Reachability is not node presence alone — the reroute below also
+refuses when the node exists but is neither `defaultOn` nor in the task's selected `stepIds`, and a
+presence-only probe would admit that second case straight into the non-unwinding path. This shares
+the reroute's own condition so the two cannot drift.
+*/
+export async function isCodeReviewRouteReachable(store: TaskStore, task: Task, resolvedIr?: WorkflowIr): Promise<boolean> {
+  const ir = resolvedIr ?? await resolveWorkflowIrForTask(store, task.id);
+  return await resolveReachableCodeReviewNode(store, task, ir) !== undefined;
+}
+
+/**
+ * The single "is a Code Review node reachable for this task" resolution: present AND either
+ * `defaultOn` or in the task's workflow selection. Both the pre-acquisition probe above and the
+ * reroute below read it, so the admission decision and the seeding decision cannot disagree.
+ */
+async function resolveReachableCodeReviewNode(
+  store: TaskStore,
+  task: Task,
+  ir: WorkflowIr,
+): Promise<WorkflowIrNode | undefined> {
+  const node = ir.nodes.find(isCodeReviewNode);
+  if (!node) return undefined;
+  if (node.config?.defaultOn === true) return node;
+  const selection = store.getTaskWorkflowSelectionAsync
+    ? await store.getTaskWorkflowSelectionAsync(task.id)
+    : store.getTaskWorkflowSelection?.(task.id);
+  return (selection?.stepIds ?? []).includes(node.id) ? node : undefined;
+}
+
 /**
  * Seed exactly one durable Code Review owner after workspace landing rejects stale evidence.
  * A live continuation wins the race; it will consume the graph's own rework path instead.
@@ -23,15 +57,8 @@ export async function rerouteWorkspaceReviewToCodeReview(
   task: Task,
 ): Promise<{ rerouted: boolean; reason: "seeded" | "active-continuation" | "no-code-review-route" }> {
   const ir = await resolveWorkflowIrForTask(store, task.id);
-  const node = ir.nodes.find(isCodeReviewNode);
+  const node = await resolveReachableCodeReviewNode(store, task, ir);
   if (!node) return { rerouted: false, reason: "no-code-review-route" };
-
-  const selection = store.getTaskWorkflowSelectionAsync
-    ? await store.getTaskWorkflowSelectionAsync(task.id)
-    : store.getTaskWorkflowSelection(task.id);
-  const selected = selection?.stepIds ?? [];
-  const defaultOn = node.config?.defaultOn === true;
-  if (!defaultOn && !selected.includes(node.id)) return { rerouted: false, reason: "no-code-review-route" };
 
   const items = await store.listWorkflowWorkItemsForTask(task.id);
   const result = await store.seedWorkspaceCodeReviewContinuationIfIdle({

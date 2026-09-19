@@ -1,6 +1,6 @@
 import { existsSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isLegacyWorkspaceWorktreeLayout, isStrictDescendantPath, resolveWorkspaceTaskWorktreeDir, type Settings, type Task, type TaskStore } from "@fusion/core";
+import { isLegacyWorkspaceWorktreeLayout, isStrictDescendantPath, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, type Settings, type Task, type TaskStore } from "@fusion/core";
 import type { RunAuditor } from "../util/run-audit.js";
 import {
   ActiveSessionWorktreeRemovalError,
@@ -286,7 +286,7 @@ export async function cleanupLandedWorkspaceTaskWorktrees(
   }
   result.removed = result.removedRepoRels.length > 0;
 
-  const taskDir = resolveWorkspaceTaskWorktreeDir(input.workspaceRootDir, settings, input.task.id);
+  const taskDir = resolveWorkspaceTaskWorktreeDir(input.workspaceRootDir, settings, resolveWorkspaceTaskDirSegment(input.task));
   if (!everyEntrySettled || isLegacyWorkspaceWorktreeLayout(input.task, taskDir)) return result;
 
   result.taskDirectoryRemoved = removeEmptyWorkspaceTaskDirectory(taskDir, entries.map(([, entry]) => entry.worktreePath));

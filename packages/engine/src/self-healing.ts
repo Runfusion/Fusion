@@ -47,7 +47,7 @@ import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
 } from "@fusion/core";
-import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
+import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
 import { classifyStaleContentPark } from "./merge/stale-content-park.js";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
@@ -11799,7 +11799,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       for (const { task, lane } of candidates) {
-        const taskDir = resolveWorkspaceTaskWorktreeDir(this.options.rootDir, settings, task.id);
+        const taskDir = resolveWorkspaceTaskWorktreeDir(this.options.rootDir, settings, resolveWorkspaceTaskDirSegment(task));
         let taskDirectoryOutcome: "removed" | "retained" | "not-applicable" = "not-applicable";
         if (!isLegacyWorkspaceWorktreeLayout(task, taskDir)) {
           const entries = Object.entries(task.workspaceWorktrees ?? {});
