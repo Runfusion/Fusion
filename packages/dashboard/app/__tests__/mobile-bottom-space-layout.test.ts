@@ -38,7 +38,7 @@ interface BottomStackInput {
   footerVisible: boolean;
   mobileNavVisible: boolean;
   keyboardOpen: boolean;
-  safeAreaFloor: number;
+  safeAreaInset: number;
   standaloneGap: number;
   icbBottomOffset: number;
   executorFooterHeight: number;
@@ -48,17 +48,14 @@ interface BottomStackInput {
 function visibleFixedBottomStack(input: BottomStackInput): number {
   if (input.keyboardOpen || !input.mobileNavVisible) return 0;
 
-  const navSurface = input.mobileNavHeight + input.safeAreaFloor + input.standaloneGap;
+  const safeAreaClearance = Math.max(12, input.safeAreaInset);
+  const navSurface = input.mobileNavHeight + safeAreaClearance;
   const footer = input.footerVisible ? input.executorFooterHeight : 0;
   return navSurface + footer + input.icbBottomOffset;
 }
 
 function reservedProjectContentBottom(input: BottomStackInput): number {
-  if (input.keyboardOpen || !input.mobileNavVisible) return 0;
-
-  const navSurface = input.mobileNavHeight + input.safeAreaFloor + input.standaloneGap;
-  const footer = input.footerVisible ? input.executorFooterHeight : 0;
-  return navSurface + footer + input.icbBottomOffset;
+  return visibleFixedBottomStack(input);
 }
 
 describe("mobile bottom-space layout invariant", () => {
@@ -66,23 +63,35 @@ describe("mobile bottom-space layout invariant", () => {
   const mobileCss = extractMobileMediaBlocks(css);
 
   it.each([
-    ["nav only / healthy viewport", { footerVisible: false, mobileNavVisible: true, keyboardOpen: false, safeAreaFloor: 12, standaloneGap: 0, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }],
-    ["footer + nav / iPhone PWA safe area", { footerVisible: true, mobileNavVisible: true, keyboardOpen: false, safeAreaFloor: 34, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }],
-    ["footer + nav / compensated visual viewport", { footerVisible: true, mobileNavVisible: true, keyboardOpen: false, safeAreaFloor: 34, standaloneGap: 8, icbBottomOffset: 52, executorFooterHeight: 36, mobileNavHeight: 44 }],
-    ["keyboard open / bars covered", { footerVisible: true, mobileNavVisible: true, keyboardOpen: true, safeAreaFloor: 34, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }],
-    ["mobile nav hidden", { footerVisible: false, mobileNavVisible: false, keyboardOpen: false, safeAreaFloor: 34, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }],
-  ] satisfies Array<[string, BottomStackInput]>)("reserves exactly the visible fixed stack for %s", (_name, input) => {
-    expect(reservedProjectContentBottom(input)).toBe(visibleFixedBottomStack(input));
+    ["browser nav only uses the Android gesture floor", { footerVisible: false, mobileNavVisible: true, keyboardOpen: false, safeAreaInset: 0, standaloneGap: 0, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }, 56],
+    ["standalone nav only does not add its PWA token", { footerVisible: false, mobileNavVisible: true, keyboardOpen: false, safeAreaInset: 0, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }, 56],
+    ["standalone footer plus large iOS inset preserves only the visible stack", { footerVisible: true, mobileNavVisible: true, keyboardOpen: false, safeAreaInset: 34, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }, 114],
+    ["compensated visual viewport adds its independent ICB offset", { footerVisible: true, mobileNavVisible: true, keyboardOpen: false, safeAreaInset: 34, standaloneGap: 8, icbBottomOffset: 52, executorFooterHeight: 36, mobileNavHeight: 44 }, 166],
+    ["keyboard open collapses the fixed stack", { footerVisible: true, mobileNavVisible: true, keyboardOpen: true, safeAreaInset: 34, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }, 0],
+    ["hidden nav reserves no fixed stack", { footerVisible: false, mobileNavVisible: false, keyboardOpen: false, safeAreaInset: 34, standaloneGap: 8, icbBottomOffset: 0, executorFooterHeight: 36, mobileNavHeight: 44 }, 0],
+  ] satisfies Array<[string, BottomStackInput, number]>)("reserves exactly the visible fixed stack for %s", (_name, input, expected) => {
+    expect(visibleFixedBottomStack(input)).toBe(expected);
+    expect(reservedProjectContentBottom(input)).toBe(expected);
   });
 
-  it("mobile project-content reservation includes only fixed bottom-bar stack terms", () => {
+  it("mobile project-content reservations contain only the visible fixed stack in both responsive paths", () => {
     const navOnlyRule = normalizeCss(extractRuleBlock(mobileCss, ".project-content--with-mobile-nav:not(.project-content--with-footer)"));
     const footerAndNavRule = normalizeCss(extractRuleBlock(mobileCss, ".project-content--with-footer.project-content--with-mobile-nav"));
+    const viewportNavOnlyRule = normalizeCss(extractRuleBlock(css, "html[data-viewport-mode=\"mobile\"] .project-content--with-mobile-nav:not(.project-content--with-footer)"));
+    const viewportFooterAndNavRule = normalizeCss(extractRuleBlock(css, "html[data-viewport-mode=\"mobile\"] .project-content--with-footer.project-content--with-mobile-nav"));
+    const navStack = "var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--icb-bottom-offset, 0px)";
+    const footerStack = "var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--icb-bottom-offset, 0px)";
 
-    expect(navOnlyRule).toContain("padding-bottom: calc(var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px))");
-    expect(footerAndNavRule).toContain("var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px)");
-    expect(footerAndNavRule).not.toContain("100vh");
-    expect(footerAndNavRule).not.toContain("100dvh");
+    for (const rule of [navOnlyRule, viewportNavOnlyRule]) {
+      expect(rule).toContain(navStack);
+      expect(rule).not.toContain("var(--standalone-bottom-gap)");
+    }
+    for (const rule of [footerAndNavRule, viewportFooterAndNavRule]) {
+      expect(rule).toContain(footerStack);
+      expect(rule).not.toContain("var(--standalone-bottom-gap)");
+      expect(rule).not.toContain("100vh");
+      expect(rule).not.toContain("100dvh");
+    }
   });
 
   it("keeps board and list content height parent-relative on mobile and desktop", () => {

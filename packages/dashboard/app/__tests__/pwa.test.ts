@@ -403,11 +403,12 @@ describe("PWA configuration", () => {
     expect(cssContent).toContain("--standalone-bottom-gap: var(--space-sm)");
   });
 
-  it("CSS applies standalone bottom gap via scoped mobile layout rules, not global #root padding", () => {
+  it("keeps the standalone token scoped away from fixed navigation and global root padding", () => {
     const cssContent = loadAllAppCss();
 
-    expect(cssContent).toMatch(/\.project-content--with-mobile-nav\s*\{[^}]*var\(--standalone-bottom-gap\)/);
-    expect(cssContent).toMatch(/\.executor-status-bar\s*\{[^}]*var\(--standalone-bottom-gap\)/);
+    expect(cssContent).not.toMatch(/\.mobile-nav-bar\s*\{[^}]*var\(--standalone-bottom-gap\)/);
+    expect(cssContent).not.toMatch(/\.executor-status-bar\s*\{[^}]*var\(--standalone-bottom-gap\)/);
+    expect(cssContent).not.toMatch(/\.project-content--with-mobile-nav[^}]*\{[^}]*var\(--standalone-bottom-gap\)/);
     expect(cssContent).not.toMatch(/#root\s*\{[^}]*var\(--standalone-bottom-gap\)/);
   });
 

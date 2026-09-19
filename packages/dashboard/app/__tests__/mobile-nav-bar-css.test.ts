@@ -64,12 +64,13 @@ describe("mobile-nav-bar.css", () => {
     expect(mobileMediaBlock).toContain("bottom: var(--icb-bottom-offset, 0px)");
   });
 
-  it("executor status bar has bottom offset above nav bar on mobile", () => {
-    // ExecutorStatusBar mobile override positions it above the mobile nav bar
-    // and includes safe-area + standalone token spacing in scoped rule.
-    expect(mobileMediaBlock).toMatch(
-      /\.executor-status-bar\s*\{[^}]*bottom:[^}]*var\(--mobile-nav-height\)/,
-    );
+  it("executor status bar stacks above the nav using safe-area and ICB clearance only", () => {
+    const mobileFooterRule = extractRuleBlock(mobileMediaBlock, ".executor-status-bar");
+
+    expect(mobileFooterRule).toContain("var(--mobile-nav-height)");
+    expect(mobileFooterRule).toContain("max(env(safe-area-inset-bottom, 0px), 12px)");
+    expect(mobileFooterRule).toContain("var(--icb-bottom-offset, 0px)");
+    expect(mobileFooterRule).not.toContain("var(--standalone-bottom-gap)");
   });
 
   it("defines bottom sheet animation", () => {
@@ -100,12 +101,14 @@ describe("mobile-nav-bar.css", () => {
     expect(block).toContain("min-height: 36px");
   });
 
-  it("defines content padding rule for mobile nav", () => {
+  it("keeps nav safe-area and ICB protection without a standalone band", () => {
+    const navRule = extractRuleBlock(cssContent, ".mobile-nav-bar");
+
     expect(mobileMediaBlock).toContain(".project-content--with-mobile-nav");
     expect(cssContent).toContain(".project-content--with-footer.project-content--with-mobile-nav");
     expect(cssContent).toContain("var(--executor-footer-height)");
-    expect(cssContent).toContain("env(safe-area-inset-bottom, 0px)");
-    expect(cssContent).toContain("var(--standalone-bottom-gap)");
+    expect(navRule).toContain("padding-bottom: max(env(safe-area-inset-bottom, 0px), 12px)");
+    expect(navRule).not.toContain("var(--standalone-bottom-gap)");
     expect(cssContent).not.toContain("calc(32px + var(--mobile-nav-height)");
   });
 

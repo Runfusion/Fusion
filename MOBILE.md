@@ -65,9 +65,9 @@ The dashboard includes a PWA manifest (`packages/dashboard/app/public/manifest.j
 ### Standalone iOS home-indicator spacing
 
 - Installed standalone mode sets `--standalone-bottom-gap` via `@media (display-mode: standalone) { :root { ... } }`.
-- Bottom spacing must stay scoped to layout/component rules (for example mobile content padding and footer/nav offsets), not global `#root` padding.
-- Keep standalone spacing additive with existing safe-area handling (`env(safe-area-inset-bottom, 0px)`).
-- The `.project-content` wrapper is the single source of truth for mobile-nav/footer/standalone bottom reservation; inline dashboard tabs (for example Agents and Missions) must only apply their own content padding and must not re-add `--mobile-nav-height` or duplicate footer spacing.
+- Bottom spacing must stay scoped to layout/component rules, not global `#root` padding.
+- Keep `--standalone-bottom-gap` available for independent modal and view-content reachability padding, but exclude it from the fixed mobile nav, executor footer, and `.project-content` fixed-stack reservation. Those surfaces use only tab height, safe-area/gesture clearance, ICB compensation, and the optional footer height.
+- The `.project-content` wrapper is the single source of truth for mobile-nav/footer bottom reservation; inline dashboard tabs (for example Agents and Missions) must only apply their own content padding and must not re-add `--mobile-nav-height` or duplicate footer spacing.
 
 Install from browser:
 

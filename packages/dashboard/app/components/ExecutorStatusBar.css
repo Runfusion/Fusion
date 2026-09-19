@@ -435,11 +435,11 @@ Elevating the fixed footer above `--mobile-nav-height` is only correct when the 
     font-size: 11px;
     height: calc(var(--space-lg) * 2 + var(--space-xs));
     overflow: hidden;
-    /* Must match the mobile nav bar's effective height. MobileNavBar floors
-       the bottom inset to 12px (Android Chrome under-reports the inset while
-       its address bar is collapsing), so we have to use the same floor here
-       or the footer ends up drawn inside the nav's padding area. */
-    bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
+    /*
+    FNXC:MobileFooter 2026-09-19-21:02:
+    The footer and project reservation mirror the visible nav footprint exactly. Preserve the safe-area floor and ICB compensation, but exclude standalone PWA breathing space so no artificial band appears between the footer and navigation.
+    */
+    bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px));
   }
 
   /* Keyboard-open override: ignore ICB offset so the keyboard can cover the
@@ -470,7 +470,7 @@ html[data-viewport-mode="mobile"] .executor-status-bar {
   font-size: 11px;
   height: calc(var(--space-lg) * 2 + var(--space-xs));
   overflow: hidden;
-  bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
+  bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px));
 }
 
 html[data-viewport-mode="mobile"] .executor-status-bar.executor-status-bar--keyboard-open {
