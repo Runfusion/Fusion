@@ -234,7 +234,7 @@ async function describeWorkflow(
  */
 export async function buildBoardWorkflowsPayload(
   store: Pick<TaskStore, "getWorkflowDefinition" | "getTaskWorkflowSelection" | "getSettings" | "listWorkflowDefinitions"> &
-    Partial<Pick<TaskStore, "getTaskWorkflowSelectionAsync">>,
+    Partial<Pick<TaskStore, "getTaskWorkflowSelectionAsync" | "getTaskWorkflowSelectionsAsync">>,
   taskIds: string[],
   settingsOverride?: Pick<Settings, "experimentalFeatures">,
 ): Promise<BoardWorkflowsPayload> {
@@ -270,12 +270,34 @@ export async function buildBoardWorkflowsPayload(
   const referenced = new Set<string>();
   const selectableWorkflowIds = new Set<string>([defaultWorkflowId]);
 
+  /*
+  FNXC:WorkflowScheduling 2026-09-19-04:10:
+  This loop used to await store.getTaskWorkflowSelectionAsync(taskId) one task at a
+  time, so a board load issued one DB round-trip per visible task — thousands of
+  sequential awaits on a project with a large non-archived task count, easily
+  exceeding any reasonable request timeout and leaving the board stuck on its
+  skeleton loading state forever. Batch through getTaskWorkflowSelectionsAsync
+  (already built for exactly this — FN-9261) when the store exposes it, falling
+  back to the historical per-task path for stores that only implement the
+  singular method.
+  */
+  let batchedSelections: Map<string, { workflowId: string; stepIds: string[] }> | undefined;
+  if (store.getTaskWorkflowSelectionsAsync) {
+    try {
+      batchedSelections = await store.getTaskWorkflowSelectionsAsync(taskIds);
+    } catch {
+      batchedSelections = undefined;
+    }
+  }
+
   for (const taskId of taskIds) {
     let workflowId = defaultWorkflowId;
     try {
-      const selection = store.getTaskWorkflowSelectionAsync
-        ? await store.getTaskWorkflowSelectionAsync(taskId)
-        : store.getTaskWorkflowSelection(taskId);
+      const selection = batchedSelections
+        ? batchedSelections.get(taskId)
+        : store.getTaskWorkflowSelectionAsync
+          ? await store.getTaskWorkflowSelectionAsync(taskId)
+          : store.getTaskWorkflowSelection(taskId);
       if (selection?.workflowId) workflowId = selection.workflowId;
     } catch {
       workflowId = defaultWorkflowId;
