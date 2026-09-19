@@ -65,8 +65,9 @@ export function SkillMultiselect({ value, onChange, projectId, disabled = false,
         <div className="skill-multiselect-chips" data-testid="skill-chips">
           {selectedIds.map((skillId) => {
             const classification = classifyAgentSkill(skillId, hasError ? null : skills, { forced: true });
+            const resolvedSkill = classification.resolvedSkillId ? skillById.get(classification.resolvedSkillId) : undefined;
             return <span key={skillId} className="skill-chip" data-testid={`skill-chip-${skillId}`}>
-              <span className="skill-chip-name">{skillById.get(skillId)?.name ?? formatAgentSkillBadgeLabel(skillId)}</span>
+              <span className="skill-chip-name">{resolvedSkill?.name ?? skillById.get(skillId)?.name ?? formatAgentSkillBadgeLabel(skillId)}</span>
               <span className="skill-state-marker" data-skill-state={classification.state}>{t(classification.labelKey, classification.defaultLabel)}</span>
               <button type="button" className="skill-chip-remove" onClick={() => updateSelection(skillId, false)} disabled={disabled} aria-label={t("skills.removeSkill", "Remove {{name}}", { name: formatAgentSkillBadgeLabel(skillId) })} data-testid={`remove-skill-${skillId}`}>×</button>
             </span>;

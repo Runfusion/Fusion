@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
-import { createMockAgent, mockFetchAgent, setupAgentDetailMocks } from "./AgentDetailView.test-helpers";
+import { createMockAgent, mockFetchAgent, mockFetchDiscoveredSkills, setupAgentDetailMocks } from "./AgentDetailView.test-helpers";
 import { AgentDetailView } from "../AgentDetailView";
 
 function installAgentDetailMatchMedia(matchesMobile: boolean, matchesNarrow = matchesMobile) {
@@ -252,6 +252,21 @@ describe("AgentDetailView mobile scroll regression (FN-4231)", () => {
       unmount();
       cleanup();
     }
+  });
+
+  it("keeps legacy discovered skills auto-available on the mobile detail surface", async () => {
+    const storedReference = "legacy::skills/../../.agents/skills/mobile-review/SKILL.md";
+    mockFetchAgent.mockResolvedValueOnce(createMockAgent({ metadata: { skills: [storedReference] } }));
+    mockFetchDiscoveredSkills.mockResolvedValueOnce([
+      { id: "current::skills/mobile-review/SKILL.md", name: "mobile-review", relativePath: "skills/mobile-review/SKILL.md", enabled: true },
+    ] as any);
+    installAgentDetailMatchMedia(true);
+
+    render(<AgentDetailView agentId="agent-001" projectId="legacy-mobile" onClose={vi.fn()} addToast={vi.fn()} inline />);
+
+    const badge = await screen.findByRole("button", { name: "View details for mobile-review" });
+    await waitFor(() => expect(badge).toHaveAttribute("data-skill-state", "auto-available"));
+    expect(badge).toHaveTextContent("Auto-available");
   });
 
   it("shows mobile task column context without empty task shells (FN-7139)", async () => {

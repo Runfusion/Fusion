@@ -1933,7 +1933,7 @@ The Skills API provides endpoints for managing execution skills. Skills are togg
 
 ### Agent skill configuration
 
-Agent cards show **Skills: None** when no forced skills are stored. The agent editor provides a filterable checkbox list: enabled entries are **Auto-available** to every agent, while checked entries are **Forced** so that agent reads them before work starts. Disabled and no-longer-discovered stored skills remain visible and are labeled **Disabled** or **Not discovered** on both the editor and agent badges. See [Agents](agents.md) for the execution semantics.
+Agent cards show **Skills: None** when no forced skills are stored. The agent editor provides a filterable checkbox list: enabled entries are **Auto-available** to every agent, while checked entries are **Forced** so that agent reads them before work starts. Compatible legacy stored references—including bare names and older path-shaped or source-qualified forms—resolve against the current discovered inventory without changing the saved reference. Exact disabled IDs remain **Disabled**; equivalent references are **Disabled** only when every discovered match is disabled, and truly absent skills remain **Not discovered** on both the editor and agent badges. See [Agents](agents.md) for the execution semantics.
 
 ![Skills view](./screenshots/skills-view.png)
 

@@ -493,6 +493,25 @@ it("renders assigned skills as readable badges with full id tooltip", async () =
   expect(missingSkillBadge.getAttribute("title")?.startsWith(`${UNDISCOVERED_SKILL_ID}: `)).toBe(true);
 });
 
+it("loads compatible legacy skill details through the resolved canonical ID", async () => {
+  const storedReference = "legacy::skills/../../.agents/skills/review/SKILL.md";
+  const canonicalId = "current::skills/review/SKILL.md";
+  mockFetchAgent.mockResolvedValue(createMockAgent({ metadata: { skills: [storedReference] } }));
+  mockFetchDiscoveredSkills.mockResolvedValue([
+    { id: canonicalId, name: "Review", relativePath: "skills/review/SKILL.md", enabled: true },
+  ]);
+
+  render(<AgentDetailView agentId="agent-001" projectId="legacy-resolution-detail" onClose={vi.fn()} addToast={vi.fn()} />);
+
+  const badge = await screen.findByRole("button", { name: "View details for review" });
+  expect(badge).toHaveAttribute("data-skill-state", "auto-available");
+  expect(badge).toHaveTextContent("Auto-available");
+  expect(badge).toHaveAttribute("title", expect.stringContaining(storedReference));
+
+  fireEvent.click(badge);
+  await waitFor(() => expect(mockFetchSkillContent).toHaveBeenCalledWith(canonicalId, "legacy-resolution-detail"));
+});
+
 it("displays state badge", async () => {
   render(
     <AgentDetailView

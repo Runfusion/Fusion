@@ -272,26 +272,28 @@ describe("AgentsView", () => {
       expect(badge).toHaveTextContent("Forced");
     });
 
-    it("formats skill badge labels from SKILL.md paths", async () => {
+    it("recognizes legacy path-shaped skill references on list cards", async () => {
+      const storedReference = "auto::skills/../../.agents/skills/review/SKILL.md";
       mockFetchAgents.mockResolvedValueOnce([
         {
           ...mockAgents[0],
           id: "agent-skills",
           name: "Skill Agent",
-          metadata: {
-            skills: ["auto::skills/../../.agents/skills/review/SKILL.md"],
-          },
+          metadata: { skills: [storedReference] },
         },
       ]);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
+      mockFetchDiscoveredSkills.mockResolvedValueOnce([
+        { id: "current::skills/review/SKILL.md", name: "Review", relativePath: "skills/review/SKILL.md", enabled: true },
+      ] as any);
 
       renderView(<AgentsView addToast={mockAddToast} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("review")).toBeInTheDocument();
-      });
-      expect(screen.queryByText("auto::skills/../../.agents/skills/review/SKILL.md")).toBeNull();
-      expect(screen.getByText("review")).toHaveAttribute("title", expect.stringContaining("auto::skills/../../.agents/skills/review/SKILL.md"));
+      const badge = await screen.findByText("review");
+      expect(badge).toHaveAttribute("data-skill-state", "auto-available");
+      expect(badge).toHaveTextContent("Auto-available");
+      expect(screen.queryByText(storedReference)).toBeNull();
+      expect(badge).toHaveAttribute("title", expect.stringContaining(storedReference));
     });
 
     it("renders model and runtime labels on list-view agent cards", async () => {

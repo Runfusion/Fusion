@@ -8,7 +8,7 @@ vi.mock("../../api", () => ({ fetchDiscoveredSkills }));
 import { SkillMultiselect } from "../SkillMultiselect";
 
 const skills = [
-  { id: "skill-1", name: "Skill One", relativePath: "skills/one/SKILL.md", enabled: true },
+  { id: "skill-1", name: "One", relativePath: "skills/one/SKILL.md", enabled: true },
   { id: "skill-2", name: "Skill Two", relativePath: "skills/two/SKILL.md", enabled: false },
   { id: "skill-3", name: "Skill Three", relativePath: "skills/three/SKILL.md", enabled: true },
 ] as any[];
@@ -40,16 +40,19 @@ describe("SkillMultiselect", () => {
     expect(screen.getAllByText("Disabled").length).toBeGreaterThan(0);
   });
 
-  it("filters with retained focus and supports unknown chips", async () => {
+  it("filters with retained focus and supports legacy and unknown chips", async () => {
+    const legacyReference = "legacy::skills/one/SKILL.md";
     fetchDiscoveredSkills.mockResolvedValue(skills);
     const user = userEvent.setup();
-    render(<SkillMultiselect value={["missing", "missing"]} onChange={vi.fn()} id="skills" />);
+    render(<SkillMultiselect value={[legacyReference, "missing", "missing"]} onChange={vi.fn()} id="skills" />);
     const filter = await screen.findByTestId("skill-filter");
     await user.type(filter, "Three");
     expect(filter).toHaveFocus();
     expect(filter).toHaveValue("Three");
     expect(screen.getByTestId("skill-option-skill-3")).toBeInTheDocument();
     expect(screen.queryByTestId("skill-option-skill-1")).toBeNull();
+    expect(screen.getByTestId(`skill-chip-${legacyReference}`)).toHaveTextContent("One");
+    expect(screen.getByTestId(`skill-chip-${legacyReference}`)).toHaveTextContent("Auto-available");
     expect(screen.getByTestId("skill-chip-missing")).toHaveTextContent("Not discovered");
   });
 
