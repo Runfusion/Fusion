@@ -33,7 +33,6 @@ import {
   SCHEMA_BASELINE_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   assertBinaryNotOlderThanDatabase,
-  StaleBinarySchemaError,
   cePluginSchemaInit,
   cliPressPluginSchemaInit,
   reportsPluginSchemaInit,
@@ -1080,11 +1079,13 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     expect(await getAppliedMigrations(ctx.db)).toContain(TASK_DECLARED_SYMBOLS_VERSION);
   });
 
-  it("refuses to open a database migrated by a newer binary (stale-binary guard)", () => {
+  it("opens (with a warning, not a throw) a database migrated by a newer binary", () => {
     const future = String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0");
+    // This binary is a permanently feature-reduced fork: a database carrying migration slots
+    // it will never implement is expected, not an error — see the FNXC:ForkedProductLine note.
     expect(() => assertBinaryNotOlderThanDatabase([SCHEMA_BASELINE_VERSION, future]))
-      .toThrow(StaleBinarySchemaError);
-    // Current and older versions are fine — this guard only fires on a FUTURE version.
+      .not.toThrow();
+    // Current and older versions are fine — this guard only ever warned on a FUTURE version.
     expect(() => assertBinaryNotOlderThanDatabase(["0000", "0018", SCHEMA_BASELINE_VERSION]))
       .not.toThrow();
     // Non-numeric markers (plugin / hand-inserted) must not brick every open.
@@ -1100,8 +1101,8 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
   it("compares schema versions numerically, not lexically", () => {
     expect(() => assertBinaryNotOlderThanDatabase(["9"])).not.toThrow();
     expect(() => assertBinaryNotOlderThanDatabase(["0009"])).not.toThrow();
-    // A genuinely newer version still throws regardless of padding.
-    expect(() => assertBinaryNotOlderThanDatabase([String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0")])).toThrow(StaleBinarySchemaError);
+    // A genuinely newer version never throws either — it's warn-only (padding included).
+    expect(() => assertBinaryNotOlderThanDatabase([String(Number(SCHEMA_BASELINE_VERSION) + 1).padStart(4, "0")])).not.toThrow();
   });
 
 

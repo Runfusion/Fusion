@@ -27,6 +27,9 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 import { acquireSchemaMutationLocks } from "./advisory-locks.js";
+import { createLogger } from "../process/logger.js";
+
+const schemaApplierLog = createLogger("schema-applier");
 
 /** The latest PostgreSQL schema version known to this applier. */
 /*
@@ -312,6 +315,17 @@ LEGACY_ADOPTION_DRAINED_MARKER (below) is a deliberately NON-NUMERIC bookkeeping
 fusion_schema_migrations after a fully-drained adoption sweep. This guard MUST keep
 skipping non-numeric versions, or the marker would present as a "newer database" and
 brick every open.
+
+FNXC:ForkedProductLine 2026-09-18-19:05:
+This binary is a permanently feature-reduced fork: it never applies (and never will apply)
+some numeric migration slots a full-featured build owns (e.g. real upstream 0074-0083 —
+project notes, whiteboards, workflow-identity lanes, task queue ordering, human approval
+flows). A database that ran those migrations is not a corruption/downgrade risk for THIS
+binary's own tables and columns — Drizzle queries name their columns explicitly, so extra
+tables/columns from features this build doesn't implement are inert, not unsafe. Refusing to
+open here would mean nobody could ever point this build at a database a full build already
+touched. Downgrade to a WARNING: still refuse nothing, but keep the signal for an operator
+who wants to know their database carries schema this binary will never use.
 */
 export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): void {
   const binaryVersion = Number(SCHEMA_BASELINE_VERSION);
@@ -327,7 +341,12 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
     }
   }
   if (highest > binaryVersion) {
-    throw new StaleBinarySchemaError(highestRaw, SCHEMA_BASELINE_VERSION);
+    schemaApplierLog.warn(
+      `database has schema migration ${highestRaw} applied, but this binary only knows up to `
+      + `${SCHEMA_BASELINE_VERSION}. Continuing: this binary intentionally does not implement every `
+      + `migration slot a full-featured build owns, and unknown tables/columns are ignored rather than `
+      + `written to.`,
+    );
   }
 }
 
