@@ -9,12 +9,26 @@ type TaskRecommendationNoticeMetadata = MessageMetadata & {
   recommendationIds?: unknown;
 };
 
-function getNoticeTarget(metadata?: MessageMetadata): { taskId: string; recommendationIds: string[] } | null {
+type NoticeTarget = {
+  taskId: string;
+  recommendationIds?: string[];
+};
+
+function getNoticeTarget(metadata?: MessageMetadata): NoticeTarget | null {
   if (metadata?.kind !== "task-recommendation-notice") return null;
-  const taskId = (metadata as TaskRecommendationNoticeMetadata).taskId?.trim();
-  const recommendationIds = (metadata as TaskRecommendationNoticeMetadata).recommendationIds;
-  if (!taskId || !Array.isArray(recommendationIds) || recommendationIds.length === 0) return null;
-  const ids = recommendationIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  const notice = metadata as TaskRecommendationNoticeMetadata;
+  const taskId = notice.taskId?.trim();
+  if (!taskId) return null;
+
+  /*
+  FNXC:TaskRecommendations 2026-09-19-21:21:
+  Historical notices predate stable recommendation IDs, so only an absent field may resolve the
+  parent's current live rows. Present IDs are an authoritative modern notice filter: empty or
+  malformed values must remain inert rather than exposing recommendations the notice did not name.
+  */
+  if (!("recommendationIds" in notice)) return { taskId };
+  if (!Array.isArray(notice.recommendationIds) || notice.recommendationIds.length === 0) return null;
+  const ids = notice.recommendationIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
   return ids.length > 0 ? { taskId, recommendationIds: ids } : null;
 }
 
@@ -38,7 +52,7 @@ export function MailboxTaskRecommendations({
 
   const taskId = target?.taskId;
   const recommendationIds = target?.recommendationIds;
-  const recommendationIdsKey = recommendationIds?.join("\u0000");
+  const recommendationIdsKey = recommendationIds?.join("\u0000") ?? "legacy";
 
   useEffect(() => {
     let active = true;
@@ -48,7 +62,7 @@ export function MailboxTaskRecommendations({
     setCreatedIds({});
     setCreatingActions({});
     setErrorActions({});
-    if (!taskId || !recommendationIds) return () => { active = false; };
+    if (!taskId) return () => { active = false; };
 
     /*
     FNXC:TaskRecommendations 2026-08-15-22:39:
@@ -58,8 +72,8 @@ export function MailboxTaskRecommendations({
     */
     void fetchTaskDetail(taskId, projectId).then((task) => {
       if (!active) return;
-      const allowedIds = new Set(recommendationIds);
-      const matched = (task.recommendations ?? []).filter((recommendation) => allowedIds.has(recommendation.id));
+      const allowedIds = recommendationIds ? new Set(recommendationIds) : null;
+      const matched = (task.recommendations ?? []).filter((recommendation) => !allowedIds || allowedIds.has(recommendation.id));
       setRecommendations(matched);
       /*
       FNXC:TaskRecommendations 2026-09-04-13:58:
@@ -107,7 +121,9 @@ export function MailboxTaskRecommendations({
   if (unavailableReason) {
     const reason = unavailableReason === "task-unavailable"
       ? t("mailbox.recommendationsUnavailableTaskReason", "The source task can no longer be loaded. It may have been deleted or moved out of this project.")
-      : t("mailbox.recommendationsUnavailableIdsReason", "The source task no longer contains the recommendation IDs from this message. A later completion retry may have replaced them.");
+      : recommendationIds
+        ? t("mailbox.recommendationsUnavailableIdsReason", "The source task no longer contains the recommendation IDs from this message. A later completion retry may have replaced them.")
+        : t("mailbox.recommendationsUnavailableLegacyReason", "The source task has no live recommendations available from this historical message.");
     return <p className="mailbox-task-recommendations__unavailable" data-testid="mailbox-task-recommendations-unavailable">{t("mailbox.recommendationsUnavailable", "Recommendations are no longer available.")} <span>{reason}</span></p>;
   }
   if (!recommendations) return null;

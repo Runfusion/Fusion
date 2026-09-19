@@ -23,7 +23,8 @@ vi.mock("lucide-react", () => ({ Mail: () => null, Send: () => null, Inbox: () =
 import * as api from "../../api";
 
 const agents = [{ id: "agent-1", name: "Agent", role: "executor", state: "idle", createdAt: "2026-08-15T00:00:00.000Z", updatedAt: "2026-08-15T00:00:00.000Z", metadata: {} }];
-const recommendationNotice = (id: string): Message => ({ id, fromId: "agent-1", fromType: "agent", toId: "dashboard", toType: "user", type: "agent-to-user", read: true, content: "Recommendations", createdAt: "2026-08-15T00:00:00.000Z", updatedAt: "2026-08-15T00:00:00.000Z", metadata: { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: ["rec-1"] } });
+const recommendationNotice = (id: string): Message => ({ id, fromId: "agent-1", fromType: "agent", toId: "dashboard", toType: "user", type: "agent-to-user", read: true, content: "Recommendations", createdAt: "2026-08-15T00:00:00.000Z", updatedAt: "2026-08-15T00:00:00.000Z", metadata: { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationCount: 1, categories: ["feature"] } });
+const explicitlyEmptyRecommendationNotice = (id: string): Message => ({ ...recommendationNotice(id), metadata: { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: [] } });
 const ordinary = (id: string): Message => ({ ...recommendationNotice(id), metadata: undefined, content: "Ordinary" });
 
 /**
@@ -42,6 +43,7 @@ describe("mailbox task recommendation production surfaces", () => {
     vi.mocked(api.fetchAgents).mockResolvedValue(agents as never);
     vi.mocked(api.fetchAllAgentMailbox).mockResolvedValue({ messages: [], total: 0, unreadCount: 0 });
     vi.mocked(api.fetchTaskDetail).mockResolvedValue({ id: "FN-9100", recommendations: [{ id: "rec-1", title: "Follow up", description: "Optional follow-up", category: "feature" }] } as never);
+    vi.mocked(api.createTaskFromRecommendation).mockResolvedValue({ task: { id: "FN-9101" }, parent: { id: "FN-9100" } } as never);
   });
 
   it.each([
@@ -53,28 +55,38 @@ describe("mailbox task recommendation production surfaces", () => {
     ["MailboxModal", "desktop", "conversation", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
     ["MailboxModal", "mobile", "selected", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
     ["MailboxModal", "mobile", "conversation", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
-  ] as const)("renders Create task in %s %s %s body", async (_name, viewport, pane, Host) => {
+  ] as const)("creates a task from a legacy notice in %s %s %s body", async (_name, viewport, pane, Host) => {
     vi.mocked(useViewportMode).mockReturnValue(viewport);
     vi.mocked(useHeaderViewportMode).mockReturnValue(viewport);
     const messages = [recommendationNotice("notice"), { ...ordinary("ordinary"), metadata: { replyTo: { messageId: "notice" } } }];
     vi.mocked(api.fetchConversation).mockResolvedValue(pane === "conversation" ? messages as never : []);
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
-    render(<Host addToast={vi.fn()} onOpenNativeStructure={vi.fn()} nativeStructureCandidates={[]} />);
+    render(<Host projectId="project-1" addToast={vi.fn()} onOpenNativeStructure={vi.fn()} nativeStructureCandidates={[]} />);
     await user.click(await screen.findByTestId("mailbox-item-notice"));
     if (pane === "conversation") await waitFor(() => expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument());
-    expect(await screen.findByRole("button", { name: "Create task" })).toBeInTheDocument();
+    const controls = await screen.findAllByRole("button", { name: "Create task" });
+    expect(controls).toHaveLength(1);
     const card = screen.getByTestId("mailbox-task-recommendations").querySelector("article");
     expect(card).toHaveClass("mailbox-task-recommendations__item");
     expect(card).not.toHaveClass("card");
+    await user.click(controls[0]!);
+    expect(api.createTaskFromRecommendation).toHaveBeenCalledTimes(1);
+    expect(api.createTaskFromRecommendation).toHaveBeenCalledWith("FN-9100", "rec-1", "project-1");
+    expect(await screen.findByRole("button", { name: "View task FN-9101" })).toBeInTheDocument();
   });
 
   it.each([
     ["MailboxView", (props: any) => <MailboxView {...props} />],
     ["MailboxModal", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
-  ])("keeps ordinary %s messages shell-free", async (_name, Host) => {
+  ])("keeps ordinary and explicitly empty %s messages shell-free", async (_name, Host) => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+    const messages = [ordinary("ordinary"), explicitlyEmptyRecommendationNotice("empty")];
+    vi.mocked(api.fetchInbox).mockResolvedValue({ messages, total: messages.length, unreadCount: 0 });
     render(<Host addToast={vi.fn()} onOpenNativeStructure={vi.fn()} nativeStructureCandidates={[]} />);
     await user.click(await screen.findByTestId("mailbox-item-ordinary"));
     expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mailbox-item-empty")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create task|view task/i })).not.toBeInTheDocument();
   });
 });

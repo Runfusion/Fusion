@@ -7,6 +7,7 @@ import { MailboxTaskRecommendations } from "../MailboxTaskRecommendations";
 vi.mock("../../api", () => ({ createTaskFromRecommendation: vi.fn(), fetchTaskDetail: vi.fn() }));
 
 const metadata: MessageMetadata = { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: ["recommendation-1"] };
+const legacyMetadata: MessageMetadata = { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationCount: 1, categories: ["feature"] };
 const detail = { id: "FN-9100", recommendations: [{ id: "recommendation-1", title: "Follow up", description: "Finish the optional work.", category: "feature" }] };
 
 function expectMailboxCardWithoutBoardClass(): void {
@@ -18,8 +19,8 @@ function expectMailboxCardWithoutBoardClass(): void {
 describe("MailboxTaskRecommendations", () => {
   beforeEach(() => vi.resetAllMocks());
 
-  it("renders nothing for non-notices, missing parents, and empty recommendation ids", () => {
-    for (const candidate of [{}, { kind: "task-recommendation-notice", recommendationIds: ["recommendation-1"] }, { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: [] }]) {
+  it("renders nothing for non-notices, missing parents, malformed ids, and empty recommendation ids", () => {
+    for (const candidate of [{}, { kind: "task-recommendation-notice", recommendationIds: ["recommendation-1"] }, { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: [] }, { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: [null] }, { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: "recommendation-1" }]) {
       const { container, unmount } = render(<MailboxTaskRecommendations metadata={candidate} />);
       expect(container).toBeEmptyDOMElement();
       unmount();
@@ -57,6 +58,30 @@ describe("MailboxTaskRecommendations", () => {
     expect(onOpenTask).toHaveBeenCalledWith("FN-9101");
   });
 
+  it("resolves legacy metadata from live recommendations and creates a linked task", async () => {
+    const onOpenTask = vi.fn();
+    vi.mocked(fetchTaskDetail).mockResolvedValue(detail as never);
+    vi.mocked(createTaskFromRecommendation).mockResolvedValue({ task: { id: "FN-9101" }, parent: detail } as never);
+    render(<MailboxTaskRecommendations metadata={legacyMetadata} projectId="project-1" onOpenTask={onOpenTask} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
+    await screen.findByRole("button", { name: "View task FN-9101" });
+    expect(fetchTaskDetail).toHaveBeenCalledWith("FN-9100", "project-1");
+    expect(createTaskFromRecommendation).toHaveBeenCalledTimes(1);
+    expect(createTaskFromRecommendation).toHaveBeenCalledWith("FN-9100", "recommendation-1", "project-1");
+    fireEvent.click(screen.getByRole("button", { name: "View task FN-9101" }));
+    expect(onOpenTask).toHaveBeenCalledWith("FN-9101");
+  });
+
+  it("keeps modern notices scoped to their named live recommendation ids", async () => {
+    vi.mocked(fetchTaskDetail).mockResolvedValue({
+      ...detail,
+      recommendations: [...detail.recommendations, { id: "recommendation-2", title: "Unreferenced", description: "Do not show this.", category: "bug" }],
+    } as never);
+    render(<MailboxTaskRecommendations metadata={metadata} />);
+    expect(await screen.findByText("Follow up")).toBeInTheDocument();
+    expect(screen.queryByText("Unreferenced")).not.toBeInTheDocument();
+  });
+
   it("shows existing links without a duplicate Create action", async () => {
     vi.mocked(fetchTaskDetail).mockResolvedValue({ ...detail, recommendations: [{ ...detail.recommendations[0], createdTaskId: "FN-9101" }] } as never);
     render(<MailboxTaskRecommendations metadata={metadata} />);
@@ -82,11 +107,24 @@ describe("MailboxTaskRecommendations", () => {
 
   it("offers a retry after a rejected creation", async () => {
     vi.mocked(fetchTaskDetail).mockResolvedValue(detail as never);
-    vi.mocked(createTaskFromRecommendation).mockRejectedValue(new Error("conflict"));
+    vi.mocked(createTaskFromRecommendation).mockRejectedValueOnce(new Error("conflict")).mockResolvedValueOnce({ task: { id: "FN-9101" }, parent: detail } as never);
     render(<MailboxTaskRecommendations metadata={metadata} />);
     fireEvent.click(await screen.findByRole("button", { name: "Create task" }));
     expect(await screen.findByRole("button", { name: "Retry creating task" })).toBeInTheDocument();
     expect(screen.getByText("Could not create task. Try again.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry creating task" }));
+    expect(await screen.findByRole("button", { name: "View task FN-9101" })).toBeInTheDocument();
+    expect(createTaskFromRecommendation).toHaveBeenCalledTimes(2);
     expectMailboxCardWithoutBoardClass();
+  });
+
+  it("ignores a stale parent lookup after the notice changes", async () => {
+    let resolveDetail!: (value: never) => void;
+    vi.mocked(fetchTaskDetail).mockImplementation(() => new Promise((resolve) => { resolveDetail = resolve; }));
+    const { rerender } = render(<MailboxTaskRecommendations metadata={metadata} />);
+    rerender(<MailboxTaskRecommendations metadata={{ kind: "task-recommendation-notice", taskId: "FN-9101", recommendationIds: [] }} />);
+    resolveDetail(detail as never);
+    await Promise.resolve();
+    expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
   });
 });
