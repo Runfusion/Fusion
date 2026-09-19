@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
@@ -1222,6 +1223,7 @@ describe("Automation routes", () => {
           column: "todo",
           thinkingLevel: "high",
         }),
+        undefined, UNATTRIBUTED_CONTEXT_MATCHER,
       );
       expect(res.body.result.stepResults[0]).toEqual(
         expect.objectContaining({
@@ -1258,7 +1260,7 @@ describe("Automation routes", () => {
       expect(res.status).toBe(200);
       expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
         thinkingLevel: undefined,
-      }));
+      }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     });
 
     it("create-task automation step remains successful without explicit tracking issue creation", async () => {

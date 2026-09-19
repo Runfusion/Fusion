@@ -1,3 +1,5 @@
+import type { TaskStore, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-17:30:
  * parkApprovalSuspension peeled from TaskExecutor (U4).
@@ -5,14 +7,11 @@
  * After disposing a surface under approval suspension, clear pause-abort markers and
  * leave the task in progress for decision resume.
  */
-import type { TaskStore } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 
 export type ParkApprovalSuspensionDeps = {
   store: TaskStore;
   approvalSuspended: Set<string>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   clearPausedAborted: (taskId: string) => void;
 };

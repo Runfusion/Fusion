@@ -1,24 +1,17 @@
-/**
- * FNXC:CodeOrganization 2026-08-03-16:20:
- * verifyWorktreeInvariants + emitWorktreeReanchoredAudit peeled from TaskExecutor (U4 Slice B).
- * Workspace multi-repo and singular checkout invariant checks for fn_task_done / completion.
- */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
-import type { Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
 import { attemptBranchAutocorrect } from "../execution/branch-autocorrect.js";
 import {
   detectNestedWorktreeRoot,
-  isInsideWorktreesDir,
-} from "../worktree/worktree-pool.js";
+  isInsideWorktreesDir } from "../worktree/worktree-pool.js";
 import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
 import {
   canonicalFusionBranchName,
-  resolveTaskWorkingBranch,
-} from "../worktree/worktree-names.js";
+  resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
 import { executorLog } from "../logger.js";
-import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
+import { createRunAuditor } from "../util/run-audit.js";
 import { canonicalizePath } from "./session-worktree-paths.js";
 import { resolveDiffBaseRef } from "./worktree-git-refs.js";
 import { classifyWorkspaceZeroAcquire } from "./workspace-zero-acquire.js";
@@ -26,6 +19,11 @@ import { evaluatePromptDerivedNoCommitEligibility } from "./prompt-derived-eligi
 import { getNoCommitEligibilityReason } from "./no-commit-eligibility.js";
 import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
 import { detectWorkspaceMainCheckoutWork } from "./workspace-main-checkout-guard.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-16:20:
+ * verifyWorktreeInvariants + emitWorktreeReanchoredAudit peeled from TaskExecutor (U4 Slice B).
+ * Workspace multi-repo and singular checkout invariant checks for fn_task_done / completion.
+ */
 
 const execAsync = promisify(exec);
 
@@ -38,7 +36,7 @@ export type WorktreeInvariantDeps = {
   store: TaskStore;
   workspaceConfig: unknown | null | undefined;
   ensureWorkspaceConfig?: () => Promise<unknown | null>;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   /** FNXC:Identity 2026-08-15-22:52 (U18 Stage C): total carrier for store mutations. */
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   getActiveWorktreePaths: (taskId: string) => string[];

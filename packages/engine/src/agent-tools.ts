@@ -1120,6 +1120,7 @@ type AgentTaskCreationOptions = {
   rootDir?: string;
   bypassDuplicateCheck?: boolean;
   acknowledgedDuplicates?: string[];
+  runContext?: RunMutationContext;
   /*
   FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
   Set true when fn_task_create is registered for an ephemeral/runtime task-worker session (executor-FN-XXXX). The tool then honors the project `ephemeralAgentsCanCreateTasks` toggle and rejects creation when it is disabled. Permanent-agent sessions leave this unset and are never gated.
@@ -1334,16 +1335,17 @@ async function carryCanonicalTaskRouting(
   store: TaskStore,
   canonical: Task,
   input: TaskCreateInput,
+  runContext?: RunMutationContext,
 ): Promise<Task> {
   // Task creation without an explicit assignee must not mutate an existing duplicate.
   if (input.assignedAgentId === undefined) return canonical;
 
   let task = canonical;
   if (input.assignedAgentId !== canonical.assignedAgentId) {
-    task = await store.updateTask(canonical.id, { assignedAgentId: input.assignedAgentId }, runContext);
+    task = await store.updateTask(canonical.id, { assignedAgentId: input.assignedAgentId }, runContext ?? fusionCore.UNATTRIBUTED_MUTATION_CONTEXT);
   }
   if (input.column !== undefined && input.column !== task.column) {
-    task = await store.moveTask(task.id, input.column, undefined, runContext);
+    task = await store.moveTask(task.id, input.column, undefined, runContext ?? fusionCore.UNATTRIBUTED_MUTATION_CONTEXT);
   }
   return task;
 }
@@ -1389,6 +1391,7 @@ export async function createAgentTask(
   input: TaskCreateInput,
   options?: AgentTaskCreationOptions,
 ): Promise<{ task: Awaited<ReturnType<TaskStore["createTask"]>>; wasDuplicate: boolean }> {
+  const runContext = options?.runContext;
   const validateDuplicateCanonical = (input as AgentTaskInputWithBootstrap).validateDuplicateCanonical;
   const settings = typeof (store as { getSettings?: unknown }).getSettings === "function"
     ? await store.getSettings()
@@ -1427,7 +1430,7 @@ export async function createAgentTask(
     if (guard.action === "duplicate" && guard.existing) {
       await validateDuplicateCanonical?.(guard.existing);
       return {
-        task: await carryCanonicalTaskRouting(store, guard.existing, input),
+        task: await carryCanonicalTaskRouting(store, guard.existing, input, runContext),
         wasDuplicate: true,
       };
     }
@@ -1459,7 +1462,7 @@ export async function createAgentTask(
         const canonical = candidates[0];
         if (canonical) {
           await validateDuplicateCanonical?.(canonical);
-          return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
+          return { task: await carryCanonicalTaskRouting(store, canonical, input, runContext), wasDuplicate: true };
         }
       } catch (error) {
         log.warn("Cross-parent diagnostic duplicate pre-check failed; aborting creation", {
@@ -1492,7 +1495,7 @@ export async function createAgentTask(
         const canonical = match ? candidates.find((candidate) => candidate.id === match.id) : undefined;
         if (canonical) {
           await validateDuplicateCanonical?.(canonical);
-          return { task: await carryCanonicalTaskRouting(store, canonical, input), wasDuplicate: true };
+          return { task: await carryCanonicalTaskRouting(store, canonical, input, runContext), wasDuplicate: true };
         }
       } catch (error) {
         log.warn("Parent-scoped task duplicate pre-check failed; aborting creation", {
@@ -1514,7 +1517,7 @@ export async function createAgentTask(
       const duplicate = await findDefinedFeatureBootstrapDuplicate(store, input, sourceAgentId, sourceParentTaskId);
       if (duplicate) {
         await validateDuplicateCanonical(duplicate);
-        return { task: await carryCanonicalTaskRouting(store, duplicate, input), wasDuplicate: true };
+        return { task: await carryCanonicalTaskRouting(store, duplicate, input, runContext), wasDuplicate: true };
       }
     }
 
@@ -1569,7 +1572,7 @@ export async function createAgentTask(
     const createdTask = await store.createTask(createInput, {
       settings,
       onProposalClaimConflict: () => { proposalClaimConflict = true; },
-    }, runContext);
+    }, runContext ?? fusionCore.UNATTRIBUTED_MUTATION_CONTEXT);
 
     const reconcileCreatedDuplicate = (input as AgentTaskInputWithBootstrap).reconcileCreatedDuplicate;
     const reconcile = await reconcileDeterministicDuplicate(store, {
@@ -1587,9 +1590,9 @@ export async function createAgentTask(
 
     const wasDuplicate = proposalClaimConflict || reconcile.outcome === "archived" || reconcile.outcome === "kept-duplicate";
     const canonical = proposalClaimConflict
-      ? await carryCanonicalTaskRouting(store, createdTask, input)
+      ? await carryCanonicalTaskRouting(store, createdTask, input, runContext)
       : reconcile.outcome === "archived"
-      ? await carryCanonicalTaskRouting(store, reconcile.canonical, input)
+      ? await carryCanonicalTaskRouting(store, reconcile.canonical, input, runContext)
       : reconcile.canonical;
     /*
     FNXC:MissionAdmission 2026-07-23-17:20:
@@ -1965,7 +1968,7 @@ export function createTaskReadTools(store: TaskStore): ToolDefinition[] {
  * @param taskId - The task ID to log entries against
  * @returns ToolDefinition for the `fn_task_log` tool
  */
-export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinition {
+export function createTaskLogTool(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_log",
     label: "Log Entry",
@@ -3633,7 +3636,7 @@ export function createTaskMergeTool(store: TaskStore, _currentTaskId: string): T
   };
 }
 
-export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefinition {
+export function createTaskUpdateTool(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_update",
     label: "Update Step / Custom Fields / Dependencies",
@@ -3687,7 +3690,7 @@ export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefi
   };
 }
 
-export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefinition {
+export function createTaskAddDepTool(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
   return {
     name: "fn_task_add_dep",
     label: "Add Task Dependency",
@@ -5965,6 +5968,7 @@ FN-8207 adds an engine-session reassignment tool because executor fn_task_update
 export function createTaskAssignTool(
   agentStore: AgentStore,
   taskStore: TaskStore,
+  runContext?: RunMutationContext,
 ): ToolDefinition {
   return {
     name: "fn_task_assign",

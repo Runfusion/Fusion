@@ -284,6 +284,85 @@ describe("installAuthFetch", () => {
     window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
   });
 
+  /*
+  FNXC:Authorization 2026-08-09-03:04:
+  Recovery detection used to require an EXACT prose match, so rewording the daemon's 401 message
+  silently disabled the re-auth prompt. These three cases lock the replacement discriminant:
+  (1) the structured `details.reason` fires recovery regardless of wording, (2) a 403 never does —
+  a denial is not fixable by re-authenticating, and (3) legacy prose still works for an old daemon.
+  */
+  it("fires recovery on the structured 401 discriminant even when the message wording changes", async () => {
+    window.localStorage.setItem("fn.authToken", "stale-token");
+    window.fetch = vi.fn(async () => new Response(
+      JSON.stringify({
+        error: "Unauthorized",
+        message: "Some completely reworded daemon session message",
+        details: { reason: "session-invalid" },
+      }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    )) as unknown as typeof window.fetch;
+
+    const { installAuthFetch, AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } = await loadAuthModule();
+    installAuthFetch();
+
+    const eventHandler = vi.fn();
+    window.addEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
+
+    await fetch("/api/tasks");
+    await vi.waitFor(() => {
+      expect(eventHandler).toHaveBeenCalledTimes(1);
+    });
+
+    window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
+  });
+
+  it("does not fire recovery for a 403 permission denial", async () => {
+    window.localStorage.setItem("fn.authToken", "valid-token");
+    window.fetch = vi.fn(async () => new Response(
+      JSON.stringify({
+        error: "Forbidden",
+        message: "actor-7 is not permitted to tasks:delete",
+        details: { reason: "permission-denied" },
+      }),
+      { status: 403, headers: { "content-type": "application/json" } },
+    )) as unknown as typeof window.fetch;
+
+    const { installAuthFetch, AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, hasDaemonAuthFailure } = await loadAuthModule();
+    installAuthFetch();
+
+    const eventHandler = vi.fn();
+    window.addEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
+
+    const response = await fetch("/api/tasks/FN-1");
+    expect(response.status).toBe(403);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(eventHandler).not.toHaveBeenCalled();
+    expect(hasDaemonAuthFailure()).toBe(false);
+
+    window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
+  });
+
+  it("still fires recovery for a legacy 401 payload with no structured reason", async () => {
+    window.localStorage.setItem("fn.authToken", "stale-token");
+    window.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ error: "Unauthorized", message: "Valid bearer token required" }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    )) as unknown as typeof window.fetch;
+
+    const { installAuthFetch, AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } = await loadAuthModule();
+    installAuthFetch();
+
+    const eventHandler = vi.fn();
+    window.addEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
+
+    await fetch("/api/tasks");
+    await vi.waitFor(() => {
+      expect(eventHandler).toHaveBeenCalledTimes(1);
+    });
+
+    window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
+  });
+
   it("is idempotent and only installs one fetch wrapper", async () => {
     window.localStorage.setItem("fn.authToken", "daemon-token");
     const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("ok", { status: 200 }));

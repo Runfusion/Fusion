@@ -1,7 +1,6 @@
-import type { Task, TaskStore, WorkflowStepResult } from "@fusion/core";
+import type { Task, TaskStore, WorkflowStepResult, RunMutationContext } from "@fusion/core";
 import { hasPreMergeRemediationAutoMergeHold } from "@fusion/core";
 import { EMPTY_REVIEW_DIFF_FINGERPRINT } from "../worktree/review-diff-fingerprint.js";
-import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 
@@ -16,7 +15,7 @@ export type EmptyReviewContentGateFence = {
 
 export type ReviewEmptyContentCloseDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
 };
 
 export function isDefiniteEmptyCodeReviewRevise(result: WorkflowStepResult | undefined): result is WorkflowStepResult {

@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { Settings, Task, TaskStore } from "@fusion/core";
+import type { RunMutationContext, Settings, Task, TaskStore } from "@fusion/core";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import type { GitAuditInput } from "./util/run-audit.js";
 
@@ -46,6 +46,7 @@ export interface RefreshReusedWorktreeBaseInput {
   /** Audit is intentionally structural so acquisition can use its run-scoped auditor. */
   audit?: { git?: (event: GitAuditInput) => Promise<void> };
   logger?: { warn: (message: string) => void };
+  runContext?: RunMutationContext;
   /*
   FNXC:WorkspaceFileOverlap 2026-08-30-19:14:
   Workspace baselines belong to `task.workspaceWorktrees[repo].baseCommitSha`, never the singular
@@ -120,14 +121,14 @@ conflict resolution — the merge lane owns conflict arbitration and deliberatel
 (see merger.ts). Dispatch-time rebase had no conflict resolution at all, so it could only ever fail.
 */
 export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBaseInput): Promise<WorktreeBaseRefreshResult> {
-  const { task, rootDir, worktreePath, store, settings, audit, logger, baseline } = input;
+  const { task, rootDir, worktreePath, store, settings, audit, logger, baseline, runContext } = input;
   const durableBaseSha = baseline ? baseline.durableBaseSha ?? null : task.baseCommitSha ?? null;
   const persistBaseSha = async (baseSha: string): Promise<void> => {
     if (baseline?.persist) {
       await baseline.persist(baseSha);
       return;
     }
-    await store.updateTask(task.id, { baseCommitSha: baseSha });
+    await store.updateTask(task.id, { baseCommitSha: baseSha }, runContext);
   };
   if (settings.worktrunk?.enabled) {
     return { kind: "worktrunk-refresh-unsupported", executionSafe: true, skipped: true, durableBaseSha };

@@ -14,6 +14,7 @@
  * PostgreSQL has no portable whole-database writer lock; the retained fake-timer
  * and mocked-store tests cover retry, error, and close-on-every-exit behavior.
  */
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "../../__tests__/mutation-context-matchers.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { retryOnLock, LockRetryExhaustedError, DEFAULT_CLI_LOCK_RETRY_MS } from "../../lock-retry.js";
@@ -257,7 +258,7 @@ describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found,
     applies user-move semantics (and the dashboard move route already did this). Asserting the bare
     two-arg call pinned the pre-hardening shape.
     */
-    expect(moveTask).toHaveBeenCalledWith("FN-5", "todo", { moveSource: "user" });
+    expect(moveTask).toHaveBeenCalledWith("FN-5", "todo", { moveSource: "user" }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(closeProjectStore).toHaveBeenCalled();
     logSpy.mockRestore();
   });

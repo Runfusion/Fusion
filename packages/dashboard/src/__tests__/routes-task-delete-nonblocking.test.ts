@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { mutationContextFor } from "./mutation-context-matchers.js";
 import { describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { Task, TaskStore } from "@fusion/core";
@@ -125,7 +126,7 @@ describe("DELETE /api/tasks/:id", () => {
     expect(response.body).toMatchObject({ id: "FN-7968", deletedAt: "2026-07-15T09:02:00.000Z" });
     expect(store.deleteTask).toHaveBeenCalledWith("FN-7968", expect.objectContaining({
       auditContext: expect.objectContaining({ agentId: "system" }),
-    }));
+    }), mutationContextFor("system"));
     expect(agentStore.listAgents).toHaveBeenCalledWith({ includeEphemeral: true });
     expect(agentStore.syncExecutionTaskLink).not.toHaveBeenCalled();
 

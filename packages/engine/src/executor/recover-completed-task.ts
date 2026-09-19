@@ -1,25 +1,23 @@
+import { existsSync } from "node:fs";
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import {
+  evaluateCompletedPromotionFailureProvenance,
+  evaluateSkipBypassTaint,
+  isFastExecutionMode } from "@fusion/core";
+import { resolvePlannerLanesForTaskAsync } from "../execution/replan-target.js";
+import { executorLog } from "../logger.js";
+import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
+import { isTaskWorkComplete } from "./task-predicates.js";
+import { areEnabledPreMergeWorkflowStepsSatisfied } from "./workflow-step-satisfaction.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-10:50:
  * recoverCompletedTask peeled from TaskExecutor (U4).
  * Shared auto-promotion chokepoint: completed work → in-review (or graph re-entry).
  */
-import { existsSync } from "node:fs";
-import type { Task, TaskStore } from "@fusion/core";
-import {
-  evaluateCompletedPromotionFailureProvenance,
-  evaluateSkipBypassTaint,
-  isFastExecutionMode,
-} from "@fusion/core";
-import { resolvePlannerLanesForTaskAsync } from "../execution/replan-target.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveAuthoritativeExternalExecutionRoute } from "./resolve-authoritative-external-execution-route.js";
-import { isTaskWorkComplete } from "./task-predicates.js";
-import { areEnabledPreMergeWorkflowStepsSatisfied } from "./workflow-step-satisfaction.js";
 
 export type RecoverCompletedTaskDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   executing: Set<string>;
   activeSessions: { has(taskId: string): boolean };

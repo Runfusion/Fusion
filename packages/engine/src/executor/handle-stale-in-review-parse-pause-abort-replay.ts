@@ -1,3 +1,15 @@
+import type { Settings, TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { allowsAutoMergeProcessing } from "@fusion/core";
+import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
+import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
+import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
+import { graphFailureValue, isStalePauseAbortParkFailure } from "./graph-failure-pure.js";
+import { isTerminalMergeGraphFailureValue } from "./task-predicates.js";
+import type { ResumeLanes } from "./resolve-resume-lanes.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
+import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+import { executorLog } from "../logger.js";
+import { WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "../workflows/workflow-graph-executor.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:45:
  * handleStaleInReviewParsePauseAbortReplay peeled from TaskExecutor (U4).
@@ -8,25 +20,13 @@
  * FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
  * One resume-lane snapshot for entry gate and deferred scheduleRetry recheck.
  */
-import type { Settings, TaskDetail, TaskStore } from "@fusion/core";
-import { allowsAutoMergeProcessing } from "@fusion/core";
-import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
-import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
-import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
-import { graphFailureValue, isStalePauseAbortParkFailure } from "./graph-failure-pure.js";
-import { isTerminalMergeGraphFailureValue } from "./task-predicates.js";
-import type { ResumeLanes } from "./resolve-resume-lanes.js";
-import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
-import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
-import { executorLog } from "../logger.js";
-import { WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "../workflows/workflow-graph-executor.js";
 
 const MAX_TRANSIENT_GRAPH_RESUME_RETRIES = 2;
 const TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 1_000;
 
 export type HandleStaleInReviewParsePauseAbortReplayDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (taskId: string, memo?: { lanes?: ResumeLanes }) => Promise<ResumeLanes>;
   isLiveSharedBranchGroupMember: (live: TaskDetail) => Promise<boolean>;

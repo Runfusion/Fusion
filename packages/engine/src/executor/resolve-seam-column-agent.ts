@@ -1,3 +1,7 @@
+import type { Agent, AgentStore, Task, TaskDetail, TaskStore, WorkflowColumnAgent, RunMutationContext } from "@fusion/core";
+import { resolveEffectiveAgent } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { extractOwnSettings } from "./agent-binding-pure.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-10:25:
  * resolveSeamColumnAgent peeled from TaskExecutor (U4).
@@ -17,15 +21,10 @@
  * Exposes the resolved Agent object (not just an id) so U5 can consume the same
  * effective principal for gating/heartbeat/restart without re-resolving.
  */
-import type { Agent, AgentStore, Task, TaskDetail, TaskStore, WorkflowColumnAgent } from "@fusion/core";
-import { resolveEffectiveAgent } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { extractOwnSettings } from "./agent-binding-pure.js";
 
 export type ResolveSeamColumnAgentDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   agentStore?: AgentStore | null;
   graphSeamGoverningNodeId: Map<string, string>;

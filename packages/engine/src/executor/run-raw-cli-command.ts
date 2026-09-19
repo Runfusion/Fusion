@@ -1,17 +1,17 @@
+import type { TaskDetail, TaskStore, RunCommandResult, RunMutationContext } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
+import { configuredCommandErrorMessage } from "./configured-command.js";
+import { createConfiguredCommandAbortError } from "./task-predicates.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-12:10:
  * runRawCliCommand peeled from TaskExecutor (U4).
  * Execute an approved CLI command in a task worktree for a workflow node.
  */
-import type { TaskDetail, TaskStore, RunCommandResult } from "@fusion/core";
-import { executorLog } from "../logger.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
-import { configuredCommandErrorMessage } from "./configured-command.js";
-import { createConfiguredCommandAbortError } from "./task-predicates.js";
 
 export type RunRawCliCommandDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   registerConfiguredCommandController: (taskId: string, controller: AbortController) => void;
   unregisterConfiguredCommandController: (taskId: string, controller: AbortController) => void;

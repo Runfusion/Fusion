@@ -1,3 +1,11 @@
+import type { TaskDetail, TaskStore, RunMutationContext } from "@fusion/core";
+import { COMPLETION_SUMMARY_NODE_ID, isTaskExternallyBlocked } from "@fusion/core";
+import { isDurableBlockedTask } from "../execution-block-classifier.js";
+import { executorLog } from "../logger.js";
+import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
+import { isMergeGraphFailure } from "./graph-failure-pure.js";
+import type { ResumeLanes } from "./resolve-resume-lanes.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-13:25:
  * routeGraphFailureToExecutionResume peeled from TaskExecutor (U4).
@@ -17,19 +25,10 @@
  * FNXC:WorkflowRemediation 2026-08-28-12:16:
  * This generic resume router must not own review-to-WIP recovery. `sendTaskBackForFix` through `scheduleWorkflowRerun` owns that contained move only after named pending remediation exists; preserving this refusal prevents an unowned backward transition from bypassing lifecycle containment.
  */
-import type { TaskDetail, TaskStore } from "@fusion/core";
-import { COMPLETION_SUMMARY_NODE_ID, isTaskExternallyBlocked } from "@fusion/core";
-import { isDurableBlockedTask } from "../execution-block-classifier.js";
-import { executorLog } from "../logger.js";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
-import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
-import { isMergeGraphFailure } from "./graph-failure-pure.js";
-import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
 export type RouteGraphFailureToExecutionResumeDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveResumeLanes: (
     taskId: string,

@@ -1,3 +1,9 @@
+import type { Task, TaskDetail, TaskStore, WorkflowStepResult, RunMutationContext } from "@fusion/core";
+import { allowsAutoMergeProcessing } from "@fusion/core";
+import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
+import { latestFailedPreMergeWorkflowStep } from "./graph-failure-pure.js";
+import { optionalStepRevisionLogOutcome } from "./optional-step-revision.js";
+import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-12:15:
  * routeRetryableRemediationGraphFailureToPreMergeFix peeled from TaskExecutor (U4).
@@ -8,17 +14,10 @@
  * FNXC:AutoMergeHold 2026-07-09-17:04:
  * FN-7750 requires retryable pre-merge remediation to treat stale shared-group members as standalone manual-hold rows when global auto-merge is off; only live/open groups retain the shared-member exemption.
  */
-import type { Task, TaskDetail, TaskStore, WorkflowStepResult } from "@fusion/core";
-import { allowsAutoMergeProcessing } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
-import { latestFailedPreMergeWorkflowStep } from "./graph-failure-pure.js";
-import { optionalStepRevisionLogOutcome } from "./optional-step-revision.js";
-import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 
 export type RouteRetryableRemediationDeps = {
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   isPreMergeRemediationGraphNode: (taskId: string, failedNode: string | undefined) => Promise<boolean>;
   isLiveSharedBranchGroupMember: (live: Pick<TaskDetail, "branchContext">) => Promise<boolean>;

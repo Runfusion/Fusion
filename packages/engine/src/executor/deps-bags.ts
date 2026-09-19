@@ -1,16 +1,6 @@
-import type { Task, TaskStore, WorkspaceConfig } from "@fusion/core";
-/**
- * FNXC:CodeOrganization 2026-08-03-17:30:
- * Free builders for TaskExecutor deps bags that wire peeled worktree/session helpers (U4).
- *
- * These stay free functions so circular this-callbacks remain assembled at the facade edge.
- *
- * FNXC:CodeOrganization 2026-08-04-08:10:
- * Bags that need runConfiguredCommand import pure by default so executor facades do not
- * re-pass pure.runConfiguredCommand on every call site.
- */
+import type { Task, TaskStore, WorkspaceConfig, RunMutationContext } from "@fusion/core";
 import type { AutoRecoveryDispatcher } from "../healing/auto-recovery.js";
-import { createRunAuditor, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
+import { createRunAuditor, type RunAuditor } from "../util/run-audit.js";
 import type { BranchConflictHandleDeps } from "./worktree-branch-conflict-handle.js";
 import type { WorktreeCreateConflictDeps } from "./worktree-create-conflict.js";
 import type { WorktreeInvariantDeps } from "./worktree-verify-invariants.js";
@@ -22,13 +12,22 @@ import {
   MAX_WORKTREE_RETRIES,
   WORKTREE_RETRY_DELAYS,
   MAX_AUTO_RECOVERY_ATTEMPTS,
-  BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
-} from "./executor-constants.js";
+  BRANCH_CONFLICT_TRIPWIRE_THRESHOLD } from "./executor-constants.js";
+/**
+ * FNXC:CodeOrganization 2026-08-03-17:30:
+ * Free builders for TaskExecutor deps bags that wire peeled worktree/session helpers (U4).
+ *
+ * These stay free functions so circular this-callbacks remain assembled at the facade edge.
+ *
+ * FNXC:CodeOrganization 2026-08-04-08:10:
+ * Bags that need runConfiguredCommand import pure by default so executor facades do not
+ * re-pass pure.runConfiguredCommand on every call site.
+ */
 
 export type BranchConflictHandleDepsSource = {
   rootDir: string;
   store: TaskStore;
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   findActiveWorktreeOwner: BranchConflictHandleDeps["findActiveWorktreeOwner"];
   normalizeReclaimableWorktreePath: BranchConflictHandleDeps["normalizeReclaimableWorktreePath"];
@@ -94,7 +93,7 @@ export type WorktreeInvariantDepsSource = {
   workspaceConfig: unknown | null | undefined;
   ensureWorkspaceConfig?: () => Promise<unknown | null>;
   getActiveWorktreePaths: (taskId: string) => string[];
-  getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  getRunContextFor: (taskId: string) => RunMutationContext | undefined;
   runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   emitWorktreeReanchoredAudit: WorktreeInvariantDeps["emitWorktreeReanchoredAudit"];
 };

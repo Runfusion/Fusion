@@ -1,15 +1,14 @@
+import type { Task, TaskStore, RunMutationContext } from "@fusion/core";
+import { preservePreExecutionWorkflowStepResults } from "./workflow-step-satisfaction.js";
 /**
  * FNXC:CodeOrganization 2026-08-03-09:25:
  * cleanupMergeStateForReverification peeled from TaskExecutor (U4).
  * Clears merge/status bookkeeping and reopens verification suffix steps for re-verification.
  */
-import type { Task, TaskStore } from "@fusion/core";
-import type { EngineRunContext } from "../util/run-audit.js";
-import { preservePreExecutionWorkflowStepResults } from "./workflow-step-satisfaction.js";
 
 export type CleanupMergeStateDeps = {
   store: TaskStore;
-  runContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string) => RunMutationContext | undefined;
 };
 
 export async function cleanupMergeStateForReverification(

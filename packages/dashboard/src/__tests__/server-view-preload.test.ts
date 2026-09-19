@@ -74,7 +74,7 @@ async function startServerWithFixture(clientDir: string) {
     cleanupStaleSessions: async () => ({ terminalDeleted: 0, orphanedDeleted: 0 }),
     stopScheduledCleanup: () => undefined,
   };
-  const app = createServer(store, { aiSessionStore: aiSessionStore as never });
+  const app = createServer(store, { aiSessionStore: aiSessionStore as never, noAuth: true });
   const server = await new Promise<import("node:http").Server>((resolve) => {
     const s = app.listen(0, "127.0.0.1", () => resolve(s));
   });

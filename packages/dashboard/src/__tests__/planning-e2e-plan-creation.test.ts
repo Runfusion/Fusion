@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { TaskStore } from "@fusion/core";
@@ -311,7 +312,7 @@ describe("Planning Mode plan creation E2E", () => {
     expect(created).toMatchObject({ status: 201, body: { task: { id: "FN-E2E-001", title: "Plan: Build secure account recovery" }, alreadyCreated: false } });
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: expect.stringContaining("## Key deliverables"),
-    }));
+    }), undefined, UNATTRIBUTED_CONTEXT_MATCHER);
     expect((await getSession(sessionId))?.createdTaskId).toBe("FN-E2E-001");
 
     const retry = await post(app, "/api/planning/create-task", { sessionId });
