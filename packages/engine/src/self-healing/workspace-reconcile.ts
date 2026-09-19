@@ -446,7 +446,16 @@ export async function reclaimPhantomWorkspaceLandLeases(host: WorkspaceReconcile
     const settings = await host.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return 0;
 
-    const entries = activeSessionRegistry.entriesByKind("workspace-repo-land");
+    /*
+    FNXC:WorkspaceWorktree 2026-08-23-06:25:
+    Acquire entries are a defence-in-depth companion to the lease-authority and
+    explicit lifecycle-release paths. Sweep only same-kind records so a stale
+    acquisition cache can never reclaim a merge/land critical section.
+    */
+    const entries = [
+      ...activeSessionRegistry.entriesByKind("workspace-repo-land"),
+      ...activeSessionRegistry.entriesByKind("workspace-repo-acquire"),
+    ];
 
     /* FNXC:Workspace 2026-08-15-12:00: durable rows must be swept even on a
        node with no local registry entries; local state cannot represent peers. */
@@ -496,17 +505,18 @@ export async function reclaimPhantomWorkspaceLandLeases(host: WorkspaceReconcile
         if (isWorkspaceOwnerLive(owner, leaseOwnerCompleteColumns, leaseOwnerArchivedColumns)) continue;
 
         activeSessionRegistry.unregisterPath(entry.path);
+        const acquire = entry.kind === "workspace-repo-acquire";
         await createRunAuditor(host.store, {
-          runId: generateSyntheticRunId("self-healing-phantom-workspace-land-lease", entry.taskId),
+          runId: generateSyntheticRunId(acquire ? "self-healing-phantom-workspace-acquire-lease" : "self-healing-phantom-workspace-land-lease", entry.taskId),
           agentId: "self-healing",
           taskId: entry.taskId,
-          phase: "reclaim-phantom-workspace-land-lease",
+          phase: acquire ? "reclaim-phantom-workspace-acquire-lease" : "reclaim-phantom-workspace-land-lease",
         }).database({
-          type: "task:reclaim-phantom-workspace-land-lease",
+          type: acquire ? "task:reclaim-phantom-workspace-acquire-lease" : "task:reclaim-phantom-workspace-land-lease",
           target: entry.taskId,
           metadata: { taskId: entry.taskId, path: entry.path, kind: entry.kind, registeredAt: entry.registeredAt, ageMs, staleBindingAgeFloorMs: staleFloorMs, ownerColumn, ownerTerminalReason },
         }).catch(() => undefined);
-        log.warn(`reclaimPhantomWorkspaceLandLeases: reclaimed leaked land lease on ${entry.path} (owner ${entry.taskId}, age ${ageMs}ms)`);
+        log.warn(`reclaimPhantomWorkspaceLandLeases: reclaimed leaked ${acquire ? "acquire" : "land"} lease on ${entry.path} (owner ${entry.taskId}, age ${ageMs}ms)`);
         reclaimed++;
       } catch (err: unknown) {
         log.error(`reclaimPhantomWorkspaceLandLeases: failed for ${entry.path}: ${err instanceof Error ? err.message : String(err)}`);
