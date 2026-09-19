@@ -3,7 +3,7 @@ import { exec as execCb } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { GlobalSettings, ProjectSettings, Settings, Task, TaskStore } from "@fusion/core";
-import { resolveTitleSummarizerSettingsModel } from "@fusion/core";
+import { isValidTaskBranchName, resolveTaskPrHeadBranch, resolveTitleSummarizerSettingsModel } from "@fusion/core";
 import { createFnAgent, resolveMcpServersForStore } from "@fusion/engine";
 
 const execAsync = promisify(execCb);
@@ -84,9 +84,23 @@ function parseAiResult(raw: string): AiMetadataResult | null {
   }
 }
 
+/*
+FNXC:PrMetadataGeneration 2026-09-19-21:38:
+A generated linked-task field can already contain the task-closing directive. Normalize it before
+assembly so completed templates and canonical bodies retain exactly one closing reference.
+*/
+function appendSingleClosingReference(body: string, taskId: string): string {
+  const closingReference = `Closes ${taskId}`;
+  const escapedTaskId = taskId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const withoutClosingReferences = body
+    .replace(new RegExp(`^\\s*Closes\\s+${escapedTaskId}\\s*$(?:\\r?\\n)?`, "gim"), "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return [withoutClosingReferences, closingReference].filter(Boolean).join("\n\n");
+}
+
 function buildBody(result: AiMetadataResult, taskId: string): string {
-  const linkedTaskLines = [result.linkedTask, `Closes ${taskId}`].filter(Boolean);
-  return [
+  return appendSingleClosingReference([
     "## Summary",
     "",
     result.summary,
@@ -101,54 +115,42 @@ function buildBody(result: AiMetadataResult, taskId: string): string {
     "",
     "## Linked Task",
     "",
-    ...linkedTaskLines,
-  ].join("\n");
+    result.linkedTask,
+  ].join("\n"), taskId);
 }
 
-function fillTemplate(template: string, result: AiMetadataResult, taskId: string): string {
-  const known = new Map<string, string>([
-    ["summary", result.summary],
-    ["changes", result.changes],
-    ["testing", result.testing],
-    ["linked task", `${result.linkedTask}\n\nCloses ${taskId}`.trim()],
-  ]);
+function getTemplateHeadings(template: string): string[] {
+  return template
+    .split(/\r?\n/)
+    .flatMap((line) => [line.match(/^(##+)\s+(\S.*)$/)?.[2]])
+    .filter((heading): heading is string => Boolean(heading));
+}
 
-  const lines = template.split(/\r?\n/);
-  let i = 0;
+function fillTemplate(template: string, result: AiMetadataResult, taskId: string): string | null {
+  const headingLines = template.split(/\r?\n/).filter((line) => /^(##+)\s+\S/.test(line));
+  if (headingLines.length === 0) return null;
+
+  const contentForHeading = (heading: string): string => {
+    const normalized = heading.trim().toLowerCase();
+    if (normalized.includes("test")) return result.testing;
+    if (normalized.includes("change") || normalized.includes("implementation")) return result.changes;
+    if (normalized.includes("task") || normalized.includes("issue") || normalized.includes("link")) {
+      return [result.linkedTask, `Closes ${taskId}`].filter(Boolean).join("\n\n");
+    }
+    return result.summary;
+  };
+
   const out: string[] = [];
-  while (i < lines.length) {
-    const line = lines[i];
+  for (const line of headingLines) {
     const headingMatch = line.match(/^(##+)\s+(.*)$/);
-    if (!headingMatch) {
-      out.push(line);
-      i += 1;
-      continue;
-    }
-
-    const heading = headingMatch[2].trim().toLowerCase();
-    const replacement = known.get(heading);
-    out.push(line);
-    i += 1;
-
-    const sectionBody: string[] = [];
-    while (i < lines.length && !/^(##+)\s+/.test(lines[i])) {
-      sectionBody.push(lines[i]);
-      i += 1;
-    }
-
-    if (replacement) {
-      out.push("");
-      out.push(...replacement.split("\n"));
-    } else {
-      out.push(...sectionBody);
-    }
+    if (!headingMatch) continue;
+    out.push(line, "", contentForHeading(headingMatch[2]));
   }
 
-  if (!out.join("\n").includes(`Closes ${taskId}`)) {
-    out.push("", "## Linked Task", "", `Closes ${taskId}`);
+  if (!out.some((line) => /^##+\s+(?:linked task|task|issue|link)$/i.test(line))) {
+    out.push("", "## Linked Task");
   }
-
-  return out.join("\n");
+  return appendSingleClosingReference(out.join("\n"), taskId);
 }
 
 async function runCommand(command: string, cwd: string, signal?: AbortSignal): Promise<string> {
@@ -222,6 +224,10 @@ function isAbortLikeError(error: unknown): boolean {
   );
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\\"'\\\"'")}'`;
+}
+
 async function resolveBaseBranch(task: Task, repoRoot: string, signal?: AbortSignal): Promise<string> {
   if (task.prInfo?.baseBranch) {
     return task.prInfo.baseBranch;
@@ -268,9 +274,25 @@ export async function generatePrMetadata(input: {
     throwIfAborted(combinedSignal);
 
     const baseBranch = await raceWithAbort(resolveBaseBranch(task, repoRoot, combinedSignal), combinedSignal);
+    const headBranch = resolveTaskPrHeadBranch(task);
+    const safeBaseBranch = isValidTaskBranchName(baseBranch) ? baseBranch : undefined;
+    const safeHeadBranch = isValidTaskBranchName(headBranch) ? headBranch : undefined;
+    /*
+    FNXC:PrMetadataGeneration 2026-09-19-20:16:
+    PR metadata must describe the persisted task head, not this process checkout. Validate both
+    refs before shell construction; invalid persisted data yields explicit empty evidence rather
+    than executing an interpolated ref or silently substituting HEAD.
+    */
+    const evidenceRange = safeBaseBranch && safeHeadBranch
+      ? `${shellQuote(safeBaseBranch)}..${shellQuote(safeHeadBranch)}`
+      : undefined;
     const [logOut, diffStatOut] = await raceWithAbort(Promise.all([
-      runCommand(`git log --no-merges ${baseBranch}..HEAD --format=%s%n%b`, repoRoot, combinedSignal).catch(() => ""),
-      runCommand(`git diff --stat ${baseBranch}..HEAD`, repoRoot, combinedSignal).catch(() => ""),
+      evidenceRange
+        ? runCommand(`git log --no-merges ${evidenceRange} --format=%s%n%b`, repoRoot, combinedSignal).catch(() => "")
+        : Promise.resolve(""),
+      evidenceRange
+        ? runCommand(`git diff --stat ${evidenceRange}`, repoRoot, combinedSignal).catch(() => "")
+        : Promise.resolve(""),
     ]), combinedSignal);
 
     let promptContent = "";
@@ -284,6 +306,7 @@ export async function generatePrMetadata(input: {
     const templatePath = join(repoRoot, ".github", "pull_request_template.md");
     const templateExists = await raceWithAbort(access(templatePath).then(() => true).catch(() => false), combinedSignal);
     const template = templateExists ? await raceWithAbort(readFile(templatePath, "utf8"), combinedSignal) : "";
+    const templateHeadings = getTemplateHeadings(template);
 
     const model = resolveTitleSummarizerSettingsModel(settings as Partial<Settings>);
     const systemPrompt = [PR_METADATA_SYSTEM_PROMPT];
@@ -324,10 +347,14 @@ export async function generatePrMetadata(input: {
         "- Use task title, task description, and task prompt only to clarify intent when the git evidence supports it.",
         "- Omit speculation; when evidence for testing or a change is absent, say so instead of inventing details.",
         "- Return only strict JSON matching the required schema.",
+        ...(templateHeadings.length > 0
+          ? [`Repository PR template sections to complete (do not reproduce its instructions): ${templateHeadings.join(" | ")}`]
+          : []),
         `Task ID: ${task.id}`,
         `Task title: ${task.title}`,
         `Task description: ${task.description ?? ""}`,
-        `Base branch: ${baseBranch}`,
+        `Base branch: ${safeBaseBranch ?? "(invalid or unavailable)"}`,
+        `Head branch: ${safeHeadBranch ?? "(invalid or unavailable)"}`,
         "Commit log (source of truth):",
         logOut || "(none)",
         "Diff stat (source of truth):",
@@ -350,11 +377,11 @@ export async function generatePrMetadata(input: {
       return fallback;
     }
 
-    const body = templateExists ? fillTemplate(template, parsed, task.id) : buildBody(parsed, task.id);
+    const completedTemplate = templateExists ? fillTemplate(template, parsed, task.id) : null;
     return {
       title: parsed.title,
-      body,
-      templateUsed: templateExists,
+      body: completedTemplate ?? buildBody(parsed, task.id),
+      templateUsed: completedTemplate !== null,
     };
   } catch (error) {
     if (isAbortLikeError(error)) {
