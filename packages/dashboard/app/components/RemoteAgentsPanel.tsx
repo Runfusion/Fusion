@@ -11,12 +11,24 @@ const number = (n: number) => n.toLocaleString();
 const usd = (n: number | null) => n === null ? "Unavailable" : new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(n);
 const tokenPrice = (perMillion: number) => `$${(perMillion / 1_000_000).toFixed(9)}`;
 
+function feedbackCommandId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === "function") return cryptoApi.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (cryptoApi && typeof cryptoApi.getRandomValues === "function") cryptoApi.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionView; projectId: string }) {
   const [detail, setDetail] = useState(session);
   const [cost, setCost] = useState<Cost | null>(null);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [text, setText] = useState("");
-  const [commandId, setCommandId] = useState(() => crypto.randomUUID());
+  const [commandId, setCommandId] = useState(feedbackCommandId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const path = `/external-sessions/${session.id}`;
@@ -43,7 +55,7 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
     try {
       const result = await api<Feedback>(withProjectId(`${path}/feedback`, projectId), { method: "POST", body: JSON.stringify({ commandId, generation: detail.observation.feedback!.generation, text }) });
       setFeedback(current => [result, ...current.filter(f => f.commandId !== result.commandId)]);
-      if (result.status === "queued" || result.status === "delivered") { setText(""); setCommandId(crypto.randomUUID()); }
+      if (result.status === "queued" || result.status === "delivered") { setText(""); setCommandId(feedbackCommandId()); }
     } catch (e) { setError(e instanceof Error ? e.message : "Feedback failed"); }
     finally { setBusy(false); }
   };
