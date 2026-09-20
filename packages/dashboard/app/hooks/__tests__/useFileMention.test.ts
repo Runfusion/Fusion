@@ -135,6 +135,28 @@ describe("useFileMention", () => {
       });
     });
 
+    it("prioritizes in-progress and in-review task matches while preserving their result order", async () => {
+      mockFetchTasks.mockResolvedValue([
+        { id: "FN-001", title: "Todo", column: "todo" } as never,
+        { id: "FN-002", title: "In progress", column: "in-progress" } as never,
+        { id: "FN-003", title: "Done", column: "done" } as never,
+        { id: "FN-004", title: "In review", column: "in-review" } as never,
+      ]);
+
+      const { result } = renderHook(() => useFileMention());
+      act(() => {
+        result.current.detectMention("#FN", 3);
+      });
+      await flushSearch();
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual([
+        "FN-002",
+        "FN-004",
+        "FN-001",
+        "FN-003",
+      ]);
+    });
+
     it("returns file matches for substring queries", async () => {
       mockSearchFiles.mockResolvedValue({
         files: [{ path: "src/project.ts", name: "project.ts" }],
