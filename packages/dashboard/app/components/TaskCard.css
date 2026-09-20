@@ -95,6 +95,14 @@ Mobile long-press opens the Board task context menu, so non-editing card text mu
   animation: agent-glow 2.5s ease-in-out infinite;
 }
 
+/* A pulsing shadow keeps style work running even when the card is offscreen.
+   Touch devices keep the same highlight without continuous rendering work. */
+@media (hover: none) and (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .card.agent-active {
+    animation: none;
+  }
+}
+
 @keyframes agent-glow {
   0%,
   100% {

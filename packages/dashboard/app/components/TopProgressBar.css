@@ -22,6 +22,11 @@
   animation: top-progress-slide 1.2s linear infinite;
 }
 
+/* Opacity hides the bar but does not stop its animation. */
+.top-progress-bar:not([data-visible="true"]) .top-progress-bar__indicator {
+  animation-play-state: paused;
+}
+
 @keyframes top-progress-slide {
   0% {
     transform: translateX(-100%);
