@@ -360,7 +360,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const streamRef = useRef<{ close: () => void } | null>(null);
   const pendingMessagesRef = useRef<string[]>([]);
   const sessionIdRef = useRef<string | null>(null);
-  const queueDispatchRef = useRef<((sessionId: string, selectedIndex?: number) => void) | null>(null);
+  const queueDispatchRef = useRef<((sessionId: string, selectedIndex?: number, scrollToBottom?: boolean) => void) | null>(null);
   const streamSnapshotRef = useRef<{
     requestId: number;
     sessionId: string;
@@ -372,6 +372,12 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const isTranscriptAtBottomRef = useRef(true);
+  /*
+   * FNXC:TaskPlannerChatForceSend 2026-09-20-00:53:
+   * Force sending is an explicit request to reveal the selected queued message. Preserve that
+   * intent until its optimistic transcript row renders, even when the reader was reviewing older output.
+   */
+  const forceScrollToBottomRef = useRef(false);
   const previousMessageCountRef = useRef(0);
   const previousActiveRef = useRef(false);
   const isProgrammaticTranscriptScrollRef = useRef(false);
@@ -909,8 +915,9 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
      * while streamed snapshots follow only when the reader remains within the 48px tail
      * threshold so manually reading earlier planner output is never overridden.
      */
-    if (active && (becameActive || receivedInitialMessages || (isTranscriptAtBottomRef.current && isTranscriptAtBottom))) {
+    if (active && (forceScrollToBottomRef.current || becameActive || receivedInitialMessages || (isTranscriptAtBottomRef.current && isTranscriptAtBottom))) {
       anchorTranscriptToBottom(container);
+      forceScrollToBottomRef.current = false;
     }
     previousMessageCountRef.current = messages.length;
   }, [active, anchorTranscriptToBottom, composerState, isTranscriptAtBottom, messages, setTranscriptAtBottom]);
@@ -924,13 +931,14 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     setError(null);
   }, [replacePendingMessages]);
 
-  const dispatchQueuedMessage = useCallback((resolvedSessionId: string, selectedIndex = 0) => {
+  const dispatchQueuedMessage = useCallback((resolvedSessionId: string, selectedIndex = 0, scrollToBottom = false) => {
     if (sessionIdRef.current !== resolvedSessionId || composerStateRef.current === "sending" || cancellationInProgressRef.current) return;
     const current = pendingMessagesRef.current;
     const content = current[selectedIndex]?.trim();
     if (!content) return;
 
     const reservation: PendingQueueReservation = { sessionId: resolvedSessionId, text: content, index: selectedIndex };
+    if (scrollToBottom) forceScrollToBottomRef.current = true;
     replacePendingMessages(current.filter((_, index) => index !== selectedIndex), resolvedSessionId);
     const streamRequestId = streamRequestRef.current + 1;
     streamRequestRef.current = streamRequestId;
@@ -1170,7 +1178,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     }
   }, []);
 
-  const cancelPlannerGeneration = useCallback((snapshot: NonNullable<typeof streamSnapshotRef.current>, selectedIndex?: number) => {
+  const cancelPlannerGeneration = useCallback((snapshot: NonNullable<typeof streamSnapshotRef.current>, selectedIndex?: number, scrollToBottom = false) => {
     if (cancellationInProgressRef.current) return;
     setQueueActionPending(true);
     streamRequestRef.current += 1;
@@ -1235,7 +1243,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         if (cancellationInProgressRef.current === cancellation) {
           cancellationInProgressRef.current = null;
         }
-        queueDispatchRef.current?.(snapshot.sessionId, selectedIndex);
+        queueDispatchRef.current?.(snapshot.sessionId, selectedIndex, scrollToBottom);
       })
       .catch((cancelError) => {
         if (sessionIdRef.current === snapshot.sessionId) {
@@ -1293,10 +1301,10 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     if (!resolvedSessionId || !pendingMessagesRef.current[index]) return;
     const snapshot = streamSnapshotRef.current;
     if (snapshot) {
-      cancelPlannerGeneration(snapshot, index);
+      cancelPlannerGeneration(snapshot, index, true);
       return;
     }
-    queueDispatchRef.current?.(resolvedSessionId, index);
+    queueDispatchRef.current?.(resolvedSessionId, index, true);
   }, [cancelPlannerGeneration, queueActionPending]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {

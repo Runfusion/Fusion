@@ -2503,6 +2503,38 @@ describe("TaskPlannerChatTab", () => {
       expect(mockStreamChatResponse.mock.calls[0][1]).not.toBe(" ");
     });
 
+    it("scrolls to the forced queued message when the transcript was manually unsnapped", async () => {
+      const user = userEvent.setup();
+      const metrics = mockPlannerTranscriptMetrics({ scrollHeight: 1000, clientHeight: 240 });
+      const streamHandlers: any[] = [];
+      mockFetchChatMessages.mockResolvedValueOnce({
+        messages: [{ id: "history", sessionId: "chat-planner", role: "assistant", content: "Earlier plan", thinkingOutput: null, metadata: null, createdAt: "2026-06-30T00:01:00.000Z" }],
+      });
+      mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+        streamHandlers.push(handlers);
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      renderPlannerChat();
+      await screen.findByText("Earlier plan");
+      metrics.scrollTop = 120;
+      fireEvent.scroll(screen.getByTestId("task-planner-chat-transcript"));
+
+      const input = screen.getByLabelText("Message task chat");
+      await user.type(input, "Start a reply");
+      await user.keyboard("{Enter}");
+      await waitFor(() => expect(streamHandlers).toHaveLength(1));
+      await user.type(input, "Show this queued message");
+      await user.keyboard("{Enter}");
+      await screen.findByTestId("task-planner-chat-pending-force-0");
+
+      metrics.scrollHeight = 1400;
+      await user.click(screen.getByTestId("task-planner-chat-pending-force-0"));
+      await waitFor(() => expect(streamHandlers).toHaveLength(2));
+
+      expect(metrics.scrollTop).toBe(metrics.scrollHeight);
+    });
+
     it("edits, reorders, deletes, and force-sends the selected duplicate occurrence", async () => {
       const user = userEvent.setup();
       const streamHandlers: any[] = [];
