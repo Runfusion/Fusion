@@ -8,13 +8,13 @@ import {
 } from "../check-pi-versions-pinned.mjs";
 
 /*
-FNXC:DesktopPackaging 2026-07-26-22:55:
-Fixture versions track the workspace's exact matched Pi runtime pin (currently 0.84.1).
+FNXC:DesktopPackaging 2026-09-20-16:20:
+Fixture versions track the workspace's exact matched Pi runtime pin (currently 0.86.1).
 Keep these in sync when advancing overrides/manifests so the policy guard still exercises
 matched-set and range rejection against the live pin surface.
 */
-const PINNED_VERSION = "0.84.1";
-const OTHER_VERSION = "0.84.0";
+const PINNED_VERSION = "0.86.1";
+const OTHER_VERSION = "0.86.0";
 
 const pinnedManifest = {
   dependencies: {
@@ -33,7 +33,7 @@ describe("check-pi-versions-pinned", () => {
   });
 
   it("rejects caret, tilde, wildcard, x, and comparator ranges", () => {
-    for (const version of [`^${PINNED_VERSION}`, `~${PINNED_VERSION}`, "*", "0.84.x", `>=${PINNED_VERSION}`]) {
+    for (const version of [`^${PINNED_VERSION}`, `~${PINNED_VERSION}`, "*", "0.86.x", `>=${PINNED_VERSION}`]) {
       const violations = validate({
         ...pinnedManifest,
         dependencies: { ...pinnedManifest.dependencies, "@earendil-works/pi-ai": version },
@@ -82,6 +82,7 @@ describe("check-pi-versions-pinned", () => {
     );
 
     for (const packageName of [
+      "@earendil-works/chord",
       "@earendil-works/pi-client",
       "@earendil-works/pi-protocol",
       "@earendil-works/pi-telemetry",

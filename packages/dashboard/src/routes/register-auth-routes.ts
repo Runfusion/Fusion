@@ -403,16 +403,31 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
   const ANTHROPIC_OAUTH_PROVIDER_ID = "anthropic";
   const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
+  const META_OAUTH_PROVIDER_ID = "meta";
+  const META_SUBSCRIPTION_PROVIDER_ID = "meta-subscription";
 
   function toOauthLoginProviderId(providerId: string): string {
-    return providerId === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID ? ANTHROPIC_OAUTH_PROVIDER_ID : providerId;
+    if (providerId === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) return ANTHROPIC_OAUTH_PROVIDER_ID;
+    if (providerId === META_SUBSCRIPTION_PROVIDER_ID) return META_OAUTH_PROVIDER_ID;
+    return providerId;
   }
 
   function toOauthCredentialProviderId(providerId: string): string {
-    return providerId === ANTHROPIC_OAUTH_PROVIDER_ID ? ANTHROPIC_SUBSCRIPTION_PROVIDER_ID : providerId;
+    if (providerId === ANTHROPIC_OAUTH_PROVIDER_ID) return ANTHROPIC_SUBSCRIPTION_PROVIDER_ID;
+    if (providerId === META_SUBSCRIPTION_PROVIDER_ID) return META_SUBSCRIPTION_PROVIDER_ID;
+    return providerId;
   }
 
   function toAuthStatusProvider(provider: { id: string; name: string }): { id: string; name: string } {
+    if (provider.id === META_OAUTH_PROVIDER_ID) {
+      /*
+      FNXC:ProviderAuth 2026-09-20-16:20:
+      Pi 0.86.1 exposes Meta's API key and subscription OAuth under one runtime id. The Settings
+      surface needs separate cards so either credential path remains actionable without duplicate keys.
+      Route login back to `meta` so ModelRuntime receives Pi's canonical provider id.
+      */
+      return { id: META_SUBSCRIPTION_PROVIDER_ID, name: "Meta (Muse subscription)" };
+    }
     if (provider.id !== ANTHROPIC_OAUTH_PROVIDER_ID) {
       return provider;
     }
@@ -735,7 +750,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }[] = await Promise.all(oauthProviders.map(async (p) => {
         const statusProvider = toAuthStatusProvider(p);
         const storageProviderId = toOauthCredentialProviderId(statusProvider.id);
-        let hasAuth = storage.hasAuth(storageProviderId);
+        const oauthCredential = storage.get?.(storageProviderId);
+        let hasAuth = storage.hasAuth(storageProviderId)
+          && (statusProvider.id !== META_SUBSCRIPTION_PROVIDER_ID || oauthCredential?.type === "oauth");
         let expired = hasAuth && isExpiredOauthCredential(storageProviderId, storage);
         if (expired && storage.getApiKey) {
           /*

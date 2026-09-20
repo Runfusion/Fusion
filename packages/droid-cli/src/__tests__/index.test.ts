@@ -206,23 +206,22 @@ describe("droid-cli extension entrypoint", () => {
       streamSimple: (model: unknown, context: unknown, options: Record<string, unknown>) => unknown;
     };
 
-    const context = {
-      tools: [
-        {
-          name: "fn_web_fetch",
-          description: "Fetch URL",
-          parameters: { type: "object", properties: { url: { type: "string" } } },
-        },
-      ],
-    };
+    const tools = [
+      {
+        name: "fn_web_fetch",
+        description: "Fetch URL",
+        parameters: { type: "object", properties: { url: { type: "string" } } },
+      },
+    ];
+    const context = { messages: [{ role: "system", content: "Use current tools", toolsAdded: tools }] };
 
     config.streamSimple({ id: "droid-pro" }, context, { temperature: 0.2 });
 
-    expect(runtimeMocks.toolsFromContext).toHaveBeenCalledWith(context.tools);
+    expect(runtimeMocks.toolsFromContext).toHaveBeenCalledWith(tools);
     expect(runtimeMocks.writeMcpConfig).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.streamViaCli).toHaveBeenCalledWith(
       { id: "droid-pro" },
-      context,
+      expect.objectContaining({ ...context, systemPrompt: "Use current tools", tools }),
       expect.objectContaining({ temperature: 0.2, mcpConfigPath: expect.stringContaining("/tmp/droid-mcp-") }),
     );
   });

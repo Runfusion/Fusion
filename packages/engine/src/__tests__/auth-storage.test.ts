@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFusionAuthStorage, createFusionCredentialStore, getFusionAuthPath } from "../auth/auth-storage.js";
+import { createFusionAuthStorage, createFusionCredentialStore, createFusionModelRegistry, getFusionAuthPath } from "../auth/auth-storage.js";
 
 function encodeBase64Url(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64url");
@@ -471,6 +471,59 @@ describe("createFusionAuthStorage", () => {
       const credentialStore = createFusionCredentialStore(authStorage);
 
       expect(await credentialStore.read("anthropic")).toBeUndefined();
+    });
+
+    it("routes Meta OAuth-only ModelRuntime reads and refresh writes through meta-subscription", async () => {
+      writeFusionAuth(homeDir, {
+        "meta-subscription": {
+          type: "oauth",
+          access: "meta-expiring-access",
+          refresh: "meta-identity-token",
+          expires: Date.now() + 1_000,
+        },
+      });
+      globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ api_key: "meta-refreshed-access" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+      const authStorage = createFusionAuthStorage();
+      const registry = await createFusionModelRegistry(authStorage, homeDir);
+
+      expect(await registry.modelRuntime.getAuth("meta")).toMatchObject({
+        auth: { apiKey: "meta-refreshed-access" },
+        source: "OAuth",
+      });
+      expect(authStorage.get("meta")).toBeUndefined();
+      expect(authStorage.get("meta-subscription")).toMatchObject({
+        type: "oauth",
+        access: "meta-refreshed-access",
+        refresh: "meta-identity-token",
+      });
+    });
+
+    it("keeps a configured Meta API key authoritative over subscription OAuth", async () => {
+      writeFusionAuth(homeDir, {
+        meta: { type: "api_key", key: "operator-meta-api-key" },
+        "meta-subscription": {
+          type: "oauth",
+          access: "meta-subscription-access",
+          refresh: "meta-identity-token",
+          expires: Date.now() + 1_000,
+        },
+      });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
+      const authStorage = createFusionAuthStorage();
+      const registry = await createFusionModelRegistry(authStorage, homeDir);
+
+      expect(await registry.modelRuntime.getAuth("meta")).toMatchObject({
+        auth: { apiKey: "operator-meta-api-key" },
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(authStorage.get("meta-subscription")).toMatchObject({
+        type: "oauth",
+        access: "meta-subscription-access",
+      });
     });
 
     it("uses Anthropic subscription OAuth for direct model runtime auth when no raw API key exists", async () => {

@@ -15,6 +15,7 @@
  * version and the ExtensionAPI stream types stay compatible.
  */
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { streamViaCli } from "./src/provider.js";
 import { streamViaAcp } from "./src/acp-driver.js";
@@ -46,9 +47,17 @@ function resolveAcpBridgePath(): string | undefined {
 }
 
 /** Resolve custom tool defs the same way ensureMcpConfig does (context → registry). */
+function normalizeTranscriptTools(tools: ReturnType<typeof getCurrentTools>): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description ?? "",
+    parameters: Object.fromEntries(Object.entries(tool.parameters)),
+  }));
+}
+
 function resolveToolDefs(
   pi: ExtensionAPI,
-  contextTools?: ReadonlyArray<{ name: string; description: string; parameters: Record<string, unknown> }>,
+  contextTools: ReadonlyArray<{ name: string; description: string; parameters: Record<string, unknown> }>,
 ): McpToolDef[] {
   let toolDefs = toolsFromContext(contextTools);
   if (toolDefs.length === 0 && Array.isArray(pi.getAllTools())) toolDefs = getCustomToolDefs(pi);
@@ -101,12 +110,9 @@ function getUserMcpServers(options: unknown): UserMcpServerSpec[] {
  * the set of custom tools changes.
  *
  * Source of truth (in order of preference):
- * 1. `context.tools` — the per-session tool list pi-ai actually hands to
- *    `streamSimple`. This is what the session is asking the model to see, so
- *    it includes session-scoped registrations (e.g. `fn_review_spec` and
- *    `fn_spawn_agent` injected by the engine's triage/executor sessions).
- * 2. `pi.getAllTools()` — fallback for older callers that don't supply
- *    `context.tools`.
+ * 1. Pi 0.86 transcript tool declarations, replayed through
+ *    `getCurrentTools(context.messages)` so mid-conversation updates survive.
+ * 2. `pi.getAllTools()` — fallback when the current transcript has no tools.
  *
  * Why not a single once-and-lock cache:
  * - The engine spawns triage/executor sessions with session-scoped tools.
@@ -121,7 +127,7 @@ function getUserMcpServers(options: unknown): UserMcpServerSpec[] {
  */
 function ensureMcpConfig(
   pi: ExtensionAPI,
-  contextTools?: ReadonlyArray<{
+  contextTools: ReadonlyArray<{
     name: string;
     description: string;
     parameters: Record<string, unknown>;
@@ -132,12 +138,11 @@ function ensureMcpConfig(
     let toolDefs: McpToolDef[] = toolsFromContext(contextTools);
     if (contextTools && contextTools.length > 0) {
       debugMcp(
-        `MCP config from context.tools: ${contextTools.map((tool) => tool.name).join(", ")}`,
+        `MCP config from current transcript: ${contextTools.map((tool) => tool.name).join(", ")}`,
       );
     }
 
-    // Fallback to the pi runtime registry if the context didn't carry tools.
-    // (Older agent-loop versions don't populate Context.tools for streamSimple.)
+    // Fallback to the pi runtime registry when the transcript has no current tools.
     if (toolDefs.length === 0) {
       const allTools = pi.getAllTools();
       if (!Array.isArray(allTools)) {
@@ -308,11 +313,13 @@ export default function (pi: ExtensionAPI) {
       api: "pi-claude-cli",
       models,
       streamSimple: (model, context, options) => {
-        const contextTools = (context as { tools?: ReadonlyArray<{
-          name: string;
-          description: string;
-          parameters: Record<string, unknown>;
-        }> }).tools;
+        /*
+        FNXC:PiTranscriptBridge 2026-09-20-16:20:
+        Pi 0.86 replaces the retired Context.tools field with transcript system-message deltas. Replay the current prompt and tool declarations before building either local CLI bridge so resumed and branched sessions retain their latest instructions and MCP schemas.
+        */
+        const contextTools = normalizeTranscriptTools(getCurrentTools(context.messages));
+        // FNXC:PiTranscriptBridge 2026-09-20-17:02: Prompt adapters still consume Context.tools for MCP tool-name instructions, so forward Pi's normalized current transcript tools after replacing its retired source field.
+        const cliContext = { ...context, systemPrompt: getCurrentSystemPrompt(context.messages), tools: contextTools };
 
         // FNXC:pi-claude-cli 2026-06-27-06:39: Route A drives Claude through the ACP bridge only when the kill-switch is on AND a bridge path is injected. OFF by default → `-p` path below.
         const bridgePath = resolveAcpBridgePath();
@@ -320,7 +327,7 @@ export default function (pi: ExtensionAPI) {
           const toolDefs = resolveToolDefs(pi, contextTools);
           const userMcpServers = getUserMcpServers(options);
           const hash = createHash("sha1").update(JSON.stringify({ toolDefs, userMcpServerNames: userMcpServers.map((server) => server.name) })).digest("hex").slice(0, 12);
-          return streamViaAcp(model, context, {
+          return streamViaAcp(model, cliContext as never, {
             ...options,
             bridgePath,
             mcpServers: buildAcpMcpServers(toolDefs, hash, userMcpServers),
@@ -330,7 +337,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         const configPath = ensureMcpConfig(pi, contextTools, getUserMcpServers(options));
-        return streamViaCli(model, context, {
+        return streamViaCli(model, cliContext as never, {
           ...options,
           mcpConfigPath: configPath,
         });

@@ -21,7 +21,7 @@
  * Sourcing note: this mirrors two existing canonical lists that dashboard
  * cannot import directly —
  *   - OAuth: pi-ai's built-in OAuth provider registry (anthropic,
- *     github-copilot, openai-codex — see `@earendil-works/pi-ai`'s
+ *     github-copilot, meta, openai-codex — see `@earendil-works/pi-ai`'s
  *     `utils/oauth/index.ts` `BUILT_IN_OAUTH_PROVIDERS`), which is not
  *     exported as a public catalog.
  *   - API key: `packages/cli/src/commands/provider-auth.ts`'s
@@ -49,6 +49,8 @@ export const STATIC_OAUTH_PROVIDER_CATALOG: AuthProviderCatalogEntry[] = [
   // `anthropic-api-key` API-key card.
   { id: "anthropic", name: "Anthropic (Claude Pro/Max)" },
   { id: "github-copilot", name: "GitHub Copilot" },
+  // FNXC:ProviderAuth 2026-09-20-16:20: Pi 0.86.1 adds Meta Muse OAuth; retain this static entry if a runtime narrows its registry.
+  { id: "meta", name: "Meta (Muse)" },
   { id: "openai-codex", name: "OpenAI (ChatGPT Plus/Pro)" },
 ];
 
@@ -57,6 +59,7 @@ export const STATIC_API_KEY_PROVIDER_CATALOG: AuthProviderCatalogEntry[] = [
   { id: "anthropic-api-key", name: "Anthropic API Key" },
   { id: "brave", name: "Brave Search" },
   { id: "kimi-coding", name: "Kimi" },
+  { id: "meta", name: "Meta (Muse)" },
   { id: "minimax", name: "Minimax" },
   { id: "openrouter", name: "OpenRouter" },
   { id: "orcarouter", name: "OrcaRouter" },

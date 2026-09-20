@@ -124,6 +124,36 @@ describe("wrapAuthStorageWithApiKeyProviders", async () => {
     expect(providerIds).toContain("opencode-go");
   });
 
+  it("keeps Meta's API-key and OAuth runtime id available to shared catalog consumers", async () => {
+    const fusionAuth = makeAuthStorage();
+    fusionAuth.getOAuthProviders = vi.fn(() => [{ id: "meta", name: "Meta (Muse subscription)" }]);
+    const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+    const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+
+    expect(wrapped.getOAuthProviders()).toContainEqual({ id: "meta-subscription", name: "Meta (Muse subscription)" });
+    expect(wrapped.getApiKeyProviders()).toContainEqual({ id: "meta", name: "Meta (Muse)" });
+    await wrapped.setApiKey("meta", "test-meta-api-key");
+    expect(fusionAuth.set).toHaveBeenCalledWith("meta", { type: "api_key", key: "test-meta-api-key" });
+  });
+
+  it("keeps Meta OAuth authenticated without replacing its API-key credential", async () => {
+    const fusionAuth = makeAuthStorage({ meta: { type: "api_key", key: "test-meta-api-key" } });
+    fusionAuth.getOAuthProviders = vi.fn(() => [{ id: "meta", name: "Meta (Muse subscription)" }]);
+    fusionAuth.login = vi.fn(async (provider: string) => {
+      await fusionAuth.set(provider, { type: "oauth", expires: Date.now() + 60_000 });
+    });
+    const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, { getAll: vi.fn(() => []) } as any);
+
+    await wrapped.login("meta-subscription", {} as any);
+
+    expect(fusionAuth.login).toHaveBeenCalledWith("meta", expect.any(Object));
+    expect(wrapped.hasAuth("meta-subscription")).toBe(true);
+    expect(wrapped.get("meta-subscription")?.type).toBe("oauth");
+    expect(wrapped.get("meta")?.type).toBe("api_key");
+    expect(wrapped.hasApiKey("meta")).toBe(true);
+  });
+
   it("keeps explicit API-key aliases when OAuth provider ids collide", async () => {
     const fusionAuth = makeAuthStorage();
     fusionAuth.getOAuthProviders = vi.fn(() => [

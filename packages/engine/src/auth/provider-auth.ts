@@ -74,6 +74,8 @@ type StoredCredential = StoredAuthCredential;
 const ANTHROPIC_API_KEY_PROVIDER_ID = "anthropic-api-key";
 const ANTHROPIC_STORAGE_PROVIDER_ID = "anthropic";
 const ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID = "anthropic-subscription";
+const META_STORAGE_PROVIDER_ID = "meta";
+const META_SUBSCRIPTION_STORAGE_PROVIDER_ID = "meta-subscription";
 
 /*
 FNXC:ProviderAuth 2026-07-22-12:00:
@@ -83,6 +85,8 @@ export const BUILT_IN_API_KEY_PROVIDERS: ReadonlyArray<{ id: string; name: strin
   { id: ANTHROPIC_API_KEY_PROVIDER_ID, name: "Anthropic API Key" },
   { id: "brave", name: "Brave Search" },
   { id: "kimi-coding", name: "Kimi" },
+  // FNXC:ProviderAuth 2026-09-20-16:20: Pi 0.86.1 supports META_API_KEY for Muse models alongside its OAuth login.
+  { id: "meta", name: "Meta (Muse)" },
   { id: "minimax", name: "Minimax" },
   { id: "openrouter", name: "OpenRouter" },
   { id: "orcarouter", name: "OrcaRouter" },
@@ -169,6 +173,9 @@ export function wrapAuthStorageWithApiKeyProviders(
     return legacyCredential?.type === "oauth" ? legacyCredential : undefined;
   };
 
+  const getMetaSubscriptionCredential = () =>
+    mergedAuthStorage.get(META_SUBSCRIPTION_STORAGE_PROVIDER_ID);
+
   const migrateStoredAnthropicSubscriptionCredential = async () => {
     const existingSubscription = authStorage.get(ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) as StoredCredential | undefined;
     if (existingSubscription?.type === "oauth") {
@@ -204,6 +211,37 @@ export function wrapAuthStorageWithApiKeyProviders(
   cannot distinguish a newly minted account from browser consent re-authorizing the stored account.
   */
   const login = async (providerId: string, callbacks: LoginCallbacks): Promise<StoredCredential | undefined> => {
+      if (providerId === META_STORAGE_PROVIDER_ID || providerId === META_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
+        /*
+        FNXC:ProviderAuth 2026-09-20-17:02:
+        Pi exposes Muse OAuth and META_API_KEY through `meta`, but Fusion keeps their credentials in
+        separate rows so completing subscription login cannot overwrite an operator API key or make
+        the synthetic subscription card look disconnected.
+        */
+        const preLoginSubscriptionCredential = getMetaSubscriptionCredential();
+        const existingApiKey = mergedAuthStorage.get(META_STORAGE_PROVIDER_ID);
+        await mergedAuthStorage.login(META_STORAGE_PROVIDER_ID, callbacks);
+        const oauthCredential = authStorage.get(META_STORAGE_PROVIDER_ID) as StoredCredential | undefined;
+        if (oauthCredential?.type !== "oauth") return oauthCredential;
+
+        const stampedCredential = {
+          ...oauthCredential,
+          ...(computeStoredCredentialAccountFingerprint(oauthCredential) ? {
+            accountFingerprint: computeStoredCredentialAccountFingerprint(oauthCredential),
+          } : {}),
+        };
+        await mergedAuthStorage.set(
+          META_SUBSCRIPTION_STORAGE_PROVIDER_ID,
+          mergeStoredCredentialPreservingMetadata(preLoginSubscriptionCredential, stampedCredential),
+        );
+        if (existingApiKey?.type === "api_key") {
+          await mergedAuthStorage.set(META_STORAGE_PROVIDER_ID, existingApiKey);
+        } else {
+          await authStorage.remove(META_STORAGE_PROVIDER_ID);
+        }
+        return stampedCredential;
+      }
+
       if (providerId !== ANTHROPIC_STORAGE_PROVIDER_ID && providerId !== ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
         /*
         FNXC:ProviderAuth 2026-09-09-14:01:
@@ -274,12 +312,20 @@ export function wrapAuthStorageWithApiKeyProviders(
         .getOAuthProviders()
         .map((provider) => provider.id === ANTHROPIC_STORAGE_PROVIDER_ID
           ? ({ id: ANTHROPIC_STORAGE_PROVIDER_ID, name: "Anthropic Subscription" })
-          : ({ id: provider.id, name: provider.name })),
+          : provider.id === META_STORAGE_PROVIDER_ID
+            ? ({ id: META_SUBSCRIPTION_STORAGE_PROVIDER_ID, name: "Meta (Muse subscription)" })
+            : ({ id: provider.id, name: provider.name })),
     hasAuth: (provider) => provider === ANTHROPIC_STORAGE_PROVIDER_ID || provider === ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID
       ? Boolean(getAnthropicSubscriptionCredential())
-      : mergedAuthStorage.hasAuth(provider),
+      : provider === META_SUBSCRIPTION_STORAGE_PROVIDER_ID
+        ? Boolean(getMetaSubscriptionCredential())
+        : mergedAuthStorage.hasAuth(provider),
     login: async (providerId, callbacks) => { await login(providerId, callbacks); },
     logout: async (provider) => {
+      if (provider === META_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
+        await mergedAuthStorage.logout(META_SUBSCRIPTION_STORAGE_PROVIDER_ID);
+        return;
+      }
       if (provider !== ANTHROPIC_STORAGE_PROVIDER_ID && provider !== ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
         await mergedAuthStorage.logout(provider);
         return;
@@ -480,6 +526,9 @@ export function wrapAuthStorageWithApiKeyProviders(
       }
       if (providerId === ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
         return getAnthropicSubscriptionCredential();
+      }
+      if (providerId === META_SUBSCRIPTION_STORAGE_PROVIDER_ID) {
+        return getMetaSubscriptionCredential();
       }
       return mergedAuthStorage.get(providerId);
     },

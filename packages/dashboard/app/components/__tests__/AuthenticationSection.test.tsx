@@ -208,6 +208,26 @@ describe("AuthenticationSection", () => {
     expect(handleSaveApiKey).toHaveBeenCalledWith("anthropic-api-key");
   });
 
+  it("renders Meta OAuth and API-key cards through the shared provider-card path", () => {
+    const { handleLogin, handleSaveApiKey } = renderAuthSection([
+      { id: "meta-subscription", name: "Meta (Muse subscription)", authenticated: false, type: "oauth" },
+      { id: "meta", name: "Meta (Muse)", authenticated: false, type: "api_key" },
+    ]);
+
+    const oauthCard = screen.getByTestId("auth-provider-icon-meta-subscription").closest(".auth-provider-card") as HTMLElement;
+    const apiKeyCard = screen.getByTestId("auth-provider-icon-meta").closest(".auth-provider-card") as HTMLElement;
+    expect(screen.getAllByTestId(/auth-provider-icon-meta/)).toHaveLength(2);
+
+    fireEvent.click(within(oauthCard).getByRole("button", { name: "Login" }));
+    expect(handleLogin).toHaveBeenCalledWith("meta-subscription");
+    expect(within(oauthCard).queryByPlaceholderText("Enter API key")).not.toBeInTheDocument();
+
+    fireEvent.change(within(apiKeyCard).getByPlaceholderText("Enter API key"), { target: { value: "example-meta-key" } });
+    fireEvent.click(within(apiKeyCard).getByRole("button", { name: "Save" }));
+    expect(handleSaveApiKey).toHaveBeenCalledWith("meta");
+    expect(within(apiKeyCard).queryByRole("button", { name: "Login" })).not.toBeInTheDocument();
+  });
+
   it("renders an OAuth refresh failure durably on the affected provider card", () => {
     renderAuthSection([
       {

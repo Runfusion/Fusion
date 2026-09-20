@@ -65,6 +65,23 @@ describe("streamSimple kill-switch dispatch (U11/R9/R14)", () => {
     expect(streamViaAcp).not.toHaveBeenCalled();
   });
 
+  it("forwards current transcript tools to the CLI prompt adapter", () => {
+    delete process.env.FUSION_CLAUDE_ACP;
+    const tools = [{
+      name: "fn_web_fetch",
+      description: "Fetch a URL",
+      parameters: { type: "object", properties: { url: { type: "string" } } },
+    }];
+    const streamSimple = registerAndGetStreamSimple();
+    streamSimple(MODEL, { messages: [{ role: "system", content: "Use Fusion tools", toolsAdded: tools }] } as never, {});
+
+    expect(streamViaCli).toHaveBeenCalledWith(
+      MODEL,
+      expect.objectContaining({ systemPrompt: "Use Fusion tools", tools }),
+      expect.any(Object),
+    );
+  });
+
   it("dispatches to the ACP bridge when the flag AND a bridge path are set", () => {
     process.env.FUSION_CLAUDE_ACP = "1";
     process.env.FUSION_CLAUDE_ACP_BRIDGE = "/abs/claude-code-cli-acp";

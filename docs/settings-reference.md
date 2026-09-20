@@ -948,6 +948,10 @@ Manual re-login is still required when no refresh token is stored or the refresh
 
 <!-- FNXC:ProviderAuth 2026-07-05-00:00: FN-7574 — `/api/auth/status` and the engine's OAuthExpiryMonitor previously diverged on what counted as "expired": an oauth-typed credential with a past or missing/non-numeric `expires` could still read authenticated:true from the status route, even after the monitor's oauth-token-expired notification fired. The status route now fails safe: any OAuth credential lacking a usable numeric `expires`, or whose numeric `expires` is in the past and cannot be refreshed, reports expired:true/authenticated:false for both the legacy anthropic-row and separated anthropic-subscription-row storage permutations. FNXC:ProviderAuth 2026-07-11-18:00: FN-7821 — OAuthExpiryMonitor also refreshes-then-rechecks before dispatching oauth-token-expired, so a silently refreshed provider such as github-copilot does not produce a push without a matching in-app re-login banner. -->
 
+### Meta Muse authentication
+
+Pi 0.86.1 bundles Meta Muse models. In **Settings → Authentication**, use **Meta (Muse subscription)** to sign in with Meta, or use the separate **Meta (Muse)** card to save an operator-supplied API key. The two cards describe different credential paths for the same `meta` runtime provider; Fusion keeps the key masked in status responses and never displays the OAuth token. Select a `meta/muse-spark-*` model after completing either path. Do not enter credentials in project settings, task prompts, or source files.
+
 ### Anthropic API-key authentication
 
 Anthropic has three independent authentication/routing paths:

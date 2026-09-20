@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 import {
   streamViaCli,
   discoverDroidModels,
@@ -68,9 +69,17 @@ function toProviderModels(ids: string[]): DiscoveredModel[] {
   }));
 }
 
+function normalizeTranscriptTools(tools: ReturnType<typeof getCurrentTools>): Array<{ name: string; description: string; parameters: Record<string, unknown> }> {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description ?? "",
+    parameters: Object.fromEntries(Object.entries(tool.parameters)),
+  }));
+}
+
 function ensureMcpConfig(
   pi: ExtensionAPI,
-  contextTools?: ReadonlyArray<{
+  contextTools: ReadonlyArray<{
     name: string;
     description: string;
     parameters: Record<string, unknown>;
@@ -109,13 +118,17 @@ function registerDroidProvider(pi: ExtensionAPI, models: DiscoveredModel[]) {
     models,
     streamSimple: ((model, context, options) => {
       void runCliValidationOnce();
-      const configPath = ensureMcpConfig(
-        pi,
-        (context as { tools?: ReadonlyArray<{ name: string; description: string; parameters: Record<string, unknown> }> }).tools,
-      );
+      /*
+      FNXC:PiTranscriptBridge 2026-09-20-16:20:
+      Pi 0.86 carries prompt and tool changes in transcript system messages rather than Context.tools. Replay the current state so Droid receives the active prompt and MCP schema after resume or branching.
+      */
+      const contextTools = normalizeTranscriptTools(getCurrentTools(context.messages));
+      const configPath = ensureMcpConfig(pi, contextTools);
+      // FNXC:PiTranscriptBridge 2026-09-20-17:02: Droid's prompt adapter reads Context.tools for MCP instructions, so preserve the normalized transcript declarations in its compatibility context.
+      const cliContext = { ...context, systemPrompt: getCurrentSystemPrompt(context.messages), tools: contextTools };
       return streamViaCli(
         model,
-        context as never,
+        cliContext as never,
         { ...(options ?? {}), mcpConfigPath: configPath } as never,
       ) as unknown as ReturnType<StreamSimpleHandler>;
     }) as StreamSimpleHandler,

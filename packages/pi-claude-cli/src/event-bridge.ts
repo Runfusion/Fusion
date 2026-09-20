@@ -321,7 +321,8 @@ export function createEventBridge(
         // Try to parse accumulated JSON -- on success update args, on failure keep previous
         try {
           block.arguments = JSON.parse(block.partialJson);
-          (output.content[idx] as ToolCall).arguments = block.arguments as Record<string, unknown>;
+          // FNXC:PiTranscriptBridge 2026-09-20-16:20: Pi 0.86 accepts only JSON-compatible tool-call arguments; JSON.parse supplies that boundary.
+          (output.content[idx] as ToolCall).arguments = block.arguments as ToolCall["arguments"];
         } catch {
           // Partial JSON not yet parseable -- keep previous arguments
         }

@@ -325,7 +325,8 @@ class FusionFileAuthStorage implements FusionAuthStorage {
       return { result: existing, changed: false };
     });
   }
-  getOAuthProviders(): Array<{ id: string; name: string }> { return [{ id: "anthropic", name: "Anthropic" }, { id: "openai-codex", name: "OpenAI Codex" }, { id: "github-copilot", name: "GitHub Copilot" }]; }
+  // FNXC:ProviderAuth 2026-09-20-16:20: Pi 0.86.1 registers Meta's Muse OAuth login; preserve the raw runtime id for ModelRuntime.login.
+  getOAuthProviders(): Array<{ id: string; name: string }> { return [{ id: "anthropic", name: "Anthropic" }, { id: "openai-codex", name: "OpenAI Codex" }, { id: "github-copilot", name: "GitHub Copilot" }, { id: "meta", name: "Meta (Muse)" }]; }
   setModelRuntime(modelRuntime: ModelRuntime): void { this.modelRuntime = modelRuntime; }
   getModelRuntime(): ModelRuntime | undefined { return this.modelRuntime; }
   async login(provider: string, callbacks: unknown): Promise<void> {
@@ -468,6 +469,33 @@ export function createFusionCredentialStore(authStorage: FusionAuthStorage, reso
       ? resolvedCredentialInstance
       : undefined;
   };
+
+  const readCredential = (providerId: string) => {
+    const scopedRef = scopedRefFor(providerId);
+    return scopedRef ? authStorage.getInstance(scopedRef) : authStorage.get(providerId);
+  };
+
+  const modifyCredential = async (
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+  ): Promise<Credential | undefined> => {
+    const scopedRef = scopedRefFor(providerId);
+    if (!scopedRef) {
+      return authStorage.modify(
+        providerId,
+        async current => fn(current as Credential | undefined) as Promise<StoredCredential | undefined>,
+      ) as Promise<Credential | undefined>;
+    }
+    const next = await fn(authStorage.getInstance(scopedRef) as Credential | undefined);
+    if (next) await authStorage.setInstance(scopedRef, next as StoredCredential);
+    return next;
+  };
+
+  const deleteCredential = async (providerId: string): Promise<void> => {
+    const scopedRef = scopedRefFor(providerId);
+    if (scopedRef) await authStorage.removeInstance(scopedRef); else await authStorage.remove(providerId);
+  };
+
   return {
     /*
     FNXC:ProviderAuth 2026-07-17-06:30:
@@ -480,22 +508,43 @@ export function createFusionCredentialStore(authStorage: FusionAuthStorage, reso
         const token = await authStorage.getApiKey(ANTHROPIC_PROVIDER_ID, scopedRef);
         return token ? ({ type: "api_key", key: token } as Credential) : undefined;
       }
-      return (scopedRef ? authStorage.getInstance(scopedRef) : authStorage.get(providerId)) as Credential | undefined;
+      if (providerId === META_PROVIDER_ID) {
+        /*
+        FNXC:ProviderAuth 2026-09-20-17:14:
+        Meta's Pi provider reads and refreshes the execution id `meta`, while Fusion separates OAuth
+        from an operator API key in `meta-subscription`. Route OAuth-only runtime reads through that
+        subscription row and keep API-key precedence, so Pi refreshes the connected account without
+        replacing an explicitly configured key.
+        */
+        const rawCredential = readCredential(META_PROVIDER_ID);
+        if (rawCredential?.type === "api_key") return rawCredential as Credential;
+        const subscriptionCredential = readCredential(META_SUBSCRIPTION_PROVIDER_ID);
+        return (subscriptionCredential?.type === "oauth" ? subscriptionCredential : rawCredential) as Credential | undefined;
+      }
+      return readCredential(providerId) as Credential | undefined;
     },
     list: async () => authStorage.list().flatMap((providerId): CredentialInfo[] => {
       const credential = scopedRefFor(providerId) ? authStorage.getInstance(scopedRefFor(providerId)!) : authStorage.get(providerId);
       return credential?.type === "api_key" || credential?.type === "oauth" ? [{ providerId, type: credential.type }] : [];
     }),
     modify: async (providerId, fn) => {
-      const scopedRef = scopedRefFor(providerId);
-      if (!scopedRef) return authStorage.modify(providerId, async current => fn(current as Credential | undefined) as Promise<StoredCredential | undefined>) as Promise<Credential | undefined>;
-      const next = await fn(authStorage.getInstance(scopedRef) as Credential | undefined);
-      if (next) await authStorage.setInstance(scopedRef, next as StoredCredential);
-      return next;
+      if (providerId === META_PROVIDER_ID) {
+        const rawCredential = readCredential(META_PROVIDER_ID);
+        if (rawCredential?.type !== "api_key" && readCredential(META_SUBSCRIPTION_PROVIDER_ID)?.type === "oauth") {
+          return modifyCredential(META_SUBSCRIPTION_PROVIDER_ID, fn);
+        }
+      }
+      return modifyCredential(providerId, fn);
     },
     delete: async (providerId) => {
-      const scopedRef = scopedRefFor(providerId);
-      if (scopedRef) await authStorage.removeInstance(scopedRef); else await authStorage.remove(providerId);
+      if (providerId === META_PROVIDER_ID) {
+        const rawCredential = readCredential(META_PROVIDER_ID);
+        if (rawCredential?.type !== "api_key" && readCredential(META_SUBSCRIPTION_PROVIDER_ID)?.type === "oauth") {
+          await deleteCredential(META_SUBSCRIPTION_PROVIDER_ID);
+          return;
+        }
+      }
+      await deleteCredential(providerId);
     },
   };
 }
@@ -519,6 +568,9 @@ FNXC:ProviderAuth 2026-09-02-22:06:
 FN-9244 re-verified pi-coding-agent@0.84.4 dist/core/auth-storage.js. Its proper-lockfile-
 guarded mutation rereads auth.json and merges `{ ...currentData, [provider]: next }`, so
 Fusion's credential adapter still preserves concurrent credentials for other providers.
+
+FNXC:ProviderAuth 2026-09-20-16:45:
+Pi 0.86.1 retains the locked read-modify-write contract required by Fusion's credential adapter.
 */
 
 /*
@@ -535,6 +587,8 @@ apply so a single stuck token doesn't get hammered).
 */
 const OAUTH_REFRESH_BUFFER_MS = 5 * 60_000;
 const ANTHROPIC_PROVIDER_ID = "anthropic";
+const META_PROVIDER_ID = "meta";
+const META_SUBSCRIPTION_PROVIDER_ID = "meta-subscription";
 const OAUTH_REFRESH_FAILURE_COOLDOWN_MS = 30_000;
 
 export function getHomeDir(): string {

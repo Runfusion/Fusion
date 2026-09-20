@@ -124,7 +124,7 @@ describe("seedDashboardProviders", () => {
 
   it("keeps native Kimi K3 available through the installed pi model registry", async () => {
     // FNXC:ModelCatalog 2026-08-12-20:46: FN-9007 keeps catalog coverage on Pi
-    // 0.84.4's real built-in registry, not a hand-written Kimi fixture.
+    // 0.86.1's real built-in registry, not a hand-written Kimi fixture.
     const modelRegistry = await createInMemoryModelRegistry();
     await modelRegistry.refresh();
 
@@ -136,6 +136,21 @@ describe("seedDashboardProviders", () => {
       baseUrl: "https://api.kimi.com/coding",
       contextWindow: 1_048_576,
       maxTokens: 131_072,
+    });
+  });
+
+  it("keeps Meta's native Muse model selectable through the installed Pi registry", async () => {
+    const modelRegistry = await createInMemoryModelRegistry();
+
+    expect(modelRegistry.find("meta", "muse-spark-1.3")).toMatchObject({
+      provider: "meta",
+      id: "muse-spark-1.3",
+      name: "Muse Spark 1.3",
+      api: "openai-responses",
+      reasoning: true,
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+      thinkingLevelMap: { max: "max" },
     });
   });
 
