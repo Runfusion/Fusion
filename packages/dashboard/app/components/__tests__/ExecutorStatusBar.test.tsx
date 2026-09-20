@@ -1063,6 +1063,20 @@ describe("ExecutorStatusBar", () => {
   });
 
   describe("mobile keyboard behavior", () => {
+    it.each([
+      ["ready", false, null],
+      ["loading", true, null],
+      ["error", false, "Stats unavailable"],
+      ["connecting", false, "Failed to fetch"],
+    ] as const)("hides the mobile %s footer above overlay keyboards and restores it on dismissal", (_state, loading, error) => {
+      viewportModeMock.value = "mobile";
+      mockUseExecutorStats.mockReturnValue({ stats: { ...defaultStats, runningTaskCount: 0 }, loading, error, refresh: vi.fn() });
+      const { container, rerender } = render(<ExecutorStatusBar tasks={emptyTasks} keyboardOpen hideWhenKeyboardOpen={false} />);
+      expect(container.firstChild).toBeNull();
+      rerender(<ExecutorStatusBar tasks={emptyTasks} keyboardOpen={false} hideWhenKeyboardOpen={false} />);
+      expect(screen.getByRole("status", { name: "Executor status" })).toBeInTheDocument();
+    });
+
     it("hides bar when hideWhenKeyboardOpen is true", () => {
       const { container } = render(<ExecutorStatusBar tasks={emptyTasks} hideWhenKeyboardOpen={true} />);
       expect(container.firstChild).toBeNull();

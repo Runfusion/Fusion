@@ -814,9 +814,9 @@ function AppInner() {
   // keyboard with no empty gap. This supersedes the earlier Android gate
   // (FN-5707), which kept the footer visible and left a ~80px dead band
   // where the off-screen nav bar's padding remained reserved.
-  // `footerKeyboardOpen` uses the same immediate focus/keyboard trigger as
-  // the nav bar. A footer that remains rendered over a modal must also drop
-  // its bottom reservation on both platforms to avoid a dead band.
+  // `footerKeyboardOpen` hides status chrome even over a modal, while
+  // `footerHidden` only releases space in the underlying board when no overlay
+  // owns viewport layout. Both bars respond to the same focus/keyboard trigger.
   const mobileKeyboardOpen = footerHidden;
   const mobileNavKeyboardOpen = navKeyboardOpen;
   // App-level scroll lock for inline editing (TaskCard inline edit, etc.):
