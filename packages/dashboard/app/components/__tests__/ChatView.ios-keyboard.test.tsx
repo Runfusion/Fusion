@@ -118,6 +118,26 @@ describe("FN-9195 Chat composer visual viewport", () => {
     } finally { restore(); }
   });
 
+  it("activates the focused composer for an iOS collapsed-layout keyboard frame", async () => {
+    const viewport = mockVisualViewport({ width: 375, height: 812 });
+    const mode = mockViewportMode("mobile");
+    try {
+      const input = await renderChat();
+      await act(async () => {
+        input.focus();
+        input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        setLayoutViewportHeight(viewport.vv, 520);
+      });
+
+      const thread = getThread();
+      expect(thread).toHaveClass("chat-thread--keyboard-active");
+      expect(thread.style.getPropertyValue("--vv-height")).toBe("520px");
+      expect(thread.style.getPropertyValue("--keyboard-overlap")).toBe("0px");
+      expect(thread.contains(input)).toBe(true);
+      expect(css).toMatch(/\.chat-thread--keyboard-active\s*\{[^}]*--vv-height/m);
+    } finally { mode.mockRestore(); viewport.restore(); }
+  });
+
   it("keeps the portrait phone composer in a keyboard-active thread", async () => {
     const viewport = mockVisualViewport({ width: 375, height: 812 });
     const mode = mockViewportMode("mobile");

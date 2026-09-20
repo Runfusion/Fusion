@@ -1243,14 +1243,16 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   useMobileKeyboardViewportLock(isMobile && keyboardOpen);
 
   /*
-  FNXC:ChatComposer 2026-08-23-16:07:
+  FNXC:ChatComposer 2026-09-20-00:55:
   The composer must remain inside the visual viewport whenever Fusion knows a soft keyboard is
   up on phone portrait/landscape, tablet, compact dock, or narrow floating Chat. The writer,
   hook enabled state, and allowNonMobileViewport deliberately share keyboardTrackedHost so their
-  host gates cannot drift. Detection remains a layout-height-minus-visual-height gap; the measured
-  thread top lets CSS account for dock/floating chrome instead of assuming only the app header.
-  Landscape-phone keyboard state newly reaches the existing touch guard while its body lock keeps
-  its own phone-width iOS gate, so this does not add body pinning on wide hosts.
+  host gates cannot drift. iOS can shrink the layout and visual viewports together, making raw
+  overlap zero while useMobileKeyboard's closed-baseline fallback correctly reports an open keyboard.
+  Follow that authoritative focused state for the clamp; raw geometry still supplies only CSS
+  variables, thread-top measurement, and real-offset drift compensation. Landscape-phone keyboard
+  state reaches the existing touch guard while its body lock keeps its own phone-width iOS gate,
+  so this does not add body pinning on wide hosts.
   */
   useLayoutEffect(() => {
     if (!keyboardTrackedHost || !activeSession) return;
@@ -1292,7 +1294,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
         thread.style.removeProperty("--chat-thread-viewport-top");
       }
 
-      const keyboardActive = (overlap > 0 || offsetTop > 0) && isKeyboardTrackingFocusable(document.activeElement);
+      const keyboardActive = keyboardOpen && isKeyboardTrackingFocusable(document.activeElement);
       thread.classList.toggle("chat-thread--keyboard-active", keyboardActive);
       /*
       FNXC:ChatComposer 2026-09-19-20:19:
@@ -1340,7 +1342,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       thread.style.willChange = "";
       appliedThreadTranslateYRef.current = 0;
     };
-  }, [activeSession, keyboardTrackedHost]);
+  }, [activeSession, keyboardOpen, keyboardTrackedHost]);
 
   // Close context menu on outside click
   useEffect(() => {
