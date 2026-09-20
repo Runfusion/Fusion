@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 2, 13, and 15), all **active first sightings**. Entry 1 closed on 2026-09-12: FN-9131's structural harness connection-budget fix (merged 2026-08-16 as `ae507afc37`) resolved its reproduced timeout, and no sighting has occurred since the fix landed; the record stays in place below for its campaign evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **2 active observation records** (entries 2 and 13), both **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -240,17 +240,28 @@ Quarantine was not available as an alternative. Core PostgreSQL files cannot be 
 
 ### 15. Workflow-results preserved-column selector mock ordering
 
-- **Status:** Active first sighting — recorded 2026-09-20, unattributed.
+- **Status:** Closed 2026-09-20 — FN-9336 structurally resolved the request-ordering mock drift. A new sighting re-opens normal escalation.
 - **File:** `packages/dashboard/app/components/__tests__/WorkflowResultsTab.test.tsx`
 - **Exact test:** `WorkflowResultsTab > calls onWorkflowReconciled for preserved-column workflow switches`
-- **Owner:** unowned — recorded rather than quarantined because the file retains 126 passing tests and file-level quarantine would discard substantial coverage.
+- **Owner:** FN-9336 — retained rather than quarantined because the file retains 126 passing tests and file-level quarantine would discard substantial coverage.
 - **Observed tree/SHA:** `5977d630dbca4981342d6c5fb6dffbc5642b9f45`.
-- **Observed frequency:** once, suite-only. Passes in isolation.
+- **Observed frequency:** once, suite-only. Passed in isolation before the fix.
 
 | run | result |
 |---|---|
-| target file | **failed**: expected `selectTaskWorkflow("FN-001", "WF-002", undefined)` but received a null workflow selection |
-| exact test in isolation | **passed** |
+| target file at first sighting | **failed**: expected `selectTaskWorkflow("FN-001", "WF-002", undefined)` but received a null workflow selection |
+| exact test in isolation at first sighting | **passed** |
+| `pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/WorkflowResultsTab.test.tsx --silent=passed-only --reporter=dot` | **passed** after FN-9336 |
+| `pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/WorkflowResultsTab.test.tsx -t "calls onWorkflowReconciled for preserved-column workflow switches" --silent=passed-only --reporter=dot` | **passed** after FN-9336 |
+
+<!--
+FNXC:WorkflowResultsTabMocks 2026-09-20-09:58:
+FN-9336 closes this record with request-aware selector fixtures. The parent tab and nested selector
+both fetch workflow definitions during mount, so fixtures now key task selection, definitions, graph
+reads, and selection writes by their task, workflow, and project request instead of consuming a queue.
+-->
+
+**Closed 2026-09-20 (FN-9336):** `WorkflowResultsTab` and its nested `WorkflowSelector` independently fetch workflow definitions during mount, so shared `mockResolvedValueOnce` queues could give the preserved-column selection test a null/default response intended for another request. FN-9336 replaced selector API queues with request-aware task, workflow, and project fixtures for null/default inheritance, explicit custom selection, task-change failure, clear selection, stale and empty graphs, no usable board id, and the `WF-002` preserved-column response. Both the complete file and the exact registered test passed with its original request, enabled-step, and reconciliation assertions unchanged; no quarantine, retry, timeout, skip, or product-source change was made.
 
 The failure occurred while validating FN-9334's unrelated resume-eligibility cases. The test's per-case resolved mock was consumed out of order only in the file run, while the isolated test passed; no timeout, retry, assertion, or product behavior was changed. A second sighting requires normal quarantine escalation.
 

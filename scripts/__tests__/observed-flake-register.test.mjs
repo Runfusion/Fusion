@@ -110,12 +110,17 @@ FN-9283 closed entry 14 by deleting stale FN-6735 coverage that asserted FN-217-
 review-to-WIP recovery. The active inventory must exclude the archived record, so a future quarantine
 is never mistaken for an unresolved deletion-ratchet obligation.
 
+FNXC:WorkflowResultsTabMocks 2026-09-20-09:58:
+FN-9336 closed entry 15 after request-aware selector fixtures proved the whole file and its exact
+preserved-column reproduction green. The record stays physically in the active section for first-sighting
+evidence, while this active inventory must include only entries 2 and 13.
+
 FNXC:TestFlakeRegister 2026-09-10-19:28:
 Entry 14 closed 2026-09-09 when the deletion ratchet executed via commit 55912bd665, which
 removed the test file, the quarantine ledger entry, and the engine-reliability exclude in one
 commit. The register record now keeps its historical identity on relabeled File/Exact-test
 lines that no longer match the dangling-path scan (the file no longer exists to drift-check),
-states 3 active records, and identifies the required successor without making the archived path active.
+and identifies the required successor without making the archived path active.
 
 FNXC:TestFlakeRegister 2026-09-13-10:38:
 FN-9297 replaces the ghost FN-9287 hand-off and delivers deterministic FN-6735 unit coverage in
@@ -151,10 +156,6 @@ test("observed-flake register active count, escalation state, and owners stay sy
     {
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
-    },
-    {
-      heading: "15. Workflow-results preserved-column selector mock ordering",
-      status: "Active first sighting — recorded 2026-09-20, unattributed.",
     },
   ]);
 });
