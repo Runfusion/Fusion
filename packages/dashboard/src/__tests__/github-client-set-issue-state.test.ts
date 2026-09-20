@@ -27,15 +27,21 @@ const mockGetGhErrorMessage = vi.mocked(getGhErrorMessage);
 describe("GitHubClient.setIssueState", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRunGh.mockReset();
     mockIsGhAvailable.mockReturnValue(true);
     mockIsGhAuthenticated.mockReturnValue(true);
     mockGetGhErrorMessage.mockImplementation((err) => err instanceof Error ? err.message : String(err));
   });
 
-  it("uses gh issue close with reason when authenticated", async () => {
-    const client = new GitHubClient();
+  it.each([
+    [undefined, "completed", "completed"],
+    [undefined, "not_planned", "not planned"],
+    ["gh-cli", "completed", "completed"],
+    ["gh-cli", "not_planned", "not planned"],
+  ] as const)("uses the CLI spelling for %s mode and %s reason", async (forceMode, stateReason, cliReason) => {
+    const client = new GitHubClient({ forceMode });
 
-    await client.setIssueState("owner", "repo", 123, "closed", "completed");
+    await client.setIssueState("owner", "repo", 123, "closed", stateReason);
 
     expect(mockRunGh).toHaveBeenCalledWith([
       "issue",
@@ -44,7 +50,7 @@ describe("GitHubClient.setIssueState", () => {
       "--repo",
       "owner/repo",
       "--reason",
-      "completed",
+      cliReason,
     ]);
   });
 
@@ -76,13 +82,19 @@ describe("GitHubClient.setIssueState", () => {
     ]);
   });
 
-  it("uses REST when gh auth unavailable and token exists for closed state", async () => {
-    mockIsGhAvailable.mockReturnValue(false);
-    const client = new GitHubClient("ghp_token");
+  it.each([
+    [undefined, "completed"],
+    [undefined, "not_planned"],
+    ["token", "completed"],
+    ["token", "not_planned"],
+  ] as const)("preserves the REST spelling for %s mode and %s reason", async (forceMode, stateReason) => {
+    mockIsGhAvailable.mockReturnValue(forceMode === "token");
+    const client = new GitHubClient({ token: "ghp_token", forceMode });
     const fetchSpy = vi.spyOn(client, "fetchThrottled").mockResolvedValue({ success: true, data: { id: 1, state: "closed" } });
 
-    await client.setIssueState("owner", "repo", 123, "closed", "completed");
+    await client.setIssueState("owner", "repo", 123, "closed", stateReason);
 
+    expect(mockRunGh).not.toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledWith(
       "https://api.github.com/repos/owner/repo/issues/123",
       {
@@ -90,7 +102,7 @@ describe("GitHubClient.setIssueState", () => {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ state: "closed", state_reason: "completed" }),
+        body: JSON.stringify({ state: "closed", state_reason: stateReason }),
       },
     );
   });
@@ -123,16 +135,19 @@ describe("GitHubClient.setIssueState", () => {
     expect(JSON.parse(String(body))).toEqual({ state: "open" });
   });
 
-  it("falls back to REST when gh command throws and token exists", async () => {
+  it.each(["completed", "not_planned"] as const)("preserves %s in REST fallback after a CLI failure", async (stateReason) => {
     mockRunGh.mockImplementation(() => {
       throw new Error("gh failed");
     });
     const client = new GitHubClient("ghp_token");
     const fetchSpy = vi.spyOn(client, "fetchThrottled").mockResolvedValue({ success: true, data: { id: 1, state: "closed" } });
 
-    await client.setIssueState("owner", "repo", 123, "closed", "completed");
+    await client.setIssueState("owner", "repo", 123, "closed", stateReason);
 
-    expect(fetchSpy).toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://api.github.com/repos/owner/repo/issues/123",
+      expect.objectContaining({ body: JSON.stringify({ state: "closed", state_reason: stateReason }) }),
+    );
   });
 
   it("throws wrapped gh error when gh command fails and no token", async () => {

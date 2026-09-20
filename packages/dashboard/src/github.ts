@@ -3122,7 +3122,7 @@ export class GitHubClient {
       const command = state === "closed" ? "close" : "reopen";
       const args = ["issue", command, String(issueNumber), "--repo", `${owner}/${repo}`];
       if (state === "closed" && (stateReason === "completed" || stateReason === "not_planned")) {
-        args.push("--reason", stateReason);
+        args.push("--reason", stateReason === "not_planned" ? "not planned" : stateReason);
       }
       runGh(args);
       return;
@@ -3135,7 +3135,7 @@ export class GitHubClient {
         const command = state === "closed" ? "close" : "reopen";
         const args = ["issue", command, String(issueNumber), "--repo", `${owner}/${repo}`];
         if (state === "closed" && (stateReason === "completed" || stateReason === "not_planned")) {
-          args.push("--reason", stateReason);
+          args.push("--reason", stateReason === "not_planned" ? "not planned" : stateReason);
         }
         runGh(args);
         return;
