@@ -400,8 +400,7 @@ Intentional exclusions from shared snapshots:
 - Backed by `research_runs`, `research_exports`, and `research_run_events`.
 - Engine orchestration is implemented in `packages/engine/src/research-orchestrator.ts` + `research-step-runner.ts`.
 - Dashboard/API surface is implemented under `/api/research` (`packages/dashboard/src/research-routes.ts`) with `ResearchView.tsx` in the app.
-- CLI surface is implemented in `packages/cli/src/commands/research.ts` with six subcommands (create, list, show, export, cancel, retry).
-- Agent tool surface is exposed via `packages/cli/src/extension.ts` (`fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`).
+- Engine-injected agent tools expose `fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, and `fn_research_retry` when research is enabled.
 - **Boundary contract (FN-3292):**
   - `ResearchStore` owns persistence and lifecycle writes (status transitions, lifecycle event log rows, sources/results snapshots).
   - `ResearchStepRunner` owns provider I/O concerns only (provider selection, timeout/abort/provider-error classification, synthesis call execution); it does not read/write run state.

@@ -162,7 +162,6 @@ async function loadCommandHandlers() {
   const { runPluginPublish } = await import("./commands/plugin-publish.js");
   const { runSkillsSearch, runSkillsInstall, runSkillsGet } = await import("./commands/skills.js");
   const { runComputer } = await import("./commands/computer.js");
-  const { runResearchCreate, runResearchList, runResearchShow, runResearchExport, runResearchCancel, runResearchRetry } = await import("./commands/research.js");
   const { runExperimentFinalize } = await import("./commands/experiment-finalize.js");
   const { dispatchUpdateCliArgs } = await import("./commands/update.js");
 
@@ -303,12 +302,6 @@ async function loadCommandHandlers() {
     runSkillsInstall,
     runSkillsGet,
     runComputer,
-    runResearchCreate,
-    runResearchList,
-    runResearchShow,
-    runResearchExport,
-    runResearchCancel,
-    runResearchRetry,
     runExperimentFinalize,
     dispatchUpdateCliArgs,
     runChatInteractive,
@@ -385,17 +378,6 @@ PR:
   fn pr automerge <pr-id> [on|off]    Toggle auto-merge for the PR
   fn pr automerge-cleanup [--apply] [--json]
                                       Dry-run or apply legacy auto-merge stamp cleanup
-  fn research create --query <text> [--wait] [--max-wait-ms <ms>] [--json]
-                                      Create and optionally wait for a cited-research run (search/fetch/synthesis)
-  fn research list | ls [--status <status>] [--limit <n>] [--json]
-                                      List cited-research runs
-  fn research show <run-id> [--json]  Show cited-research run details
-  fn research export <run-id> [--format <json|markdown|pdf>] [--output <path>] [--json]
-                                      Export cited-research run results
-  fn research cancel <run-id> [--json]
-                                      Cancel an active cited-research run
-  fn research retry <run-id> [--json]
-                                      Retry a failed/cancelled cited-research run
   fn mission create [title] [desc] [--goal <id>] [--base-branch <branch>]
                                       Create a new mission (repeat --goal to link goals)
   fn mission list | ls                List missions
@@ -848,12 +830,6 @@ async function main() {
     runSkillsInstall,
     runSkillsGet,
     runComputer,
-    runResearchCreate,
-    runResearchList,
-    runResearchShow,
-    runResearchExport,
-    runResearchCancel,
-    runResearchRetry,
     runExperimentFinalize,
     dispatchUpdateCliArgs,
     runChatInteractive,
@@ -1239,85 +1215,6 @@ async function main() {
             console.log(
               "Try: fn cloud pair-start | pair-complete | heartbeat | status | unlink",
             );
-            process.exit(1);
-        }
-        break;
-      }
-
-      case "research": {
-        const subcommand = args[1];
-        switch (subcommand) {
-          case "create": {
-            const query = getFlagValue(args, "--query") ?? args.slice(2).filter((value) => !value.startsWith("--")).join(" ").trim();
-            if (!query) {
-              console.error("Usage: fn research create --query <text> [--wait] [--max-wait-ms <ms>] [--json]");
-              process.exit(1);
-            }
-            await runResearchCreate({
-              query,
-              waitForCompletion: args.includes("--wait"),
-              maxWaitMs: getFlagValueNumber(args, "--max-wait-ms"),
-              json: args.includes("--json"),
-              projectName,
-            });
-            break;
-          }
-          case "list":
-          case "ls": {
-            const status = getFlagValue(args, "--status");
-            await runResearchList({
-              status,
-              limit: getFlagValueNumber(args, "--limit"),
-              json: args.includes("--json"),
-              projectName,
-            });
-            break;
-          }
-          case "show": {
-            const runId = args[2];
-            if (!runId) {
-              console.error("Usage: fn research show <run-id> [--json]");
-              process.exit(1);
-            }
-            await runResearchShow(runId, { json: args.includes("--json"), projectName });
-            break;
-          }
-          case "export": {
-            const runId = args[2];
-            if (!runId) {
-              console.error("Usage: fn research export <run-id> [--format <json|markdown|pdf>] [--output <path>] [--json]");
-              process.exit(1);
-            }
-            await runResearchExport({
-              runId,
-              format: getFlagValue(args, "--format"),
-              output: getFlagValue(args, "--output"),
-              json: args.includes("--json"),
-              projectName,
-            });
-            break;
-          }
-          case "cancel": {
-            const runId = args[2];
-            if (!runId) {
-              console.error("Usage: fn research cancel <run-id> [--json]");
-              process.exit(1);
-            }
-            await runResearchCancel(runId, { json: args.includes("--json"), projectName });
-            break;
-          }
-          case "retry": {
-            const runId = args[2];
-            if (!runId) {
-              console.error("Usage: fn research retry <run-id> [--json]");
-              process.exit(1);
-            }
-            await runResearchRetry(runId, { json: args.includes("--json"), projectName });
-            break;
-          }
-          default:
-            console.error(`Unknown subcommand: research ${subcommand || ""}`);
-            console.log("Try: fn research create | list | show | export | cancel | retry");
             process.exit(1);
         }
         break;

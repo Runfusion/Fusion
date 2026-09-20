@@ -251,58 +251,6 @@ If your installed CLI predates `--channel`, bootstrap onto beta with `npm instal
 
 ---
 
-## `fn research`
-
-Manage persisted research runs from the CLI.
-
-```bash
-fn research create --query "Compare sqlite WAL vs rollback journal"
-fn research create --query "Rust async runtime trade-offs" --wait --max-wait-ms 120000
-fn research list --status failed --limit 20
-fn research show RR-001
-fn research export RR-001 --format json --output ./artifacts/research-RR-001.json
-fn research cancel RR-001
-fn research retry RR-001 --json
-```
-
-| Subcommand | Description |
-|---|---|
-| `fn research create --query <text> [--wait] [--max-wait-ms <ms>] [--json]` | Create a run and optionally wait for completion. |
-| `fn research list \| ls [--status <status>] [--limit <n>] [--json]` | List recent runs (statuses: `queued`, `running`, `cancelling`, `retry_waiting`, `completed`, `failed`, `cancelled`, `timed_out`, `retry_exhausted`). |
-| `fn research show <run-id> [--json]` | Show one run with timestamps, summary, and error details. |
-| `fn research export <run-id> [--format <json\|markdown\|pdf>] [--output <path>] [--json]` | Export run results and persist an export record. |
-| `fn research cancel <run-id> [--json]` | Request cancellation for an active run. |
-| `fn research retry <run-id> [--json]` | Create a new retry run from a `failed`/`timed_out` run when lifecycle marks it retryable. |
-
-### Research error behavior (`fn research`)
-
-`fn research` returns structured failures with machine-readable codes. The extension/tool-side equivalents are lowercase aliases in payload metadata (`feature-disabled`, `missing-credentials`, `provider-unavailable`, `invalid-transition`, `retry-exhausted`, `non-retryable-provider-error`).
-
-- Feature disabled → `FEATURE_DISABLED` / `feature-disabled`
-- Missing credentials → `MISSING_CREDENTIALS` / `missing-credentials`
-- Provider unavailable/cooldown → `PROVIDER_UNAVAILABLE` / `provider-unavailable`
-- Invalid cancel/retry transition → `INVALID_TRANSITION` / `invalid-transition`
-- Retry budget exhausted → `RETRY_EXHAUSTED` / `retry-exhausted`
-- Non-retryable provider failure → `NON_RETRYABLE_PROVIDER_ERROR` / `non-retryable-provider-error`
-
-Examples:
-
-```bash
-# Feature disabled / setup guard
-fn research create --query "compare x y" --json
-
-# Missing credentials / provider unavailable
-fn research create --query "latest node lts" --json
-
-# Invalid transition (run already terminal)
-fn research cancel RR-001 --json
-
-# Retry exhausted / non-retryable provider error
-fn research retry RR-001 --json
-```
-
----
-
 ## `fn experiment finalize`
 
 Group kept experiment-session commits into reviewable branches that share a merge-base with your integration branch. This command consumes a finalized experiment session produced by the experiment executor and can either preview the finalize plan or create branches.
@@ -746,10 +694,7 @@ global-scope settings live in the file-backed `GlobalSettingsStore`
 with no close and no lock-retry. All of the above honor the same
 `FUSION_CLI_LOCK_RETRY_MS` deadline override.
 
-The same class of fix (FN-7740) also covers `fn research *`
-(`create`/`list`/`show`/`export`/`cancel`/`retry`), `fn settings import`,
-`fn agent export`, `fn git *` (`status`/`fetch`/`pull`/`push`), and
-`fn project *` (`list`/`add`/`remove`/`show`/`set-default`/`detect`):
+The same class of fix (FN-7740) also covers `fn settings import`, `fn agent export`, `fn git *` (`status`/`fetch`/`pull`/`push`), and `fn project *` (`list`/`add`/`remove`/`show`/`set-default`/`detect`):
 
 - `fn git *` and `fn agent export` never write the board, so they are
   **teardown-only** — the resolved project path is now obtained via the
@@ -761,18 +706,11 @@ The same class of fix (FN-7740) also covers `fn research *`
   after every call (so `fn project list` no longer leaks one store per
   registered project), and the count read retries a momentary
   `database is locked` instead of silently reporting zero tasks.
-- `fn settings import`'s `importSettings` write and `fn research create`
-  (settings read) / `fn research export`'s `createExport` write retry
-  through a momentary `database is locked` — subject to the same
-  `FUSION_CLI_LOCK_RETRY_MS` deadline override as `fn task`/`fn branch-group`/
-  `fn pr` — and the resolved store is closed BEFORE every `process.exit()`
-  call (a pending `finally` does not run after `process.exit()`).
-- `fn research create` without `--wait-for-completion` is the ONE
-  intentionally-long-lived exception in the CLI: the research run continues
-  in the background against the same store after the command returns, so
-  that store is deliberately NOT closed on this path (closing it would
-  truncate the in-flight run). Every other `fn research *` path, including
-  `--wait-for-completion`, closes its store on exit.
+- `fn settings import`'s `importSettings` write retries through a momentary
+  `database is locked` — subject to the same `FUSION_CLI_LOCK_RETRY_MS`
+  deadline override as `fn task`/`fn branch-group`/`fn pr` — and the resolved
+  store is closed BEFORE every `process.exit()` call (a pending `finally` does
+  not run after `process.exit()`).
 
 ### Execution and status
 
@@ -1427,7 +1365,7 @@ Subcommands: `search`, `install`, `get`.
 
 | Option | Used by |
 |---|---|
-| `--project`, `-P` | Most project-scoped commands (for example: `fn task ...`, `fn message ...`, `fn agent mailbox`, `fn settings`, `fn research`, `fn mission`, `fn node`, `fn plugin`, `fn skills`) |
+| `--project`, `-P` | Most project-scoped commands (for example: `fn task ...`, `fn message ...`, `fn agent mailbox`, `fn settings`, `fn mission`, `fn node`, `fn plugin`, `fn skills`) |
 | `--port`, `-p` | `fn dashboard`, `fn serve`, `fn daemon` |
 | `--host` | `fn serve`, `fn daemon` |
 | `--interactive` | `fn dashboard`, `fn serve`, `fn daemon`, `fn desktop`, `fn task import`, `fn project add` |

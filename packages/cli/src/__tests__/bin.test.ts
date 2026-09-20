@@ -16,6 +16,7 @@ const commandMocks = vi.hoisted(() => ({
   runTaskList: vi.fn(),
   runTaskMove: vi.fn(),
   runTaskMerge: vi.fn(),
+  runTaskReconcile: vi.fn(),
   runTaskUpdate: vi.fn(),
   runTaskDeps: vi.fn(),
   runTaskLog: vi.fn(),
@@ -129,12 +130,6 @@ const commandMocks = vi.hoisted(() => ({
   runPluginNew: vi.fn(),
   runPluginDev: vi.fn(),
 
-  runResearchCreate: vi.fn(),
-  runResearchList: vi.fn(),
-  runResearchShow: vi.fn(),
-  runResearchExport: vi.fn(),
-  runResearchCancel: vi.fn(),
-  runResearchRetry: vi.fn(),
 }));
 
 const onboardEnv = vi.hoisted(() => ({
@@ -175,6 +170,7 @@ vi.mock("../commands/task.js", () => ({
   runTaskList: commandMocks.runTaskList,
   runTaskMove: commandMocks.runTaskMove,
   runTaskMerge: commandMocks.runTaskMerge,
+  runTaskReconcile: commandMocks.runTaskReconcile,
   runTaskUpdate: commandMocks.runTaskUpdate,
   runTaskDeps: commandMocks.runTaskDeps,
   runTaskLog: commandMocks.runTaskLog,
@@ -324,14 +320,6 @@ vi.mock("../commands/plugin-dev.js", () => ({
   runPluginDev: commandMocks.runPluginDev,
 }));
 
-vi.mock("../commands/research.js", () => ({
-  runResearchCreate: commandMocks.runResearchCreate,
-  runResearchList: commandMocks.runResearchList,
-  runResearchShow: commandMocks.runResearchShow,
-  runResearchExport: commandMocks.runResearchExport,
-  runResearchCancel: commandMocks.runResearchCancel,
-  runResearchRetry: commandMocks.runResearchRetry,
-}));
 
 const originalArgv = process.argv;
 const originalExit = process.exit;
@@ -985,64 +973,12 @@ describe("bin command routing and fallbacks", () => {
     });
   });
 
-  it("routes research create with options", async () => {
-    await runBin(["research", "create", "--query", "hello world", "--wait", "--max-wait-ms", "1200", "--json", "--project", "alpha"]);
-    expect(commandMocks.runResearchCreate).toHaveBeenCalledWith({
-      query: "hello world",
-      waitForCompletion: true,
-      maxWaitMs: 1200,
-      json: true,
-      projectName: "alpha",
-    });
-  });
-
-  it("supports positional research query and rejects missing query", async () => {
-    await runBin(["research", "create", "hello", "world"]);
-    expect(commandMocks.runResearchCreate).toHaveBeenCalledWith({
-      query: "hello world",
-      waitForCompletion: false,
-      maxWaitMs: undefined,
-      json: false,
-      projectName: undefined,
-    });
-
-    await expect(runBin(["research", "create", "--wait"]))
-      .rejects.toThrow("process.exit:1");
-    expect(errorSpy).toHaveBeenCalledWith("Usage: fn research create --query <text> [--wait] [--max-wait-ms <ms>] [--json]");
-  });
-
-  it("routes research export", async () => {
-    await runBin(["research", "export", "RR-001", "--format", "json", "--output", "./out.json"]);
-    expect(commandMocks.runResearchExport).toHaveBeenCalledWith({
-      runId: "RR-001",
-      format: "json",
-      output: "./out.json",
-      json: false,
-      projectName: undefined,
-    });
-  });
-
-  it("routes research list/show/cancel/retry", async () => {
-    await runBin(["research", "ls", "--status", "failed", "--limit", "5", "--json"]);
-    await runBin(["research", "show", "RR-001", "--json"]);
-    await runBin(["research", "cancel", "RR-001"]);
-    await runBin(["research", "retry", "RR-002", "--json"]);
-
-    expect(commandMocks.runResearchList).toHaveBeenCalledWith({
-      status: "failed",
-      limit: 5,
-      json: true,
-      projectName: undefined,
-    });
-    expect(commandMocks.runResearchShow).toHaveBeenCalledWith("RR-001", { json: true, projectName: undefined });
-    expect(commandMocks.runResearchCancel).toHaveBeenCalledWith("RR-001", { json: false, projectName: undefined });
-    expect(commandMocks.runResearchRetry).toHaveBeenCalledWith("RR-002", { json: true, projectName: undefined });
-  });
-
-  it("shows research subcommand guidance on unknown subcommand", async () => {
-    await expect(runBin(["research", "oops"])).rejects.toThrow("process.exit:1");
-    expect(errorSpy).toHaveBeenCalledWith("Unknown subcommand: research oops");
-    expect(logSpy).toHaveBeenCalledWith("Try: fn research create | list | show | export | cancel | retry");
+  it("rejects retired research commands through the top-level unknown-command path", async () => {
+    await expect(runBin(["research", "create", "--query", "x"])).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith("Unknown command: research");
+    expect(commandMocks).not.toHaveProperty("runResearchCreate");
+    const output = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(output).not.toContain("fn research");
   });
 
   it.each([

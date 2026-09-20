@@ -41,19 +41,6 @@ fn task logs FN-001 --limit 50            # Limit log lines
 fn task logs FN-001 --type tool           # Filter by log type
 ```
 
-## Research
-
-```bash
-fn research create --query "question"          # Create research run
-fn research create --query "question" --wait   # Wait for completion
-fn research list                                 # List runs
-fn research ls --status failed --limit 20        # Filter by status
-fn research show RR-001                          # Show one run
-fn research export RR-001 --format json          # Export to JSON
-fn research export RR-001 --output ./run.md      # Export to specific path
-fn research cancel RR-001                        # Cancel active run
-fn research retry RR-001                         # Retry failed/cancelled run
-```
 
 ## Mission Management
 

@@ -3747,8 +3747,8 @@ export default function kbExtension(pi: ExtensionAPI) {
   });
 
   /*
-  FNXC:MergeQueue 2026-07-15-11:28:
-  Do not register fn_research_* on the host pi extension. These tools dual-boot a second TaskStore via getStore and can wedge agent turns with wait_for_completion polling (same hang class as FN-7956 fn_task_show). Bounded research remains available only when the engine injects createResearchTools into triage/executor/heartbeat sessions with experimentalFeatures.researchView enabled. Operators use `fn research` CLI / dashboard Research view.
+  FNXC:ResearchAccessBoundary 2026-09-20-05:02:
+  Do not register fn_research_* on the host pi extension. These tools dual-boot a second TaskStore via getStore and can wedge agent turns with wait_for_completion polling (same hang class as FN-7956 fn_task_show). Bounded research remains available through the dashboard Research view and when the engine injects createResearchTools into triage/executor/heartbeat sessions with experimentalFeatures.researchView enabled.
   */
 
   pi.registerTool({

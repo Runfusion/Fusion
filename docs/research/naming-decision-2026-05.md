@@ -37,7 +37,7 @@ Rationale:
 
 | Term | Meaning / scope |
 |---|---|
-| **Research run** | A cited-search/synthesis run. Backed by `research_runs`, `ResearchRun`, `fn_research_*` tools, `/api/research/*`, `ResearchView`, and `fn research`. |
+| **Research run** | A cited-search/synthesis run. Backed by `research_runs`, `ResearchRun`, `fn_research_*` tools, `/api/research/*`, `ResearchView`. |
 | **Experiment session** | An upstream-pi-autoresearch-style try-measure-keep-revert session. Backed by `experiment_sessions` / `ExperimentSession` (FN-4218) and future experiment tools/routes/UI. |
 | **Confidence (research)** | Synthesis-emitted 0–1 score from the LLM synthesis provider. **Not** a statistical MAD confidence score. If experiment sessions add metric confidence, use a distinct field name (for example `madConfidence` or `metricConfidence`). |
 | **Iterations** | Research run bounds are `maxSources` and `maxSynthesisRounds` (fan-out within one run). Upstream-style `maxIterations` belongs to experiment sessions and is a separate concept. |

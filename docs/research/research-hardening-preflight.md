@@ -35,11 +35,8 @@ This document is the verified baseline for FN-2999 hardening work. It reflects *
 - `packages/engine/src/research-step-runner.ts`
   - Provider adapters with timeout + abort handling and error classification.
 
-### CLI + extension (`@runfusion/fusion`)
-- `packages/cli/src/commands/research.ts`
-  - `create`, `list`, `show`, `export`, `cancel`, `retry` commands.
-- `packages/cli/src/extension.ts`
-  - Research tools: `fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`.
+### Engine-injected research tools
+- Research tools: `fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`.
 
 ### Boundary with Insights (separate subsystem)
 - Insights files/routes/stores remain separate (`insight-store`, `insights-routes`, `project_insights*` tables).
@@ -145,7 +142,7 @@ Key endpoints:
    - `research_runs.events` JSON snapshot and `research_run_events` append-only log coexist; hardening should preserve consistency guarantees.
 
 4. **Export surface asymmetry**
-   - Route export endpoint advertises markdown/json/html behavior while core export type includes `pdf`; CLI command accepts `pdf` format but markdown renderer fallback behavior should remain explicitly documented/validated.
+   - Route export endpoint advertises markdown/json/html behavior while core export type includes `pdf`; renderer fallback behavior should remain explicitly documented and validated.
 
 ## 9) FN-3292 boundary stress-test confirmations
 
@@ -174,13 +171,11 @@ Key endpoints:
 
 - Extension research tool contracts are now explicitly locked for missing-run errors and completed-run structured details (`summary`, `findings`, `citations`) across `fn_research_get` / `fn_research_cancel` / `fn_research_retry` behavior.
 - Server-level `/api/research` integration assertions are locked through `createServer` coverage for cancel/retry success paths, structured `400`/`404`/`409` envelopes, and export response contract checks.
-- CLI routing + docs alignment are locked to shipped behavior, including intentional CLI/core vs server export-format asymmetry documentation (no forced unification).
 
 ## 13) Validation references used for this baseline
 
 - `packages/dashboard/src/__tests__/research-routes.test.ts`
 - `packages/core/src/__tests__/research-store.test.ts`
 - `packages/engine/src/__tests__/research-orchestrator.test.ts`
-- `packages/cli/src/commands/__tests__/research.test.ts`
 
 These tests were used as behavioral evidence while preparing this baseline.

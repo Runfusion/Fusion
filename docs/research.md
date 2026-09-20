@@ -61,7 +61,7 @@ The Research view is gated behind an experimental feature flag. Set in global se
 }
 ```
 
-This also reveals the **Research Defaults** and **Research** settings sections in the dashboard Settings modal, and enables agent/CLI research tools (`fn_research_*`).
+This also reveals the **Research Defaults** and **Research** settings sections in the dashboard Settings modal, and enables engine-injected agent research tools (`fn_research_*`).
 
 ### 2. Built-in web search is the default
 
@@ -167,58 +167,6 @@ Each finding has two task-facing actions:
 | `cancelled` | Run was cancelled by user |
 | `timed_out` | Run exceeded the configured duration limit |
 | `retry_exhausted` | All retry attempts exhausted |
-
----
-
-## CLI Usage
-
-The `fn research` command provides cited-research run management from the terminal (search/fetch/synthesis runs, not experiment sessions).
-
-### Commands
-
-```bash
-# Create a research run
-fn research create --query "Compare sqlite WAL vs rollback journal"
-
-# Create and wait for completion (up to 90 seconds)
-fn research create --query "Rust async runtime trade-offs" --wait --max-wait-ms 120000
-
-# List recent runs
-fn research list
-fn research list --status failed --limit 20
-
-# Show run details
-fn research show RR-001
-
-# Export run results
-fn research export RR-001 --format json --output ./artifacts/research-RR-001.json
-fn research export RR-001 --format markdown
-
-# Cancel an active run
-fn research cancel RR-001
-
-# Retry a failed run
-fn research retry RR-001 --json
-```
-
-All commands support `--json` for machine-readable output.
-
-### Error codes
-
-| Code | Meaning | Recovery |
-|---|---|---|
-| `FEATURE_DISABLED` | Research is disabled in settings | Enable project or global research settings |
-| `MISSING_CREDENTIALS` | No API key for the configured provider | Add provider credentials in Settings |
-| `PROVIDER_UNAVAILABLE` | No configured provider or provider down | Configure a search provider |
-| `RATE_LIMITED` | Provider rate limit hit | Retry after cooldown period |
-| `PROVIDER_TIMEOUT` | Provider request timed out | Increase timeout or retry |
-| `RUN_CANCELLED` | Run was cancelled by user | Retry if needed |
-| `RETRY_EXHAUSTED` | All retry attempts used | Create a new run |
-| `INVALID_TRANSITION` | Illegal status change | Check current run status |
-| `NON_RETRYABLE_PROVIDER_ERROR` | Provider returned a permanent error | Check provider configuration |
-| `INTERNAL_ERROR` | Unexpected internal error | Check engine logs |
-
-See [CLI Reference → `fn research`](./cli-reference.md) for the full command reference.
 
 ---
 
