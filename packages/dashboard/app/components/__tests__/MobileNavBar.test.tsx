@@ -233,7 +233,46 @@ describe("MobileNavBar", () => {
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
   });
 
-  it("keeps every mobile tab in an equal-width column across tab, active, badge, and status-dot variants", () => {
+  it("keeps sparse custom shortcuts in three equal columns without losing their actions", () => {
+    const sparseRender = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        mobileNavPrimaryItems={["github-import"]}
+      />,
+    );
+
+    expectUniformMobileNavColumns(sparseRender.container, 3);
+    const githubImport = screen.getByTestId("mobile-nav-tab-github-import");
+    expect(githubImport).toHaveTextContent("Import from GitHub");
+    expect(githubImport).toHaveAttribute("role", "tab");
+    expect(githubImport).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByTestId("mobile-nav-tab-list")).toHaveTextContent("List");
+    expect(screen.getByTestId("mobile-nav-tab-more")).toHaveTextContent("More");
+    sparseRender.unmount();
+  });
+
+  it("filters duplicate, invalid, and over-limit primary input before equal-column rendering", () => {
+    const configuredRender = render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        chatHasUnreadResponse={true}
+        mailboxUnreadCount={7}
+        mailboxPendingApprovalCount={2}
+        mobileNavPrimaryItems={["command-center", "command-center", "unknown", "ideation", "tasks", "agents", "missions", "chat", "mailbox"]}
+      />,
+    );
+
+    expectUniformMobileNavColumns(configuredRender.container, 8);
+    expect(screen.getAllByTestId("mobile-nav-tab-command-center")).toHaveLength(1);
+    expect(screen.queryByTestId("mobile-nav-tab-unknown")).toBeNull();
+    expect(screen.queryByTestId("mobile-nav-tab-ideation")).toBeNull();
+    expect(screen.getByLabelText("Unread chat response")).toBeInTheDocument();
+    expect(screen.getByLabelText("Pending approvals")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")?.textContent).toBe("7");
+    configuredRender.unmount();
+  });
+
+  it("keeps every mobile tab in an equal-width column across default, active, badge, and status-dot variants", () => {
     const sevenTabRender = render(
       <MobileNavBar
         {...createDefaultProps()}

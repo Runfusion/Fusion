@@ -2574,7 +2574,7 @@ Planning Mode asks another focused question after every answer until you select 
 
 ### Mobile footer quick actions
 
-In **Settings → General**, choose up to six Mobile footer quick actions from the add dropdown. The selected list is ordered: use its earlier/later controls or remove actions to adjust the footer, and see each change immediately while Settings remains open. Eligible sidebar and More-sheet destinations can be promoted; unselected available destinations stay reachable in More. Feature-gated views remain hidden until enabled, and the trailing More tab is always present.
+In **Settings → General**, choose up to six Mobile footer quick actions from the add dropdown. The selected list is ordered: use its earlier/later controls or remove actions to adjust the footer, and see each change immediately while Settings remains open. Every visible primary shortcut, the fixed List item, and the trailing More item use equal-width columns whether a custom selection is sparse or uses the six-item default. Eligible sidebar and More-sheet destinations can be promoted; unselected available destinations stay reachable in More. Feature-gated views remain hidden until enabled, and the trailing More tab is always present.
 
 ## In-app reports
 
