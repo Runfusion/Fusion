@@ -4,12 +4,14 @@ import { BranchWorktreeAutoRecoveryHandler } from "../auto-recovery-handlers/bra
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 
 const branchConflictMocks = vi.hoisted(() => ({
+  inspectBareBranchCollision: vi.fn(),
   inspectBranchConflict: vi.fn(),
   classifyBootstrapMisbinding: vi.fn(),
   reanchorBranchToBase: vi.fn(),
 }));
 
 vi.mock("../execution/branch-conflicts.js", () => ({
+  inspectBareBranchCollision: branchConflictMocks.inspectBareBranchCollision,
   inspectBranchConflict: branchConflictMocks.inspectBranchConflict,
   classifyBootstrapMisbinding: branchConflictMocks.classifyBootstrapMisbinding,
   reanchorBranchToBase: branchConflictMocks.reanchorBranchToBase,
@@ -36,8 +38,14 @@ those cases already assert.
 */
 function createFixtures(taskOverrides: Record<string, unknown> = {}, mode = "programmatic", ir?: unknown) {
   const task = createTask(taskOverrides);
+  let current = { ...task };
   const taskStore = {
     updateTask: vi.fn(async () => undefined),
+    updateTaskAtomic: vi.fn(async (_id: string, update: (currentTask: any) => Record<string, unknown> | null) => {
+      const patch = update(current);
+      if (patch) current = { ...current, ...patch };
+      return current;
+    }),
     moveTask: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     ...(ir
@@ -51,11 +59,12 @@ function createFixtures(taskOverrides: Record<string, unknown> = {}, mode = "pro
   const runAudit = { database: vi.fn(async () => undefined), git: vi.fn(), filesystem: vi.fn() } as any;
   const logger = { warn: vi.fn(), log: vi.fn(), error: vi.fn() } as any;
   const spawnAiRecoverySession = vi.fn(async () => ({ outcome: "exhausted" as const }));
-  const handler = new BranchWorktreeAutoRecoveryHandler({ taskStore, runAudit, logger, spawnAiRecoverySession });
+  const reserveFreshBranch = vi.fn(async () => true);
+  const handler = new BranchWorktreeAutoRecoveryHandler({ taskStore, runAudit, logger, reserveFreshBranch, spawnAiRecoverySession });
   const failure: AutoRecoveryFailure = { class: "branch-conflict-unrecoverable", taskId: task.id, pausedReason: "branch-conflict-unrecoverable", evidence: {} };
   const decision: AutoRecoveryDecision = { action: "retry", rationale: "mode", legacyPausedReason: "branch-conflict-unrecoverable", auditMetadata: { mode } };
   const ctx: AutoRecoveryContext = { task, retryCount: 0, settings: { mode: "programmatic", maxRetries: 3 } as any };
-  return { taskStore, runAudit, logger, spawnAiRecoverySession, handler, failure, decision, ctx };
+  return { taskStore, runAudit, logger, reserveFreshBranch, spawnAiRecoverySession, handler, failure, decision, ctx };
 }
 
 /*
@@ -76,13 +85,79 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     vi.clearAllMocks();
   });
 
+  it("preserves a bare foreign-unmerged branch and reserves a fresh engine sibling", async () => {
+    const f = createFixtures();
+    f.failure.evidence = { branchName: "fusion/fn-4536", conflictingWorktreePath: "/tmp/missing", collisionKind: "foreign-unmerged" };
+    branchConflictMocks.inspectBareBranchCollision.mockResolvedValue({
+      kind: "foreign-unmerged",
+      tipSha: "preserved-tip",
+      uniqueCommitCount: 2,
+    });
+
+    await f.handler.issueRetry(f.failure, f.decision, f.ctx);
+
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalledTimes(1);
+    expect(f.taskStore.updateTask).not.toHaveBeenCalledWith("FN-4536", expect.objectContaining({ branch: "fusion/fn-4536-2" }));
+    expect(f.reserveFreshBranch).toHaveBeenCalledWith(expect.any(String), "fusion/fn-4536-2", "main");
+    expect(f.taskStore.updateTaskAtomic.mock.calls[0][1]({ ...f.ctx.task })).toMatchObject({
+      worktree: null,
+      sessionFile: null,
+      branch: "fusion/fn-4536-2",
+      branchWriteOrigin: "engine",
+    });
+    expect(f.taskStore.logEntry).toHaveBeenCalledWith(
+      "FN-4536",
+      expect.stringContaining("preserved unregistered conflicting branch"),
+    );
+  });
+
+  it("does not overwrite a newer branch write after reserving a fresh sibling", async () => {
+    const f = createFixtures();
+    f.failure.evidence = { branchName: "fusion/fn-4536", conflictingWorktreePath: "/tmp/missing", collisionKind: "foreign-unmerged" };
+    branchConflictMocks.inspectBareBranchCollision.mockResolvedValue({
+      kind: "foreign-unmerged",
+      tipSha: "preserved-tip",
+      uniqueCommitCount: 2,
+    });
+    f.taskStore.updateTaskAtomic.mockImplementation(async (_id: string, update: (current: any) => unknown) =>
+      update({ ...f.ctx.task, branch: "operator/newer-branch" }),
+    );
+
+    await f.handler.issueRetry(f.failure, f.decision, f.ctx);
+
+    expect(f.reserveFreshBranch).toHaveBeenCalledWith(expect.any(String), "fusion/fn-4536-2", "main");
+    expect(f.taskStore.logEntry).not.toHaveBeenCalledWith(
+      "FN-4536",
+      expect.stringContaining("reserved fresh engine branch"),
+    );
+    expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "branch-worktree:auto-requeue-skipped",
+      metadata: expect.objectContaining({ reason: "fresh-sibling-stale-recovery" }),
+    }));
+  });
+
+  it("does not replace an operator-supplied branch after a bare collision", async () => {
+    const f = createFixtures({ branch: "operator/topic" });
+    f.failure.evidence = { branchName: "operator/topic", conflictingWorktreePath: "/tmp/missing", collisionKind: "foreign-unmerged" };
+
+    await f.handler.issueRetry(f.failure, f.decision, f.ctx);
+
+    expect(branchConflictMocks.inspectBareBranchCollision).not.toHaveBeenCalled();
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTask).not.toHaveBeenCalled();
+    expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "branch-worktree:irreducible-pause",
+      metadata: expect.objectContaining({ reason: "operator-branch-preserved" }),
+    }));
+  });
+
   it("requeues on fully-subsumed", async () => {
     const f = createFixtures();
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" });
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "in-progress", expect.objectContaining({ moveSource: "engine", preserveWorktree: false }));
-    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalledTimes(1);
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
   });
 
@@ -105,18 +180,14 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
       lifecycleIr(RENAMED_VOCAB, "recovery-lifecycle"),
     );
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
+    // A production store rejects this custom workflow's absent self-transition.
+    f.taskStore.moveTask.mockRejectedValue(new Error("same-column transition rejected"));
 
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" });
-    /* Contained in the card's OWN lane, not rehomed to the hold lane, and never to a literal `todo`. */
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith(
-      "FN-4536",
-      RENAMED_VOCAB.wip,
-      expect.objectContaining({ moveSource: "engine", preserveWorktree: false }),
-    );
-    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", RENAMED_VOCAB.hold, expect.anything());
-    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
+    /* The reset is in-place; no custom-workflow self-transition is required. */
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalledTimes(1);
   });
 
   /*
@@ -154,14 +225,9 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     /* The handler must not propagate — that is the original regression, and it still holds. */
     await expect(f.handler.issueRetry(f.failure, f.decision, f.ctx)).resolves.not.toThrow();
 
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith(
-      "FN-4536",
-      "building",
-      expect.objectContaining({ lifecycleReason: "branch-worktree-recovery" }),
-    );
-    /* No invented destination: not a default lane, not a backward one. */
-    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", "todo", expect.anything());
-    expect(f.taskStore.moveTask).toHaveBeenCalledTimes(1);
+    /* A non-WIP lane clears only the stale checkout binding without rehoming the card. */
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalled();
   });
 
   /*
@@ -175,16 +241,16 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
   REVERT CHECK, measured: collapsing the reason back to the single literal makes this fail — the row
   reads `rebound-target-rejected` for a plain persistence error.
   */
-  it("names a non-lane move failure honestly instead of blaming the rebound target", async () => {
+  it("names an in-place mutation failure honestly", async () => {
     const f = createFixtures({ column: "in-progress" }, "programmatic");
-    f.taskStore.moveTask.mockRejectedValue(new Error("database connection lost"));
+    f.taskStore.updateTaskAtomic.mockRejectedValue(new Error("database connection lost"));
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
 
     await expect(f.handler.issueRetry(f.failure, f.decision, f.ctx)).resolves.not.toThrow();
 
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
       type: "branch-worktree:auto-requeue-skipped",
-      metadata: expect.objectContaining({ reason: "requeue-move-failed" }),
+      metadata: expect.objectContaining({ reason: "requeue-mutation-failed" }),
     }));
     expect(f.runAudit.database).not.toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ reason: "rebound-target-rejected" }),
@@ -202,9 +268,9 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
   REVERT CHECK, measured: moving the clear back above the move makes this fail — updateTask is called
   with { branch: null, baseCommitSha: null } on a move that never landed.
   */
-  it("preserves the branch linkage when the requeue move is rejected", async () => {
+  it("preserves the branch linkage when the in-place reset is rejected", async () => {
     const f = createFixtures({ column: "in-progress" }, "programmatic");
-    f.taskStore.moveTask.mockRejectedValue(new Error("database connection lost"));
+    f.taskStore.updateTaskAtomic.mockRejectedValue(new Error("database connection lost"));
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "fully-subsumed", livePath: "/tmp/wt", tipSha: "abc" });
 
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
@@ -227,13 +293,9 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
 
     expect(f.taskStore.updateTask).not.toHaveBeenCalled();
-    /* Contained where the card actually rests — the review lane — not pulled back into wip. */
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith(
-      "FN-4536",
-      RENAMED_VOCAB.review,
-      expect.objectContaining({ lifecycleReason: "branch-worktree-recovery" }),
-    );
-    expect(f.taskStore.moveTask).not.toHaveBeenCalledWith("FN-4536", RENAMED_VOCAB.wip, expect.anything());
+    /* The review lane remains in place while only its stale checkout binding clears. */
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalled();
   });
 
   it("reanchors bootstrap misbinding then requeues", async () => {
@@ -243,7 +305,8 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     branchConflictMocks.reanchorBranchToBase.mockResolvedValue({});
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
     expect(branchConflictMocks.reanchorBranchToBase).toHaveBeenCalledTimes(1);
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "in-progress", expect.objectContaining({ moveSource: "engine" }));
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalled();
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ rationale: "bootstrap-misbinding-reanchor" }) }));
 
     // Regression: prior to the fix, the handler passed `foreignCommits: []`
@@ -258,7 +321,8 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     const f = createFixtures({ paused: true, pausedReason: "branch-conflict-unrecoverable" });
     branchConflictMocks.inspectBranchConflict.mockResolvedValue({ kind: "stale-resolved" });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
-    expect(f.taskStore.moveTask).toHaveBeenCalled();
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalled();
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ prevPausedReason: "branch-conflict-unrecoverable" }) }));
   });
 
@@ -270,7 +334,8 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
       error: { strandedCommits: [] },
     });
     await f.handler.issueRetry(f.failure, f.decision, f.ctx);
-    expect(f.taskStore.moveTask).toHaveBeenCalledWith("FN-4536", "in-progress", expect.objectContaining({ moveSource: "engine" }));
+    expect(f.taskStore.moveTask).not.toHaveBeenCalled();
+    expect(f.taskStore.updateTaskAtomic).toHaveBeenCalled();
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:foreign-branch-discarded" }));
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue", metadata: expect.objectContaining({ rationale: "live-foreign-discard-and-recreate" }) }));
   });

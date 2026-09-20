@@ -947,6 +947,78 @@ describe("TaskExecutor worktree recovery", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("stops the original conflict retry after a foreign-unmerged recovery pins a sibling", async () => {
+    const store = createMockStore();
+    const executor = createWorktreeExecutor(store, "/tmp/test");
+    const conflictError = new BranchConflictError({
+      branchName: "fusion/fn-050",
+      conflictingWorktreePath: "/tmp/test/.worktrees/fn-050",
+      existingTipSha: "abc123def456",
+      strandedCommits: [],
+      startPoint: "main",
+      recommendedAction: "preserve the conflicting branch and retry with a fresh sibling",
+      collisionKind: "foreign-unmerged",
+    });
+
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValue({ kind: "stale" } as any);
+    vi.spyOn(executor as any, "getAutoRecoveryDispatcher").mockReturnValue({
+      dispatch: vi.fn().mockImplementation(async () => {
+        store._setRow("FN-050", {
+          branch: "fusion/fn-050-2",
+          branchWriteOrigin: "engine",
+          worktree: null,
+        });
+        return { action: "retry" };
+      }),
+    });
+
+    const result = await (executor as any).handleBranchConflict(makeTask(), conflictError);
+
+    expect(result).toBe("recovered");
+    expect(await store.getTask("FN-050")).toEqual(expect.objectContaining({
+      branch: "fusion/fn-050-2",
+      worktree: null,
+    }));
+  });
+
+  it("does not burn branch-conflict retries after a recovered sibling outcome", async () => {
+    const store = createMockStore();
+    const executor = createWorktreeExecutor(store, "/tmp/test");
+    const conflictError = new BranchConflictError({
+      branchName: "fusion/fn-050",
+      conflictingWorktreePath: "/tmp/test/.worktrees/fn-050",
+      existingTipSha: "abc123def456",
+      strandedCommits: [],
+      startPoint: "main",
+      recommendedAction: "preserve the conflicting branch and retry with a fresh sibling",
+      collisionKind: "foreign-unmerged",
+    });
+    const handle = vi.spyOn(executor as any, "handleBranchConflict").mockImplementation(async () => {
+      store._setRow("FN-050", {
+        branch: "fusion/fn-050-2",
+        branchWriteOrigin: "engine",
+        worktree: null,
+      });
+      return "recovered";
+    });
+    const createWorktree = vi.spyOn(executor as any, "createWorktree")
+      .mockRejectedValueOnce(conflictError)
+      .mockResolvedValueOnce({ path: "/tmp/test/.fusion/worktrees/fn-050", branch: "fusion/fn-050-2" });
+
+    await executor.execute(makeTask());
+    await executor.execute(await store.getTask("FN-050"));
+
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect(createWorktree).toHaveBeenCalledTimes(2);
+    expect(createWorktree.mock.calls[1][0]).toBe("fusion/fn-050-2");
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("branch-conflict auto-retry requested"),
+      undefined,
+      expect.anything(),
+    );
+  });
+
   it("FN-4397 reproduces repeated branch-conflict recovery-required emissions for the same task", async () => {
     const store = createMockStore();
     const executor = createWorktreeExecutor(store, "/tmp/test");

@@ -461,9 +461,11 @@ Do **not** patch PostgreSQL rows or compatibility `task.json` files directly; us
 
 ## Branch conflict handling
 
-When executor branch allocation finds `fusion/<task-id>` already checked out elsewhere, Fusion fails loudly by default instead of silently renaming to sibling branches. The task is moved back to `todo` with `status: "failed"`, and logs include the conflicting worktree path, tip SHA, and stranded commits.
+When executor branch allocation finds `fusion/<task-id>` already checked out elsewhere, Fusion preserves the conflicting checkout and fails safely rather than silently replacing it. Recovery stays in the task's current lifecycle lane and logs the conflict evidence.
 
-Fusion no longer provides a dedicated task-branch conflict CLI command. Resolve conflicting local branches/worktrees with standard git tooling, then retry the task. The legacy [`executorAllowSiblingBranchRename`](./settings-reference.md#executorallowsiblingbranchrename) setting still exists as an opt-in escape hatch for older workflows.
+A narrow exception applies to an engine-owned canonical branch that is unregistered, has foreign or mixed unmerged history, and has no live checkout: Fusion preserves the original ref unchanged, clears the stale checkout binding, and reserves the first available bounded sibling (`fusion/<task-id>-2` through `-6`) from the integration base for the next acquisition. It never applies this replacement to an operator-supplied branch, a live session, a user-paused task, or an exhausted recovery budget.
+
+Fusion no longer provides a dedicated task-branch conflict CLI command. Resolve other conflicting local branches/worktrees with standard git tooling, then retry the task. The [`executorAllowSiblingBranchRename`](./settings-reference.md#executorallowsiblingbranchrename) setting remains an opt-in escape hatch for live checkout conflicts.
 
 ## Task Execution Modes
 

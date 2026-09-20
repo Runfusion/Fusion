@@ -74,7 +74,7 @@ export async function handleBranchConflict(
   deps: BranchConflictHandleDeps,
   task: Task,
   error: BranchConflictError,
-): Promise<"retry" | "reclaimed" | "sticky"> {
+): Promise<"retry" | "reclaimed" | "recovered" | "sticky"> {
   // FN-4811: Before invoking inspection-based recovery (which may force-remove the
   // conflicting worktree), verify the conflict isn't currently bound to a live session.
   // If it is, refuse the whole recovery dance — a force-remove here would yank an active
@@ -179,6 +179,7 @@ export async function handleBranchConflict(
     evidence: {
       branchName: error.branchName,
       conflictingWorktreePath: error.conflictingWorktreePath,
+      ...(error.collisionKind ? { collisionKind: error.collisionKind } : {}),
     },
     underlyingError: error,
   }, {
@@ -206,6 +207,30 @@ export async function handleBranchConflict(
     executorLog.warn(`✗ ${task.id} branch conflict sticky failure: ${error.branchName} @ ${error.conflictingWorktreePath}`);
     deps.onError?.(task, error);
     return "sticky";
+  }
+
+  /*
+   * FNXC:BranchCollisionRecovery 2026-09-20-01:53:
+   * The dispatcher can preserve a bare foreign-unmerged ref and atomically pin a
+   * fresh engine sibling. Do not retry the original BranchConflictError after that
+   * accepted reset: its old branch/path evidence is necessarily still conflicting.
+   * Ending this pass lets the normal next execution acquire the persisted sibling
+   * without burning the branch-conflict retry budget or reserving another sibling.
+   */
+  if (error.collisionKind === "foreign-unmerged") {
+    const latestTask = await deps.store.getTask(task.id);
+    const replacementBranch = latestTask.branch;
+    const siblingSuffix = replacementBranch?.slice(`${error.branchName}-`.length);
+    if (
+      replacementBranch?.startsWith(`${error.branchName}-`)
+      && siblingSuffix
+      && /^\d+$/.test(siblingSuffix)
+      && Number(siblingSuffix) >= 2
+      && Number(siblingSuffix) <= 6
+      && classifyTaskBranchOrigin(latestTask, replacementBranch) !== "operator-supplied"
+    ) {
+      return "recovered";
+    }
   }
 
   return "retry";

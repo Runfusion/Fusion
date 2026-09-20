@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BranchConflictError } from "../execution/branch-conflicts.js";
+import { AutoRecoveryDispatcher } from "../healing/auto-recovery.js";
+import { BranchWorktreeAutoRecoveryHandler } from "../auto-recovery-handlers/branch-worktree.js";
+import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
 import { NativeWorktreeBackend } from "../worktree/worktree-backend.js";
 
 function git(repo: string, command: string): string {
@@ -107,12 +110,105 @@ describe("NativeWorktreeBackend bare branch collision recovery", { timeout: 60_0
       const tip = git(repo, "git rev-parse HEAD");
       git(repo, "git checkout -q main");
       const target = join(repo, ".worktrees", `refused-${taskId}`);
-      await expect(new NativeWorktreeBackend().create({
+      const error = await new NativeWorktreeBackend().create({
         rootDir: repo, branch, worktreePath: target, startPoint: "main", taskId, allowSiblingBranchRename: false,
-      })).rejects.toBeInstanceOf(BranchConflictError);
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(BranchConflictError);
+      expect((error as BranchConflictError).collisionKind).toBe("foreign-unmerged");
       expect(git(repo, `git rev-parse ${branch}`)).toBe(tip);
       expect(existsSync(target)).toBe(false);
     }
+  });
+
+  it.each([
+    ["foreign-only", ["feat(FN-999): foreign work"], false, "fusion/fn-106-2"],
+    ["mixed", ["feat(FN-106): preserved own work\n\nFusion-Task-Id: FN-106", "feat(FN-999): foreign work"], true, "fusion/fn-106-3"],
+  ])("routes a %s bare collision through dispatcher recovery into a fresh acquisition", async (_shape, messages, occupyFirstSibling, expectedBranch) => {
+    const repo = setup();
+    const branch = "fusion/fn-106";
+    const missingPath = join(repo, ".worktrees", "missing-fn-106");
+    git(repo, `git checkout -qb ${branch} main`);
+    for (const [index, message] of messages.entries()) commit(repo, `foreign-${index}.txt`, message);
+    const preservedTip = git(repo, `git rev-parse ${branch}`);
+    git(repo, "git checkout -q main");
+    if (occupyFirstSibling) git(repo, "git branch fusion/fn-106-2 main");
+
+    const thrown = await new NativeWorktreeBackend().create({
+      rootDir: repo,
+      branch,
+      worktreePath: missingPath,
+      startPoint: "main",
+      taskId: "FN-106",
+      allowSiblingBranchRename: false,
+    }).catch((error: unknown) => error);
+    expect(thrown).toBeInstanceOf(BranchConflictError);
+    const error = thrown as BranchConflictError;
+    expect(error.collisionKind).toBe("foreign-unmerged");
+
+    let task: any = {
+      id: "FN-106",
+      title: "Fresh branch recovery",
+      column: "in-progress",
+      branch,
+      worktree: missingPath,
+      baseCommitSha: "main",
+      paused: true,
+      pausedReason: "branch-conflict-unrecoverable",
+      userPaused: false,
+      columnMovedAt: "2026-09-20T00:00:00.000Z",
+    };
+    const store = {
+      updateTask: async (_id: string, patch: Record<string, unknown>) => {
+        task = { ...task, ...patch };
+        return task;
+      },
+      updateTaskAtomic: async (_id: string, update: (current: any) => Record<string, unknown> | null) => {
+        const patch = update(task);
+        if (patch) task = { ...task, ...patch };
+        return task;
+      },
+      moveTask: async (_id: string, _column: string) => {
+        task = { ...task, worktree: undefined, columnMovedAt: "2026-09-20T00:01:00.000Z" };
+        return task;
+      },
+      logEntry: async () => undefined,
+    } as any;
+    const audit = { database: async () => undefined, git: async () => undefined, filesystem: async () => undefined } as any;
+    const handler = new BranchWorktreeAutoRecoveryHandler({ taskStore: store, runAudit: audit });
+    const dispatcher = new AutoRecoveryDispatcher({
+      taskStore: store,
+      auditEmitter: audit,
+      handlers: { issueRetry: (failure, decision, context) => handler.issueRetry(failure, decision, context) },
+    });
+
+    const decision = await dispatcher.dispatch({
+      class: "branch-conflict-unrecoverable",
+      taskId: task.id,
+      pausedReason: "branch-conflict-unrecoverable",
+      underlyingError: error,
+      evidence: {
+        repoDir: repo,
+        branchName: branch,
+        conflictingWorktreePath: missingPath,
+        collisionKind: error.collisionKind,
+      },
+    }, { task, retryCount: 0, settings: { mode: "programmatic", maxRetries: 3 } as any });
+
+    expect(decision.action).toBe("retry");
+    expect(task.branch).toBe(expectedBranch);
+    expect(task.worktree).toBeNull();
+    expect(git(repo, `git rev-parse ${branch}`)).toBe(preservedTip);
+
+    const acquired = await acquireTaskWorktree({
+      task,
+      rootDir: repo,
+      store,
+      settings: { worktreesDir: join(repo, ".worktrees") } as any,
+      backend: new NativeWorktreeBackend(),
+    });
+    expect(acquired.branch).toBe(expectedBranch);
+    expect(git(repo, `git merge-base ${expectedBranch} main`)).toBe(git(repo, "git rev-parse main"));
+    expect(git(repo, `git rev-parse ${branch}`)).toBe(preservedTip);
   });
 
   it("refuses a live foreign checkout when the requested target path is absent", async () => {

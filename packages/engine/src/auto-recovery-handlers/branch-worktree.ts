@@ -5,6 +5,7 @@ import type { Task, TaskStore } from "@fusion/core";
 import { isFusionDeletableBranch, resolveWorkflowIrForTask, columnsWithFlag, resolveContainedBackwardTarget, TransitionRejectionError } from "@fusion/core";
 import {
   classifyBootstrapMisbinding,
+  inspectBareBranchCollision,
   inspectBranchConflict,
   reanchorBranchToBase,
 } from "../execution/branch-conflicts.js";
@@ -23,6 +24,8 @@ export interface BranchWorktreeRecoveryDeps {
   taskStore: TaskStore;
   runAudit: RunAuditor;
   logger?: Logger;
+  /** Test seam for the Git ref reservation that fences fresh recovery branches. */
+  reserveFreshBranch?: (repoDir: string, branchName: string, startPoint: string) => Promise<boolean>;
   spawnAiRecoverySession?: (
     failure: AutoRecoveryFailure,
     decision: AutoRecoveryDecision,
@@ -121,8 +124,15 @@ export class BranchWorktreeAutoRecoveryHandler {
     return process.cwd();
   }
 
-  private async requeueAfterRecovery(task: Task, failure: AutoRecoveryFailure, rationale: string, evidence: RecoveryEvidence): Promise<void> {
-    if (task.userPaused) return;
+  private async requeueAfterRecovery(
+    task: Task,
+    failure: AutoRecoveryFailure,
+    rationale: string,
+    evidence: RecoveryEvidence,
+    replacementBranch?: string,
+    conflictingWorktreePath?: string,
+  ): Promise<boolean> {
+    if (task.userPaused) return false;
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-13:40 (batch-engine tail):
     TWO defects here, and fixing only the counted one would have been half a fix.
@@ -225,22 +235,50 @@ export class BranchWorktreeAutoRecoveryHandler {
           evidence,
         },
       });
-      return;
+      return false;
     }
 
     let moveFailure: { reason: string; code?: string } | undefined;
+    let checkoutResetApplied = false;
     try {
-      await this.deps.taskStore.moveTask(task.id, reboundTarget, {
-        moveSource: "engine",
-        lifecycleReason: "branch-worktree-recovery",
-        preserveResumeState: true,
-        preserveProgress: true,
-        preserveWorktree: false,
+      /*
+      FNXC:BranchCollisionRecovery 2026-09-20-01:30:
+      A recovery that stays in its current workflow column is not a graph
+      transition. Custom workflows frequently have no self-edge, so moveTask
+      would reject the valid metadata repair and recreate the collision loop.
+      Fence the in-place checkout reset against newer task state instead.
+      */
+      await this.deps.taskStore.updateTaskAtomic(task.id, (current) => {
+        if (
+          current.column !== task.column
+          || current.columnMovedAt !== task.columnMovedAt
+          || current.userPaused
+          || current.branch !== task.branch
+          || current.baseCommitSha !== task.baseCommitSha
+          || current.worktree !== task.worktree
+          || (replacementBranch && !isFusionDeletableBranch(current, task.branch ?? ""))
+          || (conflictingWorktreePath && activeSessionRegistry.isPathActive(conflictingWorktreePath))
+        ) {
+          return null;
+        }
+        checkoutResetApplied = true;
+        return wipColumns.has(task.column)
+          ? {
+              worktree: null,
+              sessionFile: null,
+              branch: replacementBranch ?? null,
+              branchWriteOrigin: "engine" as const,
+              baseCommitSha: replacementBranch ? task.baseCommitSha ?? null : null,
+            }
+          : { worktree: null, sessionFile: null };
       });
+      if (!checkoutResetApplied) {
+        moveFailure = { reason: replacementBranch ? "fresh-sibling-stale-recovery" : "stale-recovery" };
+      }
     } catch (err) {
       const code = err instanceof TransitionRejectionError ? err.rejection.code : undefined;
       moveFailure = {
-        reason: code === "unknown-column" ? "rebound-target-rejected" : "requeue-move-failed",
+        reason: code === "unknown-column" ? "rebound-target-rejected" : "requeue-mutation-failed",
         ...(code ? { code } : {}),
       };
     }
@@ -262,12 +300,9 @@ export class BranchWorktreeAutoRecoveryHandler {
           evidence,
         },
       });
-      return;
+      return false;
     }
 
-    if (wipColumns.has(task.column)) {
-      await this.deps.taskStore.updateTask(task.id, { branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
-    }
     await this.deps.runAudit.database({
       type: "branch-worktree:auto-requeue",
       target: task.id,
@@ -279,6 +314,19 @@ export class BranchWorktreeAutoRecoveryHandler {
         evidence,
       },
     });
+    return true;
+  }
+
+  private async reserveFreshBranch(repoDir: string, branchName: string, startPoint: string): Promise<boolean> {
+    if (this.deps.reserveFreshBranch) {
+      return this.deps.reserveFreshBranch(repoDir, branchName, startPoint);
+    }
+    try {
+      await this.runGit(repoDir, `git branch --no-track ${this.quote(branchName)} ${this.quote(startPoint)}`);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async emitIrreduciblePause(task: Task, failure: AutoRecoveryFailure, reason: string, evidence: Record<string, unknown>): Promise<void> {
@@ -313,6 +361,61 @@ export class BranchWorktreeAutoRecoveryHandler {
       repoDir,
       ctx.settings as { integrationBranch?: string; baseBranch?: unknown },
     );
+
+    /*
+    FNXC:BranchCollisionRecovery 2026-09-20-00:56:
+    A bare foreign-unmerged collision has no registered worktree, so the ordinary
+    missing-path classifier calls it stale and would retry the same ref forever.
+    Preserve that ref, but after the normal dispatcher and liveness gates choose
+    a bounded unused engine sibling for the next acquisition.
+    */
+    if (failure.evidence?.collisionKind === "foreign-unmerged" && !isFusionDeletableBranch(ctx.task, branchName)) {
+      await this.emitIrreduciblePause(ctx.task, failure, "operator-branch-preserved", { branchName });
+      return;
+    }
+    if (failure.evidence?.collisionKind === "foreign-unmerged" && isFusionDeletableBranch(ctx.task, branchName)) {
+      const bare = await inspectBareBranchCollision({
+        repoDir,
+        branchName,
+        conflictingWorktreePath,
+        requestingTaskId: ctx.task.id,
+        startPoint: ctx.task.baseCommitSha ?? integrationBranch,
+        integrationRef: integrationBranch,
+      });
+      if (bare.kind === "foreign-unmerged") {
+        let replacementBranch: string | undefined;
+        for (let suffix = 2; suffix <= 6; suffix += 1) {
+          const candidate = `${branchName}-${suffix}`;
+          if (await this.hasBranchRef(repoDir, candidate)) continue;
+          if (await this.reserveFreshBranch(repoDir, candidate, integrationBranch)) {
+            replacementBranch = candidate;
+            break;
+          }
+        }
+        if (!replacementBranch) {
+          await this.emitIrreduciblePause(ctx.task, failure, "fresh-sibling-exhausted", {
+            branchName,
+            tipSha: bare.tipSha,
+            inspectionKind: bare.kind,
+          });
+          return;
+        }
+        const accepted = await this.requeueAfterRecovery(ctx.task, failure, "foreign-unmerged-preserved-fresh-sibling", {
+          branchExists: true,
+          worktreePresent: false,
+          tipSha: bare.tipSha,
+          inspectionKind: bare.kind,
+        }, replacementBranch, conflictingWorktreePath);
+        if (accepted) {
+          await this.deps.taskStore.logEntry(
+            ctx.task.id,
+            `[recovery] preserved unregistered conflicting branch and reserved fresh engine branch ${replacementBranch}`,
+          ).catch(() => undefined);
+        }
+        return;
+      }
+    }
+
     const inspection = await inspectBranchConflict({
       repoDir,
       branchName,

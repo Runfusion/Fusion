@@ -20,6 +20,11 @@ export interface BranchCrossContaminationCommit extends BranchConflictCommit {
 export interface BranchConflictDetails {
   branchName: string;
   conflictingWorktreePath: string;
+  /**
+   * FNXC:BranchCollisionRecovery 2026-09-20-00:56:
+   * Bare collisions need a durable typed source because their requested path is absent.
+   */
+  collisionKind?: "foreign-unmerged";
   existingTipSha: string;
   strandedCommits: BranchConflictCommit[];
   startPoint: string;
@@ -34,6 +39,7 @@ export class BranchConflictError extends Error implements BranchConflictDetails 
   readonly strandedCommits: BranchConflictCommit[];
   readonly startPoint: string;
   readonly recommendedAction: string;
+  readonly collisionKind?: "foreign-unmerged";
 
   constructor(details: BranchConflictDetails) {
     const commitSummary = details.strandedCommits.length > 0
@@ -50,6 +56,7 @@ export class BranchConflictError extends Error implements BranchConflictDetails 
     this.strandedCommits = details.strandedCommits;
     this.startPoint = details.startPoint;
     this.recommendedAction = details.recommendedAction;
+    this.collisionKind = details.collisionKind;
   }
 }
 
@@ -1048,6 +1055,7 @@ export async function inspectBareBranchCollision(
       strandedCommits: uniqueCommitResult.commits,
       startPoint: uniqueCommitResult.mainRef,
       recommendedAction: "Preserve this unregistered branch and inspect its foreign or unattributed commits before retrying.",
+      collisionKind: "foreign-unmerged",
     }),
   };
 }

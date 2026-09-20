@@ -33,8 +33,14 @@ function task(overrides: Record<string, unknown> = {}) {
 describe("reliability interaction: branch/worktree auto-recovery", () => {
   it("dispatcher delegates to handler for FN-4519 path and requeues", async () => {
     const t = task();
+    let current = { ...t };
     const taskStore = {
       updateTask: vi.fn(async () => undefined),
+      updateTaskAtomic: vi.fn(async (_id: string, mutate: (task: typeof t) => Record<string, unknown> | null) => {
+        const patch = mutate(current);
+        if (patch) current = { ...current, ...patch };
+        return current;
+      }),
       moveTask: vi.fn(async () => undefined),
     } as any;
     const audit = { database: vi.fn(async () => undefined), git: vi.fn(), filesystem: vi.fn() } as any;
@@ -59,16 +65,16 @@ describe("reliability interaction: branch/worktree auto-recovery", () => {
     });
 
     expect(decision.action).toBe("retry");
-    // FNXC:BranchWriteProvenance 2026-08-23-18:30: clearing `branch` is a branch write, so recovery
-    // now stamps `branchWriteOrigin: "engine"` on it; the assertion records that provenance.
-    expect(taskStore.updateTask).toHaveBeenCalledWith(t.id, { branch: null, baseCommitSha: null, branchWriteOrigin: "engine" });
-    expect(taskStore.moveTask).toHaveBeenCalledWith(t.id, "todo", expect.objectContaining({ moveSource: "engine" }));
+    // The reset is an in-place atomic metadata patch, not an invalid same-column transition.
+    expect(taskStore.updateTask).not.toHaveBeenCalled();
+    expect(taskStore.updateTaskAtomic).toHaveBeenCalledTimes(1);
+    expect(taskStore.moveTask).not.toHaveBeenCalled();
     expect(audit.database).toHaveBeenCalledWith(expect.objectContaining({ type: "branch-worktree:auto-requeue" }));
   });
 
   it("preserves userPaused contract", async () => {
     const t = task({ userPaused: true });
-    const taskStore = { updateTask: vi.fn(async () => undefined), moveTask: vi.fn(async () => undefined) } as any;
+    const taskStore = { updateTask: vi.fn(async () => undefined), updateTaskAtomic: vi.fn(), moveTask: vi.fn(async () => undefined) } as any;
     const audit = { database: vi.fn(async () => undefined), git: vi.fn(), filesystem: vi.fn() } as any;
     const handler = new BranchWorktreeAutoRecoveryHandler({ taskStore, runAudit: audit, logger: { warn: vi.fn(), log: vi.fn(), error: vi.fn() } as any });
 

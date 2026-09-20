@@ -3822,7 +3822,7 @@ export async function runImplementation(
             return;
           }
 
-          let outcome: "retry" | "reclaimed" | "sticky" = "sticky";
+          let outcome: "retry" | "reclaimed" | "recovered" | "sticky" = "sticky";
           for (let attempt = 1; attempt <= deps.MAX_AUTO_RECOVERY_ATTEMPTS; attempt += 1) {
             outcome = await deps.handleBranchConflict(task, err);
             if (outcome !== "retry") break;
