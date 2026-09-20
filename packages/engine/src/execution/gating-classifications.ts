@@ -58,14 +58,8 @@ export const COMMAND_EXECUTION_FN_TOOLS: ReadonlySet<string> = new Set([
  * Identity reflection stays out of this action-gate mutation-only list because it is heartbeat-critical coordination, not a task-board mutation. Keep it in COORDINATION_EXEMPT_TOOLS and READONLY_FN_TOOLS so exported mutation sets do not contradict action-gate exemption semantics.
  */
 /*
-FNXC:MissionAdmission 2026-07-30-00:00:
-FN-8307 treats autonomous implementation creation and delegation as one admission
-class at the tool factory (requireMissionLineage + resolveApprovedMissionLineage).
-
-FNXC:MissionAdmission 2026-07-22-13:07:
-Gates no longer hard-block missing lineage so freeform chat/user-directed creates
-remain policy-governed. Lineage enforcement for idle heartbeat patrol lives in
-agent-tools.ts (requireMissionLineage), not a gate pre-check.
+FNXC:MissionAdmission 2026-09-20-05:15:
+Task creation and delegation are policy-governed board mutations on every surface. Missing mission lineage is not a separate admission failure; explicitly supplied lineage is validated by the tool factory.
 */
 const PERMANENT_AND_ACTION_TASK_AGENT_TOOLS = ["fn_task_create", "fn_delegate_task"] as const;
 const ACTION_GATE_TASK_AGENT_ONLY_TOOLS = [

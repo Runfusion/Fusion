@@ -47,10 +47,8 @@ import { reconcileMissionState } from "./missions/mission-state-reconcile.js";
 const TASK_CREATE_PRIORITY_VALUES = ["low", "normal", "high", "urgent"] as const;
 
 /*
-FNXC:MissionAdmission 2026-07-22-13:07:
-Chat/user-directed freeform intake may omit mission_lineage (same as board Quick Entry).
-Autonomous heartbeat surfaces pass requireMissionLineage and hard-require an approved chain.
-When supplied, the full Feature → Slice → Milestone → Mission chain is always validated.
+FNXC:MissionAdmission 2026-09-20-05:15:
+Task creation and delegation may omit mission_lineage on every surface, including autonomous no-task heartbeats. This keeps ordinary intake independent of mission planning while still validating and persisting any lineage the caller explicitly supplies.
 */
 const missionLineageParams = Type.Object(
   {
@@ -60,9 +58,9 @@ const missionLineageParams = Type.Object(
   },
   {
     description:
-      "Optional approved Feature → Slice → Mission linkage. Omit for freeform intake (chat/board). " +
-      "Required only on autonomous heartbeat patrol creates. When omitted on a follow-up, may inherit " +
-      "from a mission-linked parent task. When supplied, the full active chain is validated.",
+      "Optional approved Feature → Slice → Mission linkage. Omit for ordinary intake on any surface. " +
+      "When omitted on a follow-up, it may inherit from a mission-linked parent task. When supplied, " +
+      "the full active chain is validated.",
   },
 );
 
@@ -496,9 +494,8 @@ export const delegateTaskParams = Type.Object({
     }),
   ),
   /*
-  FNXC:MissionAdmission 2026-07-22-13:07:
-  Same freeform-vs-autonomous contract as fn_task_create: optional for user-directed
-  delegation; required when the tool factory is registered with requireMissionLineage.
+  FNXC:MissionAdmission 2026-09-20-05:15:
+  Delegation uses the same optional-lineage contract as direct creation on every surface.
   */
   mission_lineage: Type.Optional(missionLineageParams),
   override: Type.Optional(Type.Boolean({ description: "Set true to bypass executor-role assignment policy" })),
@@ -1128,8 +1125,6 @@ type AgentTaskCreationOptions = {
   messageStore?: MessageStore;
   sourceAgentId?: string;
   sourceTaskId?: string;
-  /** Require a caller-supplied lineage rather than inheriting a task-parent lineage. */
-  requireMissionLineage?: boolean;
 };
 
 type MissionLineageReference = {
@@ -1141,25 +1136,16 @@ type MissionLineageReference = {
 };
 
 /**
- * FNXC:MissionAdmission 2026-07-30-00:00:
- * FN-8307 requires autonomous implementation create/delegate (heartbeat patrol) to
- * prove an active Feature → Slice → Milestone → Mission chain before persistence.
- * Decision A records that proof on the new task without calling linkFeatureToTask:
- * a feature's scalar taskId remains owned by its source task and cannot be stolen
- * by a follow-up task.
- *
- * FNXC:MissionAdmission 2026-07-22-13:07:
- * User-directed freeform intake (chat, board-equivalent agent creates) must remain
- * allowed without mission_lineage. Only surfaces that pass `required: true` (idle
- * heartbeat with requireMissionLineage) hard-fail on a missing lineage. When a
- * lineage is supplied on any surface, the full approved chain is still validated.
- * Missing lineage with inheritance disabled returns null so callers omit mission fields.
+ * FNXC:MissionAdmission 2026-09-20-05:15:
+ * Mission lineage is optional for every task-creation surface, including autonomous
+ * no-task heartbeats. When supplied or inherited, the full approved chain is still
+ * validated and recorded without stealing a feature's scalar taskId from its source
+ * task. Missing lineage returns null so ordinary intake omits mission fields.
  */
 async function resolveApprovedMissionLineage(
   store: TaskStore,
   requested: { mission_id: string; slice_id: string; feature_id: string } | undefined,
   sourceTaskId: string | undefined,
-  options?: { required?: boolean },
 ): Promise<MissionLineageReference | null | { error: string }> {
   const missionStore = store.getMissionStore?.();
 
@@ -1178,12 +1164,7 @@ async function resolveApprovedMissionLineage(
       }
     }
   }
-  if (!requestedLineage) {
-    if (options?.required) {
-      return { error: "Approved mission_lineage is required; no task was created." };
-    }
-    return null;
-  }
+  if (!requestedLineage) return null;
   if (!missionStore) return { error: "Mission lineage is unavailable; no task was created." };
 
   const [feature, slice, mission] = await Promise.all([
@@ -1633,8 +1614,8 @@ export function createTaskCreateTool(
       "or the current task should wait for the new one). " +
       "Optionally pass workflow_id to select a workflow at creation time; use " +
       "fn_workflow_list to discover valid IDs. " +
-      "mission_lineage is optional for freeform intake; pass it only when linking to an " +
-      "approved Feature → Slice → Mission (required on autonomous heartbeat patrol).",
+      "mission_lineage is optional on every surface; pass it only when linking to an " +
+      "approved Feature → Slice → Mission.",
     parameters: taskCreateParams,
     execute: async (_id: string, params: Static<typeof taskCreateParams>) => {
       try {
@@ -1667,16 +1648,13 @@ export function createTaskCreateTool(
         }
         const workflowId = params.workflow_id?.trim() || undefined;
         /*
-        FNXC:MissionAdmission 2026-07-22-13:07:
-        Freeform chat/user-directed creates omit mission_lineage and must succeed.
-        Only requireMissionLineage (idle heartbeat patrol) hard-requires an approved chain.
-        Supplied lineage is always validated; parent inheritance still applies when not required.
+        FNXC:MissionAdmission 2026-09-20-05:15:
+        Every create surface accepts lineage-free ordinary intake. Supplied or inherited lineage remains validation-gated so invalid mission references never persist.
         */
         const lineage = await resolveApprovedMissionLineage(
           store,
           params.mission_lineage,
-          options?.requireMissionLineage ? undefined : options?.sourceTaskId ?? provenance?.sourceParentTaskId,
-          { required: options?.requireMissionLineage === true },
+          options?.sourceTaskId ?? provenance?.sourceParentTaskId,
         );
         if (lineage && "error" in lineage) {
           return { content: [{ type: "text" as const, text: `ERROR: ${lineage.error}` }], details: { rule: "mission-lineage-required" }, isError: true };
@@ -5952,15 +5930,13 @@ export function createDelegateTaskTool(
       try {
         const workflowId = params.workflow_id?.trim() || undefined;
         /*
-        FNXC:MissionAdmission 2026-07-22-13:07:
-        Freeform chat/user-directed delegation may omit mission_lineage.
-        requireMissionLineage (idle heartbeat patrol) still hard-requires an approved chain.
+        FNXC:MissionAdmission 2026-09-20-05:15:
+        Delegation follows the same optional-lineage contract as direct creation; explicitly supplied or inherited lineage must still validate.
         */
         const lineage = await resolveApprovedMissionLineage(
           taskStore,
           params.mission_lineage,
-          options?.requireMissionLineage ? undefined : options?.sourceTaskId,
-          { required: options?.requireMissionLineage === true },
+          options?.sourceTaskId,
         );
         if (lineage && "error" in lineage) {
           return { content: [{ type: "text" as const, text: `ERROR: ${lineage.error}` }], details: { rule: "mission-lineage-required" }, isError: true };

@@ -130,8 +130,8 @@ describe("executeHeartbeat", () => {
       */
       findRecentTasksBySourceParentTaskId: vi.fn().mockResolvedValue([]),
       /*
-      FNXC:EngineTests 2026-07-20-23:55:
-      FN-8307 mission lineage admission requires an approved Feature→Slice→Milestone→Mission chain.
+      FNXC:EngineTests 2026-09-20-05:15:
+      The shared mission store supports tests that explicitly attach lineage, while lineage-free heartbeat creation must not consult it as an admission prerequisite.
       */
       getMissionStore: vi.fn().mockReturnValue({
         getFeature: vi.fn().mockResolvedValue({ id: "F-001", sliceId: "SL-001", status: "triaged" }),
@@ -1798,7 +1798,7 @@ describe("executeHeartbeat", () => {
           expect(systemPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
           expect(executionPrompt).toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
         } else {
-          expect(systemPrompt).toContain("Use fn_task_create only with an approved Feature");
+          expect(systemPrompt).toContain("mission lineage is optional");
           expect(executionPrompt).toContain("create a focused task instead of attempting unscheduled implementation");
           expect(systemPrompt).not.toContain(TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION);
         }
@@ -3994,8 +3994,12 @@ describe("executeHeartbeat", () => {
   });
 
   describe("fn_task_create tool", () => {
-    it("creates a task in the store when fn_task_create tool is called", async () => {
-      const store = createStoreWithAgentForExec();
+    /*
+    FNXC:EngineTests 2026-09-20-05:15:
+    Autonomous no-task heartbeat creation must accept ordinary work without mission lineage and preserve normal agent-heartbeat provenance.
+    */
+    it("creates a lineage-free task from an autonomous no-task heartbeat", async () => {
+      const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a coordinator" });
       let capturedCreateTool: any;
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockImplementation(async (opts: any) => {
@@ -4004,7 +4008,7 @@ describe("executeHeartbeat", () => {
       });
 
       mockSession.prompt = vi.fn().mockImplementation(async () => {
-        await capturedCreateTool.execute("call-1", { description: "Follow-up task", mission_lineage: { mission_id: "M-001", slice_id: "SL-001", feature_id: "F-001" } });
+        await capturedCreateTool.execute("call-1", { description: "Follow-up task" });
       });
 
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
@@ -4021,12 +4025,14 @@ describe("executeHeartbeat", () => {
           sourceType: "agent_heartbeat",
           sourceAgentId: "agent-001",
           sourceRunId: "run-001",
-          sourceParentTaskId: "FN-001",
           sourceMetadata: expect.objectContaining({
             contentFingerprint: expect.any(String),
           }),
         }),
       }), expect.objectContaining({ settings: {} }));
+      const createInput = vi.mocked(mockTaskStore.createTask).mock.calls[0]?.[0];
+      expect(createInput).not.toHaveProperty("missionId");
+      expect(createInput).not.toHaveProperty("sliceId");
     });
 
     it("forwards explicit priority when fn_task_create tool is called", async () => {

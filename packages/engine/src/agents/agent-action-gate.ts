@@ -288,13 +288,8 @@ export function evaluateAgentActionGate(params: {
   }
 
   /*
-  FNXC:MissionAdmission 2026-07-22-13:07:
-  Freeform chat/user-directed creates omit mission_lineage and must remain policy-
-  governed (allow/require-approval/block), not hard-blocked at the gate. Autonomous
-  heartbeat patrol still enforces lineage via createTaskCreateTool/createDelegateTaskTool
-  requireMissionLineage + resolveApprovedMissionLineage before any task row is written.
-  Supplied lineage is validated at the tool factory; the gate does not re-encode that
-  admission rule so chat freeform intake and heartbeat requirements can diverge safely.
+  FNXC:MissionAdmission 2026-09-20-05:15:
+  Creates without mission_lineage remain policy-governed (allow/require-approval/block) on every surface. Supplied lineage is validated at the tool factory; the action gate does not re-encode mission semantics.
   */
 
   /*

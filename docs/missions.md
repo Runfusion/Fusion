@@ -25,9 +25,9 @@ Mission: Improve Reliability
 
 ## Agent task-creation admission
 
-Mission lineage is an admission requirement only for **autonomous no-task heartbeat** creates and delegations. Those idle patrol calls must supply a valid active Mission → Milestone → Slice → Feature chain; an allow rule for `task_agent_mutation` cannot bypass this requirement. Missing or invalid lineage is rejected before a task is persisted with an explicit mission-lineage remedy.
+Mission lineage is optional for task creation and delegation on every surface, including **autonomous no-task heartbeats**. Ordinary work can enter the board without creating a Mission hierarchy first. All calls remain governed by the normal `task_agent_mutation` permission policy, including category and exact-tool allow, approval, and block rules.
 
-Interactive/user-supervised, task-scoped heartbeat, executor, triage, and workflow-step calls may create or delegate freeform tasks without lineage. They remain governed by the normal `task_agent_mutation` permission policy, including category and exact-tool allow, approval, and block rules.
+When a caller supplies `mission_lineage`, Fusion still requires a valid active Mission → Milestone → Slice → Feature chain before persisting the task. Optional lineage therefore preserves mission delivery tracking without making missions an intake prerequisite.
 
 A valid active lineage may name a hand-authored `defined` feature only for its first task. Fusion atomically claims the feature, links that exact task, and promotes the feature to `triaged`; an already-linked feature rejects rather than overwriting its canonical task. This bootstrap exception does not make `defined` executable: later scheduler and symbol-lock admission still uses the stricter contract below.
 
@@ -813,9 +813,9 @@ For example, activate a ready work unit with `fn_slice_activate({ id: "SL-…" }
 
 A completed cited research finding may become a normal Mission Feature. Its feature retains research run, stable finding, and source-URL provenance; optional triage uses the normal feature task flow. Linked task changes reconcile through the existing feature → slice → milestone → mission rollups, and task completion remains subject to assertion validation.
 
-### Autonomous mission admission
+### Optional autonomous mission linkage
 
-Autonomous no-task heartbeat agents may create or delegate implementation work only with an approved Feature → Slice → Milestone → Mission lineage. Interactive and task-scoped calls remain governed by `task_agent_mutation` policy as described in [Agent task-creation admission](#agent-task-creation-admission). The created task stores that lineage as task metadata; it does not replace the canonical feature `taskId` link except at the documented `defined`-feature first-task bootstrap. Missing or invalid autonomous lineage is rejected before a task is persisted. Roadmap reconciliation marks done tasks done, returns cancelled/requeued tasks to triaged, keeps failed work non-complete, and treats archives as non-promoting no-ops.
+Autonomous no-task heartbeat agents may create or delegate ordinary implementation work without mission lineage, subject to `task_agent_mutation` policy and duplicate checks described in [Agent task-creation admission](#agent-task-creation-admission). When provided, an approved Feature → Slice → Milestone → Mission lineage is stored as task metadata; it does not replace the canonical feature `taskId` link except at the documented `defined`-feature first-task bootstrap. Invalid supplied lineage is rejected before a task is persisted. Roadmap reconciliation marks done linked tasks done, returns cancelled/requeued linked tasks to triaged, keeps failed linked work non-complete, and treats archives as non-promoting no-ops.
 
 ## Validator memoization and failure budget (FN-8694)
 

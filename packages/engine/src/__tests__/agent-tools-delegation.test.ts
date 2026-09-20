@@ -545,16 +545,22 @@ describe("createDelegateTaskTool", () => {
     }), expect.anything());
   });
 
-  it("requires an explicit lineage when a no-task heartbeat cannot inherit one", async () => {
-    const tool = createTaskCreateTool(taskStore, undefined, {
-      sourceTaskId: "FN-PARENT",
-      requireMissionLineage: true,
-    });
+  /*
+  FNXC:EngineTests 2026-09-20-05:15:
+  Missing mission lineage is valid ordinary intake even when a source task has no lineage to inherit. Explicit lineage validation is covered separately by the bootstrap and approval cases below.
+  */
+  it("creates ordinary follow-up work when no mission lineage can be inherited", async () => {
+    const missionStore = taskStore.getMissionStore?.();
+    if (missionStore) vi.mocked(missionStore.getFeatureByTaskId).mockResolvedValue(undefined);
+    const tool = createTaskCreateTool(taskStore, undefined, { sourceTaskId: "FN-PARENT" });
 
     const result = await tool.execute("call-1", { description: "Capture optional report screenshots" }, undefined as any, undefined as any, undefined as any);
 
-    expect(result).toMatchObject({ isError: true, details: { rule: "mission-lineage-required" } });
-    expect(taskStore.createTask).not.toHaveBeenCalled();
+    expect(result).not.toMatchObject({ isError: true });
+    expect(taskStore.createTask).toHaveBeenCalledWith(
+      expect.not.objectContaining({ missionId: expect.anything(), sliceId: expect.anything() }),
+      expect.anything(),
+    );
   });
 
   /*

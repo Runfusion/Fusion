@@ -2717,19 +2717,16 @@ export class HeartbeatMonitor {
           heartbeatTools = [];
 
           // fn_task_create tool
+          /*
+          FNXC:MissionAdmission 2026-09-20-05:15:
+          Idle heartbeats may create ordinary tasks without forcing operators to maintain a Mission hierarchy. Explicit mission_lineage remains optional and is validated by the shared tool factory when supplied.
+          */
           heartbeatTools.push(createTaskCreateTool(taskStore, {
             sourceType: "agent_heartbeat",
             sourceAgentId: agentId,
             sourceRunId: runContext?.runId,
           }, {
             rootDir: this.rootDir,
-            /*
-            FNXC:MissionAdmission 2026-08-01-02:00:
-            Idle heartbeats have no source task whose approved lineage can be
-            inherited. Require a supplied lineage so the factory validates and
-            persists the same Feature → Slice → Milestone → Mission proof.
-            */
-            requireMissionLineage: true,
           }));
 
           /*
@@ -2742,16 +2739,9 @@ export class HeartbeatMonitor {
 
           // Agent delegation tools
           heartbeatTools.push(createListAgentsTool(this.store));
-          /*
-          FNXC:MissionAdmission 2026-07-22-13:07:
-          Idle-patrol delegation has no parent task to inherit lineage from.
-          Keep the same requireMissionLineage contract as fn_task_create so
-          freeform off-mission delegation cannot slip past FN-8307 via delegate.
-          */
           heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, {
             rootDir: this.rootDir,
             sourceAgentId: agentId,
-            requireMissionLineage: true,
           }));
           heartbeatTools.push(createTaskAssignTool(this.store, taskStore));
           heartbeatTools.push(createGetAgentConfigTool(this.store, agentId));
@@ -3493,12 +3483,11 @@ export class HeartbeatMonitor {
             const noTaskActionGuidanceLines = plannerHeartbeatPatrolEnabled
               ? [
                 /*
-                FNXC:MissionAdmission 2026-07-30-00:00:
-                FN-8307 forbids idle heartbeats from inventing implementation work.
-                Creation/delegation is available only with a validated approved mission lineage.
+                FNXC:MissionAdmission 2026-09-20-05:15:
+                Idle patrol may capture ordinary work without mission setup, but it must still scan open tasks first and create only one focused task per heartbeat.
                 */
-                "2. **Mission-linked tasks only** — Use fn_task_create only with an approved Feature → Slice → Milestone → Mission reference.",
-                "   Do not create off-mission implementation work; prefer safe coordination when no approved lineage exists.",
+                "2. **Create focused follow-up work** — Scan existing open tasks, then use fn_task_create when no task already covers the need.",
+                "   mission_lineage is optional; include it only when the work genuinely belongs to an approved mission feature.",
                 "",
               ]
               : [
@@ -3509,7 +3498,7 @@ export class HeartbeatMonitor {
             const noTaskFlowGuidanceLines = plannerHeartbeatPatrolEnabled
               ? [
                 "5. **Monitor project flow** — Review board/project signals and surface issues",
-                "   by creating or delegating only approved mission-linked follow-up work as appropriate.",
+                "   by creating or delegating focused, non-duplicate follow-up work as appropriate.",
                 "",
               ]
               : [
@@ -3552,15 +3541,15 @@ export class HeartbeatMonitor {
               "   If replying, use fn_send_message and include reply_to_message_id so threads stay linked.",
               "",
               ...noTaskActionGuidanceLines,
-              "3. **Delegate mission work** — Use fn_list_agents to find available specialists, then",
-              "   fn_delegate_task only with an approved Feature → Slice → Milestone → Mission reference.",
+              "3. **Delegate focused work** — Use fn_list_agents to find available specialists, then",
+              "   fn_delegate_task when ownership is clear; mission_lineage is optional.",
               "",
               "4. **Update memory** — Use fn_memory_append for durable, reusable learnings",
               "   (conventions, pitfalls, architecture constraints), not transient chatter.",
               "",
               ...noTaskFlowGuidanceLines,
               "When auto-claim relevant tasks is enabled, review Open Task Candidates above and",
-              "prioritize approved mission work that aligns with your role and soul before creating tasks.",
+              "prioritize existing work that aligns with your role and soul before creating tasks.",
               ...candidateLines,
               ...pendingMessagesLines,
               ...pendingRoomMessagesLines,

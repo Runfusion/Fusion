@@ -164,11 +164,8 @@ export function resolvePermanentAgentToolDecision(input: {
   const classification = classifyPermanentAgentToolCall(input.toolName, input.args);
 
   /*
-  FNXC:MissionAdmission 2026-07-22-13:07:
-  Freeform chat creates omit mission_lineage and must honor policy disposition
-  (allow/require-approval/block), not a hard gate block. Autonomous heartbeat
-  patrol still enforces lineage at the tool factory via requireMissionLineage.
-  Keep permanent-agent results in lockstep with evaluateAgentActionGate.
+  FNXC:MissionAdmission 2026-09-20-05:15:
+  Creates without mission_lineage must honor the normal allow/require-approval/block disposition on every surface, including autonomous heartbeat patrol. Keep permanent-agent results in lockstep with evaluateAgentActionGate.
   */
 
   /*

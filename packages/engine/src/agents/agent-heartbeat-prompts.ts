@@ -110,8 +110,8 @@ When you are woken by an incoming message (source includes "wake-on-message"), y
    - If the message requires a response, use fn_send_message to reply.
    - When replying, include 'reply_to_message_id' and set 'to_id' to the exact [from: type:id] ID from fn_read_messages (including cli). Omit 'to_id' only to use the safe reply-to-parent default for a message addressed to you.
    - If the message is informational, acknowledge it by logging with fn_task_log.
-   - If the message requests net-new work, first check whether an open task already covers it; idle/no-task heartbeats may create only with approved Feature → Slice → Milestone → Mission lineage.
-   - If ownership is clear and an agent is available, delegate only approved mission-linked work using fn_delegate_task.
+   - If the message requests net-new work, first check whether an open task already covers it; idle/no-task heartbeats may create focused ordinary tasks without mission lineage.
+   - If ownership is clear and an agent is available, delegate the focused work using fn_delegate_task.
 4. If a Pending Room Messages section is present, review it too:
    - Use fn_post_room_message only when the room content is relevant to your role, soul, or identity.
    - If a Room Ambiguity Notices section is present, follow it exactly: echo resolved referents before acting, and under clarification notices do not create tasks.
@@ -145,10 +145,10 @@ ${HEARTBEAT_CRITICAL_RULES}
 
 Your job:
 1. Review your context — check messages, memory, and project state.
-2. Do ONE useful action: analyze, create approved mission-linked follow-up work, delegate approved mission work, or update memory.
+2. Do ONE useful action: analyze, create focused follow-up work, delegate clearly owned work, or update memory.
 3. Use fn_task_list, fn_task_show, and fn_task_search to inspect existing work before creating or delegating tasks.
-4. Use fn_task_create only with an approved Feature → Slice → Milestone → Mission reference; first scan the board/context for an existing open task covering the same work.
-5. Use fn_list_agents and fn_delegate_task only for work carrying that approved mission lineage.
+4. Use fn_task_create only after scanning the board/context for an existing open task covering the same work; mission lineage is optional.
+5. Use fn_list_agents and fn_delegate_task when a specific available agent clearly owns the work.
 6. Use fn_get_agent_config and fn_update_agent_config to read/tune direct-report agents for better routing outcomes.
 7. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
 
@@ -180,8 +180,8 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 ## Triage and Routing Decisions
 
 Use this decision rule:
-- **fn_task_create:** create executable work only when it carries an approved Feature → Slice → Milestone → Mission reference.
-- **fn_delegate_task:** assign approved mission work immediately when a specific agent should own it now.
+- **fn_task_create:** create one focused, non-duplicate task; include mission lineage only when the work genuinely belongs to an approved mission feature.
+- **fn_delegate_task:** assign focused work immediately when a specific agent should own it now.
 - **fn_memory_append:** use \`scope="agent"\` for your own operating context and \`scope="project"\` for repo-wide durable knowledge; avoid transient run-by-run chatter.
 
 If unsure who should do the work, prefer fn_task_create and let scheduler routing happen naturally.
@@ -233,24 +233,25 @@ export const HEARTBEAT_SYSTEM_PROMPT_NO_TASK = HEARTBEAT_NO_TASK_SYSTEM_PROMPT;
 /*
 FNXC:HeartbeatPatrol 2026-07-15-00:09:
 Operators need to disable idle/no-task proactive task creation without disabling planner oversight for tasks already in flight. Keep the exported legacy constants as the default patrol-on prompt, and render patrol-off variants only when the workflow setting is explicitly false so existing callers remain compatible.
+
+FNXC:MissionAdmission 2026-09-20-05:15:
+Patrol-on prompts permit focused task creation without mission lineage. Patrol-off rendering must continue to remove those creation instructions without depending on obsolete mission-only wording.
 */
 export function renderHeartbeatNoTaskSystemPrompt(options: { plannerHeartbeatPatrolEnabled?: boolean } = {}): string {
   if (options.plannerHeartbeatPatrolEnabled !== false) {
     return HEARTBEAT_NO_TASK_SYSTEM_PROMPT;
   }
   /*
-  FNXC:HeartbeatPatrol 2026-07-20-23:55:
-  Idle-patrol-off rewrites must track the current mission-lineage no-task prompt copy (FN-8307).
-  Stale pre-lineage needles silently no-oped after the wording change, so disabled patrol still
-  encouraged task creation. Keep these replace sources in lockstep with HEARTBEAT_NO_TASK_SYSTEM_PROMPT.
+  FNXC:HeartbeatPatrol 2026-09-20-05:15:
+  Idle-patrol-off rewrites must track the current no-task prompt copy. Stale needles silently leave task-creation guidance enabled, so keep these replace sources in lockstep with HEARTBEAT_NO_TASK_SYSTEM_PROMPT.
   */
   return HEARTBEAT_NO_TASK_SYSTEM_PROMPT
     .replace(
-      "2. Do ONE useful action: analyze, create approved mission-linked follow-up work, delegate approved mission work, or update memory.",
+      "2. Do ONE useful action: analyze, create focused follow-up work, delegate clearly owned work, or update memory.",
       "2. Do ONE useful action: analyze, respond to direct messages or explicit operator requests, delegate already-requested work, or update memory.",
     )
     .replace(
-      "4. Use fn_task_create only with an approved Feature → Slice → Milestone → Mission reference; first scan the board/context for an existing open task covering the same work.",
+      "4. Use fn_task_create only after scanning the board/context for an existing open task covering the same work; mission lineage is optional.",
       `4. ${TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION}`,
     )
     .replace(
@@ -258,7 +259,7 @@ export function renderHeartbeatNoTaskSystemPrompt(options: { plannerHeartbeatPat
       "",
     )
     .replace(
-      "- **fn_task_create:** create executable work only when it carries an approved Feature → Slice → Milestone → Mission reference.",
+      "- **fn_task_create:** create one focused, non-duplicate task; include mission lineage only when the work genuinely belongs to an approved mission feature.",
       `- **Idle patrol disabled:** ${TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION}`,
     )
     .replace(
