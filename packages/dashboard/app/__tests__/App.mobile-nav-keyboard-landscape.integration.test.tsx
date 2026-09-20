@@ -55,7 +55,7 @@ describe("App landscape mobile keyboard seam", () => {
 
     act(() => { textarea.focus(); textarea.dispatchEvent(new FocusEvent("focusin", { bubbles: true })); });
     expect(nav).toHaveClass("mobile-nav-bar--keyboard-open");
-    expect(screen.getByTestId("footer-hidden")).toHaveTextContent("false");
+    expect(screen.getByTestId("footer-hidden")).toHaveTextContent("true");
 
     viewport.height = 220;
     act(() => { viewport.dispatchEvent(new Event("resize")); vi.advanceTimersByTime(1_000); });

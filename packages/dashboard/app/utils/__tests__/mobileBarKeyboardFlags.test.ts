@@ -15,7 +15,7 @@ describe("computeMobileBarKeyboardFlags", () => {
       isMobile: true, keyboardFocusPending: true, keyboardOpen: false, anyModalOpen: false, overlayOpen: false,
     });
 
-    expect(flags).toEqual({ footerHidden: false, navKeyboardOpen: true, footerKeyboardOpen: true });
+    expect(flags).toEqual({ footerHidden: true, navKeyboardOpen: true, footerKeyboardOpen: true });
   });
 
   it.each([

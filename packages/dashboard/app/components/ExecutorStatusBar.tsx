@@ -75,8 +75,7 @@ interface ExecutorStatusBarProps {
   currentProjectPath?: string;
   /** Opens the workspace-aware file browser to the project workspace. */
   onOpenProjectDirectory?: () => void;
-  /** When true on mobile, force bottom pinning so ICB compensation does not
-   *  push the bar above the keyboard; keyboard may cover it instead. */
+  /** Hide mobile status chrome while keyboard focus or an open keyboard is reported. */
   keyboardOpen?: boolean;
   /** iOS-only hide guard to prevent footer drifting over content while
    *  visualViewport settles during keyboard transitions. */
@@ -250,7 +249,9 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
 
   // Keyboard-open guard runs after all hooks: toggling it must not change the
   // hook count between renders (Rules of Hooks).
-  if (hideWhenKeyboardOpen) return null;
+  // Overlay keyboards preserve board padding, but must still hide the footer:
+  // bottom: 0 can follow Safari's resized viewport above the keyboard.
+  if (hideWhenKeyboardOpen || (isMobile && keyboardOpen)) return null;
 
   /*
   FNXC:ExecutorStatusBar 2026-09-01-05:36:
