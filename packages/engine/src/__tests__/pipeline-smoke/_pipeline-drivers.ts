@@ -218,41 +218,20 @@ export const PIPELINE_SCENARIO_DRIVERS = {
   s07Arrange: driver("create a task for an unactionable Code Review rejection", async (context) => {
     await arrangeTask(context, "S07");
   }),
-  s07Act: driver("let the real Code Review park the unactionable rejection", async (context) => {
-    const task = taskFor(context);
-    for (let turn = 0; turn < 10; turn += 1) {
-      await context.harness.runProductionTurn(task.id, { codeReviewModes: ["empty-revise"] });
-      const live = await context.harness.freshTask(task.id);
-      if (live.workflowStepResults?.some((result) => result.workflowStepId === "code-review" && result.verdict === "REVISE")) {
-        context.result = await context.harness.assertTerminal(task.id, "parked");
-        return;
-      }
-    }
-    throw new Error("S07 did not persist its real unactionable Code Review rejection.");
-  }),
   /*
-  FNXC:PipelineSmoke 2026-08-24-22:40:
-  The declared recovery for a park is "operator retry, or the cause disappears". Named remediation
-  parks an unactionable rejection as `awaiting-approval` with `paused: true` — deliberately, because
-  there is no actionable finding to derive work from, so a human must decide. A drive alone cannot
-  move a paused card, so the recovery must first perform the operator's half of that contract.
-  Releasing an EXPLICIT awaiting-approval park is the operator action under test; it is not a way to
-  make an unrelated failure pass, and the merge that follows is still fully asserted.
+  FNXC:PipelineSmoke 2026-09-20-18:05:
+  Empty Code Review REVISE replies now normalize to APPROVE_WITH_NOTES rather than creating an
+  unactionable human park. Keep S07 on the real review path and prove that advisory-only feedback
+  completes the merge without manufacturing a parked state that production no longer emits.
   */
-  s07Recovery: driver("release the operator park, then approve through the restored graph session", async (context) => {
-    const parked = context.result;
+  s07Act: driver("let advisory-only Code Review feedback complete the production graph", async (context) => {
     const task = taskFor(context);
-    const live = await context.harness.freshTask(task.id);
-    if (live.paused === true || live.status === "awaiting-approval") {
-      await context.harness.store.updateTask(task.id, {
-        paused: false,
-        pausedReason: undefined,
-        status: undefined,
-        awaitingApprovalReason: undefined,
-      } as never);
+    await driveMerged(context, { codeReviewModes: ["empty-revise"] });
+    const codeReview = (await context.harness.freshTask(task.id)).workflowStepResults
+      ?.find((result) => result.workflowStepId === "code-review");
+    if (codeReview?.verdict !== "APPROVE_WITH_NOTES" || codeReview.status !== "passed") {
+      throw new Error("S07 did not preserve the real advisory-only Code Review outcome.");
     }
-    await driveMerged(context, { planReviewModes: ["approve"], codeReviewModes: ["approve"] });
-    context.result = parked;
   }),
 
   s08Arrange: driver("disable only Code Review on the selected task", async (context) => {
@@ -557,10 +536,16 @@ export const PIPELINE_SCENARIO_DRIVERS = {
     }
     context.result = await context.harness.assertTerminal(task.id, "blocked");
   }),
+  /*
+  FNXC:ExternalBlockPipeline 2026-09-20-17:31:
+  S21 records the frozen terminal as its scenario outcome, then separately proves Retry's parked
+  continuation. Keep the recorded outcome intact so the manifest census does not mislabel a
+  successful recovery observation as a failed blocked-stage assertion.
+  */
   s21Recovery: driver("invoke dashboard Retry and re-enter the interrupted verification node", async (context) => {
     const task = taskFor(context);
     await context.harness.resumeExternalBlockReplay(task.id);
     await context.harness.assertExternalBlockReplay(task, "resumed");
-    context.result = await context.harness.assertTerminal(task.id, "parked");
+    await context.harness.assertTerminal(task.id, "parked");
   }),
 } as const;

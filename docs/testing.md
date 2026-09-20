@@ -520,15 +520,31 @@ the old 150s ceiling, but with under 2s of headroom, which is a flake waiting to
 a passing lane. Third precedent for the same rule: growth must be nameable, or it is a regression.
 -->
 <!-- FNXC:PipelineSmoke 2026-09-16-22:32: FN-9310 requires the post-merge runner to terminate the pnpm-to-Vitest process group at its existing budget, so descendants cannot outlive a timed-out smoke invocation. -->
+<!--
+FNXC:PipelineSmoke 2026-09-20-16:34:
+FN-9339 retains the fixed 175-second ceiling after S17 exceeded it. The repair consolidates its
+independent workflow records per restart stage and requires the runner to preserve bounded partial
+attribution when a child fails, rather than treating a truncated report as a passing census.
+-->
 The declared budget is **175 seconds**, rounded up from a measured 148,434ms slowest full-matrix
 run (7 files, 90 tests) after the Code Review remediation drive was added and S05 was extended to
 `builtin:coding-ideas-v2`. The wrapper enforces it through bounded process-group termination at the
 `pnpm` → Vitest boundary: timeout sends SIGTERM to the launched group and escalates to SIGKILL after
-the watchdog grace window. An overrun, child failure, or incomplete report is a fail-closed result
-to investigate, never a reason to widen timeouts. Use `--repeat=10` for the reproducibility proof,
-`--json` for machine output, and `--budget-ms=<n>` only for loud diagnostic measurement. The
-normalized report lists scenario, variant, workflow, expected terminal, observed terminal, verdict,
-and duration.
+the watchdog grace window. An overrun, child failure, missing Vitest output, or incomplete scenario
+JSONL is a fail-closed result to investigate, never a reason to widen timeouts. Use `--repeat=10`
+for the reproducibility proof, `--json` for machine output, and `--budget-ms=<n>` only for loud
+diagnostic measurement.
+
+The success report derives its expected invocation census from the declared manifest, not merely the
+scenario IDs. It requires every `(scenarioId, workflowId, variant)` key exactly once, rejects
+missing, unexpected, duplicate, malformed, truncated, failing, or wedged records, and reports the
+full invocation-key set. On any failed run, the same upload-path report is atomically replaced with
+bounded evidence: watchdog outcome, elapsed duration, Vitest/scenario-report availability, complete
+record count and final complete invocation, missing declared keys, and a truncated final JSONL record
+when present. S17 continues to cover all three built-in workflows at planning, execution, review,
+merge-in-flight, and post-merge, including the `builtin:coding-ideas-v2` post-merge boundary; its
+independent workflow tasks share each restart-stage fixture lifecycle to avoid repaying setup work
+without reducing restart-once coverage.
 
 Each scenario declares one closed terminal state: `merged-done`, `inert-intake`,
 `parked`, `manual-hold`, or `no-op-merge`. The harness fails on an undeclared terminal

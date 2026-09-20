@@ -50,8 +50,8 @@ describeIfReady("pipeline smoke: code review remediation", () => {
 
     /*
     One REVISE, then approvals. The scripted "revise" verdict carries a real finding with a file
-    path, which is what `deriveRemediationSteps` needs; an empty rejection is a different contract
-    (it parks for a human) and is covered by S07.
+    path, which is what `deriveRemediationSteps` needs; empty feedback is advisory-only and merges
+    as APPROVE_WITH_NOTES, as exercised by S07.
     */
     const behavior = { codeReviewModes: ["revise", "approve"] as const };
 

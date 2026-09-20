@@ -51,7 +51,31 @@ describeIfReady("pipeline smoke: resilience scenarios", () => {
   });
   afterAll(pg.afterAll);
 
-  it.each(executableVariants(["S17", "S18", "S19", "S20", "S21"]))(
+  /*
+  FNXC:PipelineSmoke 2026-09-20-16:04:
+  S17's three workflow records for one restart boundary are independent durable tasks. Run them
+  through one PostgreSQL fixture lifecycle so the smoke lane stops repaying engine/database setup
+  ten extra times, while preserving every workflow × recorded-stage execution and its JSONL record.
+  */
+  it.each(scenario("S17").variants ?? [])("S17 runs every workflow at %s", async (variant) => {
+    const selected = scenario("S17");
+    for (const workflowId of selected.workflows) {
+      const context = { harness, workflowId, variant };
+      await recordPipelineScenario({
+        scenarioId: selected.id,
+        workflowId,
+        variant,
+        expectedTerminal: selected.expectedTerminal,
+      }, async () => {
+        await executePipelineScenario(selected, context);
+        const observed = context.result;
+        if (!observed) throw new Error(`${selected.id} did not publish an observed terminal state.`);
+        return { observedTerminal: observed.observedTerminal, wedge: observed.wedge };
+      });
+    }
+  });
+
+  it.each(executableVariants(["S18", "S19", "S20", "S21"]))(
     "$scenario.id runs $workflowId $variant",
     async ({ scenario: selected, workflowId, variant }) => {
       const context = { harness, workflowId, variant };

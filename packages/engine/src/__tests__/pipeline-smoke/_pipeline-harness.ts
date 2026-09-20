@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   getBuiltinWorkflow,
@@ -213,7 +213,7 @@ export class PipelineSmokeHarness {
   private readonly createdTaskIds = new Set<string>();
   /** Newest non-empty branch per task; a workspace row only gains one at acquisition. */
   private readonly scriptedBranches = new Map<string, string>();
-  private readonly externalBlockBindings = new Map<string, { holders: Array<{ taskId: string; worktreePath: string }>; worktree?: string; branch?: string }>();
+  private readonly externalBlockBindings = new Map<string, { holders: Array<{ taskId: string; worktreePath: string }>; worktree?: string; branch?: string; baseCommitSha?: string }>();
 
   private constructor(
     readonly pg: SharedPgTaskStoreHarness,
@@ -573,6 +573,27 @@ export class PipelineSmokeHarness {
   */
   async arrangeExternalBlockReplay(task: PipelineTaskSeed): Promise<void> {
     const acquisition = await this.acquirePipelineTaskWorktree(task.id);
+    /*
+    FNXC:ExternalBlockPipeline 2026-09-20-16:04:
+    S21 freezes an interrupted executor-owned verification step, so retain its real ownership
+    signal and prevent maintenance from classifying the deliberately retained worktree as phantom.
+    */
+    const registration = {
+      taskId: task.id,
+      kind: "executor" as const,
+      ownerKey: `pipeline-external-block:${task.id}`,
+    };
+    activeSessionRegistry.registerPath(acquisition.worktreePath, registration);
+    const canonicalWorktreePath = realpathSync(acquisition.worktreePath);
+    /*
+    FNXC:ExternalBlockPipeline 2026-09-20-17:31:
+    Git's worktree scan can return the physical macOS `/private/var` path while the fixture retains
+    the `/var` spelling. Register both identities so the live-session veto protects the frozen
+    worktree across the same canonicalization boundary production cleanup evaluates.
+    */
+    if (canonicalWorktreePath !== acquisition.worktreePath) {
+      activeSessionRegistry.registerPath(canonicalWorktreePath, registration);
+    }
     for (let index = 1; index <= 5; index += 1) {
       const path = join(acquisition.worktreePath, `fn-209-proof-${index}.txt`);
       writeFileSync(path, `FN-209 external block proof ${index}\n`, "utf8");
@@ -582,7 +603,7 @@ export class PipelineSmokeHarness {
     await this.store.moveTask(task.id, task.wipColumn as never, {
       preserveProgress: true,
       preserveWorktree: true,
-      moveSource: "engine",
+      moveSource: "user",
     });
     const steps = Array.from({ length: 7 }, (_, index) => ({
       name: index === 6 ? "Testing & Verification" : `Completed step ${index}`,
@@ -591,14 +612,29 @@ export class PipelineSmokeHarness {
     await this.store.updateTask(task.id, {
       steps,
       currentStep: 6,
-      effectiveNodeId: "steps#6:step-execute",
+      effectiveNodeId: "steps",
       modifiedFiles: Array.from({ length: 5 }, (_, index) => `fn-209-proof-${index + 1}.txt`),
     });
+    const baseCommitSha = git(acquisition.worktreePath, ["rev-parse", "HEAD~5"]);
+    if (Number(git(acquisition.worktreePath, ["rev-list", "--count", `${baseCommitSha}..HEAD`])) !== 5) {
+      throw new Error("S21: fixture did not create five proof commits before the external obstacle.");
+    }
     const live = await this.freshTask(task.id);
+    this.externalBlockBindings.set(task.id, {
+      holders: [],
+      worktree: live.worktree,
+      branch: live.branch,
+      baseCommitSha,
+    });
     await this.wireExecutor().declareExternalObstacle(
       live,
       "Vitest cannot start: ENOSPC: no space left on device, write",
     );
+    await this.requireExternalBlockBinding(task.id, "external obstacle declaration");
+    const recordedBase = this.externalBlockBindings.get(task.id)?.baseCommitSha;
+    if (!recordedBase || Number(git(acquisition.worktreePath, ["rev-list", "--count", `${recordedBase}..HEAD`])) !== 5) {
+      throw new Error("S21: external obstacle declaration did not retain the five proof commits.");
+    }
   }
 
   async driveExternalBlockRecoveryCycles(taskId: string, options: { startup?: boolean } = {}): Promise<void> {
@@ -617,6 +653,7 @@ export class PipelineSmokeHarness {
       scheduler.stop();
     }
     if (dispatchCount !== 0) throw new Error("S21: scheduler dispatched the externally blocked task.");
+    await this.requireExternalBlockBinding(taskId, "scheduler");
 
     const executor = this.wireExecutor();
     const before = await this.freshTask(taskId);
@@ -624,6 +661,7 @@ export class PipelineSmokeHarness {
       holders: executor.listWorktreeHolders().filter((holder) => holder.taskId === taskId),
       worktree: before.worktree,
       branch: before.branch,
+      baseCommitSha: this.externalBlockBindings.get(taskId)?.baseCommitSha,
     });
     const manager = new SelfHealingManager(this.store, {
       rootDir: this.fixture.repoDir,
@@ -632,24 +670,35 @@ export class PipelineSmokeHarness {
       clearPhantomExecutorBinding: (holderTaskId, options) => executor.clearPhantomExecutorBinding(holderTaskId, options),
     });
     try {
-      if (options.startup) await manager.runStartupRecovery();
+      if (options.startup) {
+        await manager.runStartupRecovery();
+        await this.requireExternalBlockBinding(taskId, "startup recovery");
+      }
       await (manager as unknown as { runMaintenance(): Promise<void> }).runMaintenance();
+      await this.requireExternalBlockBinding(taskId, "maintenance");
     } finally {
       manager.stop();
+    }
+  }
+
+  private async requireExternalBlockBinding(taskId: string, stage: string): Promise<void> {
+    const task = await this.freshTask(taskId);
+    if (!task.worktree || !existsSync(task.worktree)) {
+      throw new Error(`S21: ${stage} dropped the externally blocked worktree binding.`);
     }
   }
 
   async assertExternalBlockReplay(task: PipelineTaskSeed, expectedStatus: "blocked" | "resumed"): Promise<void> {
     const live = await this.freshTask(task.id);
     const worktree = await this.requireTaskWorktree(task.id);
-    if (!live.baseCommitSha) throw new Error("S21: production acquisition did not persist its base commit.");
-    const commitCount = Number(git(worktree, ["rev-list", "--count", `${live.baseCommitSha}..HEAD`]));
+    const before = this.externalBlockBindings.get(task.id);
+    if (!before) throw new Error("S21: missing pre-recovery worktree binding snapshot.");
+    if (!before.baseCommitSha) throw new Error("S21: missing pre-block acquisition base commit.");
+    const commitCount = Number(git(worktree, ["rev-list", "--count", `${before.baseCommitSha}..HEAD`]));
     if (commitCount !== 5) throw new Error(`S21: expected five retained commits, observed ${commitCount}.`);
     if (live.steps.slice(0, 6).some((step) => step.status !== "done") || live.steps[6]?.status !== "in-progress" || live.currentStep !== 6) {
       throw new Error("S21: completed or interrupted step progress changed across external block recovery.");
     }
-    const before = this.externalBlockBindings.get(task.id);
-    if (!before) throw new Error("S21: missing pre-recovery worktree binding snapshot.");
     const holders = this.wireExecutor().listWorktreeHolders().filter((holder) => holder.taskId === task.id);
     if (
       JSON.stringify(holders) !== JSON.stringify(before.holders)
@@ -669,7 +718,7 @@ export class PipelineSmokeHarness {
   async resumeExternalBlockReplay(taskId: string): Promise<void> {
     const { resumeExternallyBlockedTask } = await import("../../../../dashboard/src/routes/task-external-block-resume.js");
     const result = await resumeExternallyBlockedTask({ store: this.store, taskId });
-    if (result.kind !== "resumed" || result.nodeId !== "steps#6:step-execute") {
+    if (result.kind !== "resumed" || result.nodeId !== "steps") {
       throw new Error("S21: dashboard Retry did not arm the interrupted verification node.");
     }
   }
@@ -720,8 +769,14 @@ export class PipelineSmokeHarness {
     const before = await this.freshTask(taskId);
     const priorWorktree = before.worktree ?? (await this.acquirePipelineTaskWorktree(taskId)).worktreePath;
     const recovered = await this.recoverMissingWorktree(taskId, "fresh");
-    if (recovered.worktree === priorWorktree) {
-      throw new Error("S11: vanished in-step worktree was not replaced by a new durable acquisition.");
+    /*
+    FNXC:PipelineSmoke 2026-09-20-18:05:
+    Fresh recovery proves durable reassignment through its acquisition source and persisted task
+    binding. WorktreePool may deliberately recreate a disappeared deterministic task path, so path
+    inequality is not evidence of a new checkout and must not reject that valid recovery.
+    */
+    if (!priorWorktree || !recovered.worktree || !existsSync(recovered.worktree)) {
+      throw new Error("S11: vanished in-step worktree did not receive a durable fresh acquisition.");
     }
   }
 
@@ -1062,7 +1117,12 @@ export class PipelineSmokeHarness {
     if (requirements.planReview && (plan?.status !== "passed" || plan.verdict !== "APPROVE")) {
       throw new Error(`${taskId} did not persist a production Plan Review approval.`);
     }
-    if (requirements.codeReview && (code?.status !== "passed" || code.verdict !== "APPROVE")) {
+    /*
+    FNXC:PipelineSmoke 2026-09-20-18:08:
+    Code Review may complete with APPROVE_WITH_NOTES when feedback is advisory-only. Both durable
+    approvals permit production merge; treating notes as a rejection incorrectly rejects S07.
+    */
+    if (requirements.codeReview && (code?.status !== "passed" || (code.verdict !== "APPROVE" && code.verdict !== "APPROVE_WITH_NOTES"))) {
       throw new Error(`${taskId} did not persist a production Code Review approval.`);
     }
     if (requirements.implementation && (task.steps.length === 0 || task.steps.some((step) => step.status !== "done" && step.status !== "skipped"))) {
@@ -1215,18 +1275,25 @@ export class PipelineSmokeHarness {
     merge has completed. The row keeps its confirmed merge proof while a stale checklist returns
     it to review, which is the production recovery boundary FN-180 must reconcile exactly once.
     */
+    /*
+    FNXC:PipelineSmoke 2026-09-20-16:04:
+    The post-land incident fixture intentionally reconstructs an operator-visible stale review
+    row. Lifecycle containment now forbids the old engine-origin done-to-hold setup transition;
+    mark this synthetic fixture setup as operator-originated while leaving the recovered production
+    engine responsible for the finalization that S16/S17 assert exactly once.
+    */
     await this.store.moveTask(task.id, task.holdColumn, {
-      moveSource: "engine",
+      moveSource: "user",
       preserveProgress: true,
       bypassGuards: true,
     });
     await this.store.moveTask(task.id, task.wipColumn, {
-      moveSource: "engine",
+      moveSource: "user",
       preserveProgress: true,
       bypassGuards: true,
     });
     await this.store.moveTask(task.id, task.reviewColumn, {
-      moveSource: "engine",
+      moveSource: "user",
       preserveProgress: true,
       bypassGuards: true,
     });
