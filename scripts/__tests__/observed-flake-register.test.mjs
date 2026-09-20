@@ -152,6 +152,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
     },
+    {
+      heading: "15. Workflow-results preserved-column selector mock ordering",
+      status: "Active first sighting — recorded 2026-09-20, unattributed.",
+    },
   ]);
 });
 
