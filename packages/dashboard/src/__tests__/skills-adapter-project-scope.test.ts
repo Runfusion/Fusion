@@ -55,7 +55,43 @@ describe("createSkillsAdapter project-scoped discovery", () => {
     expect(missing.map((skill) => skill.path)).toContain(shared);
     expect(a.filter((skill) => skill.name === "local-a/SKILL.md")).toHaveLength(1);
     expect(a.find((skill) => skill.name === "local-a/SKILL.md")?.path).toContain(".fusion");
+    expect(a.every((skill) => skill.enabled)).toBe(true);
+    expect(b.every((skill) => skill.enabled)).toBe(true);
     await expect(calls[0]!("ignored")).resolves.toBe("skip");
+  });
+
+  it.each([
+    ["user", "top-level", true, undefined, true],
+    ["project", "top-level", true, undefined, true],
+    ["project", "package", true, undefined, true],
+    ["user", "top-level", false, undefined, false],
+    ["project", "package", false, undefined, false],
+    ["project", "top-level", true, "-", false],
+    ["project", "package", true, "-", false],
+    ["project", "top-level", false, "+", true],
+    ["project", "package", false, "+", true],
+  ] as const)("preserves %s/%s discovery enablement %s unless overridden by %s", async (scope, origin, enabled, override, expected) => {
+    const root = await mkdtemp(join(tmpdir(), "fn-skills-enabled-"));
+    roots.push(root);
+    const path = await writeSkill(root, ".agents", "frontend-design");
+    const source = origin === "package" ? "example-package" : "auto";
+    const settingsPath = join(root, ".agents", "settings.json");
+    if (override) {
+      const patterns = [`${override}frontend-design/SKILL.md`];
+      await writeFile(settingsPath, JSON.stringify(origin === "package"
+        ? { packages: [{ source, skills: patterns }] }
+        : { skills: patterns }));
+    }
+    const adapter = createSkillsAdapter({
+      packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [{
+        path, enabled, metadata: { source, scope, origin, baseDir: join(root, ".agents") },
+      }] }) },
+      getSettingsPath: () => settingsPath,
+    });
+
+    expect(await adapter.discoverSkills(root)).toEqual([
+      expect.objectContaining({ path, enabled: expected }),
+    ]);
   });
 
   it("marks catalog entries installed only for the requesting project", async () => {

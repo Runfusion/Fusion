@@ -255,13 +255,15 @@ async function waitForSupervisedExit(
 /**
  * Check if a skill path is enabled in the settings.
  * Checks both top-level skills and package-scoped skills.
- * Defaults to disabled when the settings file says nothing about the skill.
+ * Preserve the package manager's resolved state when no Fusion override exists.
  */
 function isSkillEnabled(
   skillId: string,
   settings: { skills?: string[]; packages?: Array<{ source: string; skills?: string[] }> },
+  discoveredEnabled: boolean,
 ): boolean {
-  return getSkillSettingState(skillId, settings) === "enabled";
+  const settingState = getSkillSettingState(skillId, settings);
+  return settingState === undefined ? discoveredEnabled : settingState === "enabled";
 }
 
 type PackageManagerLike = {
@@ -381,7 +383,7 @@ export function createSkillsAdapter(options: {
           name: skillName,
           path: resource.path,
           relativePath: skillRelativePath,
-          enabled: isSkillEnabled(skillId, settings as Parameters<typeof isSkillEnabled>[1]),
+          enabled: isSkillEnabled(skillId, settings as Parameters<typeof isSkillEnabled>[1], resource.enabled),
           metadata: {
             source: resource.metadata.source,
             scope: resource.metadata.scope,
