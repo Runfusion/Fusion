@@ -505,9 +505,16 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   /*
   FNXC:MobileTaskPopups 2026-06-29-00:00:
   Mobile board-card popup opens reuse the existing task-detail FloatingWindow, but the shell must behave like a full-screen mobile sheet. Scope the override to task-detail pop-outs, hide resize handles, and remove drag/resize cursors so no invisible desktop affordances remain on touch layouts.
+
+  FNXC:TaskDetail 2026-09-20-17:15:
+  Installed-PWA system chrome can cover a fixed task popup's embedded header, leaving its only Close
+  control unreachable. Reserve both safe-area block edges inside this 100dvh border box so the
+  TaskDetailContent scroll chain stays viewport-bounded; direct modals and desktop/tablet popouts
+  retain their separate geometry.
   */
   .floating-window--task-detail {
     inset: 0 !important;
+    box-sizing: border-box;
     overflow: hidden !important;
     width: 100vw !important;
     height: 100dvh !important;
@@ -515,6 +522,7 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
     min-height: 0 !important;
     max-width: 100vw !important;
     max-height: 100dvh !important;
+    padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
     border: none;
     border-radius: 0;
     box-shadow: none;

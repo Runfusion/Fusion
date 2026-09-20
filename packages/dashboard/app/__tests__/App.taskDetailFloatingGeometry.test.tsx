@@ -1,35 +1,102 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, beforeEach } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, beforeEach, vi } from "vitest";
+import type { Task } from "@fusion/core";
 import { TASK_DETAIL_FLOATING_GEOMETRY_KEY } from "../App";
 import { FloatingWindow } from "../components/FloatingWindow";
+import { TaskDetailContent } from "../components/TaskDetailModal";
+import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 
-function renderTaskDetailPopup(taskId: string) {
-  return render(
-    <FloatingWindow
-      windowKey={`task-detail-${taskId}`}
-      title={taskId}
-      onClose={() => {}}
-      hideHeader
-      dragHandleSelector=".task-detail-content--embedded > .modal-header"
-      className="floating-window--task-detail"
-      persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
-      layer="task-detail"
-    >
-      <div className="task-detail-content--embedded">
-        <div className="modal-header">{taskId}</div>
-        <div>Task detail body</div>
-      </div>
-    </FloatingWindow>
-  );
+const workflowPayload = {
+  flagEnabled: true,
+  defaultWorkflowId: "builtin:coding",
+  workflows: [{
+    id: "builtin:coding",
+    name: "Coding",
+    columns: [
+      { id: "triage", name: "Planning", flags: { intake: true } },
+      { id: "todo", name: "Todo", flags: { hold: true } },
+      { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+      { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
+      { id: "done", name: "Done", flags: { complete: true } },
+      { id: "archived", name: "Archived", flags: { archived: true } },
+    ],
+  }],
+  taskWorkflowIds: {},
+};
+
+function createTask(taskId: string, description = ""): Task {
+  return {
+    id: taskId,
+    title: description ? "Populated task" : "Minimal task",
+    description,
+    column: "todo",
+    status: "pending",
+    prompt: "",
+    steps: [],
+    attachments: [],
+    dependencies: [],
+    createdAt: "2026-09-20T00:00:00.000Z",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+  } as Task;
+}
+
+function renderTaskDetailPopup(taskId: string, onClose = vi.fn(), description = "") {
+  const task = createTask(taskId, description);
+  return {
+    onClose,
+    ...render(
+      <FloatingWindow
+        windowKey={`task-detail-${taskId}`}
+        title={taskId}
+        onClose={onClose}
+        hideHeader
+        dragHandleSelector=".task-detail-content--embedded > .modal-header"
+        className="floating-window--task-detail"
+        persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
+        layer="task-detail"
+      >
+        <TaskDetailContent
+          task={task}
+          onOpenDetail={() => {}}
+          onDeleteTask={async () => task}
+          onMergeTask={async () => ({ success: true } as never)}
+          addToast={() => {}}
+          embedded
+          onRequestClose={onClose}
+        />
+      </FloatingWindow>,
+    ),
+  };
 }
 
 describe("task-detail FloatingWindow geometry", () => {
   beforeEach(() => {
     localStorage.clear();
+    writeBoardWorkflowsCache(undefined, workflowPayload);
   });
 
   it("uses one stable task-detail persistence key across different task window identities", () => {
     expect(TASK_DETAIL_FLOATING_GEOMETRY_KEY).toBe("floating-window:task-detail");
+  });
+
+  it("keeps one reachable embedded Close control for minimal and populated popups", () => {
+    for (const [taskId, description] of [
+      ["FN-9342-MINIMAL", ""],
+      ["FN-9342-POPULATED", "A populated task keeps its header close action reachable."],
+    ]) {
+      const onClose = vi.fn();
+      const popup = renderTaskDetailPopup(taskId, onClose, description);
+      const panel = screen.getByTestId(`floating-window-task-detail-${taskId}`);
+      const close = screen.getByRole("button", { name: "Close" });
+
+      expect(panel).toHaveClass("floating-window--headerless", "floating-window--task-detail");
+      expect(panel.querySelectorAll("button[aria-label='Close']")).toHaveLength(1);
+      expect(panel.querySelector(".floating-window__close")).toBeNull();
+      fireEvent.click(close);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId(`floating-window-task-detail-${taskId}`)).toBe(panel);
+      popup.unmount();
+    }
   });
 
   it("restores the saved task popup size and position when a different task opens", () => {

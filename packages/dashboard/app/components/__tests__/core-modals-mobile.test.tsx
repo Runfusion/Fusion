@@ -143,13 +143,21 @@ describe("core modals mobile css coverage", () => {
     expect(mobileRule).toMatch(/[{;]\s*max-height:\s*100dvh/);
     expect(mobileRule).toMatch(/[{;]\s*width:\s*100vw/);
     expect(mobileRule).toMatch(/[{;]\s*max-width:\s*100vw/);
+    expect(mobileRule).toMatch(/[{;]\s*box-sizing:\s*border-box/);
+    expect(mobileRule).toMatch(
+      /[{;]\s*padding-block:\s*env\(safe-area-inset-top,\s*0px\)\s+env\(safe-area-inset-bottom,\s*0px\)/,
+    );
     /* The resize affordance must be gone on touch, not merely inert. */
     expect(floatingMobileBlock).toContain(".floating-window--task-detail .floating-window__resize-handle");
 
     const embeddedRule = getRuleBlocks(css, ".task-detail-content--embedded")
       .find((rule) => rule.includes("height: 100%;"));
     expect(embeddedRule).toBeTruthy();
-    expect(tabletBlock).not.toContain(".task-detail-content--embedded");
+    const floatingBodyRule = getFirstRuleBlock(css, ".floating-window__body");
+    expect(floatingBodyRule).toMatch(/^\s*display:\s*flex/);
+    expect(floatingBodyRule).toMatch(/;\s*min-height:\s*0/);
+    expect(tabletBlock).not.toContain("padding-block: env(safe-area-inset-top, 0px)");
+    expect(loadAllAppCssBaseOnly()).not.toContain("padding-block: env(safe-area-inset-top, 0px)");
   });
 
   it("TaskDetailModal: modal-actions uses safe-area inset bottom padding", () => {
