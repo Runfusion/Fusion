@@ -299,6 +299,37 @@ describe("WorkflowResultsTab", () => {
     expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Code review"), "success");
   });
 
+  it.each([
+    { name: "resolved renamed WIP lane", column: "building", columnFlags: { countsTowardWip: true }, renders: true },
+    { name: "resolved renamed review lane", column: "signoff", columnFlags: { mergeBlocker: true }, renders: true },
+    { name: "resolved hold lane", column: "staging", columnFlags: { hold: true }, renders: false },
+    { name: "missing flags legacy WIP lane", column: "in-progress", columnFlags: undefined, renders: true },
+    { name: "missing flags legacy review lane", column: "in-review", columnFlags: undefined, renders: true },
+    { name: "missing flags legacy hold lane", column: "todo", columnFlags: undefined, renders: false },
+  ])("renders pending pre-merge recovery only for $name", ({ column, columnFlags, renders }) => {
+    const pendingResult: WorkflowStepResult = {
+      workflowStepId: "resume-eligibility",
+      workflowStepName: "Resume eligibility",
+      phase: "pre-merge",
+      status: "pending",
+    };
+
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        task={{ ...baseTask, column, status: null } as Task}
+        columnFlags={columnFlags}
+        settings={mockSettings}
+        results={[pendingResult]}
+        onResumeWorkflowStep={vi.fn()}
+      />,
+    );
+
+    const recovery = screen.queryByTestId("workflow-result-resume-resume-eligibility");
+    if (renders) expect(recovery).toBeInTheDocument();
+    else expect(recovery).not.toBeInTheDocument();
+  });
+
   it("keeps the pending result visible and reports a rejected recovery", async () => {
     const pendingTask = { ...baseTask, column: "in-review", status: null } as Task;
     const pendingResult: WorkflowStepResult = { workflowStepId: "code-review", workflowStepName: "Code review", phase: "pre-merge", status: "pending" };

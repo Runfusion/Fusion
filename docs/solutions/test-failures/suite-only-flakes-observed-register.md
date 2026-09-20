@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **2 active observation records** (entries 2 and 13), both **active first sightings**. Entry 1 closed on 2026-09-12: FN-9131's structural harness connection-budget fix (merged 2026-08-16 as `ae507afc37`) resolved its reproduced timeout, and no sighting has occurred since the fix landed; the record stays in place below for its campaign evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **3 active observation records** (entries 2, 13, and 15), all **active first sightings**. Entry 1 closed on 2026-09-12: FN-9131's structural harness connection-budget fix (merged 2026-08-16 as `ae507afc37`) resolved its reproduced timeout, and no sighting has occurred since the fix landed; the record stays in place below for its campaign evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -237,6 +237,22 @@ This is the same mode already characterized by entry 6 and by entry 7's A02 lane
 
 Quarantine was not available as an alternative. Core PostgreSQL files cannot be quarantined inline — the gate-policy assertion requires `quarantinedCoreTests` to remain empty — and a merge-gate eviction of a transactional-invariant file is the owner-escalated decision described in the policy section below. The file carries only 4 tests, which is thin against the usual first-sighting coverage argument, but they are the atomicity invariant for handoff-to-review and one of just two files in the blocking PG lane; recording preserves that rather than trading it away over a single unreproduced cold-start abort. A **second sighting** follows normal escalation.
 
+
+### 15. Workflow-results preserved-column selector mock ordering
+
+- **Status:** Active first sighting — recorded 2026-09-20, unattributed.
+- **File:** `packages/dashboard/app/components/__tests__/WorkflowResultsTab.test.tsx`
+- **Exact test:** `WorkflowResultsTab > calls onWorkflowReconciled for preserved-column workflow switches`
+- **Owner:** unowned — recorded rather than quarantined because the file retains 126 passing tests and file-level quarantine would discard substantial coverage.
+- **Observed tree/SHA:** `5977d630dbca4981342d6c5fb6dffbc5642b9f45`.
+- **Observed frequency:** once, suite-only. Passes in isolation.
+
+| run | result |
+|---|---|
+| target file | **failed**: expected `selectTaskWorkflow("FN-001", "WF-002", undefined)` but received a null workflow selection |
+| exact test in isolation | **passed** |
+
+The failure occurred while validating FN-9334's unrelated resume-eligibility cases. The test's per-case resolved mock was consumed out of order only in the file run, while the isolated test passed; no timeout, retry, assertion, or product behavior was changed. A second sighting requires normal quarantine escalation.
 
 ### Common shape and investigated result
 

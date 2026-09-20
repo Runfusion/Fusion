@@ -1,5 +1,5 @@
 import "@xyflow/react/dist/style.css";
-import { isCompleteColumnRole, isReviewColumnRole } from "../utils/columnRoles";
+import { isCompleteColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import "./WorkflowResultsTab.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -859,9 +859,8 @@ export function WorkflowResultsTab({
   const canResumePendingStep = (result: WorkflowStepResult): boolean => {
     if (!task || !onResumeWorkflowStep || result.status !== "pending" || result.phase === "post-merge") return false;
     if (task.paused || task.userPaused || task.status === "paused") return false;
-    return columnFlags
-      ? columnFlags.countsTowardWip === true || isReviewColumnRole(columnFlags, task.column)
-      : ["in-progress", "in-review"].includes(task.column);
+    return isWipColumnRole(columnFlags, task.column)
+      || isReviewColumnRole(columnFlags, task.column);
   };
 
   const handleResumeWorkflowStep = async (result: WorkflowStepResult) => {
