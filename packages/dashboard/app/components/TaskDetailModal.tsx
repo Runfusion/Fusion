@@ -10,6 +10,7 @@ import { FloatingWindow } from "./FloatingWindow";
 import { ExternalBlockNotice } from "./TaskCard";
 import { TaskResetDialog } from "./TaskResetDialog";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useModalDismissPreference, useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useColumnLabel } from "../i18n/labels";
 import type { DetailTaskTab } from "../hooks/useModalManager";
@@ -7645,6 +7646,16 @@ export function TaskDetailContent({
 export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
   const viewportMode = useViewportMode();
   useMobileScrollLock(true);
+  const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
+    enabled: viewportMode === "mobile",
+  });
+  const keyboardStyle: React.CSSProperties = keyboardOpen
+    ? ({
+        "--keyboard-overlap": `${keyboardOverlap}px`,
+        "--vv-offset-top": `${viewportOffsetTop}px`,
+        ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+      } as React.CSSProperties)
+    : {};
   const dismissOnOutsidePointerDown = useModalDismissPreference();
   /*
   FNXC:TaskDetailSwipeBack 2026-07-25-00:00:
@@ -7675,7 +7686,17 @@ export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
       /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Keep outside dismissal preference-gated; unconditional pointer-down would regress the default-off contract. */
       closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
-      <div className={`modal modal-lg task-detail-modal${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}>
+      {/*
+      FNXC:TaskDetailChat 2026-09-20-05:42:
+      A focused phone composer can shrink and pan the visual viewport while the layout viewport
+      remains full height. Apply that authoritative visible geometry only to this runtime mobile
+      sheet so Live keeps its flex transcript and composer reachable; the existing modal scroll lock
+      remains the sole iOS lock, and desktop, tablet, and embedded detail hosts stay unchanged.
+      */}
+      <div
+        className={`modal modal-lg task-detail-modal${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}${keyboardOpen ? " task-detail-modal--keyboard-open" : ""}`}
+        {...(keyboardOpen ? { style: keyboardStyle } : {})}
+      >
         <TaskDetailContent {...props} onRequestClose={onClose} />
       </div>
     </FloatingWindow>

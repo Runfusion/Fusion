@@ -777,6 +777,153 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getByRole("heading", { name: "Feed" })).toBeInTheDocument();
   });
 
+  it("fits the mobile Activity Live sheet to focused visual viewport geometry and clears it on close", () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(document.documentElement, "clientHeight");
+    const visualViewport = createMockVisualViewport(390, 844);
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+    Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 844 });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport });
+
+    try {
+      mockRawLogs([]);
+      const rendered = renderModal({ task: makeTask({ id: "FN-9332-empty", column: "in-progress" as any, log: [], steeringComments: [] }) });
+      const sheet = rendered.baseElement.querySelector<HTMLElement>(".task-detail-modal");
+      const textarea = screen.getByRole("textbox", { name: "Message active agent session" });
+      const transcript = screen.getByTestId("task-chat-transcript");
+
+      expect(sheet).not.toHaveClass("task-detail-modal--keyboard-open");
+      expect(sheet?.style.getPropertyValue("--vv-height")).toBe("");
+      expect(screen.getByTestId("task-chat-tab")).toContainElement(transcript);
+      expect(screen.getByTestId("task-chat-tab")).toContainElement(textarea);
+
+      act(() => textarea.focus());
+      Object.defineProperties(visualViewport, {
+        height: { configurable: true, value: 500 },
+        offsetTop: { configurable: true, value: 44 },
+      });
+      act(() => visualViewport.dispatchEvent(new Event("resize")));
+
+      expect(sheet).toHaveClass("task-detail-modal--keyboard-open");
+      expect(sheet).toHaveStyle({ "--vv-height": "500px", "--vv-offset-top": "44px" });
+      expect(sheet?.style.getPropertyValue("--keyboard-overlap")).toBe("300px");
+      expect(sheet?.querySelector(".detail-body--chat .detail-section--chat")).toContainElement(transcript);
+      expect(transcript.parentElement).toContainElement(textarea);
+
+      mockRawLogs([{ timestamp: "2026-09-20T05:42:00.000Z", taskId: "FN-9332-empty", type: "text", agent: "executor", text: "appended output" } as AgentLogEntry]);
+      rendered.rerender(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-9332-empty", column: "in-progress" as any, log: [], steeringComments: [] })}
+          onClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      expect(screen.getByText("appended output")).toBeInTheDocument();
+      expect(rendered.baseElement.querySelector(".task-detail-modal")).toHaveStyle({ "--vv-height": "500px" });
+
+      Object.defineProperties(visualViewport, {
+        height: { configurable: true, value: 844 },
+        offsetTop: { configurable: true, value: 0 },
+      });
+      fireEvent.focusOut(screen.getByRole("textbox", { name: "Message active agent session" }));
+      act(() => visualViewport.dispatchEvent(new Event("resize")));
+
+      const restoredSheet = rendered.baseElement.querySelector<HTMLElement>(".task-detail-modal");
+      expect(restoredSheet).not.toHaveClass("task-detail-modal--keyboard-open");
+      expect(restoredSheet?.style.getPropertyValue("--vv-height")).toBe("");
+      expect(restoredSheet?.style.getPropertyValue("--vv-offset-top")).toBe("");
+      expect(restoredSheet?.style.getPropertyValue("--keyboard-overlap")).toBe("");
+
+      Object.defineProperties(visualViewport, {
+        height: { configurable: true, value: 500 },
+        scale: { configurable: true, value: 1.2 },
+      });
+      const restoredTextarea = screen.getByRole("textbox", { name: "Message active agent session" });
+      act(() => restoredTextarea.focus());
+      act(() => visualViewport.dispatchEvent(new Event("resize")));
+      expect(rendered.baseElement.querySelector(".task-detail-modal")).not.toHaveClass("task-detail-modal--keyboard-open");
+
+      Object.defineProperty(visualViewport, "scale", { configurable: true, value: 1 });
+      act(() => visualViewport.dispatchEvent(new Event("resize")));
+      expect(rendered.baseElement.querySelector(".task-detail-modal")).toHaveClass("task-detail-modal--keyboard-open");
+
+      Object.defineProperties(visualViewport, {
+        height: { configurable: true, value: 844 },
+        offsetTop: { configurable: true, value: 0 },
+      });
+      fireEvent.focusOut(restoredTextarea);
+      act(() => visualViewport.dispatchEvent(new Event("resize")));
+      expect(rendered.baseElement.querySelector(".task-detail-modal")).not.toHaveClass("task-detail-modal--keyboard-open");
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight });
+      if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport);
+      else delete (window as unknown as { visualViewport?: unknown }).visualViewport;
+      if (originalMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", originalMaxTouchPoints);
+      else delete (navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints;
+      if (originalClientHeight) Object.defineProperty(document.documentElement, "clientHeight", originalClientHeight);
+      else delete (document.documentElement as unknown as { clientHeight?: number }).clientHeight;
+    }
+  });
+
+  it("does not apply phone keyboard geometry to desktop, tablet, or embedded task-detail hosts", () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+    const originalClientHeight = Object.getOwnPropertyDescriptor(document.documentElement, "clientHeight");
+    const visualViewport = createMockVisualViewport(1024, 500);
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+    Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 844 });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport });
+
+    try {
+      mockRawLogs([]);
+      const desktop = renderModal();
+      act(() => screen.getByRole("textbox", { name: "Message active agent session" }).focus());
+      act(() => visualViewport.dispatchEvent(new Event("resize")));
+      const desktopSheet = desktop.baseElement.querySelector<HTMLElement>(".task-detail-modal");
+      expect(desktopSheet).not.toHaveClass("task-detail-modal--keyboard-open");
+      expect(desktopSheet?.style.getPropertyValue("--vv-height")).toBe("");
+      desktop.unmount();
+
+      const embedded = render(
+        <TaskDetailContent
+          task={makeTask({ id: "FN-9332-embedded", column: "in-progress" as any, log: [], steeringComments: [] })}
+          embedded
+          onRequestClose={noop}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+      expect(embedded.baseElement.querySelector(".task-detail-modal")).toBeNull();
+      expect(embedded.baseElement.querySelector(".task-detail-content--embedded")).not.toBeNull();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight });
+      if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport);
+      else delete (window as unknown as { visualViewport?: unknown }).visualViewport;
+      if (originalMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", originalMaxTouchPoints);
+      else delete (navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints;
+      if (originalClientHeight) Object.defineProperty(document.documentElement, "clientHeight", originalClientHeight);
+      else delete (document.documentElement as unknown as { clientHeight?: number }).clientHeight;
+    }
+  });
+
   it("keeps Summary as the done-task mobile default after the Activity, Chat, Plan, and Changes tabs", async () => {
     const user = userEvent.setup();
     const originalInnerWidth = window.innerWidth;

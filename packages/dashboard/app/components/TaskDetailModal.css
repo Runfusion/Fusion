@@ -1823,6 +1823,12 @@ FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset a
     resize: none;
   }
 
+  .modal.task-detail-modal--keyboard-open {
+    height: var(--vv-height, 100dvh);
+    max-height: var(--vv-height, 100dvh);
+    transform: translateY(var(--vv-offset-top, 0px));
+    will-change: transform;
+  }
 
   .detail-body--chat {
     display: flex;
