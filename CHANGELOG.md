@@ -2,6 +2,70 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.5
+
+### Highlights
+
+- Board, lists, and task detail now show failed review gates and why they failed
+- Markdown headings and operator notes no longer wedge task planning or block approved merges
+- Breaking: fn research is gone — use the dashboard or agent research tools
+- Dashboard boot survives a stalled extension load after a 120s budget instead of hanging
+- New fn task reconcile <id> recovers review tasks whose landed branches were cleaned up
+
+### Breaking
+
+- The `fn research` terminal command is removed, including its create, list, show, export, cancel, and retry operations. Use the dashboard or supported agent research tools instead.
+
+### New
+
+- `fn task reconcile <id>` reconciles a review task whose already-landed branch was cleaned up, sharing its fencing with the automatic absent-branch self-healing sweep.
+- Assistants can mark chat questions optional, so a blank notes field no longer blocks a reply.
+
+### Performance
+
+- Dashboard and scheduler stay responsive on projects with long task histories.
+- Chat conversation lists stay fast as project chat history grows.
+- Phones and tablets do less idle rendering, and the hidden loading animation pauses instead of running off-screen.
+
+### Fixed
+
+- Failed review gates and their reasons now appear on task cards, lists, and task detail.
+- Markdown headings, quoted task markers, and operator headings no longer wedge planning, and equivalent plan headings no longer block an approved merge.
+- Spec-lock planning failures show their retry hold instead of looking stuck.
+- Stuck pending workflow steps can be recovered from Task Detail by an operator.
+- Required review gates stay blocked when durable evidence rejects their outcome.
+- Stalled review merges recover, and externally landed task work reconciles only after branch content is validated.
+- Worktree preparation failures stay actionable instead of collapsing into a generic step-execution error.
+- Python uv worktree setup explains incompatible or ambiguous project metadata instead of failing opaquely.
+- Built task worktrees holding only Fusion's regenerable build cache are reclaimed.
+- Preserved engine branch collisions retry on a fresh sibling branch without losing foreign history.
+- Stalled continuation pumps no longer stay stuck after an engine pause.
+- Manual feature validation and repair re-runs actually dispatch instead of sitting in progress.
+- Autonomous heartbeat agents can create ordinary tasks without mission lineage.
+- Enabled agent skills show correctly when no project toggle has been saved, and legacy saved skill references are recognized on agent cards.
+- Switching the default credential preserves selected provider accounts, and re-signing in keeps an account's name and metadata.
+- Unsupported reasoning-effort levels degrade one step instead of retry-looping.
+- ACP agents no longer stall when Fusion tool names are MCP-namespaced, across the bundled Claude, Grok, and OMP runtimes.
+- Complete assistant responses are preserved when providers batch text blocks.
+- Generated pull request descriptions are grounded in the task branch and complete the PR template.
+- GitHub issue closure works for archived and deleted tasks via the GitHub CLI, and archived tracking reconciliation stops repeatedly logging failures.
+- Deleted and archived cards stay quiet during background maintenance.
+- Planner activity stays visible when custom workflow lanes load after the board.
+- Task updates return the persisted prompt, so a prompt write read-back verifies.
+- Workflow holds and completed work survive when overlap review or targeted repair is unavailable.
+- Fusion-managed browser sessions are cleaned up after normal exits or bounded idle expiry.
+- Desktop local-startup failures are copyable and actionable.
+- Mobile: chat and task activity stay visible with the keyboard open, the extra composer gap above the keyboard is gone, the footer hides while typing, and blank space below the navigation bar in installed apps is removed.
+- Mobile navigation tabs are evenly spaced for any tab count, with balanced spacing and more room for longer labels.
+- Tablet task windows keep their resize handles inside the viewport for touch gestures.
+- Task reset dialogs render above Board cards and columns.
+- Task creation actions are restored for compatible historical mailbox recommendations.
+
+### Internal
+
+- Restoring an older PostgreSQL dump pair replays the missing migrations in one transaction, with `verify-full` SSL on remote reconciliation connections.
+- Timed-out Pipeline smoke runs no longer leave test work behind.
+
 ## 0.78.0-beta.4
 
 ### Highlights

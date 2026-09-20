@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/todos",
-  "version": "0.1.5-beta.4",
+  "version": "0.1.5-beta.5",
   "type": "module",
   "private": true,
   "description": "Todo Lists plugin package for Fusion",

@@ -1,5 +1,157 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.5
+
+### Minor Changes
+
+- 2d4c910: summary: Assistants can mark chat questions optional so blank notes fields no longer block replies.
+  category: feature
+  dev: Adds the optional schema field, required: false normalization alias, and questionOptionalLabel/questionSelectHintWithOptional i18n keys.
+- 9841c93: summary: Reconcile review tasks whose already-landed branches were cleaned up.
+  category: feature
+  dev: Adds `fn task reconcile <id>`, backed by `SelfHealingManager.reconcileLandedReviewTask`, with liveness and compare-and-set fencing shared with the automatic absent-branch self-healing sweep; records `task:reconcile-absent-branch-landed`/`task:reconcile-absent-branch-unproven` run-audit events.
+- 74ffa19: summary: Remove the fn research terminal command; use the dashboard or supported agent research tools.
+  category: breaking
+  dev: The retired CLI create, list, show, export, cancel, and retry operations are no longer available.
+
+### Patch Changes
+
+- f667f6b: summary: Show enabled agent skills correctly when no project toggle has been saved.
+  category: fix
+- 0cb73fa: summary: Allow autonomous heartbeat agents to create ordinary tasks without mission lineage.
+  category: fix
+  dev: Keeps supplied mission lineage validation while removing the no-task heartbeat hard requirement.
+- 6657633: summary: Stop an await-stalled extension load from hanging dashboard startup indefinitely.
+  category: fix
+  dev: `discoverAndLoadExtensions` now runs under `boundedPhaseTime` with a 120s budget (override via `FUSION_EXTENSION_DISCOVERY_TIMEOUT_MS`); on timeout the existing catch path builds an empty extension runtime and boot continues without extension-provided providers. pi loads extensions with a serial `await factory(api)` loop, so one slow factory stalls every extension behind it. The bound is a timer and therefore only covers an await-stalled phase — it cannot preempt one blocking the event loop synchronously.
+- b76c03c: summary: Prevent ACP agents from stalling when Fusion tool names are MCP-namespaced.
+  category: fix
+  dev: Adds tool-name mapping guidance for tools actually registered on the session's custom-tool bridge. Covers the bundled Claude, Grok, and OMP runtimes, which keep their own vendored ACP adapters, and hedges the namespaced spelling per client convention.
+- e55e8e6: summary: Show failed review gates and their reasons on task cards, lists, and task details.
+  category: fix
+- 62699cf: summary: Prevent operator headings from blocking task planning.
+  category: fix
+  dev: Shares generated Original Description terminators with spec-lock parsing; pre-fix approval fingerprints recompute once and re-request approval when required.
+- 8fceb92: summary: Prevent markdown headings and quoted task markers from wedging planning.
+  category: fix
+  dev: Declares marker encoding in-band, anchors hygiene to the known operator body, and keeps prompt-only readers deterministic.
+- 2b79996: summary: Spec-lock planning failures now show their retry hold instead of appearing stuck.
+  category: fix
+  dev: Adds tasks.planning_failure through migration 0072 for validator-free planning retry state.
+- 434854e: summary: Improve dashboard and scheduler responsiveness for projects with long task histories.
+  category: performance
+  dev: Coalesces workflow IR reads, adds observed WorkflowDefinitionReadTally accounting, prefetchWorkflowIrs, and optional list IR cache/tally options.
+- 611ba95: summary: Keep chat conversation lists fast as project chat history grows.
+  category: performance
+  dev: getLastMessageForSessions and searchChatSessionsByMessageContent use per-session CROSS JOIN LATERAL LIMIT 1 with left(content, 101), ChatSessionLastMessage, and migration 0073 / SCHEMA_BASELINE_VERSION 0073.
+- 28e0880: summary: Reclaim built task worktrees containing only Fusion's regenerable build cache.
+  category: fix
+  dev: Defensive cleanup probes top-level `.fusion` and accepts only its `cache` child.
+- 6a4b3e1: summary: Preserve complete assistant responses when providers batch text blocks.
+  category: fix
+  dev: Adds createAssistantStreamCapture, identity-bound block-scoped normalizer repair, and chat turn-slice reconciliation.
+- 875419c: summary: Make desktop local-startup failures copyable and actionable.
+  category: fix
+  dev: Adds bounded startup diagnostics and best-effort local trace logging.
+- 770e411: summary: Preserve selected provider accounts when switching the default credential.
+  category: fix
+  dev: resolveRefreshableCredentialApiKey uses identity-fenced setInstance writes, mtime revalidation, and guarded CLI hydration.
+- bf2041e: summary: Re-signing in to a credential account now keeps its name and metadata.
+  category: fix
+  dev: Uses mergeStoredCredentialPreservingMetadata at the three provider-auth.ts login write sites.
+- 2e1b9bb: summary: Keep required review gates blocked when durable evidence rejects their outcome.
+  category: fix
+  dev: Routes required gate outcomes from persisted evidence and retries earlier blocking review gates in place.
+- e3409ea: summary: Make Python uv worktree setup explain incompatible or ambiguous project metadata.
+  category: fix
+  dev: Adds analyzeUvDependencySelection, configuration-required/environment-incompatible outcomes, and safe planner closure rules.
+- 89aa132: summary: Stop archived GitHub tracking reconciliation from repeatedly logging failures.
+  category: fix
+  dev: Adds a shared task-log refusal classifier, removes deleted-pass task-log writes, and deduplicates first-occurrence diagnostics.
+- 511e40f: summary: Keep planner activity visible when custom workflow lanes load after the board.
+  category: fix
+  dev: Refresh the SSE planner-activity resolver from the current workflow metadata.
+- 69964aa: summary: Prevent stalled continuation pumps from remaining stuck after an engine pause.
+  category: fix
+  dev: Releases the leaked pause-path guard and adds a generation-fenced, progress-based continuation-drain watchdog; sibling guards needed no fix.
+- 4d422cd: summary: Clean up Fusion-managed browser sessions after normal exits or bounded idle expiry.
+  category: fix
+  dev: Adds opaque session leases and finite idle deadlines to the packaged agent-browser launcher.
+- 547ad33: summary: Keep deleted and archived cards quiet during background maintenance.
+  category: fix
+  dev: Contains dashboard lifecycle listeners, scheduler wake listeners, GitHub reconciliation diagnostics, and missing-dependency repair logs.
+- 6014be3: summary: Stop timed-out Pipeline smoke runs from leaving test work behind.
+  category: fix
+  dev: Uses bounded process-group cancellation for the Pipeline smoke pnpm-to-Vitest launch.
+- a838ef0: summary: Keep tablet task windows responsive to touch resize gestures.
+  category: fix
+  dev: Reserves a shared geometry inset for tablet touch viewports so FloatingWindow's corner/edge resize handles stay inside the visible viewport at tablet touch widths, and memoizes the resolved minimum window size so callers passing an inline `minSize` object no longer invalidate geometry-dependent effects on every render.
+- 706c155: summary: Recover stalled review merges and reconcile externally landed task work safely.
+  category: fix
+  dev: Recognizes completed status-none merge handoffs and validates present branch content before reconciliation.
+- 9644633: summary: Ground generated pull request descriptions in the task branch and complete PR templates.
+  category: fix
+  dev: PR metadata now validates and compares the persisted task head with its base for every generation.
+- 7ace075: summary: Let operators recover stuck pending workflow steps from Task Detail.
+  category: fix
+  dev: Adds a project-scoped dashboard recovery route with server-derived operator attribution.
+- 0d8c160: summary: Remove the extra mobile Chat gap above the keyboard.
+  category: fix
+  dev: Removes the keyboard-only composer clearance while preserving viewport handling.
+- f39865f: summary: Keep task reset dialogs above Board cards and columns.
+  category: fix
+- 52c9f5f: summary: Recognize legacy saved skill references on agent cards.
+  category: fix
+- 0c29bee: summary: Remove extra blank space below the mobile navigation bar in installed apps.
+  category: fix
+  dev: The fixed nav and executor footer now reserve only safe-area, gesture, and viewport compensation space.
+- f6f2395: summary: Recover safely from preserved engine branch collisions with a fresh retry branch.
+  category: fix
+  dev: Preserves unregistered foreign or mixed engine branch history while retrying on a bounded sibling.
+- 4b39d83: summary: Restore task creation actions for compatible historical mailbox recommendations.
+  category: fix
+- 9186203: summary: Keep mobile Direct Chat composers visible during iOS keyboard layout changes.
+  category: fix
+  dev: Chat now follows the shared focused keyboard state when iOS reports zero raw viewport overlap.
+- be40e99: summary: Keep mobile navigation shortcuts evenly spaced for every configured tab count.
+  category: fix
+- 255c75c: summary: Keep mobile task activity chat visible while the keyboard is open.
+  category: fix
+  dev: Task Detail now follows focused visual viewport height and offset only for its mobile sheet.
+- 7945bc5: summary: Degrade unsupported reasoning-effort levels one step instead of retry-looping.
+  category: fix
+  dev: Adds pure effort-rejection detector plus same-model single-step degradation in promptWithFallback with regression coverage.
+- e66a2f1: summary: Fix GitHub issue closure for archived and deleted tasks when using the GitHub CLI.
+  category: fix
+  dev: Translate not_planned to the CLI's not planned argument in both CLI paths while preserving REST state_reason.
+- 02742af: summary: Replay missing PostgreSQL migrations after restoring an older dump pair.
+  category: fix
+  dev: After FN-9255 bookkeeping dumps restore, legacy stems rewind public.fusion_schema_migrations from the earliest missing table or ALTER column and replay inside one transaction; a thrown reconcile uses dump-group rollback. Remote reconciliation connections use ssl verify-full.
+- 8b7373f: summary: Run manual feature validation and repair re-runs instead of leaving them stuck in progress.
+  category: fix
+  dev: Dispatch admitted runs through their project executor, recover transient setup failures, and fence result writes and remediation admission against stale validators.
+- 75d9d10: summary: Hide the mobile footer while typing and remove reserved chat space as the keyboard opens.
+  category: fix
+- 1a9765c: summary: Reduce idle dashboard rendering on phones and tablets and pause the hidden loading animation.
+  category: performance
+  dev: Keep active-card shadows static on touch devices and under reduced motion; retain visible loading feedback.
+- a81e732: summary: Balance spacing above and below mobile navigation tabs while keeping unread badges aligned.
+  category: fix
+- 056f552: summary: Space mobile navigation icon-and-label groups evenly, giving longer labels more room.
+  category: fix
+- f10cd4d: summary: Keep worktree preparation failures actionable instead of reporting generic step-execution failures.
+  category: fix
+  dev: Preserve typed base-refresh refusals through executor cleanup and foreach routing; recheck pause and liveness on retry.
+- 2377049: summary: Prevent equivalent plan headings from blocking approved task merges.
+  category: fix
+  dev: Spec-lock canonicalization now combines distinct heading aliases while still rejecting repeated exact H2s.
+- 91dc203: summary: Return the persisted prompt in task updates so prompt write read-back verifies.
+  category: fix
+  dev: `updateTask` assigns the prompt onto the returned task only after PROMPT.md reaches disk; prompt-derived declaredSymbols persist only after that write and retry if the follow-up row write fails so file and symbols cannot diverge; if restore of the previous PROMPT.md also fails, one forward row write of the new symbols is attempted so later reads cannot pair the new file with stale symbols. Current-plan evidence is captured afterward and a capture failure does not reject the durable prompt (reconciliation repairs it). The PG `tasks` row has no `prompt` column. Regression tests cover read-back, write-failure isolation, symbol isolation, deferred evidence repair, symbols-persist retry, and restore-fail forward repair.
+- 627e6c5: summary: Preserve workflow holds and completed work when overlap review or targeted repair is unavailable.
+  category: fix
+  dev: Settle admission leases and carry hold reasons across cloned template contexts instead of leaving running continuations.
+
 ## 0.78.0-beta.4
 
 ### Minor Changes
