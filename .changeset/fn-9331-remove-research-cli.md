@@ -1,5 +1,5 @@
 ---
-"@runfusion/fusion": major
+"@runfusion/fusion": minor
 ---
 
 summary: Remove the fn research terminal command; use the dashboard or supported agent research tools.
