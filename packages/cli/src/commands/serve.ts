@@ -679,6 +679,15 @@ export async function runServe(
     console.warn(`[plugins] Failed to auto-install bundled Cursor CLI runtime plugin: ${err instanceof Error ? err.message : err}`);
   }
 
+  /* FNXC:AntigravityProvider 2026-09-20-18:32: Register the agy runtime before serve-owned agent/chat sessions resolve their provider. */
+  try {
+    const installStatus = await ensureBundledPluginInstalled(pluginStore, pluginLoader, "fusion-plugin-antigravity-runtime");
+    if (installStatus === "installed") console.log("[plugins] Installed bundled Antigravity runtime plugin");
+    else if (installStatus === "missing-bundle") console.warn("[plugins] Bundled Antigravity runtime plugin was not found in this build");
+  } catch (err) {
+    console.warn(`[plugins] Failed to auto-install bundled Antigravity runtime plugin: ${err instanceof Error ? err.message : err}`);
+  }
+
   // Lazy-install hook for bundled runtime plugins (Hermes/OpenClaw/Paperclip/Grok).
   const ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
     if (!isBundledPluginId(pluginId)) {

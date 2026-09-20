@@ -1,0 +1,6 @@
+{
+  "id": "fusion-plugin-antigravity-runtime",
+  "name": "Google Antigravity Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Provides Google Antigravity agy CLI streaming runtime integration"
+}

@@ -3,6 +3,7 @@ export const RUNTIME_PLUGIN_IDS = [
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
+  "fusion-plugin-antigravity-runtime",
   "fusion-plugin-grok-runtime",
   "fusion-plugin-claude-runtime",
   // FNXC:OmpAcp 2026-07-11-23:35: Oh My Pi ACP runtime (omp acp) — staged like acp/droid for explicit runtime use.

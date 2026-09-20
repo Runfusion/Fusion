@@ -105,6 +105,8 @@ export const DASHBOARD_RUNTIME_PLUGIN_PACKAGES = [
   "plugins/fusion-plugin-openclaw-runtime",
   "plugins/fusion-plugin-paperclip-runtime",
   "plugins/fusion-plugin-cursor-runtime",
+  // FNXC:AntigravityProvider 2026-09-20-18:32: The dashboard statically imports this probe provider, so desktop must stage its compiled runtime before Local mode starts.
+  "plugins/fusion-plugin-antigravity-runtime",
   "plugins/fusion-plugin-grok-runtime",
   "plugins/fusion-plugin-claude-runtime",
   "plugins/fusion-plugin-omp-runtime",

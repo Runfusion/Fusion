@@ -702,6 +702,14 @@ export interface GlobalSettings {
    */
   grokCliBinaryPath?: string;
   /**
+   * FNXC:AntigravityProvider 2026-09-20-18:32:
+   * Enables operator-installed Google Antigravity `agy` models only after the
+   * Authentication probe has confirmed a supported non-ACP CLI contract.
+   */
+  useAntigravityCli?: boolean;
+  /** Optional machine-local `agy` override; blank values retain PATH discovery. */
+  antigravityCliBinaryPath?: string;
+  /**
    * FNXC:OmpAcp 2026-07-13-22:50:
    * When true, enable Oh My Pi (omp) CLI model-provider support (provider ID: `omp-cli`)
    * through an operator-local `omp` install driven over ACP (`omp acp`).

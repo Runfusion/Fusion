@@ -615,6 +615,12 @@ Custom Providers live in **Settings → Authentication → Custom Providers**, i
 
 A saved custom-provider configuration counts as AI setup for startup onboarding and the readiness warning, even when no built-in provider is authenticated. This readiness signal contains only whether persisted entries exist; custom providers are not duplicated as built-in authentication cards. An empty or missing custom-provider list does not suppress the normal missing-provider setup prompt.
 
+### Google Antigravity CLI
+
+In **Settings → Authentication**, use the **Google Antigravity — via agy CLI** card to test an operator-installed `agy` executable, optionally save its machine-local path, and enable its models. The same card appears during onboarding. A ready binary enables model discovery; vendor login remains owned by Antigravity and Fusion never reads or stores those credentials. Antigravity rows appear only while enabled, and an unavailable binary or failed discovery leaves existing provider rows unchanged.
+
+Antigravity sessions use the documented non-ACP streamed transport and temporarily add one namespaced Fusion MCP entry through `agy mcp`. Fusion serializes that operation, snapshots its prior state, and restores it on completion, cancellation, failure, or next-start recovery. If ownership or restoration cannot be proven, Fusion withholds tools and reports remediation without changing unrelated Antigravity MCP entries. See [Google Antigravity CLI contract](antigravity-cli-contract.md) for supported commands, recovery, and logging boundaries.
+
 ### Refresh built-in provider models
 
 The Authentication section also includes one **Refresh Models** action for built-in providers. It is available in both the modal and embedded Settings presentations, including narrow layouts, and performs a deliberate bounded refresh rather than background polling. When the refresh completes, Fusion updates the shared model cache so already-open model pickers show the new built-in catalog without a restart. A timeout, failure, or deferred refresh keeps the last available catalog visible and reports that truthful outcome so the operator can try again. This is separate from the saved custom-provider row-level **Refresh Models** action below, which queries that provider's endpoint.

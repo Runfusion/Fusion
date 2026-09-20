@@ -37,6 +37,7 @@ describe("desktop Electron main bundling", () => {
     expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-hermes-runtime");
     expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-grok-runtime");
     expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-cursor-runtime");
+    expect(DASHBOARD_RUNTIME_PLUGIN_PACKAGES).toContain("plugins/fusion-plugin-antigravity-runtime");
 
     const workspaceTools = await readDesktopFile("scripts/workspace-tools.ts");
     expect(workspaceTools).toContain("buildDashboardRuntimePlugins");

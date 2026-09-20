@@ -150,6 +150,11 @@ export interface CursorCliStatus {
   ready: boolean;
 }
 
+/** FNXC:AntigravityProvider 2026-09-20-18:32: Authentication and onboarding share the bounded agy status payload. */
+export interface AntigravityCliStatus extends CursorCliStatus {
+  binary: CursorCliStatus["binary"] & { authenticated?: boolean };
+}
+
 export interface GrokCliStatus {
   binary: {
     available: boolean;
@@ -263,6 +268,10 @@ export function fetchDroidCliStatus(): Promise<DroidCliStatus> {
 
 export function fetchCursorCliStatus(): Promise<CursorCliStatus> {
   return api<CursorCliStatus>("/providers/cursor-cli/status");
+}
+
+export function fetchAntigravityCliStatus(): Promise<AntigravityCliStatus> {
+  return api<AntigravityCliStatus>("/providers/antigravity-cli/status");
 }
 
 export function fetchGrokCliStatus(): Promise<GrokCliStatus> {
@@ -550,6 +559,24 @@ export function setCursorCliBinaryPath(
   binaryPath: string | null,
 ): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
   return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/cursor-cli", {
+    method: "POST",
+    body: JSON.stringify({ binaryPath }),
+  });
+}
+
+export function setAntigravityCliEnabled(
+  enabled: boolean,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/antigravity-cli", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function setAntigravityCliBinaryPath(
+  binaryPath: string | null,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/antigravity-cli", {
     method: "POST",
     body: JSON.stringify({ binaryPath }),
   });

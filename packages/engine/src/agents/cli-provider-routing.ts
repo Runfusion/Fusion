@@ -48,6 +48,10 @@ export function buildMissingCursorRuntimeError(): Error {
   return unavailable("Cursor CLI", "Install and enable the Cursor runtime plugin (fusion-plugin-cursor-runtime), install `cursor-agent`, and authenticate with `cursor-agent login`.");
 }
 
+export function buildMissingAntigravityRuntimeError(): Error {
+  return unavailable("Google Antigravity CLI", "Install and enable the Antigravity runtime plugin (fusion-plugin-antigravity-runtime), install `agy`, and complete its vendor login flow.");
+}
+
 /*
 FNXC:CliRuntimeRouting 2026-08-15-13:51:
 Picker rows are selectable execution contracts. The census keeps every catalog
@@ -71,6 +75,8 @@ export const CLI_PROVIDER_ROUTING_CENSUS: readonly CliProviderRouting[] = [
   { providerId: "hermes", classification: "runtime-routed", runtimeId: "hermes", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "drop-with-warning", missingRuntimeError: buildMissingHermesRuntimeError, rationale: "Fallback-only Hermes cannot be resolved by a healthy primary pi runtime." },
   { providerId: "claude-cli", classification: "runtime-routed", runtimeId: "claude", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "drop-with-warning", missingRuntimeError: buildMissingClaudeRuntimeError, rationale: "Fallback-only Claude CLI cannot be resolved by a healthy primary pi runtime." },
   { providerId: "cursor-cli", classification: "runtime-routed", runtimeId: "cursor", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "defer-cross-runtime", missingRuntimeError: buildMissingCursorRuntimeError, rationale: "Cursor fallback is withheld from a healthy foreign runtime and armed for a single prompt-time cross-runtime swap." },
+  // FNXC:AntigravityProvider 2026-09-20-18:32: Agy has no proven safe cross-runtime context transfer, so fallback-only selection must retain the healthy primary runtime.
+  { providerId: "antigravity-cli", classification: "runtime-routed", runtimeId: "antigravity", autoDerive: "fail-fast", guardNotApplicable: "pinned-pi-fallback", onExplicitHint: "assert-available", fallbackPolicy: "drop-with-warning", missingRuntimeError: buildMissingAntigravityRuntimeError, rationale: "Non-ACP agy fallback is dropped rather than silently replacing the active primary." },
 ] as const;
 
 export function getCliProviderRouting(providerId: string | undefined): CliProviderRouting | undefined {

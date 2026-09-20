@@ -6,6 +6,7 @@ import type { ToastType } from "../../../hooks/useToast";
 import { useTranslation } from "react-i18next";
 import { ClaudeCliProviderCard } from "../../ClaudeCliProviderCard";
 import { CursorCliProviderCard } from "../../CursorCliProviderCard";
+import { AntigravityCliProviderCard } from "../../AntigravityCliProviderCard";
 import { GrokCliProviderCard } from "../../GrokCliProviderCard";
 import { OmpCliProviderCard } from "../../OmpCliProviderCard";
 import { LlamaCppProviderCard } from "../../LlamaCppProviderCard";
@@ -109,7 +110,7 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
         ? authProviders.filter((p) => p.id !== "anthropic")
         : authProviders;
     // FNXC:OmpAcp 2026-07-13-22:50: include omp-cli among supported CLI auth cards.
-    const isSupportedCliProvider = (provider: AuthProvider) => provider.id === "claude-cli" || provider.id === "cursor-cli" || provider.id === "grok-cli" || provider.id === "omp-cli" || provider.id === "llama-cpp";
+    const isSupportedCliProvider = (provider: AuthProvider) => provider.id === "claude-cli" || provider.id === "cursor-cli" || provider.id === "antigravity-cli" || provider.id === "grok-cli" || provider.id === "omp-cli" || provider.id === "llama-cpp";
     /*
     FNXC:ProviderAuth 2026-07-02-12:20:
     Authentication ordering must sort supported CLI and non-CLI provider cards in one list so Cursor CLI or llama.cpp cannot split Claude CLI from Anthropic subscription/API-key entries.
@@ -157,6 +158,9 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
         }
         if (provider.id === "cursor-cli") {
             return (<CursorCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
+        }
+        if (provider.id === "antigravity-cli") {
+            return (<AntigravityCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
         }
         if (provider.id === "grok-cli") {
             return (<GrokCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);

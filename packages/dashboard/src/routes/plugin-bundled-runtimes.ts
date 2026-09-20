@@ -46,6 +46,7 @@ const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
+  "fusion-plugin-antigravity-runtime",
   "fusion-plugin-grok-runtime",
   "fusion-plugin-claude-runtime",
   "fusion-plugin-omp-runtime",

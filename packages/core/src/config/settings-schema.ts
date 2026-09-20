@@ -299,6 +299,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Grok CLI binary overrides are global operator settings because executable locations are machine-local. Blank/undefined preserves PATH auto-detection through grok.
   */
   grokCliBinaryPath: undefined,
+  // FNXC:AntigravityProvider 2026-09-20-18:32: Default disabled and preserve PATH auto-detection until an operator enables a verified agy binary.
+  useAntigravityCli: undefined,
+  antigravityCliBinaryPath: undefined,
   /*
   FNXC:OmpAcp 2026-07-13-22:50:
   Oh My Pi (omp) CLI enable + binary override are global operator settings (machine-local), mirroring Grok/Cursor.

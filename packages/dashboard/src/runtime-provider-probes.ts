@@ -29,6 +29,11 @@ import {
   probeCursorBinary,
   type CursorBinaryStatus,
 } from "@fusion-plugin-examples/cursor-runtime";
+import {
+  discoverAntigravityProviderModels,
+  probeAntigravityBinary,
+  type AntigravityBinaryStatus,
+} from "@fusion-plugin-examples/antigravity-runtime";
 
 import {
   discoverGrokProviderModels,
@@ -77,6 +82,7 @@ export type {
   MintedApiKey,
   OpenClawBinaryStatus,
   CursorBinaryStatus,
+  AntigravityBinaryStatus,
   GrokBinaryStatus,
   ClaudeBinaryStatus,
   OmpBinaryStatus,
@@ -89,6 +95,15 @@ export { mintAgentApiKeyViaCli };
 
 export async function probeCursorCliProvider(opts?: { binaryPath?: string }): Promise<CursorBinaryStatus> {
   return probeCursorBinary(opts);
+}
+
+/** FNXC:AntigravityProvider 2026-09-20-18:32: Dashboard probes share the runtime binary override, preserving a single readiness authority. */
+export async function probeAntigravityCliProvider(opts?: { binaryPath?: string }): Promise<AntigravityBinaryStatus> {
+  return probeAntigravityBinary(opts);
+}
+
+export async function discoverAntigravityCliModels(opts?: { binaryPath?: string; timeoutMs?: number }) {
+  return discoverAntigravityProviderModels(opts);
 }
 
 export async function probeGrokCliProvider(opts?: { binaryPath?: string }): Promise<GrokBinaryStatus> {

@@ -1,0 +1,5 @@
+{"type":"assistant.delta","text":"Hello"}
+{"type":"thinking.delta","text":"Checking"}
+{"type":"tool.call.start","id":"call-1","name":"fn_task_list","arguments":{"limit":1}}
+{"type":"tool.call.result","id":"call-1","name":"fn_task_list","result":"[]"}
+{"type":"result","session_id":"fixture-session","text":"Hello","is_error":false}

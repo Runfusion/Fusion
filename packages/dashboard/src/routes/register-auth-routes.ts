@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { GIT_INSTALL_URL, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
 import { probeClaudeCli } from "../claude-cli-probe.js";
 import { probeDroidCli } from "../droid-cli-probe.js";
-import { probeCursorCliProvider, probeGrokCliProvider, probeOmpCliProvider } from "../runtime-provider-probes.js";
+import { probeAntigravityCliProvider, probeCursorCliProvider, probeGrokCliProvider, probeOmpCliProvider } from "../runtime-provider-probes.js";
 import { probeLlamaCpp } from "../llama-cpp-probe.js";
 import { ApiError, badRequest, conflict } from "../api-error.js";
 import { clearUsageCache } from "../usage.js";
@@ -68,6 +68,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     "pi-claude-cli",
     "droid-cli",
     "cursor-cli",
+    "antigravity-cli",
     "grok-cli",
     "omp-cli",
     "llama-cpp",
@@ -98,6 +99,25 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
   async function probeCursorCliWithStoredBinary() {
     return probeCursorCliProvider({ binaryPath: await readCursorCliBinaryPath() });
+  }
+
+  /*
+  FNXC:AntigravityProvider 2026-09-20-18:32:
+  Auth status, enablement, and discovery must resolve the same trimmed agy
+  override so a configured executable cannot silently diverge from runtime use.
+  */
+  function normalizeAntigravityCliBinaryPath(value: unknown): string | undefined {
+    return typeof value === "string" ? value.trim() || undefined : undefined;
+  }
+
+  async function readAntigravityCliBinaryPath(): Promise<string | undefined> {
+    if (!store) return undefined;
+    const globalSettings = await store.getGlobalSettingsStore().getSettings();
+    return normalizeAntigravityCliBinaryPath((globalSettings as Record<string, unknown>).antigravityCliBinaryPath);
+  }
+
+  async function probeAntigravityCliWithStoredBinary() {
+    return probeAntigravityCliProvider({ binaryPath: await readAntigravityCliBinaryPath() });
   }
 
   /*
@@ -892,6 +912,28 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       /*
+      FNXC:AntigravityProvider 2026-09-20-18:32:
+      Antigravity owns its vendor login. Fusion reports it as ready only when
+      the operator has enabled a supported local agy binary.
+      */
+      if (store) {
+        let antigravityEnabled = false;
+        try {
+          const globalSettings = await store.getGlobalSettingsStore().getSettings();
+          antigravityEnabled = (globalSettings as Record<string, unknown>).useAntigravityCli === true;
+        } catch {
+          // best effort
+        }
+        const antigravityBinary = await probeAntigravityCliWithStoredBinary();
+        providers.push({
+          id: "antigravity-cli",
+          name: "Google Antigravity — via agy CLI",
+          authenticated: antigravityEnabled && antigravityBinary.available,
+          type: "cli" as const,
+        });
+      }
+
+      /*
       FNXC:GrokCli 2026-07-09-00:00:
       FN-7716: inject the synthetic "Grok — via Grok CLI" provider, mirroring
       the cursor-cli injection above EXACTLY — `authenticated` derives from
@@ -1398,6 +1440,65 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   `authenticated`/`reason` fields on the status route rather than blocking
   enable, since an operator may enable routing before setting GROK_API_KEY.
   */
+  /*
+  FNXC:AntigravityProvider 2026-09-20-18:32:
+  Enabling must prove both the supported agy binary and vendor-owned login;
+  configuration is global because executable paths are machine-local.
+  */
+  router.post("/auth/antigravity-cli", async (req, res) => {
+    try {
+      if (!store) throw new ApiError(500, "Settings store unavailable");
+      const requestedEnabled = req.body?.enabled;
+      const hasEnabledPatch = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled");
+      const requestedBinaryPath = req.body?.binaryPath;
+      const hasBinaryPathPatch = Object.prototype.hasOwnProperty.call(req.body ?? {}, "binaryPath");
+      if (!hasEnabledPatch && !hasBinaryPathPatch) throw badRequest("enabled or binaryPath is required");
+      if (hasEnabledPatch && typeof requestedEnabled !== "boolean") throw badRequest("enabled must be a boolean");
+      if (hasBinaryPathPatch && requestedBinaryPath !== null && typeof requestedBinaryPath !== "string") throw badRequest("binaryPath must be a string or null");
+
+      const currentSettings = await store.getGlobalSettingsStore().getSettings();
+      const enabled = hasEnabledPatch ? requestedEnabled : (currentSettings as Record<string, unknown>).useAntigravityCli === true;
+      const currentBinaryPath = normalizeAntigravityCliBinaryPath((currentSettings as Record<string, unknown>).antigravityCliBinaryPath);
+      const nextBinaryPath = hasBinaryPathPatch ? normalizeAntigravityCliBinaryPath(requestedBinaryPath) : currentBinaryPath;
+      if (hasBinaryPathPatch && nextBinaryPath) {
+        const binary = await probeAntigravityCliProvider({ binaryPath: nextBinaryPath });
+        if (!binary.available || !binary.usingConfiguredBinaryPath) {
+          throw new ApiError(400, `Cannot save Antigravity CLI binary path: ${binary.reason ?? "configured binary not available"}`);
+        }
+      }
+      if (enabled) {
+        const binary = await probeAntigravityCliProvider({ binaryPath: nextBinaryPath });
+        if (!binary.available) {
+          throw new ApiError(400, `Cannot enable Antigravity CLI routing: ${binary.reason ?? "agy binary not available"}`);
+        }
+      }
+      const patch: Record<string, unknown> = {};
+      if (hasEnabledPatch) patch.useAntigravityCli = enabled;
+      if (hasBinaryPathPatch) patch.antigravityCliBinaryPath = nextBinaryPath ?? null;
+      const settings = await store.updateGlobalSettings(patch);
+      invalidateAllGlobalSettingsCaches();
+      res.json({ enabled: (settings as Record<string, unknown>).useAntigravityCli === true, binaryPath: normalizeAntigravityCliBinaryPath((settings as Record<string, unknown>).antigravityCliBinaryPath), restartRequired: false });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/providers/antigravity-cli/status", async (_req, res) => {
+    try {
+      const binaryPath = await readAntigravityCliBinaryPath();
+      const binary = await probeAntigravityCliProvider({ binaryPath });
+      let enabled = false;
+      if (store) {
+        try { enabled = (await store.getGlobalSettingsStore().getSettings() as Record<string, unknown>).useAntigravityCli === true; } catch { /* best effort */ }
+      }
+      res.json({ binary, enabled, binaryPath, extension: null, ready: enabled && binary.available });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
   router.post("/auth/grok-cli", async (req, res) => {
     try {
       if (!store) {

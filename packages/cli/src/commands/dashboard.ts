@@ -1636,6 +1636,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       );
     }
 
+    /* FNXC:AntigravityProvider 2026-09-20-18:32: Bootstrap the bundled agy runtime before dashboard chat or automated sessions resolve antigravity-cli. */
+    try {
+      const installStatus = await ensureBundledPluginInstalled(pluginStore, pluginLoader, "fusion-plugin-antigravity-runtime");
+      if (installStatus === "installed") logSink.log("Installed bundled Antigravity runtime plugin", "plugins");
+      else if (installStatus === "missing-bundle") logSink.log("Bundled Antigravity runtime plugin was not found in this build", "plugins");
+    } catch (err) {
+      logSink.log(`Failed to auto-install bundled Antigravity runtime plugin: ${err instanceof Error ? err.message : err}`, "plugins");
+    }
+
     try {
       const { loaded, errors } = await pluginLoader.loadAllPlugins();
       logSink.log(`Loaded ${loaded} plugins (${errors} errors)`, "plugins");

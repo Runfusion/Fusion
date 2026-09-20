@@ -6,6 +6,7 @@ import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
 import { getGrokPickerModels, GROK_PICKER_PROVIDER_ID } from "../grok-model-cache.js";
+import { getAntigravityPickerModels, ANTIGRAVITY_PICKER_PROVIDER_ID } from "../antigravity-model-cache.js";
 import { getClaudePickerModels, CLAUDE_PICKER_PROVIDER_ID } from "../claude-model-cache.js";
 import { getOmpPickerModels, OMP_PICKER_PROVIDER_ID } from "../omp-model-cache.js";
 import { getHermesPickerModels, HERMES_PICKER_PROVIDER_ID } from "../hermes-model-cache.js";
@@ -288,6 +289,8 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
     let cursorCliBinaryPath: string | undefined;
     let useGrokCli = false;
     let grokCliBinaryPath: string | undefined;
+    let useAntigravityCli = false;
+    let antigravityCliBinaryPath: string | undefined;
     let useOmpCli = false;
     let ompCliBinaryPath: string | undefined;
     let resolvedPlanningProvider: string | undefined;
@@ -320,6 +323,9 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         cursorCliBinaryPath =
           typeof rawCursorCliBinaryPath === "string" ? rawCursorCliBinaryPath.trim() || undefined : undefined;
         useGrokCli = (globalSettings as Record<string, unknown>).useGrokCli === true;
+        useAntigravityCli = (globalSettings as Record<string, unknown>).useAntigravityCli === true;
+        const rawAntigravityCliBinaryPath = (globalSettings as Record<string, unknown>).antigravityCliBinaryPath;
+        antigravityCliBinaryPath = typeof rawAntigravityCliBinaryPath === "string" ? rawAntigravityCliBinaryPath.trim() || undefined : undefined;
         /*
         FNXC:GrokCli 2026-07-08-00:20:
         FN-7705: mirror the cursorCliBinaryPath override handling above so a
@@ -569,6 +575,15 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
 
+      if (useAntigravityCli) {
+        try {
+          for (const model of await getAntigravityPickerModels({ binaryPath: antigravityCliBinaryPath })) {
+            const key = `${model.provider}/${model.id}`;
+            if (!seenModelKeys.has(key)) { seenModelKeys.add(key); models.push(model); }
+          }
+        } catch { /* Antigravity discovery failure must preserve every other provider row. */ }
+      }
+
       /*
       FNXC:OmpAcp 2026-07-13-22:50:
       Surface omp models under omp-cli when useOmpCli is on (additive; never displace existing rows).
@@ -623,6 +638,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       // FNXC:GrokCli 2026-07-08-00:05 (FN-7705): allow-list "grok-cli" through
       // the final filter whenever the toggle is on, mirroring cursor-cli above.
       if (useGrokCli) configuredProviders.add(GROK_PICKER_PROVIDER_ID);
+      if (useAntigravityCli) configuredProviders.add(ANTIGRAVITY_PICKER_PROVIDER_ID);
       // FNXC:OmpAcp 2026-07-13-22:50: allow-list omp-cli when toggle is on.
       if (useOmpCli) configuredProviders.add(OMP_PICKER_PROVIDER_ID);
       // FNXC:ModelCatalog 2026-07-07-09:05 (FN-7636): only allow-list "hermes"

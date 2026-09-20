@@ -81,7 +81,7 @@ import { getPackageManagerAgentDir } from "./auth-paths.js";
 import { createProjectScopedPackageManagerFactory } from "./skills-package-manager.js";
 import { resolveProject } from "../project-context.js";
 import { startMigrationHoldingServer } from "./migration-holding-server.js";
-import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled } from "../plugins/bundled-plugin-install.js";
+import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
@@ -589,6 +589,19 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     }
   } catch (err) {
     console.warn(`[plugins] Failed to auto-install bundled Cursor CLI runtime plugin: ${err instanceof Error ? err.message : err}`);
+  }
+
+  /*
+   * FNXC:AntigravityProvider 2026-09-20-18:32:
+   * The provider toggle only persists operator settings; register the bundled
+   * non-ACP runtime before any daemon-owned session can resolve antigravity-cli.
+   */
+  try {
+    const installStatus = await ensureBundledPluginInstalled(pluginStore, pluginLoader, "fusion-plugin-antigravity-runtime");
+    if (installStatus === "installed") console.log("[plugins] Installed bundled Antigravity runtime plugin");
+    else if (installStatus === "missing-bundle") console.warn("[plugins] Bundled Antigravity runtime plugin was not found in this build");
+  } catch (err) {
+    console.warn(`[plugins] Failed to auto-install bundled Antigravity runtime plugin: ${err instanceof Error ? err.message : err}`);
   }
 
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
