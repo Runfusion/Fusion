@@ -12,6 +12,7 @@ import { writeFile, rm } from "node:fs/promises";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
 import { resolveWorktreesDirLayout, type Task, type TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import * as worktreePool from "../worktree/worktree-pool.js";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import { executingTaskLock } from "../agents/active-session-registry.js";
 import { executorLog } from "../logger.js";
@@ -517,6 +518,7 @@ describe("buildExecutionPrompt", () => {
   });
 
   it("passes settings to buildExecutionPrompt in TaskExecutor.execute()", async () => {
+    resetExecutorMocks();
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
       maxConcurrent: 2,
@@ -809,8 +811,14 @@ async function settleLeakedBackgroundRuns(): Promise<void> {
 describe("TaskExecutor pause behavior", () => {
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
   });
+
+  /*
+  FNXC:ExecutorPromptFixtures 2026-09-20-12:57:
+  FN-9338 preserves the FN-258 fail-closed warm-reuse probe by leaving pinned worktree paths absent
+  after reset. These pause cases exercise fresh acquisition; a blanket existsSync(true) instead claims
+  the non-git fixture root is a reusable checkout and prevents the implementation session from opening.
+  */
 
   afterEach(settleLeakedBackgroundRuns);
 
@@ -1374,8 +1382,8 @@ describe("TaskExecutor pause behavior", () => {
     const sessionFilePath = "/tmp/sessions/session_123.jsonl";
     const resumePromptFn = vi.fn().mockResolvedValue(undefined);
 
-    // existsSync must return true for the session file
-    mockedExistsSync.mockReturnValue(true);
+    // Only the explicit session artifact exists; the pinned worktree remains absent for fresh acquisition.
+    mockedExistsSync.mockImplementation((path) => String(path) === sessionFilePath);
 
     /*
     FNXC:EngineTests 2026-08-09-12:02:
@@ -1480,9 +1488,9 @@ describe("TaskExecutor pause behavior", () => {
     const store = createMockStore();
     const staleSessionFile = "/tmp/sessions/deleted_session.jsonl";
 
-    // Session file does NOT exist on disk
+    // The stale session artifact is absent while the task-pinned worktree remains absent.
     mockedExistsSync.mockImplementation(
-      (p) => p !== staleSessionFile,
+      (path) => !/[\\/]worktrees[\\/]/.test(String(path)) && String(path) !== staleSessionFile,
     );
 
     mockedCreateFnAgent.mockResolvedValue({
@@ -1518,7 +1526,8 @@ describe("TaskExecutor pause behavior", () => {
     const sessionFilePath = "/tmp/fn-4031-stale-session.jsonl";
     await writeFile(sessionFilePath, JSON.stringify({ cwd: "/tmp/test/.worktrees/bright-wren" }), "utf-8");
 
-    mockedExistsSync.mockReturnValue(true);
+    // The session artifact exists, but a stale session file does not make the pinned worktree reusable.
+    mockedExistsSync.mockImplementation((path) => String(path) === sessionFilePath);
 
     /*
     FNXC:EngineTests 2026-08-09-12:02:
@@ -1609,6 +1618,17 @@ describe("swallowed async store failure observability", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    /*
+    FNXC:ExecutorPromptFixtures 2026-09-20-12:57:
+    This corrupted-step test intentionally resumes a persisted pinned checkout. Model that warm state
+    completely: only its canonical path exists and the registered-worktree probe proves the expected
+    branch, rather than using a blanket existence override that would weaken FN-258's empty-probe refusal.
+    */
+    const pinnedWorktreePath = `${resolveWorktreesDirLayout("/tmp/test", undefined)}/fn-8490`;
+    mockedExistsSync.mockImplementation((path) => String(path) === pinnedWorktreePath);
+    vi.spyOn(worktreePool, "getRegisteredWorktreeBranches").mockResolvedValueOnce([
+      { worktreePath: pinnedWorktreePath, branch: "fusion/fn-8490" },
+    ]);
     store.getSettings.mockResolvedValue({
       maxConcurrent: 2,
       maxWorktrees: 4,
@@ -1635,6 +1655,8 @@ describe("swallowed async store failure observability", () => {
       const options = mockedStepSessionExecutor.mock.calls.at(-1)?.[0] as {
         onStepStart?: (stepIndex: number) => Promise<void | boolean>;
       };
+      // FNXC:ExecutorPromptFixtures 2026-09-20-12:57: The persisted predecessor accepts its resume first; only the later start exercises the blocked-order rejection and its onError observability.
+      await options.onStepStart?.(0);
       const accepted = await options.onStepStart?.(1);
       return accepted === false
         ? [{ stepIndex: 1, success: false, error: "start rejected", retries: 0 }]
@@ -2278,8 +2300,14 @@ Every handoff assertion in this block therefore asserts the graph's provenance o
 describe("TaskExecutor global pause behavior", () => {
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
   });
+
+  /*
+  FNXC:ExecutorPromptFixtures 2026-09-20-12:57:
+  Global-pause tests need two fresh pinned acquisitions to reach their implementation-session barriers.
+  Retaining resetExecutorMocks' path-aware absence default prevents the native branch probe from treating
+  fabricated /tmp worktrees as warm checkouts with an unprovable branch.
+  */
 
   afterEach(settleLeakedBackgroundRuns);
 
