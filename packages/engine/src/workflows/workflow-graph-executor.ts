@@ -2321,10 +2321,12 @@ export class WorkflowGraphExecutor {
             outcome: "failure",
             value: error.refresh.kind,
             contextPatch: {
-              [`node:${node.id}:error`]: error.message,
+              [`node:${node.id}:error`]: error.refresh.detail ? `${error.message}: ${error.refresh.detail}` : error.message,
               [`node:${node.id}:baseRefresh`]: error.refresh.kind,
             },
           };
+          /* FNXC:WorktreeBaseRefresh 2026-09-19-20:13: Foreach does not merge a failed template's patch; retain the diagnostic in its active context before returning the typed refusal. */
+          Object.assign(context, failureResult.contextPatch);
           if (recordProgress && this.shouldRecordNodeProgress(node)) {
             await this.recordNodeProgressFinish(task.id, node, null, failureResult);
           }

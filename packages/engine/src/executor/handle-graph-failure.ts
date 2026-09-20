@@ -379,9 +379,22 @@ export async function handleGraphFailure(
           await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
           await deps.store.updateTask(task.id, { graphResumeRetryCount: nextRetries }, deps.getRunContextFor(task.id));
           const scheduleRetry = () => {
-            deps.execute(live).catch((err: unknown) =>
-              executorLog.error(`Failed worktree base refresh retry for ${task.id}:`, err),
-            );
+            /*
+            FNXC:WorktreeBaseRefresh 2026-09-19-20:13:
+            A delayed preparation retry must not resurrect the stale task snapshot after a pause,
+            cancellation, deletion, or replacement session. Re-read human control and liveness
+            when the timer fires, not only when the previous acquisition failed.
+            */
+            void (async () => {
+              const [resume, settings] = await Promise.all([deps.store.getTask(task.id), deps.store.getSettings()]);
+              if (!resume || resume.deletedAt || resume.paused || resume.userPaused
+                || resume.status === "failed" || resume.column !== live.column
+                || settings.globalPause || settings.enginePaused
+                || deps.hasLiveTaskSessionSurface(task.id)
+                || deps.executing.has(task.id) || deps.resumingUnpaused.has(task.id)
+                || deps.processWideGraphRouting.has(task.id)) return;
+              await deps.execute(resume);
+            })().catch((err: unknown) => executorLog.error(`Failed worktree base refresh retry for ${task.id}:`, err));
           };
           const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
           handle.unref?.();

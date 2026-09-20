@@ -3217,15 +3217,21 @@ export async function runImplementation(
         that once git state changes, so it stays a wait: leave the row cleanly dispatchable and let ordinary
         scheduling retry it rather than terminalizing recoverable work.
         */
-        executorLog.warn(`${task.id}: worktree base refresh blocked execution (${err.refresh.kind}) — leaving the task queued for re-dispatch (not a failure)`);
+        executorLog.warn(`${task.id}: worktree base refresh blocked execution (${err.refresh.kind}) — deferring to graph recovery`);
         await deps.store.logEntry(
           task.id,
-          `Worktree base refresh blocked execution (${err.refresh.kind}) — task left queued for a later clean acquisition`,
+          `Worktree base refresh blocked execution (${err.refresh.kind}) — awaiting bounded graph recovery`,
           err.refresh.detail,
           deps.getRunContextFor(task.id),
         ).catch(() => undefined);
         await deps.persistTokenUsage(task.id);
-        return;
+        /*
+        FNXC:WorktreeBaseRefresh 2026-09-19-20:13:
+        Returning here erased the refusal and made the step adapter report step-failed for an
+        incomplete Preflight. Preserve the typed error through cleanup to the graph's bounded
+        preparation-recovery owner; never let a non-executed pass look like an implementation failure.
+        */
+        throw err;
       } else if (isInvalidAssistantContinuationErrorMessage(errorMessage)) {
         /*
         FNXC:PostDoneContinuation 2026-07-16-11:57:

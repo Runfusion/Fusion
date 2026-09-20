@@ -21,6 +21,7 @@
  */
 import type { Task, TaskStore, ThinkingLevel } from "@fusion/core";
 import { executorLog } from "../logger.js";
+import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import type { ImplementationExit } from "./implementation-exit.js";
 
 export type ImplementationPhaseResult = {
@@ -119,6 +120,13 @@ export async function runGraphTaskStep(
     if (deps.graphStepRunOnce.get(task.id) === phase) {
       deps.graphStepRunOnce.delete(task.id);
     }
+    /*
+    FNXC:WorktreeBaseRefresh 2026-09-19-20:13:
+    A checkout-integrity refusal precedes all implementation work. Preserve its typed graph
+    routing even when an older step projection is done or a reviewer would normally author done.
+    The interpreter owns its delayed retry; this adapter must not flatten it into step-failed.
+    */
+    if (err instanceof WorktreeBaseRefreshError) throw err;
     /*
     FNXC:WorkflowExecution 2026-06-29-09:01:
     Stepwise graph execution is projection-driven: a shared implementation pass can complete every task step and pass deterministic verification without using the legacy monolithic `task_done` sentinel. If the target step is already terminal in Task.steps[], the workflow node succeeds and the graph continues to its review/merge nodes instead of converting stale legacy completion failure into `steps#N:step-execute`.

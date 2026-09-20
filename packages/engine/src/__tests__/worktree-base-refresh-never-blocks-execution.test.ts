@@ -74,6 +74,31 @@ function acquire(root: string, worktree: string, baseCommitSha: string) {
 }
 
 describe("worktree base refresh never blocks execution", () => {
+  /* FNXC:WorktreeBaseRefresh 2026-09-19-20:13: A refresh must never abort/reset a pre-existing operation, even on a clean linked checkout. */
+  it("preserves pre-existing Git operations without refreshing or compensating", async () => {
+    const { root, worktree, c0 } = reusedWorktree();
+    const gitDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
+    const store = { updateTask: vi.fn() } as any;
+    for (const marker of ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer"]) {
+      const path = join(gitDir, marker);
+      const isDirectory = marker.startsWith("rebase-") || marker === "sequencer";
+      if (isDirectory) mkdirSync(path);
+      else writeFileSync(path, `${c0}\n`);
+      const evidence = isDirectory ? join(path, "owner-evidence") : path;
+      if (isDirectory) writeFileSync(evidence, "preserve existing owner");
+      const before = readFileSync(evidence, "utf8");
+      const result = await refreshReusedWorktreeBase({
+        rootDir: root, worktreePath: worktree, task: { id: "FN-1", baseCommitSha: c0 } as any,
+        store, settings: {},
+      });
+      expect(result).toMatchObject({ kind: "base-reconciliation-required", executionSafe: false });
+      expect(result.detail).toContain(marker);
+      expect(readFileSync(evidence, "utf8")).toBe(before);
+      expect(git(worktree, ["rev-parse", "HEAD"])).toBe(c0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      rmSync(path, { recursive: isDirectory });
+    }
+  });
   it("proceeds with uncommitted agent work intact instead of refusing (the 74 dirty-worktree parks)", async () => {
     const { root, worktree, c0 } = reusedWorktree();
     // The remediation re-entry shape: the previous session left edits in the task's own warm checkout.

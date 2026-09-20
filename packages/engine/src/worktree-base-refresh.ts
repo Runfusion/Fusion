@@ -1,4 +1,6 @@
 import { exec } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
@@ -131,6 +133,29 @@ export async function refreshReusedWorktreeBase(input: RefreshReusedWorktreeBase
   };
   if (settings.worktrunk?.enabled) {
     return { kind: "worktrunk-refresh-unsupported", executionSafe: true, skipped: true, durableBaseSha };
+  }
+
+  /*
+  FNXC:WorktreeBaseRefresh 2026-09-19-20:13:
+  Refuse an existing Git operation before any refresh mutation or compensation. An interrupted
+  or concurrently owned rebase is not ours to abort/reset, even when porcelain is clean or HEAD
+  already contains the target. Resolve the private git directory for linked worktrees as well.
+  */
+  try {
+    const gitDir = await git(worktreePath, "rev-parse --absolute-git-dir");
+    for (const marker of ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer"]) {
+      const present = await stat(join(gitDir, marker)).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+      if (present) return {
+        kind: "base-reconciliation-required", executionSafe: false, durableBaseSha,
+        detail: `Git operation already in progress (${marker}); preserve it until its owner finishes or explicitly reconciles it.`,
+      };
+    }
+  } catch (error) {
+    return { kind: "base-reconciliation-required", executionSafe: false, durableBaseSha,
+      detail: `Cannot establish Git operation state: ${error instanceof Error ? error.message : String(error)}` };
   }
 
   let integrationBranch: string;

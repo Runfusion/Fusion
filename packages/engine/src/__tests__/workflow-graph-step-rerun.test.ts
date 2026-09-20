@@ -4,7 +4,10 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { graphActiveContextKey } from "../executor/task-predicates.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
-import type { Task } from "@fusion/core";
+import type { Task, WorkflowIr } from "@fusion/core";
+import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import { graphFailureValue, graphFailureErrorTexts, isWorktreeBaseRefreshGraphFailure } from "../executor/graph-failure-pure.js";
 
 /**
  * FIX 3: runGraphTaskStep single-flight-per-attempt + rejection memo clearing.
@@ -43,6 +46,68 @@ describe("runGraphTaskStep (FIX 3)", () => {
   }
 
   const task = { id: "FN-001" } as Task;
+
+  /* FNXC:WorktreeBaseRefresh 2026-09-19-20:13: Prove the actual step adapter and foreach preserve the typed refusal instead of the FN-9313 step-failed symptom. */
+  it.each([false, true])("routes an unsafe checkout through the real foreach seam (deferred review=%s)", async (deferDoneToReview) => {
+    const { executor } = makeExecutor("pending", { deferDoneToReview });
+    const error = new WorktreeBaseRefreshError({ kind: "base-reconciliation-required", executionSafe: false, detail: "existing rebase-merge" });
+    executor.runImplementationPhase = vi.fn().mockRejectedValue(error);
+    const graph = new WorkflowGraphExecutor({ seams: executor.createAuthoritativeWorkflowSeams({}), maxRetriesPerNode: 3 });
+    const ir: WorkflowIr = {
+      version: "v2", name: "refresh-refusal", columns: [{ id: "in-progress", name: "Work", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "steps", kind: "foreach", config: { source: "task-steps", template: {
+          nodes: [{ id: "step-execute", kind: "prompt", config: { seam: "step-execute" } }], edges: [],
+        } } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [{ from: "start", to: "steps" }, { from: "steps", to: "end", condition: "success" }],
+    };
+    const result = await graph.run({ ...task, column: "in-progress", steps: [{ name: "Preflight", status: "pending" }] } as any, {}, ir);
+    const failure = { ...result, disposition: "failed" as const };
+    expect(result.outcome).toBe("failure");
+    expect(result.visitedNodeIds).toContain("steps#0:step-execute");
+    expect(graphFailureValue(failure)).toBe("base-reconciliation-required");
+    expect(isWorktreeBaseRefreshGraphFailure(failure)).toBe(true);
+    expect(graphFailureErrorTexts(failure).join(" ")).toContain("existing rebase-merge");
+    expect(executor.runImplementationPhase).toHaveBeenCalledOnce();
+    expect(executor.graphStepRunOnce.has(task.id)).toBe(false);
+  });
+
+  it.each(["pending", "in-progress", "done", "skipped"])("does not turn a refresh refusal into completion for %s projection", async (status) => {
+    const { executor } = makeExecutor(status, { deferDoneToReview: true });
+    const refusal = new WorktreeBaseRefreshError({ kind: "base-reconciliation-required", executionSafe: false });
+    executor.runImplementationPhase = vi.fn().mockRejectedValue(refusal);
+    await expect(executor.runGraphTaskStep(task, 0)).rejects.toBe(refusal);
+  });
+
+  it.each(["ready", "paused", "deleted", "live-session", "engine-paused", "exhausted"])("bounds refresh recovery and rechecks %s at timer fire", async (scenario) => {
+    vi.useFakeTimers();
+    try {
+      const { executor, store } = makeExecutor("pending");
+      const live = { id: task.id, column: "in-progress", steps: [{ name: "Preflight", status: "in-progress" }], graphResumeRetryCount: scenario === "exhausted" ? 2 : 0 } as any;
+      store.getTask.mockResolvedValue(live);
+      executor.execute = vi.fn().mockResolvedValue(undefined);
+      executor.hasLiveTaskSessionSurface = vi.fn().mockReturnValue(false);
+      await executor.handleGraphFailure(live, {
+        disposition: "failed", outcome: "failure", visitedNodeIds: ["steps", "steps#0:step-execute"],
+        context: { "node:steps:value": "base-reconciliation-required" },
+      });
+      if (scenario === "paused") live.paused = true;
+      if (scenario === "deleted") live.deletedAt = new Date().toISOString();
+      if (scenario === "live-session") executor.hasLiveTaskSessionSurface.mockReturnValue(true);
+      if (scenario === "engine-paused") store.getSettings.mockResolvedValue({ enginePaused: true });
+      await vi.runAllTimersAsync();
+      expect(executor.execute).toHaveBeenCalledTimes(scenario === "ready" ? 1 : 0);
+      expect(store.moveTask).not.toHaveBeenCalled();
+      expect(store.updateTask.mock.calls.some(([, patch]) => patch?.status === "failed")).toBe(false);
+      if (scenario === "exhausted") expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("retry budget exhausted"), undefined, undefined);
+      else expect(store.updateTask).toHaveBeenCalledWith(task.id, { graphResumeRetryCount: 1 }, undefined);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("re-invokes the implementation after a rejected phase (rework retries)", async () => {
     const { executor } = makeExecutor("pending", { deferDoneToReview: true });
