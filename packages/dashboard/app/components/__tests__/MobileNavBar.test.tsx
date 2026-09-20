@@ -42,7 +42,7 @@ function getRenderedMobileTabs(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(".mobile-nav-bar > .mobile-nav-tab"));
 }
 
-function expectUniformMobileNavColumns(container: HTMLElement, expectedTabCount: number) {
+function expectContentSizedMobileNavGroups(container: HTMLElement, expectedTabCount: number) {
   const tabs = getRenderedMobileTabs(container);
   expect(tabs).toHaveLength(expectedTabCount);
 
@@ -50,14 +50,15 @@ function expectUniformMobileNavColumns(container: HTMLElement, expectedTabCount:
   expect(navRule).toContain("left: 0");
   expect(navRule).toContain("right: var(--icb-right-offset, 0px)");
   expect(navRule).toContain("padding-inline: var(--space-sm)");
+  expect(navRule).toContain("column-gap: var(--space-sm)");
   expect(navRule).toMatch(/padding-inline:\s*var\(--space-[^)]+\)/);
   expect(navRule).not.toMatch(/padding-left:\s*(?!0[;\s])/);
   expect(navRule).not.toMatch(/padding-right:\s*(?!0[;\s])/);
 
   const tabRule = extractRuleBlock(mobileNavCss, ".mobile-nav-tab");
   expect(tabRule).toContain("--mobile-nav-icon-size: calc(var(--space-lg) + var(--space-sm) - (var(--space-xs) / 2))");
-  expect(tabRule).toContain("flex: 1 1 0");
-  expect(tabRule).toContain("min-width: 0");
+  expect(tabRule).toContain("flex: 1 1 auto");
+  expect(tabRule).toContain("min-width: var(--mobile-nav-icon-size)");
   expect(tabRule).toContain("align-items: center");
   expect(tabRule).toMatch(/padding:\s*[^;]+\s+0;/);
   expect(tabRule).not.toMatch(/margin-left|margin-right/);
@@ -76,7 +77,7 @@ function expectUniformMobileNavColumns(container: HTMLElement, expectedTabCount:
   expect(iconWrapperRule).toContain("height: var(--mobile-nav-icon-size)");
 
   const labelRule = extractRuleBlock(mobileNavCss, ".mobile-nav-tab-label");
-  expect(labelRule).toContain("width: 100%");
+  expect(labelRule).toContain("width: max-content");
   expect(labelRule).toContain("min-width: 0");
   expect(labelRule).toContain("text-align: center");
 
@@ -233,7 +234,7 @@ describe("MobileNavBar", () => {
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
   });
 
-  it("keeps sparse custom shortcuts in three equal columns without losing their actions", () => {
+  it("keeps sparse custom shortcuts in three content-sized groups without losing their actions", () => {
     const sparseRender = render(
       <MobileNavBar
         {...createDefaultProps()}
@@ -241,7 +242,7 @@ describe("MobileNavBar", () => {
       />,
     );
 
-    expectUniformMobileNavColumns(sparseRender.container, 3);
+    expectContentSizedMobileNavGroups(sparseRender.container, 3);
     const githubImport = screen.getByTestId("mobile-nav-tab-github-import");
     expect(githubImport).toHaveTextContent("Import from GitHub");
     expect(githubImport).toHaveAttribute("role", "tab");
@@ -251,7 +252,7 @@ describe("MobileNavBar", () => {
     sparseRender.unmount();
   });
 
-  it("filters duplicate, invalid, and over-limit primary input before equal-column rendering", () => {
+  it("filters duplicate, invalid, and over-limit primary input before content-sized rendering", () => {
     const configuredRender = render(
       <MobileNavBar
         {...createDefaultProps()}
@@ -262,7 +263,7 @@ describe("MobileNavBar", () => {
       />,
     );
 
-    expectUniformMobileNavColumns(configuredRender.container, 8);
+    expectContentSizedMobileNavGroups(configuredRender.container, 8);
     expect(screen.getAllByTestId("mobile-nav-tab-command-center")).toHaveLength(1);
     expect(screen.queryByTestId("mobile-nav-tab-unknown")).toBeNull();
     expect(screen.queryByTestId("mobile-nav-tab-ideation")).toBeNull();
@@ -272,7 +273,7 @@ describe("MobileNavBar", () => {
     configuredRender.unmount();
   });
 
-  it("keeps every mobile tab in an equal-width column across default, active, badge, and status-dot variants", () => {
+  it("keeps every mobile tab in a content-sized group across default, active, badge, and status-dot variants", () => {
     const sevenTabRender = render(
       <MobileNavBar
         {...createDefaultProps()}
@@ -283,7 +284,7 @@ describe("MobileNavBar", () => {
         mailboxPendingApprovalCount={2}
       />,
     );
-    expectUniformMobileNavColumns(sevenTabRender.container, 8);
+    expectContentSizedMobileNavGroups(sevenTabRender.container, 8);
     expect(screen.getByTestId("mobile-nav-tab-command-center").className).toContain("mobile-nav-tab--active");
     expect(screen.getByLabelText("Unread chat response")).toBeInTheDocument();
     expect(screen.getByLabelText("Pending approvals")).toBeInTheDocument();
@@ -302,7 +303,7 @@ describe("MobileNavBar", () => {
         mailboxPendingApprovalCount={1}
       />,
     );
-    expectUniformMobileNavColumns(skillsEnabledRender.container, 8);
+    expectContentSizedMobileNavGroups(skillsEnabledRender.container, 8);
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
     expect(screen.getByTestId("mobile-nav-tab-more").className).toContain("mobile-nav-tab--active");
     expect(screen.getByTestId("mobile-nav-tab-mailbox").querySelector(".mobile-nav-tab-badge")?.textContent).toBe("99+");
@@ -322,7 +323,7 @@ describe("MobileNavBar", () => {
         ]}
       />,
     );
-    expectUniformMobileNavColumns(pluginVariantRender.container, 8);
+    expectContentSizedMobileNavGroups(pluginVariantRender.container, 8);
     expect(screen.queryByTestId("mobile-nav-tab-plugin-fusion-plugin-spacing-check-wide")).toBeNull();
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
     expect(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-spacing-check-wide")).toBeDefined();
