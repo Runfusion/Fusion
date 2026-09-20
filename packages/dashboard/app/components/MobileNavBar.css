@@ -145,6 +145,9 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
   gap: calc(var(--space-xs) / 2);
   min-height: calc(var(--space-xl) + var(--space-md));
   padding: calc(var(--space-sm) - (var(--space-xs) / 2)) 0;
+  /* Balance the bar's bottom clearance inside each measured tab so the
+     footer and content offsets include the same breathing room. */
+  padding-top: calc(var(--space-md) + var(--space-sm) - (var(--space-xs) / 2));
   background: none;
   border: none;
   color: var(--text-muted);
@@ -199,7 +202,7 @@ Wrap every tab icon in the same token-sized icon slot and keep unread/pending do
 
 .mobile-nav-tab-badge {
   position: absolute;
-  top: calc(var(--space-xs) / 2);
+  top: calc(var(--space-md) + (var(--space-xs) / 2));
   right: calc(50% - var(--space-md));
   min-width: var(--space-lg);
   height: var(--space-lg);
