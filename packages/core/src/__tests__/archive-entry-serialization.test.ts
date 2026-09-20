@@ -28,8 +28,15 @@ describe("archiveEntryToTask", () => {
     expect(task.archivedAt).toBe("2026-07-24T10:00:00.000Z");
   });
 
-  it("keeps legacy and active-compatible payloads readable without archivedAt", () => {
+  it("preserves recommendation links while retaining legacy entries without them", () => {
+    const linked = archiveEntryToTask({
+      ...entry,
+      recommendations: [{ id: "rec-follow-up", title: "Add export", description: "Provide an export follow-up.", category: "feature", createdTaskId: "FN-9000" }],
+    });
+    expect(linked.recommendations?.[0]?.createdTaskId).toBe("FN-9000");
+
     const legacy = archiveEntryToTask({ ...entry, archivedAt: undefined } as unknown as ArchivedTaskEntry);
     expect(legacy.archivedAt).toBeUndefined();
+    expect(legacy.recommendations).toBeUndefined();
   });
 });

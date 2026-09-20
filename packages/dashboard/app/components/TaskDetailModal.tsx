@@ -1361,7 +1361,14 @@ export function TaskDetailContent({
   const taskOwnedRecommendations = detailSnapshotIsForThisTask
     ? workingTask.recommendations
     : task.recommendations;
-  const hasRecommendations = isDoneColumn && (taskOwnedRecommendations?.length ?? 0) > 0;
+  /*
+  FNXC:ArchivedRecommendations 2026-09-20-17:46:
+  Recommendation follow-ups remain actionable from a cold archived snapshot, not from every live
+  workflow lane carrying the archived trait. The archive marker proves the task left the live row;
+  without it, a custom archived-role lane would render a Create task action that the API must refuse.
+  */
+  const hasRecommendations = (isDoneColumn || (isArchivedColumn && typeof task.archivedAt === "string"))
+    && (taskOwnedRecommendations?.length ?? 0) > 0;
   // Reset planner-chat focus when the operator opens a different task.
   useEffect(() => {
     setPlannerChatExpanded(false);

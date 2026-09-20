@@ -152,8 +152,29 @@ pgDescribe("TaskStore recommendation persistence (PostgreSQL)", () => {
     await store.updateTask(parent.id, { column: "todo" });
 
     await expect(store.linkTaskRecommendation(parent.id, "rec-a", "FN-CHILD-A", new Set(["done"])))
-      .rejects.toThrow("completed tasks");
+      .rejects.toThrow("completed or archived tasks");
     expect((await store.getTask(parent.id))?.recommendations?.[0]?.createdTaskId).toBeUndefined();
+  });
+
+  it("preserves and links an archived recommendation source without creating a second child", async () => {
+    const store = h.store();
+    const parent = await store.createTask({ description: "Complete a parent before archiving its recommendation." });
+    await store.updateTask(parent.id, {
+      column: "done",
+      recommendations: [{ id: "rec-archive", title: "Add export", description: "Build export as a follow-up.", category: "feature" }],
+    });
+
+    await store.archiveTask(parent.id, { cleanup: false });
+    const archived = await store.getTask(parent.id);
+    expect(archived).toMatchObject({ column: "archived", recommendations: [{ id: "rec-archive" }] });
+
+    const child = await store.createTask({ description: "Build export as a follow-up." });
+    const linked = await store.linkTaskRecommendation(parent.id, "rec-archive", child.id, new Set(["done"]));
+    expect(linked.recommendations?.[0]?.createdTaskId).toBe(child.id);
+    expect((await store.getTask(parent.id)).recommendations?.[0]?.createdTaskId).toBe(child.id);
+
+    await store.unarchiveTask(parent.id);
+    expect((await store.getTask(parent.id)).recommendations?.[0]?.createdTaskId).toBe(child.id);
   });
 
   it("keeps identical task ids and recommendation payloads isolated by project", async () => {

@@ -251,9 +251,14 @@ export async function archiveParentTaskWithLineageGate(
     Admission writers take this same advisory key before changing a task's lane. Re-read and decide
     under it so a CLI archive cannot win a todo-to-WIP race and destroy an executor's live worktree.
     */
+    /*
+    FNXC:ArchivedRecommendations 2026-09-20-17:23:
+    Archive and recommendation-link writes share this project/task advisory fence even when no
+    liveness predicate is needed. The snapshot is then built or updated from one serialized state.
+    */
+    await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
+    const live = await readTaskRowInTransaction(tx, taskId, { includeDeleted: true }, layer.projectId);
     if (options.livenessWipLanes) {
-      await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
-      const live = await readTaskRowInTransaction(tx, taskId, undefined, layer.projectId);
       const verdict = decideArchiveLiveness({column: String(live?.column ?? ""), status: live?.status as string | null | undefined, wipLanes: options.livenessWipLanes});
       if (verdict.live) return {archived: false as const, liveVerdict: verdict};
     }
@@ -281,7 +286,12 @@ export async function archiveParentTaskWithLineageGate(
 
     // 3. Archive snapshot to cold storage (VAL-CROSS-015 — preserves for restore).
     // FNXC:MultiProjectIsolation 2026-07-12: stamped with the bound project.
-    await upsertArchivedTaskEntry(tx, entry, layer.projectId);
+    // A link accepted immediately before this lock is durable in the live row; carry it into the
+    // snapshot rather than overwriting it with the caller's pre-lock copy.
+    const lockedEntry = Array.isArray(live?.recommendations)
+      ? { ...entry, recommendations: live.recommendations as ArchivedTaskEntry["recommendations"] }
+      : entry;
+    await upsertArchivedTaskEntry(tx, lockedEntry, layer.projectId);
 
     // 4. Soft-delete the project row. Documents/artifacts are retained because
     //    this is an UPDATE, not a DELETE — the ON DELETE CASCADE FK does not

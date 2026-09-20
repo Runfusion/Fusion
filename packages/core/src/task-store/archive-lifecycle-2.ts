@@ -101,6 +101,12 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       comments: task.comments,
       review: task.review,
       reviewState: task.reviewState,
+      /*
+      FNXC:ArchivedRecommendations 2026-09-20-17:23:
+      The cold archive is the authoritative terminal snapshot. Preserve recommendation records,
+      including createdTaskId, so archival cannot erase an accepted follow-up link.
+      */
+      recommendations: task.recommendations,
       prompt,
       ...agentLogFields,
       log: [{ timestamp: archivedAt, action: "Task archived" }],

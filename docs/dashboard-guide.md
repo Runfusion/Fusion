@@ -998,7 +998,7 @@ Mailbox view shows inbox/outbox communication threads and unread state. The acti
 
 ## Recommendations View
 
-**Recommendations** is a dedicated desktop/sidebar and mobile-navigation destination for optional follow-up work captured by completed tasks. It preserves each recommendation's source task, category, description, task-creation action, and link to an already-created follow-up; operators can load additional completed source-task pages without returning to Mailbox or removing the existing Task Recommendations section from Insights. Its new-item counter is scoped to the selected project, clears when the view opens, and re-arms when the project changes.
+**Recommendations** is a dedicated desktop/sidebar and mobile-navigation destination for optional follow-up work captured by completed or archived tasks. It preserves each recommendation's source task, category, description, task-creation action, and link to an already-created follow-up; operators can load additional terminal source-task pages without returning to Mailbox or removing the existing Task Recommendations section from Insights. Follow-ups remain actionable after a source is archived, but missing, reopened, or ordinarily deleted sources remain unavailable. Its new-item counter is scoped to the selected project, clears when the view opens, and re-arms when the project changes.
 
 ## Interactive Terminal
 

@@ -8,6 +8,7 @@ import type { ExecutionMode, PlannerOversightLevel } from "../ui/execution-and-u
 import type { IssueInfo, PrInfo, TaskGitLabTracking, TaskGithubTracking, TaskSourceIssue } from "../task/task-tracking.js";
 import type { AgentCapability } from "../agents/agents.js";
 import type { TaskReview, TaskReviewState } from "../task/task-review.js";
+import type { TaskRecommendation } from "../task/task-core.js";
 import type { GlobalSettings, ProjectSettings } from "../settings/settings-scope.js";
 import type {
   ActivityEventType,
@@ -71,6 +72,12 @@ export interface ArchivedTaskEntry {
   review?: TaskReview;
   /** Structured review metadata shown in the Review tab (canonical contract). */
   reviewState?: TaskReviewState;
+  /**
+   * FNXC:ArchivedRecommendations 2026-09-20-17:23:
+   * Recommendation links are terminal-task state, so cold snapshots retain them for archived
+   * follow-up creation and later restore. Absent remains valid for legacy archive entries.
+   */
+  recommendations?: TaskRecommendation[];
   /** Reconstructed prompt content at archive time, without attachment blobs. */
   prompt?: string;
   /** Agent log retention mode used when this archive entry was written. */

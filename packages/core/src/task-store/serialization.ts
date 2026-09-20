@@ -384,6 +384,8 @@ export function archiveEntryToTask(
     attachments: slim ? undefined : entry.attachments,
     comments: entry.comments,
     review: slim ? undefined : entry.review,
+    // FNXC:ArchivedRecommendations 2026-09-20-17:23: archive reads retain actionable terminal recommendation state.
+    recommendations: entry.recommendations,
     log: slim ? [] : entry.log ?? [],
     timedExecutionMs: slim ? computeTimedExecutionMs(entry.log) : undefined,
     createdAt: entry.createdAt,

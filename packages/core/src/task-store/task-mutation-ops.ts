@@ -563,11 +563,23 @@ export async function linkTaskRecommendationImpl(
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
       const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
       if (!row) throw new TaskNotFoundError(id);
-      if (row.deletedAt) throw new TaskDeletedError(id, row.deletedAt as string);
 
-      const current = store.rowToTask(store.pgRowToTaskRow(row));
-      if (completeColumns && !completeColumns.has(current.column)) {
-        throw new Error("Recommendations are available only on completed tasks");
+      /*
+      FNXC:ArchivedRecommendations 2026-09-20-17:23:
+      A cold snapshot, not a generic tombstone, is the only deleted source that remains actionable.
+      Read and write it under the same advisory transaction as the retained task row so an archive
+      and a recommendation link cannot overwrite each other's JSON snapshot.
+      */
+      const archivedEntry = row.deletedAt
+        ? await findArchivedTaskEntry(tx, id, layer.projectId)
+        : undefined;
+      if (row.deletedAt && !archivedEntry) throw new TaskDeletedError(id, row.deletedAt as string);
+
+      const current = archivedEntry
+        ? store.archiveEntryToTask(archivedEntry, false)
+        : store.rowToTask(store.pgRowToTaskRow(row));
+      if (!archivedEntry && completeColumns && !completeColumns.has(current.column)) {
+        throw new Error("Recommendations are available only on completed or archived tasks");
       }
       const index = current.recommendations?.findIndex((item) => item.id === recommendationId) ?? -1;
       if (index < 0) throw new Error("Recommendation no longer exists");
@@ -575,38 +587,44 @@ export async function linkTaskRecommendationImpl(
       if (recommendation.createdTaskId && recommendation.createdTaskId !== createdTaskId) {
         throw new Error("Recommendation is already linked to another task");
       }
-      if (recommendation.createdTaskId === createdTaskId) return current;
+      if (recommendation.createdTaskId === createdTaskId) return { task: current, archived: Boolean(archivedEntry) };
 
       const recommendations: TaskRecommendation[] = current.recommendations!.map((item) =>
         item.id === recommendationId ? { ...item, createdTaskId } : item,
       );
       const updatedAt = new Date().toISOString();
-      /*
-      FNXC:TaskRecommendations 2026-08-08-07:15:
-      Lifecycle moves do not share this recommendation advisory lock. Keep the completed-lane
-      predicate in the UPDATE itself so PostgreSQL's row-level CAS rejects a parent reopened after
-      our read but before this JSONB link write.
-      */
+      if (archivedEntry) {
+        const updatedEntry = { ...archivedEntry, recommendations, updatedAt };
+        await upsertArchivedTaskEntry(tx, updatedEntry, layer.projectId);
+        // Keep the retained row aligned for forensic/admin reads without clearing its tombstone.
+        await tx.update(schema.project.tasks).set({ recommendations, updatedAt }).where(and(
+          eq(schema.project.tasks.id, id), taskProjectScope(layer), isNotNull(schema.project.tasks.deletedAt),
+        ));
+        return { task: store.archiveEntryToTask(updatedEntry, false), archived: true };
+      }
       const [updatedRow] = await tx
         .update(schema.project.tasks)
         .set({ recommendations, updatedAt })
         .where(and(
           eq(schema.project.tasks.id, id),
           taskProjectScope(layer),
+          isNull(schema.project.tasks.deletedAt),
           ...(completeColumns ? [inArray(schema.project.tasks.column, [...completeColumns])] : []),
         ))
         .returning();
       if (!updatedRow) {
-        if (completeColumns) throw new Error("Recommendations are available only on completed tasks");
+        if (completeColumns) throw new Error("Recommendations are available only on completed or archived tasks");
         throw new TaskNotFoundError(id);
       }
-      return store.rowToTask(store.pgRowToTaskRow(updatedRow));
+      return { task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), archived: false };
     });
 
-    await store.writeTaskJsonFile(store.taskDir(id), updated);
-    if (store.isWatching) store.taskCache.set(id, { ...updated });
-    store.emitTaskLifecycleEventSafely("task:updated", [updated]);
-    return updated;
+    if (!updated.archived) {
+      await store.writeTaskJsonFile(store.taskDir(id), updated.task);
+      if (store.isWatching) store.taskCache.set(id, { ...updated.task });
+    }
+    store.emitTaskLifecycleEventSafely("task:updated", [updated.task]);
+    return updated.task;
   });
 }
 

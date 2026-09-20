@@ -2393,8 +2393,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           return new Set(["done"]);
         }
       })();
-      if (!completeColumns.has(parent.column)) {
-        throw conflict("recommendations are available only on completed tasks");
+      /*
+      FNXC:ArchivedRecommendations 2026-09-20-17:23:
+      Cold archive detail is a terminal source just like a complete lane. Require archivedAt so a
+      live custom lane merely named archived cannot bypass the store's physical-snapshot gate.
+      */
+      const isPhysicalArchivedSource = parent.column === "archived" && typeof parent.archivedAt === "string";
+      if (!completeColumns.has(parent.column) && !isPhysicalArchivedSource) {
+        throw conflict("recommendations are available only on completed or archived tasks");
       }
       const recommendation = parent.recommendations?.find((item) => item.id === req.params.recommendationId);
       if (!recommendation) throw notFound("Recommendation not found");
@@ -2415,6 +2421,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             message === "Recommendation no longer exists"
             || message === "Recommendation is already linked to another task"
             || message === "Recommendations are available only on completed tasks"
+            || message === "Recommendations are available only on completed or archived tasks"
           ) {
             throw conflict(message);
           }

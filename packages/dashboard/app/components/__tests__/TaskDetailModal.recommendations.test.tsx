@@ -1,10 +1,20 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TaskRecommendationsTab } from "../TaskRecommendationsTab";
+import { TaskDetailContent } from "../TaskDetailModal";
 import type { Task } from "@fusion/core";
 
-const { createTaskFromRecommendation } = vi.hoisted(() => ({ createTaskFromRecommendation: vi.fn() }));
-vi.mock("../../api", () => ({ createTaskFromRecommendation }));
+const { createTaskFromRecommendation, fetchBoardWorkflows } = vi.hoisted(() => ({
+  createTaskFromRecommendation: vi.fn(),
+  fetchBoardWorkflows: vi.fn(),
+}));
+vi.mock("../../api", async (importOriginal) => {
+  const { createDashboardApiMock } = await import("../../test/mockApi");
+  return createDashboardApiMock(() => importOriginal<typeof import("../../api")>(), {
+    createTaskFromRecommendation,
+    fetchBoardWorkflows,
+  });
+});
 
 const task: Task = {
   id: "FN-8829",
@@ -24,7 +34,44 @@ const task: Task = {
   }],
 };
 
+const sharedDetailProps = {
+  onDeleteTask: vi.fn(),
+  onMergeTask: vi.fn(),
+  onOpenDetail: vi.fn(),
+  addToast: vi.fn(),
+};
+
 describe("TaskRecommendationsTab", () => {
+  it("does not show recommendations for a live custom archived-role lane", async () => {
+    fetchBoardWorkflows.mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "custom-workflow",
+      taskWorkflowIds: { "FN-8829": "custom-workflow" },
+      workflows: [{
+        id: "custom-workflow",
+        name: "Custom workflow",
+        columns: [{ id: "boxed", name: "Boxed", flags: { archived: true } }],
+      }],
+    } as never);
+
+    render(
+      <TaskDetailContent
+        {...sharedDetailProps}
+        embedded
+        task={{
+          ...task,
+          column: "boxed",
+          prompt: "",
+          recommendations: task.recommendations,
+        }}
+      />,
+    );
+
+    expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Custom workflow");
+    expect(screen.queryByRole("heading", { name: "Recommendations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+  });
+
   it("renders one accessible empty message with no action for undefined or empty recommendations", () => {
     const view = render(<TaskRecommendationsTab task={{ ...task, recommendations: undefined }} projectId="project-a" />);
 

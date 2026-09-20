@@ -995,27 +995,45 @@ export async function listTaskRecommendationsImpl(
   const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, Math.trunc(rawLimit))) : 50;
   const offset = typeof rawOffset === "number" && Number.isFinite(rawOffset) ? Math.max(0, Math.trunc(rawOffset)) : 0;
   const columns = [...completeColumns];
-  if (columns.length === 0) return { items: [], rowOffset: offset, rowLimit: limit, returnedRowCount: 0, totalRowCount: 0, hasMore: false };
-  const filter = and(
+  const liveFilter = columns.length === 0 ? undefined : and(
     taskProjectScope(layer),
     isNull(schema.project.tasks.deletedAt),
     inArray(schema.project.tasks.column, columns),
     isNotNull(schema.project.tasks.recommendations),
     sql`jsonb_array_length(${schema.project.tasks.recommendations}) > 0`,
   );
-  const [countRows, rows] = await Promise.all([
-    layer.db.select({ count: sql<number>`count(*)` }).from(schema.project.tasks).where(filter),
-    layer.db.select({ id: schema.project.tasks.id, title: schema.project.tasks.title, column: schema.project.tasks.column, updatedAt: schema.project.tasks.updatedAt, recommendations: schema.project.tasks.recommendations })
-      .from(schema.project.tasks).where(filter).orderBy(desc(schema.project.tasks.updatedAt), desc(schema.project.tasks.id)).limit(limit).offset(offset),
+  /*
+  FNXC:ArchivedRecommendations 2026-09-20-17:23:
+  Cold entries are terminal recommendation sources too. Merge physical archive snapshots with live
+  complete-role rows; a plain deleted row is intentionally absent because it has no snapshot.
+  */
+  const [liveRows, archivedEntries] = await Promise.all([
+    liveFilter
+      ? layer.db.select({ id: schema.project.tasks.id, title: schema.project.tasks.title, column: schema.project.tasks.column, updatedAt: schema.project.tasks.updatedAt, recommendations: schema.project.tasks.recommendations })
+        .from(schema.project.tasks).where(liveFilter).orderBy(desc(schema.project.tasks.updatedAt), desc(schema.project.tasks.id))
+      : Promise.resolve([]),
+    listArchivedTaskEntries(layer.db, layer.projectId),
   ]);
+  const rows = [
+    ...liveRows.map((row) => ({
+      id: row.id,
+      title: row.title ?? undefined,
+      column: row.column,
+      updatedAt: row.updatedAt,
+      recommendations: Array.isArray(row.recommendations) ? row.recommendations as TaskRecommendation[] : [],
+    })),
+    ...archivedEntries
+      .filter((entry) => Array.isArray(entry.recommendations) && entry.recommendations.length > 0)
+      .map((entry) => ({ id: entry.id, title: entry.title, column: "archived", updatedAt: entry.updatedAt, recommendations: entry.recommendations! })),
+  ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
+  const page = rows.slice(offset, offset + limit);
   const items: TaskRecommendationListItem[] = [];
-  for (const row of rows) {
-    if (!Array.isArray(row.recommendations) || row.recommendations.length === 0) continue;
+  for (const row of page) {
     for (const recommendation of row.recommendations) {
-      items.push({ taskId: row.id, taskTitle: row.title ?? undefined, taskColumn: row.column, updatedAt: row.updatedAt, recommendation: recommendation as TaskRecommendation });
+      items.push({ taskId: row.id, taskTitle: row.title, taskColumn: row.column as TaskRecommendationListItem["taskColumn"], updatedAt: row.updatedAt, recommendation: recommendation as TaskRecommendation });
     }
   }
-  const totalRowCount = Number(countRows[0]?.count ?? 0);
-  const returnedRowCount = rows.length;
+  const totalRowCount = rows.length;
+  const returnedRowCount = page.length;
   return { items, rowOffset: offset, rowLimit: limit, returnedRowCount, totalRowCount, hasMore: offset + returnedRowCount < totalRowCount };
 }
