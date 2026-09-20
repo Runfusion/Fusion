@@ -88,8 +88,12 @@ function buildApp(seed: Task[], projectId = "project-a") {
     linkTaskRecommendation: vi.fn(async (id: string, recommendationId: string, createdTaskId: string, completeColumns?: ReadonlySet<string>) => {
       const index = tasks.findIndex((item) => item.id === id);
       if (index < 0) throw new Error("Task not found");
-      if (completeColumns && !completeColumns.has(tasks[index]!.column)) {
-        throw new Error("Recommendations are available only on completed tasks");
+      if (
+        completeColumns
+        && !completeColumns.has(tasks[index]!.column)
+        && typeof tasks[index]!.archivedAt !== "string"
+      ) {
+        throw new Error("Recommendations are available only on completed or archived tasks");
       }
       const recommendations = tasks[index]!.recommendations?.map((item) => {
         if (item.id !== recommendationId) return item;
@@ -548,6 +552,64 @@ describe("recommendation task creation route", () => {
     expect(store.createTask).not.toHaveBeenCalled();
     expect(tasks[0]?.recommendations?.[0]?.createdTaskId).toBeUndefined();
     expect(store.recordActivity).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-9", metadata: expect.objectContaining({ source: "explicit-marker-intake" }) }));
+  });
+
+  /*
+  FNXC:ArchivedRecommendations 2026-09-20-18:54:
+  Recommendation source admission follows lifecycle traits, while archivedAt proves the source is a
+  physical archive snapshot. Exercise the real route so renamed lanes work and a live lane named
+  archived cannot gain terminal-source privileges from its identifier.
+  */
+  it("creates follow-ups from renamed complete and physically archived workflow lanes", async () => {
+    const shipped = buildApp([parent({ column: "shipped" as Column })]);
+    installCustomRecommendationWorkflow(shipped.store, ["FN-1"]);
+
+    const shippedResponse = await performRequest(
+      shipped.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(shippedResponse.status).toBe(201);
+    expect(shipped.store.createTask).toHaveBeenCalledTimes(1);
+    expect(shipped.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe(shippedResponse.body.task.id);
+
+    const boxed = buildApp([parent({
+      column: "boxed" as Column,
+      archivedAt: "2026-09-20T18:54:00.000Z",
+    })]);
+    installCustomRecommendationWorkflow(boxed.store, ["FN-1"]);
+
+    const boxedResponse = await performRequest(
+      boxed.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(boxedResponse.status).toBe(201);
+    expect(boxed.store.createTask).toHaveBeenCalledTimes(1);
+    expect(boxed.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe(boxedResponse.body.task.id);
+  });
+
+  it("rejects a live custom archived-named parent despite an archive timestamp", async () => {
+    const liveArchived = buildApp([parent({
+      column: "archived",
+      archivedAt: "2026-09-20T18:54:00.000Z",
+    })]);
+    installCustomRecommendationWorkflow(liveArchived.store, ["FN-1"], { declareLegacyArchivedAsLive: true });
+
+    const response = await performRequest(
+      liveArchived.app,
+      "POST",
+      "/api/tasks/FN-1/recommendations/rec-1/create",
+      undefined,
+    );
+
+    expect(response.status).toBe(409);
+    expect(liveArchived.store.createTask).not.toHaveBeenCalled();
+    expect(liveArchived.tasks[0]?.recommendations?.[0]?.createdTaskId).toBeUndefined();
   });
 
   it("rejects non-complete parents and stale linked children without creating another task", async () => {

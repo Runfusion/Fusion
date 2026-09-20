@@ -2393,12 +2393,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           return new Set(["done"]);
         }
       })();
+      const archivedColumns = await archivedColumnsForTask(scopedStore, parent.id);
       /*
-      FNXC:ArchivedRecommendations 2026-09-20-17:23:
-      Cold archive detail is a terminal source just like a complete lane. Require archivedAt so a
-      live custom lane merely named archived cannot bypass the store's physical-snapshot gate.
+      FNXC:ArchivedRecommendations 2026-09-20-18:54:
+      Cold archive detail is a terminal source just like a complete lane. Resolve the parent lane
+      from its workflow's archived trait and require archivedAt, so a live lane name cannot bypass
+      the physical-snapshot gate while renamed archive lanes remain eligible.
       */
-      const isPhysicalArchivedSource = parent.column === "archived" && typeof parent.archivedAt === "string";
+      const isPhysicalArchivedSource = archivedColumns.has(parent.column) && typeof parent.archivedAt === "string";
       if (!completeColumns.has(parent.column) && !isPhysicalArchivedSource) {
         throw conflict("recommendations are available only on completed or archived tasks");
       }
