@@ -36,6 +36,7 @@ Mission → Milestone → Slice → Feature → Task
 - **Skills tools** — `fn_skills_search`, `fn_skills_install`
 - **Insight tools** — `fn_insight_list`, `fn_insight_show`, `fn_insight_run_list`, `fn_insight_run_show`
 - **Other tools** — `fn_web_fetch`, `fn_secret_get`, `fn_experiment_finalize`
+- **Operator-only tools (withheld from agent sessions)** — `fn_workflow_delete`, `fn_task_bypass_review`, `fn_workflow_step_resume`, `fn_task_delete`, `fn_experiment_finalize`, `fn_mission_delete`, `fn_mission_clear_blocked`, `fn_feature_delete`, `fn_slice_delete`, `fn_milestone_delete`, `fn_skills_install`
 <!-- END: tool-categories -->
 - **Dashboard** — Use `/fn` command to start/stop the dashboard
 

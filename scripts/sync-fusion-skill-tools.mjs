@@ -580,7 +580,28 @@ function extractTools(source, engineSource = "") {
   return tools;
 }
 
-function buildSkillCategoriesBlock(tools) {
+/*
+FNXC:OperatorOnlyToolDocs 2026-09-20-05:01:
+The extension source is the policy authority for tools withheld from agent principals. Parse its Set
+rather than copying names into documentation so a future privileged recovery tool is visibly marked
+operator-only everywhere the generated skill catalog is consumed.
+*/
+function extractWithheldToolNames(source) {
+  const declaration = source.match(/const WITHHELD_FROM_AGENT_EXTENSION_TOOLS[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/);
+  return new Set(declaration ? parseStringLiterals(declaration[1]) : []);
+}
+
+function operatorOnlyGuidance(toolName) {
+  if (toolName === "fn_workflow_step_resume") {
+    return "Use the Task Detail workflow result recovery action or POST /tasks/:id/steps/:stepId/resume with a mandatory reason; it marks only an eligible pending pre-merge step failed. The separate fn_task_bypass_review recovery may be needed afterward.";
+  }
+  if (toolName === "fn_task_bypass_review") {
+    return "Use the separate dashboard failed-review bypass action only after its own eligibility checks; it does not resume pending steps.";
+  }
+  return "This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.";
+}
+
+function buildSkillCategoriesBlock(tools, withheldTools) {
   const grouped = new Map(CATEGORY_ORDER.map((c) => [c, []]));
   for (const tool of tools) {
     grouped.get(categorize(tool.name)).push(tool.name);
@@ -594,11 +615,15 @@ function buildSkillCategoriesBlock(tools) {
       `- **${CATEGORY_LABELS[category]}** — ${names.map((n) => `\`${n}\``).join(", ")}`,
     );
   }
+  const withheld = tools.filter((tool) => withheldTools.has(tool.name)).map((tool) => `\`${tool.name}\``);
+  if (withheld.length > 0) {
+    lines.push(`- **Operator-only tools (withheld from agent sessions)** — ${withheld.join(", ")}`);
+  }
   lines.push(SKILL_END);
   return lines.join("\n");
 }
 
-function buildExtensionToolsBlock(tools) {
+function buildExtensionToolsBlock(tools, withheldTools) {
   const grouped = new Map(CATEGORY_ORDER.map((c) => [c, []]));
   for (const tool of tools) {
     grouped.get(categorize(tool.name)).push(tool);
@@ -618,6 +643,12 @@ function buildExtensionToolsBlock(tools) {
       lines.push("");
       lines.push(tool.description || tool.label || "No description provided.");
       lines.push("");
+      if (withheldTools.has(tool.name)) {
+        lines.push("**Availability:** Operator-only — withheld from agent sessions.");
+        lines.push("");
+        lines.push(operatorOnlyGuidance(tool.name));
+        lines.push("");
+      }
 
       if (tool.parameters.length === 0) {
         lines.push("No parameters.");
@@ -638,15 +669,17 @@ function buildExtensionToolsBlock(tools) {
   return lines.join("\n");
 }
 
-function buildCapabilitiesTableBlock(tools) {
+function buildCapabilitiesTableBlock(tools, withheldTools) {
   const lines = [
     CAP_TABLE_BEGIN,
-    "| Tool | Purpose |",
-    "|------|---------|",
+    "| Tool | Availability | Purpose |",
+    "|------|--------------|---------|",
   ];
 
   for (const tool of tools) {
-    lines.push(`| \`${tool.name}\` | ${tool.description || tool.label || ""} |`);
+    const availability = withheldTools.has(tool.name) ? "Operator-only (withheld from agent sessions)" : "Agent sessions";
+    const purpose = `${tool.description || tool.label || ""}${withheldTools.has(tool.name) ? ` ${operatorOnlyGuidance(tool.name)}` : ""}`;
+    lines.push(`| \`${tool.name}\` | ${availability} | ${purpose} |`);
   }
 
   lines.push(CAP_TABLE_END);
@@ -673,27 +706,28 @@ function main() {
   const extensionSource = readFileSync(extensionPath, "utf-8");
   const engineSource = readFileSync(engineAgentToolsPath, "utf-8");
   const tools = extractTools(extensionSource, engineSource);
+  const withheldTools = extractWithheldToolNames(extensionSource);
 
   const files = [
     {
       path: skillPath,
       begin: SKILL_BEGIN,
       end: SKILL_END,
-      block: buildSkillCategoriesBlock(tools),
+      block: buildSkillCategoriesBlock(tools, withheldTools),
       label: "SKILL.md tool-categories",
     },
     {
       path: extensionToolsPath,
       begin: EXT_TOOLS_BEGIN,
       end: EXT_TOOLS_END,
-      block: buildExtensionToolsBlock(tools),
+      block: buildExtensionToolsBlock(tools, withheldTools),
       label: "extension-tools.md",
     },
     {
       path: capabilitiesPath,
       begin: CAP_TABLE_BEGIN,
       end: CAP_TABLE_END,
-      block: buildCapabilitiesTableBlock(tools),
+      block: buildCapabilitiesTableBlock(tools, withheldTools),
       label: "fusion-capabilities.md tool table",
     },
   ];

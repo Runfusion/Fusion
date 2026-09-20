@@ -68,6 +68,11 @@ interface WorkflowResultsTabProps {
   agentLogEntries?: AgentLogEntry[];
   assignedAgent?: Agent | null;
   onEditWorkflow?: () => void;
+  /** Explicit dashboard operator recovery; TaskStore remains the final eligibility authority. */
+  onResumeWorkflowStep?: (taskId: string, stepId: string, reason: string) => Promise<Task>;
+  /** Publishes the server-confirmed failed result to every Task Detail host. */
+  onTaskUpdated?: (task: Task) => void;
+  addToast?: (message: string, type?: "success" | "error") => void;
   /** U5 (R20): called after a workflow switch affects board placement
    *  (any reconciliation result) so the board can refresh before the SSE
    *  catch-up arrives; lane membership is keyed by workflow id, not column. */
@@ -388,6 +393,9 @@ export function WorkflowResultsTab({
   agentLogEntries = [],
   assignedAgent = null,
   onEditWorkflow,
+  onResumeWorkflowStep,
+  onTaskUpdated,
+  addToast,
   onWorkflowReconciled,
 }: WorkflowResultsTabProps) {
   const { t } = useTranslation("app");
@@ -397,6 +405,7 @@ export function WorkflowResultsTab({
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [expandedViewStepId, setExpandedViewStepId] = useState<string | null>(null);
+  const [resumingStepId, setResumingStepId] = useState<string | null>(null);
   const [allWorkflowSteps, setAllWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [optionalWorkflowSteps, setOptionalWorkflowSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
   const [workflowDefinitions, setWorkflowDefinitions] = useState<WorkflowDefinition[]>([]);
@@ -847,6 +856,31 @@ export function WorkflowResultsTab({
     );
   };
 
+  const canResumePendingStep = (result: WorkflowStepResult): boolean => {
+    if (!task || !onResumeWorkflowStep || result.status !== "pending" || result.phase === "post-merge") return false;
+    if (task.paused || task.userPaused || task.status === "paused") return false;
+    return columnFlags
+      ? columnFlags.countsTowardWip === true || isReviewColumnRole(columnFlags, task.column)
+      : ["in-progress", "in-review"].includes(task.column);
+  };
+
+  const handleResumeWorkflowStep = async (result: WorkflowStepResult) => {
+    if (!onResumeWorkflowStep || resumingStepId) return;
+    const reason = window.prompt(t("app:workflow.resumePrompt", "Reason for marking this stuck pending step as failed (required, audit-logged):"));
+    if (!reason?.trim()) return;
+
+    setResumingStepId(result.workflowStepId);
+    try {
+      const updated = await onResumeWorkflowStep(taskId, result.workflowStepId, reason.trim());
+      onTaskUpdated?.(updated);
+      addToast?.(t("app:workflow.resumeSuccess", "Marked {{name}} as failed; use the separate review bypass if needed.", { name: result.workflowStepName }), "success");
+    } catch (err) {
+      addToast?.(getErrorMessage(err), "error");
+    } finally {
+      setResumingStepId(null);
+    }
+  };
+
   const renderResults = () => {
     if (loading) {
       return (
@@ -957,6 +991,22 @@ export function WorkflowResultsTab({
                   <span className="workflow-result-duration">{formatDuration(result.startedAt, result.completedAt)}</span>
                 )}
               </div>
+
+              {canResumePendingStep(result) && (
+                <div className="workflow-result-recovery">
+                  <button
+                    type="button"
+                    className="btn btn-sm workflow-result-resume"
+                    onClick={() => void handleResumeWorkflowStep(result)}
+                    disabled={resumingStepId !== null}
+                    data-testid={`workflow-result-resume-${result.workflowStepId}`}
+                  >
+                    {resumingStepId === result.workflowStepId
+                      ? t("app:workflow.resuming", "Marking failed…")
+                      : t("app:workflow.resumePending", "Mark stuck step failed")}
+                  </button>
+                </div>
+              )}
 
               {/* Show live agent logs for pending steps, static output for completed steps */}
               {result.status === "pending" && result.startedAt ? (

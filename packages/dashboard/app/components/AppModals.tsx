@@ -76,6 +76,8 @@ interface AppModalsProps {
     unpauseTask: (taskId: string) => Promise<Task>;
     /* FNXC:ReviewLaneBypass 2026-07-09-00:00 (FN-7720): operator-only review-lane bypass, threaded to TaskDetailModal only. */
     bypassReview?: (taskId: string, reason: string) => Promise<Task>;
+    /* FNXC:WorkflowStepResume 2026-09-20-05:01: Task Detail is the sole operator recovery surface, shared by modal, dock, and pop-out hosts. */
+    resumeWorkflowStep?: (taskId: string, stepId: string, reason: string) => Promise<Task>;
 
     resetTask: (taskId: string, options?: { description?: string }) => Promise<Task>;
     duplicateTask: (taskId: string, options?: { workflowId?: string }) => Promise<Task>;
@@ -335,6 +337,7 @@ export function AppModals({
             onPauseTask={taskOperations.pauseTask}
             onUnpauseTask={taskOperations.unpauseTask}
             onBypassReview={taskOperations.bypassReview}
+            onResumeWorkflowStep={taskOperations.resumeWorkflowStep}
             onResetTask={taskOperations.resetTask}
             onDuplicateTask={taskOperations.duplicateTask}
             onTaskUpdated={modalManager.updateDetailTask}

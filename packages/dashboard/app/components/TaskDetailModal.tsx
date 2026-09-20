@@ -460,6 +460,8 @@ export interface TaskDetailModalProps {
   affordance surface for this policy-gated escape hatch.
   */
   onBypassReview?: (id: string, reason: string) => Promise<Task>;
+  /* FNXC:WorkflowStepResume 2026-09-20-05:01: explicit dashboard-operator recovery for a pending pre-merge result; WorkflowResultsTab remains the only renderer. */
+  onResumeWorkflowStep?: (id: string, stepId: string, reason: string) => Promise<Task>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onTaskUpdated?: (task: Task) => void;
@@ -848,6 +850,7 @@ export function TaskDetailContent({
   onPauseTask,
   onUnpauseTask,
   onBypassReview,
+  onResumeWorkflowStep,
   onResetTask,
   onDuplicateTask,
   onTaskUpdated,
@@ -6102,6 +6105,9 @@ export function TaskDetailContent({
                 agentLogEntries={agentLogEntries}
                 assignedAgent={assignedAgent}
                 onEditWorkflow={onOpenWorkflowEditor}
+                onResumeWorkflowStep={onResumeWorkflowStep}
+                onTaskUpdated={onTaskUpdated}
+                addToast={addToast}
               />
             </div>
           ) : activeTab === "model" ? (

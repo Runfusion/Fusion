@@ -157,6 +157,20 @@ export function bypassReview(id: string, reason: string, projectId?: string): Pr
   });
 }
 
+/*
+FNXC:WorkflowStepResume 2026-09-20-05:01:
+This dashboard-only client calls the trusted REST bridge for an operator's explicit recovery reason.
+The server owns actor attribution and TaskStore owns eligibility, so this function carries only the
+selected workflow-step ID and reason through the project-scoped lifecycle transport.
+*/
+export function resumeWorkflowStep(id: string, stepId: string, reason: string, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/steps/${encodeURIComponent(stepId)}/resume`, projectId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function relaunchCliSession(sessionId: string, projectId?: string): Promise<{ ok: boolean; taskId?: string }> {
   return api<{ ok: boolean; taskId?: string }>(
     withProjectId(`/cli-sessions/${encodeURIComponent(sessionId)}/relaunch`, projectId),

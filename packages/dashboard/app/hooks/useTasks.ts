@@ -1763,6 +1763,45 @@ export function useTasks(options?: UseTasksOptions) {
     return bypassedTask;
   }, [projectId]);
 
+  /*
+  FNXC:WorkflowStepResume 2026-09-20-05:01:
+  Resume uses the same confirmed-return replacement as bypassReview so every Task Detail host sees
+  the failed result immediately, without waiting for SSE. A rejected operator request mutates neither
+  the in-memory board nor its project-scoped cache because the API call completes before reconciliation.
+  */
+  const resumeWorkflowStep = useCallback(async (id: string, stepId: string, reason: string): Promise<Task> => {
+    const resumedTask = normalizeNonBoardTask(await api.resumeWorkflowStep(id, stepId, reason, projectId));
+    fetchVersionRef.current++;
+
+    const projectUpdatedTasks = (currentTasks: Task[]) => currentTasks.map((task) => (task.id === id ? resumedTask : task));
+
+    if (projectId) {
+      const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+      const cachedTasks = readCache<unknown>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (Array.isArray(cachedTasks)) {
+        const cacheContainsOnlyTaskRows = cachedTasks.every((task) => Boolean(task && typeof task === "object" && typeof (task as Task).id === "string"));
+        if (cacheContainsOnlyTaskRows) {
+          const nextCachedTasks = cachedTasks.map((task) => ((task as Task).id === id ? resumedTask : normalizeTask(task as Task)));
+          writeCache(cacheKey, nextCachedTasks.length > 500 ? nextCachedTasks.slice(0, 500) : nextCachedTasks, { maxBytes: 500_000 });
+        } else {
+          clearCache(cacheKey);
+        }
+      } else if (cachedTasks === null) {
+        const nextCurrentTasks = projectUpdatedTasks(tasksRef.current);
+        writeCache(cacheKey, nextCurrentTasks.length > 500 ? nextCurrentTasks.slice(0, 500) : nextCurrentTasks, { maxBytes: 500_000 });
+      } else {
+        clearCache(cacheKey);
+      }
+    }
+
+    setTasks((prev) => {
+      const next = projectUpdatedTasks(prev);
+      tasksRef.current = next;
+      return next;
+    });
+    return resumedTask;
+  }, [projectId]);
+
   const resetTask = useCallback(async (id: string, options?: TaskResetOptions): Promise<Task> => {
     return reconcileConfirmedTask(await api.resetTask(id, options, projectId));
   }, [projectId, reconcileConfirmedTask]);
@@ -1898,5 +1937,5 @@ export function useTasks(options?: UseTasksOptions) {
     advanceFreshnessClockForLiveUpdate();
   }, [advanceFreshnessClockForLiveUpdate]);
 
-  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, changeArchivedSortMode, archivedSortMode, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
+  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resumeWorkflowStep, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, changeArchivedSortMode, archivedSortMode, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

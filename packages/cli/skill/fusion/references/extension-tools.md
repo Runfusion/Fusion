@@ -103,6 +103,10 @@ Retry a failed task — clears the error state. Non-review failures move to todo
 
 Policy-gated escape hatch for an in-review task stranded solely by a failed pre-merge review lane (leading real-world cause: the Runfusion/Fusion#1946 '(no feedback captured)' no-verdict dispatch defect), not a real REVISE. Rewrites the latest failed pre-merge WorkflowStepResult to a terminal non-blocking status with explicit bypass audit metadata (who/when/why/prior status) — it never fabricates a reviewer verdict. Requires a mandatory reason and is audit-logged. Clears ONLY the failed-pre-merge-step merge blocker; paused, incomplete-step, blocking-status, and still-pending conditions still block, and an autoMerge:false task is not force-merged.
 
+**Availability:** Operator-only — withheld from agent sessions.
+
+Use the separate dashboard failed-review bypass action only after its own eligibility checks; it does not resume pending steps.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Task ID (e.g. FN-001) |
@@ -145,6 +149,10 @@ Unarchive an archived task (move from archived → its restore column). Restores
 ### fn_task_delete
 
 Soft-delete a task from active Fusion board views. The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. If live lineage children or dependents still reference the task, deletion is rejected unless the matching explicit reference-removal option is passed.
+
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -280,6 +288,10 @@ Update a custom Fusion workflow definition's metadata, IR, or layout.
 
 Delete a custom Fusion workflow definition; built-in workflows are protected.
 
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflow_id` | string | ✓ | The workflow definition ID to delete (built-ins cannot be deleted). |
@@ -312,6 +324,10 @@ Assign a workflow definition to a task by workflow ID.
 ### fn_workflow_step_resume
 
 Resume a stuck pending workflow step on an in-review or in-progress Fusion task (operator-only, mandatory reason, audit-logged). When a prompt node (like code-review) is dispatched but never receives a verdict callback (Runfusion/Fusion#1946), the step stays in 'pending' status indefinitely. This tool transitions it to 'failed', enabling the existing fn_task_bypass_review escape hatch to clear the merge blocker. Requires a mandatory reason and step ID.
+
+**Availability:** Operator-only — withheld from agent sessions.
+
+Use the Task Detail workflow result recovery action or POST /tasks/:id/steps/:stepId/resume with a mandatory reason; it marks only an eligible pending pre-merge step failed. The separate fn_task_bypass_review recovery may be needed afterward.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -420,6 +436,10 @@ Backfill mission assertions by deriving and linking one store-managed assertion 
 
 Delete a mission and all its milestones, slices, and features. Cannot be undone.
 
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Mission ID to delete (e.g., M-001) |
@@ -437,6 +457,10 @@ Set a mission lifecycle status.
 ### fn_mission_clear_blocked
 
 Clear a stale mission-level blocked badge without resuming automation.
+
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -488,6 +512,10 @@ Add a feature to a slice. Features are deliverables that can be linked to tasks.
 
 Delete a feature. Rejects deletion when linked to a live task unless force=true.
 
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `featureId` | string | ✓ | Feature ID to delete (e.g., F-001) |
@@ -497,6 +525,10 @@ Delete a feature. Rejects deletion when linked to a live task unless force=true.
 
 Delete a slice and its features. Rejects deletion when child features link to live tasks unless force=true.
 
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sliceId` | string | ✓ | Slice ID to delete (e.g., SL-001) |
@@ -505,6 +537,10 @@ Delete a slice and its features. Rejects deletion when child features link to li
 ### fn_milestone_delete
 
 Delete a milestone and all descendant slices/features. Rejects deletion when child features link to live tasks unless force=true.
+
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -787,6 +823,10 @@ Search the skills.sh directory for agent skills. Returns matching skills with na
 
 Install an agent skill from skills.sh into the current project. Downloads skill files into the project's skill directories (.fusion/skills/, legacy .pi/skills/, .agents/skills/). The skill becomes available to AI agents in subsequent sessions.
 
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `source` | string | ✓ | GitHub source in owner/repo format (e.g., 'firebase/agent-skills') |
@@ -858,6 +898,10 @@ Read a secret by key using per-secret access policy.
 ### fn_experiment_finalize
 
 Group kept experiment runs into reviewable branches and finalize the session. Use dryRun=true to preview the plan without touching git.
+
+**Availability:** Operator-only — withheld from agent sessions.
+
+This tool is withheld from agent sessions and must be invoked by a human operator through its supported operator surface.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

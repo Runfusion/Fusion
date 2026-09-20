@@ -266,6 +266,76 @@ describe("WorkflowResultsTab", () => {
     },
   ];
 
+  /*
+  FNXC:WorkflowStepResume 2026-09-20-05:01:
+  Reproduce the pending review-callback wedge through the rendered Task Detail tab: an operator supplies
+  a reason, the exact result ID reaches the callback, and only its server-returned failed task is published.
+  */
+  it("recovers an eligible pending pre-merge result through the explicit operator action", async () => {
+    const pendingTask = { ...baseTask, column: "in-review", status: null } as Task;
+    const pendingResult: WorkflowStepResult = { workflowStepId: "code-review", workflowStepName: "Code review", phase: "pre-merge", status: "pending" };
+    const updated = { ...pendingTask, workflowStepResults: [{ ...pendingResult, status: "failed" }] } as Task;
+    const onResumeWorkflowStep = vi.fn().mockResolvedValue(updated);
+    const onTaskUpdated = vi.fn();
+    const addToast = vi.fn();
+    vi.spyOn(window, "prompt").mockReturnValue(" callback did not return ");
+
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        task={pendingTask}
+        settings={mockSettings}
+        results={[pendingResult]}
+        onResumeWorkflowStep={onResumeWorkflowStep}
+        onTaskUpdated={onTaskUpdated}
+        addToast={addToast}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("workflow-result-resume-code-review"));
+
+    await waitFor(() => expect(onResumeWorkflowStep).toHaveBeenCalledWith("FN-001", "code-review", "callback did not return"));
+    expect(onTaskUpdated).toHaveBeenCalledWith(updated);
+    expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Code review"), "success");
+  });
+
+  it("keeps the pending result visible and reports a rejected recovery", async () => {
+    const pendingTask = { ...baseTask, column: "in-review", status: null } as Task;
+    const pendingResult: WorkflowStepResult = { workflowStepId: "code-review", workflowStepName: "Code review", phase: "pre-merge", status: "pending" };
+    const onResumeWorkflowStep = vi.fn().mockRejectedValue(new Error("step is no longer pending"));
+    const addToast = vi.fn();
+    vi.spyOn(window, "prompt").mockReturnValue("callback stalled");
+
+    render(<WorkflowResultsTab taskId="FN-001" task={pendingTask} settings={mockSettings} results={[pendingResult]} onResumeWorkflowStep={onResumeWorkflowStep} addToast={addToast} />);
+    fireEvent.click(screen.getByTestId("workflow-result-resume-code-review"));
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("step is no longer pending", "error"));
+    expect(screen.getByTestId("workflow-result-badge-code-review")).toHaveTextContent("Running");
+  });
+
+  it("does not dispatch when the operator cancels or leaves the recovery reason blank", () => {
+    const pendingTask = { ...baseTask, column: "in-review", status: null } as Task;
+    const pendingResult: WorkflowStepResult = { workflowStepId: "code-review", workflowStepName: "Code review", phase: "pre-merge", status: "pending" };
+    const onResumeWorkflowStep = vi.fn();
+    vi.spyOn(window, "prompt").mockReturnValueOnce(null).mockReturnValueOnce("   ");
+
+    render(<WorkflowResultsTab taskId="FN-001" task={pendingTask} settings={mockSettings} results={[pendingResult]} onResumeWorkflowStep={onResumeWorkflowStep} />);
+    fireEvent.click(screen.getByTestId("workflow-result-resume-code-review"));
+    fireEvent.click(screen.getByTestId("workflow-result-resume-code-review"));
+
+    expect(onResumeWorkflowStep).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "post-merge",  task: { ...baseTask, column: "in-review", status: null } as Task, result: { workflowStepId: "post", workflowStepName: "Post", phase: "post-merge", status: "pending" } as WorkflowStepResult },
+    { name: "terminal", task: { ...baseTask, column: "in-review", status: null } as Task, result: { workflowStepId: "failed", workflowStepName: "Failed", phase: "pre-merge", status: "failed" } as WorkflowStepResult },
+    { name: "paused", task: { ...baseTask, column: "in-review", status: "paused", paused: true } as Task, result: { workflowStepId: "paused", workflowStepName: "Paused", phase: "pre-merge", status: "pending" } as WorkflowStepResult },
+    { name: "outside lifecycle lane", task: { ...baseTask, column: "todo", status: null } as Task, result: { workflowStepId: "todo", workflowStepName: "Todo", phase: "pre-merge", status: "pending" } as WorkflowStepResult },
+  ])("does not render a recovery action for $name results", ({ task, result }) => {
+    render(<WorkflowResultsTab taskId="FN-001" task={task} settings={mockSettings} results={[result]} onResumeWorkflowStep={vi.fn()} />);
+    expect(screen.queryByTestId(`workflow-result-resume-${result.workflowStepId}`)).not.toBeInTheDocument();
+  });
+
   it("renders list of workflow step results", () => {
     render(<WorkflowResultsTab taskId="FN-001" results={mockResults} task={baseTask} settings={mockSettings} />);
 

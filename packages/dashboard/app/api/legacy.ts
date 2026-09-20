@@ -104,6 +104,7 @@ export {
   apiAbandonBranchGroup,
   retryTask,
   bypassReview,
+  resumeWorkflowStep,
   relaunchCliSession,
   recoverBranchBinding,
   resetTask,

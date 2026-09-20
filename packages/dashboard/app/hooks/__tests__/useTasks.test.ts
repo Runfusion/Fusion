@@ -34,6 +34,7 @@ vi.mock("../../api", async (importOriginal) => {
     mergeTask: vi.fn(),
     retryTask: vi.fn(),
     bypassReview: vi.fn(),
+    resumeWorkflowStep: vi.fn(),
     pauseTask: vi.fn(),
     unpauseTask: vi.fn(),
     resetTask: vi.fn(),
@@ -57,6 +58,7 @@ const mockMoveTask = vi.mocked(api.moveTask);
 const mockDeleteTask = vi.mocked(api.deleteTask);
 const mockRetryTask = vi.mocked(api.retryTask);
 const mockBypassReview = vi.mocked(api.bypassReview);
+const mockResumeWorkflowStep = vi.mocked(api.resumeWorkflowStep);
 const mockPauseTask = vi.mocked(api.pauseTask);
 const mockUnpauseTask = vi.mocked(api.unpauseTask);
 const mockResetTask = vi.mocked(api.resetTask);
@@ -112,6 +114,7 @@ beforeEach(() => {
   mockMoveTask.mockReset();
   mockDeleteTask.mockReset();
   mockRetryTask.mockReset();
+  mockResumeWorkflowStep.mockReset();
   mockPauseTask.mockReset();
   mockUnpauseTask.mockReset();
   mockReadCache.mockReset();
@@ -2763,6 +2766,49 @@ describe("useTasks", () => {
   matching local task row immediately (no SSE/refresh dependency), and a
   rejected bypass leaves local state and cache untouched.
   */
+  describe("resumeWorkflowStep", () => {
+    it("replaces only the returned task and updates the project cache", async () => {
+      const pending = createMockTask({ id: "FN-RESUME", column: "in-review" as Column });
+      const keep = createMockTask({ id: "FN-KEEP", column: "todo" as Column });
+      const resumed = createMockTask({ id: "FN-RESUME", column: "in-review" as Column, workflowStepResults: [{ workflowStepId: "code-review", workflowStepName: "Code review", status: "failed" }] });
+      mockFetchTasks.mockResolvedValueOnce([pending, keep]);
+      mockResumeWorkflowStep.mockResolvedValueOnce(resumed);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+
+      await act(async () => {
+        await result.current.resumeWorkflowStep("FN-RESUME", "code-review", "callback never returned");
+      });
+
+      expect(mockResumeWorkflowStep).toHaveBeenCalledWith("FN-RESUME", "code-review", "callback never returned", "proj-1");
+      expect(result.current.tasks).toEqual([resumed, keep]);
+      expect(mockWriteCache).toHaveBeenCalled();
+    });
+
+    it("leaves tasks and cache untouched when the recovery request rejects", async () => {
+      const pending = createMockTask({ id: "FN-RESUME", column: "in-review" as Column });
+      const keep = createMockTask({ id: "FN-KEEP", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([pending, keep]);
+      mockResumeWorkflowStep.mockRejectedValueOnce(new Error("only pending steps can be resumed"));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+
+      await expect(act(async () => {
+        await result.current.resumeWorkflowStep("FN-RESUME", "code-review", "callback never returned");
+      })).rejects.toThrow("only pending steps can be resumed");
+
+      expect(result.current.tasks).toEqual([pending, keep]);
+      expect(mockReadCache).not.toHaveBeenCalled();
+      expect(mockWriteCache).not.toHaveBeenCalled();
+      expect(mockClearCache).not.toHaveBeenCalled();
+    });
+  });
+
   describe("bypassReview", () => {
     it("calls the bypass-review API and normalizes the returned task into local state", async () => {
       const failing = createMockTask({

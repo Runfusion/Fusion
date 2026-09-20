@@ -129,6 +129,23 @@
   opacity: 0.7;
 }
 
+/*
+FNXC:WorkflowStepResume 2026-09-20-05:01:
+An eligible pending pre-merge result exposes one explicit operator recovery control. Keep it in the
+result flow and tokenized so narrow Task Detail panes wrap the action without leaving an empty shell
+for ineligible results.
+*/
+.workflow-result-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.workflow-result-resume {
+  color: var(--color-warning);
+}
+
 .workflow-results-tab {
   display: flex;
   flex-direction: column;
@@ -796,6 +813,12 @@
 
   .workflow-result-output-header {
     align-items: flex-start;
+  }
+
+  .workflow-result-resume {
+    width: 100%;
+    justify-content: center;
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
   }
 
   .workflow-result-output-preview {

@@ -50,6 +50,8 @@ export interface RightDockControllerInput {
   onUnpauseTask?: (id: string) => Promise<Task>;
   /* FNXC:ReviewLaneBypass 2026-07-09-00:00 (FN-7720): threaded through so the right-dock host renders the same TaskDetailContent bypass affordance as the full modal/floating hosts. */
   onBypassReview?: (id: string, reason: string) => Promise<Task>;
+  /* FNXC:WorkflowStepResume 2026-09-20-05:01: pass the same explicit operator recovery through the dock's canonical Task Detail host. */
+  onResumeWorkflowStep?: (id: string, stepId: string, reason: string) => Promise<Task>;
   onResetTask?: (id: string, options?: { description?: string }) => Promise<Task>;
   onDuplicateTask?: (id: string, options?: { workflowId?: string }) => Promise<Task>;
   onTaskUpdated?: (task: Task) => void;
@@ -284,6 +286,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onPauseTask={input.onPauseTask}
       onUnpauseTask={input.onUnpauseTask}
       onBypassReview={input.onBypassReview}
+      onResumeWorkflowStep={input.onResumeWorkflowStep}
       onResetTask={input.onResetTask}
       onDuplicateTask={input.onDuplicateTask}
       onTaskUpdated={input.onTaskUpdated}

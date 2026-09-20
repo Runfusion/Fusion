@@ -3817,6 +3817,37 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
    * (FN-7720). This route is intentionally NOT part of the executor/reviewer
    * agent tool surface — dashboard/operator only.
    */
+  /*
+  FNXC:WorkflowStepResume 2026-09-20-05:01:
+  A pending pre-merge prompt callback can wedge indefinitely, but the recovery remains an explicit
+  dashboard-operator action. This bridge supplies a server-derived actor and delegates every
+  eligibility and mutation decision to TaskStore; it must never trust a client identity or duplicate
+  the pending/lane/paused checks enforced by resumeWorkflowStep.
+  */
+  router.post("/tasks/:id/steps/:stepId/resume", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { reason } = (req.body ?? {}) as { reason?: unknown };
+      if (typeof reason !== "string" || reason.trim().length === 0) {
+        throw badRequest("reason is required to resume a pending pre-merge workflow step");
+      }
+      const updated = await scopedStore.resumeWorkflowStep(req.params.id, {
+        stepId: req.params.stepId,
+        reason: reason.trim(),
+        actor: "dashboard-operator",
+      });
+      res.json(updated);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      if (isTaskLookupMiss(err) || /^Task .* not found$/.test(message)) throw notFound(message);
+      if (message.startsWith("Cannot resume workflow step") || message.startsWith("resumeWorkflowStep requires")) {
+        throw conflict(message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   router.post("/tasks/:id/bypass-review", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
