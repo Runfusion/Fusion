@@ -226,12 +226,18 @@ and prints `ACCEPTED RISES`, which is the only way to record a rise deliberately
 
 <!-- FNXC:LifecycleColumnCensus 2026-09-15-15:11: The PR-only ratchet let main-line drift
 accumulate unseen until an unrelated pull request inherited the failure. Keep post-merge observation
-separate from the merge gate while making the same strict command visible at the introducing commit. -->
-The strict ratchet runs in the `Lint` job of `PR Checks` on `pull_request` and in the
-`lifecycle-ratchet-drift` job of `.github/workflows/full-suite.yml` on pushes to `main`.
-`pnpm lint` does **not** run this census. Resolve every rise by converting it to a live
-workflow-resolved check or adding a declaration-leading `DELIBERATE-LITERAL` marker with its reason,
-then re-record the baseline with `--strict --update-baseline` in the same change.
+separate from the merge gate while making the same strict command visible at the introducing commit.
+
+FNXC:LifecycleColumnCensus 2026-09-20-03:41: Main-push visibility must retain a failing ratchet step
+without becoming branch protection. The independent Full Suite job runs the same strict package command
+without continue-on-error, so the introducing merge records drift while PR Checks remains the blocker. -->
+The strict ratchet runs in the `Lint` job of `PR Checks` on `pull_request` and in the independent
+`lifecycle-ratchet-drift` job of `.github/workflows/full-suite.yml` on pushes to `main`. Both invoke
+`pnpm check:lifecycle-columns`; the Full Suite step must not use `continue-on-error`, while the workflow
+itself remains a non-blocking post-merge observer rather than a required PR check. `pnpm lint` does **not**
+run this census. Resolve every rise by converting it to a live workflow-resolved check or adding a
+declaration-leading `DELIBERATE-LITERAL` marker with its reason, then re-record the baseline with
+`--strict --update-baseline` in the same change.
 
 The regression suite is `packages/engine/src/__tests__/lifecycle-column-census.test.ts`. It pins
 each form the census must catch (all six ids, non-`column` locals, single quotes, negation,
