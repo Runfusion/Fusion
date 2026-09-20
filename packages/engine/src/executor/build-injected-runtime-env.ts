@@ -6,6 +6,7 @@
  * Never mutates process.env globally — scoped env is threaded through taskEnv.
  */
 import { delimiter } from "node:path";
+import { createFusionBrowserLease } from "../agent-browser-lifecycle.js";
 
 export type BuildInjectedRuntimeEnvDeps = {
   rootDir: string;
@@ -31,12 +32,20 @@ export async function buildInjectedRuntimeEnv(
   });
   const pathPrepend = runtimeEnvContribution?.pathPrepend ?? [];
   const injectedEnv = runtimeEnvContribution?.env ?? {};
+  const baseEnv = {
+    ...process.env,
+    ...injectedEnv,
+    PATH: [...pathPrepend, process.env.PATH ?? ""].filter(Boolean).join(delimiter),
+  };
+  /*
+  FNXC:AgentBrowserOwnership 2026-09-20-00:56:
+  Every actual executor environment receives one opaque browser lease. The native
+  daemon has no parent watchdog; this lease and its enforced positive idle timeout
+  make a SIGKILL survivor attributable to Fusion recovery without affecting probes.
+  */
+  const browser = createFusionBrowserLease(taskId, baseEnv);
   return {
-    env: {
-      ...process.env,
-      ...injectedEnv,
-      PATH: [...pathPrepend, process.env.PATH ?? ""].filter(Boolean).join(delimiter),
-    },
+    env: browser.env,
     injectedKeyCount: Object.keys(injectedEnv).length,
     pathEntryCount: pathPrepend.length,
   };

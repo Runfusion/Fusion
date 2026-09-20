@@ -1765,3 +1765,9 @@ Workflow routing never changes `assignedAgentId`. An explicit task owner runs cl
 ### Memory-first steering and consolidation history
 
 Agent instruction assembly uses the resolved `agentMemoryInclusionMode` across triage, execution, review, heartbeat, and chat lanes. `full` asks agents to query memory before re-reading raw sources, `index` keeps that direction terse, and `off` omits it. Operators can inspect the built-in Memory Keeper's compact consolidation audit history in **Agent Detail → Agent Memory**; it shows only completion outcomes and existing audit counts/reasons, never memory content.
+
+## Managed agent-browser sessions
+
+Fusion executor sessions supply an opaque `AGENT_BROWSER_SESSION` identity and a lease-bound browser profile to the packaged `agent-browser` launcher. Managed sessions always use a finite idle deadline: invalid, zero, or negative values fall back to ten minutes; positive overrides are capped at one hour. Normal executor teardown requests that exact scoped session to close, while an expired lease is the conservative recovery signal for a crashed owner.
+
+The launcher preserves upstream behavior for direct, unmanaged `agent-browser` use. Operators should not kill browsers by port or broad process-name matching: recovery is limited to a Fusion lease-bound profile after its owner deadline expires.

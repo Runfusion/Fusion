@@ -30,6 +30,7 @@
   },
   "files": [
     "agent-browser.mjs",
+    "agent-browser-lifecycle.mjs",
     "bin.mjs",
     "dist/**/*.js",
     "dist/**/*.d.ts",

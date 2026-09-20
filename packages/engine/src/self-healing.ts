@@ -117,6 +117,7 @@ import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js
 import { shouldReclaimWedgedMerge } from "./merge/merge-reclaim-policy.js";
 import { resolveRemediationCheckout } from "./executor/resolve-remediation-checkout.js";
 import { isDefiniteEmptyCodeReviewRevise } from "./executor/review-empty-content-close.js";
+import { reapExpiredFusionBrowserLeasesInProduction } from "./agent-browser-lifecycle.js";
 
 import { advanceIntegrationBranchRef } from "./merge/merger-ref-update-advance.js";
 import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorktreeContainerDir, resolveAiMergeSearchRoots, resolveWorktreesDirScanRoots } from "./worktree/worktree-paths.js";
@@ -389,6 +390,8 @@ const PRE_EXECUTION_WORKTREE_MAX_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
 export interface SelfHealingOptions {
   /** Project root directory (parent of .worktrees/) */
   rootDir: string;
+  /** Injected only by tests; production uses exact profile + daemon-ancestry discovery. */
+  reapExpiredFusionBrowserLeases?: () => Promise<number>;
   /*
    * FNXC:PlanReviewLease 2026-07-26-20:30:
    * This engine's cluster node id, matching what the graph stamps into
@@ -1938,6 +1941,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     // Each recovery step is isolated — one failure doesn't prevent subsequent steps.
     const startupSurfacing = this.surfacingCycleMemo();
     const steps: Array<{ name: string; fn: () => Promise<unknown> }> = [
+      {
+        name: "reap-expired-agent-browser-leases",
+        fn: () => this.reapExpiredAgentBrowserLeases(),
+      },
       // FNXC:LegacyAdoption 2026-07-19-04:20 (U9b / KTD-8): adoption runs FIRST. Every step
       // below reasons about `task.status` and column, so a pre-cutover row must be adopted
       // into the post-cutover vocabulary before any of them classify it — otherwise a
@@ -2760,6 +2767,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   FNXC:EngineDiagnostics 2026-07-26-07:26:
   Periodic maintenance walks 50+ batch steps each cycle. Per-step "succeeded"/disabled-skip lines are steady-state chatter that filled the TUI log pane and drowned real recovery events. Route routine start/complete/success/skip to debug() (opt-in via FUSION_DEBUG=self-healing). Keep log()/warn()/error() only for state changes (recovered/deleted/cleaned counts > 0), pause-policy skips operators may need, and step failures.
   */
+  /**
+   * FNXC:AgentBrowserReaping 2026-09-20-13:20:
+   * Browser cleanup is independent of task rows and is safe while paused: it reads only Fusion's
+   * bounded lease directory and signals a process tree only after exact profile/daemon proof.
+   */
+  private async reapExpiredAgentBrowserLeases(): Promise<number> {
+    const reaped = await (this.options.reapExpiredFusionBrowserLeases ?? reapExpiredFusionBrowserLeasesInProduction)();
+    if (reaped > 0) log.log(`Reaped ${reaped} expired Fusion agent-browser session(s)`);
+    return reaped;
+  }
+
   private async runMaintenance(): Promise<void> {
     if (this.maintenanceRunning) {
       log.debug("Maintenance cycle skipped — previous cycle still running");
@@ -2795,6 +2813,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       // Batch 1 — housekeeping (safe under pause: filesystem/db cleanup only)
       const batch1Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
+        {
+          name: "reap-expired-agent-browser-leases",
+          fn: () => this.reapExpiredAgentBrowserLeases(),
+        },
         {
           name: "prune-worktrees",
           fn: () => (maintenancePaused || !gitWorktreeChurnDue ? Promise.resolve(0) : this.pruneWorktrees()),

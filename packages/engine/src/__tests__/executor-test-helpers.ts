@@ -375,8 +375,14 @@ vi.mock("node:child_process", async () => {
 vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
   realpathSync: vi.fn((path: string) => path),
-  lstatSync: vi.fn(() => ({ isSymbolicLink: () => false, isDirectory: () => true })),
-  statSync: vi.fn(() => ({ isDirectory: () => true })),
+  lstatSync: vi.fn(() => ({ isSymbolicLink: () => false, isDirectory: () => true, isFile: () => true })),
+  statSync: vi.fn(() => ({ isDirectory: () => true, isFile: () => true })),
+  mkdirSync: vi.fn(),
+  readdirSync: vi.fn(() => []),
+  readFileSync: vi.fn(() => "{}"),
+  renameSync: vi.fn(),
+  rmSync: vi.fn(),
+  writeFileSync: vi.fn(),
 }));
 
 export const mockExecuteAll: Mock<() => Promise<unknown[]>> = vi.fn().mockResolvedValue([]);

@@ -160,6 +160,7 @@ import { isResearchToolSurfaceEnabled } from "../execution/tool-availability.js"
 import { summarizeVerificationOutput } from "../execution/verification-utils.js";
 import { buildAgentPersona } from "./agent-binding-pure.js";
 import { releaseExternalExecutionActiveWorktree } from "./active-worktrees.js";
+import { closeFusionBrowserSession } from "../agent-browser-lifecycle.js";
 import { evaluateImplicitCompletionRefusal } from "./completion-predicates.js";
 import {
   configuredCommandErrorMessage,
@@ -3953,6 +3954,14 @@ export async function runImplementation(
         deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
+      /*
+      FNXC:AgentBrowserOwnership 2026-09-20-00:56:
+      Session teardown closes only the opaque browser session carried in this run's
+      environment. Retiring its lease after the bounded close prevents an older retry
+      from selecting a newer task session, while crash survivors remain reaper-owned.
+      */
+      if (taskEnv) await closeFusionBrowserSession(taskEnv);
+
       /*
       FNXC:ExternalExecutionCheckout 2026-08-10-03:13:
       External checkouts remain operator-owned and are never removed by Fusion, but every run exit must clear their in-memory active-worktree ownership before any awaited teardown or executor-lock release. This prevents teardown errors from retaining a phantom holder and prevents an old run from deleting a successor run's binding.

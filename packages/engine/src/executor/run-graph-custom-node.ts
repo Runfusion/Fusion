@@ -48,6 +48,7 @@ import {
   type WorktreeDependencyReadiness,
 } from "../worktree/worktree-dependency-install.js";
 import { resolveContentReviewInputProof } from "../worktree/review-diff-fingerprint.js";
+import { closeFusionBrowserSession } from "../agent-browser-lifecycle.js";
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
@@ -809,7 +810,7 @@ export async function runGraphCustomNode(
     let nodeEnv: NodeJS.ProcessEnv | undefined;
     if (executorKind === "cli" && prompt) {
       nodeEnv = { ...process.env, FUSION_NODE_PROMPT: prompt };
-    } else if (mode === "prompt") {
+    } else if (mode === "prompt" && !(workspaceConfig && declaredReviewKind === "code")) {
       const injected = await deps.buildInjectedRuntimeEnv(live.id, worktreePath, executionTarget.branch ?? undefined);
       nodeEnv = injected.env;
       // FNXC:EngineDiagnostics 2026-08-03-05:54: per-node PATH/key injection is plumbing, not a lifecycle event.
@@ -903,17 +904,22 @@ export async function runGraphCustomNode(
           duplicate work; it is a second inspection of a different repository, so preserve both
           dispatches and label each one with the repository rather than suppressing either line.
           */
-          const repoOutcome = mode === "script"
-            ? await deps.executeScriptWorkflowStep(workspaceReviewTarget, step, repoWorktreePath, settings, repoEnv)
-            : await deps.executeWorkflowStep(workspaceReviewTarget, step, repoWorktreePath, settings, repoEnv, {
-              unattended,
-              principalAgentId,
-              outputLanguage,
-              sessionBoundary: reviewBoundary,
-              ...(repoRelPath ? { dispatchLabel: repoRelPath } : {}),
-              ...(repoDiffBaseCommitSha ? { diffBaseCommitSha: repoDiffBaseCommitSha } : {}),
-            });
-          return toWorkspaceRepoReviewResult(repoOutcome);
+          try {
+            const repoOutcome = mode === "script"
+              ? await deps.executeScriptWorkflowStep(workspaceReviewTarget, step, repoWorktreePath, settings, repoEnv)
+              : await deps.executeWorkflowStep(workspaceReviewTarget, step, repoWorktreePath, settings, repoEnv, {
+                unattended,
+                principalAgentId,
+                outputLanguage,
+                sessionBoundary: reviewBoundary,
+                ...(repoRelPath ? { dispatchLabel: repoRelPath } : {}),
+                ...(repoDiffBaseCommitSha ? { diffBaseCommitSha: repoDiffBaseCommitSha } : {}),
+              });
+            return toWorkspaceRepoReviewResult(repoOutcome);
+          } finally {
+            // Each workspace repository receives an independently fenced session lease.
+            if (repoEnv?.FUSION_AGENT_BROWSER_SESSION_ID) await closeFusionBrowserSession(repoEnv);
+          }
         }, { workspaceRepos: workspaceConfig.repos, workspaceRootDir: deps.rootDir, settings });
         /*
         FNXC:WorkspaceReviewEvidence 2026-08-29-12:17:
@@ -972,19 +978,24 @@ export async function runGraphCustomNode(
       }
     } else {
       const dispatchSingularStep = async (reviewInputFingerprint?: string): Promise<WorkflowStepOutcome> => {
-        if (mode === "script") {
-          const scriptOutcome = await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv);
-          return reviewInputFingerprint === undefined
-            ? scriptOutcome
-            : { ...scriptOutcome, reviewInputFingerprint };
+        try {
+          if (mode === "script") {
+            const scriptOutcome = await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv);
+            return reviewInputFingerprint === undefined
+              ? scriptOutcome
+              : { ...scriptOutcome, reviewInputFingerprint };
+          }
+          return await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
+            unattended,
+            principalAgentId,
+            outputLanguage,
+            ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
+            ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
+          });
+        } finally {
+          // The graph owns this per-node environment, so it must retire its exact lease on every exit.
+          if (nodeEnv) await closeFusionBrowserSession(nodeEnv);
         }
-        return deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, {
-          unattended,
-          principalAgentId,
-          outputLanguage,
-          ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
-          ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
-        });
       };
       /*
       FNXC:ReviewInputProof 2026-09-01-11:18:
@@ -1003,6 +1014,8 @@ export async function runGraphCustomNode(
             undefined,
             deps.getRunContextFor(live.id),
           );
+          // This refusal happens after environment construction but before session dispatch.
+          if (nodeEnv) await closeFusionBrowserSession(nodeEnv);
           outcome = { success: false, error: diagnostic, failureValue: "review-input-unprovable" };
         } else {
           outcome = await dispatchSingularStep(proof.fingerprint);
