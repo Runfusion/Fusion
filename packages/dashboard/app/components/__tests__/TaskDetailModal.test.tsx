@@ -191,7 +191,8 @@ describe("TaskDetailModal reset dialog", () => {
     fireEvent.click(await screen.findByTestId("task-reset-submit"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("partial cleanup; retry Reset", "error"));
     expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("fresh run will be allocated"), "success");
-    expect(screen.getByTestId("task-reset-dialog")).toBeInTheDocument();
+    // Reset dispatch closes immediately; failure is reported by the asynchronous toast.
+    expect(screen.queryByTestId("task-reset-dialog")).not.toBeInTheDocument();
     expect(mockConfirm).not.toHaveBeenCalled();
   });
 });

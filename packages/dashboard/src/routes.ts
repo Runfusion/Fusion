@@ -1103,6 +1103,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           return {
             rootDir: engine.getWorkingDirectory(),
             reconcileInReviewBranchRebind: selfHealing.reconcileInReviewBranchRebind.bind(selfHealing),
+            reconcileLandedReviewTask: selfHealing.reconcileLandedReviewTask.bind(selfHealing),
             getActiveMergeTaskId: selfHealing.getActiveMergeTaskId.bind(selfHealing),
             getStaleMergingStatusMinAgeMs: selfHealing.getStaleMergingStatusMinAgeMs.bind(selfHealing),
           };

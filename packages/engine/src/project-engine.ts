@@ -64,6 +64,7 @@ import {
   type WorkspaceLeaseHandle,
   getTaskMergeBlocker,
   resolvePreMergeGateForTask,
+  buildManualRetryResetPatch,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
 import { moveTaskToContainedBackwardTarget } from "./execution/lifecycle-move.js";
@@ -577,6 +578,13 @@ export class ProjectEngine {
      soft-delete also clear their entry directly. */
   private readonly mergeSweepHoldReasons = new Map<string, string>();
   private mergeActive = new Set<string>();
+  /**
+   * FNXC:MergeRetryAdmission 2026-09-20-04:31:
+   * Chat's status-none reset and queue admission share this process-local fence. A merge
+   * request that arrives while the reset is committing is deferred, never silently clobbered.
+   */
+  private readonly mergeRetryResetTaskIds = new Set<string>();
+  private readonly mergeEnqueueDeferredByRetryReset = new Set<string>();
   /** Capacity-deferred ids stay out of the runnable queue until their retry timer fires. */
   private readonly capacityDeferredMergeTaskIds = new Set<string>();
   /** Last persisted live-cap reason per merge; avoids rewriting the task log each poll. */
@@ -1079,6 +1087,50 @@ export class ProjectEngine {
   legitimately mid-dispatch. Because `mergeActive` lingers across the entire dequeue→rawMerge
   window, checking it in addition to `mergeQueue` closes that TOCTOU gap.
   */
+  /**
+   * Atomically reset a stalled review card only while this engine has no merge owner.
+   * Queue admission defers behind the fence, so its later claim cannot be overwritten by
+   * the TaskStore-only compare-and-set used for the manual reset.
+   */
+  async resetInReviewMergeRetry(task: Task): Promise<"reset" | "pending" | "changed" | "unavailable"> {
+    const store = this.runtime.getTaskStore();
+    if (typeof store.updateTaskAtomic !== "function") return "unavailable";
+    if (this.mergeRetryResetTaskIds.has(task.id)) return "pending";
+
+    this.mergeRetryResetTaskIds.add(task.id);
+    let outcome: "reset" | "pending" | "changed" | "unavailable" = "changed";
+    try {
+      if (await this.isMergePending(task.id)) return "pending";
+      await store.updateTaskAtomic(task.id, async (current) => {
+        if (await this.isMergePending(task.id)) {
+          outcome = "pending";
+          return null;
+        }
+        if (current.column !== task.column
+          || current.status !== task.status
+          || (current.mergeRetries ?? 0) !== (task.mergeRetries ?? 0)
+          || current.paused !== task.paused
+          || current.userPaused !== task.userPaused) return null;
+        outcome = "reset";
+        return {
+          status: null,
+          error: null,
+          ...buildManualRetryResetPatch({ resetMergeRetries: true }),
+        };
+      });
+      return outcome;
+    } catch {
+      return "unavailable";
+    } finally {
+      this.mergeRetryResetTaskIds.delete(task.id);
+      if (this.mergeEnqueueDeferredByRetryReset.delete(task.id)) {
+        queueMicrotask(() => {
+          if (!this.shuttingDown) this.internalEnqueueMerge(task.id);
+        });
+      }
+    }
+  }
+
   async isMergePending(taskId: string): Promise<boolean> {
     if (this.mergeActive.has(taskId)
       || this.mergeQueue.includes(taskId)
@@ -3053,6 +3105,10 @@ export class ProjectEngine {
 
   private internalEnqueueMerge(taskId: string): boolean {
     if (this.shuttingDown || !this.started) return false;
+    if (this.mergeRetryResetTaskIds.has(taskId)) {
+      this.mergeEnqueueDeferredByRetryReset.add(taskId);
+      return true;
+    }
     if (this.capacityDeferredMergeTaskIds.has(taskId)) return false;
     if (this.mergeActive.has(taskId)) {
       // Distinguish "actually being processed" (queued or active) from a

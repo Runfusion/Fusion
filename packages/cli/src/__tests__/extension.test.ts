@@ -4312,7 +4312,7 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(updated?.mergeRetries).toBe(0);
     });
 
-    it("rejects status-none in-review task with completed steps and no merge attempts", async () => {
+    it("retries status-none in-review task with completed steps and no merge attempts in place", async () => {
       const store = createStore();
 
       const task = await store.createTask({
@@ -4333,11 +4333,43 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       const retryTool = api.tools.get("fn_task_retry")!;
       const result = await retryTool.execute("retry-status-none-no-merge", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
 
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("not in a retryable state");
+      expect(result.isError).toBeFalsy();
+      expect(result.details.newColumn).toBe("in-review");
 
       const updated = await store.getTask(task.id);
       expect(updated?.column).toBe("in-review");
+      expect(updated?.status).toBeFalsy();
+      expect(updated?.mergeRetries).toBe(0);
+    });
+
+    it("refuses a completed status-none review card held by auto-merge off", async () => {
+      const store = createStore();
+      await store.updateSettings({ autoMerge: false });
+
+      const task = await store.createTask({
+        title: "manual review hold",
+        description: "test",
+        column: "todo",
+      });
+      await store.updateTask(task.id, {
+        steps: [
+          { name: "Step 0", status: "done" },
+          { name: "Step 1", status: "done" },
+        ],
+        status: null,
+        mergeRetries: 0,
+      });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      const retryTool = api.tools.get("fn_task_retry")!;
+      const result = await retryTool.execute("retry-manual-review-hold", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("not in a retryable state");
+      const updated = await store.getTask(task.id);
+      expect(updated?.column).toBe("in-review");
+      expect(updated?.status).toBeFalsy();
       expect(updated?.mergeRetries).toBe(0);
     });
 

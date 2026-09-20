@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { execSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 
@@ -64,6 +68,7 @@ function managerWithStubs(
   store: TaskStore,
   overrides: {
     isBranchTipMisboundToTask?: unknown;
+    hasUnlandedTaskOwnedContent?: unknown;
     isTaskActive?: (taskId: string) => boolean;
   } = {},
 ) {
@@ -72,6 +77,7 @@ function managerWithStubs(
     isBranchTipMisboundToTask:
       overrides.isBranchTipMisboundToTask ??
       vi.fn(async () => ({ misbound: false, branchMissing: true, branchTip: "", landed: { sha: "abc123", strategy: "trailer" } })),
+    hasUnlandedTaskOwnedContent: overrides.hasUnlandedTaskOwnedContent ?? vi.fn(async () => false),
     resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main" })),
     recordSelfHealingBranchGroupMemberLanding: vi.fn(async () => undefined),
     moveToCompleteLaneAfterLandedCleanup: vi.fn(async (task: Task, completeLane: string) => ({ ...task, column: completeLane })),
@@ -79,6 +85,13 @@ function managerWithStubs(
     reconcileCompletedTask: vi.fn(async () => undefined),
   });
   return manager;
+}
+
+const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
+const itIfGit = hasGit ? it : it.skip;
+
+function git(repo: string, command: string): void {
+  execSync(command, { cwd: repo, stdio: "pipe" });
 }
 
 describe("SelfHealingManager.reconcileLandedReviewTask", () => {
@@ -102,16 +115,89 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(updateTaskAtomic).not.toHaveBeenCalled();
   });
 
-  it("refuses a card whose branch is still present (not missing)", async () => {
+  it("reconciles a present branch after all task-owned content is proven landed", async () => {
     const { store } = storeWithTask(baseTask());
     const manager = managerWithStubs(store, {
-      isBranchTipMisboundToTask: vi.fn(async () => ({ misbound: false, branchMissing: false, branchTip: "abc", landed: null })),
+      isBranchTipMisboundToTask: vi.fn(async () => ({ misbound: false, branchMissing: false, branchTip: "abc", landed: { sha: "abc123", strategy: "trailer" } })),
+      hasUnlandedTaskOwnedContent: vi.fn(async () => false),
+    });
+
+    await expect(manager.reconcileLandedReviewTask("FN-9304", { source: "manual" })).resolves.toMatchObject({
+      outcome: "reconciled",
+      sha: "abc123",
+    });
+  });
+
+  itIfGit("treats a still-present externally squashed branch as landed but retains a later owned suffix", async () => {
+    const repo = mkdtempSync(path.join(os.tmpdir(), "fn-9317-squash-"));
+    try {
+      git(repo, "git init -b main");
+      git(repo, 'git config user.email "test@example.com"');
+      git(repo, 'git config user.name "Test"');
+      git(repo, "git commit --allow-empty -m init");
+      git(repo, "git checkout -b fusion/fn-9317");
+      writeFileSync(path.join(repo, "landed.txt"), "landed\n");
+      git(repo, "git add landed.txt && git commit -m 'feat(FN-9317): landed content' -m 'Fusion-Task-Id: FN-9317'");
+      git(repo, "git checkout main");
+      git(repo, "git merge --squash fusion/fn-9317");
+      git(repo, "git commit -m 'external squash landing'");
+
+      const manager = new SelfHealingManager({} as TaskStore, { rootDir: repo }) as unknown as {
+        hasUnlandedTaskOwnedContent: (input: { branch: string; baseBranch: string; taskId: string }) => Promise<boolean>;
+      };
+      await expect(manager.hasUnlandedTaskOwnedContent({
+        branch: "fusion/fn-9317",
+        baseBranch: "main",
+        taskId: "FN-9317",
+      })).resolves.toBe(false);
+
+      git(repo, "git checkout fusion/fn-9317");
+      writeFileSync(path.join(repo, "suffix.txt"), "unlanded\n");
+      git(repo, "git add suffix.txt && git commit -m 'feat(FN-9317): unlanded suffix' -m 'Fusion-Task-Id: FN-9317'");
+      await expect(manager.hasUnlandedTaskOwnedContent({
+        branch: "fusion/fn-9317",
+        baseBranch: "main",
+        taskId: "FN-9317",
+      })).resolves.toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a present branch with task-owned unlanded content", async () => {
+    const { store } = storeWithTask(baseTask());
+    const manager = managerWithStubs(store, {
+      isBranchTipMisboundToTask: vi.fn(async () => ({ misbound: false, branchMissing: false, branchTip: "abc", landed: { sha: "abc123", strategy: "trailer" } })),
+      hasUnlandedTaskOwnedContent: vi.fn(async () => true),
     });
 
     await expect(manager.reconcileLandedReviewTask("FN-9304", { source: "manual" })).resolves.toEqual({
       outcome: "ineligible",
-      reason: "branch-present",
+      reason: "branch-has-unlanded-content",
     });
+  });
+
+  it.each([
+    ["pending", [{ workflowStepId: "code-review", phase: "pre-merge", status: "pending" }]],
+    ["failed", [{ workflowStepId: "code-review", phase: "pre-merge", status: "failed" }]],
+    ["missing", []],
+  ])("refuses externally landed work without a current required review approval: %s", async (_state, workflowStepResults) => {
+    const guardedTask = baseTask({
+      enabledWorkflowSteps: ["code-review"],
+      workflowStepResults: workflowStepResults as Task["workflowStepResults"],
+    });
+    const { store, updateTaskAtomic } = storeWithTask(guardedTask);
+    (store as unknown as { getTaskWorkflowSelection: ReturnType<typeof vi.fn> }).getTaskWorkflowSelection = vi.fn(() => ({
+      workflowId: "builtin:coding",
+      stepIds: ["code-review"],
+    }));
+    const manager = managerWithStubs(store);
+
+    await expect(manager.reconcileLandedReviewTask("FN-9304", { source: "manual" })).resolves.toEqual({
+      outcome: "ineligible",
+      reason: "workflow-approval-blocked",
+    });
+    expect(updateTaskAtomic).not.toHaveBeenCalled();
   });
 
   it("never fabricates an approval: no ownership-anchored commit means not-landed", async () => {

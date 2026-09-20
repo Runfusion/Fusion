@@ -117,6 +117,36 @@ describe("routeGraphMergeFailureToRetry — rejected merge requester", () => {
     resetExecutorMocks();
   });
 
+  it("parks a callback that resolves without durable merge admission", async () => {
+    const task = makeTask(await mkdtemp(join(tmpdir(), "fusion-gdpr53-admission-wt-")));
+    const store = createMockStore();
+    (store as any).updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: TaskDetail) => Partial<TaskDetail> | null, context: unknown) => {
+      const patch = reducer(task);
+      return patch ? store.updateTask(task.id, patch, context) : task;
+    });
+
+    const handled = await routeGraphMergeFailureToRetry({
+      store,
+      getRunContextFor: () => undefined,
+      // The historical wedge: the callback fulfilled, but no queue owner or merge result existed.
+      mergeRequester: vi.fn(async () => undefined),
+      ensureWorkflowMergeBoundaryTask: vi.fn(async () => ({ task })),
+      persistTokenUsage: vi.fn(),
+    }, task, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["merge"],
+      context: {},
+    } as any, "merge-seam");
+
+    expect(handled).toBe(true);
+    const failure = store.updateTask.mock.calls.find(
+      (call: unknown[]) => (call[1] as Record<string, unknown>)?.status === "failed",
+    );
+    expect(String((failure?.[1] as Record<string, unknown>)?.error)).toContain("AUTO_MERGE_RETRY_REJECTED");
+    expect(String((failure?.[1] as Record<string, unknown>)?.error)).toContain("without an admitted merge result");
+  });
+
   it.for(REJECTION_SURFACES)("parks the task failed with the reason ($label)", async ({ rejection }) => {
     const { store, mergeRequester } = await runRejectedRetryScenario(rejection);
 

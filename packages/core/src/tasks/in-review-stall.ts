@@ -27,6 +27,7 @@ export type InReviewStallCode =
   | "merge-blocker"
   | "transient-merge-status-no-owner"
   | "merge-retries-exhausted"
+  | "completed-review-status-none"
   | "no-worktree-no-merge-confirmed"
   | "non-retryable-provider-error";
 
@@ -281,6 +282,33 @@ export function getInReviewStallReason(
     return {
       code: "merge-retries-exhausted",
       reason: `Auto-merge retries exhausted (${mergeRetries}/${maxAutoMergeRetries}) without confirmed merge`,
+      observedAt,
+    };
+  }
+
+  /*
+  FNXC:MergeRetryAdmission 2026-09-20-02:17:
+  A fully completed review card with no status, active owner, admitted retry, or
+  terminal error is not an idle healthy state. Wait for the existing stale-merge
+  threshold so a normal handoff is not badged, then expose the board/engine
+  disagreement through the shared hydration signal rather than a dashboard-only
+  inference. Zero-step cards remain excluded because they do not prove execution.
+  */
+  const updatedAtMs = Date.parse(task.updatedAt);
+  const completedSteps = task.steps.length > 0
+    && task.steps.every((step) => step.status === "done" || step.status === "skipped");
+  if (
+    completedSteps
+    && task.status == null
+    && !task.error
+    && mergeRetries === 0
+    && Number.isFinite(updatedAtMs)
+    && Math.max(0, now - updatedAtMs) >= staleMergingMinAgeMs
+  ) {
+    const minutes = Math.max(1, Math.floor(staleMergingMinAgeMs / 60_000));
+    return {
+      code: "completed-review-status-none",
+      reason: `Completed review task has no merge owner or status for >= ${minutes} min`,
       observedAt,
     };
   }

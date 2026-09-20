@@ -133,6 +133,26 @@ describe("getInReviewStallReason", () => {
     expect(signal?.code).toBe("merge-retries-exhausted");
   });
 
+  it("surfaces a completed status-none merge handoff after the stale threshold", () => {
+    const signal = getInReviewStallReason({
+      ...baseTask,
+      status: undefined,
+      mergeRetries: 0,
+      updatedAt: new Date(NOW - DEFAULT_STALE_MERGING_MIN_AGE_MS - 1).toISOString(),
+    }, { now: NOW });
+    expect(signal?.code).toBe("completed-review-status-none");
+  });
+
+  it("does not surface status-none drift for incomplete or zero-step review tasks", () => {
+    for (const steps of [[], [{ name: "Step 1", status: "pending" as const }]]) {
+      expect(getInReviewStallReason({
+        ...baseTask,
+        steps,
+        updatedAt: new Date(NOW - DEFAULT_STALE_MERGING_MIN_AGE_MS - 1).toISOString(),
+      }, { now: NOW })?.code).not.toBe("completed-review-status-none");
+    }
+  });
+
   it("returns no-worktree-no-merge-confirmed", () => {
     const signal = getInReviewStallReason({ ...baseTask, worktree: undefined, mergeDetails: {} }, { now: NOW });
     expect(signal?.code).toBe("no-worktree-no-merge-confirmed");

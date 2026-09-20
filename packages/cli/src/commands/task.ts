@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -1696,6 +1696,13 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const retryReviewColumns = new Set(resolvedReviewColumns.length > 0 ? resolvedReviewColumns : ["in-review"]);
     const isInReviewStatusNone =
       retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
+    /*
+    FNXC:MergeRetryAdmission 2026-09-20-02:52:
+    A completed status-none review card is recoverable only while effective auto-merge is enabled.
+    Project or task-level manual review holds intentionally have the same persisted shape, so retry
+    must not clear their review state or claim a missing merge handoff.
+    */
+    const effectiveAutoMergeDisabled = resolveEffectiveAutoMerge(task, await context.store.getSettings()) === false;
     const hasIncompleteSteps = task.steps.some(
       (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
     );
@@ -1704,7 +1711,12 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const isExecutionFailureInReview =
       hasIncompleteSteps || (task.steps.length === 0 && (task.mergeRetries ?? 0) === 0);
     const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
-    const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
+    /* FNXC:MergeRetryAdmission 2026-09-20-02:17: a completed review card can lose its
+       retry handoff before mergeRetries increments; retain it in review and restart merge. */
+    const isInReviewMergeRetryStall = !effectiveAutoMergeDisabled && isInReviewStatusNone && (
+      (task.mergeRetries ?? 0) > 0
+      || (task.steps.length > 0 && task.steps.every((step: { status: string }) => step.status === "done" || step.status === "skipped"))
+    );
     const isInReviewRetry =
       retryReviewColumns.has(task.column) &&
       (task.status === "failed" ||
@@ -1792,17 +1804,16 @@ export async function runTaskRetry(id: string, projectName?: string) {
         return;
       }
 
-      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never));
       await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
         status: null,
         error: null,
         ...autoPauseClearPatch,
         ...buildManualRetryResetPatch({ resetMergeRetries: true }),
       }));
-      await retryBoardCall(context, id, "log entry", () => context.store.logEntry(id, `Retry requested from CLI (merge retry → todo, mergeRetries reset${retryLogSuffix})`));
+      await retryBoardCall(context, id, "log entry", () => context.store.logEntry(id, `Retry requested from CLI (in-review merge retry, mergeRetries reset${retryLogSuffix})`));
 
       console.log();
-      console.log(`  ✓ Retried ${id} → todo (merge retry state cleared)`);
+      console.log(`  ✓ Retried ${id} in review (merge retry state cleared)`);
       console.log();
       return;
     }

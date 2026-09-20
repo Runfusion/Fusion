@@ -3041,6 +3041,7 @@ describe("runTaskRetry", () => {
         updateTask: mockUpdateTask,
         moveTask: mockMoveTask,
         logEntry: mockLogEntry,
+        getSettings: vi.fn().mockResolvedValue({ autoMerge: true }),
       } as unknown as TaskStore,
     });
   });
@@ -3286,14 +3287,14 @@ describe("runTaskRetry", () => {
       error: null,
       mergeRetries: 0,
     }));
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(mockMoveTask).not.toHaveBeenCalled();
     expect(mockLogEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Retry requested from CLI (merge retry → todo, mergeRetries reset)",
+      "Retry requested from CLI (in-review merge retry, mergeRetries reset)",
     );
   });
 
-  it("rejects stranded in-review task with status none, completed steps, and no merge attempts", async () => {
+  it("retries a stranded in-review task with status none and completed steps in place", async () => {
     mockGetTask.mockResolvedValueOnce(makeTask({
       id: "FN-001",
       status: null,
@@ -3305,9 +3306,32 @@ describe("runTaskRetry", () => {
       ],
     }));
 
+    await expect(runTaskRetry("FN-001")).resolves.toBeUndefined();
+    expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
+      status: null,
+      error: null,
+      mergeRetries: 0,
+    }));
+    expect(mockMoveTask).not.toHaveBeenCalled();
+  });
+
+  it("refuses a completed status-none manual review hold without resetting it", async () => {
+    mockGetTask.mockResolvedValueOnce(makeTask({
+      id: "FN-001",
+      status: null,
+      column: "in-review",
+      autoMerge: false,
+      mergeRetries: 0,
+      steps: [
+        { name: "Step 0", status: "done" },
+        { name: "Step 1", status: "done" },
+      ],
+    }));
+
     await expect(runTaskRetry("FN-001")).rejects.toThrow("Task FN-001 is not in a retryable state (status: none)");
     expect(mockUpdateTask).not.toHaveBeenCalled();
     expect(mockMoveTask).not.toHaveBeenCalled();
+    expect(mockLogEntry).not.toHaveBeenCalled();
   });
 
   it("rejects non-review task with status none", async () => {

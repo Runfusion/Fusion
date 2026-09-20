@@ -821,7 +821,7 @@ fn task delete FN-001 --force
 ```
 
 Notes:
-- `fn task reconcile <id>` closes an in-review card only when its base branch carries an ownership-anchored landed commit found after its branch itself was cleaned up. It refuses paused, leased, live, raced, or unproven cards and never bypasses review approval; use `fn task merge` for the normal live-branch path.
+- `fn task reconcile <id>` closes an in-review card only when its base branch carries ownership-anchored landed content. The recorded branch may already be cleaned up or may remain present, but a present branch is accepted only when it has no unlanded task-owned commits. It refuses paused, leased, live, raced, foreign-owned, or unproven cards and never bypasses review approval; use `fn task merge` for normal live merge work.
 - Interrupting `fn task merge` aborts its merge and clears its transient merge status: Ctrl-C (`SIGINT`) exits 130, `SIGTERM` exits 143, and a closed terminal (`SIGHUP`) exits 129. Unlike `fn serve`, `fn dashboard`, and the daemon, this one-shot foreground command deliberately does not survive terminal disconnects.
 - `fn task archive` accepts live-board tasks and preserves the original column for restore. It refuses tasks in a WIP lane or active merge pipeline to protect another process's worktrees; a human operator may use `--force` to override this destructive guard.
 - The agent-facing `fn_task_archive` tool returns a structured error for the same live-task refusal and deliberately has no force parameter.

@@ -22,6 +22,7 @@ const BADGE_LABEL_BY_CODE: Record<InReviewStallCode, string> = {
   "merge-blocker": "Merge blocked",
   "transient-merge-status-no-owner": "Merge stalled",
   "merge-retries-exhausted": "Retries exhausted",
+  "completed-review-status-none": "Merge retry stalled",
   "no-worktree-no-merge-confirmed": "No worktree",
   "non-retryable-provider-error": "Provider error",
 };
@@ -44,6 +45,13 @@ const COPY_BY_CODE: Record<InReviewStallCode, Omit<InReviewStallCopy, "badgeLabe
     description: "The merger hit its retry ceiling without confirming a merge. The task will not be re-enqueued automatically.",
     suggestedAction:
       "Resolve the underlying merge problem manually and re-run the merge from the Review tab, or move the task back to in-progress.",
+  },
+  "completed-review-status-none": {
+    headline: "Completed review has no active merge",
+    description:
+      "All workflow steps are complete, but the task has no merge status or active merger. The automatic merge handoff did not durably start.",
+    suggestedAction:
+      "Retry the task to restart merge recovery. If the task-owned work is already on the target branch, use reconciliation to finalize it safely.",
   },
   "no-worktree-no-merge-confirmed": {
     headline: "No worktree on disk and merge not confirmed",

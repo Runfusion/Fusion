@@ -77,6 +77,8 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
         chatStore,
         pluginRunner: options?.pluginRunner,
         messageStore: options?.engine?.getMessageStore(),
+        isMergePending: options?.engine?.isMergePending?.bind(options.engine),
+        resetInReviewMergeRetry: options?.engine?.resetInReviewMergeRetry?.bind(options.engine),
       });
       return { chatStore, chatManager };
     }
@@ -91,6 +93,8 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
         chatStore,
         pluginRunner: options?.pluginRunner,
         messageStore: options?.engine?.getMessageStore(),
+        isMergePending: options?.engine?.isMergePending?.bind(options.engine),
+        resetInReviewMergeRetry: options?.engine?.resetInReviewMergeRetry?.bind(options.engine),
       });
       return { chatStore, chatManager };
     }
@@ -114,6 +118,8 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
       chatStore,
       pluginRunner: options?.pluginRunner,
       messageStore: engine?.getMessageStore(),
+      isMergePending: engine?.isMergePending?.bind(engine),
+      resetInReviewMergeRetry: engine?.resetInReviewMergeRetry?.bind(engine),
     });
     return { chatStore, chatManager };
   }

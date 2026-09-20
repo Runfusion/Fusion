@@ -3510,7 +3510,17 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskRetryTool(store: TaskStore): ToolDefinition {
+export interface TaskRetryToolOptions {
+  /** Legacy probe retained so pre-fence hosts fail closed rather than resetting a live handoff. */
+  isMergePending?: (taskId: string) => boolean | Promise<boolean>;
+  /**
+   * FNXC:MergeRetryAdmission 2026-09-20-03:25:
+   * ProjectEngine owns the reset because its queue can claim outside TaskStore's lock.
+   */
+  resetInReviewMergeRetry?: (task: Task) => Promise<"reset" | "pending" | "changed" | "unavailable">;
+}
+
+export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOptions = {}): ToolDefinition {
   return {
     name: "fn_task_retry",
     label: "Retry Task",
@@ -3519,6 +3529,71 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
     execute: async (_id: string, params: Static<typeof taskRetryParams>) => {
       try {
         const task = await store.getTask(params.id);
+        const retryIr = await fusionCore.resolveWorkflowIrForTask(store, params.id).catch(() => undefined);
+        const resolvedReviewColumns = retryIr === undefined ? [] : fusionCore.resolveReviewColumns(retryIr);
+        const retryReviewColumns = new Set(resolvedReviewColumns.length > 0 ? resolvedReviewColumns : ["in-review"]);
+        const isInReviewStatusNone =
+          retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
+        /*
+        FNXC:MergeRetryAdmission 2026-09-20-02:52:
+        Completed status-none review cards are also the normal manual-review hold shape.
+        Only effective auto-merge permits chat to treat that shape as a lost merge handoff.
+        */
+        const effectiveAutoMergeDisabled = fusionCore.resolveEffectiveAutoMerge(task, await store.getSettings()) === false;
+        const completedSteps = task.steps.length > 0
+          && task.steps.every((step) => step.status === "done" || step.status === "skipped");
+        const isInReviewMergeRetryStall = !effectiveAutoMergeDisabled && isInReviewStatusNone
+          && ((task.mergeRetries ?? 0) > 0 || completedSteps);
+
+        /*
+        FNXC:MergeRetryAdmission 2026-09-20-02:40:
+        Chat retry must share the review/status-none recovery contract with the CLI,
+        extension, and dashboard. A completed card whose merge handoff vanished stays
+        in review: moving it to the execution rebound would re-run approved work.
+        */
+        if (isInReviewMergeRetryStall) {
+          /*
+          FNXC:MergeRetryAdmission 2026-09-20-02:52:
+          A null status is written after queue admission, before the merger persists its transient
+          status. Consult ProjectEngine's queue ownership rather than resetting that live handoff.
+          An unreadable owner probe refuses recovery because retrying could clobber an active merge.
+          */
+          if (!options.resetInReviewMergeRetry) {
+            return {
+              content: [{ type: "text" as const, text: `Task ${params.id} cannot be retried because authoritative merge ownership is unavailable` }],
+              details: { taskId: params.id, currentStatus: task.status },
+              isError: true,
+            };
+          }
+          const resetOutcome = await options.resetInReviewMergeRetry(task);
+          if (resetOutcome === "pending") {
+            return {
+              content: [{ type: "text" as const, text: `Task ${params.id} cannot be retried while a merge is queued or active` }],
+              details: { taskId: params.id, currentStatus: task.status },
+              isError: true,
+            };
+          }
+          if (resetOutcome === "unavailable") {
+            return {
+              content: [{ type: "text" as const, text: `Task ${params.id} cannot be retried because merge ownership is unavailable` }],
+              details: { taskId: params.id, currentStatus: task.status },
+              isError: true,
+            };
+          }
+          if (resetOutcome !== "reset") {
+            return {
+              content: [{ type: "text" as const, text: `Task ${params.id} cannot be retried because its review state changed` }],
+              details: { taskId: params.id, currentStatus: task.status },
+              isError: true,
+            };
+          }
+          await store.logEntry(params.id, "Retry requested via chat tool (in-review merge retry, mergeRetries reset)");
+          return {
+            content: [{ type: "text" as const, text: `Retried ${params.id} in review (merge retry state cleared)` }],
+            details: { taskId: params.id, newColumn: task.column },
+          };
+        }
+
         if (task.status !== "failed" && task.status !== "stuck-killed") {
           return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
         }

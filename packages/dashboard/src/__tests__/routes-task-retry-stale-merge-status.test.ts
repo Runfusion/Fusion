@@ -88,6 +88,7 @@ function buildApp(input: {
   staleMergingStatusMinAgeMs?: number;
   settings?: { autoMerge?: boolean };
   engine?: { isMergePending: ReturnType<typeof vi.fn>; enqueueMerge: ReturnType<typeof vi.fn> };
+  reconcileLandedReviewTask?: ReturnType<typeof vi.fn>;
   workflowIr?: unknown;
 }) {
   const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(input.task, patch));
@@ -166,6 +167,7 @@ function buildApp(input: {
     triggerCommentWakeForAssignedAgent: async () => {},
     // The seam the fix reads for live-merge proof.
     resolveSelfHealingManager: () => ({
+      reconcileLandedReviewTask: input.reconcileLandedReviewTask ?? vi.fn().mockResolvedValue({ outcome: "not-landed", baseBranch: "main" }),
       getActiveMergeTaskId: () => input.activeMergeTaskId ?? null,
       getStaleMergingStatusMinAgeMs: () => input.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
     }),
@@ -211,6 +213,37 @@ const workspaceRetrySafetyCases: Array<[string, WorkspaceRetryGateInput]> = [
   ["a user-controlled pause", { task: { userPaused: true } }],
   ["an unreadable pending-owner probe", { probeError: new Error("remote lease unavailable") }],
 ];
+
+describe("POST /api/tasks/:id/reconcile-landed-review", () => {
+  it("uses the project-scoped reconciliation manager and returns a landed completion", async () => {
+    const reconcileLandedReviewTask = vi.fn().mockResolvedValue({
+      outcome: "reconciled",
+      sha: "abc123",
+      strategy: "patch-id",
+      baseBranch: "main",
+    });
+    const { app } = buildApp({ task: mkMergeTask({ id: "FN-9317", status: null }), reconcileLandedReviewTask });
+
+    const res = await performRequest(app, "POST", "/api/tasks/FN-9317/reconcile-landed-review", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ outcome: "reconciled", sha: "abc123" });
+    expect(reconcileLandedReviewTask).toHaveBeenCalledWith("FN-9317", {
+      source: "manual",
+      requireAutoMergeEligible: false,
+    });
+  });
+
+  it("returns structured conflicts for reconciliation refusals", async () => {
+    const reconcileLandedReviewTask = vi.fn().mockResolvedValue({ outcome: "ineligible", reason: "foreign-ownership" });
+    const { app } = buildApp({ task: mkMergeTask({ id: "FN-9318", status: null }), reconcileLandedReviewTask });
+
+    const res = await performRequest(app, "POST", "/api/tasks/FN-9318/reconcile-landed-review", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ outcome: "ineligible", reason: "foreign-ownership" });
+  });
+});
 
 describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)", () => {
   it("retries a task stranded in 'landing' by a killed merger", async () => {
@@ -267,6 +300,22 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
 
     expect(res.status, JSON.stringify(res.body)).toBe(409);
     expect(JSON.stringify(res.body)).toContain("Retry is unavailable while a merge is active");
+  });
+
+  it("refuses a completed status-none review card held by effective auto-merge off", async () => {
+    const { app, updateTask, moveTask, logEntry } = buildApp({
+      task: mkMergeTask({ status: null, mergeRetries: 0 }),
+      settings: { autoMerge: false },
+      workflowIr: LEGACY_V1_IR,
+    });
+
+    const res = await performRequest(app, "POST", "/api/tasks/FN-8004/retry", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toContain("not in a legacy retryable state");
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(logEntry).not.toHaveBeenCalled();
   });
 
   it("leaves the pre-existing failed-merge retry path unchanged", async () => {

@@ -531,6 +531,48 @@ export abstract class SelfHealingGitEvidence {
     }
   }
 
+  /**
+   * FNXC:LandedReviewReconciliation 2026-09-20-02:17:
+   * A still-present branch is safe to reconcile only after proving it contributes
+   * no task-owned commit beyond the target. This preserves the branch-presence
+   * recovery path without mistaking an externally merged prefix for all work.
+   */
+  protected async hasUnlandedTaskOwnedContent(input: {
+    branch: string;
+    baseBranch: string;
+    taskId: string;
+    lineageId?: string;
+  }): Promise<boolean> {
+    /*
+    FNXC:LandedReviewReconciliation 2026-09-20-02:40:
+    An external squash retains the original task commits in `base..branch`, even
+    though the aggregate branch tree is already on the target. Check aggregate
+    content first; a later task-owned suffix makes this diff non-empty and still
+    reaches the trailer scan below, preserving the unlanded-work refusal.
+    */
+    try {
+      await execAsync(
+        `git diff --quiet ${shellQuote(`${input.baseBranch}..${input.branch}`)}`,
+        { cwd: this.options.rootDir, timeout: 30_000, maxBuffer: 1024 * 1024 },
+      );
+      return false;
+    } catch {
+      // A non-zero diff is expected for a branch with remaining content; inspect ownership below.
+    }
+
+    const { stdout } = await execAsync(
+      `git log --format=%H ${shellQuote(`${input.baseBranch}..${input.branch}`)}`,
+      { cwd: this.options.rootDir, timeout: 30_000, maxBuffer: 1024 * 1024 },
+    );
+    for (const sha of stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
+      const ownership = await this.readCommitTaskOwnership(sha, input.taskId, input.lineageId);
+      if (ownership.ownerTaskId === input.taskId || (input.lineageId && ownership.ownerLineageId === input.lineageId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   protected async isBranchTipMisboundToTask(input: {
     branch: string;
     taskId: string;

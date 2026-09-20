@@ -4564,3 +4564,63 @@ pgDescribe("ProjectEngine research recall composition", () => {
     }
   });
 });
+
+describe("ProjectEngine chat merge-retry reset fence", () => {
+  it("defers a merge admitted after the in-fence probe until the reset commits", async () => {
+    const mockStore = createMockStore(baseSettings);
+    const currentTask = {
+      id: "FN-chat-reset-race",
+      column: "in-review",
+      status: null,
+      mergeRetries: 0,
+      paused: false,
+      userPaused: false,
+      steps: [{ id: "step", status: "done" }],
+    } as Task;
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    const privateEngine = engine as unknown as {
+      started: boolean;
+      mergeQueue: string[];
+      mergeActive: Set<string>;
+      internalEnqueueMerge(taskId: string): boolean;
+      drainMergeQueue(): Promise<void>;
+    };
+    privateEngine.started = true;
+    vi.spyOn(privateEngine, "drainMergeQueue").mockResolvedValue(undefined);
+
+    let resolveInFenceProbe!: (value: boolean) => void;
+    const pendingProbe = new Promise<boolean>((resolve) => {
+      resolveInFenceProbe = resolve;
+    });
+    const isMergePending = vi.spyOn(engine, "isMergePending")
+      .mockResolvedValueOnce(false)
+      .mockImplementationOnce(async () => await pendingProbe);
+    let appliedPatch: Partial<Task> | null = null;
+    (mockStore.store as Record<string, unknown>).updateTaskAtomic = vi.fn(async (
+      _id: string,
+      mutate: (task: Task) => Promise<Partial<Task> | null>,
+    ) => {
+      appliedPatch = await mutate(currentTask);
+      return { ...currentTask, ...appliedPatch };
+    });
+
+    const reset = engine.resetInReviewMergeRetry(currentTask);
+    await vi.waitFor(() => expect(isMergePending).toHaveBeenCalledTimes(2));
+
+    /*
+    FNXC:MergeRetryAdmission 2026-09-20-03:25:
+    Queue admission can occur after the reset's final ownership probe but before its TaskStore
+    patch commits. The shared ProjectEngine fence must defer that claim until the reset settles.
+    */
+    resolveInFenceProbe(false);
+    expect(privateEngine.internalEnqueueMerge(currentTask.id)).toBe(true);
+    expect(privateEngine.mergeQueue).toEqual([]);
+
+    expect(await reset).toBe("reset");
+    await Promise.resolve();
+    expect(appliedPatch).toEqual(expect.objectContaining({ status: null, mergeRetries: 0 }));
+    expect(privateEngine.mergeQueue).toEqual([currentTask.id]);
+    expect(privateEngine.mergeActive.has(currentTask.id)).toBe(true);
+  });
+});

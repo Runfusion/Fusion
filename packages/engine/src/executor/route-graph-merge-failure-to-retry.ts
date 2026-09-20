@@ -252,7 +252,30 @@ export async function routeGraphMergeFailureToRetry(
     let mergeRequestRejected = false;
     let mergeRequestRejection: unknown;
     try {
-      await deps.mergeRequester(mergeBoundary.task.id);
+      const mergeResult = await deps.mergeRequester(mergeBoundary.task.id);
+      /*
+      FNXC:MergeRetryAdmission 2026-09-20-02:17:
+      A fulfilled callback is not evidence that ProjectEngine accepted work into its
+      serialized merge lifecycle. The retry seam must require the canonical merge
+      result: either a confirmed merge or the explicit no-op/manual-review hold.
+      Undefined and partial callback results previously made the graph report a
+      retry while no queue owner, status, or retry counter existed.
+      */
+      if (
+        !mergeResult
+        || typeof mergeResult !== "object"
+        || (!(mergeResult as { merged?: unknown }).merged
+          && (mergeResult as { noOp?: unknown }).noOp !== true)
+      ) {
+        const reason = typeof mergeResult === "object" && mergeResult !== null
+          && typeof (mergeResult as { error?: unknown; reason?: unknown }).error === "string"
+          ? (mergeResult as { error: string }).error
+          : typeof mergeResult === "object" && mergeResult !== null
+            && typeof (mergeResult as { reason?: unknown }).reason === "string"
+            ? (mergeResult as { reason: string }).reason
+            : "merge requester resolved without an admitted merge result";
+        throw new Error(reason);
+      }
     } catch (error) {
       mergeRequestRejected = true;
       mergeRequestRejection = error;
