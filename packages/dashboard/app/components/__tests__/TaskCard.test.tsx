@@ -3318,14 +3318,22 @@ describe("TaskCard", () => {
     expect(badge.getAttribute("title")).toContain("Auto-merge retries exhausted");
   });
 
-  /*
-  FNXC:InReviewStallBadge 2026-07-26-18:12:
-  Inverted from "renders merge-blocker badge": the merge-blocker code is now badge-suppressed
-  (operator request — a pre-merge blocker is the ordinary in-review resting state, so badging it
-  marked routine cards abnormal). The card must show NO stall badge for this code, in any merge
-  status — the previous carve-out only suppressed it while isActiveMergeStatus(status) held, so
-  "failed" here is the case that used to badge and must now stay silent.
-  */
+  it("shows and clears a status-null failed review badge when its derived signal changes", () => {
+    const task = makeTask({ column: "in-review", status: undefined,
+      enabledWorkflowSteps: ["code-review"], workflowStepResults: [{
+        workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge",
+        status: "failed", startedAt: "2026-09-20T00:00:00Z", output: "review-input-unprovable",
+      }],
+    });
+    const { rerender } = render(<TaskCard task={task} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.queryByText("Code Review blocked")).toBeNull();
+    rerender(<TaskCard task={{ ...task, inReviewStall: { code: "merge-blocker", reason: "failed gate", observedAt: "2026-09-20T00:00:00Z" } }} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.getByText("Code Review blocked").getAttribute("title")).toContain("review-input-unprovable");
+    rerender(<TaskCard task={task} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.queryByText("Code Review blocked")).toBeNull();
+    expect(document.querySelector(".card-status-badge.in-review-stall")).toBeNull();
+  });
+
   it("suppresses the in-review stall badge for the merge-blocker code", () => {
     render(
       <TaskCard

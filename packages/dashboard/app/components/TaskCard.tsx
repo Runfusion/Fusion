@@ -899,6 +899,7 @@ function areTaskWorkflowResultsEqual(previous?: Task["workflowStepResults"], nex
       result.workflowStepId === nextResult.workflowStepId &&
       result.workflowStepName === nextResult.workflowStepName &&
       result.phase === nextResult.phase &&
+      result.source === nextResult.source &&
       result.status === nextResult.status &&
       result.output === nextResult.output &&
       result.startedAt === nextResult.startedAt &&
@@ -1071,6 +1072,9 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     // nonexistent task field.
     previousTask.missionId === nextTask.missionId &&
     previousTask.assignedAgentId === nextTask.assignedAgentId &&
+    // FNXC:InReviewStallBadge 2026-09-20-00:53: derived stall signals can arrive without a task timestamp change.
+    previousTask.inReviewStall?.code === nextTask.inReviewStall?.code &&
+    previousTask.inReviewStall?.reason === nextTask.inReviewStall?.reason &&
     previousTask.mergeRetries === nextTask.mergeRetries &&
     previousTask.retrySummary?.total === nextTask.retrySummary?.total &&
     previousTask.sourceType === nextTask.sourceType &&
@@ -1657,6 +1661,7 @@ function TaskCardComponent({
   const cliNeedsAttention = cliSessionState?.agentState === "needsAttention";
   const stallCopy = task.inReviewStall
     ? getInReviewStallCopy(task.inReviewStall, {
+      ...task,
       mergeRetries: task.mergeRetries,
       maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
     })

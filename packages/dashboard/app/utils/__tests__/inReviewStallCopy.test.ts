@@ -93,12 +93,6 @@ describe("inReviewStallCopy", () => {
   });
 
   it.each([
-    /*
-    FNXC:InReviewStallBadge 2026-07-26-18:15:
-    merge-blocker is badge-suppressed in EVERY merge status, not just the active ones. The
-    `undefined` row previously expected true — that was the only status in which this code badged,
-    and it is the row that proves the suppression is unconditional rather than a widened carve-out.
-    */
     ["merge-blocker", "merging", false],
     ["merge-blocker", "merging-pr", false],
     ["merge-blocker", "merging-fix", false],
@@ -118,6 +112,40 @@ describe("inReviewStallCopy", () => {
         inReviewStall: { code, reason: "r", observedAt: "2026-05-13T00:00:00.000Z" },
       }),
     ).toBe(expected);
+  });
+
+  const failedGate = {
+    workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge" as const,
+    status: "failed" as const, startedAt: "2026-09-20T00:00:00Z", output: "review-input-unprovable",
+  };
+  const blockedTask = {
+    column: "in-review", status: undefined, enabledWorkflowSteps: ["code-review"],
+    workflowStepResults: [failedGate],
+    inReviewStall: { code: "merge-blocker" as const, reason: "failed pre-merge steps", observedAt: "2026-09-20T00:00:00Z" },
+  };
+
+  it("shows the failing gate and reason despite a missing task status", () => {
+    expect(shouldShowInReviewStallBadge(blockedTask)).toBe(true);
+    expect(getInReviewStallCopy(blockedTask.inReviewStall, blockedTask)).toMatchObject({
+      badgeLabel: "Code Review blocked", description: "review-input-unprovable",
+    });
+    expect(shouldShowInReviewStallBadge({ ...blockedTask, column: "custom-review" }, { humanReview: true })).toBe(true);
+  });
+
+  it.each([undefined, [], [{ ...failedGate, status: "passed" as const }],
+    [{ ...failedGate, status: "advisory_failure" as const }],
+    [failedGate, { ...failedGate, status: "passed" as const }],
+    [{ ...failedGate, phase: "pre-execution" as const }],
+  ])("keeps normal or superseded review waits quiet: %j", workflowStepResults => {
+    expect(shouldShowInReviewStallBadge({ ...blockedTask, workflowStepResults })).toBe(false);
+  });
+
+  it("filters disabled gates but includes recorded nodes and ignores historical attempts", () => {
+    expect(shouldShowInReviewStallBadge({ ...blockedTask, enabledWorkflowSteps: [] })).toBe(false);
+    expect(shouldShowInReviewStallBadge({ ...blockedTask, enabledWorkflowSteps: [], workflowStepResults: [{ ...failedGate, source: "node" }] })).toBe(true);
+    expect(shouldShowInReviewStallBadge({ ...blockedTask, workflowStepResults: [{ ...failedGate, status: "passed", priorAttempts: [failedGate] }] })).toBe(false);
+    expect(shouldShowInReviewStallBadge({ ...blockedTask, paused: true })).toBe(false);
+    expect(shouldShowInReviewStallBadge({ ...blockedTask, column: "done" })).toBe(false);
   });
 
   it("falls back to defensive default for unknown codes", () => {

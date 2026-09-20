@@ -915,6 +915,21 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
+  it.each(["mobile", "desktop"])("shows failed review diagnostics in the %s list", viewport => {
+    const spy = viewport === "mobile" ? mockMobileViewport() : mockDesktopViewport();
+    try {
+      renderListView({ tasks: [createMockTask({ column: "in-review", status: undefined,
+        enabledWorkflowSteps: ["code-review"], workflowStepResults: [{
+          workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge",
+          status: "failed", startedAt: "2026-09-20T00:00:00Z", output: "review-input-unprovable",
+        }], inReviewStall: { code: "merge-blocker", reason: "failed gate", observedAt: "2026-09-20T00:00:00Z" },
+      })] });
+      const badge = screen.getByText("Code Review blocked");
+      expect(badge.getAttribute("title")).toContain("review-input-unprovable");
+      expect(badge.closest(viewport === "mobile" ? ".list-card" : "tr")).not.toBeNull();
+    } finally { spy.mockRestore(); }
+  });
+
   it("does not glow a fresh status-null triage card in grouped mobile cards", () => {
     // FNXC:TaskActivity 2026-08-01-17:53: fresh planner logs alone are not a concurrency
     // slot; the pulsing Planning badge requires the authoritative planning status.

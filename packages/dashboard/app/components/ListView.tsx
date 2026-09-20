@@ -1,3 +1,4 @@
+import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
 import "./ListView.css";
 import { useState, useCallback, useMemo, Fragment, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -3019,6 +3020,8 @@ export function ListView({
                           const suppressPlanningStatusBadge = showOptionalGateBadge && isNonPlanningOptionalGateBadge(optionalGateBadge);
                           const isPlanningStatusBadge = !isReviewBudgetExhausted
                             && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
+                          const reviewStallCopy = shouldShowInReviewStallBadge(task, getTaskColumnFlags(task)) && task.inReviewStall
+                            ? getInReviewStallCopy(task.inReviewStall, task) : undefined;
                           const wipLifecycleBadgeLabel = !isPaused
                             && !isReviewBudgetExhausted
                             && !showOptionalGateBadge
@@ -3029,7 +3032,7 @@ export function ListView({
                             : null;
                           const hasStatus = ((hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                             || isTransientPlannerActive
-                            || Boolean(wipLifecycleBadgeLabel))
+                            || Boolean(wipLifecycleBadgeLabel) || Boolean(reviewStallCopy))
                             && !(suppressPlanningStatusBadge && isPlanningStatusBadge);
                           /*
                           FNXC:TaskStatusBadge 2026-07-26-14:05:
@@ -3037,12 +3040,12 @@ export function ListView({
                           status badge drops U12's workflow-step-name override while that badge renders and
                           states the row's own status instead — never the same words twice on one row.
                           */
-                          const statusBadgeLabel = isReviewBudgetExhausted
+                          const statusBadgeLabel = reviewStallCopy?.badgeLabel ?? (isReviewBudgetExhausted
                             ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                             : isLivePlanning || isTransientPlannerActive
                               ? t("tasks.statusPlanning", "Planning")
                               : wipLifecycleBadgeLabel
-                                ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null });
+                                ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null }));
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task, getTaskColumnFlags(task));
                           const hasProgress = taskProgress.hasProgress;
@@ -3097,7 +3100,7 @@ export function ListView({
                                 ) : hasStatus ? (
                                   <span
                                     className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${isAgentActive ? " pulsing" : ""}`}
-                                    title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                    title={reviewStallCopy ? `${reviewStallCopy.headline} — ${reviewStallCopy.description}` : isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
                                     aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                     data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                   >
@@ -3308,6 +3311,8 @@ export function ListView({
                             const suppressPlanningStatusBadge = showOptionalGateBadge && isNonPlanningOptionalGateBadge(optionalGateBadge);
                             const isPlanningStatusBadge = !isReviewBudgetExhausted
                               && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
+                            const reviewStallCopy = shouldShowInReviewStallBadge(task, getTaskColumnFlags(task)) && task.inReviewStall
+                              ? getInReviewStallCopy(task.inReviewStall, task) : undefined;
                             const wipLifecycleBadgeLabel = !isPaused
                               && !isReviewBudgetExhausted
                               && !showOptionalGateBadge
@@ -3318,16 +3323,16 @@ export function ListView({
                               : null;
                             const showStatusBadge = ((hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                               || isTransientPlannerActive
-                              || Boolean(wipLifecycleBadgeLabel))
+                              || Boolean(wipLifecycleBadgeLabel) || Boolean(reviewStallCopy))
                               && !(suppressPlanningStatusBadge && isPlanningStatusBadge);
                             // FNXC:TaskStatusBadge 2026-07-26-14:05: the step-name override yields to the
                             // gate badge — see the grouped-card render path above.
-                            const statusBadgeLabel = isReviewBudgetExhausted
+                            const statusBadgeLabel = reviewStallCopy?.badgeLabel ?? (isReviewBudgetExhausted
                               ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                               : isLivePlanning || isTransientPlannerActive
                                 ? t("tasks.statusPlanning", "Planning")
                                 : wipLifecycleBadgeLabel
-                                  ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null });
+                                  ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null }));
 
                             return (
                               <tr
@@ -3386,7 +3391,7 @@ export function ListView({
                                         className={`list-status-badge list-status-badge--${task.column}${isReviewBudgetExhausted ? " list-status-badge--review-budget-exhausted" : ""}${isFailed ? " failed" : ""}${
                                           isAgentActive ? " pulsing" : ""
                                         }`}
-                                        title={isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
+                                        title={reviewStallCopy ? `${reviewStallCopy.headline} — ${reviewStallCopy.description}` : isReviewBudgetExhausted ? t("tasks.awaitingApprovalPlanReviewReplanCapTitle", "Plan Review requested revisions repeatedly without converging. Approve the current plan to proceed, or reject to regenerate it.") : undefined}
                                         aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
                                         data-testid={isReviewBudgetExhausted ? `list-review-budget-exhausted-${task.id}` : undefined}
                                       >

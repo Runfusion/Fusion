@@ -6324,6 +6324,7 @@ export function TaskDetailContent({
                 <>
                   {shouldShowInReviewStallBadge(workingTask, detailColumnFlags) && workingTask.inReviewStall && (() => {
                     const copy = getInReviewStallCopy(workingTask.inReviewStall, {
+                      ...workingTask,
                       mergeRetries: workingTask.mergeRetries,
                       maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
                     });

@@ -47,6 +47,18 @@ describe("TaskDetailModal Pull Request tab", () => {
     expect(screen.getByRole("button", { name: "Pull Request" })).toBeInTheDocument();
   });
 
+  it("shows a failed review reason even without top-level status", () => {
+    render(<TaskDetailModal task={makeTask({ column: "in-review", status: undefined,
+      enabledWorkflowSteps: ["code-review"], workflowStepResults: [{
+        workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge",
+        status: "failed", startedAt: "2026-09-20T00:00:00Z", output: "review-input-unprovable",
+      }], inReviewStall: { code: "merge-blocker", reason: "failed gate", observedAt: "2026-09-20T00:00:00Z" },
+    })} onClose={noop} onDeleteTask={noopDelete} onMergeTask={noopMerge} onOpenDetail={noopOpenDetail} addToast={noop} />);
+    fireEvent.click(screen.getByRole("button", { name: "Pull Request" }));
+    expect(screen.getByText("Code Review blocked")).toBeInTheDocument();
+    expect(screen.getByText("review-input-unprovable")).toBeInTheDocument();
+  });
+
   it("renders PrPanel and in-review stall badge in Pull Request tab, not Definition tab", () => {
     const inReviewStall = {
       code: "merge-failed" as const,

@@ -2734,3 +2734,7 @@ An externally blocked task uses a Blocked cover on board cards and the same noti
 ### Desktop local-startup diagnostics
 
 When the desktop shell cannot start its embedded local Fusion runtime, its failure panel shows the startup phase and attempt count, expandable technical details, and a control to copy a support-ready report. It also shows the per-launch log location when available. Fusion writes this log best-effort, off the startup path, to `<runtime root>/.fusion/logs/desktop-startup.log`; the runtime root honors `FUSION_HOME`, and the previous launch is rotated to `desktop-startup.prev.log`. If the host cannot write that location, the panel says so instead of showing a dead path. `FUSION_STARTUP_TRACE` remains available as an operator-selected synchronous trace sink.
+
+### Failed review diagnostics
+
+A failed pre-merge workflow gate shows **Code Review blocked** (or the gate's configured name) on board cards, desktop/mobile lists, and the task detail Pull Request tab, even when the task has no top-level status. The tooltip or detail diagnostic includes the recorded failure reason. Ordinary review waits remain quiet; disabled gates, superseded attempts, advisory failures, and passed gates do not produce this badge. Paused cards retain their pause indication.

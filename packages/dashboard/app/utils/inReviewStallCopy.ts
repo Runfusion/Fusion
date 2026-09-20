@@ -1,6 +1,7 @@
 import type { InReviewStallCode, InReviewStallSignal, Task } from "@fusion/core";
 import { isReviewColumnRole } from "./columnRoles";
 import { MAX_AUTO_MERGE_RETRIES } from "../hooks/useBlockerFanout";
+import { getUnifiedTaskProgress } from "./taskProgress";
 import { getTaskLogEntryAction } from "./taskLogEntryDisplay";
 
 export interface InReviewStallCopy {
@@ -82,13 +83,40 @@ function defaultCopy(signal: InReviewStallSignal): InReviewStallCopy {
   };
 }
 
+type ReviewProgressTask = Pick<Task, "steps" | "enabledWorkflowSteps" | "workflowStepResults">;
+
+/*
+FNXC:InReviewStallBadge 2026-09-20-00:53:
+Failed pre-merge gates must remain visible even when the task has no top-level status.
+Reuse workflow progress filtering; superseded attempts, disabled gates and advisory failures are not blockers.
+All card, list and detail surfaces use this same classification.
+*/
+function failedReviewGate(task: Partial<ReviewProgressTask>) {
+  const results = [...new Map((task.workflowStepResults ?? []).map(result => [result.workflowStepId, result])).values()];
+  return getUnifiedTaskProgress({ ...task, steps: [], workflowStepResults: results }).items.find(
+    item => item.source === "workflow" && item.phase === "pre-merge" && item.status === "failed",
+  );
+}
+
 export function getInReviewStallCopy(
   signal: InReviewStallSignal,
-  options?: { mergeRetries?: number | null; maxAutoMergeRetries?: number },
+  options?: { mergeRetries?: number | null; maxAutoMergeRetries?: number } & Partial<ReviewProgressTask>,
 ): InReviewStallCopy {
   const mapped = COPY_BY_CODE[signal.code];
   if (!mapped) {
     return defaultCopy(signal);
+  }
+
+  const failedGate = signal.code === "merge-blocker" && options ? failedReviewGate(options) : undefined;
+  if (failedGate) {
+    const result = [...(options?.workflowStepResults ?? [])].reverse().find(row => `workflow-${row.workflowStepId}` === failedGate.id);
+    return {
+      ...mapped,
+      code: signal.code,
+      badgeLabel: `${failedGate.name} blocked`,
+      headline: `${failedGate.name} failed`,
+      description: result?.output || signal.reason,
+    };
   }
 
   const maxAutoMergeRetries = options?.maxAutoMergeRetries ?? MAX_AUTO_MERGE_RETRIES;
@@ -136,10 +164,7 @@ Badge suppression list. A suppressed code still computes and stores `task.inRevi
 visual affordance is withheld — so the Review tab, run-audit, and self-healing continue to see it.
 
 - `no-worktree-no-merge-confirmed`: never surfaced as a badge.
-- `merge-blocker`: operator-requested removal. A pre-merge check reporting a blocker is the ordinary
-  in-review resting state rather than an exceptional one, so badging it marked routine cards as
-  abnormal. Previously suppressed only while `isActiveMergeStatus(task.status)` held; that carve-out
-  is gone because the code is now suppressed unconditionally.
+- `merge-blocker`: ordinary waiting stays quiet; a current failed pre-merge gate overrides suppression.
 
 The other codes (transient-merge-status-no-owner, merge-retries-exhausted, non-retryable-provider-error)
 still badge — they report genuinely stuck states needing an operator.
@@ -150,7 +175,7 @@ const BADGE_SUPPRESSED_CODES: ReadonlySet<InReviewStallCode> = new Set([
 ]);
 
 export function shouldShowInReviewStallBadge(
-  task: Pick<Task, "column" | "paused" | "inReviewStall" | "status">,
+  task: Pick<Task, "column" | "paused" | "inReviewStall" | "status"> & Partial<ReviewProgressTask>,
   columnFlags?: Parameters<typeof isReviewColumnRole>[0],
 ): boolean {
   /*
@@ -163,5 +188,6 @@ export function shouldShowInReviewStallBadge(
     return false;
   }
 
-  return !BADGE_SUPPRESSED_CODES.has(task.inReviewStall.code);
+  return (task.inReviewStall.code === "merge-blocker" && Boolean(failedReviewGate(task)))
+    || !BADGE_SUPPRESSED_CODES.has(task.inReviewStall.code);
 }
