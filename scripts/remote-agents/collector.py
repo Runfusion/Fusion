@@ -4,13 +4,13 @@ import argparse
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
 from pathlib import Path
 import sqlite3
 import time
-import urllib.request
 import urllib.parse
 import uuid
 from native_parser import consume, totals, bounded
@@ -20,8 +20,8 @@ VERSION = 'fusion-remote-1'
 MAX_LINE = 4 * 1024 * 1024
 
 
-def validated_base_url(value):
-    """Accept HTTPS endpoints and HTTP only on explicitly local/private addresses."""
+def validate_url(value):
+    """Accept HTTPS endpoints and allowlisted or literal private HTTP origins."""
     parsed = urllib.parse.urlsplit(value)
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError('Collector URL must not contain credentials, query, or fragment')
@@ -31,7 +31,9 @@ def validated_base_url(value):
         return value.rstrip('/')
     if parsed.scheme != 'http':
         raise ValueError('Collector URL must use HTTPS or private HTTP')
-    if parsed.hostname == 'localhost':
+    allowed_hosts = {'localhost', 'wj'}
+    allowed_hosts.update(host.strip().lower() for host in os.environ.get('FUSION_REMOTE_AGENTS_HTTP_HOSTS', '').split(',') if host.strip())
+    if parsed.hostname.lower() in allowed_hosts:
         return value.rstrip('/')
     try:
         address = ipaddress.ip_address(parsed.hostname)
@@ -40,6 +42,10 @@ def validated_base_url(value):
     if not (address.is_private or address.is_loopback or address.is_link_local):
         raise ValueError('HTTP collector URL must use a private address')
     return value.rstrip('/')
+
+
+# Kept as an import-compatible alias for existing host tooling.
+validated_base_url = validate_url
 
 
 def connect(path):
@@ -72,14 +78,23 @@ def bind(db, project, host):
 
 def post(url, project, token, operation, body, timeout=5):
     # FNXC:RemoteAgents 2026-09-21-04:51: Host collectors may use WireGuard HTTP, but arbitrary cleartext or credential-bearing destinations must fail before any token-bearing request.
-    base_url = validated_base_url(url)
-    request = urllib.request.Request(base_url + '/api/external-sessions/' + operation + '?' + urllib.parse.urlencode({'projectId': project}),
-        data=json.dumps(body).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    parsed = urllib.parse.urlsplit(validate_url(url))
+    connection_type = http.client.HTTPSConnection if parsed.scheme == 'https' else http.client.HTTPConnection
+    connection = connection_type(parsed.hostname, parsed.port, timeout=timeout)
+    request_path = '/api/external-sessions/' + operation + '?' + urllib.parse.urlencode({'projectId': project})
+    connection.request('POST', request_path, body=json.dumps(body).encode(), headers={
+        'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token,
+    })
+    try:
+        response = connection.getresponse()
         raw = response.read(262145)
         if len(raw) > 262144:
             raise ValueError('Collector response limit exceeded')
+        if response.status < 200 or response.status >= 300:
+            raise ValueError(f'Collector returned HTTP {response.status}')
         return json.loads(raw)
+    finally:
+        connection.close()
 
 
 def enqueue(db, session):
