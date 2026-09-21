@@ -27,7 +27,8 @@ export const registerRemoteAgentActions: ApiRouteRegistrar = ctx => {
     const { session, store } = await resolve(req);
     const settings = await store.getGlobalSettingsStore().getSettings();
     const raw = session.observation.usage ?? [];
-    const usage = raw.map(u => priceUsage(u, session.provider === "claude" ? "claude_code" : "codex_cli", settings.modelPricingOverrides)).filter((u): u is NonNullable<typeof u> => u !== null);
+    const pricingProvider = session.provider === "claude" ? "claude_code" : session.provider === "codex" ? "codex_cli" : session.provider;
+    const usage = raw.map(u => priceUsage(u, pricingProvider, settings.modelPricingOverrides)).filter((u): u is NonNullable<typeof u> => u !== null);
     const priced = usage.filter(u => u.usd !== null); const partial = priced.reduce((n, u) => n + u.usd!, 0);
     const complete = session.observation.usageComplete === true && usage.length > 0 && usage.length === raw.length && priced.length === usage.length;
     res.json({ usage, estimatedUsd: complete ? partial : null, partialUsd: priced.length ? partial : null,

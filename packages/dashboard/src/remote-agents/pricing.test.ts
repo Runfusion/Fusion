@@ -12,6 +12,9 @@ describe("remote session accounting", () => {
     expect(priceUsage(usage, "codex_cli")?.usd).toBeNull();
     for (const extra of [{ fast: true }, { longContext: true }]) expect(priceUsage({ ...usage, ...extra }, "claude_code", { "anthropic:fixture": rates })?.usd).toBeNull();
   });
+  it("keeps unsupported providers unavailable even when the model matches a catalog entry", () => {
+    expect(priceUsage(usage, "runtime", { "openai-codex:fixture": rates })).toMatchObject({ rates: null, usd: null, reason: "Provider rate unavailable" });
+  });
   it("prices mixed cache durations once and handles the observed native Claude receipt", () => {
     expect(priceUsage({ ...usage, cacheWriteHourTokens: 40000 }, "claude_code", { "anthropic:fixture": rates })).toMatchObject({ cacheWrite: 60000, cacheWriteHour: 40000, usd: 9.25 });
     const native = priceUsage({ ...usage, model: "claude-haiku-4-5-20251001", inputTokens: 20817, cachedInputTokens: 13607, cacheWriteTokens: 7200, cacheWriteHourTokens: 7200, outputTokens: 379, reasoningTokens: null }, "claude_code");
