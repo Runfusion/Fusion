@@ -42,6 +42,8 @@ describe("buildDevNodeArgs", () => {
       "--require",
       "/tmp/preflight.cjs",
       "--import",
+      expect.stringMatching(/scripts\/dev-source-condition-fallback\.mjs$/),
+      "--import",
       "file:///tmp/loader.mjs",
       "/tmp/bin.ts",
       "dashboard",
