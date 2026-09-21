@@ -378,6 +378,13 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   included. Geometry suspension in React must also change the panel, rather than leaving
   a fixed desktop-sized dialog on a short or true-phone viewport.
   */
+  /*
+  FNXC:MobilePwaSheetSafeArea 2026-09-21-09:45:
+  Full-screen FloatingWindow sheets share one header/body shell, so installed-PWA system chrome can
+  obscure their existing Close control regardless of the feature that opened the sheet. Reserve both
+  safe-area block edges inside the 100dvh border box at the phone and short-viewport boundary; zero
+  insets preserve browser geometry, while desktop and tablet floating geometry remain untouched.
+  */
   .floating-window.new-task-modal,
   .floating-window.right-dock-expand-modal--floating,
   .floating-window.terminal-modal--floating,
@@ -410,6 +417,9 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   .floating-window--create-room,
   .floating-window--chat {
     inset: 0 !important;
+    box-sizing: border-box;
+    overflow: hidden !important;
+    padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
     width: 100vw !important;
     height: 100dvh !important;
     min-width: 0 !important;
@@ -461,6 +471,9 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   */
   .floating-window--image-preview {
     inset: 0 !important;
+    box-sizing: border-box;
+    overflow: hidden !important;
+    padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
     width: 100vw !important;
     height: 100dvh !important;
     min-width: 0 !important;

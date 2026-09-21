@@ -160,6 +160,66 @@ describe("core modals mobile css coverage", () => {
     expect(loadAllAppCssBaseOnly()).not.toContain("padding-block: env(safe-area-inset-top, 0px)");
   });
 
+  it("FloatingWindow: reserves installed-PWA safe areas for every remaining full-screen sheet", () => {
+    const css = loadAllAppCss();
+    const floatingMobileBlock = getFloatingWindowMobileBlock(css);
+    const tabletBlock = getTabletBlock(css);
+    const rawSheetRule = floatingMobileBlock.match(
+      /\.floating-window\.new-task-modal,[\s\S]*?\.floating-window--chat\s*\{([^}]*)\}/,
+    )?.[1];
+    const imagePreviewRule = getLastRuleBlock(floatingMobileBlock, ".floating-window--image-preview");
+    const importDetailRule = getLastRuleBlock(floatingMobileBlock, ".floating-window--github-import-detail");
+    const expectedDeclarations = [
+      /[{;]\s*height:\s*100dvh/,
+      /[{;]\s*max-height:\s*100dvh/,
+      /[{;]\s*box-sizing:\s*border-box/,
+      /[{;]\s*overflow:\s*hidden\s*!important/,
+      /[{;]\s*padding-block:\s*env\(safe-area-inset-top,\s*0px\)\s+env\(safe-area-inset-bottom,\s*0px\)/,
+    ];
+    const rawSheetSelectors = [
+      ".floating-window.new-task-modal",
+      ".floating-window.right-dock-expand-modal--floating",
+      ".floating-window.terminal-modal--floating",
+      ".floating-window--agent-list",
+      ".floating-window--agent-import",
+      ".floating-window--agent-generation",
+      ".floating-window--agent-onboarding",
+      ".floating-window--experimental-agent-onboarding",
+      ".floating-window--setup-wizard",
+      ".floating-window--native-shell-onboarding",
+      ".floating-window--docker-node-onboarding",
+      ".floating-window--agent-detail",
+      ".floating-window--github-import",
+      ".floating-window--mailbox",
+      ".floating-window--milestone-slice-interview",
+      ".floating-window--subtask-breakdown",
+      ".floating-window--automation",
+      ".floating-window--activity-log",
+      ".floating-window--scripts",
+      ".floating-window--add-node",
+      ".floating-window--connect-node",
+      ".floating-window--node-detail",
+      ".floating-window--workflow-add-step",
+      ".floating-window--group-task",
+      ".floating-window--changes-diff",
+      ".floating-window--model-onboarding",
+      ".floating-window--git-manager",
+      ".floating-window--settings",
+      ".floating-window--planning-mode",
+      ".floating-window--create-room",
+      ".floating-window--chat",
+    ];
+
+    expect(rawSheetRule).toBeTruthy();
+    for (const selector of rawSheetSelectors) expect(floatingMobileBlock).toContain(selector);
+    for (const rule of [rawSheetRule!, imagePreviewRule, importDetailRule]) {
+      for (const declaration of expectedDeclarations) expect(rule).toMatch(declaration);
+    }
+    expect(floatingMobileBlock).toContain("max-height: 480px");
+    expect(tabletBlock).not.toContain("safe-area-inset-top, 0px");
+    expect(loadAllAppCssBaseOnly()).not.toContain(".floating-window--github-import-detail {\n    inset: 0 !important;\n    box-sizing: border-box");
+  });
+
   it("TaskDetailModal: modal-actions uses safe-area inset bottom padding", () => {
     const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);

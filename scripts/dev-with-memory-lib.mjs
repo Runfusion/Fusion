@@ -1,3 +1,5 @@
+import { URL } from "node:url";
+
 const SOURCE_CONDITION_FALLBACK_URL = new URL("./dev-source-condition-fallback.mjs", import.meta.url).href;
 
 export function buildDevNodeArgs({

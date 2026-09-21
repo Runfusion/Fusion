@@ -685,6 +685,57 @@ describe("GitHubImportModal", () => {
     window.dispatchEvent(new PopStateEvent("popstate", { state: { navIndex: 1 } }));
   };
 
+  it.each([
+    ["GitHub issue", "modal"],
+    ["GitHub pull request", "modal"],
+    ["GitLab issue", "embedded"],
+    ["GitLab merge request", "embedded"],
+  ] as const)("keeps one dismissing detail Close for %s in the %s host", async (surface, presentation) => {
+    if (surface === "GitHub issue") {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
+        { number: 94, title: "Dismissible issue", body: "Body", html_url: "https://github.com/owner/repo/issues/94", labels: [], state: "open" },
+      ]);
+    } else if (surface === "GitHub pull request") {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([
+        { number: 95, title: "Dismissible pull", body: "Body", html_url: "https://github.com/owner/repo/pull/95", headBranch: "feature", baseBranch: "main" },
+      ]);
+    } else if (surface === "GitLab issue") {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+      vi.mocked(apiFetchGitLabProjectIssues).mockResolvedValueOnce([
+        { resourceKind: "project_issue", id: 96, iid: 96, projectId: 3, projectPath: "group/project", title: "Dismissible GitLab issue", description: "Body", webUrl: "https://gitlab.example.com/group/project/-/issues/96", state: "opened", labels: [] },
+      ]);
+    } else {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+      vi.mocked(apiFetchGitLabMergeRequests).mockResolvedValueOnce([
+        { resourceKind: "merge_request", id: 97, iid: 97, projectId: 3, projectPath: "group/project", title: "Dismissible GitLab merge request", description: "Body", webUrl: "https://gitlab.example.com/group/project/-/merge_requests/97", state: "opened", labels: [], sourceBranch: "feature", targetBranch: "main" },
+      ]);
+    }
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} presentation={presentation} />);
+    if (surface === "GitHub issue") {
+      fireEvent.click(await screen.findByRole("button", { name: /Select issue #94/i }));
+      expect(screen.getByTestId("github-import-issue-close")).toBeInTheDocument();
+    } else if (surface === "GitHub pull request") {
+      fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /Select pull request #95/i }));
+    } else {
+      fireEvent.click(await screen.findByRole("button", { name: "GitLab" }));
+      fireEvent.click(screen.getByRole("tab", { name: surface === "GitLab issue" ? "Project issues" : "Merge requests" }));
+      fireEvent.change(screen.getByLabelText("GitLab project path or ID"), { target: { value: "group/project" } });
+      fireEvent.click(screen.getByRole("button", { name: /Load/ }));
+      fireEvent.click(await screen.findByText(surface === "GitLab issue" ? /#96 Dismissible GitLab issue/ : /!97 Dismissible GitLab merge request/));
+    }
+
+    const closeButtons = await screen.findAllByTestId("floating-window-close-github-import-detail");
+    expect(closeButtons).toHaveLength(1);
+    fireEvent.click(closeButtons[0]);
+    await waitFor(() => expect(screen.queryByTestId("floating-window-github-import-detail")).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+    if (presentation === "embedded") expect(screen.queryByTestId("floating-window-close-github-import")).toBeNull();
+  });
+
   it("keeps provider-less detail selection and close behavior available", async () => {
     vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
     vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([
