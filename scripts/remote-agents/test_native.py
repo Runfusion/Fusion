@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from datetime import datetime, timezone, timedelta
-from collector import connect, bind, scan
+from collector import connect, bind, scan, validated_base_url
 from native_parser import consume, totals
 from feedback_hook import run
 from install_hooks import install
@@ -17,6 +17,14 @@ class NativeTests(unittest.TestCase):
 
     def tearDown(self):
         self.db.close(); self.tmp.cleanup()
+
+    def test_collector_url_restricts_private_http_and_embedded_credentials(self):
+        self.assertEqual(validated_base_url('https://fusion.example'), 'https://fusion.example')
+        self.assertEqual(validated_base_url('http://10.8.0.5:4040/'), 'http://10.8.0.5:4040')
+        self.assertEqual(validated_base_url('http://localhost:4040'), 'http://localhost:4040')
+        for value in ('http://fusion.example', 'http://8.8.8.8', 'https://user:secret@fusion.example', 'file:///tmp/socket', 'https://fusion.example/prefix'):
+            with self.assertRaises(ValueError):
+                validated_base_url(value)
 
     def test_claude_request_deduplication_and_cache_accounting(self):
         state = {}; base = dict(type='assistant', timestamp='2026-09-18T05:00:00Z', sessionId='native', cwd='/work', message=dict(id='request', model='claude', usage=dict(input_tokens=100, cache_read_input_tokens=50, cache_creation_input_tokens=10, output_tokens=5)))

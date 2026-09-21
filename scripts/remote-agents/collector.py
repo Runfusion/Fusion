@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,28 @@ from opaque_records import ignored_header, scan_opaque_tail
 
 VERSION = 'fusion-remote-1'
 MAX_LINE = 4 * 1024 * 1024
+
+
+def validated_base_url(value):
+    """Accept HTTPS endpoints and HTTP only on explicitly local/private addresses."""
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError('Collector URL must not contain credentials, query, or fragment')
+    if not parsed.hostname or parsed.path not in ('', '/'):
+        raise ValueError('Collector URL must be an origin')
+    if parsed.scheme == 'https':
+        return value.rstrip('/')
+    if parsed.scheme != 'http':
+        raise ValueError('Collector URL must use HTTPS or private HTTP')
+    if parsed.hostname == 'localhost':
+        return value.rstrip('/')
+    try:
+        address = ipaddress.ip_address(parsed.hostname)
+    except ValueError as error:
+        raise ValueError('HTTP collector URL must use a literal private address') from error
+    if not (address.is_private or address.is_loopback or address.is_link_local):
+        raise ValueError('HTTP collector URL must use a private address')
+    return value.rstrip('/')
 
 
 def connect(path):
@@ -48,7 +71,9 @@ def bind(db, project, host):
 
 
 def post(url, project, token, operation, body, timeout=5):
-    request = urllib.request.Request(url.rstrip('/') + '/api/external-sessions/' + operation + '?' + urllib.parse.urlencode({'projectId': project}),
+    # FNXC:RemoteAgents 2026-09-21-04:51: Host collectors may use WireGuard HTTP, but arbitrary cleartext or credential-bearing destinations must fail before any token-bearing request.
+    base_url = validated_base_url(url)
+    request = urllib.request.Request(base_url + '/api/external-sessions/' + operation + '?' + urllib.parse.urlencode({'projectId': project}),
         data=json.dumps(body).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         raw = response.read(262145)

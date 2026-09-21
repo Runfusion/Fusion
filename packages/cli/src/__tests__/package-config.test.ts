@@ -143,6 +143,7 @@ describe("CLI package.json publishing config", () => {
     expect(pkg.files).toContain("dist/**/*.js.map");
     expect(pkg.files).toContain("dist/client/**");
     expect(pkg.files).toContain("dist/desktop/**");
+    expect(pkg.files).toContain("dist/remote-agents/**");
     expect(pkg.files).toContain("README.md");
   });
 
