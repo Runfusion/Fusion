@@ -481,14 +481,23 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
   Import details use FloatingWindow for desktop drag and resize; on mobile this scoped variant becomes a full-screen sheet
   and hides desktop resize affordances.
   */
+  /*
+  FNXC:GitHubImportMobileClose 2026-09-21-09:34:
+  Installed-PWA system chrome can cover the GitHub import detail sheet header, making its only
+  Close control unreachable. Reserve safe-area block edges inside the viewport-sized sheet so the
+  shared FloatingWindow header remains visible while the detail body keeps its bounded scroll area.
+  */
   .floating-window--github-import-detail {
     inset: 0 !important;
+    box-sizing: border-box;
+    overflow: hidden !important;
     width: 100vw !important;
     height: 100dvh !important;
     min-width: 0 !important;
     min-height: 0 !important;
     max-width: 100vw !important;
     max-height: 100dvh !important;
+    padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
     border: none;
     border-radius: 0;
     box-shadow: none;

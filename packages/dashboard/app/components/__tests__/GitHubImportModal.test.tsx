@@ -3280,6 +3280,9 @@ describe("GitHubImportModal", () => {
 
     const baseDeclarations = ruleDeclarations(source, /(?:^|\n)\s*\.floating-window\s*\{([^}]*)\}/, "base FloatingWindow");
     expect(baseDeclarations, "base FloatingWindow must provide inherited sheet clipping").toContain("overflow: hidden");
+    expect(importSheetDeclarations, "GitHub Import detail must reserve PWA safe areas for its close control").toContain("box-sizing: border-box");
+    expect(importSheetDeclarations, "GitHub Import detail must reserve PWA safe areas for its close control").toContain("overflow: hidden !important");
+    expect(importSheetDeclarations, "GitHub Import detail must reserve PWA safe areas for its close control").toContain("padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px)");
     expect(taskSheetDeclarations, "Task Detail must override its desktop visible-overflow rule on phones").toContain("overflow: hidden !important");
 
     /*
