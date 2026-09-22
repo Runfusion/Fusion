@@ -29,6 +29,14 @@ Checked the five open CodeRabbit PostgreSQL threads against head `35e018b58`. Fo
 - CI at `35e018b58`: agent-browser pack run 35758732650 was cancelled in the CLI build step on a docs-only head. This is the same transient timeout pattern as before, and the next push superseded it.
 - No deployment, service, database, or provider change happened.
 
+## PR #3637 status (2026-09-22 18:35 UTC)
+
+Head `3f1ee8805`, branch `claude/remote-agents-landing-20260919`, upstream main `aba51f9503f2555284df540eac2276965b6717b2`. All 13 checks pass and the PR is MERGEABLE. The only remaining blocker is the required human review; `reviewDecision` is REVIEW_REQUIRED.
+
+Every review thread opened on this PR now has a verified disposition. Fixed: the 0087 partial-schema repair, the `project.tasks` coupling in the 0086 probe, the unqualified ledger insert, the stale 0084 ledger test, the four-route collector documentation, the "clean integration" wording, the packaging guard (`567234d42`), the malformed hook command (`020c1c515`), hidden-tab polling (`85e0b828d`) and the feedback receipt lock (`6a608cae5`). Rejected with reasons on the thread: the ThreatCrush CWE-89 alerts on Drizzle `sql` tagged templates (parameterized; the same form as every other ledger write, and the ThreatCrush check passes), Greptile's `files`-allowlist and changeset-number findings (both already correct at this head), and the skip-first-fetch-while-hidden suggestion (it would lose the list cursor).
+
+Deferred, with nothing outstanding in this PR: live native acceptance on m3/m5 and the protected-main integration, both of which need execution access this session does not have. No deployment, service, database, routing, hook, provider or active-agent change happened in this session.
+
 ## PR #3637 malformed-hook review fix (2026-09-22 15:56 UTC)
 
 Verified the CodeRabbit `install_hooks.py` finding against current PR head `e15dbb424f49ee6ef2f2f8bdf141c4bf28c65b08`. Existing hook entries with a missing, null or object `command` could reach `shlex.split`; older Python can read stdin for `None`, while newer Python raises and relies on the catch. Commit `020c1c515` now calls the owned-command parser only for strings and preserves malformed or unrelated entries. The regression wraps the parser with a string-only assertion, so it proves the installer never invokes it for the three malformed shapes while still installing the Fusion hook.
