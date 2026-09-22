@@ -47,7 +47,8 @@ def install(path, command, apply=False):
             removed = False
             for hook in group.get('hooks', []):
                 existing = hook.get('command')
-                if existing == command or (owned is not None and identity(existing) == owned):
+                # FNXC:RemoteAgents 2026-09-22-15:54: Existing native hook entries without string commands are unrelated and must be preserved without parser calls that can block on stdin.
+                if existing == command or (owned is not None and isinstance(existing, str) and identity(existing) == owned):
                     if found:
                         changed = removed = True
                         continue

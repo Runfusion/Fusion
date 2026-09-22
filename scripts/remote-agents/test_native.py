@@ -3,11 +3,12 @@ import shlex
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone, timedelta
 from collector import connect, bind, scan, validated_base_url
 from native_parser import consume, totals
 from feedback_hook import run
-from install_hooks import install
+from install_hooks import identity, install
 
 
 class NativeTests(unittest.TestCase):
@@ -139,6 +140,22 @@ class NativeTests(unittest.TestCase):
         install(path, new, True)
         self.assertEqual(path.read_bytes(), after)
         self.assertEqual(list(self.root.glob('hooks.json.fusion-backup-*')), backups)
+
+    def test_hook_installer_preserves_non_string_commands_without_parsing_them(self):
+        path = self.root / 'hooks.json'
+        malformed = [{'type': 'command'}, {'type': 'command', 'command': None}, {'type': 'command', 'command': {'nested': True}}]
+        path.write_text(json.dumps({'hooks': {'PreToolUse': [{'hooks': malformed}]}}))
+
+        def require_string(value):
+            self.assertIsInstance(value, str)
+            return identity(value)
+
+        with patch('install_hooks.identity', side_effect=require_string):
+            install(path, 'fusion-hook', True)
+
+        result = json.loads(path.read_text())
+        self.assertEqual(result['hooks']['PreToolUse'][0]['hooks'], malformed)
+        self.assertEqual(result['hooks']['PreToolUse'][1]['hooks'][0]['command'], 'fusion-hook')
 
 
 if __name__ == '__main__':
