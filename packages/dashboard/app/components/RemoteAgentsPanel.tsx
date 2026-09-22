@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExternalSessionPage, ExternalSessionView } from "@fusion/core";
 import type { RemoteUsage } from "../../src/remote-agents/types";
 import { api } from "../api/client/client";
 import { withProjectId } from "../api/client/health";
+import { useVisibilityAwarePoll } from "../hooks/visibilitySuspension";
 import "./RemoteAgentsPanel.css";
 
 type Feedback = { commandId: string; status: string; createdAt: string; expiresAt: string; deliveredAt: string | null };
@@ -42,11 +43,13 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
       if (!signal.aborted) { setDetail(d.session); setCost(c); setFeedback(f.feedback); setError(null); }
     } catch (e) { if (!signal.aborted) setError(e instanceof Error ? e.message : "Session unavailable"); }
   }, [path, projectId]);
+  const detailPoll = useRef<AbortController | null>(null);
   useEffect(() => {
-    const controller = new AbortController(); void refresh(controller.signal);
-    const timer = window.setInterval(() => void refresh(controller.signal), 5000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    const controller = new AbortController(); detailPoll.current = controller; void refresh(controller.signal);
+    return () => controller.abort();
   }, [refresh]);
+  // FNXC:RemoteAgents 2026-09-22-15:57: The open session is what the operator is watching, so it polls at 5s as a critical subscriber of the shared visibility gate: no request while the tab is hidden, one immediate refresh on return.
+  useVisibilityAwarePoll(() => { const signal = detailPoll.current?.signal; if (signal && !signal.aborted) void refresh(signal); }, 5000, { priority: "critical" });
   const supported = detail.collectorConnected && !["completed", "failed"].includes(detail.observation.activity) && !!detail.observation.feedback && Date.parse(detail.observation.feedback.expiresAt) > Date.now();
   const pendingSame = feedback.find(f => f.commandId === commandId);
   const send = async () => {
@@ -116,22 +119,33 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
     } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Remote agents unavailable"); }
     finally { if (!signal?.aborted) setLoading(false); }
   }, [host, provider, projectId]);
+  const refreshHosts = useCallback(async (signal: AbortSignal) => {
+    if (!projectId) return;
+    try { const data = await api<{ hosts: { hostId: string; collectorConnected: boolean }[] }>(withProjectId("/external-sessions/hosts", projectId), { signal }); if (!signal.aborted) setHosts(data.hosts); }
+    catch { /* Session errors use the main monitoring error state. */ }
+  }, [projectId]);
+  const listPoll = useRef<AbortController | null>(null);
   useEffect(() => {
     setSessions([]); setSelected(null); setCursor(null);
-    const controller = new AbortController(); void load(undefined, controller.signal);
-    const timer = window.setInterval(() => void load(undefined, controller.signal, true), 10000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    const controller = new AbortController(); listPoll.current = controller; void load(undefined, controller.signal);
+    return () => controller.abort();
   }, [load]);
+  const hostsPoll = useRef<AbortController | null>(null);
   useEffect(() => {
-    setHosts([]); if (!projectId) return;
-    const controller = new AbortController();
-    const refreshHosts = async () => {
-      try { const data = await api<{ hosts: { hostId: string; collectorConnected: boolean }[] }>(withProjectId("/external-sessions/hosts", projectId), { signal: controller.signal }); if (!controller.signal.aborted) setHosts(data.hosts); }
-      catch { /* Session errors use the main monitoring error state. */ }
-    };
-    void refreshHosts(); const timer = window.setInterval(() => void refreshHosts(), 10000);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [projectId]);
+    setHosts([]);
+    const controller = new AbortController(); hostsPoll.current = controller; void refreshHosts(controller.signal);
+    return () => controller.abort();
+  }, [refreshHosts]);
+  /*
+  FNXC:RemoteAgents 2026-09-22-15:57:
+  PR #3637 review: the list and host status used two independent 10s intervals that kept running in hidden tabs.
+  They now share one tick through the dashboard's single visibility gate (`useVisibilityAwarePoll`), so a hidden tab issues no requests and a returning tab refreshes once.
+  Polling stays because external sessions have no push channel; the list tick merges pages so loaded cursors survive.
+  */
+  useVisibilityAwarePoll(() => {
+    const list = listPoll.current?.signal; if (list && !list.aborted) void load(undefined, list, true);
+    const hostSignal = hostsPoll.current?.signal; if (hostSignal && !hostSignal.aborted) void refreshHosts(hostSignal);
+  }, 10000, { enabled: !!projectId });
   const detail = sessions.find(s => s.id === selected);
   return <div className="remote-agents-panel">
     <div className="remote-agent-filters">

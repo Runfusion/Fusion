@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RemoteAgentsPanel } from "../RemoteAgentsPanel";
 import { api } from "../../api/client/client";
 
 vi.mock("../../api/client/client", () => ({ api: vi.fn() }));
 const id = "a".repeat(64);
 const fixture = { id, hostId: "host", provider: "codex", nativeSessionId: "native", observation: { title: "Fixture agent", activity: "working", observedAt: new Date().toISOString(), feedback: { generation: "generation", expiresAt: new Date(Date.now() + 3600000).toISOString() } }, collectorConnected: true, activityStale: false };
-afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+const setVisibility = (state: DocumentVisibilityState) => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+};
+afterEach(() => { cleanup(); vi.useRealTimers(); setVisibility("visible"); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 describe("standalone remote agents", () => {
   it("preserves the composer across background updates and submits one stable command", async () => {
     const calls: unknown[] = [];
@@ -52,5 +56,33 @@ describe("standalone remote agents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]!.commandId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+  it("polls list, hosts and the open session only while the tab is visible", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.mocked(api).mockImplementation(async path => {
+      if (path.includes("/hosts")) return { hosts: [] } as never;
+      if (path.includes("/cost")) return { usage: [], estimatedUsd: null, partialUsd: null, usageComplete: false, pricingDate: "2026-07-16", pricingSource: "Fusion" } as never;
+      if (path.includes("/feedback")) return { feedback: [] } as never;
+      if (path.includes(id)) return { session: fixture } as never;
+      return { sessions: [fixture], nextCursor: null } as never;
+    });
+    const count = (match: (path: string) => boolean) => vi.mocked(api).mock.calls.filter(([path]) => match(String(path))).length;
+    const list = (path: string) => path.startsWith("/external-sessions?");
+    const hosts = (path: string) => path.includes("/hosts");
+    const detail = (path: string) => path.includes(`/cost`);
+    render(<RemoteAgentsPanel projectId="project-a" />);
+    fireEvent.click((await screen.findByText("Fixture agent")).closest("button")!);
+    await waitFor(() => expect(count(detail)).toBe(1));
+    expect([count(list), count(hosts)]).toEqual([1, 1]);
+
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect([count(list), count(hosts), count(detail)]).toEqual([2, 2, 3]);
+
+    setVisibility("hidden");
+    await act(async () => { vi.advanceTimersByTime(60_000); });
+    expect([count(list), count(hosts), count(detail)]).toEqual([2, 2, 3]);
+
+    await act(async () => { setVisibility("visible"); });
+    expect([count(list), count(hosts), count(detail)]).toEqual([3, 3, 4]);
   });
 });
