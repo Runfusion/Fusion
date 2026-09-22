@@ -12,6 +12,16 @@ Set `BOOT_SMOKE_TIMINGS=1` when invoking `pnpm smoke:boot` to print per-attempt 
 
 Gate membership is the explicit allow-list in `packages/engine/vitest.config.ts` (`engine-core` project). Admission requires evidence of value (the test catches real regressions); tests never graduate in by default. A flaky gate test is evicted by deleting its allow-list line — the eviction PR does not need the flaky test to pass. The whole `engine-core` project must stay under ~60s wall-clock.
 
+### Shard watchdog and timing-artifact ownership
+
+The shard watchdog owns only the detached process group captured when it spawns a command. Timeout, forwarded cancellation, and wrapper-exit cleanup must not signal after the tracked child has reported exit; this prevents a late cleanup path from addressing a recycled process-group ID. Core's test subprocess guard similarly replaces its complete ownership record on duplicate registration, including close/error listeners and timer, so an old callback cannot clear a successor record. Global teardown also removes a worker root only while its marker still matches the setup closure that created it; a partial startup or stale teardown preserves a successor-owned root and its live sibling.
+
+Use `pnpm test:ci:shard --shard 2 --total 4` to reproduce a shard lane and `node scripts/ci-test-shard.mjs --dry-run --total 4` to inspect its current mapping. The Full Suite artifact step remains `if: always()` and retains `test-timings-shard-1` through `test-timings-shard-4`; a partially failing run can refresh timings that reached reporter finalization without discarding valid measurements from commands that did not. The Full Suite and Pipeline smoke tiers are non-blocking post-merge signals, and Pipeline smoke is an independent surface rather than evidence of shard-watchdog behavior.
+
+### Required post-landing Full Suite evidence
+
+An enabled workflow `post-merge-verification` gate can make Full Suite evidence a blocking task-completion requirement without changing branch protection. The gate must refuse approval until the delivery record identifies the landed SHA, the first Full Suite push-to-main run at or after that SHA with its run ID and SHA, conclusions for Test shards 1/4 through 4/4, and `test-timings-shard-1` through `test-timings-shard-4`. A pre-landing run, an unrelated main run, or partial artifacts are not substitutes; record the verified evidence in the task delivery record before final approval.
+
 <!-- FNXC:MergeGatePerformance 2026-08-16-10:41: FN-9122 corrected the W33 composition ledger: all 15 static validators, all 21 engine-core files, every PG/unit canary, nonzero propagation, and CI-shape-after-success remain blocking; a timing win that weakens any of those contracts is not accepted. -->
 **Static-validator and lane ordering:** `test:gate:static` declares the 15 canonical, directly runnable read-only validators. `scripts/run-static-gate-checks.mjs` starts them concurrently and waits for **every** result, so zero, one, or multiple policy failures remain fail-closed and observable before tests start. It then starts `engine-core`, `test:pg-gate`, and `test:unit-gate` concurrently; the shell waits for all **three** and returns nonzero if any fail. CI-shape runs only after that successful wait.
 

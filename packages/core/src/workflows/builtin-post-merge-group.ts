@@ -23,6 +23,12 @@ merger-only fallback code. The group node id is the STABLE per-task enable key
 
 export const POST_MERGE_VERIFICATION_GROUP_ID = "post-merge-verification";
 
+/*
+FNXC:PostMergeFullSuiteEvidence 2026-09-22-01:36:
+An enabled post-merge gate owns the task's required post-landing Full Suite evidence. CI remains
+non-blocking branch protection, but this gate must refuse final task completion until the first
+push-to-main run at or after the landed SHA has recorded every shard conclusion and timing artifact.
+*/
 const POST_MERGE_VERIFICATION_PROMPT = `You are a post-merge verification reviewer. Verify that the task's merged result is safe after integration.
 
 ## Review focus
@@ -30,9 +36,17 @@ const POST_MERGE_VERIFICATION_PROMPT = `You are a post-merge verification review
 2. Check the final merged diff and task summary for obvious mismatches, missing verification evidence, or integration-only regressions.
 3. If configured test/build commands are available in the task context, inspect their latest result or explain why no post-merge command was applicable.
 
+## Required post-landing Full Suite evidence
+This enabled gate requires post-landing Full Suite evidence. Do NOT approve until its delivery record names all of the following:
+1. The landed SHA and the first Full Suite push-to-main run at or after that SHA, including the run ID and run SHA.
+2. A conclusion for every Test shard: 1/4, 2/4, 3/4, and 4/4.
+3. All four timing artifacts: test-timings-shard-1, test-timings-shard-2, test-timings-shard-3, and test-timings-shard-4.
+
+Pre-landing, unrelated-main, or partial evidence does not satisfy this contract. If the required run or any required evidence is unavailable, return REVISE and state that final completion remains blocked pending the post-landing evidence. Record verified evidence in the task delivery record before approving.
+
 ## Output Requirements
 - APPROVE: post-merge verification is acceptable.
-- APPROVE_WITH_NOTES: completion may proceed with non-blocking notes.
+- APPROVE_WITH_NOTES: completion may proceed with non-blocking notes only when every post-landing evidence item above is recorded.
 - REVISE: completion should be blocked; include the concrete post-merge issue and the needed follow-up.
 - \`notes\` MUST contain one to three non-empty sentences naming what was checked and why the verdict was reached. An empty \`notes\` string is a protocol violation.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):

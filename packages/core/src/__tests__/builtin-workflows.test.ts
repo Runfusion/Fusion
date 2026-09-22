@@ -298,7 +298,12 @@ describe("built-in workflows", () => {
         defaultOn: false,
       });
       const template = postMerge?.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
-      expect(template?.nodes?.[0]?.config?.gateMode, workflow.id).toBe("gate");
+      const postMergeStep = template?.nodes?.[0]?.config;
+      expect(postMergeStep?.gateMode, workflow.id).toBe("gate");
+      expect(postMergeStep?.prompt, workflow.id).toContain("first Full Suite push-to-main run at or after that SHA");
+      expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-1");
+      expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-4");
+      expect(postMergeStep?.prompt, workflow.id).toContain("Do NOT approve until");
       expect(workflow.ir.edges, `${workflow.id}:post-merge-entry`).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ from: mergeNode.id, to: "post-merge-verification", condition: "success" }),

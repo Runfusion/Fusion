@@ -746,6 +746,7 @@ type TrackedSubprocess = {
   timeoutTimer: NodeJS.Timeout | null;
   timedOut: boolean;
   testName: string | null;
+  finishListener: () => void;
 };
 
 const originalChildProcess = {
@@ -904,14 +905,17 @@ function cleanupTrackedSubprocess(proc: ChildProcess): void {
     realClearTimeout(tracked.timeoutTimer);
     tracked.timeoutTimer = null;
   }
+  proc.removeListener("close", tracked.finishListener);
+  proc.removeListener("error", tracked.finishListener);
   trackedSubprocesses.delete(proc);
 }
 
 function registerTrackedSubprocess(proc: ChildProcess, commandLine: string): void {
   /*
-  FNXC:TestSubprocessGuard 2026-08-10-09:35:
-  FN-8937 requires duplicate registration to cancel its prior watchdog; map size
-  alone cannot expose the otherwise orphaned timer that later fabricates a timeout.
+  FNXC:TestSubprocessGuard 2026-09-21-09:44:
+  FN-9349 requires a duplicate registration to replace the entire prior ownership
+  record. Detach its completion listeners before installing the successor so a
+  stale close/error callback cannot clear the successor timer or registration.
   */
   cleanupTrackedSubprocess(proc);
   const tracked: TrackedSubprocess = {
@@ -920,6 +924,7 @@ function registerTrackedSubprocess(proc: ChildProcess, commandLine: string): voi
     timeoutTimer: null,
     timedOut: false,
     testName: currentTestName(),
+    finishListener: () => cleanupTrackedSubprocess(proc),
   };
   trackedSubprocesses.set(proc, tracked);
 
@@ -937,9 +942,8 @@ function registerTrackedSubprocess(proc: ChildProcess, commandLine: string): voi
   }, currentSubprocessTimeoutMs);
   tracked.timeoutTimer.unref?.();
 
-  const finish = () => cleanupTrackedSubprocess(proc);
-  proc.once("close", finish);
-  proc.once("error", finish);
+  proc.once("close", tracked.finishListener);
+  proc.once("error", tracked.finishListener);
 }
 
 function installChildProcessGuards(): void {

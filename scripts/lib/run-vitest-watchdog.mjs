@@ -182,7 +182,7 @@ export function captureHangDiagnostics({ label, command, args, budgetMs, started
  * @param {string} [opts.cwd]       working directory for the spawned child (preserves callers that
  *   ran the test command from a fixed root, e.g. test-changed.mjs's rootDir)
  * @param {() => number} [opts.now] injected clock (defaults to Date.now)
- * @param {(signal: string) => void} [opts.killGroup] injected group-signaller
+ * @param {(signal: string, groupId: number|null) => void} [opts.killGroup] injected group-signaller
  *   (defaults to a process-group `process.kill(-pid)` with child.kill fallback);
  *   override in tests so signals are captured instead of hitting real groups.
  */
@@ -220,6 +220,11 @@ export function runWithWatchdog({
       env,
       ...(cwd ? { cwd } : {}),
     });
+    // Capture the detached process-group identity while this ChildProcess is
+    // created. Reading child.pid during later timeout/cancellation handling can
+    // follow a mutable test double or a stale process handle instead of the
+    // group this watchdog originally owns.
+    const groupId = Number.isSafeInteger(child.pid) && child.pid > 0 ? child.pid : null;
 
     const heartbeat = setInterval(() => {
       lastHeartbeatAt = now();
@@ -227,14 +232,23 @@ export function runWithWatchdog({
     }, heartbeatMs);
     heartbeat.unref?.();
 
+    function childHasExited() {
+      return child.exitCode !== null && child.exitCode !== undefined ||
+        child.signalCode !== null && child.signalCode !== undefined;
+    }
+
     function defaultSignalGroup(signal) {
-      try {
-        process.kill(-child.pid, signal);
-        return;
-      } catch (error) {
-        if (!(error instanceof Error) || !("code" in error)) throw error;
-        if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
+      if (childHasExited()) return;
+      if (groupId !== null) {
+        try {
+          process.kill(-groupId, signal);
+          return;
+        } catch (error) {
+          if (!(error instanceof Error) || !("code" in error)) throw error;
+          if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
+        }
       }
+      if (childHasExited()) return;
       try {
         child.kill(signal);
       } catch (error) {
@@ -242,6 +256,18 @@ export function runWithWatchdog({
       }
     }
     const signalGroup = typeof killGroup === "function" ? killGroup : defaultSignalGroup;
+
+    /*
+    FNXC:VitestWatchdog 2026-09-21-09:44:
+    FN-9349 requires timeout and cancellation cleanup to signal only the detached
+    group captured at spawn. A child that already reported exit owns no live group,
+    so suppress late signals rather than risking a recycled process-group id.
+    */
+    function signalOwnedGroup(signal) {
+      if (settled || childHasExited()) return false;
+      signalGroup(signal, groupId);
+      return true;
+    }
 
     // Arm the SIGTERM→SIGKILL grace ladder once. Used by BOTH the timeout path
     // and external-cancellation forwarding so a child that ignores SIGTERM can't
@@ -251,8 +277,8 @@ export function runWithWatchdog({
     function armForceKill(triggerSignal) {
       if (forceKillTimer) return;
       forceKillTimer = setTimeout(() => {
+        if (!signalOwnedGroup("SIGKILL")) return;
         log(`[watchdog] grace expired after ${triggerSignal}; SIGKILL: ${label}`);
-        signalGroup("SIGKILL");
       }, Math.max(1, graceMs));
       forceKillTimer.unref?.();
     }
@@ -271,8 +297,7 @@ export function runWithWatchdog({
               now: now(),
             });
             log(diagnostics);
-            signalGroup("SIGTERM");
-            armForceKill("timeout");
+            if (signalOwnedGroup("SIGTERM")) armForceKill("timeout");
           }, budgetMs)
         : null;
     watchdog?.unref?.();
@@ -282,8 +307,7 @@ export function runWithWatchdog({
     for (const sig of forwardedSignals) {
       const handler = () => {
         log(`[watchdog] received ${sig}; forwarding to group: ${label}`);
-        signalGroup(sig);
-        armForceKill(sig);
+        if (signalOwnedGroup(sig)) armForceKill(sig);
       };
       signalHandlers.set(sig, handler);
       process.on(sig, handler);
@@ -293,7 +317,7 @@ export function runWithWatchdog({
       // Best-effort: don't leave an orphaned group if the wrapper itself dies.
       // Route through signalGroup so the injection contract holds everywhere.
       try {
-        signalGroup("SIGTERM");
+        signalOwnedGroup("SIGTERM");
       } catch {
         /* group already gone */
       }

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import setup, {
 
 const createdPaths: string[] = [];
 const originalWorkerRoot = process.env.FUSION_TEST_WORKER_ROOT;
+const originalRunToken = process.env.FUSION_TEST_RUN_TOKEN;
 
 function remember(path: string): string {
   createdPaths.push(path);
@@ -29,6 +30,11 @@ function restoreWorkerRootEnv(): void {
   } else {
     process.env.FUSION_TEST_WORKER_ROOT = originalWorkerRoot;
   }
+  if (originalRunToken === undefined) {
+    delete process.env.FUSION_TEST_RUN_TOKEN;
+  } else {
+    process.env.FUSION_TEST_RUN_TOKEN = originalRunToken;
+  }
 }
 
 afterEach(() => {
@@ -42,13 +48,92 @@ afterEach(() => {
 
 describe("vitest global teardown worker-root cleanup", () => {
   it("removes the per-invocation worker root on the clean path", async () => {
+    process.env.FUSION_TEST_RUN_TOKEN = "clean-run-token";
     const teardown = setup();
     const workerRoot = remember(process.env.FUSION_TEST_WORKER_ROOT!);
     makeWorkerChild(workerRoot, "clean");
 
+    /*
+    FNXC:TestTeardownOwnership 2026-09-21-10:48:
+    FN-9349 requires this regression to execute globalSetup's marker protocol,
+    including its run token, rather than only invoking a cleanup helper.
+    */
+    expect(readFileSync(join(workerRoot, ".fusion-test-worker-root-owner"), "utf8")).toBe(
+      `${process.pid}\nrunToken=clean-run-token\n`,
+    );
     await teardown();
 
     expect(existsSync(workerRoot)).toBe(false);
+  });
+
+  it("does not let a stale teardown remove a successor-owned worker root", async () => {
+    process.env.FUSION_TEST_RUN_TOKEN = "stale-run-token";
+    const staleTeardown = setup();
+    const workerRoot = remember(process.env.FUSION_TEST_WORKER_ROOT!);
+    makeWorkerChild(workerRoot, "successor");
+
+    /*
+    FNXC:TestTeardownOwnership 2026-09-21-10:48:
+    FN-9349 requires a stale teardown to reject a successor's distinct run-token
+    marker, preserving the live successor root instead of deleting it by path.
+    */
+    writeFileSync(
+      join(workerRoot, ".fusion-test-worker-root-owner"),
+      `${process.pid}\nrunToken=successor-run-token\n`,
+    );
+    await staleTeardown();
+
+    expect(existsSync(workerRoot)).toBe(true);
+    expect(readFileSync(join(workerRoot, ".fusion-test-worker-root-owner"), "utf8")).toContain("successor-run-token");
+    expect(existsSync(join(workerRoot, "w-" + process.pid + "-successor", "file.txt"))).toBe(true);
+  });
+
+  it("preserves an unproven partial-startup root while cleaning a live sibling", async () => {
+    process.env.FUSION_TEST_RUN_TOKEN = "partial-startup-token";
+    const partialTeardown = setup();
+    const partialRoot = remember(process.env.FUSION_TEST_WORKER_ROOT!);
+    makeWorkerChild(partialRoot, "partial");
+
+    /*
+    FNXC:TestTeardownOwnership 2026-09-21-10:48:
+    FN-9349 requires partial startup to fail closed: absent marker provenance
+    cannot authorize deleting a root while an independent sibling remains live.
+    */
+    unlinkSync(join(partialRoot, ".fusion-test-worker-root-owner"));
+
+    process.env.FUSION_TEST_RUN_TOKEN = "live-sibling-token";
+    const siblingTeardown = setup();
+    const siblingRoot = remember(process.env.FUSION_TEST_WORKER_ROOT!);
+    makeWorkerChild(siblingRoot, "live-sibling");
+
+    await partialTeardown();
+
+    expect(existsSync(partialRoot)).toBe(true);
+    expect(existsSync(join(partialRoot, "w-" + process.pid + "-partial", "file.txt"))).toBe(true);
+    expect(existsSync(siblingRoot)).toBe(true);
+    expect(existsSync(join(siblingRoot, "w-" + process.pid + "-live-sibling", "file.txt"))).toBe(true);
+
+    await siblingTeardown();
+    expect(existsSync(siblingRoot)).toBe(false);
+  });
+
+  it("removes only its own root while a live sibling teardown remains active", async () => {
+    const firstTeardown = setup();
+    const firstRoot = remember(process.env.FUSION_TEST_WORKER_ROOT!);
+    makeWorkerChild(firstRoot, "first");
+
+    const secondTeardown = setup();
+    const secondRoot = remember(process.env.FUSION_TEST_WORKER_ROOT!);
+    makeWorkerChild(secondRoot, "second");
+
+    await firstTeardown();
+
+    expect(existsSync(firstRoot)).toBe(false);
+    expect(existsSync(secondRoot)).toBe(true);
+    expect(existsSync(join(secondRoot, "w-" + process.pid + "-second", "file.txt"))).toBe(true);
+
+    await secondTeardown();
+    expect(existsSync(secondRoot)).toBe(false);
   });
 
   it("retries an EBUSY worker-root removal and removes the root", async () => {

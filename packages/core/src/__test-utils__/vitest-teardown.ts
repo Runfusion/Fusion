@@ -6,7 +6,7 @@
  * the run-local worker/home directories as leaks.
  */
 
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -87,14 +87,17 @@ export default function setup(): () => Promise<void> {
   // setup-time redirect sweep proportional to stale directories left by every
   // prior interrupted run.
   const workerRoot = resolve(mkdtempSync(join(tmpdir(), "fusion-test-workers-")));
+  const runToken = process.env[FUSION_TEST_RUN_TOKEN_ENV];
+  const tokenLine = runToken && runToken.trim().length > 0 ? `runToken=${runToken}\n` : "";
+  const ownerMarker = `${process.pid}\n${tokenLine}`;
+  let ownsWorkerRoot = false;
   try {
-    const runToken = process.env[FUSION_TEST_RUN_TOKEN_ENV];
-    const tokenLine = runToken && runToken.trim().length > 0 ? `runToken=${runToken}\n` : "";
-    writeFileSync(join(workerRoot, WORKER_ROOT_OWNER_FILE), `${process.pid}\n${tokenLine}`);
+    writeFileSync(join(workerRoot, WORKER_ROOT_OWNER_FILE), ownerMarker);
+    ownsWorkerRoot = true;
   } catch {
-    // Best effort only. The marker protects active roots from external orphan
-    // pruning; FN-6396 adds the runner token so stale pid reuse cannot keep an
-    // orphaned root alive. Teardown still owns this root by absolute path.
+    // A teardown without its marker cannot prove ownership. Preserve the root
+    // rather than letting a partially initialized invocation delete a future
+    // successor that has claimed the same path.
   }
   process.env.FUSION_TEST_WORKER_ROOT = workerRoot;
   /*
@@ -118,7 +121,22 @@ export default function setup(): () => Promise<void> {
     Prefer injectable in-process removeWorkerRootWithRetry so unit tests can assert EBUSY/ENOTEMPTY retry semantics via __setWorkerRootRmSyncForTests.
     Dashboard hang root causes were open SSE/undici handles (fixed via __resetSseBus + quarantines), not rmSync itself — restore sync cleanup for deterministic isolation and test hooks.
     */
-    removeWorkerRootWithRetry(workerRoot);
+    /*
+    FNXC:TestTeardownOwnership 2026-09-21-10:23:
+    FN-9349 requires teardown to prove the marker it created still owns this
+    root. A partial startup or stale teardown must not delete a root claimed by
+    a live successor, even when its path was retained or reused by a runner.
+    */
+    if (ownsWorkerRoot) {
+      try {
+        if (readFileSync(join(workerRoot, WORKER_ROOT_OWNER_FILE), "utf8") === ownerMarker) {
+          removeWorkerRootWithRetry(workerRoot);
+        }
+      } catch {
+        // Missing/unreadable ownership proof is a safe no-op; later bounded
+        // cleanup can reclaim only a root whose owner it can establish.
+      }
+    }
     removeLegacyTopLevelHomeRoots();
   };
 }

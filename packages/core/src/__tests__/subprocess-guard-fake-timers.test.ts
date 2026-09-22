@@ -98,19 +98,45 @@ describe("subprocess guard watchdog timers", () => {
     expect(guard.getTrackedSubprocessCount()).toBe(0);
   });
 
-  it("S6 duplicate registration does not orphan a watchdog", async () => {
+  it("S6 duplicate registration replaces completion listeners without orphaning a watchdog", async () => {
     guard.setSubprocessTimeoutMsForTests(150);
     const proc = startShortChild();
+    const closeListenerCount = proc.listenerCount("close");
+    const errorListenerCount = proc.listenerCount("error");
+
     guard.registerTrackedSubprocessForTests(proc, "duplicate-registration-probe");
+
+    // A duplicate record replaces rather than layers an owner callback. Otherwise
+    // the stale callback can unregister the successor before its own lifecycle ends.
+    expect(proc.listenerCount("close")).toBe(closeListenerCount);
+    expect(proc.listenerCount("error")).toBe(errorListenerCount);
     await waitForClose(proc);
     await waitForRealTime(450);
 
-    // The map is keyed by proc, so only absence of a fabricated failure proves cleanup.
     expect(guard.takeOwnedSubprocessFailures()).toEqual([]);
     expect(guard.getTrackedSubprocessCount()).toBe(0);
   });
 
-  it("S7 leaves a foreign-only failure queued", () => {
+  it("S7 removes an errored child registration without touching a live sibling", async () => {
+    const errored = startHangingChild();
+    const sibling = startHangingChild();
+
+    // Exercise the production guard's child error listener before the process
+    // closes; an error path must unregister only its own record and timer.
+    errored.emit("error", new Error("partial startup failure"));
+    expect(guard.getTrackedSubprocessCount()).toBe(1);
+    expect(sibling.exitCode).toBeNull();
+    expect(sibling.signalCode).toBeNull();
+
+    errored.kill("SIGKILL");
+    sibling.kill("SIGKILL");
+    await Promise.all([waitForClose(errored), waitForClose(sibling)]);
+
+    expect(guard.getTrackedSubprocessCount()).toBe(0);
+    expect(guard.takeOwnedSubprocessFailures()).toEqual([]);
+  });
+
+  it("S8 leaves a foreign-only failure queued", () => {
     expect(guard.takeOwnedSubprocessFailures()).toEqual([]);
     expect(guard.peekForeignSubprocessFailureCount()).toBe(0);
 
@@ -122,7 +148,7 @@ describe("subprocess guard watchdog timers", () => {
     expect(guard.peekForeignSubprocessFailureCount()).toBe(0);
   });
 
-  it("S8 drains owned failures while preserving foreign order", async () => {
+  it("S9 drains owned failures while preserving foreign order", async () => {
     guard.setSubprocessTimeoutMsForTests(150);
     guard.recordSubprocessFailureForTests("FN-8937 synthetic sibling A", "synthetic-F1");
     const proc = startHangingChild();
