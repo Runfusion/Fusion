@@ -802,6 +802,31 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "archived" });
   });
 
+  it("does not exhaust the runtime pool when concurrent duplicate cleanup resolves archive lanes", async () => {
+    const m = missions();
+    const taskStore = h.store();
+    const cases = await Promise.all(["A", "B", "C"].map(async (label) => {
+      const mission = await m.createMission({ title: `Concurrent duplicate ${label}` });
+      const milestone = await m.addMilestone(mission.id, { title: "MS" });
+      const slice = await m.addSlice(milestone.id, { title: "SL" });
+      const feature = await m.addFeature(slice.id, { title: `Feature ${label}` });
+      const claimedTask = await taskStore.createTask({ description: `canonical ${label}`, missionId: mission.id, sliceId: slice.id });
+      await m.linkFeatureToTask(feature.id, claimedTask.id);
+      const duplicateTask = await taskStore.createTask({ description: `duplicate ${label}`, missionId: mission.id, sliceId: slice.id });
+      return { feature, claimedTask, duplicateTask };
+    }));
+
+    await Promise.all(cases.map(({ feature, claimedTask, duplicateTask }) => m.archiveDefinedFeatureBootstrapDuplicate({
+      featureId: feature.id,
+      taskId: claimedTask.id,
+      duplicateTaskId: duplicateTask.id,
+    })));
+
+    await expect(Promise.all(cases.map(({ duplicateTask }) => taskStore.getTask(duplicateTask.id))))
+      .resolves.toEqual(expect.arrayContaining(cases.map(({ duplicateTask }) => expect.objectContaining({ id: duplicateTask.id, column: "archived" }))));
+    await expect(taskStore.asyncLayer!.ping()).resolves.toBeUndefined();
+  });
+
   /*
   FNXC:MissionReconciliation 2026-07-20-08:34:
   Regression coverage exercises every terminal-evidence representation through the real PostgreSQL store. Reconciliation must never route through ordinary triage linking, mutate loop attempts or mission controls, or partially commit when the transaction fails.

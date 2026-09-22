@@ -1574,8 +1574,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    * generic intake path to archive feature.taskId.
    */
   async archiveDefinedFeatureBootstrapDuplicate(input: { featureId: string; taskId: string; duplicateTaskId: string }): Promise<void> {
-    /* Resolved once, outside the transaction: both guards below ask the same question. */
-    const claimedArchivedLanes = await this.archivedLanesFor(input.taskId);
+    /* Resolve workflow vocabulary before holding a pool connection. Three concurrent
+       duplicate reconciliations must not occupy the whole runtime pool while each
+       waits for archivedLanesFor() to borrow a fourth connection. */
+    const [claimedArchivedLanes, duplicateArchivedLanes] = await Promise.all([
+      this.archivedLanesFor(input.taskId),
+      this.archivedLanesFor(input.duplicateTaskId),
+    ]);
     /*
     FNXC:MissionAdmission 2026-07-23-21:10:
     Project-agnostic legacy stores remain scoped to their reserved RLS
@@ -1635,7 +1640,6 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       choice `resolveLifecycleColumns` makes, and multiple archive lanes are not a shape the
       builtin lineages produce.
       */
-      const duplicateArchivedLanes = await this.archivedLanesFor(input.duplicateTaskId);
       const archiveTarget = [...duplicateArchivedLanes][0] ?? "archived";
       await tx.update(schema.project.tasks)
         .set({ column: archiveTarget, updatedAt: new Date().toISOString() })
