@@ -20,6 +20,15 @@ Verified the CodeRabbit `install_hooks.py` finding against current PR head `e15d
 
 Validation: all 10 standalone native tests passed, both changed Python files compile, changeset-format and FNXC timestamp checks passed, and `git diff --check` passed. The source fix was pushed by normal fast-forward to `flexi767:claude/remote-agents-landing-20260919`; fresh PR checks follow this documentation checkpoint. No deployment, service, database, routing, native hook configuration, active agent or provider setting changed. Remaining review leads stay pending and must be verified individually.
 
+## PR #3637 polling review fix (2026-09-22 16:35 UTC)
+
+Checked the Greptile P2 on `RemoteAgentsPanel.tsx` against head `9438d9be9`. It was partly valid: three independent `setInterval` loops (5s detail, 10s list, 10s hosts) kept running in hidden tabs. Its claim that this breaks the AGENTS.md polling rule is wrong, because that rule covers tests. External sessions have no push channel, so polling stays.
+
+- `85e0b828d` routes all three refreshes through the shared `useVisibilityAwarePoll` gate. The list and host status share one 10s tick, and the open session polls at 5s with `priority: "critical"`. A hidden tab now issues no requests, and returning to it triggers one refresh. The new regression test asserts request counts while visible, hidden, and after return, and fails on the old code (8/8/15 vs 2/2/3 calls). Local checks: 8/8 panel tests, ESLint, dashboard `tsc -p tsconfig.app.json`, FNXC date check and `git diff --check`.
+- CI at `85e0b828d`: Build, Lint, Typecheck, Gate, agent-browser pack and installs (macOS/Ubuntu/Windows), credential scan, ThreatCrush, Greptile and CodeRabbit all passed. Desktop packaging was still pending when I recorded this. Greptile thread answered: https://github.com/Runfusion/Fusion/pull/3637#discussion_r4073680103.
+- CodeRabbit follow-ups on `85e0b828d`: the test-cleanup finding was valid and is fixed in the next commit (delete the own `visibilityState` override instead of redefining it). The "skip initial fetch while hidden" finding is rejected: one mount request is not a polling loop, and the suggested change would lose the list cursor because the resume tick loads in merge mode.
+- Queued, still unverified: migration-number docs, legacy PostgreSQL upgrade expectations, public-schema migration bookkeeping, schema-probe coupling to `tasks`, feedback-schema repair, feedback UI receipt handling, route README completeness. No deployment, service, database, or provider change happened.
+
 Updated 2026-09-17 23:24 UTC.
 
 Owned worktree: `/Users/v/Documents/Codex/2026-09-16/fusion-external-pr1-retry/work/fusion-remote-agents`, branch `codex/remote-agent-feedback-costs`. Narrow scope and queue in `remote-agent-delivery-plan.md`.

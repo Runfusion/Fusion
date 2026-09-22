@@ -10,7 +10,8 @@ const setVisibility = (state: DocumentVisibilityState) => {
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
   document.dispatchEvent(new Event("visibilitychange"));
 };
-afterEach(() => { cleanup(); vi.useRealTimers(); setVisibility("visible"); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+// jsdom defines visibilityState on Document.prototype; dropping the own override restores it.
+afterEach(() => { cleanup(); vi.useRealTimers(); Reflect.deleteProperty(document, "visibilityState"); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 describe("standalone remote agents", () => {
   it("preserves the composer across background updates and submits one stable command", async () => {
     const calls: unknown[] = [];
