@@ -240,12 +240,49 @@ pgDescribe("external sessions: durable observation ingestion", () => {
     expect(await h.layer().db.select({ id: externalSessions.id }).from(externalSessions)).toHaveLength(1);
   });
 
-  it("installs migration 0084 on an upgrade and reopening is idempotent", async () => {
-    await h.adminDb().execute(sql.raw("DROP TABLE project.external_session_feedback, project.external_sessions, project.external_session_streams, project.external_session_hosts; DELETE FROM public.fusion_schema_migrations WHERE version = '0084';"));
+  it("installs migrations 0086/0087 on an upgrade and reopening is idempotent", async () => {
+    await h.adminDb().execute(sql.raw("DROP TABLE project.external_session_feedback, project.external_sessions, project.external_session_streams, project.external_session_hosts; DELETE FROM public.fusion_schema_migrations WHERE version IN ('0086', '0087');"));
     expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
     expect((await store().ingest(envelope())).applied).toBe(true);
     expect((await applySchemaBaseline(h.adminDb())).applied).toBe(false);
-    const ledger = await h.adminDb().execute(sql`SELECT version FROM public.fusion_schema_migrations WHERE version = '0084'`);
-    expect(ledger).toHaveLength(1);
+    const ledger = await h.adminDb().execute(sql`SELECT version FROM public.fusion_schema_migrations WHERE version IN ('0086', '0087')`);
+    expect(ledger).toHaveLength(2);
+  });
+
+  it("repairs a damaged external-session schema even when project.tasks is absent", async () => {
+    await h.adminDb().execute(sql.raw("ALTER TABLE project.tasks RENAME TO tasks_hidden; ALTER TABLE project.external_sessions DROP COLUMN observation_digest CASCADE;"));
+    try {
+      expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+    } finally {
+      await h.adminDb().execute(sql.raw("ALTER TABLE project.tasks_hidden RENAME TO tasks"));
+    }
+    expect((await store().ingest(envelope())).applied).toBe(true);
+  });
+
+  const feedbackContract = sql`
+    SELECT
+      (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'project' AND table_name = 'external_session_feedback') AS columns,
+      to_regclass('project.external_session_feedback_queue') IS NOT NULL AS queue_index,
+      (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid = 'project.external_session_feedback'::regclass) AS rls,
+      EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'project' AND tablename = 'external_session_feedback' AND policyname = 'fusion_project_isolation') AS policy,
+      EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'project.external_session_feedback'::regclass AND tgname = 'fusion_assign_project_id') AS trigger,
+      (SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'project.external_session_feedback'::regclass AND contype IN ('p', 'f', 'c')) AS constraints`;
+
+  it.each([
+    ["missing required column", "ALTER TABLE project.external_session_feedback DROP COLUMN fingerprint CASCADE"],
+    ["missing nullable column", "ALTER TABLE project.external_session_feedback DROP COLUMN delivered_at CASCADE"],
+    ["missing queue index", "DROP INDEX project.external_session_feedback_queue"],
+    ["missing project trigger", "DROP TRIGGER fusion_assign_project_id ON project.external_session_feedback"],
+    ["missing state constraint", "ALTER TABLE project.external_session_feedback DROP CONSTRAINT external_session_feedback_state_check"],
+    ["missing session foreign key", "ALTER TABLE project.external_session_feedback DROP CONSTRAINT external_session_feedback_project_id_session_id_fkey"],
+  ])("repairs a recorded 0087 feedback schema with a %s", async (_label, damage) => {
+    const intact = (await h.adminDb().execute(feedbackContract))[0];
+    await h.adminDb().execute(sql.raw(damage));
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+    expect((await h.adminDb().execute(feedbackContract))[0]).toEqual(intact);
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(false);
+    const s = await feedbackSession();
+    const b = { commandId: randomUUID(), generation: "runtime-1", text: "Repaired schema" };
+    expect((await s.feedback.submit(s.sessionId, b, s.now)).status).toBe("queued");
   });
 });

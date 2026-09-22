@@ -25,7 +25,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { pgTable, text } from "drizzle-orm/pg-core";
 import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 import { acquireSchemaMutationLocks } from "./advisory-locks.js";
 import { createLogger } from "../process/logger.js";
@@ -363,7 +362,6 @@ export function assertBinaryNotOlderThanDatabase(applied: readonly string[]): vo
 
 /** Bookkeeping table for the fresh Drizzle migration history. */
 export const MIGRATION_BOOKKEEPING_TABLE = "fusion_schema_migrations";
-const migrationBookkeeping = pgTable(MIGRATION_BOOKKEEPING_TABLE, { version: text("version").primaryKey() });
 
 /*
 FNXC:LegacyAdoption 2026-07-19-14:30 (PR #2341 review):
@@ -1646,8 +1644,9 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
     // FNXC:ExternalSessions 2026-09-19-00:00: Probe the full column contract; a ledger row alone cannot prove a restored schema is usable.
+    // FNXC:ExternalSessions 2026-09-22-17:54: 0086 owns its tables independently of project.tasks, so the probe must not depend on that table existing.
     const externalSessionsMissing = ((await tx.execute(sql`
-      SELECT to_regclass('project.tasks') IS NOT NULL AND EXISTS (
+      SELECT EXISTS (
         SELECT 1 FROM (VALUES
           ('external_session_hosts', 'project_id'),
           ('external_session_hosts', 'host_id'),
@@ -1681,14 +1680,40 @@ export async function applySchemaBaseline(
     if (!applied.includes(EXTERNAL_SESSIONS_VERSION) || externalSessionsMissing) {
       const migrationSql = await readFile(EXTERNAL_SESSIONS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
-      await tx.insert(migrationBookkeeping).values({ version: EXTERNAL_SESSIONS_VERSION }).onConflictDoNothing();
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     // FNXC:RemoteAgents 2026-09-19-00:00: Feedback has its own forward identity after this rebase's 0084/0085 renumber; never reuse the overlap-sync/excluded-feature-schema bookkeeping IDs.
-    const feedbackMissing = ((await tx.execute(sql`SELECT to_regclass('project.external_session_feedback') IS NULL AS missing`)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    /*
+    FNXC:RemoteAgents 2026-09-22-17:54: A recorded 0087 row does not prove a usable feedback table.
+    Probe every column, the named constraints, the queue index and the project-id trigger; any gap re-runs the idempotent 0087 repair.
+    */
+    const feedbackMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.external_session_feedback') IS NULL
+        OR to_regclass('project.external_session_feedback_queue') IS NULL
+        OR EXISTS (
+          SELECT 1 FROM unnest(ARRAY['project_id', 'id', 'session_id', 'generation', 'text', 'fingerprint', 'state', 'created_at', 'expires_at', 'delivered_at']) AS required(column_name)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM information_schema.columns actual
+            WHERE actual.table_schema = 'project' AND actual.table_name = 'external_session_feedback'
+              AND actual.column_name = required.column_name
+          )
+        )
+        OR EXISTS (
+          SELECT 1 FROM unnest(ARRAY['external_session_feedback_pkey', 'external_session_feedback_state_check', 'external_session_feedback_project_id_session_id_fkey']) AS required(conname)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM pg_constraint actual
+            WHERE actual.conrelid = to_regclass('project.external_session_feedback') AND actual.conname = required.conname
+          )
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid = to_regclass('project.external_session_feedback') AND tgname = 'fusion_assign_project_id'
+        ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
     if (!applied.includes("0087") || feedbackMissing) {
       await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_FEEDBACK_MIGRATION_PATH, "utf8")));
-      await tx.insert(migrationBookkeeping).values({ version: "0087" }).onConflictDoNothing();
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${"0087"}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
