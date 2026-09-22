@@ -46,8 +46,7 @@ describe("FN-4946 implicit refusal budget handling", () => {
       status: "queued",
       error: null,
       taskDoneRetryCount: 3,
-      worktree: null,
-      branch: null,
+
       paused: false,
       pausedByAgentId: null,
       sessionFile: null,
@@ -64,12 +63,12 @@ describe("FN-4946 implicit refusal budget handling", () => {
     await (executor as any).handleImplicitTaskDoneRefusal(task(3), refusal());
 
     // FNXC:WorkflowLifecycle 2026-07-01-20:25: At refusal-budget exhaustion the implicit path now parks
-    // the task `status: "failed"` IN PLACE (worktree/branch cleared), mirroring the explicit fn_task_done
+    // the task `status: "failed"` IN PLACE (worktree/branch preserved), mirroring the explicit fn_task_done
     // exhaustion path and the workflow-graph failure-in-place model. status="failed" is the surfaced
     // terminal + self-healing-exemption marker; the legacy FN-1284 move-to-in-review escalation was
     // superseded. The protected invariant — budget exhaustion is terminal, not another requeue — holds
     // via the failed parking + persisted token usage.
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4946-B", expect.objectContaining({ status: "failed", worktree: null, branch: null }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4946-B", expect.objectContaining({ status: "failed" }));
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B", "in-review");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-4946-B", "todo", { preserveProgress: true });
     expect(persistSpy).toHaveBeenCalledWith("FN-4946-B");

@@ -5,7 +5,7 @@
  * FNXC:WorkflowMerge 2026-07-12-17:38:
  * FN-1165: never route implementation-incomplete merge failures to the merge requester.
  */
-import type { TaskDetail, TaskStore } from "@fusion/core";
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, type TaskDetail, type TaskStore } from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
@@ -304,6 +304,12 @@ export async function routeGraphMergeFailureToRetry(
     unconditionally with its own bounded retry.
     */
     const reason = mergeRequestRejection instanceof Error ? mergeRequestRejection.message : String(mergeRequestRejection);
+    // An unrun gate is a deferral. The graph owner or periodic review recovery
+    // must run it; a terminal park would hide the card from that recovery.
+    if (reason.endsWith(PRE_MERGE_STEPS_NOT_RUN_BLOCKER)) {
+      await persistTokenUsageBestEffort(deps.persistTokenUsage, live.id);
+      return true;
+    }
     try {
       await deps.store.logEntry(
         live.id,

@@ -6,6 +6,8 @@ current content and produce its own genuine result.
 */
 import {
   computeWorkflowIrPin,
+  PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
+  IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
   evaluatePreMergeApprovals,
   resolveWorkflowIrForTask,
   type MergeContentDescriptor,
@@ -20,6 +22,15 @@ export type UnrunPreMergeGateRerouteReason =
   | "no-review-route"
   | "not-singular"
   | "operator-held";
+
+/** Only the engine-owned unrun-gate park may be automatically released. */
+export function isRecoverableUnrunGatePark(task: Task): boolean {
+  return task.status === "failed"
+    && !task.userPaused && !task.deletedAt && task.autoMerge !== false
+    && (!task.paused || task.pausedReason === IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON)
+    && typeof task.error === "string"
+    && task.error.endsWith(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+}
 
 export async function rerouteUnrunPreMergeGateToReview(
   store: TaskStore,

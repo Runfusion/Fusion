@@ -54,8 +54,6 @@ describe("FN-4946 implicit completion + REVISE verdict interaction", () => {
       status: "queued",
       error: null,
       taskDoneRetryCount: 1,
-      worktree: null,
-      branch: null,
       paused: false,
       pausedByAgentId: null,
       sessionFile: null,

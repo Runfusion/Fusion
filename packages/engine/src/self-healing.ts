@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -90,7 +90,7 @@ import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, ty
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./merge/auto-merge-finalization.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
-import { rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
+import { isRecoverableUnrunGatePark, rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
 import { cleanupLandedTaskWorktree, removeEmptyWorkspaceTaskDirectory } from "./merge/post-landing-worktree-cleanup.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
@@ -1984,6 +1984,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       { name: "completed-tasks", fn: () => this.recoverCompletedTasks().then(() => undefined) },
       { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks().then(() => undefined) },
       { name: "recover-advanced-triage", fn: () => this.recoverAdvancedTriageTasks().then(() => undefined) },
+      { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks().then(() => undefined) },
       { name: "failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps().then(() => undefined) },
       { name: "missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures().then(() => undefined) },
       /*
@@ -9607,7 +9608,44 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         await this.canRecoverMergeRequest(task, settings),
       ] as const));
       const mergeAdmissionByTaskId = new Map(mergeAdmission);
+      // Failed/engine-paused unrun gates are excluded from merge admission below.
+      // Re-prove their real blocker before releasing only that stale failure. A
+      // crash after the clear is safe: ordinary recovery will seed the idle gate.
+      const recoveredUnrunGateIds = new Set<string>();
+      for (const task of tasks) {
+        if (!isRecoverableUnrunGatePark(task) || !mergeAdmissionByTaskId.get(task.id)
+          || executingIds.has(task.id)) continue;
+        try {
+          const reviewColumns = await ownReviewLanesFor(task);
+          if (!reviewColumns.has(task.column)) continue;
+          const gate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task);
+          if (gate.provenance === "default" && !gate.selectionAbsent) continue;
+          const content = await captureMergeContentDescriptor(task, { workspaceRootDir: this.options.rootDir, settings });
+          if (content.kind !== "singular" || task.workspaceWorktrees !== undefined) continue;
+          const recoverable = { ...task, status: undefined, paused: false };
+          if (getTaskMergeBlocker(recoverable, { reviewColumns, requiredPreMergeStepIds: gate.requiredPreMergeStepIds, mergeContent: content })
+            !== PRE_MERGE_STEPS_NOT_RUN_BLOCKER) continue;
+          const items = await this.store.listWorkflowWorkItemsForTask(task.id);
+          if (items.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) continue;
+          const snapshot = { updatedAt: task.updatedAt, error: task.error, column: task.column };
+          let released = false;
+          await this.store.updateTaskAtomic(task.id, (live) => {
+            if (!isRecoverableUnrunGatePark(live) || live.updatedAt !== snapshot.updatedAt
+              || live.error !== snapshot.error || live.column !== snapshot.column
+              || !allowsAutoMergeProcessing(live, settings)) return null;
+            released = true;
+            return { status: null, error: null, paused: false, pausedReason: null, mergeRetries: 0 };
+          });
+          if (!released) continue;
+          recoveredUnrunGateIds.add(task.id);
+          const live = await this.store.getTask(task.id);
+          if (live) await this.routeUnrunPreMergeGateBackToReview(live, reviewColumns, gate, content);
+        } catch (error) {
+          log.warn(`Unrun pre-merge gate recovery deferred for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       const mergeable = tasks.filter((t) =>
+        !recoveredUnrunGateIds.has(t.id) &&
         mergeAdmissionByTaskId.get(t.id) === true &&
         !t.paused &&
         !executingIds.has(t.id) &&

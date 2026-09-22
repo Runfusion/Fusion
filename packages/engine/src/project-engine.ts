@@ -2302,10 +2302,25 @@ export class ProjectEngine {
         // Live surface cleared — allow a fresh skip log if work goes live again later.
         this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
         /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
-        await moveTaskToContainedBackwardTarget(store, task.id, "self-healing-stranded-recovery", {
+        const recovery = await moveTaskToContainedBackwardTarget(store, task.id, "self-healing-stranded-recovery", {
           preserveProgress: true,
           moveSource: "engine",
         }, task.column);
+        if (!recovery.moved) {
+          if (!("reason" in recovery) || recovery.reason !== "in-place-recovery"
+            || task.status !== "failed"
+            || (await this.resolveTaskColumnFlags(store, task, new Map()))?.countsTowardWip !== true) return false;
+          let resumed = false;
+          await store.updateTaskAtomic(task.id, (current) => {
+            if (current.column !== task.column || current.status !== "failed"
+              || current.error !== task.error || current.updatedAt !== task.updatedAt
+              || current.paused || current.userPaused || current.deletedAt
+              || executor?.isTaskLiveForOverseerRetry?.(task.id) === true) return null;
+            resumed = true;
+            return { status: "queued", error: null, sessionFile: null };
+          });
+          if (!resumed) return false;
+        }
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
         await this.emitOverseerInterventionSafe(() =>

@@ -470,8 +470,6 @@ export function createTaskDoneTool(
               ...taintUpdate,
               paused: false,
               pausedByAgentId: null,
-              worktree: null,
-              branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
             await store.logEntry(
@@ -489,8 +487,6 @@ export function createTaskDoneTool(
               ...taintUpdate,
               paused: false,
               pausedByAgentId: null,
-              worktree: null,
-              branch: null, branchWriteOrigin: "engine" as const,
               sessionFile: null,
             });
             await store.logEntry(taskId, `${refusalMessage} — fn_task_done refusal retry budget exhausted`, undefined, deps.getRunContextFor(task.id));
