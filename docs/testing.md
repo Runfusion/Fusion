@@ -613,7 +613,7 @@ Quarantine is the default when a sighting is reproducible enough to justify evic
 
 Run `pnpm check:quarantine-ledger` to print a soonest-deadline-first summary of `scripts/lib/test-quarantine.json`. The command uses the same 14-day deletion clock (`quarantinedAt + 14d`) as the velocity baseline and reports each entry as expired, near-deadline, healthy, or unknown when `quarantinedAt` is missing/invalid. Default mode remains report-only for deadline status.
 
-The checker also enforces the quarantine lockstep. It reads only comment-stripped `exclude:` array literals in every `packages/*/vitest.config.ts`; include-shard lists and identifier/spread excludes are deliberately out of scope. It reports `missing-file` (a ledger entry names no file), `missing-exclude` (a ledger file lacks its package exclusion), and `dangling-exclude` (an exclusion names no file). `--strict` fails on any of those violations as well as near/expired deadlines.
+The checker enforces quarantine lockstep in both directions. It reads only comment-stripped `exclude:` array literals in every `packages/*/vitest.config.ts`; include-shard lists, identifier/spread excludes, and glob/partition values are deliberately out of scope. It reports `missing-file` (a ledger entry names no file), `missing-exclude` (a ledger file lacks its package exclusion), `dangling-exclude` (an exclusion names no file), and `orphan-exclude` (an existing concrete per-file exclusion has no ledger owner or deletion clock). Remove or restore an `orphan-exclude`; never add an expired ledger entry just to restart its clock. `--strict` fails on any of those violations as well as near/expired deadlines.
 
 Flags:
 

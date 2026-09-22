@@ -170,6 +170,10 @@ function normalizeConfigPath(rootDir, config) {
   return path.isAbsolute(config) ? config : path.join(rootDir, config);
 }
 
+function normalizeRepoPath(value) {
+  return String(value).replaceAll("\\", "/");
+}
+
 /**
  * Checks the two directions of the quarantine decision without evaluating Vitest configuration.
  * `packageConfigs` accepts root-relative or absolute config paths to keep fixture tests narrow.
@@ -179,13 +183,13 @@ export function findLockstepViolations({ rootDir, ledger, packageConfigs = disco
   for (const config of packageConfigs) {
     const configPath = normalizeConfigPath(rootDir, config);
     if (!existsSync(configPath)) continue;
-    const relativeConfig = path.relative(rootDir, configPath);
+    const relativeConfig = normalizeRepoPath(path.relative(rootDir, configPath));
     configExcludes.set(relativeConfig, extractConcreteExcludes(readFileSync(configPath, "utf8")));
   }
 
   const violations = [];
   for (const entry of Array.isArray(ledger?.entries) ? ledger.entries : []) {
-    const file = String(entry?.file ?? "");
+    const file = normalizeRepoPath(entry?.file ?? "");
     const filePath = path.join(rootDir, file);
     if (!existsSync(filePath)) {
       violations.push({ kind: "missing-file", file, detail: "ledger entry names no file on disk" });
@@ -205,11 +209,20 @@ export function findLockstepViolations({ rootDir, ledger, packageConfigs = disco
     }
   }
 
+  /*
+  FNXC:QuarantineLockstep 2026-09-22-02:16:
+  A literal per-file Vitest exclusion is coverage eviction even when the ledger is empty.
+  Require the reverse ledger mapping for existing files, while keeping missing paths as the distinct dangling-exclude repair.
+  */
+  const ledgerFiles = new Set((Array.isArray(ledger?.entries) ? ledger.entries : []).map((entry) => normalizeRepoPath(entry?.file ?? "")));
   for (const [config, excludes] of configExcludes) {
-    for (const excludedFile of excludes) {
-      const packageRoot = path.dirname(config);
-      if (!existsSync(path.join(rootDir, packageRoot, excludedFile))) {
-        violations.push({ kind: "dangling-exclude", file: path.join(packageRoot, excludedFile), config, detail: "exclude array names no file on disk" });
+    const packageRoot = path.posix.dirname(config);
+    for (const excludedFile of new Set(excludes)) {
+      const file = path.posix.join(packageRoot, excludedFile);
+      if (!existsSync(path.join(rootDir, file))) {
+        violations.push({ kind: "dangling-exclude", file, config, detail: "exclude array names no file on disk" });
+      } else if (!ledgerFiles.has(file)) {
+        violations.push({ kind: "orphan-exclude", file, config, detail: "existing concrete exclude has no quarantine ledger entry" });
       }
     }
   }

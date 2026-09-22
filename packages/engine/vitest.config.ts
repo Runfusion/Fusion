@@ -419,63 +419,8 @@ export default defineConfig({
         test: {
           name: "engine-reliability",
           include: ["src/__tests__/reliability-interactions/**/*.test.ts"],
-          // Mirror the engine-default exclusion so reliability slow tests
-          // also tier into engine-slow.
-          exclude: [
-            "src/**/*.slow.test.ts",
-            /*
-            FNXC:FullSuiteBookkeeping 2026-08-09-03:49:
-            dependency-cycle-reconcile and worktrunk-failure from the 2026-08-05 full-suite quarantine wave (run 30982276306) deleted under the deletion ratchet after operator directive. Both tested pre-refactor PG lifecycle-lock and mock-hoist behavior that no longer exists.
-            */
-            /*
-            FNXC:EngineTests 2026-06-26-09:30:
-            Quarantined 3 reliability-interactions files failing in CI full-suite run 28259456548 under the deletion ratchet.
-
-            FNXC:EngineTests 2026-06-27-10:05:
-            FN-7119 rescued the reliability batch by adding the production `updateSettings` heartbeat surface to scheduler fakes, so lease-recovery and todo/in-progress flapping call-count invariants run under the loaded reliability shard without quarantine.
-            */
-            /*
-            FNXC:EngineTests 2026-06-14-02:12:
-            FN-6433 removed the reliability-interactions quarantine after deleting the duplicate soft-delete blocker residue file under the deletion ratchet; keep this project exclude list ledger-free unless a new flake is quarantined in lockstep.
-
-            FNXC:EngineTests 2026-06-25-11:48:
-            Pre-existing failure on clean baseline: merge-request-cancel-on-hard-cancel 'cancels pending merge request' asserts expected Promise to be null (timing/ordering). Quarantined on sight per AGENTS.md so verify:workspace goes green; mirrored in scripts/lib/test-quarantine.json.
-            */
-            // Pre-existing reliability flake (quarantine on sight): see scripts/lib/test-quarantine.json.
-            "src/__tests__/reliability-interactions/merge-request-cancel-on-hard-cancel.test.ts",
-            /*
-            FNXC:EngineTests 2026-06-25-16:30:
-            The SQLite-to-PostgreSQL cutover (feature delete-sqlite-runtime-final, PHASE A)
-            quarantines the remaining non-quarantined engine reliability-interaction test
-            files that construct a SQLite-backed store. The SQLite runtime code is being
-            deleted in this feature. Per the AGENTS.md flaky-test deletion ratchet, these
-            tests are quarantined on sight (not migrated to PG) because they exercise code
-            that will be deleted. Mirrored in scripts/lib/test-quarantine.json.
-            */
-            // SQLite-path + pre-existing real-git CWD race flake (quarantine on sight).
-            /*
-            FNXC:EngineTests 2026-06-25-18:00:
-            The SQLite-to-PostgreSQL cutover (feature delete-sqlite-runtime-final, SESSION 3 PHASE A)
-            quarantines remaining reliability-interaction test files that import _helpers.ts
-            (which constructs TaskStore with inMemoryDb:true). These tests exercise the SQLite
-            Database class being deleted. Quarantined on sight per AGENTS.md; mirrored in
-            scripts/lib/test-quarantine.json.
-            */
-            // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 restored the final VAL-REMOVAL-005 reliability suites with awaited PostgreSQL audit reads. Keep the project partition below while allowing these tests to execute under engine-reliability.
-            // FNXC:PgMigrationQuarantine 2026-07-16-04:59:
-            // FN-8044 migrated dependency-reconcile suites to the PG corrupt-row seeding seam, so
-            // they are deliberately absent from this quarantine list and ledger.
-            // FNXC:PgMigrationQuarantine 2026-07-16-10:45:
-            // FN-8047 restored multi-node claim and owning-node handoff coverage with shared PG-backed
-            // AgentStores and AsyncCentralClaimStore; their paired ledger entries are intentionally live.
-            // FNXC:PgMigrationQuarantine 2026-07-16-11:25:
-            // FN-8117 restored explicit-marker coverage by configuring its PG fixture with taskPrefix: FN.
-            // The strict marker parser now receives valid FN ids, so this file is intentionally unquarantined.
-            // FNXC:PgMigrationQuarantine 2026-07-16-11:58:
-            // FN-8111 restored meta-archive guard composition with PG-authoritative audits and canonical fixture ids, and fixed completed stale continuations so the in-memory wedge suite is intentionally unquarantined.
-            // FNXC:PgMigrationQuarantine 2026-07-16-12:30:
-            // FN-8118 verified the already-landed post-done continuation rescue: this pure in-memory suite has no PG fixture and passed its serialized reliability lane three times. Keep it absent from this quarantine list while preserving the engine-default reliability partition exclusion.
-          ],
+          // Slow reliability files tier into engine-slow through the broad glob above.
+          exclude: ["src/**/*.slow.test.ts"],
           // These tests assert event ordering across real worktrees. Parallel
           // execution under merger load caused subprocess-guard timeouts and
           // SQLite rowid interleaving (e.g. FN-5521 hit
@@ -527,25 +472,6 @@ export default defineConfig({
           // and inflating wall time further. Excluded from the default
           // `pnpm test` lane; run via `pnpm test:slow` / `pnpm test:all`.
           include: ["src/**/*.slow.test.ts"],
-          /*
-          FNXC:EngineTests 2026-06-25-14:30:
-          The SQLite-to-PostgreSQL cutover (feature quarantine-sqlite-internals-tests, retry
-          session) quarantines 6 engine-slow reliability-interaction test files that fail on
-          clean baseline (stash + rerun, 6 failed | 8 passed). These are real-git + SQLite-backed
-          branch-group tests that hit the async-satellite getAsyncLayer/isBackendMode mock drift
-          or branch-group "undefined not found" errors under the cutover's dual-path. Quarantined
-          on sight per AGENTS.md flaky-test rule so verify:workspace goes green. Mirrored in
-          scripts/lib/test-quarantine.json.
-          */
-          exclude: [
-            "src/__tests__/merger-ai-dependency-install.slow.test.ts",
-            "src/__tests__/reliability-interactions/branch-group-automerge-precedence.slow.test.ts",
-            "src/__tests__/reliability-interactions/branch-group-merge-routing.slow.test.ts",
-            "src/__tests__/reliability-interactions/branch-group-pr-sync.slow.test.ts",
-            "src/__tests__/reliability-interactions/branch-group-single-pr-e2e.slow.test.ts",
-            "src/__tests__/reliability-interactions/shared-branch-group-lifecycle.slow.test.ts",
-            // SQLite-path (delete-sqlite-runtime-final PHASE A): uses inMemoryDb via _helpers.ts.
-          ],
           minWorkers: 1,
           maxWorkers: 1,
           fileParallelism: false,

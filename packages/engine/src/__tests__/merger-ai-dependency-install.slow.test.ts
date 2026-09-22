@@ -50,6 +50,11 @@ function makeStore(settingsOverrides: Record<string, unknown> = {}) {
     getTask: vi.fn(async () => task),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 1 }, ...settingsOverrides })),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => { Object.assign(task, patch); return task; }),
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: typeof task) => Record<string, unknown> | null) => {
+      const patch = reducer(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
     emit: vi.fn(),
     logEntry: vi.fn(async () => undefined),
@@ -173,8 +178,8 @@ describe("runAiMerge dependency install", () => {
     expect(mergeAgent).toHaveBeenCalledTimes(1);
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-1",
-      expect.stringContaining("(no command)"),
-      "text",
+      expect.stringContaining("no-command"),
+      "status",
       undefined,
       "merger",
     );
