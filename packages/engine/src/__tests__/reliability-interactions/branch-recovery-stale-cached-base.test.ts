@@ -46,10 +46,11 @@ describe("reliability interactions: stale cached-base branch reclaim", () => {
     vi.restoreAllMocks();
   });
 
-  it("restart recovery + reclaim sweep ends with todo and nulled cached branch metadata", async () => {
+  it("restart recovery clears stale metadata but keeps an unproven review card in place", async () => {
     const task: any = { id: "FN-9001", column: "in-review", checkedOutBy: null, branch: "fusion/fn-9001", worktree: "/tmp/ghost", baseCommitSha: "stale-base", paused: true, pausedReason: "branch-conflict-unrecoverable", error: "Agent exited without calling fn_task_done", status: "failed", steps: [{ status: "pending" }] };
     const statefulStore: any = createStore();
     statefulStore.listTasks = vi.fn(async ({ column }: { column?: string }) => (column ? (task.column === column ? [task] : []) : [task]));
+    statefulStore.getTask = vi.fn(async () => task);
     statefulStore.updateTask = vi.fn(async (_id: string, updates: Record<string, unknown>) => Object.assign(task, updates));
     statefulStore.moveTask = vi.fn(async (_id: string, col: string) => { task.column = col; });
 
@@ -60,7 +61,14 @@ describe("reliability interactions: stale cached-base branch reclaim", () => {
     await restart.recoverInterruptedRuns();
     await manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(task.column).toBe("todo");
+    /*
+    FNXC:LifecycleContainment 2026-09-22-12:47:
+    Cleanup does not prove a review card is safe to move backward. Supply the
+    store's live-row reader and assert the production triple-proof outcome:
+    stale checkout metadata clears in place while the review lane is retained.
+    */
+    expect(task.column).toBe("in-review");
+    expect(statefulStore.moveTask).not.toHaveBeenCalled();
     expect(task.branch).toBeNull();
     expect(task.worktree).toBeNull();
     expect(task.baseCommitSha).toBeNull();

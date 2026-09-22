@@ -24,9 +24,15 @@ export async function moveTaskToContainedBackwardTarget(
   taskId: string,
   reason: string,
   options?: MoveTaskOptions,
-  liveColumn?: string,
+  _liveColumn?: string,
 ): Promise<ContainedLifecycleMoveResult> {
-  const column = liveColumn ?? (await store.getTask(taskId)).column;
+  /*
+  FNXC:LifecycleContainment 2026-09-22-14:05:
+  Recovery callers can hold a task snapshot across git and filesystem awaits. Re-read the durable
+  column before choosing a backward target so an operator move during recovery wins over stale
+  caller metadata; `liveColumn` remains a diagnostic hint for compatibility, not mutation authority.
+  */
+  const column = (await store.getTask(taskId)).column;
   const revisionReasons = new Set([
     "plan-review-revise-replan",
     "code-review-revise-remediation",

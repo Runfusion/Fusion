@@ -33,11 +33,24 @@ describe("reliability interactions: auto-revive + watchdog", () => {
     const executor: any = { resumeOrphaned: vi.fn(async () => undefined) };
     const rc = new RestartRecoveryCoordinator(store, executor);
     await rc.recoverInterruptedRuns();
-    expect(store.moveTask).toHaveBeenCalledTimes(1);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({
-      moveSource: "engine",
-      lifecycleReason: "self-healing-session-recovery",
+    /*
+    FNXC:LifecycleContainment 2026-09-22-13:50:
+    Restart recovery clears only stale execution metadata. It is not a review or
+    verification revision, so the shared lifecycle owner retains the card's current
+    role rather than authorizing an implicit backward move to `todo`.
+    */
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({
+      status: "stuck-killed",
+      worktree: null,
+      branch: null,
+      sessionFile: null,
+      error: null,
     }));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("has no backward-move authority"),
+    );
   });
 
   it("Case 8: recovery coordinator skips resume when no in-progress candidates", async () => {
@@ -53,10 +66,17 @@ describe("reliability interactions: auto-revive + watchdog", () => {
     const executor: any = { resumeOrphaned: vi.fn(async () => undefined) };
     const rc = new RestartRecoveryCoordinator(store, executor);
     await rc.recoverInterruptedRuns();
-    expect(store.updateTask).toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-3", "todo", expect.objectContaining({
-      moveSource: "engine",
-      lifecycleReason: "self-healing-session-recovery",
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3", expect.objectContaining({
+      status: "stuck-killed",
+      worktree: null,
+      branch: null,
+      sessionFile: null,
+      error: null,
     }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-3",
+      expect.stringContaining("has no backward-move authority"),
+    );
   });
 });
