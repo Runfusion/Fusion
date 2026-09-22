@@ -590,25 +590,50 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const mission = await m.createMission({ title: "Rejected claim cleanup" });
     const milestone = await m.addMilestone(mission.id, { title: "MS" });
     const slice = await m.addSlice(milestone.id, { title: "SL" });
-    const feature = await m.addFeature(slice.id, { title: "Feature" });
+    const features = await Promise.all(
+      ["A", "B", "C"].map((label) => m.addFeature(slice.id, { title: `Feature ${label}` })),
+    );
+    let waitingClaims = 0;
+    let releaseClaims!: () => void;
+    const allClaimsWaiting = new Promise<void>((resolve) => { releaseClaims = resolve; });
 
-    await expect(h.store().createTask({
-      description: "custom-lane archived bootstrap",
+    const outcomes = await Promise.allSettled(features.map((feature) => h.store().createTask({
+      description: `custom-lane archived bootstrap ${feature.id}`,
       column: "vaulted",
       missionId: mission.id,
       sliceId: slice.id,
-      afterTaskInsert: (tx: DbTransaction, inserted: { id: string }) => m.claimDefinedFeatureTaskInTransaction(tx, {
-        featureId: feature.id,
-        taskId: inserted.id,
-        missionId: mission.id,
-        sliceId: slice.id,
-        archivedLanes: new Set(["vaulted"]),
-      }),
-    } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> }))
-      .rejects.toThrow(`Cannot bootstrap feature ${feature.id}: task`);
+      afterTaskInsert: async (tx: DbTransaction, inserted: { id: string }) => {
+        waitingClaims += 1;
+        if (waitingClaims === features.length) releaseClaims();
+        await allClaimsWaiting;
+        return m.claimDefinedFeatureTaskInTransaction(tx, {
+          featureId: feature.id,
+          taskId: inserted.id,
+          missionId: mission.id,
+          sliceId: slice.id,
+          archivedLanes: new Set(["vaulted"]),
+        });
+      },
+    } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> })));
 
-    expect(await m.getFeature(feature.id)).toMatchObject({ status: "defined", taskId: undefined });
-    await expect(h.store().asyncLayer!.ping()).resolves.toBeUndefined();
+    expect(outcomes).toEqual(features.map((feature) => expect.objectContaining({
+      status: "rejected",
+      reason: expect.objectContaining({ message: expect.stringContaining(`Cannot bootstrap feature ${feature.id}: task`) }),
+    })));
+    await expect(Promise.all(features.map((feature) => m.getFeature(feature.id))))
+      .resolves.toEqual(features.map(() => expect.objectContaining({ status: "defined", taskId: undefined })));
+
+    let pingTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await expect(Promise.race([
+        h.store().asyncLayer!.ping(),
+        new Promise<never>((_, reject) => {
+          pingTimeout = setTimeout(() => reject(new Error("PostgreSQL pool remained exhausted after rollbacks")), 1_000);
+        }),
+      ])).resolves.toBeUndefined();
+    } finally {
+      clearTimeout(pingTimeout);
+    }
   });
 
   it("does not overwrite an existing task directory on a creation collision", async () => {
