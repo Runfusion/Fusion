@@ -144,9 +144,10 @@ Nothing here authorizes a deployment or service restart.
 1. Build the reviewed commit using `pnpm install --frozen-lockfile`, Fusion's workspace build,
    typecheck/lint, and gate. Preserve the exact built SHA and existing service configuration.
 2. Before an authorized deployment, take a supported PostgreSQL backup and retain the currently
-   deployed artifact. Verify the target's current schema ceiling and migration ledger. Migration
-   0084 is additive and runs through Fusion startup; resolve upstream numbering collisions before
-   deploying. Do not manually stamp the migration as applied. Startup probes all required external-session columns.
+   deployed artifact. Verify the target's current schema ceiling and migration ledger. Ingestion
+   migration 0086 and feedback migration 0087 are additive and run through Fusion startup, setting
+   the current schema ceiling to 0087. Resolve upstream numbering collisions before deploying. Do
+   not manually stamp either migration as applied. Startup probes all required external-session columns.
    Missing nullable receipt columns are repaired additively. Missing required identity, revision,
    fingerprint or acknowledgement data in populated tables fails startup transactionally; restore a
    supported backup instead of inventing state or resetting replay positions.
@@ -157,7 +158,7 @@ Nothing here authorizes a deployment or service restart.
    router when authorized. Retain external-session tables and stream positions; they are recovery
    state. Existing independent collector spools must keep their own acknowledgement positions.
 5. Fusion rejects a binary older than the database schema ceiling. Reverting only the application
-   after 0084 runs is insufficient: use the retained database backup with the matching old artifact
+   after 0086 or 0087 runs is insufficient: use the retained database backup with the matching old artifact
    in an isolated restore, or keep a compatible binary with ingestion disabled. Never delete ledger
    rows or tables to bypass this guard on a live database. Replaying acknowledged commands is not
    relevant to PR1 because it implements no command delivery.
