@@ -105,6 +105,7 @@ jobs:
             plugins/fusion-plugin-openclaw-runtime/dist
             plugins/fusion-plugin-paperclip-runtime/dist
             plugins/fusion-plugin-roadmap/dist
+            plugins/fusion-plugin-antigravity-runtime/dist
             plugins/fusion-plugin-claude-runtime/dist
             plugins/fusion-plugin-cursor-runtime/dist
             plugins/fusion-plugin-droid-runtime/dist
@@ -192,6 +193,7 @@ jobs:
             plugins/fusion-plugin-openclaw-runtime/dist
             plugins/fusion-plugin-paperclip-runtime/dist
             plugins/fusion-plugin-roadmap/dist
+            plugins/fusion-plugin-antigravity-runtime/dist
             plugins/fusion-plugin-claude-runtime/dist
             plugins/fusion-plugin-cursor-runtime/dist
             plugins/fusion-plugin-droid-runtime/dist
@@ -372,6 +374,7 @@ jobs:
             plugins/fusion-plugin-openclaw-runtime/dist
             plugins/fusion-plugin-paperclip-runtime/dist
             plugins/fusion-plugin-roadmap/dist
+            plugins/fusion-plugin-antigravity-runtime/dist
             plugins/fusion-plugin-claude-runtime/dist
             plugins/fusion-plugin-cursor-runtime/dist
             plugins/fusion-plugin-droid-runtime/dist

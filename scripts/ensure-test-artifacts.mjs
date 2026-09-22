@@ -76,6 +76,27 @@ export const REQUIRED_BUILD_PACKAGES = [
     staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-roadmap/src" }],
   },
   {
+    /*
+    FNXC:TestArtifactBootstrap 2026-09-22-06:48:
+    Full Suite dashboard and CLI tests resolve the Antigravity plugin's export map to dist at module
+    load. Build and content-hash both public exports before shards start so a cold checkout cannot
+    fail unrelated tests with an unresolved runtime-plugin entry.
+    */
+    name: "@fusion-plugin-examples/antigravity-runtime",
+    requiredArtifacts: [
+      "plugins/fusion-plugin-antigravity-runtime/dist/index.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/probe.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/runtime-adapter.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/cli-spawn.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/mcp-config-transaction.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/prompt-transport.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/stream-parser.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/tool-bridge.js",
+      "plugins/fusion-plugin-antigravity-runtime/dist/mcp-schema-server.cjs",
+    ],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-antigravity-runtime/src" }],
+  },
+  {
     // Dashboard runtime-provider probes import these at module load.
     name: "@fusion-plugin-examples/claude-runtime",
     requiredArtifacts: ["plugins/fusion-plugin-claude-runtime/dist/index.js"],
