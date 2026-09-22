@@ -13,6 +13,7 @@ import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 import { createPipelineNoAiGuard } from "./_pipeline-no-ai-guard.js";
 import { PipelineSmokeHarness } from "./_pipeline-harness.js";
 import { classifyTerminalState, detectPipelineWedge, type PipelineObservedState } from "./_pipeline-terminal-state.js";
+import vitestConfig from "../../../vitest.config.ts";
 
 const describeIfGit = hasGit ? describe : describe.skip;
 const describeIfReady = hasGit ? pgDescribe : describe.skip;
@@ -23,6 +24,12 @@ describeIfGit("pipeline smoke harness guards", () => {
   afterEach(() => {
     guards.splice(0).forEach((guard) => guard.restore());
     fixtures.splice(0).forEach((fixture) => fixture.cleanup());
+  });
+
+  it("runs this project with the configured three-file worker envelope", () => {
+    const projects = (vitestConfig.test?.projects ?? []) as Array<{ test?: { name?: string; maxWorkers?: number; fileParallelism?: boolean } }>;
+    const project = projects.find((candidate) => candidate.test?.name === "engine-pipeline-smoke")?.test;
+    expect(project).toMatchObject({ maxWorkers: 3, fileParallelism: true });
   });
 
   it("creates and removes only its disposable local fixture", () => {

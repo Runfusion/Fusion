@@ -484,11 +484,17 @@ deterministic mock-provider scripts under `testMode: true`.
 Prerequisites are Git and reachable test PostgreSQL. Start the latter with
 `pnpm pg:test:up`; the wrapper fails with that actionable instruction when either
 prerequisite is absent (or accepts `--allow-skip` only for an explicit local
-non-execution). The workflow project is intentionally excluded from `engine-default`
-and `engine-core` so it cannot expand `pnpm test` or the merge gate. The non-blocking
-`Pipeline smoke tier` job in `.github/workflows/full-suite.yml` runs after merge with
-`fetch-depth: 0` and a PostgreSQL service; never add it to `pr-checks.yml`, branch
-protection, or the engine-core allow-list.
+non-execution). On Darwin, where the embedded PostgreSQL helper is unavailable, point
+`FUSION_PG_TEST_URL_BASE` at a manually provisioned Docker PostgreSQL service and run
+`pnpm --filter @fusion/engine exec vitest run --project=engine-pipeline-smoke` as the
+supported substitute. The wrapper pins its child to three Vitest workers: this prevents
+the workspace-wide worker setting from oversubscribing the lane's single PostgreSQL
+service while keeping the fixed 175-second watchdog budget unchanged. The workflow
+project is intentionally excluded from `engine-default` and `engine-core` so it cannot
+expand `pnpm test` or the merge gate. The non-blocking `Pipeline smoke tier` job in
+`.github/workflows/full-suite.yml` runs after merge with `fetch-depth: 0` and a
+PostgreSQL service; never add it to `pr-checks.yml`, branch protection, or the
+engine-core allow-list.
 
 <!-- FNXC:PipelineSmoke 2026-09-12-22:57: FN-9291 keeps the opt-in lane observable from the ordinary engine test project without making its Git/PostgreSQL composition part of the merge gate. -->
 **Import-integrity ratchet:** Engine TypeScript configuration excludes `src/__tests__/**/*`, and this opt-in project is excluded from `engine-default`. Consequently, a test-only named import of a deleted engine export can evade typecheck, build, `verify:fast`, and the merge gate until the full smoke lane runs. `pipeline-smoke-import-integrity.test.ts` runs in `engine-default` and resolves each non-type named relative import from pipeline-smoke modules against its runtime module namespace, failing with the importer, specifier, and missing binding. When product behavior is removed, delete the tests that assert that retired behavior in the same change rather than restoring a compatibility stub.

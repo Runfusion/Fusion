@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PIPELINE_SMOKE_DURATION_BUDGET_MS, PIPELINE_SMOKE_PROJECT, buildPipelineSmokeSummary, expectedInvocationKeys, expectedScenarioIds, invocationKey, parseArgs, parsePipelineSmokeReport, runPipelineSmoke, validatePipelineSmokeSummary } from "../run-pipeline-smoke.mjs";
+import { PIPELINE_SMOKE_DURATION_BUDGET_MS, PIPELINE_SMOKE_MAX_WORKERS, PIPELINE_SMOKE_PROJECT, buildPipelineSmokeSummary, expectedInvocationKeys, expectedScenarioIds, invocationKey, parseArgs, parsePipelineSmokeReport, runPipelineSmoke, validatePipelineSmokeSummary } from "../run-pipeline-smoke.mjs";
 import { expectedPipelineInvocations } from "../../packages/engine/src/__tests__/pipeline-smoke/_pipeline-scenario-manifest.mjs";
 
 async function withReports(fn) { const dir = mkdtempSync(join(tmpdir(), "fusion-pipeline-smoke-")); try { return await fn({ reportPath: join(dir, "report.json") }); } finally { rmSync(dir, { recursive: true, force: true }); } }
@@ -14,6 +14,22 @@ function successfulWatchdog(scenarioRecords = records(), testCount = 80) { retur
 test("runPipelineSmoke writes a strict multi-workflow invocation report", async () => withReports(async ({ reportPath }) => {
   const summary = await runPipelineSmoke({ spawn: healthyPrerequisite, watchdog: successfulWatchdog(), now: (() => { const values = [0, 1, 30]; return () => values.shift(); })(), options: { reportPath }, write: () => undefined });
   assert.equal(summary.passed, true); assert.equal(summary.scenarioIds.length, expectedScenarioIds().length); assert.deepEqual(summary.invocationKeys, expectedInvocationKeys()); assert.deepEqual(JSON.parse(readFileSync(reportPath, "utf8")), summary);
+}));
+test("runPipelineSmoke overrides inherited Vitest worker fan-out for the real smoke child", async () => withReports(async ({ reportPath }) => {
+  const watchdog = async ({ args, env }) => {
+    assert.equal(env.VITEST_MAX_WORKERS, String(PIPELINE_SMOKE_MAX_WORKERS));
+    writeFileSync(args.find((arg) => arg.startsWith("--outputFile=")).slice(13), JSON.stringify({ numTotalTests: 1 }));
+    writeFileSync(env.FUSION_PIPELINE_SMOKE_REPORT, `${records().map(JSON.stringify).join("\n")}\n`);
+    return { code: 0, signal: null, timedOut: false };
+  };
+  const summary = await runPipelineSmoke({
+    spawn: healthyPrerequisite,
+    watchdog,
+    now: (() => { const values = [0, 1, 2]; return () => values.shift(); })(),
+    options: { reportPath },
+    write: () => undefined,
+  });
+  assert.equal(summary.passed, true);
 }));
 test("timeout replaces stale success with bounded partial S17 attribution and still fails closed", async () => withReports(async ({ reportPath }) => {
   writeFileSync(reportPath, JSON.stringify({ passed: true })); const complete = records().filter((record) => record.scenarioId !== "S17"); const partial = { scenarioId: "S17", workflowId: "builtin:coding-ideas-v2", variant: "post-merge" };

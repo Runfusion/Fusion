@@ -503,12 +503,18 @@ export default defineConfig({
           FN-182 permits one bounded timeout for the serialized real PostgreSQL/local-Git lane.
           The five-minute runner budget remains the outer contract; these values only allow a
           single fixture body and shared database hook to report a concrete failure before it.
+
+          FNXC:PipelineSmoke 2026-09-22-01:58:
+          FN-9350 requires the smoke project's effective worker configuration to match its
+          three-worker child envelope. The scenario files isolate disposable Git fixtures and
+          PostgreSQL state, so file-level parallelism restores the intended CI throughput without
+          widening the fixed smoke watchdog budget.
           */
           testTimeout: 120_000,
           hookTimeout: 60_000,
           minWorkers: 1,
-          maxWorkers: 1,
-          fileParallelism: false,
+          maxWorkers: 3,
+          fileParallelism: true,
         },
       },
       {
