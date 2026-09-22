@@ -9585,10 +9585,35 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     reviewColumns: ReadonlySet<string>,
     mergeGate: ResolvedMergeRecoveryGate,
     mergeContent: CapturedMergeRecoveryContent,
+    expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null,
+    failedPark?: Pick<Task, "status" | "error" | "paused" | "pausedReason" | "mergeRetries" | "workflowIrPin" | "workflowIrPinNodeId" | "workflowIrPinColumnId">,
   ): Promise<boolean> {
     if (getTaskMergeBlocker(task, { reviewColumns, requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds, mergeContent }) !== "task has enabled pre-merge workflow steps that never ran") return false;
-    const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, { requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds, mergeContent })
-      .catch(() => ({ rerouted: false, reason: "no-unrun-gate" as const, nodeId: undefined, workflowStepId: undefined }));
+    const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
+      requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+      mergeContent,
+      expectedWorkflowSelection,
+    }).catch(() => ({ rerouted: false, reason: "no-unrun-gate" as const, nodeId: undefined, workflowStepId: undefined }));
+    if (reroute.reason === "workflow-selection-changed" && failedPark) {
+      /*
+      FNXC:PreMergeGateRecovery 2026-09-22-02:03:
+      Selection mismatch means this sweep's just-cleared failed park no longer describes the selected
+      workflow. Restore only the exact clear shape while the row remains untouched, so the next pass
+      reclassifies the new selection rather than leaving a falsely mergeable card with no seeded gate.
+      */
+      await this.store.updateTaskAtomic(task.id, (live) => live.status === null && live.error === null
+        ? {
+          status: failedPark.status,
+          error: failedPark.error,
+          paused: failedPark.paused,
+          pausedReason: failedPark.pausedReason,
+          mergeRetries: failedPark.mergeRetries,
+          workflowIrPin: failedPark.workflowIrPin,
+          workflowIrPinNodeId: failedPark.workflowIrPinNodeId,
+          workflowIrPinColumnId: failedPark.workflowIrPinColumnId,
+        }
+        : null);
+    }
     if (reroute.rerouted) {
       await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded the workflow graph at an enabled pre-merge gate that never ran.");
       log.warn(`Unrun pre-merge gate for ${task.id} re-seeded at ${reroute.nodeId ?? "unknown"}`);
@@ -9703,6 +9728,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const items = await this.store.listWorkflowWorkItemsForTask(task.id);
           if (items.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) continue;
           const snapshot = { updatedAt: task.updatedAt, error: task.error, column: task.column };
+          /*
+          FNXC:PreMergeGateRecovery 2026-09-22-02:03:
+          Preserve failed fields independently because updateTaskAtomic can mutate the same list
+          snapshot object. A selection-fenced seed refusal must restore that original park exactly.
+          */
+          const failedPark = { ...task };
           let released = false;
           await this.store.updateTaskAtomic(task.id, (live) => {
             if (!isRecoverableUnrunGatePark(live) || live.updatedAt !== snapshot.updatedAt
@@ -9713,9 +9744,40 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               workflowIrPin: null, workflowIrPinNodeId: null, workflowIrPinColumnId: null };
           });
           if (!released) continue;
-          recoveredUnrunGateIds.add(task.id);
           const live = await this.store.getTask(task.id);
-          if (live) await this.routeUnrunPreMergeGateBackToReview(live, reviewColumns, gate, content);
+          if (!live) continue;
+          /*
+          FNXC:PreMergeApproval 2026-09-22-01:50:
+          A task row claim cannot lock the separately stored workflow selection. Re-resolve the
+          selection, review lanes, required gates, and content after the claim so reseeding never
+          applies a gate classification captured before an operator selected another workflow.
+          */
+          const selection = this.store.getTaskWorkflowSelectionAsync
+            ? await this.store.getTaskWorkflowSelectionAsync(live.id)
+            : this.store.getTaskWorkflowSelection(live.id);
+          const expectedWorkflowSelection = selection
+            ? { workflowId: selection.workflowId, stepIds: [...selection.stepIds] }
+            : null;
+          const currentGate = await resolvePreMergeGateForTask(this.store, live.id, live.enabledWorkflowSteps, live);
+          if (currentGate.provenance === "default" && !currentGate.selectionAbsent) continue;
+          const currentContent = await captureMergeContentDescriptor(live, { workspaceRootDir: this.options.rootDir, settings });
+          if (currentContent.kind !== "singular" || live.workspaceWorktrees !== undefined) continue;
+          const currentRecoverable = { ...live, status: undefined, paused: false };
+          if (getTaskMergeBlocker(currentRecoverable, {
+            reviewColumns: currentGate.reviewColumns,
+            requiredPreMergeStepIds: currentGate.requiredPreMergeStepIds,
+            mergeContent: currentContent,
+          }) !== PRE_MERGE_STEPS_NOT_RUN_BLOCKER) continue;
+          if (await this.routeUnrunPreMergeGateBackToReview(
+            live,
+            currentGate.reviewColumns,
+            currentGate,
+            currentContent,
+            expectedWorkflowSelection,
+            failedPark,
+          )) {
+            recoveredUnrunGateIds.add(task.id);
+          }
         } catch (error) {
           log.warn(`Unrun pre-merge gate recovery deferred for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
         }

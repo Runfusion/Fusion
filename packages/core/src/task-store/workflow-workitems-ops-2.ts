@@ -28,7 +28,13 @@ export async function replaceActiveTaskWorkflowContinuationImpl(
     return replaceActiveTaskWorkflowContinuationAsync(store.asyncLayer!, input);
 }
 
-export async function seedWorkspaceCodeReviewContinuationIfIdleImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput & { kind: "task" }): Promise<{ seeded: boolean; reason?: "active-continuation"; workItemId?: string }> {
+export async function seedWorkspaceCodeReviewContinuationIfIdleImpl(
+  store: TaskStore,
+  input: WorkflowWorkItemUpsertInput & {
+    kind: "task";
+    expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
+  },
+): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed"; workItemId?: string }> {
   return seedWorkspaceCodeReviewContinuationIfIdleAsync(store.asyncLayer!, input);
 }
 

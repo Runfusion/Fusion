@@ -2854,7 +2854,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async replaceActiveTaskWorkflowContinuation(input: WorkflowWorkItemUpsertInput & { kind: "task" }): Promise<WorkflowWorkItem> {
     return replaceActiveTaskWorkflowContinuationImpl(this, input);
   }
-  async seedWorkspaceCodeReviewContinuationIfIdle(input: WorkflowWorkItemUpsertInput & { kind: "task" }): Promise<{ seeded: boolean; reason?: "active-continuation"; workItemId?: string }> {
+  async seedWorkspaceCodeReviewContinuationIfIdle(
+    input: WorkflowWorkItemUpsertInput & {
+      kind: "task";
+      expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
+    },
+  ): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed"; workItemId?: string }> {
     return seedWorkspaceCodeReviewContinuationIfIdleImpl(this, input);
   }
   async seedStrandedPlanReviewContinuation(input: WorkflowWorkItemUpsertInput & { kind: "task" }, options: { retirePredecessorId?: string } = {}): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {

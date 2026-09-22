@@ -21,7 +21,8 @@ export type UnrunPreMergeGateRerouteReason =
   | "no-unrun-gate"
   | "no-review-route"
   | "not-singular"
-  | "operator-held";
+  | "operator-held"
+  | "workflow-selection-changed";
 
 /** Only the engine-owned unrun-gate park may be automatically released. */
 export function isRecoverableUnrunGatePark(task: Task): boolean {
@@ -37,9 +38,13 @@ export function isRecoverableUnrunGatePark(task: Task): boolean {
 export async function rerouteUnrunPreMergeGateToReview(
   store: TaskStore,
   task: Task,
-  options: { requiredPreMergeStepIds: ReadonlySet<string>; mergeContent: MergeContentDescriptor },
+  options: {
+    requiredPreMergeStepIds: ReadonlySet<string>;
+    mergeContent: MergeContentDescriptor;
+    expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
+  },
 ): Promise<{ rerouted: boolean; reason: UnrunPreMergeGateRerouteReason; nodeId?: string; workflowStepId?: string }> {
-  const { mergeContent, requiredPreMergeStepIds } = options;
+  const { mergeContent, requiredPreMergeStepIds, expectedWorkflowSelection } = options;
   if (mergeContent.kind !== "singular" || task.workspaceWorktrees !== undefined) return { rerouted: false, reason: "not-singular" };
   if (task.paused || task.userPaused || task.deletedAt || task.autoMerge === false) return { rerouted: false, reason: "operator-held" };
   if (requiredPreMergeStepIds.size === 0) return { rerouted: false, reason: "no-unrun-gate" };
@@ -65,8 +70,13 @@ export async function rerouteUnrunPreMergeGateToReview(
     sourceColumn: task.column,
     targetColumn: node.column ?? task.column,
     irHash: computeWorkflowIrPin(ir, node.id).irHash,
+    expectedWorkflowSelection,
   });
-  return result.seeded
-    ? { rerouted: true, reason: "seeded", nodeId: node.id, workflowStepId: node.id }
-    : { rerouted: false, reason: "active-continuation", nodeId: node.id, workflowStepId: node.id };
+  if (result.seeded) return { rerouted: true, reason: "seeded", nodeId: node.id, workflowStepId: node.id };
+  return {
+    rerouted: false,
+    reason: result.reason === "workflow-selection-changed" ? "workflow-selection-changed" : "active-continuation",
+    nodeId: node.id,
+    workflowStepId: node.id,
+  };
 }

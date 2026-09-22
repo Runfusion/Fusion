@@ -142,6 +142,66 @@ describe("unrun pre-merge gate wedge regression", () => {
     expect(enqueueMerge).not.toHaveBeenCalled();
   });
 
+  it("reclassifies against a workflow selected after the failed-park claim", async () => {
+    const live = resultlessReviewTask({
+      status: "failed",
+      enabledWorkflowSteps: ["code-review", "security-review"],
+      error: "task has enabled pre-merge workflow steps that never ran",
+    });
+    const store = recoveryStore(live);
+    const replacementIr = {
+      ...codingIr,
+      name: "replacement-review-workflow",
+      nodes: codingIr.nodes.map((node) => node.id === "code-review" ? { ...node, id: "security-review" } : node),
+    };
+    let selection = { workflowId: "old-review-workflow", stepIds: ["code-review"] };
+    store.getTaskWorkflowSelection.mockImplementation(() => selection);
+    store.getTaskWorkflowSelectionAsync.mockImplementation(async () => selection);
+    store.getWorkflowDefinition.mockImplementation(async (workflowId: string) => ({
+      id: workflowId,
+      ir: workflowId === "replacement-review-workflow" ? replacementIr : codingIr,
+    }));
+    store.listWorkflowDefinitions.mockResolvedValue([
+      { id: "old-review-workflow", ir: codingIr },
+      { id: "replacement-review-workflow", ir: replacementIr },
+    ]);
+    store.updateTaskAtomic.mockImplementation(async (_id: string, reduce: (task: Task) => Partial<Task> | null) => {
+      const patch = reduce(live);
+      if (patch) Object.assign(live, patch);
+      selection = { workflowId: "replacement-review-workflow", stepIds: ["security-review"] };
+      return live;
+    });
+
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+
+    expect(live).toMatchObject({ status: null, error: null });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "security-review" }));
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalledWith(expect.objectContaining({ nodeId: "code-review" }));
+  });
+
+  it("retains the failed park when selection changes before its continuation seed", async () => {
+    const error = "task has enabled pre-merge workflow steps that never ran";
+    const live = resultlessReviewTask({ status: "failed", error });
+    const store = recoveryStore(live);
+    let selection = { workflowId: "old-review-workflow", stepIds: ["code-review"] };
+    store.getTaskWorkflowSelection.mockImplementation(() => selection);
+    store.getTaskWorkflowSelectionAsync.mockImplementation(async () => selection);
+    store.seedWorkspaceCodeReviewContinuationIfIdle.mockImplementation(async (input: { expectedWorkflowSelection?: typeof selection }) => {
+      selection = { workflowId: "replacement-review-workflow", stepIds: ["security-review"] };
+      return input.expectedWorkflowSelection?.workflowId === selection.workflowId
+        ? { seeded: true }
+        : { seeded: false, reason: "workflow-selection-changed" };
+    });
+
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+
+    expect(live).toMatchObject({ status: "failed", error });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: "code-review",
+      expectedWorkflowSelection: { workflowId: "old-review-workflow", stepIds: ["code-review"] },
+    }));
+  });
+
   it.each([
     { userPaused: true }, { paused: true, pausedReason: "manual" },
     { deletedAt: "2026-09-01" }, { autoMerge: false }, { error: "unrelated failure" },

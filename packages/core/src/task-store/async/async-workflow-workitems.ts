@@ -389,9 +389,41 @@ an idle graph atomically, rather than replacing a live continuation or relying o
 */
 export async function seedWorkspaceCodeReviewContinuationIfIdle(
   layer: AsyncDataLayer,
-  input: WorkflowWorkItemUpsertInput & { kind: "task" },
-): Promise<{ seeded: boolean; reason?: "active-continuation"; workItemId?: string }> {
+  input: WorkflowWorkItemUpsertInput & {
+    kind: "task";
+    expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
+  },
+): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed"; workItemId?: string }> {
   return layer.transactionImmediate(async (tx) => withTaskWorkflowSerialization(tx, layer.projectId, input.taskId, async () => {
+    /*
+    FNXC:PreMergeGateRecovery 2026-09-22-02:03:
+    A recovery continuation must be tied to the workflow selection that identified its missing gate.
+    Selection writes share this advisory lock, so validate the selected workflow inside the seed
+    transaction; a changed selection leaves the failed park intact for reclassification instead of
+    seeding an unrelated review node.
+    */
+    if (input.expectedWorkflowSelection !== undefined) {
+      const rows = await tx.select({
+        workflowId: schema.project.taskWorkflowSelection.workflowId,
+        stepIds: schema.project.taskWorkflowSelection.stepIds,
+      }).from(schema.project.taskWorkflowSelection).where(and(
+        projectScopeFor(schema.project.taskWorkflowSelection.projectId, layer.projectId),
+        eq(schema.project.taskWorkflowSelection.taskId, input.taskId),
+      )).limit(1);
+      const row = rows[0];
+      const current = row
+        ? {
+          workflowId: row.workflowId,
+          stepIds: Array.isArray(row.stepIds) ? row.stepIds.filter((id): id is string => typeof id === "string") : [],
+        }
+        : null;
+      const expected = input.expectedWorkflowSelection;
+      if (current?.workflowId !== expected?.workflowId
+        || current?.stepIds.length !== expected?.stepIds.length
+        || current?.stepIds.some((id, index) => id !== expected?.stepIds[index])) {
+        return { seeded: false, reason: "workflow-selection-changed" as const };
+      }
+    }
     const active = await tx.select({ id: schema.project.workflowWorkItems.id }).from(schema.project.workflowWorkItems).where(and(
       projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
       eq(schema.project.workflowWorkItems.taskId, input.taskId),
