@@ -1212,7 +1212,8 @@
     "workflow": {
       "edit": "",
       "new": ""
-    }
+    },
+    "archived": "已归档任务"
   },
   "branchGroup": {
     "abandonGroup": "",
@@ -1430,14 +1431,6 @@
     "agentRepliesFailed": "部分代理无法回复：{{agents}}",
     "noDefaultModelConfigured": "请先在设置中配置默认聊天模型，再创建对话。",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "最小化所有聊天",
-    "restoreAllChats": "恢复所有聊天",
-    "slashSuggestions": "斜杠建议",
-    "loadingSlashSuggestions": "正在加载建议…",
-    "snippetSuggestion": "插入已保存的提示词",
-    "snippetSuggestions": "片段建议",
-    "conversationIdCopied": "",
-    "copyConversationId": "",
     "questionOptionalLabel": "",
     "questionSelectHintWithOptional": ""
   },
@@ -1552,7 +1545,18 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "archiveAllDoneAriaLabel": "归档所有已完成任务",
+    "archiveAllDoneTitle": "归档所有已完成任务",
+    "archiveAllMessage_other": "要归档 {{count}} 个已完成任务吗？",
+    "archiveAllTitle": "归档所有已完成任务",
+    "archivedTasks_other": "已归档 {{count}} 个任务",
+    "archivedTasksWithSkips_other": "已归档 {{archived}} 个任务；跳过 {{skipped}} 个：{{ids}}",
+    "collapseArchivedLabel": "收起已归档任务",
+    "collapseArchivedTitle": "收起已归档任务",
+    "expandArchivedLabel": "展开已归档任务",
+    "expandArchivedTitle": "展开已归档任务",
+    "failedToArchive": "归档任务失败"
   },
   "commandCenter": {
     "activity": {
@@ -2579,10 +2583,7 @@
     "fileHeader": "文件",
     "fileMatches": "匹配的文件",
     "taskHeader": "任务",
-    "taskMatches": "匹配的任务",
-    "conversationHeader": "",
-    "conversationMatches": "",
-    "untitledConversation": ""
+    "taskMatches": "匹配的任务"
   },
   "git": {
     "addComment": "Add comment",
@@ -3131,11 +3132,7 @@
     "viewProjects": "查看项目",
     "viewUsage": "查看用量",
     "workflows": "工作流",
-    "workingBranch": "工作分支",
-    "unreadArtifacts_one": "",
-    "unreadArtifacts_other": "",
-    "unreadRecommendations_one": "",
-    "unreadRecommendations_other": ""
+    "workingBranch": "工作分支"
   },
   "health": {
     "activeTasks": "活动任务",
@@ -3441,7 +3438,20 @@
     "statusReplan": "重新规划",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": ""
+    "bulkDeleteSummary": "",
+    "archiveSelected": "归档所选任务",
+    "archiveSelectedTitle": "归档已完成的所选任务",
+    "archiveUnavailable": "归档操作不可用",
+    "archiveViaButton": "任务只能通过“归档”按钮归档",
+    "bulkArchiveDone_other": "归档 {{count}} 个已完成任务",
+    "bulkArchiveMessage_other": "要归档 {{count}} 个所选任务吗？",
+    "bulkArchiveNoTasks": "没有可归档的所选任务（仅可归档已完成任务）",
+    "bulkArchiveSummary": "已归档 {{archived}} 个 · 跳过 {{skipped}} 个 · 失败 {{failed}} 个",
+    "bulkArchiveTitle": "归档所选任务",
+    "bulkDeleteArchiveSummary": "已归档 {{archived}} 个，已删除 {{deleted}} 个，失败 {{failed}} 个",
+    "bulkDeleteNoTasks": "没有可删除的所选任务（不包括已归档任务）",
+    "bulkDeleteWithDoneMessage": "要删除 {{deletable}} 个任务，还是归档 {{done}} 个已完成任务并删除其余任务？",
+    "lineageArchiveMessage": "{{taskId}} 有 {{children}} 个谱系子任务将其引用为源父任务。\n\n要先解除这些引用再继续归档吗？"
   },
   "mailbox": {
     "agent": "代理",
@@ -4234,14 +4244,7 @@
     "todos": "待办",
     "usage": "用量",
     "workflows": "工作流",
-    "patchnode": "",
-    "artifactsUnreadAriaLabel_one": "",
-    "artifactsUnreadAriaLabel_other": "",
-    "artifactsUnreadDotAriaLabel": "",
-    "recommendations": "",
-    "recommendationsUnreadAriaLabel_one": "",
-    "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": ""
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "添加依赖项",
@@ -5401,7 +5404,8 @@
     "hideDone": "",
     "noActiveTasks": "",
     "noTasksYet": "",
-    "showDone": ""
+    "showDone": "",
+    "archivedCopy": "已归档任务"
   },
   "routine": {
     "andMore_one": "",
@@ -5732,8 +5736,6 @@
     "confirmDelete": "确认删除",
     "confirmDeleteNamed": "确认删除 {{name}}",
     "deleteScriptNamed": "删除 {{name}}",
-    "description": "描述（可选）",
-    "descriptionPlaceholder": "此脚本用于做什么？",
     "editScriptNamed": "编辑 {{name}}",
     "failedToDelete": "无法删除脚本",
     "failedToLoadScripts": "加载脚本失败",
@@ -5754,7 +5756,9 @@
     "scriptNamePlaceholder": "例如，build、test、lint",
     "scriptNameRequired": "需要脚本名称",
     "scriptUpdated": "脚本已更新",
-    "title": "脚本"
+    "title": "脚本",
+    "nameErrorMsg": "名称只能包含字母、数字、连字符和下划线（不能有空格）",
+    "nameHint": "只能使用字母、数字、连字符和下划线"
   },
   "secrets": {
     "accessPolicyAuto": "自动",
@@ -6239,12 +6243,7 @@
       "noLimitOnAgentToolOutput": "",
       "noLimitOnAgentToolOutputHint": "",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": "",
-      "chatSubmitOnEnter": "",
-      "chatSubmitOnEnterHint": "",
-      "chatSubmitOnEnterAuto": "",
-      "chatSubmitOnEnterAlways": "",
-      "chatSubmitOnEnterNever": ""
+      "quickAddSubmitOnEnterHint": ""
     },
     "globalModels": {
       "modelOverrides": "",
@@ -6995,7 +6994,12 @@
       "triageDuplicateResolutionHelp": "将分诊检测到的重复项拦截并要求保留/删除决策（默认），或不拦截而自动保留/删除。",
       "triageDuplicateResolutionPrompt": "拦截并决策（默认）",
       "triageDuplicateResolutionKeep": "自动保留",
-      "triageDuplicateResolutionDelete": "自动删除"
+      "triageDuplicateResolutionDelete": "自动删除",
+      "archiveAgentLog": "归档代理日志",
+      "archiveCompletedTasksAfterDays": "在以下天数后归档已完成任务",
+      "autoArchiveDuplicateTasks": "自动归档重复任务",
+      "autoArchiveDuplicateTasksHelp": "创建时自动归档检测为同一代理重复项的任务（默认关闭）。关闭后，重复项会保留在原处，并显示黄色“重复”标记以及“保留/归档”操作。",
+      "doNotArchiveAgentLogs": "不归档代理日志"
     },
     "title": "设置",
     "worktrees": {
@@ -7532,7 +7536,30 @@
     "gitPrerequisiteMissingBody": "Fusion could not find `git` on the server host running Fusion. Install Git there before cloning repositories, initializing projects, or registering Git-backed workspaces.",
     "gitPrerequisiteMissingTitle": "Install Git before project setup",
     "gitPrerequisiteReadyTitle": "Git prerequisite ready",
-    "gitPrerequisiteWindows": "Windows: install Git for Windows and restart the Fusion host shell or service."
+    "gitPrerequisiteWindows": "Windows: install Git for Windows and restart the Fusion host shell or service.",
+    "antigravityCli": {
+      "active": "Antigravity 已启用",
+      "binaryNotFound": "未找到 Antigravity 可执行文件",
+      "binaryPathHelp": "指定 Antigravity 可执行文件的路径。留空可自动检测。",
+      "binaryPathLabel": "Antigravity 可执行文件路径",
+      "binaryPathPlaceholder": "例如：/usr/local/bin/antigravity",
+      "connected": "已连接到 Antigravity {{version}}",
+      "description": "将 Antigravity 用作 AI 提供商",
+      "detectedPrompt": "已检测到 Antigravity。要使用它吗？",
+      "disable": "禁用 Antigravity",
+      "disabling": "正在禁用 Antigravity…",
+      "enable": "启用 Antigravity",
+      "enabling": "正在启用 Antigravity…",
+      "notConnected": "Antigravity 未连接",
+      "pathCleared": "已清除 Antigravity 路径",
+      "pathSaved": "已保存 Antigravity 路径",
+      "probing": "正在检测 Antigravity…",
+      "providerName": "Google Antigravity — 通过 agy CLI",
+      "saveAndTestPath": "保存并测试路径",
+      "savingPath": "正在保存路径…",
+      "test": "测试",
+      "testing": "正在测试 Antigravity…"
+    }
   },
   "shell": {
     "activePill": "活跃",
@@ -7622,37 +7649,7 @@
     "noMatches": "No matching skills",
     "loadError": "Skills could not be loaded.",
     "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries",
-    "snippetsReservedName": "此名称已保留给聊天命令。",
-    "snippetsInvalidName": "请使用 1–48 个字母、数字、下划线或连字符。",
-    "snippetsPromptRequired": "请输入此片段的提示词。",
-    "snippetsPromptTooLong": "提示词最多可包含 {{count}} 个字符。",
-    "snippetsDuplicateName": "已存在同名片段。",
-    "snippetsLimitReached": "最多可保存 {{count}} 个片段。",
-    "snippetsSaveError": "无法保存片段。请刷新后重试。",
-    "snippetsDeleteError": "无法删除片段。请刷新后重试。",
-    "snippetsTitle": "聊天片段",
-    "snippetsCount": "已保存 {{count}} 个",
-    "snippetsDescription": "保存可复用提示词，然后在任意聊天中输入 /名称，即可插入而不会发送。",
-    "snippetsLoading": "正在加载片段...",
-    "snippetsLoadError": "无法刷新片段。仍显示上次加载的列表。",
-    "snippetsFormLabel": "聊天片段编辑器",
-    "snippetsNameLabel": "名称",
-    "snippetsNameHelp": "字母、数字、下划线或连字符；最多 48 个字符。",
-    "snippetsPromptLabel": "提示词",
-    "snippetsPromptHelp": "{{count}} / {{max}} 个字符",
-    "snippetsSaving": "正在保存...",
-    "snippetsSaveChanges": "保存更改",
-    "snippetsAdd": "添加片段",
-    "snippetsEmpty": "尚未保存片段。",
-    "snippetsEdit": "编辑 /{{name}}",
-    "snippetsDelete": "删除 /{{name}}",
-    "tabSkills": "技能",
-    "tabSnippets": "片段",
-    "tabsLabel": "技能和片段分区",
-    "skillsDescription": "浏览、启用并安装此项目可用的技能。",
-    "snippetsEmptyHint": "在此创建一个片段，然后在任意聊天中输入 /名称 即可插入。",
-    "refreshSkillsLabel": "刷新技能",
-    "refreshSnippetsLabel": "刷新片段"
+    "snippetsTitle": "聊天片段"
   },
   "specEditor": {
     "edit": "编辑",
@@ -7861,9 +7858,7 @@
   },
   "taskDetail": {
     "actions": {
-      "menuBtn": "操作",
-      "oversightHeading": "",
-      "priorityHeading": ""
+      "menuBtn": "操作"
     },
     "agent": {
       "assignBtn": "分配代理",
@@ -7952,7 +7947,10 @@
       "linkedIssueTitle": "关联的 GitHub Issue",
       "message": "删除 {{id}}？",
       "moreOptions": "更多选项",
-      "title": "删除任务"
+      "title": "删除任务",
+      "archivedAfterUnlink": "解除引用后已归档任务 {{id}}",
+      "archiveInstead": "改为归档",
+      "archiveUnlinkPrompt": "要先解除这些引用再继续归档吗？"
     },
     "deps": {
       "addBtn": "添加依赖",
@@ -8100,7 +8098,12 @@
       "deleteTitle": "删除重复任务",
       "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
       "dismissBtn": "Mark the duplicate flag for {{id}} as read",
-      "dismissed": "Duplicate flag cleared for {{id}}"
+      "dismissed": "Duplicate flag cleared for {{id}}",
+      "archiveBtn": "归档",
+      "archiveConfirm": "确认归档",
+      "archived": "任务 {{id}} 已归档",
+      "archiveMessage": "要将 {{id}} 作为 {{duplicateOf}} 的重复项归档吗？",
+      "archiveTitle": "归档任务"
     },
     "nextRecoveryAt": "下次恢复时间：{{time}}",
     "no": "否",
@@ -8872,7 +8875,17 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
-    }
+    },
+    "archive": "归档",
+    "archived": "任务 {{taskId}} 已归档",
+    "archivedUnlinked": "任务 {{taskId}} 已归档并解除关联",
+    "archiveFailed": "归档任务 {{taskId}} 失败：{{error}}",
+    "archiveLineageConflict": "无法归档 {{taskId}}，因为它有 {{children}} 个谱系子任务",
+    "archiveTask": "归档任务",
+    "unarchive": "取消归档",
+    "unarchived": "任务 {{taskId}} 已取消归档",
+    "unarchiveFailed": "取消归档任务 {{taskId}} 失败：{{error}}",
+    "unarchiveTask": "取消归档任务"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9508,15 +9521,16 @@
   },
   "workflowSwitcher": {
     "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
-    "plan": "计划",
-    "progress": "进行中",
     "label": "Workflow",
     "merging": "",
     "mergingTitle": "",
-    "review": "审核",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "newWorkflow": "New workflow",
+    "done": "已完成",
+    "inProgress": "进行中",
+    "todo": "待办",
+    "plan": "计划"
   },
   "workspace": {
     "projectRoot": "项目根目录",
@@ -9761,11 +9775,7 @@
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": "",
-    "zoomIn": "",
-    "zoomOut": "",
-    "resetZoom": "",
-    "zoomLevel": ""
+    "retry": ""
   },
   "taskHistory": {
     "stage": {
@@ -9834,23 +9844,5 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
-  },
-  "recommendations": {
-    "count": "",
-    "createError": "",
-    "createTask": "",
-    "created": "",
-    "creating": "",
-    "emptyDescription": "",
-    "emptyTitle": "",
-    "loadError": "",
-    "loadMore": "",
-    "loading": "",
-    "loadingMore": "",
-    "retryCreate": "",
-    "source": "",
-    "title": "",
-    "truncated": "",
-    "viewTask": ""
   }
 }

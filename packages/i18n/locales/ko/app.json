@@ -1212,7 +1212,8 @@
     "workflow": {
       "edit": "",
       "new": ""
-    }
+    },
+    "archived": "보관된 작업"
   },
   "branchGroup": {
     "abandonGroup": "",
@@ -1430,14 +1431,6 @@
     "agentRepliesFailed": "일부 에이전트가 응답하지 못했습니다: {{agents}}",
     "noDefaultModelConfigured": "대화를 만들기 전에 설정에서 기본 채팅 모델을 구성하세요.",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "모든 채팅 최소화",
-    "restoreAllChats": "모든 채팅 복원",
-    "slashSuggestions": "슬래시 제안",
-    "loadingSlashSuggestions": "제안 불러오는 중…",
-    "snippetSuggestion": "저장된 프롬프트 삽입",
-    "snippetSuggestions": "스니펫 제안",
-    "conversationIdCopied": "",
-    "copyConversationId": "",
     "questionOptionalLabel": "",
     "questionSelectHintWithOptional": ""
   },
@@ -1552,7 +1545,18 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "archiveAllDoneAriaLabel": "완료된 모든 작업 보관",
+    "archiveAllDoneTitle": "완료된 모든 작업 보관",
+    "archiveAllMessage_other": "완료된 작업 {{count}}개를 보관하시겠습니까?",
+    "archiveAllTitle": "완료된 작업 모두 보관",
+    "archivedTasks_other": "{{count}}개 작업 보관됨",
+    "archivedTasksWithSkips_other": "{{archived}}개 작업 보관됨, {{skipped}}개 건너뜀: {{ids}}",
+    "collapseArchivedLabel": "보관된 작업 접기",
+    "collapseArchivedTitle": "보관된 작업 접기",
+    "expandArchivedLabel": "보관된 작업 펼치기",
+    "expandArchivedTitle": "보관된 작업 펼치기",
+    "failedToArchive": "작업 보관에 실패했습니다"
   },
   "commandCenter": {
     "activity": {
@@ -2579,10 +2583,7 @@
     "fileHeader": "파일",
     "fileMatches": "파일 검색 결과",
     "taskHeader": "작업",
-    "taskMatches": "작업 검색 결과",
-    "conversationHeader": "",
-    "conversationMatches": "",
-    "untitledConversation": ""
+    "taskMatches": "작업 검색 결과"
   },
   "git": {
     "addComment": "Add comment",
@@ -3131,11 +3132,7 @@
     "viewProjects": "프로젝트 보기",
     "viewUsage": "사용량 보기",
     "workflows": "워크플로",
-    "workingBranch": "작업 브랜치",
-    "unreadArtifacts_one": "",
-    "unreadArtifacts_other": "",
-    "unreadRecommendations_one": "",
-    "unreadRecommendations_other": ""
+    "workingBranch": "작업 브랜치"
   },
   "health": {
     "activeTasks": "활성 작업",
@@ -3441,7 +3438,20 @@
     "statusReplan": "재계획",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": ""
+    "bulkDeleteSummary": "",
+    "archiveSelected": "선택한 작업 보관",
+    "archiveSelectedTitle": "완료된 선택 작업 보관",
+    "archiveUnavailable": "보관 작업을 사용할 수 없습니다",
+    "archiveViaButton": "작업은 보관 버튼으로만 보관할 수 있습니다",
+    "bulkArchiveDone_other": "완료된 작업 {{count}}개 보관",
+    "bulkArchiveMessage_other": "선택한 작업 {{count}}개를 보관하시겠습니까?",
+    "bulkArchiveNoTasks": "선택한 작업 중 보관할 수 있는 작업이 없습니다(완료된 작업만 가능)",
+    "bulkArchiveSummary": "{{archived}}개 보관 · {{skipped}}개 건너뜀 · {{failed}}개 실패",
+    "bulkArchiveTitle": "선택한 작업 보관",
+    "bulkDeleteArchiveSummary": "{{archived}}개 보관, {{deleted}}개 삭제, {{failed}}개 실패",
+    "bulkDeleteNoTasks": "선택한 작업 중 삭제할 수 있는 작업이 없습니다(보관된 작업 제외)",
+    "bulkDeleteWithDoneMessage": "작업 {{deletable}}개를 삭제하거나, 완료된 작업 {{done}}개를 보관하고 나머지를 삭제하시겠습니까?",
+    "lineageArchiveMessage": "{{taskId}}에는 원본 부모로 참조하는 계보 하위 작업이 {{children}}개 있습니다.\n\n먼저 이 참조를 해제하고 보관하시겠습니까?"
   },
   "mailbox": {
     "agent": "에이전트",
@@ -4234,14 +4244,7 @@
     "todos": "할 일",
     "usage": "사용량",
     "workflows": "워크플로",
-    "patchnode": "",
-    "artifactsUnreadAriaLabel_one": "",
-    "artifactsUnreadAriaLabel_other": "",
-    "artifactsUnreadDotAriaLabel": "",
-    "recommendations": "",
-    "recommendationsUnreadAriaLabel_one": "",
-    "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": ""
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "의존성 추가",
@@ -5401,7 +5404,8 @@
     "hideDone": "",
     "noActiveTasks": "",
     "noTasksYet": "",
-    "showDone": ""
+    "showDone": "",
+    "archivedCopy": "보관된 작업"
   },
   "routine": {
     "andMore_one": "",
@@ -5732,8 +5736,6 @@
     "confirmDelete": "삭제 확인",
     "confirmDeleteNamed": "{{name}} 삭제 확인",
     "deleteScriptNamed": "{{name}} 삭제",
-    "description": "설명 (선택 사항)",
-    "descriptionPlaceholder": "이 스크립트는 어떤 작업을 하나요?",
     "editScriptNamed": "{{name}} 편집",
     "failedToDelete": "스크립트 삭제에 실패했습니다",
     "failedToLoadScripts": "스크립트 불러오기에 실패했습니다",
@@ -5754,7 +5756,9 @@
     "scriptNamePlaceholder": "예: build, test, lint",
     "scriptNameRequired": "스크립트 이름이 필요합니다",
     "scriptUpdated": "스크립트가 업데이트되었습니다",
-    "title": "스크립트"
+    "title": "스크립트",
+    "nameErrorMsg": "이름에는 문자, 숫자, 하이픈, 밑줄만 사용할 수 있습니다(공백 불가)",
+    "nameHint": "문자, 숫자, 하이픈, 밑줄만 사용"
   },
   "secrets": {
     "accessPolicyAuto": "auto",
@@ -6239,12 +6243,7 @@
       "noLimitOnAgentToolOutput": "",
       "noLimitOnAgentToolOutputHint": "",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": "",
-      "chatSubmitOnEnter": "",
-      "chatSubmitOnEnterHint": "",
-      "chatSubmitOnEnterAuto": "",
-      "chatSubmitOnEnterAlways": "",
-      "chatSubmitOnEnterNever": ""
+      "quickAddSubmitOnEnterHint": ""
     },
     "globalModels": {
       "modelOverrides": "",
@@ -6995,7 +6994,12 @@
       "triageDuplicateResolutionHelp": "트리아지에서 감지된 중복을 유지/삭제 결정으로 차단(기본)하거나, 차단 없이 자동 유지/삭제합니다.",
       "triageDuplicateResolutionPrompt": "결정 대기(기본)",
       "triageDuplicateResolutionKeep": "자동 유지",
-      "triageDuplicateResolutionDelete": "자동 삭제"
+      "triageDuplicateResolutionDelete": "자동 삭제",
+      "archiveAgentLog": "에이전트 로그 보관",
+      "archiveCompletedTasksAfterDays": "완료된 작업 보관 기간(일)",
+      "autoArchiveDuplicateTasks": "중복 작업 자동 보관",
+      "autoArchiveDuplicateTasksHelp": "생성 시 동일 에이전트의 중복으로 감지된 작업을 자동으로 보관합니다(기본값: 해제). 해제하면 중복 작업은 보관되지 않고 노란색 중복 칩과 유지/보관 작업으로 표시됩니다.",
+      "doNotArchiveAgentLogs": "에이전트 로그를 보관하지 않음"
     },
     "title": "설정",
     "worktrees": {
@@ -7532,7 +7536,30 @@
     "gitPrerequisiteMissingBody": "Fusion could not find `git` on the server host running Fusion. Install Git there before cloning repositories, initializing projects, or registering Git-backed workspaces.",
     "gitPrerequisiteMissingTitle": "Install Git before project setup",
     "gitPrerequisiteReadyTitle": "Git prerequisite ready",
-    "gitPrerequisiteWindows": "Windows: install Git for Windows and restart the Fusion host shell or service."
+    "gitPrerequisiteWindows": "Windows: install Git for Windows and restart the Fusion host shell or service.",
+    "antigravityCli": {
+      "active": "Antigravity가 활성화되어 있습니다",
+      "binaryNotFound": "Antigravity 실행 파일을 찾을 수 없습니다",
+      "binaryPathHelp": "Antigravity 실행 파일의 경로를 지정하세요. 자동 감지를 사용하려면 비워 두세요.",
+      "binaryPathLabel": "Antigravity 실행 파일 경로",
+      "binaryPathPlaceholder": "예: /usr/local/bin/antigravity",
+      "connected": "Antigravity {{version}}에 연결됨",
+      "description": "Antigravity를 AI 제공자로 사용합니다",
+      "detectedPrompt": "Antigravity를 찾았습니다. 사용하시겠습니까?",
+      "disable": "Antigravity 비활성화",
+      "disabling": "Antigravity 비활성화 중…",
+      "enable": "Antigravity 활성화",
+      "enabling": "Antigravity 활성화 중…",
+      "notConnected": "Antigravity가 연결되지 않았습니다",
+      "pathCleared": "Antigravity 경로를 지웠습니다",
+      "pathSaved": "Antigravity 경로를 저장했습니다",
+      "probing": "Antigravity 확인 중…",
+      "providerName": "Google Antigravity — agy CLI 사용",
+      "saveAndTestPath": "경로 저장 및 테스트",
+      "savingPath": "경로 저장 중…",
+      "test": "테스트",
+      "testing": "Antigravity 테스트 중…"
+    }
   },
   "shell": {
     "activePill": "활성",
@@ -7622,37 +7649,7 @@
     "noMatches": "No matching skills",
     "loadError": "Skills could not be loaded.",
     "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries",
-    "snippetsReservedName": "이 이름은 채팅 명령용으로 예약되어 있습니다.",
-    "snippetsInvalidName": "문자, 숫자, 밑줄 또는 하이픈을 1~48자 사용하세요.",
-    "snippetsPromptRequired": "이 스니펫의 프롬프트를 입력하세요.",
-    "snippetsPromptTooLong": "프롬프트는 최대 {{count}}자까지 입력할 수 있습니다.",
-    "snippetsDuplicateName": "이 이름의 스니펫이 이미 있습니다.",
-    "snippetsLimitReached": "스니펫은 최대 {{count}}개까지 저장할 수 있습니다.",
-    "snippetsSaveError": "스니펫을 저장할 수 없습니다. 새로 고친 후 다시 시도하세요.",
-    "snippetsDeleteError": "스니펫을 삭제할 수 없습니다. 새로 고친 후 다시 시도하세요.",
-    "snippetsTitle": "채팅 스니펫",
-    "snippetsCount": "{{count}}개 저장됨",
-    "snippetsDescription": "재사용 가능한 프롬프트를 저장한 다음 채팅에서 /이름을 입력해 전송하지 않고 삽입하세요.",
-    "snippetsLoading": "스니펫 불러오는 중...",
-    "snippetsLoadError": "스니펫을 새로 고칠 수 없습니다. 마지막으로 불러온 목록이 계속 표시됩니다.",
-    "snippetsFormLabel": "채팅 스니펫 편집기",
-    "snippetsNameLabel": "이름",
-    "snippetsNameHelp": "문자, 숫자, 밑줄 또는 하이픈을 최대 48자까지 사용할 수 있습니다.",
-    "snippetsPromptLabel": "프롬프트",
-    "snippetsPromptHelp": "{{count}} / {{max}}자",
-    "snippetsSaving": "저장 중...",
-    "snippetsSaveChanges": "변경 사항 저장",
-    "snippetsAdd": "스니펫 추가",
-    "snippetsEmpty": "저장된 스니펫이 없습니다.",
-    "snippetsEdit": "/{{name}} 편집",
-    "snippetsDelete": "/{{name}} 삭제",
-    "tabSkills": "스킬",
-    "tabSnippets": "스니펫",
-    "tabsLabel": "스킬 및 스니펫 섹션",
-    "skillsDescription": "이 프로젝트에서 사용할 수 있는 스킬을 탐색하고 활성화하거나 설치하세요.",
-    "snippetsEmptyHint": "여기에서 만든 다음 채팅에 /이름을 입력해 삽입하세요.",
-    "refreshSkillsLabel": "스킬 새로 고침",
-    "refreshSnippetsLabel": "스니펫 새로 고침"
+    "snippetsTitle": "채팅 스니펫"
   },
   "specEditor": {
     "edit": "편집",
@@ -7861,9 +7858,7 @@
   },
   "taskDetail": {
     "actions": {
-      "menuBtn": "작업",
-      "oversightHeading": "",
-      "priorityHeading": ""
+      "menuBtn": "작업"
     },
     "agent": {
       "assignBtn": "에이전트 할당",
@@ -7952,7 +7947,10 @@
       "linkedIssueTitle": "연결된 GitHub 이슈",
       "message": "{{id}}를 삭제하시겠습니까?",
       "moreOptions": "추가 옵션",
-      "title": "작업 삭제"
+      "title": "작업 삭제",
+      "archivedAfterUnlink": "참조를 해제한 뒤 작업 {{id}}을(를) 보관했습니다",
+      "archiveInstead": "대신 보관",
+      "archiveUnlinkPrompt": "먼저 이 참조를 해제하고 보관하시겠습니까?"
     },
     "deps": {
       "addBtn": "의존성 추가",
@@ -8100,7 +8098,12 @@
       "deleteTitle": "중복 작업 삭제",
       "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
       "dismissBtn": "Mark the duplicate flag for {{id}} as read",
-      "dismissed": "Duplicate flag cleared for {{id}}"
+      "dismissed": "Duplicate flag cleared for {{id}}",
+      "archiveBtn": "보관",
+      "archiveConfirm": "보관 확인",
+      "archived": "작업 {{id}} 보관됨",
+      "archiveMessage": "{{id}}을(를) {{duplicateOf}}의 중복으로 보관하시겠습니까?",
+      "archiveTitle": "작업 보관"
     },
     "nextRecoveryAt": "다음 복구 시각: {{time}}",
     "no": "아니요",
@@ -8872,7 +8875,17 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
-    }
+    },
+    "archive": "보관",
+    "archived": "작업 {{taskId}} 보관됨",
+    "archivedUnlinked": "작업 {{taskId}}을(를) 보관하고 참조를 해제했습니다",
+    "archiveFailed": "작업 {{taskId}} 보관에 실패했습니다: {{error}}",
+    "archiveLineageConflict": "{{taskId}}에는 계보 하위 작업 {{children}}개가 있어 보관할 수 없습니다",
+    "archiveTask": "작업 보관",
+    "unarchive": "보관 해제",
+    "unarchived": "작업 {{taskId}} 보관 해제됨",
+    "unarchiveFailed": "작업 {{taskId}} 보관 해제에 실패했습니다: {{error}}",
+    "unarchiveTask": "작업 보관 해제"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9508,15 +9521,16 @@
   },
   "workflowSwitcher": {
     "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
-    "plan": "계획",
-    "progress": "진행",
     "label": "Workflow",
     "merging": "",
     "mergingTitle": "",
-    "review": "검토",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "newWorkflow": "New workflow",
+    "done": "완료",
+    "inProgress": "진행 중",
+    "todo": "할 일",
+    "plan": "계획"
   },
   "workspace": {
     "projectRoot": "프로젝트 루트",
@@ -9761,11 +9775,7 @@
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": "",
-    "zoomIn": "",
-    "zoomOut": "",
-    "resetZoom": "",
-    "zoomLevel": ""
+    "retry": ""
   },
   "taskHistory": {
     "stage": {
@@ -9834,23 +9844,5 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
-  },
-  "recommendations": {
-    "count": "",
-    "createError": "",
-    "createTask": "",
-    "created": "",
-    "creating": "",
-    "emptyDescription": "",
-    "emptyTitle": "",
-    "loadError": "",
-    "loadMore": "",
-    "loading": "",
-    "loadingMore": "",
-    "retryCreate": "",
-    "source": "",
-    "title": "",
-    "truncated": "",
-    "viewTask": ""
   }
 }
