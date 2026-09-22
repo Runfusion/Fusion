@@ -738,6 +738,40 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
   ];
 }
 
+/*
+FNXC:ChatAgentMemory 2026-09-22-03:01:
+Structural clone of the engine's (unexported) AgentMemoryContext — the shape
+`createMemoryTools` consumes for agent-scoped recall. Kept structural so the engine can
+rename the type without a cross-package export churn.
+*/
+type ChatAgentMemoryContext = { agentId: string; agentName?: string; memory?: string | null };
+
+/** Resolve the bound agent's memory context; any lookup failure yields project-scoped recall. */
+async function resolveChatAgentMemoryContext(
+  agentStore: { getAgent?: (id: string) => Promise<{ id: string; name: string; memory?: string | null } | null | undefined> },
+  agentId: string,
+): Promise<ChatAgentMemoryContext | undefined> {
+  try {
+    const agent = await agentStore.getAgent?.(agentId);
+    if (!agent) return undefined;
+    return { agentId: agent.id, agentName: agent.name, memory: agent.memory ?? null };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Compose createMemoryTools options; empty composition collapses to undefined (pre-existing call shape). */
+function buildChatMemoryToolOptions(input: {
+  focusEnabled: boolean;
+  focus?: string;
+  agentMemory?: ChatAgentMemoryContext;
+}): { focus?: string; agentMemory?: ChatAgentMemoryContext } | undefined {
+  const options: { focus?: string; agentMemory?: ChatAgentMemoryContext } = {};
+  if (input.focusEnabled && input.focus) options.focus = input.focus;
+  if (input.agentMemory) options.agentMemory = input.agentMemory;
+  return Object.keys(options).length > 0 ? options : undefined;
+}
+
 export async function createChatFusionToolset(options: ChatFusionToolsetOptions): Promise<ChatCustomTool[]> {
   const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false, actionGateContext, focus, isMergePending, resetInReviewMergeRetry } = options;
   const tools: ChatCustomTool[] = [];
@@ -784,11 +818,24 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       /* FNXC:Ideation 2026-07-30-15:30: Unbound or ephemeral chat exposes only positive ideation reads; mutations require the same durable gate context as Mission writes. */
       ...createIdeationTools(taskStore).filter((tool) => missionMutationGated || CHAT_IDEATION_READ_TOOL_NAMES.has(tool.name)),
       ...createGoalRetrievalTools(taskStore),
-      /* FNXC:ChatAgentTools 2026-07-15-00:00: Chat exposes memory retrieval only and respects the workspace memory-enabled setting; prompt-triggered persistent writes stay excluded without an action-gate context. */
+      /*
+      FNXC:ChatAgentMemory 2026-09-22-03:01:
+      Chat binds to a real durable agent (direct chat) or a room responder; both must
+      recall THAT agent's memory. Without the agentMemory context, fn_memory_search
+      skipped agent memory and fn_memory_get fell through to project memory — and once
+      the prompt budget replaces an oversized agent-memory body with an index, that
+      index tells the model to recall via these tools, so a blind recall path is a dead
+      end (review finding). Lookup failure degrades to project-scoped recall instead of
+      dropping the read-only memory tools.
+      */
       ...createMemoryTools(
         rootDir,
         settings,
-        focus && isExperimentalFeatureEnabled(settings, CHAT_FOCUS_FLAG) ? { focus } : undefined,
+        buildChatMemoryToolOptions({
+          focusEnabled: Boolean(focus) && isExperimentalFeatureEnabled(settings, CHAT_FOCUS_FLAG),
+          focus,
+          agentMemory: agentId && agentStore ? await resolveChatAgentMemoryContext(agentStore, agentId) : undefined,
+        }),
       ).filter((tool) => tool.name !== "fn_memory_append"),
       ...createResearchTools({ store: taskStore, rootDir, getSettings: () => taskStore.getSettings() }),
     );
@@ -3537,6 +3584,20 @@ export class ChatManager {
       });
       if (gateResult.fallback) {
         contextTruncationNotice = gateResult.fallback;
+      }
+
+      /*
+      FNXC:ChatGenerationFence 2026-09-22-03:01:
+      The gate await can take seconds (LLM compaction). A second send during that window
+      calls beginGeneration, which aborts this send's controller and steals the
+      active-generation slot, but the code previously reached enginePromptWithFallback
+      anyway and ran an obsolete model/tool turn concurrently with the replacement against
+      the same CLI session file (review finding). Re-check cancellation here, before the
+      prompt; the throw lands in the silent aborted-cleanup arm below, so no error frame
+      can leak into the newer generation's stream and the handoff primer stays pending.
+      */
+      if (abortController.signal.aborted) {
+        throw new Error("Generation cancelled");
       }
 
       // Send user message and get response

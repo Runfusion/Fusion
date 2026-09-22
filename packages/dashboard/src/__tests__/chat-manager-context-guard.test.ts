@@ -310,6 +310,44 @@ describe("ChatManager.sendMessage — pre-overflow compaction gate (dashboard se
     expect(order).toEqual(["compact", "prompt"]);
   });
 
+  /*
+  FNXC:ChatGenerationFence 2026-09-22-02:15:
+  Greptile finding #1 on the compaction-gate PR: the gate await can take seconds (LLM
+  compaction). A second send during that window calls beginGeneration, which aborts this
+  send's controller and steals the active-generation slot, but the old send still reached
+  enginePromptWithFallback and ran an obsolete model turn against the same CLI session
+  file. The post-gate cancellation re-check must skip the prompt entirely.
+  */
+  it("abandons the send without prompting when a newer generation supersedes it while the gate awaits", async () => {
+    setupSession();
+    const order: string[] = [];
+    const { session, compact } = makeFakeSession({
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+      usageTokens: 150_000,
+      compactAfterTokens: 20_000,
+    });
+    mockCreateResolvedAgentSession.mockResolvedValue({ session, model: { provider: "test-provider", modelId: "test-model" } });
+    const manager = makeManager();
+    mockEnsureContextWithinCompactionThreshold.mockImplementation(async (s: unknown, o: unknown) => {
+      order.push("gate");
+      // The sanctioned pre-emption seam: a newer send allocating a generation aborts
+      // this one's controller, exactly as beginGeneration does in production.
+      manager.beginGeneration("chat-guard");
+      return gateHolder.real(s as never, o as never);
+    });
+    mockPromptWithFallback.mockImplementation(async () => {
+      order.push("prompt");
+      return undefined;
+    });
+
+    await manager.sendMessage("chat-guard", "hello world");
+
+    expect(compact).toHaveBeenCalledTimes(1);
+    expect(mockPromptWithFallback).not.toHaveBeenCalled();
+    expect(order).toEqual(["gate"]);
+  });
+
   it("surfaces a distinct overflow failure and skips the prompt when the context is still at/above the hard limit after compaction", async () => {
     // 150,000 loaded → compact; post-compaction 120,000 ≥ 111,616 hard limit → throw.
     setupSession();
