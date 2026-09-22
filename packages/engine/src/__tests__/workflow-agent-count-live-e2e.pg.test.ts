@@ -34,8 +34,14 @@ import { persistedTopLevelAgentSlotsFromStore } from "../concurrency/concurrency
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live agent-count E2E: what the cap is actually compared against", () => {
+  /*
+  FNXC:PatchnodeProjectScope 2026-09-22-03:44:
+  Completion writes are project-owned. Bind this live terminal-transition harness so its Patchnode
+  transaction uses the same non-empty partition as the store and workflow config.
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_agent_count_e2e",
+    projectId: "fusion-agent-count-e2e",
   });
 
   beforeAll(h.beforeAll);

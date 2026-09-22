@@ -47,8 +47,14 @@ import {
 import { TriageProcessor } from "../triage.js";
 
 pgDescribe("U11 stranded-column behaviour against a live store and the REAL default workflow", () => {
+  /*
+  FNXC:PatchnodeProjectScope 2026-09-22-03:44:
+  The stranded-column flow reaches a real completed-task transition. Bind this live harness so its
+  Patchnode transaction receives the same non-empty project partition as the task store.
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_u11_stranded",
+    projectId: "fusion-stranded-column-e2e",
   });
 
   beforeAll(h.beforeAll);
