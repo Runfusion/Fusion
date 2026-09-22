@@ -20,6 +20,15 @@ Verified the CodeRabbit `install_hooks.py` finding against current PR head `e15d
 
 Validation: all 10 standalone native tests passed, both changed Python files compile, changeset-format and FNXC timestamp checks passed, and `git diff --check` passed. The source fix was pushed by normal fast-forward to `flexi767:claude/remote-agents-landing-20260919`; fresh PR checks follow this documentation checkpoint. No deployment, service, database, routing, native hook configuration, active agent or provider setting changed. Remaining review leads stay pending and must be verified individually.
 
+## PR #3637 feedback-receipt review fix (2026-09-22 17:30 UTC)
+
+Checked CodeRabbit thread 4060778285 against head `79548ab23`. It was valid. The API returns only `queued`, `delivered`, `expired` and `uncertain` (claimed rows show as `uncertain`), and resubmitting an existing command ID returns its stored receipt. The panel treated any receipt with the current command ID as pending. After a lost POST response, polling could surface that receipt and leave the composer locked after it turned terminal.
+
+- `6a608cae5`: only `queued` blocks the composer. A terminal receipt for the current command rotates the command ID. Text is cleared only on `delivered` and kept after `expired` or `uncertain` so the operator can resend. New `it.each` regression: lost POST, receipt queued (locked), receipt terminal (unlocked, expected text), and the next send uses a new ID. The three new cases fail on the previous component. Local checks: 14/14 panel tests across both dashboard vitest projects, ESLint, dashboard `tsc -p tsconfig.app.json`, FNXC date check, `git diff --check`.
+- CI at `6a608cae5`: all 13 checks passed (PR Checks 35757460226, Desktop packaging 35757460278, Agent-browser install 35757460256, ThreatCrush 35757460244, Greptile, CodeRabbit). Thread reply: https://github.com/Runfusion/Fusion/pull/3637#discussion_r4074209053.
+- The rejected skip-first-fetch-while-hidden rationale stands unchanged: the resume tick loads in merge mode and would lose the list cursor.
+- Queued, still unverified: legacy PostgreSQL upgrade expectations, public-schema migration bookkeeping, schema-probe coupling to `tasks`, feedback-schema repair (open `schema-applier.ts` and `external-sessions.pg.test.ts` threads), and the route README thread. No deployment, service, database, or provider change happened.
+
 ## PR #3637 polling review fix (2026-09-22 16:35 UTC)
 
 Checked the Greptile P2 on `RemoteAgentsPanel.tsx` against head `9438d9be9`. It was partly valid: three independent `setInterval` loops (5s detail, 10s list, 10s hosts) kept running in hidden tabs. Its claim that this breaks the AGENTS.md polling rule is wrong, because that rule covers tests. External sessions have no push channel, so polling stays.
