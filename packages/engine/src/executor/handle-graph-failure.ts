@@ -37,7 +37,7 @@ import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
 import { rerouteUnrunPreMergeGateToReview } from "../merge/pre-merge-gate-reseed.js";
-import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { MERGE_BOUNDARY_RECOVERY_VALUE, MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
 import {
@@ -915,6 +915,18 @@ export async function handleGraphFailure(
       const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
       const mergeGraphFailure = isMergeGraphFailure(failedNode);
       const failureValue = graphFailureValue(result);
+      const recoveryCode = result.context?.["workflow:merge-boundary-recovery-code"];
+      const recoveryMissingIds = result.context?.["workflow:merge-boundary-missing-instance-ids"];
+      const recoveryNonTerminalNodeId = result.context?.["workflow:merge-boundary-non-terminal-node-id"];
+      const boundaryEvidence = failureValue === MERGE_BOUNDARY_RECOVERY_VALUE
+        && (recoveryCode === "no-node-result" || recoveryCode === "non-terminal-node-result" || recoveryCode === "missing-foreach-instances")
+        && Array.isArray(recoveryMissingIds) && recoveryMissingIds.every((id) => typeof id === "string")
+        ? {
+            code: recoveryCode,
+            missingInstanceIds: recoveryMissingIds,
+            nonTerminalNodeId: typeof recoveryNonTerminalNodeId === "string" ? recoveryNonTerminalNodeId : undefined,
+          }
+        : undefined;
       /*
       FNXC:DuplicateIntake 2026-08-01-19:24:
       Defense in depth for FN-8704: if a card slipped into WIP with PROMPT.md = only
@@ -1116,8 +1128,15 @@ export async function handleGraphFailure(
         await deps.persistTokenUsage(task.id);
         return;
       }
-      if (mergeGraphFailure && failureValue === "implementation-incomplete") {
-        if (await deps.routeImplementationIncompleteMergeGraphFailure(live, failedNode ?? "unknown")) {
+      if (mergeGraphFailure && (failureValue === "implementation-incomplete" || failureValue === MERGE_BOUNDARY_RECOVERY_VALUE)) {
+        /*
+        FNXC:WorkflowMergeRecovery 2026-09-20-18:37:
+        The direct merge primitive and retry boundary share this recovery entry.
+        Only the typed evidence-gap result may authorize the named review-to-WIP
+        remediation; ordinary implementation-incomplete failures keep their
+        existing in-place-only lifecycle containment.
+        */
+        if (await deps.routeImplementationIncompleteMergeGraphFailure(live, failedNode ?? "unknown", failureValue, boundaryEvidence)) {
           return;
         }
       }

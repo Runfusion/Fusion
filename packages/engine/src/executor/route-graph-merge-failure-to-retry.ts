@@ -5,16 +5,21 @@
  * FNXC:WorkflowMerge 2026-07-12-17:38:
  * FN-1165: never route implementation-incomplete merge failures to the merge requester.
  */
-import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, type TaskDetail, type TaskStore } from "@fusion/core";
+import {
+  allowsAutoMergeProcessing,
+  PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
+  type TaskDetail,
+  type TaskStore,
+} from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 import { isGenericAbortProvenance } from "./paused-abort-provenance.js";
 import { graphFailureValue } from "./graph-failure-pure.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
-import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { MERGE_BOUNDARY_RECOVERY_VALUE, MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
-import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
+import type { MergeBoundaryRecoveryEvidence, MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.js";
 import { AUTO_MERGE_RETRY_REJECTED_PREFIX } from "../merge/stale-content-park.js";
 
 export type RouteGraphMergeFailureToRetryDeps = {
@@ -30,9 +35,17 @@ export type RouteGraphMergeFailureToRetryDeps = {
       reason: string;
       code: MergeBoundaryUnprovenReasonCode;
       missingInstanceCount: number;
+      evidence: MergeBoundaryRecoveryEvidence;
     };
   }>;
   persistTokenUsage: (taskId: string) => Promise<void>;
+  routeGraphFailureToExecutionResume?: (
+    live: TaskDetail,
+    failedNode: string,
+    failureValue: string,
+    resumeLanesMemo?: unknown,
+    boundaryEvidence?: MergeBoundaryRecoveryEvidence,
+  ) => Promise<boolean>;
 };
 
 const BIT_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 32000, 64000];
@@ -172,7 +185,50 @@ export async function routeGraphMergeFailureToRetry(
       work, rather than silently retaining an in-review blocker.
       */
       if (mergeBoundary.blocked) {
-        const { reason, code, missingInstanceCount } = mergeBoundary.blocked;
+        const { reason, code, missingInstanceCount, evidence } = mergeBoundary.blocked;
+        /*
+        FNXC:WorkflowMergeRecovery 2026-09-20-18:37:
+        Retry-boundary admission must take the identical fenced remediation path
+        as direct merge admission. Recheck never calls mergeRequester while the
+        proof is absent; if no resolved owner can resume, preserve the existing
+        terminal fail-closed path below.
+        */
+        if (await deps.routeGraphFailureToExecutionResume?.(live, failedNode, MERGE_BOUNDARY_RECOVERY_VALUE, undefined, evidence)) {
+          await deps.store.logEntry(live.id, `Workflow merge boundary retry scheduled evidence recovery: ${reason}`, undefined, deps.getRunContextFor(live.id));
+          await persistTokenUsageBestEffort(deps.persistTokenUsage, live.id);
+          return true;
+        }
+        const settings = typeof deps.store.getSettings === "function"
+          ? await deps.store.getSettings().catch(() => undefined)
+          : undefined;
+        /*
+        FNXC:WorkflowMergeRecovery 2026-09-21-11:07:
+        A recovery refusal for an operator auto-merge hold is not missing ownership.
+        Keep that review card terminal-until-human-control: the retry router must not
+        convert an `autoMerge:false` hold into a failed merge-boundary park.
+        */
+        /*
+        FNXC:WorkflowMergeRecovery 2026-09-21-11:22:
+        Recovery can decline after its fenced claim observes a newly enabled human-control hold.
+        Re-read the durable row before the fallback decision and repeat the hold predicate in
+        the terminal reducer so a stale retry cannot turn an operator's autoMerge:false card
+        into a merge-boundary failure or overwrite its continuation.
+        */
+        const current = typeof deps.store.getTask === "function"
+          ? await deps.store.getTask(live.id).catch(() => undefined)
+          : live;
+        if (
+          !current
+          || current.deletedAt
+          || current.paused
+          || current.userPaused
+          || current.autoMerge === false
+          || (settings && !allowsAutoMergeProcessing(current, settings))
+        ) {
+          await deps.store.logEntry(live.id, `Workflow merge boundary retry is held for human control: ${reason}`, undefined, deps.getRunContextFor(live.id));
+          await persistTokenUsageBestEffort(deps.persistTokenUsage, live.id);
+          return true;
+        }
         await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.getRunContextFor(live.id));
         let parked = false;
         /*
@@ -189,6 +245,8 @@ export async function routeGraphMergeFailureToRetry(
             || current.status != null
             || current.paused
             || current.userPaused
+            || current.autoMerge === false
+            || (settings && !allowsAutoMergeProcessing(current, settings))
             || (typeof live.columnMovedAt === "string"
               && typeof current.columnMovedAt === "string"
               && current.columnMovedAt !== live.columnMovedAt)

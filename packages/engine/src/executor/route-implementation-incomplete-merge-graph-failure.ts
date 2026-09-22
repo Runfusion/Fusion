@@ -11,6 +11,8 @@ import type { EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
 import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
+import { MERGE_BOUNDARY_RECOVERY_VALUE } from "../workflows/workflow-merge-nodes.js";
+import type { MergeBoundaryRecoveryEvidence } from "./workflow-merge-boundary.js";
 
 export type RouteImplementationIncompleteMergeGraphFailureDeps = {
   store: TaskStore;
@@ -21,6 +23,8 @@ export type RouteImplementationIncompleteMergeGraphFailureDeps = {
     live: TaskDetail,
     failedNode: string,
     failureValue: string | undefined,
+    resumeLanesMemo?: unknown,
+    boundaryEvidence?: MergeBoundaryRecoveryEvidence,
   ) => Promise<boolean>;
   persistTokenUsage: (taskId: string) => Promise<void>;
 };
@@ -29,6 +33,8 @@ export async function routeImplementationIncompleteMergeGraphFailure(
   deps: RouteImplementationIncompleteMergeGraphFailureDeps,
   live: TaskDetail,
   failedNode: string,
+  failureValue: "implementation-incomplete" | typeof MERGE_BOUNDARY_RECOVERY_VALUE = "implementation-incomplete",
+  boundaryEvidence?: MergeBoundaryRecoveryEvidence,
 ): Promise<boolean> {
     /*
     FNXC:WorkflowMerge 2026-07-14-18:20:
@@ -48,7 +54,8 @@ export async function routeImplementationIncompleteMergeGraphFailure(
       }, deps.getRunContextFor(live.id));
       resumeLive = { ...live, paused: false, pausedReason: undefined };
     }
-    if (hasNonTerminalWorkflowSteps(resumeLive) && await deps.routeGraphFailureToExecutionResume(resumeLive, failedNode, "implementation-incomplete")) {
+    if ((hasNonTerminalWorkflowSteps(resumeLive) || failureValue === MERGE_BOUNDARY_RECOVERY_VALUE)
+      && await deps.routeGraphFailureToExecutionResume(resumeLive, failedNode, failureValue, undefined, boundaryEvidence)) {
       return true;
     }
     // Fail-closed terminal path — release active worktree tracking now that no resume will reuse it.

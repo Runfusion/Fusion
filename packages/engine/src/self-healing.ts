@@ -44,6 +44,7 @@ import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLane
   isFusionDeletableBranch,
   isTaskExternallyBlocked,
   isTaskLogWriteRefusal,
+  hasNonTerminalSteps,
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
 } from "@fusion/core";
@@ -117,6 +118,9 @@ import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js
 import { shouldReclaimWedgedMerge } from "./merge/merge-reclaim-policy.js";
 import { resolveRemediationCheckout } from "./executor/resolve-remediation-checkout.js";
 import { isDefiniteEmptyCodeReviewRevise } from "./executor/review-empty-content-close.js";
+import { evaluateWorkflowMergeBoundary } from "./executor/evaluate-workflow-merge-boundary.js";
+import { loadMergeBoundaryInstances } from "./executor/workflow-merge-boundary-helpers.js";
+import { recoverMergeBoundaryEvidenceGap } from "./executor/route-graph-failure-to-execution-resume.js";
 import { reapExpiredFusionBrowserLeasesInProduction } from "./agent-browser-lifecycle.js";
 
 import { advanceIntegrationBranchRef } from "./merge/merger-ref-update-advance.js";
@@ -1962,6 +1966,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // stall-deadlock ride this sweep exists to prevent.
       { name: "reconcile-orphaned-pending-step-results", fn: () => this.reconcileOrphanedPendingStepResults().then(() => undefined) },
       { name: "reconcile-unproven-review-approvals", fn: () => this.reconcileUnprovenReviewApprovals().then(() => undefined) },
+      { name: "reconcile-merge-boundary-evidence-gaps", fn: () => this.reconcileMergeBoundaryEvidenceGaps().then(() => undefined) },
       /*
       FNXC:WorkspaceContention 2026-08-23-08:00:
       `contention-hold` is owned by an in-memory retry timer. After a process restart that
@@ -3039,6 +3044,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           */
           { name: "reconcile-orphaned-pending-step-results", fn: () => this.reconcileOrphanedPendingStepResults() },
           { name: "reconcile-unproven-review-approvals", fn: () => this.reconcileUnprovenReviewApprovals() },
+          { name: "reconcile-merge-boundary-evidence-gaps", fn: () => this.reconcileMergeBoundaryEvidenceGaps() },
           { name: "recover-failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps() },
           { name: "recover-missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures() },
           { name: "recover-interrupted-merging", fn: () => this.recoverInterruptedMergingTasks() },
@@ -8812,6 +8818,75 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   would discard that valid result. Re-check lane, user pause, workspace ownership, and session liveness
   in the callback, then log and audit only a repair whose atomic mutation actually applied.
   */
+  /*
+  FNXC:WorkflowMergeRecovery 2026-09-20-19:38:
+  A historic merge-boundary-unproven park can outlive the executor process that
+  created it. Recover only durable failed evidence with unfinished checklist
+  work, then use the ordinary named merge-fix remediation transition; no sweep
+  may invent node proof, clear an external blocker, or disturb a live session.
+  */
+  async reconcileMergeBoundaryEvidenceGaps(): Promise<number> {
+    const settings = await this.store.getSettings().catch(() => undefined);
+    if (!settings || settings.globalPause || settings.enginePaused) return 0;
+    const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+    const candidates = new Map<string, Task>();
+    for (const column of reviewColumns) {
+      for (const task of await this.store.listTasks({ column, slim: true })) candidates.set(task.id, task);
+    }
+    const isSessionLive = (taskId: string): boolean => activeSessionRegistry.pathsForTask(taskId)
+      .some((path) => activeSessionRegistry.isPathActive(path))
+      || executingTaskLock.has(taskId)
+      || this.options.isTaskActive?.(taskId) === true;
+    let recovered = 0;
+    for (const candidate of candidates.values()) {
+      if (!candidate.error?.includes("merge-boundary-unproven")) continue;
+      const fresh = await this.store.getTask(candidate.id);
+      if (!fresh || fresh.deletedAt || fresh.userPaused || fresh.paused || fresh.workspaceWorktrees !== undefined
+        || isTaskExternallyBlocked(fresh) || isSessionLive(fresh.id)
+        || !allowsAutoMergeProcessing(fresh, settings)) continue;
+      const ir = await resolveWorkflowIrForTask(this.store, fresh.id).catch(() => undefined);
+      const column = (ir as WorkflowIrV2 | undefined)?.columns.find((entry) => entry.id === fresh.column);
+      const wipColumn = (ir as WorkflowIrV2 | undefined)?.columns
+        .find((entry) => resolveColumnFlags(entry).countsTowardWip === true)?.id;
+      if (!column || !wipColumn || !isReviewColumnRole(resolveColumnFlags(column), fresh.column)) continue;
+
+      const proof = await evaluateWorkflowMergeBoundary(
+        { store: this.store, loadMergeBoundaryInstances: (taskId, runId) => loadMergeBoundaryInstances({ store: this.store }, taskId, runId) },
+        fresh,
+      ).catch(() => undefined);
+      if (!proof?.hasForeachStepExecute || proof.complete || (fresh.noCommitsExpected === true && !hasNonTerminalSteps(fresh))) continue;
+      const evidence = !proof.hasRelevantNodeResult
+        ? { code: "no-node-result" as const, missingInstanceIds: [] }
+        : !proof.allResultsTerminal
+          ? { code: "non-terminal-node-result" as const, nonTerminalNodeId: proof.nonTerminalResult?.workflowStepId, missingInstanceIds: [] }
+          : { code: "missing-foreach-instances" as const, missingInstanceIds: proof.missingInstanceIds };
+      const outcome = await recoverMergeBoundaryEvidenceGap(
+        { store: this.store, getRunContextFor: () => undefined },
+        fresh,
+        "merge-boundary",
+        evidence,
+        wipColumn,
+        settings,
+      );
+      if (outcome !== "recovered") continue;
+      recovered += 1;
+      await this.store.logEntry(
+        fresh.id,
+        "Workflow merge evidence recovery resumed the proven implementation owner; merge proof will be checked after durable progress",
+      ).catch(() => undefined);
+      await emitBoundedRunAudit(this.store, {
+        taskId: fresh.id,
+        agentId: "self-healing",
+        runId: generateSyntheticRunId("reconcile-merge-boundary-evidence-gap", fresh.id),
+        domain: "database",
+        mutationType: "task:merge-boundary-evidence-recovered",
+        target: fresh.id,
+        metadata: { taskId: fresh.id, outcome: "resumed" },
+      }, { log });
+    }
+    return recovered;
+  }
+
   async reconcileUnprovenReviewApprovals(): Promise<number> {
     try {
       const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);

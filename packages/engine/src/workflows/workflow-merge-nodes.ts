@@ -2,8 +2,11 @@ import type { TaskDetail } from "@fusion/core";
 import type { MergePrimitiveResult, WorkflowPrimitiveContext, WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 import type { WorkflowNodeResult } from "./workflow-graph-executor.js";
 
-/** A terminal graph value: retrying cannot create missing merge-boundary proof. */
+/** A legacy graph value retained to classify stranded rows created before FN-9345. */
 export const MERGE_BOUNDARY_UNPROVEN_VALUE = "merge-boundary-unproven";
+
+/** A graph-native remediation value: implementation evidence is absent, never fabricated. */
+export const MERGE_BOUNDARY_RECOVERY_VALUE = "merge-boundary-evidence-recovery";
 
 export const PRESERVED_MERGE_FAILURE_REASONS = new Set(["implementation-incomplete", "merge-unavailable", "workspace-review-required"]);
 
@@ -40,14 +43,16 @@ export function classifyMergePrimitiveResult(
   primitiveOutcome: WorkflowNodeResult["outcome"],
 ): WorkflowNodeResult {
   /*
-  FNXC:WorkflowMerge 2026-08-20-00:50:
-  FN-9157 requires an unprovable merge boundary to remain terminal on direct
-  merge-attempt dispatch. Preserve this explicit value before failed-data
-  classification, whose unknown-reason fallback is merge-failed and would repeat
-  the boundary retry.
+  FNXC:WorkflowMergeRecovery 2026-09-20-18:37:
+  Missing boundary evidence is an engine-owned bookkeeping/dispatch gap, not a
+  merge outcome. Preserve a typed remediation result so the failure router can
+  resume proven unfinished work without inventing a node result, checklist
+  completion, review approval, or merge proof. The legacy terminal token remains
+  classified as-is for already persisted unsafe rows; only a newly observed gap
+  uses the recovery token.
   */
-  if (value === MERGE_BOUNDARY_UNPROVEN_VALUE) {
-    return { outcome: "failure", value: MERGE_BOUNDARY_UNPROVEN_VALUE };
+  if (value === MERGE_BOUNDARY_RECOVERY_VALUE || value === MERGE_BOUNDARY_UNPROVEN_VALUE) {
+    return { outcome: "failure", value };
   }
   if (data?.status === "merged") {
     return { outcome: "success", value: data.noOp ? "already-landed" : "merged" };

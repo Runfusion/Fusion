@@ -55,6 +55,14 @@ const TERMINAL_WORKFLOW_WORK_ITEM_STATES: ReadonlySet<string> = new Set([
 
 const ACTIVE_TASK_CONTINUATION_STATES: WorkflowWorkItemState[] = [...ACTIVE_WORKFLOW_WORK_ITEM_STATES];
 
+/** A conditional recovery lost to a current workflow owner; no row was retired. */
+export class ActiveTaskContinuationError extends Error {
+  constructor(taskId: string) {
+    super(`active task continuation exists for ${taskId}`);
+    this.name = "ActiveTaskContinuationError";
+  }
+}
+
 /**
  * FNXC:WorkflowSerialization 2026-07-26-12:00:
  * FN-8592 serializes a task's workflow continuation decisions on the logical
@@ -307,6 +315,15 @@ export async function replaceActiveTaskWorkflowContinuation(
       eq(schema.project.workflowWorkItems.kind, "task"),
       inArray(schema.project.workflowWorkItems.state, ACTIVE_TASK_CONTINUATION_STATES),
     ));
+    /*
+    FNXC:WorkflowMergeRecovery 2026-09-20-20:12:
+    Boundary-evidence repair may seed a continuation only while the graph is idle.
+    Unlike an intentional successor handoff, it must refuse a live owner rather
+    than retiring it; every task-continuation writer shares this advisory lock.
+    */
+    if (input.onlyIfNoActiveTaskContinuation && activeRows.length > 0) {
+      throw new ActiveTaskContinuationError(input.taskId);
+    }
     for (const row of activeRows as WorkflowWorkItemRow[]) {
       if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
       await transitionWorkflowWorkItem(layer, row.id, "succeeded", { leaseOwner: null, leaseExpiresAt: null, lastError: null }, tx);

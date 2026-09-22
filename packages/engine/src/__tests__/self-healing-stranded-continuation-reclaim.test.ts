@@ -1,13 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Settings, Task, TaskStore, WorkflowWorkItem } from "@fusion/core";
 
-const { recordRunAuditEventMock, resolveTaskLifecycleColumnsMock } = vi.hoisted(() => ({
+const { recordRunAuditEventMock, resolveTaskLifecycleColumnsMock, resolveProjectColumnsForRolesMock, resolveWorkflowIrForTaskMock } = vi.hoisted(() => ({
   recordRunAuditEventMock: vi.fn(async () => undefined),
   resolveTaskLifecycleColumnsMock: vi.fn(),
+  resolveProjectColumnsForRolesMock: vi.fn(async () => new Set(["in-review"])),
+  resolveWorkflowIrForTaskMock: vi.fn(async () => ({
+    version: "v2",
+    columns: [{ id: "in-review", traits: ["review"] }, { id: "todo", traits: ["wip"] }],
+    nodes: [{ id: "implementation", kind: "foreach", config: { source: "task-steps", template: { nodes: [{ id: "step-execute", kind: "prompt", config: { seam: "step-execute" } }], edges: [] } } }],
+    edges: [],
+  })),
 }));
 vi.mock("@fusion/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fusion/core")>()),
   resolveTaskLifecycleColumns: resolveTaskLifecycleColumnsMock,
+  resolveProjectColumnsForRoles: resolveProjectColumnsForRolesMock,
+  resolveWorkflowIrForTask: resolveWorkflowIrForTaskMock,
+  resolveColumnFlags: (column: { id: string }) => column.id === "todo" ? ({ countsTowardWip: true }) : ({ mergeBlocker: true }),
+  resolveContainedBackwardTargetForTask: vi.fn(async () => "todo"),
 }));
 vi.mock("../util/run-audit.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../util/run-audit.js")>()),
@@ -62,7 +73,18 @@ function harness(
   const store = {
     getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, ...settings } as Settings)),
     listDueWorkflowWorkItems: vi.fn(async () => items),
+    listTasks: vi.fn(async () => [task]),
     getTask: vi.fn(async (id: string) => (id === task.id ? task : undefined)),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (live: Task) => Partial<Task> | null) => {
+      const patch = updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
+    moveTask: vi.fn(async (_id: string, column: string) => Object.assign(task, { column })),
+    moveTaskIf: vi.fn(async (_id: string, column: string, predicate: (current: Task) => boolean) => predicate(task) ? Object.assign(task, { column }) && { moved: true } : { moved: false }),
+    replaceActiveTaskWorkflowContinuation: vi.fn(async () => undefined),
+    listWorkflowWorkItemsForTask: vi.fn(async () => []),
+    recordRunAuditEvent: recordRunAuditEventMock,
     transitionWorkflowWorkItem: vi.fn(async (id: string, state: string, patch: Record<string, unknown>) => {
       transitions.push({ id, state, patch });
       return { ...items.find((entry) => entry.id === id)!, state };
@@ -198,5 +220,106 @@ describe("evaluateStrandedContinuationReclaim", () => {
       item: { ...base.item, leaseExpiresAt: new Date(base.now + 60_000).toISOString() },
       stalenessMs: 24 * 3_600_000,
     })).toEqual({ action: "none", reason: "lease-active" });
+  });
+});
+
+/*
+FNXC:WorkflowMergeRecovery 2026-09-20-19:38:
+A restart must repair the old terminal token only after durable unfinished work
+still exists. This production manager test protects the recovery from synthetic proof.
+*/
+describe("reconcileMergeBoundaryEvidenceGaps", () => {
+  it("returns a historic proofless review card to contained implementation remediation", async () => {
+    const { manager, store, task, logged } = harness([], {
+      column: "in-review",
+      autoMerge: true,
+      status: "failed",
+      error: "Workflow graph terminal merge failure at node 'merge' (merge-boundary-unproven)",
+      steps: [{ status: "done" }, { status: "in-progress" }],
+    });
+
+    await expect(manager.reconcileMergeBoundaryEvidenceGaps()).resolves.toBe(1);
+
+    expect((store as any).moveTaskIf).toHaveBeenCalledWith("FN-8932", "todo", expect.any(Function), expect.anything());
+    expect((store as any).replaceActiveTaskWorkflowContinuation).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "implementation" }));
+    expect(task).toMatchObject({ column: "todo", status: null, error: null });
+    expect(logged).toContain("Workflow merge evidence recovery resumed the proven implementation owner; merge proof will be checked after durable progress");
+  });
+
+  it("keeps a stranded review card unchanged when auto-merge is disabled during recovery", async () => {
+    const { manager, store, task } = harness([], {
+      column: "in-review",
+      autoMerge: true,
+      status: "failed",
+      error: "Workflow graph terminal merge failure at node 'merge' (merge-boundary-unproven)",
+      steps: [{ status: "done" }, { status: "in-progress" }],
+    });
+    (store.getTask as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(async () => ({ ...task }))
+      .mockImplementation(async () => {
+        task.autoMerge = false;
+        return { ...task };
+      });
+
+    await expect(manager.reconcileMergeBoundaryEvidenceGaps()).resolves.toBe(0);
+
+    expect(store.replaceActiveTaskWorkflowContinuation).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
+    expect(task).toMatchObject({
+      column: "in-review",
+      status: "failed",
+      error: "Workflow graph terminal merge failure at node 'merge' (merge-boundary-unproven)",
+      autoMerge: false,
+    });
+  });
+
+  it("recovers the first IR-ordered owner when two foreach regions have missing instances", async () => {
+    const twoForeachIr = {
+      version: "v2",
+      columns: [{ id: "in-review", traits: ["review"] }, { id: "todo", traits: ["wip"] }],
+      nodes: [
+        { id: "foreach-first", kind: "foreach", config: { source: "task-steps", template: { nodes: [{ id: "step-execute", kind: "prompt", config: { seam: "step-execute" } }], edges: [] } } },
+        { id: "foreach-second", kind: "foreach", config: { source: "task-steps", template: { nodes: [{ id: "step-execute", kind: "prompt", config: { seam: "step-execute" } }], edges: [] } } },
+      ],
+      edges: [],
+    };
+    // Reconciliation proves the boundary then the shared dispatcher resolves the same live IR again.
+    resolveWorkflowIrForTaskMock
+      .mockResolvedValueOnce(twoForeachIr)
+      .mockResolvedValueOnce(twoForeachIr)
+      .mockResolvedValueOnce(twoForeachIr);
+    const { manager, store, task } = harness([], {
+      column: "in-review",
+      autoMerge: true,
+      status: "failed",
+      error: "Workflow graph terminal merge failure at node 'merge' (merge-boundary-unproven)",
+      steps: [{ status: "in-progress" }],
+      workflowStepResults: [{ workflowStepId: "review", source: "node", phase: "pre-merge", status: "passed" }],
+    });
+
+    await expect(manager.reconcileMergeBoundaryEvidenceGaps()).resolves.toBe(1);
+
+    expect((store as any).replaceActiveTaskWorkflowContinuation).toHaveBeenCalledOnce();
+    expect((store as any).replaceActiveTaskWorkflowContinuation).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "foreach-first" }));
+    expect(task).toMatchObject({ column: "todo", status: null, error: null });
+  });
+
+  it("retains the historic failure when a competing lifecycle move wins", async () => {
+    const { manager, store, task } = harness([], {
+      column: "in-review",
+      autoMerge: true,
+      status: "failed",
+      error: "Workflow graph terminal merge failure at node 'merge' (merge-boundary-unproven)",
+      steps: [{ status: "done" }, { status: "in-progress" }],
+    });
+    (store.moveTaskIf as ReturnType<typeof vi.fn>).mockResolvedValue({ moved: false });
+
+    await expect(manager.reconcileMergeBoundaryEvidenceGaps()).resolves.toBe(0);
+
+    expect(store.replaceActiveTaskWorkflowContinuation).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "implementation" }));
+    expect(task).toMatchObject({
+      column: "in-review",
+      error: "Workflow graph terminal merge failure at node 'merge' (merge-boundary-unproven)",
+    });
   });
 });

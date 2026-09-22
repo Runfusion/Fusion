@@ -44,6 +44,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   "task:empty-merge-finalize-blocked-no-landed-proof",
   "task:finalize-unproven-blocked",
   "task:merge-boundary-unproven-parked",
+  "task:merge-boundary-evidence-recovered",
   "task:merge-admission-deferred-live-execution",
   "task:reconcile-confirmed-merge-checklist",
   "task:finalize-lost-work-blocked",
@@ -122,6 +123,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "Finalize is blocked because finalization has not been proven against the landing truth.",
   "task:merge-boundary-unproven-parked":
     "A terminal merge-boundary proof failure is parked with bounded best-effort audit telemetry.",
+  "task:merge-boundary-evidence-recovered":
+    "Self-healing resumes durable unfinished implementation after re-verifying a historic proofless boundary park.",
   "task:merge-admission-deferred-live-execution":
     "Merge admission deferred because a live execution signal still owns the task.",
   "task:reconcile-confirmed-merge-checklist":

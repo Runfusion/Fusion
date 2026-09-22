@@ -835,14 +835,12 @@ describe("fast mode workflow/runtime invariants", () => {
   });
 
   /*
-  FNXC:WorkflowMerge 2026-08-23-19:10:
-  FN-9157 (7b55a02e51) moved the block for this exact shape one gate earlier. A fast builtin:coding
-  task with no parsed steps and no pre-merge node result now fails the merge BOUNDARY, which is
-  terminal (`merge-boundary-unproven`) rather than the resumable `implementation-incomplete`. The
-  invariant this test owns — a coding merge with no implementation evidence never reaches the merge
-  requester — is unchanged; only the gate that enforces it moved. On builtin:coding the parsed-steps
-  `implementation-incomplete` route is now unreachable, because its IR always carries a foreach
-  step-execute template and the boundary check subsumes it.
+  FNXC:WorkflowMergeRecovery 2026-09-20-18:37:
+  FN-9345 keeps the earlier boundary block for this fast builtin:coding shape but
+  makes its missing evidence graph-native remediation. The invariant remains that
+  a coding merge with no implementation proof never reaches mergeRequester; the
+  typed result lets the failure router resume only durable unfinished work rather
+  than terminalizing the card or inventing a successful node result.
   */
   it("blocks fast builtin:coding merge when parsed implementation proof is missing", async () => {
     const liveTask = task({
@@ -872,7 +870,7 @@ describe("fast mode workflow/runtime invariants", () => {
 
     expect(result).toMatchObject({
       outcome: "failure",
-      value: "merge-boundary-unproven",
+      value: "merge-boundary-evidence-recovery",
     });
     expect(mergeRequester).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(

@@ -23,12 +23,20 @@ export type MergeBoundaryUnprovenReasonCode =
   | "non-terminal-node-result"
   | "missing-foreach-instances";
 
+/** Internal graph-routing evidence; never include its identifiers in run-audit metadata. */
+export type MergeBoundaryRecoveryEvidence = {
+  code: MergeBoundaryUnprovenReasonCode;
+  nonTerminalNodeId?: string;
+  missingInstanceIds: string[];
+};
+
 export type WorkflowMergeBoundaryResult = {
   task: TaskDetail;
   blocked?: {
     reason: string;
     code: MergeBoundaryUnprovenReasonCode;
     missingInstanceCount: number;
+    evidence: MergeBoundaryRecoveryEvidence;
   };
 };
 
@@ -144,7 +152,15 @@ export async function ensureWorkflowMergeBoundaryTask(
     await deps.store.logEntry(live.id, `Workflow merge boundary blocked: ${blocked.reason}`, undefined, deps.getRunContextFor(live.id));
     return {
       task: live,
-      blocked: { ...blocked, missingInstanceCount: mergeProof.missingInstanceIds.length },
+      blocked: {
+        ...blocked,
+        missingInstanceCount: mergeProof.missingInstanceIds.length,
+        evidence: {
+          code: blocked.code,
+          nonTerminalNodeId: mergeProof.nonTerminalResult?.workflowStepId,
+          missingInstanceIds: mergeProof.missingInstanceIds,
+        },
+      },
     };
   }
 

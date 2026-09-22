@@ -260,7 +260,13 @@ describe("FN-6735 merge pause-abort recovery", () => {
       const paused = incomplete({ paused: true });
       await routeImplementationIncompleteMergeGraphFailure(resumable.deps as any, paused, "merge");
       expect(resumable.updateTask).toHaveBeenCalledWith("FN-6735", { paused: false, pausedReason: null }, undefined);
-      expect(resumable.deps.routeGraphFailureToExecutionResume).toHaveBeenCalledWith(expect.objectContaining({ paused: false }), "merge", "implementation-incomplete");
+      expect(resumable.deps.routeGraphFailureToExecutionResume).toHaveBeenCalledWith(
+        expect.objectContaining({ paused: false }),
+        "merge",
+        "implementation-incomplete",
+        undefined,
+        undefined,
+      );
 
       const failed = incompleteDeps(false);
       await routeImplementationIncompleteMergeGraphFailure(failed.deps as any, incomplete(), "merge");
