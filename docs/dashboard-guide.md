@@ -917,6 +917,8 @@ Mailbox Inbox, Outbox, and agent lists exclude archived correspondence and unrea
 
 Chat View exposes Direct conversations only. The retained Rooms APIs and storage are not presented as a persistent Chat View scope.
 
+Direct Chat captures each assistant text and thinking block exactly once even when a provider reuses a mutable message object while queued stream events are still being displayed or saved. When the completed provider turn differs from the temporary stream, the final persisted message and terminal client snapshot use that completed answer, so reloads and live chat agree.
+
 - **New Chat** immediately creates a Direct conversation from the Settings-configured default agent or model. Use the **Brain** control beside the composer to retarget an existing conversation.
 - Mention one or more agents with `@Agent_Name` in a message to summon them for that turn. Each mentioned agent answers with its own configured model and thinking level; an unmentioned turn uses the conversation model as usual.
 - Every persisted message has a quote control. Quoting an agent reply seeds the composer as `"<excerpt>" - @Agent_Name , `, so the next turn explicitly cites and re-summons that agent.

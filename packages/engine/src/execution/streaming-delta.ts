@@ -30,7 +30,8 @@ function derivePreviousText(partial: StreamingPartialMessage | undefined, conten
   const content = partial?.content;
   const block = Array.isArray(content) && Number.isInteger(contentIndex) && contentIndex >= 0 ? content[contentIndex] : undefined;
   const accumulated = getContentText(block, kind);
-  return accumulated && delta && accumulated.endsWith(delta) ? accumulated.slice(0, Math.max(0, accumulated.length - delta.length)) : accumulated;
+  // A matching tail proves this is the delta's event-time prefix; an ahead partial is not evidence.
+  return accumulated && delta && accumulated.endsWith(delta) ? accumulated.slice(0, Math.max(0, accumulated.length - delta.length)) : "";
 }
 
 function identityFor(partial: StreamingPartialMessage | undefined, contentIndex: number): BlockIdentity {
@@ -44,8 +45,8 @@ function sameIdentity(left: BlockIdentity | undefined, right: BlockIdentity): bo
 }
 
 /*
-FNXC:AssistantTextCapture 2026-09-08-14:13:
-FN-9277 restricts sentence-boundary repair to evidence from the current content block. Stale sibling and prior-message tails inserted spaces into paragraphs and REPRO MARKER B; verbatim block flushes bind their tail to this identity so same-block continuation repair remains intact.
+FNXC:AssistantTextCapture 2026-09-22-02:30:
+FN-9356 restricts sentence-boundary repair to evidence from the current content block that predates the delta. Queued provider events can share a partial mutated ahead of the consumer, so a non-tail partial must yield to capture-owned same-block output rather than insert spaces from future text; verbatim terminal flushes retain the identity-bound tail for legitimate continuation repair.
 */
 export function createStreamingDeltaNormalizer(): {
   normalize: (partial: StreamingPartialMessage | undefined, contentIndex: number, delta: string, kind: Kind) => string;

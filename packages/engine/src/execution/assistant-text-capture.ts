@@ -18,25 +18,18 @@ function indexOf(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
-function blockText(partial: unknown, index: number | undefined, kind: Kind): string {
-  const content = record(partial)?.content;
-  if (!Array.isArray(content) || index === undefined) return "";
-  const block = record(content[index]);
-  if (block?.type !== kind) return "";
-  const value = block[kind === "text" ? "text" : "thinking"];
-  return typeof value === "string" ? value : "";
-}
-
 /** Captures every pi assistant block shape while retaining exact-once offsets. */
 export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgentEvent(event: unknown): void } {
   const normalizer = createStreamingDeltaNormalizer();
   const emitted: Record<Kind, Map<number, number>> = { text: new Map(), thinking: new Map() };
+  const seen: Record<Kind, Map<number, number>> = { text: new Map(), thinking: new Map() };
   let lastPartial: object | undefined;
   let lastTextPartial: unknown;
   let lastTextIndex: number | undefined;
   let sawText = false;
   const reset = () => {
     emitted.text.clear(); emitted.thinking.clear();
+    seen.text.clear(); seen.thinking.clear();
     normalizer.noteBoundary("text"); normalizer.noteBoundary("thinking");
     lastPartial = undefined;
   };
@@ -90,12 +83,23 @@ export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgent
         if (!kind) return;
         if (type === `${kind}_delta`) {
           if (typeof update.delta !== "string" || index === undefined) return;
-          const delta = normalizer.normalize(partial as { content?: Array<{ type?: string; text?: string; thinking?: string }> } | undefined, index, update.delta, kind);
-          emit(kind, delta, partial, index);
-          const full = blockText(partial, index, kind);
-          emitted[kind].set(index, full ? full.length : (emitted[kind].get(index) ?? 0) + update.delta.length);
+          /*
+           * FNXC:AssistantTextCapture 2026-09-22-02:30:
+           * Provider queues can retain a mutable partial long after a delta was produced. Advance
+           * source cursors only from queued deltas so a later-mutated block cannot replay its prefix.
+           */
+          const seenBefore = seen[kind].get(index) ?? 0;
+          const seenAfter = seenBefore + update.delta.length;
+          const emittedBefore = emitted[kind].get(index) ?? 0;
+          const sourceSegment = update.delta.slice(Math.max(0, emittedBefore - seenBefore));
+          if (sourceSegment) {
+            const delta = normalizer.normalize(partial as { content?: Array<{ type?: string; text?: string; thinking?: string }> } | undefined, index, sourceSegment, kind);
+            emit(kind, delta, partial, index);
+          }
+          seen[kind].set(index, seenAfter);
+          emitted[kind].set(index, Math.max(emittedBefore, seenAfter));
         } else if (type === `${kind}_start`) {
-          flush(kind, blockText(partial, index, kind), partial, index);
+          // A mutable partial is not an event-time snapshot; terminal events recover missing deltas.
         } else if (type === `${kind}_end`) {
           flush(kind, typeof update.content === "string" ? update.content : "", partial, index);
         }

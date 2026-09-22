@@ -1444,6 +1444,41 @@ describe("ChatManager.sendMessage", () => {
     expect(mockChatStore.addMessage.mock.calls.at(-1)?.[1].content).toBe("Complete streamed answer.");
   });
 
+  it("replaces longer corrupt streamed text with the completed authoritative turn", async () => {
+    const events: Array<{ type: string; data: any }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => events.push(event));
+    const authoritative = "Clean Input/Output result.";
+    mockChatStore.addMessage.mockImplementation((sessionId, input) => ({
+      id: input.role === "user" ? "msg-user" : "msg-assistant",
+      sessionId,
+      role: input.role,
+      content: input.content,
+      thinkingOutput: null,
+      metadata: null,
+      attachments: undefined,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }));
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => options.onText?.("Clean Input/ Output result.Clean Input/Output result.")),
+        dispose: vi.fn(),
+        state: { messages: [
+          { role: "assistant", content: "Prior turn must remain excluded." },
+          { role: "user", content: "Question" },
+          { role: "assistant", content: authoritative },
+        ] },
+      },
+    }));
+
+    await createChatManager().sendMessage("chat-001", "Question");
+    unsubscribe();
+
+    const persisted = mockChatStore.addMessage.mock.calls.at(-1)?.[1];
+    const done = events.find((event) => event.type === "done");
+    expect(persisted.content).toBe(authoritative);
+    expect(done?.data.message.content).toBe(authoritative);
+  });
+
   it("excludes assistant messages from prior turns during reconciliation", async () => {
     __setCreateFnAgent(async (options: any) => ({
       session: {

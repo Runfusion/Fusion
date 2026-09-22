@@ -106,7 +106,7 @@ describe("reviewStep — model settings threading", () => {
   });
 
   it("captures a terminal-only reviewer verdict through the production subscriber", async () => {
-    const terminalVerdict = approvingReview("### Verdict: APPROVE\n### Summary\nTerminal text is complete.");
+    const terminalVerdict = "### Verdict: APPROVE\n### Summary\nTerminal text is complete.";
     mockedCreateFnAgent.mockResolvedValue({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),
@@ -129,6 +129,36 @@ describe("reviewStep — model settings threading", () => {
 
     expect(result.verdict).toBe("APPROVE");
     expect(result.review).toBe(terminalVerdict);
+  });
+
+  it("parses an exact-once verdict from a lagging mutable partial through the production subscriber", async () => {
+    const verdict = "### Verdict: APPROVE\n### Summary\nInput/Output is correct.";
+    const deltas = ["### Verdict: APPROVE\n", "### Summary\n", "Input/", "Output is correct."];
+    const output = { role: "assistant", content: [] as Array<{ type: string; text: string }> };
+    const block = { type: "text", text: "" };
+    output.content.push(block);
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        subscribe: vi.fn().mockImplementation((callback: (event: unknown) => void) => {
+          block.text = deltas.slice(0, 2).join("");
+          callback({ type: "message_start", message: output });
+          callback({ type: "message_update", assistantMessageEvent: { type: "text_start", partial: output, contentIndex: 0 } });
+          block.text = verdict;
+          for (const delta of deltas) {
+            callback({ type: "message_update", assistantMessageEvent: { type: "text_delta", partial: output, contentIndex: 0, delta } });
+          }
+          callback({ type: "message_update", assistantMessageEvent: { type: "text_end", partial: output, contentIndex: 0, content: verdict } });
+          callback({ type: "message_end", message: output });
+        }),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const result = await reviewStep("/tmp/worktree", "FN-9356", 1, "Mutable verdict", "plan", "# prompt");
+
+    expect(result.verdict).toBe("APPROVE");
+    expect(result.review).toBe(verdict);
   });
 
   it("emits resolved durable reviewer session and tool telemetry through the live lane callbacks", async () => {
