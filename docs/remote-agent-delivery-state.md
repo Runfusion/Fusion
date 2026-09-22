@@ -2,7 +2,7 @@
 
 Current scheduler status (2026-09-18 07:38 UTC): `fusion-remote-agent-delivery` is ACTIVE, every 20 minutes, attached to this implementation thread. This supersedes the historical creation failures below. Full live acceptance is still pending; do not pause the heartbeat yet.
 
-Current m3 status (2026-09-18 07:49 UTC): installation completed by the authorized coordinator; tunnel/collector running, live Codex/Claude visibility and one native cost sample independently verified. Native Codex trust and m3 feedback acceptance remain pending. Clean upstream integration exists on J with three unresolved owned conflicts; resolution is prepared locally after an SSH block. See latest continuation below.
+Current m3 status (2026-09-18 07:49 UTC): installation completed by the authorized coordinator; tunnel/collector running, live Codex/Claude visibility and one native cost sample independently verified. Native Codex trust and m3 feedback acceptance remain pending. An upstream integration worktree exists on J but is not clean: three owned conflicts remain unresolved, so it is not ready to land or deploy. A resolution is prepared locally after an SSH block. See latest continuation below.
 
 ## PR #3637 review continuation (2026-09-22 15:08 UTC)
 
@@ -13,6 +13,21 @@ Owned clone `/Users/v/dev/fusion-pr3637-claude-review-20260921`, pushing fast-fo
 - CI at `567234d42`: Build, Lint, Typecheck, Gate, Desktop packaging, Pack agent-browser install fixture (plus macOS/Ubuntu/Windows installs), credential scan, ThreatCrush, Greptile and CodeRabbit all passed. The earlier cancelled agent-browser run `35597847760` is superseded by run `35743899621` (success).
 - Open lead, deferred and not yet verified: Greptile P2 on `RemoteAgentsPanel.tsx` about three independent polling loops (5s detail, 10s list and host status). Remaining earlier candidates are still unverified leads: migration-number docs, legacy PostgreSQL upgrade expectations, public-schema migration bookkeeping, schema-probe coupling to `tasks`, feedback-schema repair, feedback UI receipt handling, route README completeness, and the non-string command guard in `install_hooks.py`.
 - Blocker: required human review. No deployment, service, database, or provider change happened.
+
+## PR #3637 PostgreSQL schema-applier review fixes (2026-09-22 18:10 UTC)
+
+Checked the five open CodeRabbit PostgreSQL threads against head `35e018b58`. Four were valid and are fixed in `73b9c8494`:
+
+- 4060778281 (0087 repair): the applier re-ran 0087 only when the feedback table was missing. 0087 now restores its columns and named constraints (the same pattern as 0086). The applier re-runs it when any column, constraint, the queue index or the `fusion_assign_project_id` trigger is missing. Missing RLS or isolation policy is left to the existing global ownership audit, which fails startup closed and names the table. That audit is the repo-wide contract, so this change does not bypass it.
+- 4060778273 (tasks coupling): the 0086 repair probe no longer requires `project.tasks` to exist.
+- 4060778265 (bookkeeping): 0086/0087 are now recorded with the same `public`-qualified raw insert as every other migration. The unqualified Drizzle table and its import are gone.
+- 4060778253 (ledger test): the upgrade test now drops and asserts ledger rows `0086`/`0087`.
+- New regressions: repair without `project.tasks`, plus six partial-0087 cases (required column, nullable column, queue index, trigger, state check, session foreign key). All seven failed on the old code. Local PostgreSQL 17: `external-sessions.pg.test.ts` 30/30; schema-applier, schema-applier-isolation, migration-bookkeeping, postgres-health and startup-factory suites 114/114. Core `tsc --noEmit`, ESLint, FNXC date check and `git diff --check` also passed.
+- Docs follow-up: `packages/dashboard/src/routes/README.md` now lists all four collector-authenticated routes (`ingest`, `heartbeat`, `feedback-claim`, `feedback-ack`), matching `external-session-ingestion-paths.ts`. The status line at the top of this file no longer calls the unresolved J integration clean.
+- Stale threads, no change needed: Greptile's `files` allowlist finding (`dist/remote-agents/**` is already published) and its changeset migration-number finding (already says 0086). The ThreatCrush CWE-89 alert at `external-sessions.pg.test.ts:44` is a false positive: it flags a Drizzle `sql` tagged template, which binds values as parameters.
+- CI at `73b9c8494`: Build, Lint, Typecheck, Gate, Desktop packaging, credential scan, ThreatCrush, Greptile and CodeRabbit passed (run 35763983358). Note that the merge gate's PostgreSQL lane (`test:pg-gate`) runs only `handoff-to-review-atomicity` and `task-lifecycle-e2e`, so it does not execute `external-sessions.pg.test.ts`. The local PostgreSQL 17 run above is the evidence for these suites; `full-suite.yml` covers them non-blocking after merge.
+- CI at `35e018b58`: agent-browser pack run 35758732650 was cancelled in the CLI build step on a docs-only head. This is the same transient timeout pattern as before, and the next push superseded it.
+- No deployment, service, database, or provider change happened.
 
 ## PR #3637 malformed-hook review fix (2026-09-22 15:56 UTC)
 
