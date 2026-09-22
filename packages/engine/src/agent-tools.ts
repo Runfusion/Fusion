@@ -1196,7 +1196,7 @@ async function resolveApprovedMissionLineage(
 }
 
 type DefinedFeatureBootstrapStore = {
-  claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string; archivedLanes?: ReadonlySet<string> }) => Promise<unknown>;
+  claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string; archivedLanes: ReadonlySet<string> }) => Promise<unknown>;
   claimDefinedFeatureTask: (input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
   archiveDefinedFeatureBootstrapDuplicate: (input: { featureId: string; taskId: string; duplicateTaskId: string }) => Promise<void>;
 };

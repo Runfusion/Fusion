@@ -545,6 +545,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         taskId: inserted.id,
         missionId: mission.id,
         sliceId: slice.id,
+        archivedLanes: new Set(["archived"]),
       }),
     } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> });
 
@@ -575,6 +576,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         taskId: inserted.id,
         missionId: mission.id,
         sliceId: slice.id,
+        archivedLanes: new Set(["archived"]),
       }),
     } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> })));
 
@@ -591,8 +593,8 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const feature = await m.addFeature(slice.id, { title: "Feature" });
 
     await expect(h.store().createTask({
-      description: "archived bootstrap",
-      column: "archived",
+      description: "custom-lane archived bootstrap",
+      column: "vaulted",
       missionId: mission.id,
       sliceId: slice.id,
       afterTaskInsert: (tx: DbTransaction, inserted: { id: string }) => m.claimDefinedFeatureTaskInTransaction(tx, {
@@ -600,7 +602,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         taskId: inserted.id,
         missionId: mission.id,
         sliceId: slice.id,
-        archivedLanes: new Set(["archived"]),
+        archivedLanes: new Set(["vaulted"]),
       }),
     } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> }))
       .rejects.toThrow(`Cannot bootstrap feature ${feature.id}: task`);
@@ -644,6 +646,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         taskId,
         missionId: mission.id,
         sliceId: slice.id,
+        archivedLanes: new Set(["archived"]),
       }),
     );
     const writeTaskJson = vi.spyOn(taskStore, "writeTaskJsonFile").mockRejectedValueOnce(new Error("injected task-file failure"));

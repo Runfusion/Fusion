@@ -1461,7 +1461,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    */
   async claimDefinedFeatureTaskInTransaction(
     tx: import("../postgres/data-layer.js").DbTransaction,
-    input: { featureId: string; taskId: string; missionId: string; sliceId: string; archivedLanes?: ReadonlySet<string>; requireExistingFeatureLink?: boolean; statusEvent?: { value?: MissionEvent } },
+    input: { featureId: string; taskId: string; missionId: string; sliceId: string; archivedLanes: ReadonlySet<string>; requireExistingFeatureLink?: boolean; statusEvent?: { value?: MissionEvent } },
   ): Promise<MissionFeature> {
     /*
     FNXC:MissionAdmission 2026-07-23-15:30:
@@ -1517,9 +1517,10 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     Resolve workflow vocabulary before entering this transaction and pass it in.
     Borrowing the ordinary task-store connection here deadlocks when every pool
     slot is already held by a concurrent feature claim waiting for that borrow.
-    Direct/internal callers retain the legacy archive-lane fallback.
+    Every caller must resolve the task's workflow archive lanes before entering
+    this transaction.
     */
-    if (!task || (input.archivedLanes ?? new Set(["archived"])).has(task.column)) {
+    if (!task || input.archivedLanes.has(task.column)) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} is not active in this project`);
     }
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {
