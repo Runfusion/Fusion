@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { executorLog } from "../logger.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
+
+const temporaryRoots = new Set<string>();
 
 function baseTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -11,7 +17,7 @@ function baseTask(overrides: Record<string, unknown> = {}) {
     description: "",
     prompt: "## Review Level: 1",
     column: "in-progress",
-    worktree: "/repo/.worktrees/swift-falcon",
+    worktree: "/repo/task-fn-4482",
     branch: "fusion/fn-4482",
     baseCommitSha: "abc123",
     taskDoneRetryCount: 0,
@@ -33,9 +39,14 @@ async function setup(params?: {
   staged?: string[];
   committed?: string[];
   gitFailure?: boolean;
+  rootDir?: string;
+  taskId?: string;
 }) {
   const store = createMockStore();
+  const rootDir = params?.rootDir ?? await mkdtemp(join(tmpdir(), "fn-9359-plan-only-"));
+  if (!params?.rootDir) temporaryRoots.add(rootDir);
   let task = baseTask({
+    id: params?.taskId ?? "FN-4482",
     prompt: `## Review Level: ${params?.reviewLevel ?? 1}`,
     scopeOverride: params?.scopeOverride,
   });
@@ -54,7 +65,7 @@ async function setup(params?: {
   });
 
   mockedExecSync.mockImplementation((cmd: string) => {
-    if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo/.worktrees/swift-falcon\n");
+    if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from(`${rootDir}\n`);
     if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("fusion/fn-4482\n");
     if (cmd.includes("rev-list --count")) return Buffer.from("1\n");
     if (cmd.includes("git diff --name-only --cached")) {
@@ -76,7 +87,7 @@ async function setup(params?: {
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 
-  const executor = new TaskExecutor(store as any, "/repo");
+  const executor = new TaskExecutor(store as any, rootDir);
   await executor.execute(task as any);
 
   return { store, tool, executor };
@@ -85,6 +96,38 @@ async function setup(params?: {
 describe("FN-4482 plan-only scope leak guard", () => {
   beforeEach(() => {
     resetExecutorMocks();
+  });
+
+  afterEach(async () => {
+    await Promise.all([...temporaryRoots].map((rootDir) => rm(rootDir, { recursive: true, force: true })));
+    temporaryRoots.clear();
+  });
+
+  /*
+  FNXC:EngineTests 2026-09-22-04:17:
+  The timing artifact's `undefined.execute` was an acquisition prerequisite failure, not a scope-guard
+  result: its synthetic `/repo` root reached the real pinned-worktree owner and failed while creating
+  the missing parent. Exercise that failure first, then a separately constructed valid root, so a
+  previous failed acquisition cannot mask the successor run's completion-tool capture. Temporary roots
+  keep the production owner out of the protected repository and are removed after each independent run.
+  */
+  it("reproduces the missing-root acquisition failure before a valid root captures completion", async () => {
+    const failed = await setup({ rootDir: "/missing-artifact-root", unstaged: ["docs/foo.md"] });
+
+    expect(failed.tool).toBeUndefined();
+    expect(failed.store.updateTask).toHaveBeenCalledWith("FN-4482", expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("ENOENT: no such file or directory, mkdir '/missing-artifact-root'"),
+    }));
+
+    resetExecutorMocks();
+    const healthy = await setup({ taskId: "FN-4483", unstaged: ["docs/foo.md"] });
+
+    expect(healthy.tool).toEqual(expect.objectContaining({ execute: expect.any(Function) }));
+    await expect(healthy.tool.execute("id", {})).resolves.toEqual(expect.objectContaining({
+      content: expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining("Task marked complete") })]),
+    }));
+    expect(healthy.store.updateTask).not.toHaveBeenCalledWith("FN-4483", expect.objectContaining({ status: "failed" }));
   });
 
   it("allows plan-only completion when edits are in-scope", async () => {

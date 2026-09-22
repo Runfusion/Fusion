@@ -18,6 +18,16 @@ The reported 20m33s–25m12s duration and `[watchdog] still running` lines were 
 
 Therefore no common plugin/core Vitest teardown owner exists in this incident. Treating these heartbeats as a teardown leak would incorrectly change shared cleanup behavior and could hide the actual engine test failure.
 
+## FN-9359 post-landing adjudication
+
+FN-9349's teardown, subprocess, and worker-root hardening landed in `9539f8aafd`; the accompanying Pipeline smoke and quarantine commits were `5a4a4199ba` and `e149bf6310`. Timing artifacts from baseline Full Suite run `35659656504` and post-landing run `35682179476` make the result falsifiable: 147 of 148 baseline failed test names remained, one baseline failure disappeared, and two failures were new. The post-landing artifact therefore disproves teardown/watchdog ownership for this family while confirming that timing artifacts are available for diagnosis.
+
+The downloaded `test-timings-shard-1` JSON gives a more limited, reproducible conclusion than a shared-environment diagnosis. Its plan-only failures are `TypeError: Cannot read properties of undefined (reading 'execute')` at the test's `tool.execute` calls: graph dispatch returned before the fixture captured its completion tool. Its paused-scope failures are zero `moveTask("…", "todo", …)` calls, while live-zero's first assertion is `expected 'in-review' to be 'todo'`; those are retired fixture expectations after lifecycle containment removed automatic backward authority. The second live-zero timeout is a separate incomplete fake: recovery now re-reads the candidate with `getTask` under its liveness fence.
+
+Accordingly, these representatives do **not** establish one shared PostgreSQL, cache, environment, or teardown prerequisite. The plan-only regression now uses the real production `TaskExecutor` acquisition path: a missing synthetic root reproduces the acquisition failure and missing `fn_task_done`, while an independent valid temporary root captures and executes the completion tool. The recovery fixtures provide the live reader and assert the in-place containment contract. Focused production-configured Vitest runs cover those exact files, including the healthy completion-tool path and the recovery cleanup path. The artifact evidence rejects the shared-prerequisite hypothesis for these three representatives, but it does not explain every remaining shard failure.
+
+Pipeline smoke remains separately owned by FN-9350 and is excluded from this diagnosis. This document records local reproduction and the repair boundary only; it does not claim a qualifying post-landing Full Suite run.
+
 ## Repro and verification
 
 Use `node scripts/ci-test-shard.mjs --dry-run --total 4` to inspect the current deterministic mapping. For the historical shard-2 package paths, use direct production-configured Vitest commands with named files rather than package scripts. The focused checks for auto-label, settings-demo, quality, selected engine real-git files, browser lifecycle files, PTY, tunnel, and verification-supervision files all exited cleanly in the FN-9337 worktree.
