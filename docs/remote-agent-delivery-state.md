@@ -4,6 +4,16 @@ Current scheduler status (2026-09-18 07:38 UTC): `fusion-remote-agent-delivery` 
 
 Current m3 status (2026-09-18 07:49 UTC): installation completed by the authorized coordinator; tunnel/collector running, live Codex/Claude visibility and one native cost sample independently verified. Native Codex trust and m3 feedback acceptance remain pending. Clean upstream integration exists on J with three unresolved owned conflicts; resolution is prepared locally after an SSH block. See latest continuation below.
 
+## PR #3637 review continuation (2026-09-22 15:08 UTC)
+
+Owned clone `/Users/v/dev/fusion-pr3637-claude-review-20260921`, pushing fast-forward to `origin/claude/remote-agents-landing-20260919`. Upstream main at refresh: `aba51f9503f2555284df540eac2276965b6717b2`; PR mergeable.
+
+- `567234d42` fix(cli): remote-agent host tools now stage in `packages/cli/tsup.config.ts` independently of the PostgreSQL-migration guard (both fast and full package modes), with explicit asset names, stale-dest cleanup and a truthful warning when `scripts/remote-agents` is absent. Regression in `packages/cli/src/__tests__/package-config.test.ts`.
+- Local validation: package-config test 44/44 passed, scoped ESLint 0 errors, CLI `tsc --noEmit` clean, `git diff --check` clean.
+- CI at `567234d42`: Build, Lint, Typecheck, Gate, Desktop packaging, Pack agent-browser install fixture (plus macOS/Ubuntu/Windows installs), credential scan, ThreatCrush, Greptile and CodeRabbit all passed. The earlier cancelled agent-browser run `35597847760` is superseded by run `35743899621` (success).
+- Open lead, deferred and not yet verified: Greptile P2 on `RemoteAgentsPanel.tsx` about three independent polling loops (5s detail, 10s list and host status). Remaining earlier candidates are still unverified leads: migration-number docs, legacy PostgreSQL upgrade expectations, public-schema migration bookkeeping, schema-probe coupling to `tasks`, feedback-schema repair, feedback UI receipt handling, route README completeness, and the non-string command guard in `install_hooks.py`.
+- Blocker: required human review. No deployment, service, database, or provider change happened.
+
 Updated 2026-09-17 23:24 UTC.
 
 Owned worktree: `/Users/v/Documents/Codex/2026-09-16/fusion-external-pr1-retry/work/fusion-remote-agents`, branch `codex/remote-agent-feedback-costs`. Narrow scope and queue in `remote-agent-delivery-plan.md`.
