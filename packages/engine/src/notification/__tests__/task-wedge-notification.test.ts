@@ -837,6 +837,36 @@ describe("task wedge notifications", () => {
   REVIEW lane as progress — a wedged card sitting in review has not moved on, and resolving there
   would clear every episode on the next incidental update and re-alert forever.
   */
+  it("delivers the safe four-part external-block report exactly once", async () => {
+    const { store, service, sendMessageOnce, task } = fixture();
+    await service.start();
+    const blocked = task({
+      status: "blocked", paused: true, pausedReason: "external-block", error: "BLOCKED: host-environment/ENOSPC: raw stack trace",
+      externalBlock: {
+        origin: "host-environment", code: "ENOSPC", message: "raw stack trace", source: "agent-declaration", blockedAt: "2026-09-22T02:24:00.000Z",
+        resume: { column: "in-review", currentStep: 0 },
+        report: {
+          verifiedCondition: "Session-isolated MCP support was verified unavailable.",
+          stopReason: "Persistent configuration was not changed.",
+          unimplementedWork: "Remaining implementation was not performed.",
+          unblockCondition: "Provide a supported session-scoped interface.",
+        },
+      },
+    });
+    store.setLiveTask(blocked);
+    store.emit(blocked);
+    store.emit(blocked);
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
+    const payload = sendMessageOnce.mock.calls[0]?.[0] as { content: string; metadata: Record<string, unknown> };
+    expect(payload.content).toContain("**Verified:** Session-isolated MCP support was verified unavailable.");
+    expect(payload.content).toContain("**Why work stopped:** Persistent configuration was not changed.");
+    expect(payload.content).toContain("**Not implemented:** Remaining implementation was not performed.");
+    expect(payload.content).toContain("**Unblock:** Provide a supported session-scoped interface.");
+    expect(payload.content).not.toContain("raw stack trace");
+    expect(payload.metadata).toEqual(expect.objectContaining({ taskId: "FN-8501", wedgeReason: "external-block:host-environment:ENOSPC" }));
+    await service.stop();
+  });
+
   it("does NOT resolve on a status-less update while the card sits in the renamed REVIEW lane", async () => {
     const { store, service, sendMessageOnce, task } = fixture(RENAMED_IR);
     await service.start();

@@ -49,6 +49,7 @@ import type {
 import {
   ApprovalRequestStore,
   buildTaskExternalBlockPatch,
+  buildTaskExternalBlockReport,
   DEFAULT_PROVIDER_INSTANCE_ID,
   RetryStormError,
   columnsWithFlag,
@@ -345,6 +346,7 @@ export async function parkExternalSessionObstacle(
   const externalBlock = {
     ...obstacle,
     message: errorMessage,
+    report: buildTaskExternalBlockReport(obstacle),
     source: "session-failure" as const,
     blockedAt: new Date().toISOString(),
     resume: {

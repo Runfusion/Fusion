@@ -4,6 +4,7 @@ import {
   EXTERNAL_BLOCK_PAUSE_REASON,
   buildTaskExternalBlockClearPatch,
   buildTaskExternalBlockPatch,
+  buildTaskExternalBlockReport,
   formatTaskExternalBlockReason,
   isTaskExternallyBlocked,
   type TaskExternalBlock,
@@ -69,6 +70,28 @@ describe("task external block", () => {
     expect(isTaskExternallyBlocked(task({ paused: true }))).toBe(false);
     expect(isTaskExternallyBlocked(task({ status: "failed", externalBlock: block() }))).toBe(false);
     expect(isTaskExternallyBlocked(task({ status: "blocked", externalBlock: block() }))).toBe(true);
+  });
+
+  it("creates bounded redacted operator reports and falls back for unsafe input", () => {
+    const report = buildTaskExternalBlockReport(block(), {
+      verifiedCondition: "session-scoped MCP was unavailable; token=super-secret",
+      stopReason: "system prompt: do not share this",
+      unimplementedWork: "Finish the remaining implementation steps.",
+      unblockCondition: "Provide a supported session-scoped interface.",
+    });
+
+    expect(report.verifiedCondition).toContain("token=[REDACTED]");
+    expect(report.stopReason).toBe("The task is safely paused to preserve its current execution state.");
+    expect(report.unimplementedWork).toBe("Finish the remaining implementation steps.");
+    expect(report.unblockCondition).toBe("Provide a supported session-scoped interface.");
+    expect(Object.values(report).every((field) => field.length <= 320)).toBe(true);
+  });
+
+  it("generates conservative report content for legacy external-block rows", () => {
+    expect(buildTaskExternalBlockReport(block({ report: undefined }))).toEqual(expect.objectContaining({
+      verifiedCondition: expect.stringContaining("host-environment limitation (ENOSPC)"),
+      unblockCondition: expect.stringContaining("retry the task"),
+    }));
   });
 
   it.each([

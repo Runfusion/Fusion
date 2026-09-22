@@ -17,8 +17,29 @@ import { schedulerLog } from "../logger.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
 import { WebhookNotificationProvider } from "./webhook-provider.js";
 import { classifyTerminalFailureAutoRecoveryForTask, describeTaskRecoveryOwner, describeTaskWedge, isTaskProgressing, shouldWithholdWedgeAlertForAutoRecovery, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
+import { deliverMailboxMessageOnce } from "./mailbox-delivery.js";
 
 type PendingWedgeCompletionOutcome = "delivered" | "suppressed" | "cleared" | "rearmed" | "held" | "absent" | "unreadable";
+
+function formatWedgeMailboxContent(task: Task, descriptor: TaskWedgeDescriptor, link: string | undefined): string {
+  if (descriptor.externalBlockReport) {
+    const report = descriptor.externalBlockReport;
+    return [
+      `**${formatTaskIdentifier(task)} is blocked and needs operator action**`, "",
+      `**Verified:** ${report.verifiedCondition}`,
+      `**Why work stopped:** ${report.stopReason}`,
+      `**Not implemented:** ${report.unimplementedWork}`,
+      `**Unblock:** ${report.unblockCondition}`,
+      ...(link ? ["", `[Open ${task.id}](${link})`] : []),
+    ].join("\n");
+  }
+  return [
+    `**${formatTaskIdentifier(task)} needs operator action**`, "", descriptor.reason,
+    ...(descriptor.gate ? [`Gate: \`${descriptor.gate}\`.`] : []),
+    `Recommended action: ${descriptor.action}`,
+    ...(link ? ["", `[Open ${task.id}](${link})`] : []),
+  ].join("\n");
+}
 type PendingWedgeCompletionResult = { outcome: PendingWedgeCompletionOutcome; reasonKey?: string; remainingMs?: number };
 
 export interface NotificationServiceOptions {
@@ -757,12 +778,7 @@ export class NotificationService {
       if (!episode) return "suppressed";
     }
     const link = buildNtfyClickUrl({ dashboardHost: this.dashboardHost, projectId: this.options.projectId, taskId: task.id });
-    const content = [
-      `**${formatTaskIdentifier(task)} needs operator action**`, "", descriptor.reason,
-      ...(descriptor.gate ? [`Gate: \`${descriptor.gate}\`.`] : []),
-      `Recommended action: ${descriptor.action}`,
-      ...(link ? ["", `[Open ${task.id}](${link})`] : []),
-    ].join("\n");
+    const content = formatWedgeMailboxContent(task, descriptor, link);
     const payload: NotificationPayload = {
       taskId: task.id, taskTitle: task.title, taskDescription: task.description, event: "task-wedged",
       // Bounded descriptor text is operator-facing provider content, never audit metadata.
@@ -770,14 +786,10 @@ export class NotificationService {
     };
     // Push and mailbox delivery are independently best-effort.
     void this.dispatch("task-wedged", payload);
-    try {
-      await this.options.messageStore?.sendMessageOnce?.({
-        fromId: "system", fromType: "system", toId: DASHBOARD_USER_ID, toType: "user", type: "system",
-        content, metadata: { taskId: task.id, kind: "task-wedge", wedgeReason: descriptor.reasonKey, ...(descriptor.gate ? { gate: descriptor.gate } : {}) },
-      }, `task-wedge:${episode}`);
-    } catch (error) {
-      schedulerLog.log(`[notify] ${task.id} wedge mailbox message failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    await deliverMailboxMessageOnce(this.options.messageStore, {
+      fromId: "system", fromType: "system", toId: DASHBOARD_USER_ID, toType: "user", type: "system",
+      content, metadata: { taskId: task.id, kind: "task-wedge", wedgeReason: descriptor.reasonKey, ...(descriptor.gate ? { gate: descriptor.gate } : {}) },
+    }, `task-wedge:${episode}`);
     if (isAutoRecoveryEscalationDispatch && classification.action === "notify") {
       try {
         await this.store.markTerminalFailureAutoRecoveryEscalationDelivered?.(task.id, {
@@ -950,8 +962,8 @@ export class NotificationService {
       }
       const payload = this.createTaskPayload(task, "task-wedged", { wedgeReason: descriptor.reasonKey, reason: descriptor.reason, action: descriptor.action, ...(descriptor.gate ? { gate: descriptor.gate } : {}), notificationDedupeKey: `task-wedge:${claim.episodeId}` });
       void this.dispatch("task-wedged", payload);
-      const content = `**${formatTaskIdentifier(task)} needs operator action**\n\n${descriptor.reason}\nRecommended action: ${descriptor.action}`;
-      try { await this.options.messageStore?.sendMessageOnce?.({ fromId: "system", fromType: "system", toId: DASHBOARD_USER_ID, toType: "user", type: "system", content, metadata: { taskId, kind: "task-wedge", wedgeReason: descriptor.reasonKey } }, `task-wedge:${claim.episodeId}`); } catch { /* mailbox is independently best-effort */ }
+      const content = formatWedgeMailboxContent(task, descriptor, buildNtfyClickUrl({ dashboardHost: this.dashboardHost, projectId: this.options.projectId, taskId }));
+      await deliverMailboxMessageOnce(this.options.messageStore, { fromId: "system", fromType: "system", toId: DASHBOARD_USER_ID, toType: "user", type: "system", content, metadata: { taskId, kind: "task-wedge", wedgeReason: descriptor.reasonKey } }, `task-wedge:${claim.episodeId}`);
       return { outcome: "delivered", reasonKey: descriptor.reasonKey };
     } catch (error) {
       schedulerLog.debug(`[notify] ${taskId} pending wedge completion failed: ${error instanceof Error ? error.message : String(error)}`);

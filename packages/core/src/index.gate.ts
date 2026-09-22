@@ -1076,9 +1076,10 @@ export {
   isTaskExternallyBlocked,
   buildTaskExternalBlockPatch,
   buildTaskExternalBlockClearPatch,
+  buildTaskExternalBlockReport,
   formatTaskExternalBlockReason,
 } from "./tasks/task-external-block.js";
-export type { TaskExternalBlock, TaskExternalBlockOrigin } from "./tasks/task-external-block.js";
+export type { TaskExternalBlock, TaskExternalBlockOrigin, TaskExternalBlockReport } from "./tasks/task-external-block.js";
 export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
 export type {
   TaskColumnRestartEntryNode,
