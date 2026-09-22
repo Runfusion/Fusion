@@ -131,14 +131,14 @@ describe("unrun pre-merge gate wedge regression", () => {
   });
 
   it.each([false, true])("recovers a failed unrun gate after engine stall pause=%s without merging", async (paused) => {
-    const live = resultlessReviewTask({ status: "failed", paused,
+    const live = resultlessReviewTask({ status: "failed", paused, workflowIrPin: "old-ir", workflowIrPinNodeId: "merge",
       pausedReason: paused ? "in-review-stall-deadlock" : undefined,
       error: "AUTO_MERGE_RETRY_REJECTED: Cannot merge FN-9243-resultless: task has enabled pre-merge workflow steps that never ran" });
     const store = recoveryStore(live);
     const enqueueMerge = vi.fn();
     await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless", enqueueMerge } as any).recoverMergeableReviewTasks();
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "code-review" }));
-    expect(live).toMatchObject({ status: null, error: null, paused: false, column: "in-review" });
+    expect(live).toMatchObject({ status: null, error: null, paused: false, column: "in-review", workflowIrPin: null, workflowIrPinNodeId: null });
     expect(enqueueMerge).not.toHaveBeenCalled();
   });
 
@@ -217,6 +217,15 @@ describe("unrun pre-merge gate wedge regression", () => {
     expect(first.status).toBe("failed");
     expect(live.status).toBeNull();
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({ taskId: live.id }));
+  });
+
+  it.each([undefined, "still-pinned"])("recovers drift only after the stale pin was cleared: %s", async (workflowIrPin) => {
+    const live = resultlessReviewTask({ status: "failed", workflowIrPin,
+      error: "Workflow drift park: the workflow definition changed under this run. Stale IR pin cleared — requeue the task." });
+    const store = recoveryStore(live);
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledTimes(workflowIrPin ? 0 : 1);
+    expect(live.status).toBe(workflowIrPin ? "failed" : null);
   });
 
   it("uses merge admission to schedule the producer while retaining its blocker", async () => {

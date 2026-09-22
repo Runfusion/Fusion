@@ -29,7 +29,9 @@ export function isRecoverableUnrunGatePark(task: Task): boolean {
     && !task.userPaused && !task.deletedAt && task.autoMerge !== false
     && (!task.paused || task.pausedReason === IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON)
     && typeof task.error === "string"
-    && task.error.endsWith(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+    && (task.error.endsWith(PRE_MERGE_STEPS_NOT_RUN_BLOCKER)
+      || (!task.workflowIrPin && task.error.startsWith("Workflow drift park:")
+        && task.error.includes("Stale IR pin cleared")));
 }
 
 export async function rerouteUnrunPreMergeGateToReview(

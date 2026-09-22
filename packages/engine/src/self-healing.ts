@@ -9634,7 +9634,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               || live.error !== snapshot.error || live.column !== snapshot.column
               || !allowsAutoMergeProcessing(live, settings)) return null;
             released = true;
-            return { status: null, error: null, paused: false, pausedReason: null, mergeRetries: 0 };
+            return { status: null, error: null, paused: false, pausedReason: null, mergeRetries: 0,
+              workflowIrPin: null, workflowIrPinNodeId: null, workflowIrPinColumnId: null };
           });
           if (!released) continue;
           recoveredUnrunGateIds.add(task.id);
