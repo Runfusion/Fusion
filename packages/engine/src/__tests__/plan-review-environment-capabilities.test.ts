@@ -115,7 +115,8 @@ describe("Plan Review environment capability injection", () => {
   it("injects a healthy capability block after the embedded plan", async () => {
     mockProbeEnvironmentCapabilities.mockResolvedValue({
       capabilities: [
-        { name: "node", available: true },
+        { name: "nix", available: true },
+        { name: "dotnet", available: true, via: "nix develop --command" },
         { name: "python3", available: false },
       ],
       degraded: false,
@@ -128,7 +129,10 @@ describe("Plan Review environment capability injection", () => {
     expect(result.success).toBe(true);
     expect(captured.last?.systemPrompt).toContain("Plan Review Scope:");
     expect(captured.last?.systemPrompt).toContain("## Environment Capabilities");
-    expect(captured.last?.systemPrompt).toContain("Unavailable commands: python3");
+    expect(captured.last?.systemPrompt).toContain("Confirmed-unavailable commands: python3");
+    expect(captured.last?.systemPrompt).toContain("dotnet via nix develop --command");
+    expect(captured.last?.systemPrompt).toContain("UNKNOWN, not absent");
+    expect(mockProbeEnvironmentCapabilities).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/tmp/test", projectId: "/tmp/test" }));
     expect(captured.last?.systemPrompt?.indexOf("## Environment Capabilities"))
       .toBeGreaterThan(captured.last?.systemPrompt?.indexOf("--- END PROMPT.md ---") ?? -1);
   });

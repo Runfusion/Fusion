@@ -3658,11 +3658,19 @@ export class TriageProcessor {
           const [planDocument, originalDescriptionDocument] = typeof getTaskDocument === "function"
             ? await Promise.all([getTaskDocument.call(this.store, task.id, "plan"), getTaskDocument.call(this.store, task.id, "original-description")])
             : [null, null];
+          /*
+          FNXC:EnvironmentCapabilities 2026-09-22-03:05:
+          Planning probes the stable project root, not a task worktree or description. This preserves a root-flake Nix gate when command settings are intentionally unset.
+          */
           const environmentCapabilities = await probeEnvironmentCapabilities({
             extraCommands: [
               ...extractCommandBinaries(settings?.testCommand),
               ...extractCommandBinaries(settings?.buildCommand),
             ],
+            testCommand: settings?.testCommand,
+            buildCommand: settings?.buildCommand,
+            rootDir: this.rootDir,
+            projectId: this.store.getProjectId?.() ?? this.rootDir,
           }).catch((): EnvironmentCapabilityProbe => ({ capabilities: [], degraded: true }));
           const agentPrompt = buildSpecificationPrompt(
             detail,

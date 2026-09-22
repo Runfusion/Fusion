@@ -332,12 +332,20 @@ export async function executeWorkflowStep(
     const planReviewConvergenceContext = isPlanReviewStep
       ? buildGraphPlanReviewConvergenceContext(latestTaskForUserComments, planReviewRevisionKey)
       : "";
+    /*
+    FNXC:EnvironmentCapabilities 2026-09-22-03:05:
+    Graph Plan Review uses the same project-root evidence as triage, so host-only absence cannot demote a confirmed wrapper gate between planning and review.
+    */
     const planReviewEnvironmentCapabilities = isPlanReviewStep
       ? await probeEnvironmentCapabilities({
         extraCommands: [
           ...extractCommandBinaries(settings.testCommand),
           ...extractCommandBinaries(settings.buildCommand),
         ],
+        testCommand: settings.testCommand,
+        buildCommand: settings.buildCommand,
+        rootDir: deps.rootDir,
+        projectId: deps.store.getProjectId?.() ?? deps.rootDir,
       }).catch((): EnvironmentCapabilityProbe => ({ capabilities: [], degraded: true }))
       : undefined;
     const planReviewEnvironmentCapabilitiesBlock = planReviewEnvironmentCapabilities

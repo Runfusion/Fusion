@@ -397,8 +397,8 @@ describe("buildSpecificationPrompt", () => {
     );
 
     expect(prompt).toContain("## Environment Capabilities");
-    expect(prompt).toContain("Unavailable commands: python3");
-    expect(prompt).toContain("## Environment Constraints");
+    expect(prompt).toContain("Confirmed-unavailable commands: python3");
+    expect(prompt).toContain("UNKNOWN, not absent");
   });
 
   it("omits environment capabilities when the probe is degraded or absent", () => {

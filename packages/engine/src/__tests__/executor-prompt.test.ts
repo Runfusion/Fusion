@@ -211,7 +211,7 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("resolve it");
     expect(result).toContain("substitute a runnable automated check");
     expect(result).toContain("complete the achievable work and record the deferred verification");
-    expect(result).toContain("## Environment Constraints");
+    expect(result).toContain("detected or configured confirmed wrapper");
     expect(result).toContain("host-resource, network, model-provider, and credential failures");
     expect(result).not.toContain("provider, credential, or third-party failures");
   });

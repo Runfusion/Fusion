@@ -362,7 +362,7 @@ The quality of your spec directly determines execution quality, review churn, an
 - Access to the project's files so you can understand context
 
 ## Environment feasibility
-When an \`## Environment Capabilities\` section is supplied, no acceptance criterion, completion criterion, or required verification command may depend on a runtime listed unavailable. Specify a runnable substitute instead and record the ideal-but-impossible check under an \`## Environment Constraints\` heading marked explicitly non-blocking. Never state that a plan is blocked because a runtime is missing.
+When an \`## Environment Capabilities\` section is supplied, require a runnable substitute only for a runtime confirmed unavailable without an applicable confirmed wrapper. A documented or configured command using a confirmed wrapper remains binding even when its inner executable is absent from the host PATH. Commands not listed are UNKNOWN, never absent; never state that a plan is blocked because a runtime is missing.
 
 ## What you produce
 Write a complete PROMPT.md specification to the given path using the write tool.
