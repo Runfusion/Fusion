@@ -51,7 +51,19 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
   // FNXC:RemoteAgents 2026-09-22-15:57: The open session is what the operator is watching, so it polls at 5s as a critical subscriber of the shared visibility gate: no request while the tab is hidden, one immediate refresh on return.
   useVisibilityAwarePoll(() => { const signal = detailPoll.current?.signal; if (signal && !signal.aborted) void refresh(signal); }, 5000, { priority: "critical" });
   const supported = detail.collectorConnected && !["completed", "failed"].includes(detail.observation.activity) && !!detail.observation.feedback && Date.parse(detail.observation.feedback.expiresAt) > Date.now();
-  const pendingSame = feedback.find(f => f.commandId === commandId);
+  /*
+  FNXC:RemoteAgents 2026-09-22-16:56:
+  PR #3637 review: only a `queued` receipt blocks the composer. After a lost POST response, polling can surface this command's receipt, which later turns terminal (`delivered`, `expired`, or `uncertain`).
+  A terminal receipt rotates the command ID so the operator is never locked out, and a retry never reuses a spent ID. Text is cleared only on `delivered`; after `expired` or `uncertain` it stays so the operator can resend.
+  */
+  const sameCommand = feedback.find(f => f.commandId === commandId);
+  const pendingSame = sameCommand?.status === "queued" ? sameCommand : undefined;
+  const terminalSame = sameCommand && sameCommand.status !== "queued" ? sameCommand.status : null;
+  useEffect(() => {
+    if (!terminalSame) return;
+    if (terminalSame === "delivered") setText("");
+    setCommandId(feedbackCommandId());
+  }, [terminalSame]);
   const send = async () => {
     if (busy || !supported || !text.trim() || pendingSame) return;
     setBusy(true); setError(null);

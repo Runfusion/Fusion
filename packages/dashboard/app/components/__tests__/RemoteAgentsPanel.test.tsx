@@ -86,4 +86,44 @@ describe("standalone remote agents", () => {
     await act(async () => { setVisibility("visible"); });
     expect([count(list), count(hosts), count(detail)]).toEqual([3, 3, 4]);
   });
+  it.each([
+    ["expired", "Retry me"],
+    ["uncertain", "Retry me"],
+    ["delivered", ""],
+  ] as const)("unlocks the composer when a lost-response receipt turns %s", async (terminal, remainingText) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const posts: { commandId: string }[] = [];
+    let receiptStatus: string | null = null;
+    vi.mocked(api).mockImplementation(async (path, opts) => {
+      if (opts?.method === "POST") {
+        const body = JSON.parse(String(opts.body)); posts.push(body);
+        if (posts.length === 1) { receiptStatus = "queued"; throw new Error("Network response lost"); }
+        return { commandId: body.commandId, status: "queued", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300000).toISOString(), deliveredAt: null } as never;
+      }
+      if (path.includes("/hosts")) return { hosts: [] } as never;
+      if (path.includes("/cost")) return { usage: [], estimatedUsd: null, partialUsd: null, usageComplete: false, pricingDate: "2026-07-16", pricingSource: "Fusion" } as never;
+      if (path.includes("/feedback")) return { feedback: receiptStatus && posts[0] ? [{ commandId: posts[0].commandId, status: receiptStatus, createdAt: new Date().toISOString(), expiresAt: new Date().toISOString(), deliveredAt: null }] : [] } as never;
+      if (path.includes(id)) return { session: fixture } as never;
+      return { sessions: [fixture], nextCursor: null } as never;
+    });
+    render(<RemoteAgentsPanel projectId="project-a" />);
+    fireEvent.click((await screen.findByText("Fixture agent")).closest("button")!);
+    fireEvent.change(await screen.findByLabelText("Message"), { target: { value: "Retry me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Network response lost");
+
+    // The receipt surfaces as queued: the same command is still pending, so the composer stays locked.
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeDisabled());
+
+    receiptStatus = terminal;
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    await waitFor(() => expect(screen.getByLabelText("Message")).toBeEnabled());
+    expect(screen.getByLabelText("Message")).toHaveValue(remainingText);
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Retry me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1]!.commandId).not.toBe(posts[0]!.commandId);
+  });
 });
