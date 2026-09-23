@@ -267,6 +267,31 @@ pgDescribe("external sessions: durable observation ingestion", () => {
       (SELECT count(*)::int FROM pg_constraint WHERE contype IN ('p', 'f', 'c')
          AND conrelid IN ('project.external_session_hosts'::regclass, 'project.external_session_streams'::regclass, 'project.external_sessions'::regclass)) AS constraints`;
 
+  it("repairs 0086 even when another project table reuses a constraint name", async () => {
+    // A same-named CHECK on an unrelated table must not make the probe read the schema as intact.
+    // The decoy satisfies the project-ownership audit, so only the constraint-name collision is under test.
+    await h.adminDb().execute(sql.raw(`
+      CREATE TABLE project.external_sessions_decoy (
+        project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),
+        revision bigint,
+        CONSTRAINT external_sessions_revision CHECK (revision > 0)
+      );
+      ALTER TABLE project.external_sessions_decoy ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE project.external_sessions_decoy FORCE ROW LEVEL SECURITY;
+      CREATE POLICY fusion_project_isolation ON project.external_sessions_decoy
+        USING (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true))
+        WITH CHECK (current_setting('fusion.project_bypass', true) = 'on' OR project_id = current_setting('fusion.project_id', true));
+      ALTER TABLE project.external_sessions DROP CONSTRAINT external_sessions_revision;
+    `));
+    try {
+      expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+      const restored = await h.adminDb().execute(sql`SELECT 1 FROM pg_constraint WHERE conrelid = 'project.external_sessions'::regclass AND conname = 'external_sessions_revision'`);
+      expect(restored).toHaveLength(1);
+    } finally {
+      await h.adminDb().execute(sql.raw("DROP TABLE project.external_sessions_decoy"));
+    }
+  });
+
   it.each([
     ["missing recent index", 'DROP INDEX project."idxExternalSessionsRecent"'],
     ["missing project trigger", "DROP TRIGGER fusion_assign_project_id ON project.external_sessions"],
