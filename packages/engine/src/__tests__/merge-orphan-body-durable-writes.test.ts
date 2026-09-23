@@ -108,6 +108,14 @@ function createRecordingStore(controller: AbortController, options: { sharedGrou
         return task;
       }),
       moveTask: vi.fn(async (...args: unknown[]) => { records.push({ generation, writer: "moveTask", args }); task.column = args[1] as string; return task; }),
+      // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Attribute FN-9370's predicate-fenced terminal write to its own durable seam.
+      moveTaskIf: vi.fn(async (...args: unknown[]) => {
+        records.push({ generation, writer: "moveTaskIf", args });
+        const predicate = args[2] as (live: typeof task) => boolean | Promise<boolean>;
+        if (!await predicate(task)) return { moved: false, task };
+        task.column = args[1] as string;
+        return { moved: true, task };
+      }),
       logEntry: record("logEntry"), appendAgentLog: record("appendAgentLog"),
       emit: vi.fn((...args: unknown[]) => { records.push({ generation, writer: "emit", args }); }),
       recordRunAuditEvent: vi.fn(async (...args: unknown[]) => {

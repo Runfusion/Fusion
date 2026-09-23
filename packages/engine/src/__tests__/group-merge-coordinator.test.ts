@@ -1348,6 +1348,11 @@ function createPostReviewStore(task: Record<string, any>, branchGroup: Record<st
       return task;
     }),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Execute FN-9370's live finalization predicate in this group-merge fixture.
+    moveTaskIf: vi.fn(async (_id: string, column: string, predicate: (live: typeof task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(task)) return { moved: false, task };
+      return { moved: true, task: await store.moveTask(_id, column, options) };
+    }),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),

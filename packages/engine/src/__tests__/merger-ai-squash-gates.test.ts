@@ -58,6 +58,15 @@ function makeStore(scope: string[], overrides: Record<string, unknown> = {}) {
       return task;
     }),
     moveTask: vi.fn(async (_id: string, column: string) => Object.assign(task, { column })),
+    /*
+    FNXC:PostMergeFinalizationFixture 2026-09-23-11:20:
+    FN-9370 finalization uses the durable conditional-move fence. Squash-gate tests must
+    evaluate its live predicate, so their real merge path cannot bypass post-merge evidence.
+    */
+    moveTaskIf: vi.fn(async (_id: string, column: string, predicate: (live: typeof task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(task)) return { moved: false, task };
+      return { moved: true, task: await store.moveTask(_id, column, options) };
+    }),
     appendAgentLog: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     emit: vi.fn(),

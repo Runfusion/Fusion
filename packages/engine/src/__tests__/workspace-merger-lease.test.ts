@@ -95,6 +95,11 @@ function createStore(task: Task): TaskStore & RecordingStore {
       store.task.column = column as Task["column"];
       return Promise.resolve(store.task);
     }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Lease finalization must evaluate FN-9370's live predicate before a terminal move.
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(store.task)) return { moved: false, task: store.task };
+      return { moved: true, task: await store.moveTask(id, column, options) };
+    }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),
   }) as unknown as TaskStore & RecordingStore;

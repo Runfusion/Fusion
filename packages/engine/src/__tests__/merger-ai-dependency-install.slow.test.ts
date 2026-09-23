@@ -56,6 +56,16 @@ function makeStore(settingsOverrides: Record<string, unknown> = {}) {
       return task;
     }),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
+    /*
+    FNXC:PostMergeEvidenceFixture 2026-09-23-10:48:
+    FN-9370 fences finalization through moveTaskIf so merge fixtures must execute the live predicate,
+    not bypass the durable post-merge approval check through the retired unconditional move seam.
+    */
+    moveTaskIf: vi.fn(async (_id: string, column: string, predicate: (live: typeof task) => boolean | Promise<boolean>) => {
+      if (!(await predicate(task))) return { task, moved: false };
+      task.column = column;
+      return { task, moved: true };
+    }),
     emit: vi.fn(),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),

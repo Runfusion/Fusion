@@ -68,6 +68,11 @@ function makeStore(taskId: string, branch: string) {
       return task;
     }),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Execute FN-9370's live finalization predicate before this fixture mutates its task.
+    moveTaskIf: vi.fn(async (_id: string, column: string, predicate: (live: typeof task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(task)) return { moved: false, task };
+      return { moved: true, task: await store.moveTask(_id, column, options) };
+    }),
     emit: vi.fn(),
     logEntry: vi.fn(async (_id: string, message: string) => { logs.push(message); }),
     appendAgentLog: vi.fn(async (_id: string, message: string) => { logs.push(message); }),

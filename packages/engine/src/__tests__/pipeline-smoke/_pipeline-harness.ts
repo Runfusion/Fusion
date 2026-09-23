@@ -535,10 +535,19 @@ export class PipelineSmokeHarness {
     */
     await this.publishPlannedPrompt(taskId);
 
-    if (options.codeReview === false) {
-      const task = await this.freshTask(taskId);
+    const task = await this.freshTask(taskId);
+    if (options.codeReview === false || (task.enabledWorkflowSteps ?? []).includes("post-merge-verification")) {
+      /*
+      FNXC:PipelineSmokePostMergeEvidence 2026-09-23-11:13:
+      Pipeline scenarios exercise local planning-through-merge behavior and cannot produce the
+      hosted push-to-main evidence required by the new post-merge verification gate. Explicitly
+      disable that external delivery gate in this fixture while retaining every local production
+      stage; dedicated post-merge evidence tests own the hosted-evidence contract.
+      */
       await this.store.updateTask(taskId, {
-        enabledWorkflowSteps: (task.enabledWorkflowSteps ?? []).filter((stepId) => stepId !== "code-review"),
+        enabledWorkflowSteps: (task.enabledWorkflowSteps ?? []).filter(
+          (stepId) => stepId !== "post-merge-verification" && (options.codeReview !== false || stepId !== "code-review"),
+        ),
       });
     }
 

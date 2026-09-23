@@ -43,7 +43,15 @@ function storeFor(task: Task, scope: string[]): TaskStore & { updates: Array<Rec
     }),
     appendAgentLog: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
-    moveTask: vi.fn(async () => task),
+    moveTask: vi.fn(async (_id: string, column: Task["column"]) => { task.column = column; return task; }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Scope-gate finalization retains FN-9370's live conditional-move fence.
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(task)) return { moved: false, task };
+      void id;
+      void options;
+      task.column = column;
+      return { moved: true, task };
+    }),
     upsertTaskCommitAssociation: vi.fn(async () => undefined),
     accumulateTokenUsage: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async (event: unknown) => { audit.push(event); }),

@@ -152,6 +152,17 @@ function makeStore(
       return task;
     }),
     moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
+    /*
+    FNXC:PostMergeFinalizationFixture 2026-09-23-11:11:
+    FN-9370 moved terminal finalization behind a conditional durable move. This shared
+    real-Git fixture must evaluate that live predicate so merger tests retain the production
+    finalization fence instead of silently exercising the retired unconditional move path.
+    */
+    moveTaskIf: vi.fn(async (_id: string, column: string, predicate: (live: typeof task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(task)) return { moved: false, task };
+      const movedTask = await store.moveTask(_id, column, options);
+      return { moved: true, task: movedTask };
+    }),
     emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }),
     logEntry: vi.fn(async (_id: string, m: string) => { logs.push(m); }),
     appendAgentLog: vi.fn(async (_id: string, m: string) => { logs.push(m); }),
@@ -461,14 +472,14 @@ describe("runAiMerge", () => {
     expect(landedMsg).toContain("Fusion-Task-Id: FN-1");
     expect((landedMsg.match(/Co-authored-by:\s*Fusion <noreply@runfusion\.ai>/g) ?? []).length).toBe(1);
     expect(git(dir, "log -1 --pretty=%s main")).toMatch(/^FN-1: /);
-    // Task marked merge-backed before moving to done, then event emitted.
-    expect(store.updateTask).toHaveBeenCalledWith(
+    // Task finalizes through the guarded durable move before emitting its event.
+    expect(store.moveTaskIf).toHaveBeenCalledWith(
       "FN-1",
-      expect.objectContaining({
-        status: null,
-        mergeDetails: expect.objectContaining({ mergeConfirmed: true }),
-      }),
+      "done",
+      expect.any(Function),
+      expect.objectContaining({ moveSource: "engine", preserveProgress: true }),
     );
+    expect(store.updateTaskAtomic).toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
     expect(emitted.some((e) => e.event === "task:merged")).toBe(true);
   });
@@ -829,17 +840,7 @@ describe("runAiMerge", () => {
     expect(result.noOp).toBe(true);
     expect(result.merged).toBe(false);
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-1",
-      expect.objectContaining({
-        status: null,
-        mergeDetails: expect.objectContaining({
-          mergeConfirmed: true,
-          noOpMerge: true,
-          noOpReason: "no-net-changes",
-        }),
-      }),
-    );
+    expect(store.updateTaskAtomic).toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
@@ -1479,16 +1480,7 @@ describe("runAiMerge", () => {
     });
 
     expect(result.noOp).toBe(true);
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-1",
-      expect.objectContaining({
-        status: null,
-        mergeDetails: expect.objectContaining({
-          mergeConfirmed: true,
-          noOpMerge: true,
-        }),
-      }),
-    );
+    expect(store.updateTaskAtomic).toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
