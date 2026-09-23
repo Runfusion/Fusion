@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,9 @@ The DealersSaaS plan must remain evidence-labeled, cover all seven requested dea
 
 FNXC:DealersSaaSPlanContract 2026-09-23-09:32:
 Every proposed Mission hierarchy heading must remain visibly awaiting approval. The contract checks each milestone, slice, and feature rather than accepting one document-level status marker that could conceal an accidentally pre-approved item.
+
+FNXC:DealersSaaSPlanContract 2026-09-23-10:16:
+Repository evidence must be reviewable at the inventory's measured revision, not only against a later worktree. The contract asks Git to prove every cited production package path existed at that exact revision and mutation coverage proves a fabricated historical path is rejected.
 */
 function tableRows(markdown, heading) {
   const section = markdown.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |\\Z)`, "m"));
@@ -290,12 +294,33 @@ function validateLocalLinks(filePath, markdown) {
   return errors;
 }
 
+function currentPathCitations(markdown) {
+  return [...markdown.matchAll(/`((?:packages|docs|scripts)\/[^`\n]+)`/g)].map((match) => match[1]);
+}
+
 function validateCurrentPathCitations(markdown) {
   const errors = [];
-  const citations = [...markdown.matchAll(/`((?:packages|docs|scripts)\/[^`\n]+)`/g)].map((match) => match[1]);
-  for (const citation of citations) {
+  for (const citation of currentPathCitations(markdown)) {
     if (/[*{}]/.test(citation)) continue;
     if (!existsSync(path.join(repoRoot, citation))) errors.push(`Missing cited current path: ${citation}`);
+  }
+  return errors;
+}
+
+function measuredRevision(markdown) {
+  return markdown.match(/\*\*Measured revision:\*\* `([0-9a-f]{40})`/)?.[1];
+}
+
+function validateMeasuredRevisionCitations(markdown, revision) {
+  const errors = [];
+  if (!revision) return ["Missing measured revision for historical citation check"];
+  for (const citation of currentPathCitations(markdown).filter((candidate) => candidate.startsWith("packages/"))) {
+    if (/[*{}]/.test(citation)) continue;
+    try {
+      execFileSync("git", ["cat-file", "-e", `${revision}:${citation}`], { cwd: repoRoot, stdio: "ignore" });
+    } catch {
+      errors.push(`Missing cited path at measured revision ${revision}: ${citation}`);
+    }
   }
   return errors;
 }
@@ -315,16 +340,20 @@ test("documentation index discovers exactly the plan and two supporting specs", 
   assert.deepEqual(planningDocs, ["carcuro-capability-inventory.md", "carcuro-product-spec.md", "dealersaas-mission-plan.md"]);
 });
 
-test("planning links and current path citations resolve", () => {
+test("planning links and current path citations resolve at the measured revision", () => {
+  const revision = measuredRevision(inventory);
+  assert.match(revision ?? "", /^[0-9a-f]{40}$/);
   for (const [filePath, markdown] of [[inventoryPath, inventory], [productSpecPath, productSpec], [planPath, plan]]) {
     assert.deepEqual(validateLocalLinks(filePath, markdown), []);
     assert.deepEqual(validateCurrentPathCitations(markdown), []);
+    assert.deepEqual(validateMeasuredRevisionCitations(markdown, revision), []);
   }
 });
 
-test("contract detects broken current paths and duplicate proposal labels", () => {
+test("contract detects broken current and measured-revision paths plus duplicate proposal labels", () => {
   const brokenPath = inventory.replace("packages/core/src/postgres/schema/project.ts", "packages/core/src/postgres/schema/not-real.ts");
   assert.match(validateCurrentPathCitations(brokenPath).join("\n"), /not-real\.ts/);
+  assert.match(validateMeasuredRevisionCitations(brokenPath, measuredRevision(inventory)).join("\n"), /not-real\.ts/);
 
   const duplicate = plan.replace("Feature `F-FOUND-02`", "Feature `F-FOUND-01`");
   assert.match(validateHierarchy(duplicate).join("\n"), /Duplicate feature proposal label/);

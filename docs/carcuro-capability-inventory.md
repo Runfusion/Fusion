@@ -4,9 +4,10 @@
 
 ## Measurement boundary
 
-- **Measured revision:** `f98115ec8c967125fc9701b8bfed7f308b8be3ee`
-- **Measured at:** 2026-09-23 08:42 UTC
+- **Measured revision:** `f772db2c901b5b24aba2eaf1a6f617f53f039210`
+- **Measured at:** 2026-09-23 10:16 UTC
 - **Checkout:** branch `fusion/fx-010`, package `fusion-workspace@0.78.0-beta.6`
+- **Review boundary:** the measured revision is the current merge base with `origin/main`; every cited production package path is contract-tested with `git cat-file` at this exact revision rather than inferred from the later task worktree.
 - **Scope:** tracked files and all refs reachable from this Fusion repository. This is not evidence about another repository, an unpushed branch, a deployed Carcuro system, or the mission description's named `scrapeui` substrate.
 
 ### Evidence vocabulary
@@ -33,7 +34,7 @@ git rev-list --objects --all | grep -Ei 'dealerssaas|carcuro|scrapeui'
 git grep -Il -Ei 'invoice|storefront|sales channel|vehicle|dealership|customer relationship|valuation provider' -- ':!pnpm-lock.yaml'
 ```
 
-Bounded results on 2026-09-23:
+Bounded results on 2026-09-23, reconciled against the measured revision before the task-authored planning commits:
 
 1. Tracked-content searches for the three names returned zero results before these planning files were added.
 2. All-ref commit-message, requested-path history, and reachable object-name searches returned zero results.
