@@ -52,6 +52,18 @@ describe("external-session observation contract", () => {
     expect(externalSessionIngestionSchema.safeParse({ ...envelope, session: { ...session, observedAt: "not-a-date" } }).success).toBe(false);
   });
 
+  it.each(["2026-09-17T00:00:00+24:00", "2026-09-17T00:00:00+99:99"])("rejects date-shaped but unparseable instant %s without throwing", value => {
+    const observations = [
+      { ...session, observedAt: value },
+      { ...session, recentActivity: [{ kind: "prompt", at: value, text: "hello" }] },
+      { ...session, feedback: { generation: "generation-1", expiresAt: value } },
+    ];
+    for (const observation of observations) {
+      expect(() => externalSessionIngestionSchema.safeParse({ ...envelope, session: observation })).not.toThrow();
+      expect(externalSessionIngestionSchema.safeParse({ ...envelope, session: observation }).success).toBe(false);
+    }
+  });
+
   it("keeps collector connectivity independent from terminal/ongoing activity", () => {
     const observation = externalSessionIngestionSchema.parse(envelope).session;
     const now = Date.parse("2026-09-17T00:02:00Z");
