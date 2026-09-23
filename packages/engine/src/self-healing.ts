@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -3434,6 +3434,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (await this.isStrandedCompletedPromotionBlockedByFailureProvenance(task.id, "stuck-in-progress")) {
           continue;
         }
+        /*
+        FNXC:PostMergeEvidenceFence 2026-09-23-08:05:
+        Post-merge evidence is unavailable until merge succeeds. Unmerged recovery must re-enter
+        the normal graph path to reach merge and its gate; proven-merged recovery must retain it.
+        */
+        if (task.mergeDetails?.mergeConfirmed === true) {
+          const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
+          if (evidenceBlocker) {
+            log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
+            continue;
+          }
+        }
         log.log(`Recovering completed task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
         const success = await recoverFn(task);
         if (success) recovered++;
@@ -3543,6 +3555,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // failure/refusal park — the pause-abort bounce to todo must not launder the failure.
         if (await this.isStrandedCompletedPromotionBlockedByFailureProvenance(task.id, "stranded-todo")) {
           continue;
+        }
+        /*
+        FNXC:PostMergeEvidenceFence 2026-09-23-08:05:
+        An unmerged task resumes through the graph to reach its post-merge node; only a
+        proven-merged recovery can require evidence that is already durable.
+        */
+        if (task.mergeDetails?.mergeConfirmed === true) {
+          const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
+          if (evidenceBlocker) {
+            log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
+            continue;
+          }
         }
 
         const success = await recoverFn(task);
@@ -3774,6 +3798,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             && steps.every((step) => step.status === "done" || step.status === "skipped");
           if (complete) {
             if (!this.options.recoverCompletedTask) continue;
+            /*
+            FNXC:PostMergeEvidenceFence 2026-09-23-08:05:
+            This is pre-merge recovery unless durable proof exists. Do not strand graph re-entry
+            waiting for evidence that can only be produced after merge.
+            */
+            if (live.mergeDetails?.mergeConfirmed === true) {
+              const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, live);
+              if (evidenceBlocker) {
+                log.debug(`${live.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
+                continue;
+              }
+            }
             if (await this.options.recoverCompletedTask(live)) recovered++;
             continue;
           }

@@ -1,5 +1,6 @@
 import {
   getPostMergeFinalizeBlocker,
+  getRequiredPostMergeEvidenceBlocker,
   planConfirmedMergeChecklistReconciliation,
   resolveWorkflowIrForTask,
   resolveCompleteColumn,
@@ -247,6 +248,21 @@ export async function finalizeProvenAutoMergeTask({
   // done/in-review for builtin:coding).
   const { completeColumn, mergeColumn, isCompleteColumn } = await resolveFinalizationColumns(store, taskId);
 
+  const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest);
+  if (evidenceBlocker) {
+    await recordFinalizationAudit({
+      store,
+      audit,
+      task: latest,
+      type: "task:auto-merge-finalize-column-mismatch-no-action",
+      reason: evidenceBlocker,
+      auditAgentId,
+      auditPhase,
+    });
+    await log?.(`Auto-merge finalization deferred for ${taskId}: ${evidenceBlocker}`);
+    return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: evidenceBlocker };
+  }
+
   const validationMergeDetails = buildFinalizationMergeDetails(latest, result);
   const cleanupLandedWorktree = async (task: Task, mergeDetails: NonNullable<Task["mergeDetails"]>): Promise<void> => {
     if (!rootDir) return;
@@ -338,16 +354,6 @@ export async function finalizeProvenAutoMergeTask({
     });
     return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: postMergeBlocker };
   }
-  const checklistReconciliation = planConfirmedMergeChecklistReconciliation(latest);
-  const reconciledSteps = latest.steps.map((step, index) =>
-    checklistReconciliation.skippedStepIndexes.includes(index) ? { ...step, status: "skipped" as const } : step,
-  );
-  const reconciledWorkflowStepResults = (latest.workflowStepResults ?? []).map((result) =>
-    checklistReconciliation.reconciledWorkflowStepIds.includes(result.workflowStepId)
-      ? { ...result, status: "skipped" as const }
-      : result,
-  );
-
   const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails } as Task, {
     result,
     checkWorkflowSteps: false,
@@ -366,19 +372,6 @@ export async function finalizeProvenAutoMergeTask({
     await log?.(`Auto-merge finalization blocked for ${taskId}: ${proofVerdict.reason}`);
     return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: proofVerdict.reason };
   }
-
-  fence?.assertOwned("finalization");
-  await store.updateTask(taskId, {
-    paused: false,
-    status: null,
-    error: null,
-    blockedBy: null,
-    overlapBlockedBy: null,
-    mergeRetries: 0,
-    mergeDetails,
-    steps: reconciledSteps,
-    workflowStepResults: reconciledWorkflowStepResults,
-  } as Pick<Task, "steps" | "workflowStepResults">);
 
   const shouldRecoveryRehome = latest.column !== mergeColumn;
   if (shouldRecoveryRehome) {
@@ -403,10 +396,75 @@ export async function finalizeProvenAutoMergeTask({
     provenance instead of workflow-graph, workflow-remediation, or plan-approval: those literals
     carry in-review-entry and reopen semantics. The value is also forwarded to plugin move policies.
     */
-    const moved = await store.moveTask(taskId, completeColumn, shouldRecoveryRehome
+    /*
+    FNXC:PostMergeEvidenceFence 2026-09-23-08:10:
+    Post-merge approval is mutable graph state, so the optimistic evidence read above cannot
+    authorize a later terminal move. Re-read it under moveTaskIf's task-row fence: a superseded
+    result refuses this move instead of allowing a done card without durable evidence.
+    */
+    let finalizationBlocker: string | undefined;
+    const move = await store.moveTaskIf(taskId, completeColumn, async (live) => {
+      const liveMergeDetails = buildFinalizationMergeDetails(live, result);
+      if (!hasDurableMergeProof({ ...live, mergeDetails: liveMergeDetails } as Task, result)) {
+        finalizationBlocker = "missing-merge-confirmation";
+        return false;
+      }
+      finalizationBlocker = await getRequiredPostMergeEvidenceBlocker(store, live);
+      if (finalizationBlocker) return false;
+      finalizationBlocker = getPostMergeFinalizeBlocker({
+        status: clearMergeConfirmedTransientStatus(live.status),
+        error: undefined,
+      });
+      if (finalizationBlocker) return false;
+      const liveProofVerdict = await validateWorkflowDoneMergeProof({ ...live, mergeDetails: liveMergeDetails } as Task, {
+        result,
+        checkWorkflowSteps: false,
+        isCompleteColumn,
+      });
+      if (!liveProofVerdict.ok) {
+        finalizationBlocker = liveProofVerdict.reason;
+        return false;
+      }
+      return true;
+    }, shouldRecoveryRehome
       ? { moveSource: "engine", workflowMoveSource: "auto-merge-finalization", recoveryRehome: true, preserveProgress: true }
       : { moveSource: "engine", workflowMoveSource: "auto-merge-finalization", preserveProgress: true });
-    if (result) result.task = moved;
+    if (!move.moved) {
+      const currentBlocker = finalizationBlocker
+        ?? await getRequiredPostMergeEvidenceBlocker(store, move.task)
+        ?? "finalization-fence-refused";
+      await recordFinalizationAudit({
+        store,
+        audit,
+        task: move.task,
+        type: "task:auto-merge-finalize-column-mismatch-no-action",
+        reason: currentBlocker,
+        auditAgentId,
+        auditPhase,
+      });
+      return { outcome: "blocked", task: move.task, previousColumn: latest.column, reason: currentBlocker };
+    }
+    const finalized = await store.updateTaskAtomic(taskId, (current) => {
+      const reconciliation = planConfirmedMergeChecklistReconciliation(current);
+      return {
+        paused: false,
+        status: null,
+        error: null,
+        blockedBy: null,
+        overlapBlockedBy: null,
+        mergeRetries: 0,
+        mergeDetails: buildFinalizationMergeDetails(current, result),
+        steps: current.steps.map((step, index) =>
+          reconciliation.skippedStepIndexes.includes(index) ? { ...step, status: "skipped" as const } : step,
+        ),
+        workflowStepResults: (current.workflowStepResults ?? []).map((entry) =>
+          reconciliation.reconciledWorkflowStepIds.includes(entry.workflowStepId)
+            ? { ...entry, status: "skipped" as const }
+            : entry,
+        ),
+      } as Pick<Task, "steps" | "workflowStepResults">;
+    });
+    if (result) result.task = finalized;
     if (shouldRecoveryRehome) {
       await recordFinalizationAudit({
         store,
@@ -423,7 +481,7 @@ export async function finalizeProvenAutoMergeTask({
         `Auto-merge finalization repaired column mismatch: ${latest.column} → ${completeColumn} after proven merge; cleared stale status/blockers`,
       ).catch(() => undefined);
     }
-    const finalTask = moved ?? (await store.getTask(taskId).catch(() => null)) ?? latest;
+    const finalTask = finalized;
     return { outcome: shouldRecoveryRehome ? "done" : "done", task: finalTask, previousColumn: latest.column };
   } catch (error) {
     if (isInvalidDoneTransitionError(error, completeColumn)) {

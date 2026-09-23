@@ -1210,7 +1210,7 @@ export {
   requiresContentReviewProof,
   resolveUnprovenReviewApproval,
 } from "./merge/pre-merge-approval.js";
-export { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {

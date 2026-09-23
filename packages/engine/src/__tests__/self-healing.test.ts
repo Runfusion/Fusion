@@ -253,6 +253,19 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
   return store;
 }
 
+function installFinalizationAtomics(store: TaskStore): void {
+  store.updateTaskAtomic = vi.fn(async (id, updater) => {
+    const current = await store.getTask(id);
+    return store.updateTask(id, await updater(current));
+  });
+  store.moveTaskIf = vi.fn(async (id, column, predicate, options) => {
+    const current = await store.getTask(id);
+    if (!await predicate(current)) return { task: current, moved: false };
+    const moved = await store.moveTask(id, column, options);
+    return { task: moved ?? { ...current, column }, moved: true };
+  });
+}
+
 describe("SelfHealingManager", () => {
   let store: TaskStore & EventEmitter;
   let manager: SelfHealingManager;
@@ -2317,6 +2330,47 @@ describe("SelfHealingManager", () => {
         expect.objectContaining({ id: "FN-001" }),
       );
 
+      managerWithRecovery.stop();
+    });
+
+    it("allows unmerged graph recovery but blocks proven-merged recovery while enabled post-merge evidence is absent", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+      Object.assign(store, {
+        getTaskWorkflowSelection: vi.fn(() => ({
+          workflowId: "builtin:coding",
+          stepIds: ["post-merge-verification"],
+        })),
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        id: "FN-PM-recovery",
+        column: "in-progress",
+        paused: false,
+        enabledWorkflowSteps: ["post-merge-verification"],
+        workflowStepResults: [],
+        steps: [{ status: "done" }],
+      }]);
+
+      // The graph must resume to perform the merge and create the post-merge evidence.
+      await expect(managerWithRecovery.recoverCompletedTasks()).resolves.toBe(1);
+      expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-PM-recovery" }));
+
+      recoverFn.mockClear();
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        id: "FN-PM-merged-recovery",
+        column: "in-progress",
+        paused: false,
+        mergeDetails: { mergeConfirmed: true },
+        enabledWorkflowSteps: ["post-merge-verification"],
+        workflowStepResults: [],
+        steps: [{ status: "done" }],
+      }]);
+      await expect(managerWithRecovery.recoverCompletedTasks()).resolves.toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
       managerWithRecovery.stop();
     });
 
@@ -5894,6 +5948,7 @@ describe("SelfHealingManager", () => {
       };
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([task]);
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+      installFinalizationAtomics(store);
 
       const result = await managerWithRecovery.recoverMergedReviewTasks();
 
@@ -5934,6 +5989,7 @@ describe("SelfHealingManager", () => {
         return [];
       });
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+      installFinalizationAtomics(store);
       mockedExecSync.mockImplementation((command: string | Buffer) => {
         const cmd = String(command);
         if (cmd.includes("cat-file -e landed123^{commit}")) return "" as any;
@@ -9763,6 +9819,7 @@ describe("stranded AI merge clean-room recovery", () => {
       moveTask: vi.fn().mockResolvedValue(movedTask),
       updateTask: vi.fn().mockImplementation(async (_id: string, patch: Partial<Task>) => Object.assign(task as object, patch)),
     });
+    installFinalizationAtomics(testStore);
     const testManager = new SelfHealingManager(testStore, { rootDir: "/tmp/test-project", requeueForAutoMerge: vi.fn().mockResolvedValue(true) });
 
     const originalReaddir = mockedReaddirSync.getMockImplementation();

@@ -1342,7 +1342,22 @@ export class WorkflowGraphExecutor {
           const effectiveStepStatus = authoritativeResult?.status ?? stepStatus;
           const effectiveVerdict = authoritativeResult ? authoritativeResult.verdict : verdict;
           const verdictRequired = false;
-          const requiredGate = verdictRequired || resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps, task).has(node.id);
+          /*
+          FNXC:PostMergeEvidenceFence 2026-09-23-07:48:
+          An enabled gate-mode post-merge group is a required follow-up, not an advisory
+          observation. A stale scope or continuation fence may refuse its terminal write, but
+          must not turn the optimistic handler success into a graph success: the pending durable
+          obligation remains for the replacement run. Explicitly disabled and advisory groups
+          retain their non-blocking behavior.
+          */
+          const requiredPostMergeGate = node.kind === "optional-group"
+            && node.config?.phase === "post-merge"
+            && isWorkflowOptionalGroupEnabled(task.enabledWorkflowSteps, node.id, node.config.defaultOn === true)
+            && (node.config.template as { nodes?: Array<{ config?: { gateMode?: unknown } }> } | undefined)
+              ?.nodes?.some((inner) => inner.config?.gateMode === "gate") === true;
+          const requiredGate = verdictRequired
+            || requiredPostMergeGate
+            || resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps, task).has(node.id);
           const persistenceUnavailable = terminalPersistence.disposition !== "no-writer"
             && terminalPersistence.disposition !== "aborted"
             && !terminalPersistence.persisted;
@@ -1352,6 +1367,7 @@ export class WorkflowGraphExecutor {
            * leaves APPROVE attached to a failed row. Only a durably passed result may advance.
            */
           const requiresAuthoritativeApproval = verdictRequired
+            || requiredPostMergeGate
             || this.workflowReviewKind(node) !== undefined;
           /*
            * FNXC:AuthoritativeGateResult 2026-09-13-05:59:
@@ -1571,7 +1587,12 @@ export class WorkflowGraphExecutor {
               return { outcome: "success", value: "pre-merge-optional-step-fix-scheduled" };
             }
           }
-          return await traverseChildren(node, effectiveVerdict === "REVISE"
+          /*
+          FNXC:PostMergeEvidenceFence 2026-09-23-08:05:
+          Advisory post-merge observations retain their result but cannot select a failure edge.
+          Gate-mode post-merge and all pre-merge REVISE verdicts remain blocking.
+          */
+          return await traverseChildren(node, effectiveVerdict === "REVISE" && (stepPhase === "pre-merge" || requiredPostMergeGate)
             ? { outcome: "failure", value: "REVISE" }
             : result);
         }

@@ -1,4 +1,6 @@
 import type { Task, WorkflowStepResult } from "../types.js";
+import { resolveWorkflowIrForTask, type WorkflowIrResolverStore } from "../workflows/workflow-ir-resolver.js";
+import { isWorkflowOptionalGroupEnabled } from "../workflows/workflow-optional-steps.js";
 import { BLOCKING_TASK_STATUSES, clearMergeConfirmedTransientStatus } from "./task-merge.js";
 
 export type ConfirmedMergeChecklistReconciliation = {
@@ -24,6 +26,42 @@ export function getPostMergeFinalizeBlocker(task: Pick<Task, "status" | "error">
   const status = clearMergeConfirmedTransientStatus(task.status);
   if (status && status !== "failed" && BLOCKING_TASK_STATUSES.has(status)) {
     return task.error ? `task is marked '${status}': ${task.error}` : `task is marked '${status}'`;
+  }
+  return undefined;
+}
+
+/*
+FNXC:WorkflowPostMerge 2026-09-23-07:48:
+A confirmed merge does not erase an enabled gate-mode post-merge requirement. Finalizers and
+self-healing share this resolver-backed decision so absent, pending, skipped, or revised evidence
+keeps the task outside completion until the durable gate result approves it. Explicitly disabled
+and advisory groups retain their intentional non-blocking behavior.
+*/
+export async function getRequiredPostMergeEvidenceBlocker(
+  store: WorkflowIrResolverStore,
+  task: Pick<Task, "id" | "enabledWorkflowSteps" | "workflowStepResults">,
+): Promise<string | undefined> {
+  const reader = store as Partial<WorkflowIrResolverStore>;
+  if (typeof reader.getTaskWorkflowSelection !== "function") return undefined;
+
+  const ir = await resolveWorkflowIrForTask(store, task.id);
+  const requiredGateIds = ir.version === "v2"
+    ? ir.nodes.flatMap((node) => {
+      if (node.kind !== "optional-group" || node.config?.phase !== "post-merge") return [];
+      const template = node.config.template as { nodes?: Array<{ config?: { gateMode?: unknown } }> } | undefined;
+      const gateMode = template?.nodes?.some((inner) => inner.config?.gateMode === "gate");
+      return gateMode && isWorkflowOptionalGroupEnabled(task.enabledWorkflowSteps, node.id, node.config.defaultOn === true)
+        ? [node.id]
+        : [];
+    })
+    : [];
+
+  for (const gateId of requiredGateIds) {
+    const result = (task.workflowStepResults ?? []).find((entry) => entry.workflowStepId === gateId);
+    if (!result) return `required post-merge evidence gate '${gateId}' has not reported`;
+    if (result.status !== "passed" || (result.verdict !== "APPROVE" && result.verdict !== "APPROVE_WITH_NOTES")) {
+      return `required post-merge evidence gate '${gateId}' is not approved`;
+    }
   }
   return undefined;
 }
