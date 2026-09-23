@@ -8,8 +8,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const inventoryPath = path.join(repoRoot, "docs/carcuro-capability-inventory.md");
 const productSpecPath = path.join(repoRoot, "docs/carcuro-product-spec.md");
+const planPath = path.join(repoRoot, "docs/dealersaas-mission-plan.md");
 const inventory = readFileSync(inventoryPath, "utf8");
 const productSpec = readFileSync(productSpecPath, "utf8");
+const plan = readFileSync(planPath, "utf8");
 
 const REQUIRED_DOMAINS = [
   "Inventory P&L",
@@ -138,4 +140,110 @@ test("external claims require provenance and cannot disguise inference as observ
     validateExternalClaim({ label: "observed", url: "https://www.carcuro.com/", retrieved: "2026-09-23" }),
     [],
   );
+});
+
+function parseHierarchy(markdown) {
+  const features = [];
+  let milestone;
+  let slice;
+  const headingPattern = /^(###|####|#####) (Milestone|Slice|Feature) `([^`]+)`[^\n]*$/gm;
+  const headings = [...markdown.matchAll(headingPattern)];
+  for (let index = 0; index < headings.length; index += 1) {
+    const match = headings[index];
+    if (match[2] === "Milestone") {
+      milestone = match[3];
+      slice = undefined;
+    } else if (match[2] === "Slice") {
+      slice = match[3];
+    } else {
+      const bodyStart = match.index + match[0].length;
+      const bodyEnd = headings[index + 1]?.index ?? markdown.length;
+      const body = markdown.slice(bodyStart, bodyEnd);
+      const prerequisites = body.match(/\*\*Prerequisites:\*\* ([^\n]+)/)?.[1] ?? "";
+      features.push({
+        id: match[3],
+        milestone,
+        slice,
+        body,
+        prerequisites: prerequisites === "none." ? [] : [...prerequisites.matchAll(/`([^`]+)`/g)].map((item) => item[1]),
+      });
+    }
+  }
+  return features;
+}
+
+function validateHierarchy(markdown) {
+  const errors = [];
+  const features = parseHierarchy(markdown);
+  const ids = features.map((feature) => feature.id);
+  const known = new Set(ids);
+  if (new Set(ids).size !== ids.length) errors.push("Duplicate feature proposal label");
+
+  for (const feature of features) {
+    if (!feature.milestone || !feature.slice) errors.push(`${feature.id} lacks milestone or slice parent`);
+    for (const field of ["Outcome", "Prerequisites", "Affected domains/surfaces", "Blast radius", "Principal risks", "Acceptance evidence", "Deferred discovery"]) {
+      if (!feature.body.includes(`**${field}:**`)) errors.push(`${feature.id} missing ${field}`);
+    }
+    for (const dependency of feature.prerequisites) {
+      if (!known.has(dependency)) errors.push(`${feature.id} references unknown dependency ${dependency}`);
+    }
+  }
+
+  const visiting = new Set();
+  const visited = new Set();
+  const byId = new Map(features.map((feature) => [feature.id, feature]));
+  function visit(id) {
+    if (visiting.has(id)) {
+      errors.push(`Dependency cycle includes ${id}`);
+      return;
+    }
+    if (visited.has(id)) return;
+    visiting.add(id);
+    for (const dependency of byId.get(id)?.prerequisites ?? []) visit(dependency);
+    visiting.delete(id);
+    visited.add(id);
+  }
+  ids.forEach(visit);
+
+  for (const domain of REQUIRED_DOMAINS) {
+    if (!features.some((feature) => feature.body.match(/\*\*Affected domains\/surfaces:\*\*[^\n]*/)?.[0].includes(domain))) {
+      errors.push(`No acceptance-bearing feature covers ${domain}`);
+    }
+  }
+  return errors;
+}
+
+function validateApprovalGate(markdown) {
+  const errors = [];
+  for (const choice of ["Approve", "Approve with changes", "Revise"]) {
+    const count = [...markdown.matchAll(new RegExp(`^- \\*\\*${choice}\\*\\*$`, "gm"))].length;
+    if (count !== 1) errors.push(`Approval choice ${choice} must occur exactly once`);
+  }
+  if (!/proposed \/ awaiting approval/.test(markdown)) errors.push("Hierarchy lacks awaiting-approval status");
+  for (const forbidden of ["hierarchy is approved", "hierarchy is active", "hierarchy is implemented", "hierarchy is delegated", "hierarchy is linked"]) {
+    if (markdown.toLowerCase().includes(forbidden)) errors.push(`Forbidden completion claim: ${forbidden}`);
+  }
+  return errors;
+}
+
+test("plan hierarchy is parented, acceptance-bearing, dependency-valid, and acyclic", () => {
+  assert.deepEqual(validateHierarchy(plan), []);
+  assert.match(plan, /\*\*Blast radius:\*\*/);
+  assert.match(plan, /\*\*Principal risks:\*\*/);
+  assert.match(plan, /\.\/carcuro-capability-inventory\.md/);
+  assert.match(plan, /\.\/carcuro-product-spec\.md/);
+});
+
+test("plan contract detects dependency cycles and a missing approval choice", () => {
+  const cyclic = plan.replace("- **Prerequisites:** none.", "- **Prerequisites:** `F-FOUND-02`.");
+  assert.match(validateHierarchy(cyclic).join("\n"), /Dependency cycle/);
+
+  const missingChoice = plan.replace("- **Revise**", "");
+  assert.match(validateApprovalGate(missingChoice).join("\n"), /Revise must occur exactly once/);
+});
+
+test("plan preserves the pre-implementation approval gate", () => {
+  assert.deepEqual(validateApprovalGate(plan), []);
+  assert.match(plan, /Approval authorizes only a later interaction to persist the agreed Mission hierarchy and hand it to Engineering/);
+  assert.match(plan, /FX-011 must be resolved before the active goal is linked/);
 });
