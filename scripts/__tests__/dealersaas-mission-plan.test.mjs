@@ -32,6 +32,9 @@ const EVIDENCE_STATES = [
 /*
 FNXC:DealersSaaSPlanContract 2026-09-23-08:42:
 The DealersSaaS plan must remain evidence-labeled, cover all seven requested dealership domains exactly once in its capability matrix, and preserve an explicit approval gate before hierarchy persistence or implementation handoff. Mutation assertions prove the guard rejects incomplete evidence instead of merely confirming that files can be read.
+
+FNXC:DealersSaaSPlanContract 2026-09-23-09:32:
+Every proposed Mission hierarchy heading must remain visibly awaiting approval. The contract checks each milestone, slice, and feature rather than accepting one document-level status marker that could conceal an accidentally pre-approved item.
 */
 function tableRows(markdown, heading) {
   const section = markdown.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |\\Z)`, "m"));
@@ -177,7 +180,13 @@ function validateHierarchy(markdown) {
   const features = parseHierarchy(markdown);
   const ids = features.map((feature) => feature.id);
   const known = new Set(ids);
+  const hierarchyHeadings = [...markdown.matchAll(/^(?:###|####|#####) (?:Milestone|Slice|Feature) `([^`]+)`([^\n]*)$/gm)];
   if (new Set(ids).size !== ids.length) errors.push("Duplicate feature proposal label");
+  for (const heading of hierarchyHeadings) {
+    if (!heading[2].includes("proposed / awaiting approval")) {
+      errors.push(`${heading[1]} is not marked proposed / awaiting approval`);
+    }
+  }
 
   for (const feature of features) {
     if (!feature.milestone || !feature.slice) errors.push(`${feature.id} lacks milestone or slice parent`);
@@ -234,9 +243,15 @@ test("plan hierarchy is parented, acceptance-bearing, dependency-valid, and acyc
   assert.match(plan, /\.\/carcuro-product-spec\.md/);
 });
 
-test("plan contract detects dependency cycles and a missing approval choice", () => {
+test("plan contract detects dependency cycles, premature hierarchy status, and a missing approval choice", () => {
   const cyclic = plan.replace("- **Prerequisites:** none.", "- **Prerequisites:** `F-FOUND-02`.");
   assert.match(validateHierarchy(cyclic).join("\n"), /Dependency cycle/);
+
+  const prematurelyApproved = plan.replace(
+    "Slice `S-PUB-1` — Reference marketplace channel — proposed / awaiting approval",
+    "Slice `S-PUB-1` — Reference marketplace channel — approved",
+  );
+  assert.match(validateHierarchy(prematurelyApproved).join("\n"), /S-PUB-1 is not marked proposed \/ awaiting approval/);
 
   const missingChoice = plan.replace("- **Revise**", "");
   assert.match(validateApprovalGate(missingChoice).join("\n"), /Revise must occur exactly once/);
