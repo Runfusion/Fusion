@@ -1131,6 +1131,7 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
         CREATE TABLE centralSettings (id INTEGER PRIMARY KEY, defaultProjectId TEXT, updatedAt TEXT NOT NULL);
         CREATE TABLE plugin_installs (id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL, path TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL);
         CREATE TABLE project_plugin_states (projectPath TEXT NOT NULL, pluginId TEXT NOT NULL, enabled INTEGER NOT NULL, state TEXT NOT NULL, error TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, PRIMARY KEY (projectPath, pluginId));
+        CREATE TABLE globalConcurrency (id INTEGER PRIMARY KEY, globalMaxConcurrent INTEGER NOT NULL, currentlyActive INTEGER NOT NULL, queuedCount INTEGER NOT NULL);
       `);
       legacy.prepare(`INSERT INTO centralSettings VALUES (?, ?, ?)`).run(1, "project-default", "2026-06-01");
       legacy.prepare(`INSERT INTO plugin_installs VALUES (?, ?, ?, ?, ?, ?)`).run("plugin-a", "A", "1.0.0", "/a", "2026-06-01", "2026-06-01");
@@ -1155,6 +1156,13 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     for (const table of ["central_settings", "project_plugin_states"]) {
       expect(report.tables).toContainEqual(expect.objectContaining({ table, verified: true }));
     }
+    expect(report.tables).toContainEqual(expect.objectContaining({
+      table: "global_concurrency",
+      sourceRows: 0,
+      verified: true,
+      skipped: true,
+      skipReason: expect.stringContaining("retired global concurrency table"),
+    }));
     const settings = await ctx!.db.execute(sql`
       SELECT default_project_id, updated_at FROM central.central_settings WHERE id = 1
     `) as unknown as Array<{ default_project_id: string; updated_at: string }>;
@@ -1165,6 +1173,35 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       SELECT to_regclass('central.global_concurrency') AS present
     `) as unknown as Array<{ present: string | null }>;
     expect(remaining[0]?.present ?? null).toBeNull();
+  });
+
+  /*
+  FNXC:SqliteMigrationVerification 2026-09-23-01:49:
+  A zero-row stale tasks table may retain breakIntoSubtasks after task splitting
+  was retired. The report must name that intentionally ignored field while any
+  unrelated SQLite-only payload continues through the fail-closed path.
+  */
+  it("ignores the retired tasks breakIntoSubtasks column without accepting unknown columns", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "retired-tasks.db");
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`${TASKS_SQLITE_DDL}\nALTER TABLE tasks ADD COLUMN breakIntoSubtasks INTEGER;`);
+    } finally {
+      legacy.close();
+    }
+
+    const report = await migrateTest(
+      ctx!.db,
+      [{ sqlitePath, pgSchema: "project" as const }],
+      { projectId: "project-retired-column" },
+    );
+    expect(report.tables).toContainEqual(expect.objectContaining({
+      table: "tasks",
+      sourceRows: 0,
+      verified: true,
+      skipped: false,
+      skipReason: expect.stringContaining("breakIntoSubtasks"),
+    }));
   });
 
   /*
@@ -1840,6 +1877,130 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
       expect(t.verified, `${key} should still verify`).toBe(true);
       expect(t.insertedRows, `${key} re-run should insert nothing`).toBe(0);
     }
+  });
+
+  /*
+  FNXC:SqliteMigrationVerification 2026-09-23-01:49:
+  A source becomes inert only when every attempted row conflicts and another
+  table proves PostgreSQL has advanced for the same project. This preserves the
+  live target's newer config while avoiding a perpetual failed marker for an
+  old duplicate SQLite file; dry-run exposes the same classification without DML.
+  */
+  it("classifies a target-ahead project source as a stale duplicate without overwriting PostgreSQL", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "stale-duplicate.db");
+    const projectId = "project-stale-duplicate";
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(`${AGENTS_SQLITE_DDL}\nCREATE TABLE config (id INTEGER PRIMARY KEY, settings TEXT, updatedAt TEXT);`);
+      for (const id of ["agent-1", "agent-2"]) {
+        legacy.prepare("INSERT INTO agents (id, name, role, state, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)").run(
+          id, `Legacy ${id}`, "worker", "idle", "2026-01-01", "2026-01-01",
+        );
+      }
+      legacy.prepare("INSERT INTO config (id, settings, updatedAt) VALUES (1, ?, ?)").run(
+        '{"source":"stale"}', "2026-01-01",
+      );
+    } finally {
+      legacy.close();
+    }
+    await applySchemaBaseline(ctx!.db);
+    for (let index = 1; index <= 7; index += 1) {
+      await ctx!.db.execute(sql`
+        INSERT INTO project.agents (project_id, id, name, role, state, created_at, updated_at)
+        VALUES (${projectId}, ${`agent-${index}`}, ${`Live agent ${index}`}, 'worker', 'idle', '2026-02-01', '2026-02-01')
+      `);
+    }
+    await ctx!.db.execute(sql`
+      INSERT INTO project.config (project_id, id, settings, updated_at)
+      VALUES (${projectId}, 1, '{"source":"live"}'::jsonb, '2026-02-01')
+    `);
+
+    const sources = [{ sqlitePath, pgSchema: "project" as const }];
+    const report = await migrateTest(ctx!.db, sources, { projectId, migrationKey: projectId });
+    for (const table of ["agents", "config"]) {
+      expect(report.tables).toContainEqual(expect.objectContaining({
+        table,
+        insertedRows: 0,
+        verified: true,
+        skipped: true,
+        skipReason: expect.stringContaining("stale SQLite duplicate"),
+      }));
+    }
+    await expect(ctx!.db.execute(sql`
+      SELECT name FROM project.agents WHERE project_id = ${projectId} AND id = 'agent-1'
+    `)).resolves.toEqual([{ name: "Live agent 1" }]);
+    await expect(ctx!.db.execute(sql`
+      SELECT settings FROM project.config WHERE project_id = ${projectId}
+    `)).resolves.toEqual([{ settings: { source: "live" } }]);
+    await expect(ctx!.db.execute(sql`
+      SELECT status, last_error FROM public.fusion_sqlite_migrations WHERE migration_key = ${projectId}
+    `)).resolves.toEqual([{ status: "complete", last_error: null }]);
+
+    const dryRun = await migrateTest(ctx!.db, sources, { projectId, migrationKey: `${projectId}-dry`, dryRun: true });
+    expect(dryRun.tables.filter((table) => ["agents", "config"].includes(table.table))).toEqual(
+      expect.arrayContaining([expect.objectContaining({ skipped: true, verified: true, skipReason: expect.stringContaining("stale SQLite duplicate") })]),
+    );
+    await expect(ctx!.db.execute(sql`
+      SELECT status FROM public.fusion_sqlite_migrations WHERE migration_key = ${`${projectId}-dry`}
+    `)).resolves.toEqual([]);
+  });
+
+  /*
+  FNXC:SqliteMigrationVerification 2026-09-23-02:13:
+  PostgreSQL can be ahead by count while still lacking every SQLite identity.
+  Dry-run must preserve that distinction so it does not claim a completion that
+  a real migration would disprove by inserting new source rows.
+  */
+  it("does not classify target-ahead rows with different primary keys as a dry-run duplicate", async () => {
+    const sqlitePath = join(ctx!.fusionDir, "target-ahead-different-keys.db");
+    const projectId = "project-target-ahead-different-keys";
+    const legacy = new DatabaseSync(sqlitePath);
+    try {
+      legacy.exec(AGENTS_SQLITE_DDL);
+      for (const id of ["legacy-agent-1", "legacy-agent-2"]) {
+        legacy.prepare("INSERT INTO agents (id, name, role, state, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)").run(
+          id, `Legacy ${id}`, "worker", "idle", "2026-01-01", "2026-01-01",
+        );
+      }
+    } finally {
+      legacy.close();
+    }
+    await applySchemaBaseline(ctx!.db);
+    for (let index = 1; index <= 7; index += 1) {
+      await ctx!.db.execute(sql`
+        INSERT INTO project.agents (project_id, id, name, role, state, created_at, updated_at)
+        VALUES (${projectId}, ${`live-agent-${index}`}, ${`Live agent ${index}`}, 'worker', 'idle', '2026-02-01', '2026-02-01')
+      `);
+    }
+
+    const report = await migrateTest(ctx!.db, [{ sqlitePath, pgSchema: "project" as const }], {
+      projectId,
+      migrationKey: `${projectId}-dry`,
+      dryRun: true,
+    });
+    expect(report.tables).toContainEqual(expect.objectContaining({
+      table: "agents",
+      sourceRows: 2,
+      insertedRows: 0,
+      targetRows: 7,
+      verified: false,
+      skipped: true,
+      skipReason: "dry-run",
+    }));
+    await expect(ctx!.db.execute(sql`
+      SELECT to_regclass('public.fusion_sqlite_migrations') AS migration_state_table
+    `)).resolves.toEqual([{ migration_state_table: null }]);
+    await expect(ctx!.db.execute(sql`
+      SELECT id FROM project.agents WHERE project_id = ${projectId} ORDER BY id
+    `)).resolves.toEqual([
+      { id: "live-agent-1" },
+      { id: "live-agent-2" },
+      { id: "live-agent-3" },
+      { id: "live-agent-4" },
+      { id: "live-agent-5" },
+      { id: "live-agent-6" },
+      { id: "live-agent-7" },
+    ]);
   });
 
   it("serializes concurrent cutovers on a multi-connection migration pool", async () => {

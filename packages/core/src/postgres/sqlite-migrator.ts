@@ -275,6 +275,8 @@ interface TablePlan {
   readonly allowedSkipReason?: string;
   /** Source columns that would otherwise be silently discarded. */
   readonly unmappedSourceColumns: readonly string[];
+  /** Known-retired SQLite-only fields intentionally excluded from the copy. */
+  readonly ignoredRetiredSourceColumns: readonly string[];
   /** Opaque legacy rows retained as tagged canonical JSON when typed DDL is unavailable. */
   readonly legacyPreservation?: {
     readonly sourceSchemaSql: string;
@@ -745,6 +747,11 @@ async function migrateSqliteToPostgresOnSession(
     emitMigrationProgress(options, { phase: "copy-started", tableCount });
     let tableIndex = 0;
     for (const { source, plan } of plannedSources) {
+      const sourceHasPreexistingTargetAhead = await hasPreexistingTargetAhead(
+        migrationDb,
+        source,
+        plan,
+      );
       for (const tablePlan of plan) {
         tableIndex += 1;
         const progressBase = {
@@ -759,6 +766,7 @@ async function migrateSqliteToPostgresOnSession(
           source,
           tablePlan,
           dryRun,
+          sourceHasPreexistingTargetAhead,
           {
             onCopyProgress: (processedRows, sourceRows) => emitMigrationProgress(options, {
               phase: "table-progress",
@@ -919,6 +927,7 @@ async function buildMigrationPlan(
           pgTable: table,
           columns: [],
           unmappedSourceColumns: [],
+          ignoredRetiredSourceColumns: [],
           allowedSkipReason: "redirected to central plugin registry and project state",
         });
         continue;
@@ -941,6 +950,7 @@ async function buildMigrationPlan(
           columns: [],
           partitionProjectId: projectId,
           unmappedSourceColumns: [],
+          ignoredRetiredSourceColumns: [],
           legacyPreservation: { sourceSchemaSql: readSqliteTableSchema(sqlite, table) },
         });
         continue;
@@ -948,7 +958,13 @@ async function buildMigrationPlan(
       // Legacy SQLite table names are camelCase; PostgreSQL tables are
       // snake_case. toSnakeCase is the identity for already-snake names.
       const pgTable = toSnakeCase(table);
-      const { columns: resolvedColumns, targetColumnNames, unmappedSourceColumns } = resolveColumnMapping(
+      const {
+        columns: resolvedColumns,
+        targetColumnNames,
+        unmappedSourceColumns,
+        ignoredRetiredSourceColumns,
+      } = resolveColumnMapping(
+        source.pgSchema,
         pgTable,
         table,
         sqlite,
@@ -985,7 +1001,9 @@ async function buildMigrationPlan(
           columns: cols,
           partitionProjectId,
           unmappedSourceColumns,
-          allowedSkipReason: disposableSqliteTableReason(ftsVirtualTables, table),
+          ignoredRetiredSourceColumns,
+          allowedSkipReason: retiredSqliteTableSkipReason(source.pgSchema, table)
+            ?? disposableSqliteTableReason(ftsVirtualTables, table),
         });
         continue;
       }
@@ -996,12 +1014,115 @@ async function buildMigrationPlan(
         columns: cols,
         partitionProjectId,
         unmappedSourceColumns,
+        ignoredRetiredSourceColumns,
       });
     }
     return plans;
   } finally {
     sqlite.close();
   }
+}
+
+/*
+FNXC:SqliteMigrationVerification 2026-09-23-01:49:
+A source is a stale duplicate only after PostgreSQL is already ahead for that
+same source partition. This source-level signal prevents a same-count corrupted
+re-run from being mislabeled as a safe backup while allowing a live store's
+later config value to remain authoritative alongside its ahead agent rows.
+*/
+async function hasPreexistingTargetAhead(
+  db: PostgresJsDatabase<Record<string, never>>,
+  source: SqliteMigrationSource,
+  plans: readonly TablePlan[],
+): Promise<boolean> {
+  const sqlite = openSqlite(source.sqlitePath);
+  try {
+    for (const plan of plans) {
+      if (plan.columns.length === 0 || plan.unmappedSourceColumns.length > 0) continue;
+      const row = sqlite.prepare(`SELECT COUNT(*) AS n FROM ${quoteIdent(plan.table)}`).get() as { n: number };
+      const sourceRows = Number(row.n);
+      if (sourceRows === 0) continue;
+      const targetRows = await countTargetRows(db, plan.pgSchema, plan.pgTable, plan.partitionProjectId);
+      if (targetRows > sourceRows) return true;
+    }
+    return false;
+  } finally {
+    sqlite.close();
+  }
+}
+
+function staleDuplicateSkipReason(targetRows: number): string {
+  return `stale SQLite duplicate; PostgreSQL already has ${targetRows} scoped rows`;
+}
+
+/**
+ * FNXC:SqliteMigrationVerification 2026-09-23-02:13:
+ * Dry-run must not infer a duplicate from target row counts alone: an ahead
+ * PostgreSQL table can still be missing every source identity. Require a
+ * read-only primary-key lookup for every proposed source row, matching the
+ * conflict guarantee a real INSERT ... ON CONFLICT DO NOTHING would provide.
+ */
+async function sourceRowsArePrimaryKeyConflictCovered(
+  db: PostgresJsDatabase<Record<string, never>>,
+  sqlite: DatabaseSync,
+  plan: TablePlan,
+  insertableCols: readonly ColumnMapping[],
+): Promise<boolean> {
+  const primaryKeyRows = (await db.execute(sql`
+    SELECT key_columns.column_name
+    FROM information_schema.table_constraints AS constraints
+    JOIN information_schema.key_column_usage AS key_columns
+      ON key_columns.constraint_catalog = constraints.constraint_catalog
+      AND key_columns.constraint_schema = constraints.constraint_schema
+      AND key_columns.constraint_name = constraints.constraint_name
+    WHERE constraints.constraint_type = 'PRIMARY KEY'
+      AND constraints.table_schema = ${plan.pgSchema}
+      AND constraints.table_name = ${plan.pgTable}
+    ORDER BY key_columns.ordinal_position
+  `)) as unknown as Array<{ column_name: string }>;
+  if (primaryKeyRows.length === 0) return false;
+
+  const columnByPgName = new Map(insertableCols.map((column) => [column.pgName, column]));
+  const primaryKeyColumns = primaryKeyRows.map(({ column_name }) => {
+    if (column_name === "project_id" && plan.partitionProjectId !== undefined) {
+      return { pgName: column_name, valueFor: () => plan.partitionProjectId };
+    }
+    const column = columnByPgName.get(column_name);
+    if (!column) return undefined;
+    return {
+      pgName: column_name,
+      valueFor: (row: Record<string, unknown>) => convertValue(
+        row[column.sqliteName],
+        column.type,
+        column.nullJsonbFallback,
+        column.preserveEmptyJsonbString,
+      ),
+    };
+  });
+  if (primaryKeyColumns.some((column) => column === undefined)) return false;
+
+  const selectableCols = [...new Set(
+    primaryKeyColumns.flatMap((column) => {
+      if (!column || column.pgName === "project_id" && plan.partitionProjectId !== undefined) return [];
+      return [quoteIdent(columnByPgName.get(column.pgName)!.sqliteName)];
+    }),
+  )].join(", ") || "1";
+  const rows = sqlite.prepare(`SELECT ${selectableCols} FROM ${quoteIdent(plan.table)}`)
+    .all() as Array<Record<string, unknown>>;
+  for (const row of rows) {
+    const predicates = primaryKeyColumns.map((column) => {
+      const resolved = column!;
+      return sql`${sql.raw(quoteIdent(resolved.pgName))} IS NOT DISTINCT FROM ${resolved.valueFor(row)}`;
+    });
+    const existing = (await db.execute(sql`
+      SELECT 1
+      FROM ${sql.raw(quoteIdent(plan.pgSchema))}.${sql.raw(quoteIdent(plan.pgTable))}
+      WHERE ${sql.join(predicates, sql` AND `)}
+      LIMIT 1
+    `)) as unknown as readonly unknown[];
+    if (existing.length === 0) return false;
+  }
+  return true;
 }
 
 function readSqliteTableSchema(db: DatabaseSync, table: string): string {
@@ -1291,6 +1412,7 @@ async function loadTargetColumnMetadata(
 }
 
 function resolveColumnMapping(
+  sourceSchema: SchemaName,
   pgTable: string,
   table: string,
   sqlite: DatabaseSync,
@@ -1299,6 +1421,7 @@ function resolveColumnMapping(
   columns: readonly ColumnMapping[];
   targetColumnNames: ReadonlySet<string>;
   unmappedSourceColumns: readonly string[];
+  ignoredRetiredSourceColumns: readonly string[];
 } {
   // PostgreSQL columns from information_schema + pg_attribute.
   // FNXC:PostgresMigration 2026-06-26-15:30 (fix migration-review P1 #14):
@@ -1319,7 +1442,12 @@ function resolveColumnMapping(
 
   if (pgCols.length === 0) {
     // No PostgreSQL table with this name — skip.
-    return { columns: [], targetColumnNames: new Set(), unmappedSourceColumns: [] };
+    return {
+      columns: [],
+      targetColumnNames: new Set(),
+      unmappedSourceColumns: [],
+      ignoredRetiredSourceColumns: [],
+    };
   }
 
   const pgByName = new Map(pgCols.map((c) => [c.column_name, c]));
@@ -1332,6 +1460,7 @@ function resolveColumnMapping(
 
   const mapping: ColumnMapping[] = [];
   const unmappedSourceColumns: string[] = [];
+  const ignoredRetiredSourceColumns: string[] = [];
   for (const sc of sqliteCols) {
     /*
     FNXC:MultiProjectIsolation 2026-07-15-23:40:
@@ -1352,7 +1481,11 @@ function resolveColumnMapping(
       FNXC:PostgresMigrationColumnCoverage 2026-07-14-12:10:
       Row-count and mapped-column checksums cannot detect a discarded source column. Record every unmatched source column so the table fails verification unless a future migration gives that column an explicit documented destination.
       */
-      unmappedSourceColumns.push(sc.name);
+      if (retiredSqliteColumnReason(sourceSchema, table, sc.name)) {
+        ignoredRetiredSourceColumns.push(sc.name);
+      } else {
+        unmappedSourceColumns.push(sc.name);
+      }
       continue;
     }
     const type = classifyColumnType(pgCol);
@@ -1392,7 +1525,35 @@ function resolveColumnMapping(
     columns: mapping,
     targetColumnNames: new Set(pgByName.keys()),
     unmappedSourceColumns,
+    ignoredRetiredSourceColumns,
   };
+}
+
+/*
+FNXC:SqliteMigrationVerification 2026-09-23-01:49:
+The SQLite cutover must tolerate only schema that Fusion explicitly retired.
+Keep this allowlist narrow: unknown columns and tables still fail verification so
+an old backup cannot silently discard operator or extension data.
+*/
+function retiredSqliteColumnReason(
+  schema: SchemaName,
+  table: string,
+  column: string,
+): string | undefined {
+  return schema === PROJECT_SCHEMA && table === "tasks" && column === "breakIntoSubtasks"
+    ? "retired task-splitting field"
+    : undefined;
+}
+
+function retiredSqliteTableSkipReason(schema: SchemaName, table: string): string | undefined {
+  return schema === CENTRAL_SCHEMA && table === "globalConcurrency"
+    ? "retired global concurrency table; PostgreSQL target was removed"
+    : undefined;
+}
+
+function retiredColumnSkipReason(plan: TablePlan): string | undefined {
+  if (plan.ignoredRetiredSourceColumns.length === 0) return undefined;
+  return `ignored retired SQLite column(s): ${plan.ignoredRetiredSourceColumns.join(", ")}`;
 }
 
 /** Classify a PostgreSQL column into a conversion type. */
@@ -1689,6 +1850,7 @@ async function migrateTable(
   source: SqliteMigrationSource,
   plan: TablePlan,
   dryRun: boolean,
+  sourceHasPreexistingTargetAhead: boolean,
   progress: TableMigrationProgressCallbacks = {},
 ): Promise<TableMigrationResult> {
   if (plan.legacyPreservation) {
@@ -1772,16 +1934,21 @@ async function migrateTable(
     sourceRows = Number(countRow.n);
 
     if (dryRun || sourceRows === 0) {
-      // Dry-run: report the plan without writing.
+      // Dry-run reads the same scoped target count without writing or stamping state.
+      const targetRows = await countTargetRows(db, plan.pgSchema, plan.pgTable, plan.partitionProjectId);
+      const staleDuplicate = dryRun && sourceRows > 0 && sourceHasPreexistingTargetAhead && targetRows >= sourceRows
+        && await sourceRowsArePrimaryKeyConflictCovered(db, sqlite, plan, insertableCols);
       return {
         schema: plan.pgSchema,
         table: plan.pgTable,
         sourceRows,
         insertedRows: 0,
-        targetRows: dryRun ? 0 : await countTargetRows(db, plan.pgSchema, plan.pgTable, plan.partitionProjectId),
-        verified: dryRun ? false : true,
-        skipped: dryRun ? true : false,
-        skipReason: dryRun ? "dry-run" : "no source rows",
+        targetRows,
+        verified: staleDuplicate ? true : !dryRun,
+        skipped: staleDuplicate || dryRun,
+        skipReason: staleDuplicate
+          ? staleDuplicateSkipReason(targetRows)
+          : retiredColumnSkipReason(plan) ?? (dryRun ? "dry-run" : "no source rows"),
       };
     }
 
@@ -1880,7 +2047,17 @@ async function migrateTable(
         `Row-count mismatch for ${plan.pgSchema}.${plan.pgTable}: source=${sourceRows}, target=${targetRows}`,
       );
     }
-    const verified = rowCountOk && contentOk;
+    const staleDuplicate =
+      insertedRows === 0 &&
+      sourceHasPreexistingTargetAhead &&
+      targetRows >= sourceRows;
+    if (staleDuplicate) {
+      log.log(
+        `Skipping stale SQLite duplicate for ${plan.pgSchema}.${plan.pgTable}: ` +
+          `all ${sourceRows} source rows conflicted while PostgreSQL already has ${targetRows} scoped rows.`,
+      );
+    }
+    const verified = staleDuplicate || (rowCountOk && contentOk);
 
     return {
       schema: plan.pgSchema,
@@ -1889,7 +2066,8 @@ async function migrateTable(
       insertedRows,
       targetRows,
       verified,
-      skipped: false,
+      skipped: staleDuplicate,
+      skipReason: staleDuplicate ? staleDuplicateSkipReason(targetRows) : retiredColumnSkipReason(plan),
     };
   } finally {
     sqlite.close();

@@ -545,6 +545,78 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
   });
 
   /*
+  FNXC:SqliteMigrationVerification 2026-09-23-01:49:
+  Startup must clear a prior impossible migration path when the retained source
+  is a stale duplicate: retired task metadata is ignored and all conflicting
+  source rows defer to a PostgreSQL project that has already advanced.
+  */
+  it("completes startup migration for a stale duplicate source without replacing live PostgreSQL rows", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-stale-duplicate-"));
+    const globalDir = join(rootDir, "global");
+    const projectId = "project-stale-startup";
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+    seedLegacyRegistry(globalDir, [{ id: projectId, path: rootDir }]);
+
+    const initial = await createTaskStoreForBackend({ rootDir, globalSettingsDir: globalDir, env: { DATABASE_URL: testUrl } });
+    expect(initial).not.toBeNull();
+    try {
+      await initial!.asyncLayer.db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('fusion.project_id', ${projectId}, true)`);
+        for (let index = 1; index <= 7; index += 1) {
+          await tx.execute(sql`
+            INSERT INTO project.agents (project_id, id, name, role, state, created_at, updated_at)
+            VALUES (${projectId}, ${`agent-${index}`}, ${`Live agent ${index}`}, 'worker', 'idle', '2026-02-01', '2026-02-01')
+          `);
+        }
+        await tx.execute(sql`
+          INSERT INTO project.config (project_id, id, settings, updated_at)
+          VALUES (${projectId}, 1, '{"source":"live"}'::jsonb, '2026-02-01')
+        `);
+      });
+    } finally {
+      await initial!.shutdown();
+    }
+
+    const fusionDir = join(rootDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+    const legacy = new DatabaseSync(join(fusionDir, "fusion.db"));
+    try {
+      legacy.exec(`
+        CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, description TEXT NOT NULL, "column" TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, breakIntoSubtasks INTEGER);
+        CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL, state TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL);
+        CREATE TABLE config (id INTEGER PRIMARY KEY, settings TEXT, updatedAt TEXT);
+      `);
+      for (const id of ["agent-1", "agent-2"]) {
+        legacy.prepare("INSERT INTO agents VALUES (?, ?, ?, ?, ?, ?)").run(id, `Legacy ${id}`, "worker", "idle", "2026-01-01", "2026-01-01");
+      }
+      legacy.prepare("INSERT INTO config VALUES (1, ?, ?)").run('{"source":"stale"}', "2026-01-01");
+    } finally {
+      legacy.close();
+    }
+
+    const started = await createTaskStoreForBackend({ rootDir, globalSettingsDir: globalDir, env: { DATABASE_URL: testUrl } });
+    expect(started).not.toBeNull();
+    try {
+      await expect(started!.asyncLayer.db.execute(sql`
+        SELECT name FROM project.agents WHERE project_id = ${projectId} AND id = 'agent-1'
+      `)).resolves.toEqual([{ name: "Live agent 1" }]);
+      await expect(started!.asyncLayer.db.execute(sql`
+        SELECT settings FROM project.config WHERE project_id = ${projectId}
+      `)).resolves.toEqual([expect.objectContaining({
+        settings: expect.objectContaining({ source: "live" }),
+      })]);
+      await expect(getSqliteMigrationState(started!.asyncLayer.db, `project:${projectId}`)).resolves.toMatchObject({
+        status: "complete",
+        lastError: null,
+      });
+    } finally {
+      await started!.shutdown();
+    }
+  });
+
+  /*
   FNXC:MultiProjectIsolation 2026-07-13-21:20:
   A rootDir-only boot (`fn dashboard` in the project directory — the main
   cutover path) must still stamp migrated NULL-project_id rows when the
