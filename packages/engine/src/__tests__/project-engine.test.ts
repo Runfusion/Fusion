@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   runtimeStart: vi.fn(async () => undefined),
   runtimeStop: vi.fn(async () => undefined),
   runtimeResumeAfterUnpause: vi.fn(async () => undefined),
+  runtimeSetFailedNoVerdictPreMergeReviewRerouter: vi.fn(),
   getSelfHealingManager: vi.fn(() => undefined),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
@@ -274,6 +275,7 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
       start: mocks.runtimeStart,
       stop: mocks.runtimeStop,
       resumeAfterUnpause: mocks.runtimeResumeAfterUnpause,
+      setFailedNoVerdictPreMergeReviewRerouter: mocks.runtimeSetFailedNoVerdictPreMergeReviewRerouter,
       getTaskStore: () => mocks.currentStore,
       getPluginRunner: vi.fn(() => undefined),
       getAgentStore: vi.fn(),
@@ -443,6 +445,7 @@ beforeEach(() => {
   mocks.deliverPostgresMigrationCompleteNotice.mockReset();
   mocks.deliverPostgresMigrationCompleteNotice.mockResolvedValue("no-migration");
   mocks.runtimeResumeAfterUnpause.mockClear();
+  mocks.runtimeSetFailedNoVerdictPreMergeReviewRerouter.mockClear();
   mocks.getSelfHealingManager.mockReset();
   mocks.getSelfHealingManager.mockReturnValue(undefined);
   mocks.notifierStart.mockClear();
@@ -638,6 +641,17 @@ describe("ProjectEngine planner overseer observation wiring", () => {
 });
 
 describe("ProjectEngine accessors", () => {
+  it("wires automatic no-verdict recovery through the ProjectEngine admission fence", () => {
+    const engine = createEngine();
+
+    expect(mocks.runtimeSetFailedNoVerdictPreMergeReviewRerouter).toHaveBeenCalledWith(expect.any(Function));
+    const reroute = mocks.runtimeSetFailedNoVerdictPreMergeReviewRerouter.mock.calls.at(-1)?.[0] as (task: Task) => Promise<string>;
+    (engine as any).runtime.getTaskStore = () => ({ updateTaskAtomic: vi.fn() });
+    (engine as any).mergeActive.add("FN-9372-race");
+
+    return expect(reroute({ id: "FN-9372-race", column: "in-review", status: null, mergeRetries: 0 } as Task)).resolves.toBe("pending");
+  });
+
   it("returns configured project id", () => {
     const engine = new ProjectEngine(
       {

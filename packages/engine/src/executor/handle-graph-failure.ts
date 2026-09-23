@@ -36,7 +36,10 @@ import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
-import { rerouteUnrunPreMergeGateToReview } from "../merge/pre-merge-gate-reseed.js";
+import {
+  rerouteFailedNoVerdictPreMergeGateToReview,
+  rerouteUnrunPreMergeGateToReview,
+} from "../merge/pre-merge-gate-reseed.js";
 import { MERGE_BOUNDARY_RECOVERY_VALUE, MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
@@ -131,6 +134,8 @@ export type HandleGraphFailureDeps = {
   routeResetParsePinMismatchToRetry: AnyFn;
   routeRetryableRemediationGraphFailureToPreMergeFix: AnyFn;
   routeUnusableWorktreeGraphFailureToRecovery: AnyFn;
+  /** ProjectEngine fence used by production automatic no-verdict recovery. */
+  rerouteFailedNoVerdictPreMergeReview?: (task: Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
   safeLogEntry: AnyFn;
 };
 
@@ -1191,6 +1196,31 @@ export async function handleGraphFailure(
       if (wipColumn !== undefined && live.column !== wipColumn) {
         const failedPreMergeStep = latestFailedPreMergeWorkflowStep(live);
         if (failedPreMergeStep) {
+          /*
+          FNXC:NoVerdictReviewRecovery 2026-09-23-20:52:
+          Graph-failure recovery can race a just-queued merger after its last durable probe.
+          Production delegates to ProjectEngine's admission fence; the direct helper remains only
+          for isolated executor fixtures that do not construct a ProjectEngine.
+          */
+          const noVerdictReroute = await (async () => {
+            if (deps.rerouteFailedNoVerdictPreMergeReview) {
+              return deps.rerouteFailedNoVerdictPreMergeReview(live);
+            }
+            const gate = await resolvePreMergeGateForTask(deps.store, live.id, live.enabledWorkflowSteps, live);
+            const settings = await deps.store.getSettings();
+            const mergeContent = await captureMergeContentDescriptor(live, { workspaceRootDir: deps.rootDir, settings });
+            return rerouteFailedNoVerdictPreMergeGateToReview(deps.store, live, {
+              requiredPreMergeStepIds: gate.requiredPreMergeStepIds,
+              mergeContent,
+              expectedWorkflowSelection: gate.expectedWorkflowSelection,
+            });
+          })().catch(() => undefined);
+          if (noVerdictReroute && (typeof noVerdictReroute === "string" ? noVerdictReroute === "rerouted" : noVerdictReroute.rerouted)) {
+            const message = `Workflow graph re-seeded at failed no-verdict pre-merge review gate '${typeof noVerdictReroute === "string" ? "unknown" : noVerdictReroute.nodeId ?? "unknown"}'`;
+            executorLog.warn(`${task.id}: ${message}`);
+            await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+            return;
+          }
           /*
           FNXC:LifecycleContainment 2026-08-30-12:57:
           A graph route may end in review without traversing its remediation edge. Before parking a

@@ -7,7 +7,10 @@ const core = vi.hoisted(() => ({
 }));
 vi.mock("@fusion/core", () => core);
 
-import { rerouteUnrunPreMergeGateToReview } from "../merge/pre-merge-gate-reseed.js";
+import {
+  rerouteFailedNoVerdictPreMergeGateToReview,
+  rerouteUnrunPreMergeGateToReview,
+} from "../merge/pre-merge-gate-reseed.js";
 
 const singular = { kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } } as any;
 const subject = (overrides: Record<string, unknown> = {}) => ({
@@ -99,5 +102,74 @@ describe("unrun pre-merge gate reseed", () => {
     await expect(rerouteUnrunPreMergeGateToReview(fake, subject(), { requiredPreMergeStepIds: required, mergeContent: singular }))
       .resolves.toMatchObject({ rerouted: false, reason: "no-review-route" });
     expect(fake.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("re-seeds exactly a failed no-verdict code review while retaining its finding evidence", async () => {
+    const task = subject({
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "failed",
+        findings: [{ id: "fn-9372-unfixed-pipeline-smoke", severity: "critical" }],
+      }],
+    });
+    const before = structuredClone(task);
+    const fake = store();
+
+    await expect(rerouteFailedNoVerdictPreMergeGateToReview(fake, task, {
+      requiredPreMergeStepIds: required,
+      mergeContent: singular,
+    })).resolves.toMatchObject({ rerouted: true, reason: "seeded", nodeId: "code-review" });
+    expect(fake.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: task.id,
+      nodeId: "code-review",
+      runId: expect.stringContaining("failed-no-verdict-pre-merge-gate-reseed"),
+    }));
+    expect(task).toEqual(before);
+  });
+
+  it.each([
+    ["a real REVISE", { status: "failed", verdict: "REVISE" }],
+    ["a pending result", { status: "pending" }],
+    ["a bypassed result", { status: "skipped", bypassedBy: "operator" }],
+    ["a post-merge result", { status: "failed", phase: "post-merge" }],
+  ])("does not re-run %s", async (_label, result) => {
+    const fake = store();
+    const task = subject({ workflowStepResults: [{ workflowStepId: "code-review", phase: "pre-merge", ...result }] });
+    await expect(rerouteFailedNoVerdictPreMergeGateToReview(fake, task, {
+      requiredPreMergeStepIds: required,
+      mergeContent: singular,
+    })).resolves.toMatchObject({ rerouted: false, reason: "no-failed-no-verdict-gate" });
+    expect(fake.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("refuses duplicate dispatch, manual hold, selection change, and non-singular content", async () => {
+    const retryTask = subject({ workflowStepResults: [{ workflowStepId: "code-review", phase: "pre-merge", status: "failed" }] });
+    const duplicate = store(false);
+    await expect(rerouteFailedNoVerdictPreMergeGateToReview(duplicate, retryTask, {
+      requiredPreMergeStepIds: required,
+      mergeContent: singular,
+    })).resolves.toMatchObject({ rerouted: false, reason: "active-continuation", nodeId: "code-review" });
+
+    for (const [task, content, expected] of [
+      [subject({ paused: true, workflowStepResults: retryTask.workflowStepResults }), singular, "operator-held"],
+      [retryTask, { kind: "workspace" }, "not-singular"],
+    ] as const) {
+      const fake = store();
+      await expect(rerouteFailedNoVerdictPreMergeGateToReview(fake, task, {
+        requiredPreMergeStepIds: required,
+        mergeContent: content as any,
+      })).resolves.toMatchObject({ rerouted: false, reason: expected });
+      expect(fake.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    }
+
+    const changed = store(false);
+    changed.seedWorkspaceCodeReviewContinuationIfIdle.mockResolvedValueOnce({ seeded: false, reason: "workflow-selection-changed" });
+    await expect(rerouteFailedNoVerdictPreMergeGateToReview(changed, retryTask, {
+      requiredPreMergeStepIds: required,
+      mergeContent: singular,
+      expectedWorkflowSelection: { workflowId: "builtin:coding", stepIds: ["code-review"] },
+    })).resolves.toMatchObject({ rerouted: false, reason: "workflow-selection-changed" });
   });
 });

@@ -57,6 +57,72 @@ describe("createTaskRetryTool", () => {
     expect(moveTask).not.toHaveBeenCalled();
   });
 
+  it("re-seeds a failed no-verdict review through the ProjectEngine fence without resetting merge state", async () => {
+    const noVerdictTask = task({
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        status: "failed",
+        phase: "pre-merge",
+        findings: [{ id: "fn-9372-unfixed-pipeline-smoke", severity: "critical" }],
+      }],
+    });
+    const resetInReviewMergeRetry = vi.fn();
+    const rerouteFailedNoVerdictPreMergeReview = vi.fn().mockResolvedValue("rerouted");
+    const logEntry = vi.fn().mockResolvedValue(undefined);
+    const store = {
+      getTask: vi.fn().mockResolvedValue(noVerdictTask),
+      getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined),
+      getSettings: vi.fn().mockResolvedValue({ autoMerge: true }),
+      logEntry,
+    } as unknown as TaskStore;
+
+    const result = await createTaskRetryTool(store, {
+      resetInReviewMergeRetry,
+      rerouteFailedNoVerdictPreMergeReview,
+    }).execute("run", { id: noVerdictTask.id }, undefined as never, undefined as never, undefined as never);
+
+    expect((result as { isError?: boolean }).isError).not.toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain("failed review re-seeded");
+    expect(rerouteFailedNoVerdictPreMergeReview).toHaveBeenCalledWith(noVerdictTask);
+    expect(resetInReviewMergeRetry).not.toHaveBeenCalled();
+    expect(logEntry).toHaveBeenCalledWith(noVerdictTask.id, expect.stringContaining("failed no-verdict"));
+  });
+
+  it("refuses a no-verdict retry when ProjectEngine observes a selection race before queue admission", async () => {
+    const noVerdictTask = task({
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        status: "failed",
+        phase: "pre-merge",
+        findings: [{ id: "fn-9372-unfixed-pipeline-smoke", severity: "critical" }],
+      }],
+    });
+    const resetInReviewMergeRetry = vi.fn();
+    const rerouteFailedNoVerdictPreMergeReview = vi.fn().mockImplementation(async () => {
+      await Promise.resolve();
+      return "changed";
+    });
+    const logEntry = vi.fn();
+    const store = {
+      getTask: vi.fn().mockResolvedValue(noVerdictTask),
+      getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined),
+      getSettings: vi.fn().mockResolvedValue({ autoMerge: true }),
+      logEntry,
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(),
+    } as unknown as TaskStore;
+
+    const result = await createTaskRetryTool(store, {
+      resetInReviewMergeRetry,
+      rerouteFailedNoVerdictPreMergeReview,
+    }).execute("run", { id: noVerdictTask.id }, undefined as never, undefined as never, undefined as never);
+
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain("ownership is unavailable, active, or changed");
+    expect(resetInReviewMergeRetry).not.toHaveBeenCalled();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(logEntry).not.toHaveBeenCalled();
+  });
+
   it("refuses a status-none retry while ProjectEngine still owns the queued merge", async () => {
     const queuedMergeTask = task();
     const updateTask = vi.fn();

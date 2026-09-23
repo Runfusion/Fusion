@@ -91,7 +91,12 @@ import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, ty
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./merge/auto-merge-finalization.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
-import { isRecoverableUnrunGatePark, rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
+import {
+  isFailedNoVerdictPreMergeReviewResult,
+  isRecoverableUnrunGatePark,
+  rerouteFailedNoVerdictPreMergeGateToReview,
+  rerouteUnrunPreMergeGateToReview,
+} from "./merge/pre-merge-gate-reseed.js";
 import { cleanupLandedTaskWorktree, removeEmptyWorkspaceTaskDirectory } from "./merge/post-landing-worktree-cleanup.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
@@ -501,6 +506,13 @@ export interface SelfHealingOptions {
     task: Task,
     options?: { claim?: ReviewRemediationAttemptDescriptor },
   ) => Promise<RecoverFailedPreMergeStepOutcome>;
+  /**
+   * Uses ProjectEngine's queue-admission fence to re-seed a failed no-verdict review.
+   * The callback is optional for compatibility with isolated recovery tests.
+   */
+  rerouteFailedNoVerdictPreMergeReview?: (
+    task: Task,
+  ) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
   /**
    * Re-enqueue a task into the auto-merge queue. Used by
    * `recoverInterruptedMergingTasks` so that a stale `merging` status that was
@@ -10098,6 +10110,49 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         );
       }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      let noVerdictRecovered = 0;
+
+      /*
+      FNXC:NoVerdictReviewRecovery 2026-09-23-19:50:
+      A failed review with no verdict is not remediation input. Re-seed its existing review node while
+      it is idle, leaving its findings and failed result intact; genuine REVISE results continue below
+      through the fix producer and its revision budget.
+      */
+      for (const task of tasks) {
+        if (!(reviewLanesByTask.get(task.id) ?? new Set(["in-review"])).has(task.column)
+          || !allowsAutoMergeProcessing(task, settings)
+          || task.paused
+          || executingIds.has(task.id)
+          || await this.isMergeLaneOwned(task.id)) continue;
+        try {
+          const gate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task);
+          if (!(task.workflowStepResults ?? []).some((result) =>
+            isFailedNoVerdictPreMergeReviewResult(result, gate.requiredPreMergeStepIds))) continue;
+          /*
+          FNXC:NoVerdictReviewRecovery 2026-09-23-20:52:
+          Queue admission can claim a review card between this sweep's liveness probe and the
+          continuation insert. Production delegates to ProjectEngine so its in-memory admission
+          fence remains held through the exact idle seed; a local store seed is test-only fallback.
+          */
+          const delegated = this.options.rerouteFailedNoVerdictPreMergeReview;
+          const reroute = delegated
+            ? await delegated(task)
+            : await (async () => {
+              const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: this.options.rootDir, settings });
+              return rerouteFailedNoVerdictPreMergeGateToReview(this.store, task, {
+                requiredPreMergeStepIds: gate.requiredPreMergeStepIds,
+                mergeContent,
+                expectedWorkflowSelection: gate.expectedWorkflowSelection,
+              });
+            })();
+          if ((typeof reroute === "string" ? reroute === "rerouted" : reroute.rerouted)) {
+            noVerdictRecovered++;
+            await this.store.logEntry(task.id, "[pre-merge] Self-healing re-seeded the failed no-verdict review gate.");
+          }
+        } catch (error) {
+          log.warn(`Failed no-verdict review recovery skipped for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
 
       const latestFailedPreMergeStep = (task: Pick<Task, "workflowStepResults">): WorkflowStepResult | undefined => {
         return (task.workflowStepResults ?? [])
@@ -10353,7 +10408,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (recovered > 0) {
         log.log(`Auto-revived ${recovered} in-review task(s) for pre-merge workflow step fix`);
       }
-      return recovered;
+      if (noVerdictRecovered > 0) {
+        log.log(`Re-seeded ${noVerdictRecovered} failed no-verdict pre-merge review gate(s)`);
+      }
+      return recovered + noVerdictRecovered;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Failed pre-merge workflow step revival failed: ${errorMessage}`);

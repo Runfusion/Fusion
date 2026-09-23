@@ -15,6 +15,7 @@ vi.mock("@fusion/engine", () => ({
     reconcileLandedReviewTask = reconcile;
   },
   isInReviewMissingWorktreeSessionStartFailure: vi.fn(),
+  isFailedNoVerdictPreMergeReviewResult: vi.fn(() => false),
   installBaselineArchiveWorktreeDisposer: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),

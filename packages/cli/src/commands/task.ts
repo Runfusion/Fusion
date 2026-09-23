@@ -1,5 +1,5 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
-import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
+import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolvePreMergeGateForTask, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { isFailedNoVerdictPreMergeReviewResult, isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import { createSession, createTaskFromPlanSession, ensureDurablePlanningSessionStore, getSession as getPlanningSession, submitResponse, validateSession, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
@@ -1723,6 +1723,19 @@ export async function runTaskRetry(id: string, projectName?: string) {
         task.status === "stuck-killed" ||
         isInReviewExecutionStall ||
         isInReviewMergeRetryStall);
+    const noVerdictGate = !effectiveAutoMergeDisabled && isInReviewStatusNone && retryIr !== undefined
+      ? await resolvePreMergeGateForTask(context.store, task.id, task.enabledWorkflowSteps, task).catch(() => undefined)
+      : undefined;
+    /*
+    FNXC:NoVerdictReviewRecovery 2026-09-23-20:18:
+    The standalone CLI owns only a TaskStore, not ProjectEngine's in-memory merge queue. It must not
+    seed a review directly: a queued merger has a status-none row before its transient merge stamp.
+    Keep that card unchanged for the engine-owned retry route or periodic recovery, both of which
+    fence queue admission before inserting the continuation.
+    */
+    const noVerdictReviewRetry = noVerdictGate !== undefined
+      && (task.workflowStepResults ?? []).some((result) =>
+        isFailedNoVerdictPreMergeReviewResult(result, noVerdictGate.requiredPreMergeStepIds));
     /*
     FNXC:MissingWorktreeRetry 2026-07-10-18:28:
     Upstream #1992 requires operator retry to recover an in-review task whose session start refused a missing/incomplete/unregistered worktree even when the row is stuck in an invalid merge-active status. This signature-only bypass clears stale session metadata instead of requiring a valid `merging` transition.
@@ -1730,6 +1743,9 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns.has(task.column));
 
     // Validate task is in a retryable state
+    if (noVerdictReviewRetry) {
+      throw new Error(`Task ${id} has a failed review with no verdict; retry it through the running dashboard or wait for engine recovery`);
+    }
     if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
       throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
     }
