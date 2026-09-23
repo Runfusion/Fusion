@@ -8,6 +8,13 @@ export const externalSessionIdentifier = z.string().min(1).max(256).refine(value
 const counter = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const displayText = (max: number) => z.string().max(max).refine(value => !containsControlCharacters(value));
 const tokenCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+/*
+ * FNXC:ExternalSessions 2026-09-23-11:31:
+ * External timestamps must describe real instants. Zod's datetime syntax check accepts impossible
+ * offsets that JavaScript cannot parse, so validate parseability before any ISO normalization.
+ */
+const isoInstant = z.string().datetime({ offset: true }).refine(value => !Number.isNaN(Date.parse(value)));
+const canonicalInstant = isoInstant.transform(value => new Date(value).toISOString());
 export const externalSessionUsageSchema = z.object({
   model: externalSessionIdentifier, inputTokens: tokenCount, cachedInputTokens: tokenCount,
   cacheWriteTokens: tokenCount, cacheWriteHourTokens: tokenCount, outputTokens: tokenCount,
@@ -25,15 +32,15 @@ export const externalSessionObservationSchema = z.object({
   nativeSessionId: externalSessionIdentifier,
   revision: counter,
   activity: z.enum(["working", "waiting", "completed", "failed", "unknown"]),
-  observedAt: z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString()),
+  observedAt: canonicalInstant,
   title: displayText(512).optional(),
   projectPath: displayText(4096).optional(),
   // FNXC:RemoteAgents 2026-09-18-05:22: Standalone collectors supply bounded native activity and deduplicated usage snapshots. Native hooks advertise a fenced generation; no AgentPulse service participates.
   model: externalSessionIdentifier.optional(),
   usage: z.array(externalSessionUsageSchema).max(64).optional(),
   usageComplete: z.boolean().optional(),
-  recentActivity: z.array(z.object({ kind: z.enum(["prompt", "response", "tool"]), at: z.string().datetime({ offset: true }), text: z.string().max(2048) }).strict()).max(10).optional(),
-  feedback: z.object({ generation: externalSessionIdentifier, expiresAt: z.string().datetime({ offset: true }).transform(v => new Date(v).toISOString()) }).strict().optional(),
+  recentActivity: z.array(z.object({ kind: z.enum(["prompt", "response", "tool"]), at: isoInstant, text: z.string().max(2048) }).strict()).max(10).optional(),
+  feedback: z.object({ generation: externalSessionIdentifier, expiresAt: canonicalInstant }).strict().optional(),
 }).strict();
 
 export const externalSessionIngestionSchema = z.object({
