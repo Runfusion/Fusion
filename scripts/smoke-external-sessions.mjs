@@ -115,7 +115,7 @@ async function main() {
   assert.equal(beat.status, 200, `Heartbeat failed: ${JSON.stringify(beat.body)}`); assert.equal(beat.body.hostId, hostId);
   console.log("PASS: authenticated host heartbeat");
   const event = { schemaVersion: 1, collectorVersion: "manual-smoke", streamId: "smoke-spool", sequence: 1, eventId: "event-1",
-    session: { provider: "manual-test", nativeSessionId: "session-1", revision: 1, activity: "working", observedAt: new Date().toISOString(), title: "Manual ingestion smoke",
+    session: { provider: "codex", nativeSessionId: "session-1", revision: 1, activity: "working", observedAt: new Date().toISOString(), title: "Manual ingestion smoke",
       feedback: { generation: "smoke-generation", expiresAt: new Date(Date.now() + 3600000).toISOString() },
       usageComplete: true, usage: [{ model: "gpt-5.6-sol", inputTokens: 1000, cachedInputTokens: 500, cacheWriteTokens: 0, cacheWriteHourTokens: 0, outputTokens: 100, reasoningTokens: 20, fast: false, longContext: false }], recentActivity: [{ kind: "prompt", at: new Date().toISOString(), text: "Disposable native activity" }] } };
   const first = await post("ingest", event);
@@ -130,7 +130,7 @@ async function main() {
     assert.equal(response.status, 200);
     return response.json();
   };
-  const page = await read(`?hostId=${hostId}&provider=manual-test&limit=1`);
+  const page = await read(`?hostId=${hostId}&provider=codex&limit=1`);
   assert.equal(page.sessions.length, 1); assert.equal(page.nextCursor, null);
   assert.equal(page.sessions[0].id, first.body.sessionId); assert.equal(page.sessions[0].collectorConnected, true);
   assert.equal(Object.hasOwn(page.sessions[0], "observationDigest"), false);
