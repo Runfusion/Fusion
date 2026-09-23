@@ -1646,6 +1646,7 @@ export async function applySchemaBaseline(
     // FNXC:ExternalSessions 2026-09-19-00:00: Probe the full column contract; a ledger row alone cannot prove a restored schema is usable.
     // FNXC:ExternalSessions 2026-09-22-17:54: 0086 owns its tables independently of project.tasks, so the probe must not depend on that table existing.
     // FNXC:ExternalSessions 2026-09-23-07:55: 0086 also owns the recency index, the project-id triggers and the named constraints, so probe those too; columns alone cannot prove a restored schema is usable.
+    // FNXC:ExternalSessions 2026-09-23-08:25: Bind each constraint to its OWNING table. PostgreSQL allows the same CHECK or foreign-key name on a different table, so a name-and-namespace match can read a damaged schema as intact.
     const externalSessionsMissing = ((await tx.execute(sql`
       SELECT EXISTS (
         SELECT 1 FROM (VALUES
@@ -1686,18 +1687,21 @@ export async function applySchemaBaseline(
         )
       )
       OR EXISTS (
-        SELECT 1 FROM unnest(ARRAY[
-          'external_session_hosts_pkey',
-          'external_session_streams_pkey',
-          'external_session_streams_project_id_host_id_fkey',
-          'external_session_stream_sequence',
-          'external_sessions_pkey',
-          'external_sessions_native_identity',
-          'external_sessions_project_id_host_id_fkey',
-          'external_sessions_observed_origin',
-          'external_sessions_revision'
-        ]) AS required(conname)
-        WHERE NOT EXISTS (SELECT 1 FROM pg_constraint actual WHERE actual.conname = required.conname AND actual.connamespace = 'project'::regnamespace)
+        SELECT 1 FROM (VALUES
+          ('external_session_hosts', 'external_session_hosts_pkey'),
+          ('external_session_streams', 'external_session_streams_pkey'),
+          ('external_session_streams', 'external_session_streams_project_id_host_id_fkey'),
+          ('external_session_streams', 'external_session_stream_sequence'),
+          ('external_sessions', 'external_sessions_pkey'),
+          ('external_sessions', 'external_sessions_native_identity'),
+          ('external_sessions', 'external_sessions_project_id_host_id_fkey'),
+          ('external_sessions', 'external_sessions_observed_origin'),
+          ('external_sessions', 'external_sessions_revision')
+        ) AS required(table_name, conname)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pg_constraint actual
+          WHERE actual.conrelid = to_regclass('project.' || required.table_name) AND actual.conname = required.conname
+        )
       ) AS missing
     `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
     if (!applied.includes(EXTERNAL_SESSIONS_VERSION) || externalSessionsMissing) {
