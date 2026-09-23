@@ -118,11 +118,45 @@ pgDescribe("Task-ID integrity detector (U8) — VAL-HEALTH-003", () => {
     ctx = null;
   });
 
-  it("reports ok status on an empty database", async () => {
+  it("treats blank project scope as an unscoped empty-database diagnostic", async () => {
     ctx = await setupCtx();
-    const report = await detectTaskIdIntegrityAnomaliesAsync(ctx.layer.db);
+    const report = await detectTaskIdIntegrityAnomaliesAsync(ctx.layer.db, { projectId: "  " });
     expect(report.status).toBe("ok");
     expect(report.anomalies).toEqual([]);
+  });
+
+  /*
+  FNXC:TaskIdIntegrity 2026-09-23-01:47:
+  PostgreSQL stores task IDs, archived copies, and allocator prefixes per
+  project. This fixture reproduces legal cross-project reuse while retaining
+  global diagnostics and project-local corruption detection.
+  */
+  it("keeps legal multi-project task ID reuse out of scoped integrity reports", async () => {
+    ctx = await setupCtx();
+    const db = ctx.layer.db;
+    const now = new Date().toISOString();
+    const tasks = sql.raw(`${PROJECT_SCHEMA}.tasks`);
+    const archivedTasks = sql.raw(`${PROJECT_SCHEMA}.archived_tasks`);
+    const allocatorState = sql.raw(`${PROJECT_SCHEMA}.distributed_task_id_state`);
+
+    // Project A has only an unused FN allocator row. Projects B and C legally
+    // reuse FN-1; C's archived FN-64 proves archived rows share the partition.
+    await db.execute(sql`INSERT INTO ${allocatorState} (project_id, prefix, next_sequence, committed_cluster_task_count, last_committed_task_id, updated_at) VALUES (${ "project-a" }, 'FN', 1, 0, NULL, ${now})`);
+    await db.execute(sql`INSERT INTO ${tasks} (project_id, id, description, "column", created_at, updated_at) VALUES (${ "project-b" }, 'FN-1', 'test', 'todo', ${now}, ${now}), (${ "project-b" }, 'FN-64', 'test', 'todo', ${now}, ${now}), (${ "project-c" }, 'FN-1', 'test', 'todo', ${now}, ${now})`);
+    await db.execute(sql`INSERT INTO ${archivedTasks} (project_id, id, data, archived_at) VALUES (${ "project-c" }, 'FN-64', '{}', ${now})`);
+    await db.execute(sql`INSERT INTO ${allocatorState} (project_id, prefix, next_sequence, committed_cluster_task_count, last_committed_task_id, updated_at) VALUES (${ "project-b" }, 'FN', 65, 0, NULL, ${now}), (${ "project-c" }, 'FN', 65, 0, NULL, ${now})`);
+
+    const global = await detectTaskIdIntegrityAnomaliesAsync(db);
+    expect(global.anomalies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "duplicate_active_id", affectedIds: ["FN-1"] }),
+      expect.objectContaining({ kind: "next_sequence_at_or_below_used", prefix: "FN" }),
+      expect.objectContaining({ kind: "id_in_active_and_archived", affectedIds: ["FN-64"] }),
+    ]));
+
+    for (const projectId of ["project-a", "project-b", "project-c"]) {
+      const scoped = await detectTaskIdIntegrityAnomaliesAsync(db, { projectId });
+      expect(scoped).toMatchObject({ status: "ok", anomalies: [] });
+    }
   });
 
   it("detects duplicate active IDs", async () => {
@@ -159,7 +193,7 @@ pgDescribe("Task-ID integrity detector (U8) — VAL-HEALTH-003", () => {
       `INSERT INTO ${PROJECT_SCHEMA}.distributed_task_id_state (prefix, next_sequence, committed_cluster_task_count, last_committed_task_id, updated_at) VALUES ('FN', 100, 0, NULL, '${now}')`,
     ));
 
-    const report = await detectTaskIdIntegrityAnomaliesAsync(ctx.layer.db);
+    const report = await detectTaskIdIntegrityAnomaliesAsync(ctx.layer.db, { projectId: "__legacy_unscoped__" });
     expect(report.status).toBe("anomaly");
     expect(report.anomalies).toContainEqual(
       expect.objectContaining({
@@ -184,7 +218,7 @@ pgDescribe("Task-ID integrity detector (U8) — VAL-HEALTH-003", () => {
       `INSERT INTO ${PROJECT_SCHEMA}.distributed_task_id_state (prefix, next_sequence, committed_cluster_task_count, last_committed_task_id, updated_at) VALUES ('FN', 51, 0, NULL, '${now}')`,
     ));
 
-    const report = await detectTaskIdIntegrityAnomaliesAsync(ctx.layer.db);
+    const report = await detectTaskIdIntegrityAnomaliesAsync(ctx.layer.db, { projectId: "__legacy_unscoped__" });
     expect(report.status).toBe("anomaly");
     expect(report.anomalies).toContainEqual(
       expect.objectContaining({

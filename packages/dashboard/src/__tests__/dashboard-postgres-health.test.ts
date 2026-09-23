@@ -43,9 +43,31 @@ describe("evaluateDashboardPostgresHealth", () => {
     const result = await evaluateDashboardPostgresHealth(store);
 
     expect(healthMocks.checkPostgresHealth).toHaveBeenCalledWith(layer);
-    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(layer.db);
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(layer.db, { projectId: undefined });
     expect(result.database.healthy).toBe(true);
     expect(result.taskIdIntegrity.status).toBe("ok");
+  });
+
+  it("prefers the engine project context for task-ID integrity partitioning", async () => {
+    const boundLayer = { ...layer, projectId: "layer-project" } as AsyncDataLayer;
+    const store = { getAsyncLayer: () => boundLayer } as TaskStore;
+
+    await evaluateDashboardPostgresHealth(store, undefined, { projectId: " daemon-project " });
+
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(boundLayer.db, {
+      projectId: "daemon-project",
+    });
+  });
+
+  it("uses the bound data-layer partition when engine context is absent", async () => {
+    const boundLayer = { ...layer, projectId: "layer-project" } as AsyncDataLayer;
+    const store = { getAsyncLayer: () => boundLayer } as TaskStore;
+
+    await evaluateDashboardPostgresHealth(store);
+
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(boundLayer.db, {
+      projectId: "layer-project",
+    });
   });
 
   it("surfaces durable failed and running cutovers without an age threshold", async () => {

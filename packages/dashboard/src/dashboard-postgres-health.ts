@@ -97,9 +97,20 @@ export async function evaluateDashboardPostgresHealth(
   ]);
   if (errors.length > 0) return failedHealth(checkedAt, ...errors);
 
+  /*
+  FNXC:TaskIdIntegrity 2026-09-23-01:47:
+  Health must inspect one authoritative task-ID partition. Prefer the engine's
+  typed project identity, then the bound data-layer identity; only a genuinely
+  unbound caller retains the detector's intentional global diagnostic mode.
+  */
+  const taskIdIntegrityProjectId = context?.projectId?.trim() || layer.projectId?.trim() || undefined;
   let taskIdIntegrity: DashboardTaskIdIntegrityHealth;
   try {
-    taskIdIntegrity = await withDeadline(() => detectTaskIdIntegrityAnomaliesAsync(layer.db), remaining(), "PostgreSQL task-ID integrity probe");
+    taskIdIntegrity = await withDeadline(
+      () => detectTaskIdIntegrityAnomaliesAsync(layer.db, { projectId: taskIdIntegrityProjectId }),
+      remaining(),
+      "PostgreSQL task-ID integrity probe",
+    );
   } catch (error) {
     return failedHealth(
       checkedAt,

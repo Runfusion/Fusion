@@ -1121,6 +1121,7 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
   - PostgreSQL startup and explicit refreshes never open or inspect a SQLite file. The server derives the live async layer from its `TaskStore`; a missing layer fails health closed instead of falling back to a synchronous healthy sentinel.
   - The compatibility-shaped `database.corruptionDetected` and `database.corruptionErrors` fields carry PostgreSQL connectivity and health-query failures so existing dashboard clients receive an actionable degraded response.
   - The former background `PRAGMA integrity_check` scheduling, per-`fusion.db` deduplication, and SQLite corruption notification behavior are pre-cutover history only; they are not a runtime fallback.
+  - Task-ID integrity checks use the engine's project identity, or the bound async data-layer project identity when engine context is unavailable. This scopes active tasks, archived tasks, and allocator state to the same partition; callers without either identity intentionally retain an unscoped global/single-project diagnostic.
   - `POST /api/health/refresh` recomputes PostgreSQL connectivity and task-ID integrity on demand. Detector failures return `taskIdIntegrity.status: "error"` and degrade the top-level status; they are never rewritten as an empty healthy report.
   - No authentication required
 
