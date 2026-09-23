@@ -235,9 +235,15 @@ pgDescribe("external sessions: durable observation ingestion", () => {
   it("fails closed rather than resetting lost acknowledgement positions in populated schemas", async () => {
     const first = await store().ingest(envelope());
     await h.adminDb().execute(sql`ALTER TABLE project.external_session_streams DROP COLUMN acknowledged_sequence CASCADE`);
-    await expect(applySchemaBaseline(h.adminDb())).rejects.toThrow();
-    expect((await store().get(first.sessionId))?.revision).toBe(1);
-    expect(await h.layer().db.select({ id: externalSessions.id }).from(externalSessions)).toHaveLength(1);
+    try {
+      await expect(applySchemaBaseline(h.adminDb())).rejects.toThrow();
+      expect((await store().get(first.sessionId))?.revision).toBe(1);
+      expect(await h.layer().db.select({ id: externalSessions.id }).from(externalSessions)).toHaveLength(1);
+    } finally {
+      // The refusal is the point, so the column stays dropped: rebuild the DDL rather than leave later tests on a damaged table.
+      await h.adminDb().execute(sql.raw("DROP TABLE project.external_session_feedback, project.external_sessions, project.external_session_streams, project.external_session_hosts; DELETE FROM public.fusion_schema_migrations WHERE version IN ('0086', '0087');"));
+      await applySchemaBaseline(h.adminDb());
+    }
   });
 
   it("installs migrations 0086/0087 on an upgrade and reopening is idempotent", async () => {
