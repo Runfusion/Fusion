@@ -99,6 +99,138 @@ afterEach(() => {
 });
 
 describe("executor outer dispatch dependency gate", () => {
+  it.each(["pending", "done"] as const)("does not feed task updates back into dependency-blocked %s work", async (stepStatus) => {
+    resetExecutorMocks();
+    const child = task({
+      status: "queued",
+      blockedBy: "FN-PARENT",
+      queuedLogEpisodeSignature: "dependency:FN-PARENT",
+      steps: [{ name: "Implement", status: stepStatus }],
+      currentStep: stepStatus === "done" ? 1 : 0,
+    });
+    const parent = task({ id: "FN-PARENT", column: "todo", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockImplementation(async (candidate) => {
+      await (executor as any).blockOuterDispatchWhenDependenciesUnmet(candidate);
+    });
+    const recover = vi.spyOn(executor as any, "recoverCompletedTask").mockResolvedValue(true);
+
+    // The real listener receives later updates after the previous dispatch has
+    // settled, as it does when the durable hold emits another task:updated event.
+    for (let update = 0; update < 3; update += 1) {
+      await store._triggerAsync("task:updated", { ...child });
+      await Promise.all(execute.mock.results.map((result) => result.value));
+    }
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(recover).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["triage", "todo", "queued", "in-progress"])("holds unmarked resume attempts with a live %s dependency", async (column) => {
+    resetExecutorMocks();
+    const child = task({ dependencies: ["FN-PARENT", "FN-PARENT"] });
+    const parent = task({ id: "FN-PARENT", column, dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+
+    await store._triggerAsync("task:updated", child);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+  });
+
+  it.each(["done", "in-review", "archived", "missing"])("resumes a held task when its dependency becomes %s", async (column) => {
+    resetExecutorMocks();
+    const child = task({ status: "queued", blockedBy: "FN-PARENT" });
+    const parent = task({ id: "FN-PARENT", column: "todo", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+
+    await store._triggerAsync("task:updated", child);
+    expect(execute).not.toHaveBeenCalled();
+    store.listTasks.mockResolvedValue(column === "missing" ? [child] : [child, { ...parent, column }]);
+    await store._triggerAsync("task:updated", child);
+
+    expect(execute).toHaveBeenCalledExactlyOnceWith(child);
+    expect(store.updateTask).toHaveBeenCalledWith(child.id, { status: null, blockedBy: null });
+    expect(store.logEntry).toHaveBeenCalledWith(child.id, "Resuming execution after unpause", undefined, undefined);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each([{ dependencies: [] }, { dependencies: undefined }])("does not query dependencies for an empty resume dependency list ($dependencies)", async ({ dependencies }) => {
+    resetExecutorMocks();
+    const child = task({ dependencies });
+    const store = prepareStore(child, []);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+
+    await store._triggerAsync("task:updated", child);
+
+    expect(execute).toHaveBeenCalledExactlyOnceWith(child);
+    expect(store.listTasks).not.toHaveBeenCalled();
+  });
+
+  it("recovers completed work after the live dependency list is cleared", async () => {
+    resetExecutorMocks();
+    const child = task({ steps: [{ name: "Implement", status: "done" }], currentStep: 1 });
+    const store = prepareStore({ ...child, dependencies: [] }, []);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+    const recover = vi.spyOn(executor as any, "recoverCompletedTask").mockResolvedValue(true);
+
+    await store._triggerAsync("task:updated", child);
+
+    expect(recover).toHaveBeenCalledExactlyOnceWith(child);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("releases resume ownership after a failed dependency read without clearing the hold", async () => {
+    resetExecutorMocks();
+    const child = task({ status: "queued", blockedBy: "FN-PARENT" });
+    const store = prepareStore(child, []);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+    store.listTasks.mockRejectedValueOnce(new Error("dependency read unavailable"));
+
+    await store._triggerAsync("task:updated", child);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+
+    await store._triggerAsync("task:updated", child);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one resume owner during the dependency read and releases it when held", async () => {
+    resetExecutorMocks();
+    const child = task();
+    const parent = task({ id: "FN-PARENT", column: "todo", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+    let resolveTasks!: (tasks: TaskDetail[]) => void;
+    const pendingTasks = new Promise<TaskDetail[]>((resolve) => { resolveTasks = resolve; });
+    store.listTasks.mockReturnValueOnce(pendingTasks);
+
+    const first = store._triggerAsync("task:updated", child);
+    await store._triggerAsync("task:updated", child);
+    expect(store.listTasks).toHaveBeenCalledTimes(1);
+    resolveTasks([child, parent]);
+    await first;
+    expect(execute).not.toHaveBeenCalled();
+
+    store.listTasks.mockResolvedValue([child, { ...parent, column: "done" }]);
+    await store._triggerAsync("task:updated", child);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it("holds a live dependency in place before any execution surface can run", async () => {
     resetExecutorMocks();
     const child = task();
