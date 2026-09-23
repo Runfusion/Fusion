@@ -118,19 +118,26 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
   const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false);
   const [hosts, setHosts] = useState<{ hostId: string; collectorConnected: boolean }[]>([]);
   /*
-  FNXC:RemoteAgents 2026-09-23-08:40: Every list request carries a generation, and only the newest one may write.
-  Manual Refresh and Load More pass no AbortSignal, so an abort check alone let a response that was already in flight
-  when the operator changed project or filters replace the new view's sessions and cursor. The generation also
-  discards an OLDER response for the SAME scope, which a signal cannot distinguish.
+  FNXC:RemoteAgents 2026-09-23-11:07: A list response may write only while it still describes the view the operator is looking at.
+  Two different things can invalidate it, so they are tracked separately.
+  Scope: a project or filter change resets the list, and Manual Refresh and Load More pass no AbortSignal, so an abort check alone
+  let a reply that was already in flight repopulate the new view. Every request captures the scope epoch and writes only within it.
+  Order: two REPLACING requests for the same scope race, and a signal cannot tell an older reply from a newer one, so the newest
+  replacing request wins by generation. Additive requests (Load More and the poll's merge) are deliberately exempt from that
+  generation, because they contribute a page rather than define the list: making them lose it discarded the page the operator asked for
+  whenever the 10s poll overlapped Load More. They are idempotent — the merge filters by session id — so order between them does not matter.
   */
+  const scopeEpoch = useRef(0);
   const loadGeneration = useRef(0);
   const load = useCallback(async (after?: string, signal?: AbortSignal, merge = false) => {
     if (!projectId) return;
-    const generation = ++loadGeneration.current;
+    const additive = Boolean(after) || merge;
+    const epoch = scopeEpoch.current;
+    const generation = additive ? loadGeneration.current : ++loadGeneration.current;
     setLoading(true);
     const query = new URLSearchParams({ projectId, limit: "100" });
     if (host) query.set("hostId", host); if (provider) query.set("provider", provider); if (after) query.set("cursor", after);
-    const superseded = () => signal?.aborted === true || generation !== loadGeneration.current;
+    const superseded = () => signal?.aborted === true || epoch !== scopeEpoch.current || (!additive && generation !== loadGeneration.current);
     try {
       const page = await api<ExternalSessionPage>(`/external-sessions?${query}`, { signal });
       if (!superseded()) {
@@ -147,6 +154,7 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
   }, [projectId]);
   const listPoll = useRef<AbortController | null>(null);
   useEffect(() => {
+    scopeEpoch.current += 1;
     setSessions([]); setSelected(null); setCursor(null);
     const controller = new AbortController(); listPoll.current = controller; void load(undefined, controller.signal);
     return () => controller.abort();

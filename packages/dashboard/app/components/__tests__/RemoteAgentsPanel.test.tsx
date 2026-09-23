@@ -61,6 +61,31 @@ describe("standalone remote agents", () => {
     expect(screen.queryByRole("button", { name: "Load more sessions" })).toBeNull();
   });
 
+  it("keeps a Load more page that lands while the background poll is refreshing", async () => {
+    // The poll and pagination belong to the same scope, so a newer poll must not discard the page
+    // the operator asked for. Only a project or filter change may invalidate an in-flight response.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const first = { ...fixture, id: "d".repeat(64), observation: { ...fixture.observation, title: "First page agent" } };
+    const next = { ...fixture, id: "e".repeat(64), observation: { ...fixture.observation, title: "Second page agent" } };
+    const pendingPages: (() => void)[] = [];
+    vi.mocked(api).mockImplementation(async path => {
+      if (path.includes("/hosts")) return { hosts: [] } as never;
+      if (path.includes("cursor=page-2")) { await new Promise<void>(resolve => pendingPages.push(resolve)); return { sessions: [next], nextCursor: null } as never; }
+      return { sessions: [first], nextCursor: "page-2" } as never;
+    });
+    render(<RemoteAgentsPanel projectId="project-a" />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    screen.getByText("First page agent");
+    fireEvent.click(screen.getByRole("button", { name: "Load more sessions" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(pendingPages).toHaveLength(1);
+    // The background poll for the same scope lands while that page is still in flight.
+    await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { pendingPages.forEach(resolve => resolve()); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("Second page agent")).toBeInTheDocument();
+    expect(screen.getByText("First page agent")).toBeInTheDocument();
+  });
+
   it("surfaces monitoring errors instead of showing an empty success state", async () => {
     vi.mocked(api).mockRejectedValue(new Error("Collector storage unavailable"));
     render(<RemoteAgentsPanel projectId="project-a" />);
