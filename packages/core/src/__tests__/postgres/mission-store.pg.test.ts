@@ -2211,20 +2211,12 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const slice = await m.addSlice(milestone.id, { title: "SL" });
     const feature = await m.addFeature(slice.id, { title: "Feature" });
     const task = await h.store().createTask({ description: "mission delivery" });
-    const now = new Date().toISOString();
-    await h.store().getAsyncLayer()!.db.insert(schema.project.goals).values({
-      id: "G-TASK-PROVENANCE",
-      title: "Task goal",
-      description: null,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await m.linkGoal(mission.id, "G-TASK-PROVENANCE");
+    const goal = await h.store().getGoalStore().createGoal({ title: "Task goal" });
+    await m.linkGoal(mission.id, goal.id);
     await m.linkFeatureToTask(feature.id, task.id);
 
-    expect(await m.listGoalIdsForTask(task.id)).toEqual(["G-TASK-PROVENANCE"]);
-    expect((await m.listGoalsForTask(task.id)).map((goal) => goal.id)).toEqual(["G-TASK-PROVENANCE"]);
+    expect(await m.listGoalIdsForTask(task.id)).toEqual([goal.id]);
+    expect((await m.listGoalsForTask(task.id)).map((linkedGoal) => linkedGoal.id)).toEqual([goal.id]);
   });
 
   it("computeMissionStatus reflects milestone state", async () => {
