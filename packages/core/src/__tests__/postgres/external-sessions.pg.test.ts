@@ -259,6 +259,28 @@ pgDescribe("external sessions: durable observation ingestion", () => {
     expect((await store().ingest(envelope())).applied).toBe(true);
   });
 
+  const sessionsContract = sql`
+    SELECT
+      to_regclass('project."idxExternalSessionsRecent"') IS NOT NULL AS recent_index,
+      (SELECT count(*)::int FROM pg_trigger WHERE tgname = 'fusion_assign_project_id'
+         AND tgrelid IN ('project.external_session_hosts'::regclass, 'project.external_session_streams'::regclass, 'project.external_sessions'::regclass)) AS triggers,
+      (SELECT count(*)::int FROM pg_constraint WHERE contype IN ('p', 'f', 'c')
+         AND conrelid IN ('project.external_session_hosts'::regclass, 'project.external_session_streams'::regclass, 'project.external_sessions'::regclass)) AS constraints`;
+
+  it.each([
+    ["missing recent index", 'DROP INDEX project."idxExternalSessionsRecent"'],
+    ["missing project trigger", "DROP TRIGGER fusion_assign_project_id ON project.external_sessions"],
+    ["missing revision constraint", "ALTER TABLE project.external_sessions DROP CONSTRAINT external_sessions_revision"],
+    ["missing native identity constraint", "ALTER TABLE project.external_sessions DROP CONSTRAINT external_sessions_native_identity"],
+  ])("repairs a recorded 0086 session schema with a %s", async (_label, damage) => {
+    const intact = (await h.adminDb().execute(sessionsContract))[0];
+    await h.adminDb().execute(sql.raw(damage));
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+    expect((await h.adminDb().execute(sessionsContract))[0]).toEqual(intact);
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(false);
+    expect((await store().ingest(envelope())).applied).toBe(true);
+  });
+
   const feedbackContract = sql`
     SELECT
       (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'project' AND table_name = 'external_session_feedback') AS columns,
