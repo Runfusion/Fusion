@@ -42,6 +42,9 @@ Repository evidence must be reviewable at the inventory's measured revision, not
 
 FNXC:DealersSaaSPlanContract 2026-09-23-11:24:
 Workflow review judges whether the planning artifact satisfies its contract; it does not make the later product-approval decision. Keep that boundary explicit so an awaiting-approval hierarchy remains independently reviewable rather than being mistaken for unprovable implementation input.
+
+FNXC:DealersSaaSPlanContract 2026-09-23-13:31:
+Delivering the verified proposal and asking the user to choose is the complete documentation outcome. Product approval intentionally occurs later and must gate hierarchy persistence rather than make the current artifact review unprovable.
 */
 function tableRows(markdown, heading) {
   const section = markdown.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |\\Z)`, "m"));
@@ -270,8 +273,10 @@ test("plan contract detects dependency cycles, duplicate labels, premature hiera
 
 test("plan preserves the pre-implementation approval gate and separates workflow review", () => {
   assert.deepEqual(validateApprovalGate(plan), []);
+  assert.match(plan, /Artifact completion boundary.*FX-010 is complete when this evidence-grounded proposal and its explicit user decision request are delivered and verified/s);
   assert.match(plan, /Workflow review and product approval are separate decisions/);
   assert.match(plan, /workflow reviewer can approve or revise whether this task faithfully produced the evidence-grounded planning artifact/);
+  assert.match(plan, /No product-approval response is required to complete or review FX-010 itself/);
   assert.match(plan, /Approval authorizes only a later interaction to persist the agreed Mission hierarchy and hand it to Engineering/);
   assert.match(plan, /FX-011 must be resolved before the active goal is linked/);
 });

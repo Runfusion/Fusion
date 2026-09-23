@@ -10,6 +10,8 @@ At measured revision `f772db2c901b5b24aba2eaf1a6f617f53f039210`, this checkout i
 
 The first approval decision is therefore architectural: implement an isolated dealer domain in this repository using its extension seams, identify and authorize the intended separate substrate repository, or revise the mission. The hierarchy below remains **proposed / awaiting approval** and creates no persisted milestone, slice, feature, goal link, or implementation task.
 
+**Artifact completion boundary:** FX-010 is complete when this evidence-grounded proposal and its explicit user decision request are delivered and verified. A product-approval response is deliberately not an input to, or proof required for, workflow review of this documentation-only task; the response belongs to a later interaction and gates only hierarchy persistence and Engineering handoff.
+
 ## Scope and non-goals
 
 ### Proposed scope
@@ -304,7 +306,7 @@ FX-011 owns the mission-goal linking defect for active goal `G-MR6PYWXZ-0001-H2A
 
 ## Approval gate
 
-Workflow review and product approval are separate decisions. A workflow reviewer can approve or revise whether this task faithfully produced the evidence-grounded planning artifact without choosing a product direction. The three choices below are reserved for the user after delivery; workflow review must not treat the still-pending product decision as missing proof about this task's implementation.
+Workflow review and product approval are separate decisions. A workflow reviewer can approve or revise whether this task faithfully produced the evidence-grounded planning artifact without choosing a product direction. The three choices below are reserved for the user after delivery; workflow review must not treat the still-pending product decision as missing proof about this task's implementation. No product-approval response is required to complete or review FX-010 itself.
 
 Choose exactly one:
 
