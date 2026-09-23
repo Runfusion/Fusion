@@ -67,7 +67,7 @@ Code evidence:
 - API composition: `packages/dashboard/src/routes.ts` (`createApiRoutes`) and `packages/dashboard/src/routes/create-api-routes-mount-sequence.ts` (`CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE`). No dealership registrar appears in the enforced sequence or `packages/dashboard/src/routes/`.
 - Persistence boundary: `packages/core/src/postgres/schema/project.ts` exports project-scoped `tasks`, `missions`, `goals`, `missionGoals`, `milestones`, `slices`, and `runAuditEvents`; it exports no vehicle, customer, deal, invoice, channel listing, storefront, or valuation table.
 - Mission writers (not dealer writers): `packages/core/src/missions/mission-store.ts` (`MissionStore.addMilestone`, `addSlice`, `addFeature`) and `packages/core/src/async-stores/async-mission-store.ts` (`AsyncMissionStore`).
-- Real generic contract tests include `packages/dashboard/src/routes/__tests__/create-api-routes-mount-order.test.ts`, mission-store tests under `packages/core/src/missions/__tests__/`, and dashboard navigation tests. They do not exercise dealer journeys.
+- Real generic contract tests include `packages/dashboard/src/routes/__tests__/create-api-routes-mount-order.test.ts`, mission-store tests under `packages/core/src/__tests__/`, and dashboard navigation tests. They do not exercise dealer journeys.
 
 ### End-to-end dealership trace result
 

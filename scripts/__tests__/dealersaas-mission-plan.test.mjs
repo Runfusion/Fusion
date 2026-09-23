@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -246,4 +246,71 @@ test("plan preserves the pre-implementation approval gate", () => {
   assert.deepEqual(validateApprovalGate(plan), []);
   assert.match(plan, /Approval authorizes only a later interaction to persist the agreed Mission hierarchy and hand it to Engineering/);
   assert.match(plan, /FX-011 must be resolved before the active goal is linked/);
+});
+
+function localMarkdownLinks(markdown) {
+  return [...markdown.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)]
+    .map((match) => match[1])
+    .filter((target) => !/^(?:https?:|mailto:)/.test(target));
+}
+
+function headingAnchor(text) {
+  return text.trim().toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s/g, "-");
+}
+
+function validateLocalLinks(filePath, markdown) {
+  const errors = [];
+  for (const target of localMarkdownLinks(markdown)) {
+    const [relativePath, anchor] = target.split("#");
+    const resolved = relativePath ? path.resolve(path.dirname(filePath), relativePath) : filePath;
+    if (!existsSync(resolved)) {
+      errors.push(`Broken local link ${target} in ${path.relative(repoRoot, filePath)}`);
+      continue;
+    }
+    if (anchor) {
+      const anchors = new Set([...readFileSync(resolved, "utf8").matchAll(/^#{1,6}\s+(.+)$/gm)].map((match) => headingAnchor(match[1])));
+      if (!anchors.has(anchor)) errors.push(`Broken anchor ${target} in ${path.relative(repoRoot, filePath)}`);
+    }
+  }
+  return errors;
+}
+
+function validateCurrentPathCitations(markdown) {
+  const errors = [];
+  const citations = [...markdown.matchAll(/`((?:packages|docs|scripts)\/[^`\n]+)`/g)].map((match) => match[1]);
+  for (const citation of citations) {
+    if (/[*{}]/.test(citation)) continue;
+    if (!existsSync(path.join(repoRoot, citation))) errors.push(`Missing cited current path: ${citation}`);
+  }
+  return errors;
+}
+
+test("documentation index discovers exactly the plan and two supporting specs", () => {
+  const docsIndexPath = path.join(repoRoot, "docs/README.md");
+  const docsIndex = readFileSync(docsIndexPath, "utf8");
+  const indexRow = docsIndex.match(/^\| \[DealersSaaS → Carcuro Mission Plan\].*$/m)?.[0] ?? "";
+  for (const target of ["./dealersaas-mission-plan.md", "./carcuro-capability-inventory.md", "./carcuro-product-spec.md"]) {
+    assert.ok(indexRow.includes(`(${target})`), `Docs index row missing ${target}`);
+  }
+  assert.deepEqual(validateLocalLinks(docsIndexPath, indexRow), []);
+
+  const planningDocs = readdirSync(path.join(repoRoot, "docs"))
+    .filter((name) => name === "dealersaas-mission-plan.md" || /^carcuro-.*\.md$/.test(name))
+    .sort();
+  assert.deepEqual(planningDocs, ["carcuro-capability-inventory.md", "carcuro-product-spec.md", "dealersaas-mission-plan.md"]);
+});
+
+test("planning links and current path citations resolve", () => {
+  for (const [filePath, markdown] of [[inventoryPath, inventory], [productSpecPath, productSpec], [planPath, plan]]) {
+    assert.deepEqual(validateLocalLinks(filePath, markdown), []);
+    assert.deepEqual(validateCurrentPathCitations(markdown), []);
+  }
+});
+
+test("contract detects broken current paths and duplicate proposal labels", () => {
+  const brokenPath = inventory.replace("packages/core/src/postgres/schema/project.ts", "packages/core/src/postgres/schema/not-real.ts");
+  assert.match(validateCurrentPathCitations(brokenPath).join("\n"), /not-real\.ts/);
+
+  const duplicate = plan.replace("Feature `F-FOUND-02`", "Feature `F-FOUND-01`");
+  assert.match(validateHierarchy(duplicate).join("\n"), /Duplicate feature proposal label/);
 });
