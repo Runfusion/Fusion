@@ -117,19 +117,28 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false);
   const [hosts, setHosts] = useState<{ hostId: string; collectorConnected: boolean }[]>([]);
+  /*
+  FNXC:RemoteAgents 2026-09-23-08:40: Every list request carries a generation, and only the newest one may write.
+  Manual Refresh and Load More pass no AbortSignal, so an abort check alone let a response that was already in flight
+  when the operator changed project or filters replace the new view's sessions and cursor. The generation also
+  discards an OLDER response for the SAME scope, which a signal cannot distinguish.
+  */
+  const loadGeneration = useRef(0);
   const load = useCallback(async (after?: string, signal?: AbortSignal, merge = false) => {
     if (!projectId) return;
+    const generation = ++loadGeneration.current;
     setLoading(true);
     const query = new URLSearchParams({ projectId, limit: "100" });
     if (host) query.set("hostId", host); if (provider) query.set("provider", provider); if (after) query.set("cursor", after);
+    const superseded = () => signal?.aborted === true || generation !== loadGeneration.current;
     try {
       const page = await api<ExternalSessionPage>(`/external-sessions?${query}`, { signal });
-      if (!signal?.aborted) {
+      if (!superseded()) {
         setSessions(current => after || merge ? [...current.filter(s => !page.sessions.some(n => n.id === s.id)), ...page.sessions] : page.sessions);
         if (!merge) setCursor(page.nextCursor); setError(null);
       }
-    } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Remote agents unavailable"); }
-    finally { if (!signal?.aborted) setLoading(false); }
+    } catch (e) { if (!superseded()) setError(e instanceof Error ? e.message : "Remote agents unavailable"); }
+    finally { if (!superseded()) setLoading(false); }
   }, [host, provider, projectId]);
   const refreshHosts = useCallback(async (signal: AbortSignal) => {
     if (!projectId) return;

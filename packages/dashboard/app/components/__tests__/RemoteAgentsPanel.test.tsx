@@ -35,6 +35,32 @@ describe("standalone remote agents", () => {
     expect(calls[0]).toMatchObject({ generation: "generation", text: "Keep working" });
     expect(screen.getByLabelText("Message")).toHaveValue("");
   });
+  it("discards an in-flight manual refresh once the operator changes the filter", async () => {
+    // Manual Refresh passes no AbortSignal, so aborting the scope's controller cannot stop its
+    // response. Only a request generation keeps a late reply from replacing the new view.
+    const stale = { ...fixture, id: "b".repeat(64), observation: { ...fixture.observation, title: "Stale agent" } };
+    const fresh = { ...fixture, id: "c".repeat(64), provider: "claude", observation: { ...fixture.observation, title: "Fresh agent" } };
+    const pending: (() => void)[] = [];
+    let listRequests = 0;
+    vi.mocked(api).mockImplementation(async path => {
+      if (path.includes("/hosts")) return { hosts: [] } as never;
+      if (path.includes("provider=claude")) return { sessions: [fresh], nextCursor: null } as never;
+      // The first load must finish, because Refresh is disabled while a load is in flight.
+      if (++listRequests > 1) await new Promise<void>(resolve => pending.push(resolve));
+      return { sessions: [stale], nextCursor: "stale-cursor" } as never;
+    });
+    render(<RemoteAgentsPanel projectId="project-a" />);
+    await screen.findByText("Stale agent");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "claude" } });
+    await screen.findByText("Fresh agent");
+    await act(async () => { pending.forEach(resolve => resolve()); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("Fresh agent")).toBeInTheDocument();
+    expect(screen.queryByText("Stale agent")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more sessions" })).toBeNull();
+  });
+
   it("surfaces monitoring errors instead of showing an empty success state", async () => {
     vi.mocked(api).mockRejectedValue(new Error("Collector storage unavailable"));
     render(<RemoteAgentsPanel projectId="project-a" />);
