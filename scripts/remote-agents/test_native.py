@@ -30,6 +30,22 @@ class NativeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validated_base_url('http://relay-host:4040')
 
+    def test_malformed_complete_record_is_skipped_without_stalling_later_activity(self):
+        # FNXC:RemoteAgents 2026-09-23-07:55: One corrupted COMPLETE line must not pin the cursor
+        # forever. The line is skipped and collection continues; an incomplete or oversized record
+        # still preserves the cursor, because those may complete on a later pass.
+        path = self.root / 'session.jsonl'
+        good = json.dumps({'type': 'user', 'timestamp': '2026-09-17T00:00:00Z', 'sessionId': 'n1'})
+        path.write_text(good + '\n' + '{not valid json\n' + good + '\n')
+        db = connect(self.root / 'malformed-spool.sqlite')
+        bind(db, 'project', 'host-a')
+        scan(db, path, 'claude')
+        first = db.execute('SELECT offset FROM files WHERE path=?', (str(path),)).fetchone()[0]
+        self.assertEqual(first, path.stat().st_size)
+        path.write_text(path.read_text() + good + '\n')
+        scan(db, path, 'claude')
+        self.assertEqual(db.execute('SELECT offset FROM files WHERE path=?', (str(path),)).fetchone()[0], path.stat().st_size)
+
     def test_named_relay_host_requires_env_in_every_process_including_hooks(self):
         # FNXC:RemoteAgents 2026-09-22-20:10: post() re-validates on every request and feedback_hook
         # imports it, so a named relay host needs FUSION_REMOTE_AGENTS_HTTP_HOSTS in the NATIVE HOOK's
