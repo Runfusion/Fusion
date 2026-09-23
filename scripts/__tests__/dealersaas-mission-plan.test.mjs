@@ -39,6 +39,9 @@ Every proposed Mission hierarchy heading must remain visibly awaiting approval. 
 
 FNXC:DealersSaaSPlanContract 2026-09-23-10:16:
 Repository evidence must be reviewable at the inventory's measured revision, not only against a later worktree. The contract asks Git to prove every cited production package path existed at that exact revision and mutation coverage proves a fabricated historical path is rejected.
+
+FNXC:DealersSaaSPlanContract 2026-09-23-11:24:
+Workflow review judges whether the planning artifact satisfies its contract; it does not make the later product-approval decision. Keep that boundary explicit so an awaiting-approval hierarchy remains independently reviewable rather than being mistaken for unprovable implementation input.
 */
 function tableRows(markdown, heading) {
   const section = markdown.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |\\Z)`, "m"));
@@ -185,7 +188,8 @@ function validateHierarchy(markdown) {
   const ids = features.map((feature) => feature.id);
   const known = new Set(ids);
   const hierarchyHeadings = [...markdown.matchAll(/^(?:###|####|#####) (?:Milestone|Slice|Feature) `([^`]+)`([^\n]*)$/gm)];
-  if (new Set(ids).size !== ids.length) errors.push("Duplicate feature proposal label");
+  const proposalLabels = hierarchyHeadings.map((heading) => heading[1]);
+  if (new Set(proposalLabels).size !== proposalLabels.length) errors.push("Duplicate hierarchy proposal label");
   for (const heading of hierarchyHeadings) {
     if (!heading[2].includes("proposed / awaiting approval")) {
       errors.push(`${heading[1]} is not marked proposed / awaiting approval`);
@@ -247,9 +251,12 @@ test("plan hierarchy is parented, acceptance-bearing, dependency-valid, and acyc
   assert.match(plan, /\.\/carcuro-product-spec\.md/);
 });
 
-test("plan contract detects dependency cycles, premature hierarchy status, and a missing approval choice", () => {
+test("plan contract detects dependency cycles, duplicate labels, premature hierarchy status, and a missing approval choice", () => {
   const cyclic = plan.replace("- **Prerequisites:** none.", "- **Prerequisites:** `F-FOUND-02`.");
   assert.match(validateHierarchy(cyclic).join("\n"), /Dependency cycle/);
+
+  const duplicateSlice = plan.replace("Slice `S-PUB-2`", "Slice `S-PUB-1`");
+  assert.match(validateHierarchy(duplicateSlice).join("\n"), /Duplicate hierarchy proposal label/);
 
   const prematurelyApproved = plan.replace(
     "Slice `S-PUB-1` — Reference marketplace channel — proposed / awaiting approval",
@@ -261,8 +268,10 @@ test("plan contract detects dependency cycles, premature hierarchy status, and a
   assert.match(validateApprovalGate(missingChoice).join("\n"), /Revise must occur exactly once/);
 });
 
-test("plan preserves the pre-implementation approval gate", () => {
+test("plan preserves the pre-implementation approval gate and separates workflow review", () => {
   assert.deepEqual(validateApprovalGate(plan), []);
+  assert.match(plan, /Workflow review and product approval are separate decisions/);
+  assert.match(plan, /workflow reviewer can approve or revise whether this task faithfully produced the evidence-grounded planning artifact/);
   assert.match(plan, /Approval authorizes only a later interaction to persist the agreed Mission hierarchy and hand it to Engineering/);
   assert.match(plan, /FX-011 must be resolved before the active goal is linked/);
 });
@@ -356,5 +365,5 @@ test("contract detects broken current and measured-revision paths plus duplicate
   assert.match(validateMeasuredRevisionCitations(brokenPath, measuredRevision(inventory)).join("\n"), /not-real\.ts/);
 
   const duplicate = plan.replace("Feature `F-FOUND-02`", "Feature `F-FOUND-01`");
-  assert.match(validateHierarchy(duplicate).join("\n"), /Duplicate feature proposal label/);
+  assert.match(validateHierarchy(duplicate).join("\n"), /Duplicate hierarchy proposal label/);
 });

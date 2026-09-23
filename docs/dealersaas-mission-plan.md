@@ -304,6 +304,8 @@ FX-011 owns the mission-goal linking defect for active goal `G-MR6PYWXZ-0001-H2A
 
 ## Approval gate
 
+Workflow review and product approval are separate decisions. A workflow reviewer can approve or revise whether this task faithfully produced the evidence-grounded planning artifact without choosing a product direction. The three choices below are reserved for the user after delivery; workflow review must not treat the still-pending product decision as missing proof about this task's implementation.
+
 Choose exactly one:
 
 - **Approve**
