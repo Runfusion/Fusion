@@ -1,6 +1,6 @@
 import { defineConfig } from "tsup";
 import { spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -499,16 +499,32 @@ const cliBuildConfig = {
       );
     }
 
-    // FNXC:RemoteAgents 2026-09-18-06:04: Ship independent host tools with Fusion. Explicit source names prevent private tokens/spools or parser caches from entering an artifact.
+    /*
+    FNXC:RemoteAgents 2026-09-18-06:04: Ship independent host tools with Fusion. Only source files are copied, so private tokens, spools and parser caches cannot enter an artifact.
+    FNXC:RemoteAgents 2026-09-23-10:25: Stage every module rather than a hand-written list. The list silently went stale when turn_parser.py was added, and the packaged collector then died on startup with ModuleNotFoundError while its own tests passed, because the source tree it is tested from has the file. Tests are excluded, and the import guard below fails the build instead of shipping a collector that cannot start.
+    */
     if (existsSync(remoteAgentAssetsSrc)) {
       if (existsSync(remoteAgentAssetsDest)) {
         rmSync(remoteAgentAssetsDest, { recursive: true, force: true });
       }
       mkdirSync(remoteAgentAssetsDest, { recursive: true });
-      for (const asset of ["collector.py", "native_parser.py", "opaque_records.py", "feedback_hook.py", "install_hooks.py", "README.md"]) {
+      const remoteAgentModules = readdirSync(remoteAgentAssetsSrc)
+        .filter(name => (name.endsWith(".py") && !name.startsWith("test_")) || name === "README.md")
+        .sort();
+      for (const asset of remoteAgentModules) {
         cpSync(join(remoteAgentAssetsSrc, asset), join(remoteAgentAssetsDest, asset));
       }
-      console.log("Copied remote-agent host tools to dist/remote-agents/");
+      const staged = new Set(remoteAgentModules.filter(name => name.endsWith(".py")).map(name => name.replace(/\.py$/, "")));
+      const available = new Set(readdirSync(remoteAgentAssetsSrc).filter(name => name.endsWith(".py")).map(name => name.replace(/\.py$/, "")));
+      for (const module of staged) {
+        const body = readFileSync(join(remoteAgentAssetsDest, `${module}.py`), "utf8");
+        for (const [, imported] of body.matchAll(/^(?:from|import)\s+([a-z_][a-z0-9_]*)/gm)) {
+          if (available.has(imported) && !staged.has(imported)) {
+            throw new Error(`remote-agent asset ${module}.py imports ${imported}, which is not staged into dist/remote-agents/`);
+          }
+        }
+      }
+      console.log(`Copied remote-agent host tools to dist/remote-agents/ (${remoteAgentModules.length} files)`);
     } else {
       console.warn(
         `WARNING: remote-agent assets source not found at ${remoteAgentAssetsSrc}; standalone remote-agent host tooling will be unavailable.`,
