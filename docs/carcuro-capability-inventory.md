@@ -4,10 +4,10 @@
 
 ## Measurement boundary
 
-- **Measured revision:** `f772db2c901b5b24aba2eaf1a6f617f53f039210`
-- **Measured at:** 2026-09-23 10:16 UTC
-- **Checkout:** branch `fusion/fx-010`, package `fusion-workspace@0.78.0-beta.6`
-- **Review boundary:** the measured revision is the current merge base with `origin/main`; every cited production package path is contract-tested with `git cat-file` at this exact revision rather than inferred from the later task worktree.
+- **Measured revision:** `38455359f2cc4d91dc10dc6a0d8d7a94ca14b959`
+- **Measured at:** 2026-09-23 11:45 UTC
+- **Checkout:** branch `fusion/fx-010`, package `fusion-workspace@0.73.0-beta.0`
+- **Review boundary:** the measured revision is the task's recorded base and local `main`; every cited production package path is contract-tested with `git cat-file` at this exact revision rather than inferred from the later task worktree.
 - **Scope:** tracked files and all refs reachable from this Fusion repository. This is not evidence about another repository, an unpushed branch, a deployed Carcuro system, or the mission description's named `scrapeui` substrate.
 
 ### Evidence vocabulary
@@ -23,15 +23,17 @@ No required dealership domain is `code-verified implemented` or `code-verified p
 
 ## Reproducible repository census
 
-Run from the repository root at the measured revision:
+Run from the repository root, with the census bounded to the measured revision so later task-authored commits cannot satisfy their own evidence search:
 
 ```bash
-git grep -In -e DealersSaaS -e Carcuro -e scrapeui -- ':!pnpm-lock.yaml'
-git log --all --oneline --regexp-ignore-case --grep='dealerssaas\|carcuro\|scrapeui'
-git log --all --name-status --pretty='format:%H %s' -- \
+measured=38455359f2cc4d91dc10dc6a0d8d7a94ca14b959
+git grep -In -e DealersSaaS -e Carcuro -e scrapeui "$measured" -- ':!pnpm-lock.yaml'
+git log "$measured" --oneline --regexp-ignore-case --grep='dealerssaas\|carcuro\|scrapeui'
+git log "$measured" --name-status --pretty='format:%H %s' -- \
   docs/dealersaas-mission-plan.md 'docs/carcuro-*.md'
-git rev-list --objects --all | grep -Ei 'dealerssaas|carcuro|scrapeui'
-git grep -Il -Ei 'invoice|storefront|sales channel|vehicle|dealership|customer relationship|valuation provider' -- ':!pnpm-lock.yaml'
+git rev-list --objects "$measured" | grep -Ei 'dealerssaas|carcuro|scrapeui'
+git grep -Il -Ei 'invoice|storefront|sales channel|vehicle|dealership|customer relationship|valuation provider' \
+  "$measured" -- ':!pnpm-lock.yaml'
 ```
 
 Bounded results on 2026-09-23, reconciled against the measured revision before the task-authored planning commits:
@@ -67,7 +69,7 @@ Code evidence:
 - Extension boundary: `packages/dashboard/app/plugins/types.ts` (`PluginDashboardViewRegistration`), `packages/plugin-sdk/src/index.ts` (`definePlugin`), and `docs/PLUGIN_AUTHORING.md`. These contracts show where an extension could attach, not that one exists.
 - API composition: `packages/dashboard/src/routes.ts` (`createApiRoutes`) and `packages/dashboard/src/routes/create-api-routes-mount-sequence.ts` (`CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE`). No dealership registrar appears in the enforced sequence or `packages/dashboard/src/routes/`.
 - Persistence boundary: `packages/core/src/postgres/schema/project.ts` exports project-scoped `tasks`, `missions`, `goals`, `missionGoals`, `milestones`, `slices`, and `runAuditEvents`; it exports no vehicle, customer, deal, invoice, channel listing, storefront, or valuation table.
-- Mission writers (not dealer writers): `packages/core/src/missions/mission-store.ts` (`MissionStore.addMilestone`, `addSlice`, `addFeature`) and `packages/core/src/async-stores/async-mission-store.ts` (`AsyncMissionStore`).
+- Mission writers (not dealer writers): `packages/core/src/mission-store.ts` (`MissionStore.addMilestone`, `addSlice`, `addFeature`) and `packages/core/src/async-mission-store.ts` (`AsyncMissionStore`).
 - Real generic contract tests include `packages/dashboard/src/routes/__tests__/create-api-routes-mount-order.test.ts`, mission-store tests under `packages/core/src/__tests__/`, and dashboard navigation tests. They do not exercise dealer journeys.
 
 ### End-to-end dealership trace result

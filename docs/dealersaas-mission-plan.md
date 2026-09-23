@@ -6,7 +6,7 @@
 
 ## Executive decision
 
-At measured revision `f772db2c901b5b24aba2eaf1a6f617f53f039210`, this checkout is the Fusion orchestration monorepo and contains no reachable DealersSaaS, Carcuro, or `scrapeui` dealership substrate. The [inventory](./carcuro-capability-inventory.md) records the bounded code/history evidence; the [product specification](./carcuro-product-spec.md) separates repository observations, dated vendor claims, planning inference, unknowns, and proposed outcomes.
+At measured revision `38455359f2cc4d91dc10dc6a0d8d7a94ca14b959`, this checkout is the Fusion orchestration monorepo and contains no reachable DealersSaaS, Carcuro, or `scrapeui` dealership substrate. The [inventory](./carcuro-capability-inventory.md) records the bounded code/history evidence; the [product specification](./carcuro-product-spec.md) separates repository observations, dated vendor claims, planning inference, unknowns, and proposed outcomes.
 
 The first approval decision is therefore architectural: implement an isolated dealer domain in this repository using its extension seams, identify and authorize the intended separate substrate repository, or revise the mission. The hierarchy below remains **proposed / awaiting approval** and creates no persisted milestone, slice, feature, goal link, or implementation task.
 
