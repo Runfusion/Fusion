@@ -9,6 +9,7 @@ import { useProjectContextGuard } from "./useProjectContextGuard";
 interface UseAgentsOptions {
   filterState?: AgentState | "all";
   showSystemAgents?: boolean;
+  enabled?: boolean;
 }
 
 interface AgentFilter {
@@ -24,6 +25,10 @@ interface AgentFilter {
 const SSE_REFRESH_DEBOUNCE_MS = 250;
 
 export function useAgents(projectId?: string, options?: UseAgentsOptions) {
+  // FNXC:RemoteAgents 2026-09-18-15:52: Remote monitoring uses its own read APIs. Pause managed-agent requests and event refreshes there, including stale callbacks after switching views; existing callers remain enabled by default.
+  const enabled = options?.enabled ?? true;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const agentsCacheKey = projectId ? `${SWR_CACHE_KEYS.AGENTS}:${projectId}` : SWR_CACHE_KEYS.AGENTS;
   const statsCacheKey = projectId ? `${SWR_CACHE_KEYS.AGENT_STATS}:${projectId}` : SWR_CACHE_KEYS.AGENT_STATS;
   const [agents, setAgents] = useState<Agent[]>(() => {
@@ -78,7 +83,16 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
     setIsLoading(false);
   }, [agentsCacheKey, statsCacheKey]);
 
+  useEffect(() => {
+    if (!enabled) {
+      ++agentsGenRef.current;
+      ++statsGenRef.current;
+      setIsLoading(false);
+    }
+  }, [enabled]);
+
   const loadAgents = useCallback(async (filter?: AgentFilter, opts?: { forceFresh?: boolean }) => {
+    if (!enabled || !enabledRef.current) return;
     const context = capture();
     const gen = ++agentsGenRef.current;
     if (!hasCachedHydrationRef.current) {
@@ -98,7 +112,7 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
         : await fetchAgents(mergedFilter, projectId);
       // A newer call superseded us — drop this response so we don't clobber
       // fresher state with stale data.
-      if (gen !== agentsGenRef.current || context.isStale()) return;
+      if (!enabledRef.current || gen !== agentsGenRef.current || context.isStale()) return;
       // Defensive dedupe: a race between the initial fetch and an SSE refresh
       // (or a backend that returned the same agent twice) would otherwise put
       // duplicate ids into every list rendered from this hook, flooding React
@@ -108,27 +122,28 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
       writeCache(agentsCacheKey, unique, { maxBytes: 500_000 });
       hasCachedHydrationRef.current = hasCachedHydrationRef.current || unique.length > 0;
     } catch (err) {
-      console.error("Failed to load agents:", err);
+      if (enabledRef.current) console.error("Failed to load agents:", err);
     } finally {
       if (gen === agentsGenRef.current) setIsLoading(false);
     }
-  }, [agentsCacheKey, capture, projectId, options?.filterState, options?.showSystemAgents]);
+  }, [enabled, agentsCacheKey, capture, projectId, options?.filterState, options?.showSystemAgents]);
 
   const loadStats = useCallback(async (opts?: { forceFresh?: boolean }) => {
+    if (!enabled || !enabledRef.current) return;
     const context = capture();
     const gen = ++statsGenRef.current;
     try {
       const data = opts?.forceFresh
         ? await fetchAgentStats(projectId, { forceFresh: true })
         : await fetchAgentStats(projectId);
-      if (gen !== statsGenRef.current || context.isStale()) return;
+      if (!enabledRef.current || gen !== statsGenRef.current || context.isStale()) return;
       setStats(data);
       writeCache(statsCacheKey, data, { maxBytes: 500_000 });
       hasCachedHydrationRef.current = true;
     } catch (err) {
-      console.error("Failed to load agent stats:", err);
+      if (enabledRef.current) console.error("Failed to load agent stats:", err);
     }
-  }, [capture, projectId, statsCacheKey]);
+  }, [enabled, capture, projectId, statsCacheKey]);
 
   useEffect(() => {
     void loadAgents();
@@ -150,6 +165,7 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
   // fetch+debounce window, we issue at most 2 fetches (the initial debounced
   // fetch and one trailing catch-up).
   useEffect(() => {
+    if (!enabled) return;
     const context = capture();
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
 
@@ -224,7 +240,7 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
       if (debounceTimer) clearTimeout(debounceTimer);
       unsubscribe();
     };
-  }, [capture, projectId, loadAgents, loadStats]);
+  }, [enabled, capture, projectId, loadAgents, loadStats]);
 
   // refreshAgents is the canonical post-mutation refetch entrypoint. It
   // defaults to forceFresh so consumers don't have to remember — anyone

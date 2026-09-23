@@ -143,6 +143,7 @@ describe("CLI package.json publishing config", () => {
     expect(pkg.files).toContain("dist/**/*.js.map");
     expect(pkg.files).toContain("dist/client/**");
     expect(pkg.files).toContain("dist/desktop/**");
+    expect(pkg.files).toContain("dist/remote-agents/**");
     expect(pkg.files).toContain("README.md");
   });
 
@@ -175,6 +176,27 @@ describe("CLI package.json publishing config", () => {
     expect(tsupRaw).toContain("ensureDesktopRuntimeAssetsBuilt");
     expect(tsupRaw).toContain("Copied desktop runtime assets to dist/desktop/");
     expect(tsupRaw).not.toContain("join(desktopRuntimeSrc, \"package.json\")");
+  });
+
+  it("stages remote-agent host tools independently of PostgreSQL migrations", () => {
+    const tsupRaw = readFileSync(join(workspaceRoot, "packages", "cli", "tsup.config.ts"), "utf-8");
+    const migrationWarning = tsupRaw.indexOf("WARNING: PostgreSQL migrations source not found");
+    const remoteAgentGuard = tsupRaw.indexOf("if (existsSync(remoteAgentAssetsSrc))");
+
+    expect(migrationWarning).toBeGreaterThan(-1);
+    expect(remoteAgentGuard).toBeGreaterThan(migrationWarning);
+    expect(tsupRaw).toContain("Copied remote-agent host tools to dist/remote-agents/");
+    expect(tsupRaw).toContain("WARNING: remote-agent assets source not found");
+    for (const asset of [
+      "collector.py",
+      "native_parser.py",
+      "opaque_records.py",
+      "feedback_hook.py",
+      "install_hooks.py",
+      "README.md",
+    ]) {
+      expect(tsupRaw).toContain(`"${asset}"`);
+    }
   });
 
   it("excludes runtime directory from npm package (GitHub Releases only)", () => {
