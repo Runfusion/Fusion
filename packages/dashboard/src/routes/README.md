@@ -69,6 +69,7 @@ The following is the complete top-level registrar map currently imported by `rou
 - `registerSetupActivityRoutes` — the late activity feed, concurrency, and setup split export from `register-setup-activity-routes.ts`.
 - `registerIntegratedDevServerRouter` — domain registrar mounted by `createApiRoutes`.
 - `registerAgentSkillsRoutes` — domain registrar mounted by `createApiRoutes`.
+- `registerExternalSessionRoutes` — opt-in, host/project-authenticated observation ingestion, heartbeat, and feedback claim/acknowledgement; dashboard-authenticated project-scoped cursor list/detail reads, plus the `registerRemoteAgentActions` sub-registrar it mounts for usage/cost reads and operator feedback submission. Collector credentials can claim and acknowledge feedback for their own host but do not grant session reads or operator actions.
 - `registerPatchnodeRoutes` — project-scoped read-only Patchnode delivery feed.
 - `registerProxyRoutes` — domain registrar mounted by `createApiRoutes`.
 
@@ -138,8 +139,9 @@ Express matches in registration order. `create-api-routes-mount-sequence.ts` is 
 57. `registerSetupActivityRoutes`
 58. `registerIntegratedDevServerRouter`
 59. `registerAgentSkillsRoutes`
-60. `registerPatchnodeRoutes`
-61. `registerProxyRoutes`
+60. `registerExternalSessionRoutes`
+61. `registerPatchnodeRoutes`
+62. `registerProxyRoutes`
 <!-- mount-sequence:end -->
 
 ## Ordering rules
@@ -203,3 +205,14 @@ bodies consume memory and can add latency. It is not derived from model context 
 HTTP parsing precedes model selection, bytes are not tokens, and model context also includes
 history, system/tool input, reasoning, and output. GitHub raw webhook parsing stays first;
 Voice keeps its route-owned 2 MiB parser and Planning keeps its route-owned 5 MiB parser.
+
+## External session ingestion
+
+Only exact `POST /api/external-sessions/ingest`, `/heartbeat`, `/feedback-claim` and `/feedback-ack`
+(optional trailing slash) bypass dashboard bearer authentication. The registrar always requires its own
+collector credential, including under `--no-auth`. Collector credentials can claim and acknowledge
+feedback queued for their host, but cannot read sessions or submit operator feedback. All other methods
+and nested paths retain dashboard authentication.
+The global 100 KiB JSON parser and mutation rate limits remain in force. See
+[the provider-neutral contract](../../../../docs/external-session-ingestion.md) for configuration,
+stream ordering, and replay semantics.

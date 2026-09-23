@@ -140,6 +140,7 @@ describe("model-pricing", () => {
       ["gpt-5.6-luna", 2.2],
       ["gpt-5.6-sol", 11],
       ["gpt-5.6-terra", 5.5],
+      ["gpt-6-astra", 20],
     ] as const;
 
     for (const [model, expectedUsd] of cases) {

@@ -74,6 +74,43 @@ describe("useAgents", () => {
     expect(mockFetchAgentStats).toHaveBeenCalled();
   });
 
+  it("does not fetch or subscribe while disabled and resumes when enabled", async () => {
+    const { result, rerender } = renderHook(({ enabled }) => useAgents(undefined, { enabled }), {
+      initialProps: { enabled: false },
+    });
+    await act(async () => { await result.current.refreshAgents(); });
+    expect(mockFetchAgents).not.toHaveBeenCalled();
+    expect(mockFetchAgentStats).not.toHaveBeenCalled();
+    expect(MockEventSource.instances).toHaveLength(0);
+    rerender({ enabled: true });
+    await waitFor(() => expect(mockFetchAgentStats).toHaveBeenCalledTimes(1));
+    expect(mockFetchAgents).toHaveBeenCalledTimes(1);
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it("ignores stale callbacks and in-flight results after disabling", async () => {
+    let resolveAgents!: (agents: Agent[]) => void;
+    mockFetchAgents.mockImplementationOnce(() => new Promise(resolve => { resolveAgents = resolve; }));
+    const { result, rerender } = renderHook(({ enabled }) => useAgents(undefined, { enabled }), {
+      initialProps: { enabled: true },
+    });
+    const oldLoadAgents = result.current.loadAgents;
+    rerender({ enabled: false });
+    expect(result.current.isLoading).toBe(false);
+    await act(async () => {
+      await oldLoadAgents();
+      await result.current.refreshAgents();
+      resolveAgents([createAgent({ id: "stale" })]);
+    });
+    expect(mockFetchAgents).toHaveBeenCalledTimes(1);
+    expect(result.current.agents).toEqual([]);
+    const fresh = createAgent({ id: "fresh" });
+    mockFetchAgents.mockResolvedValue([fresh]);
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.agents).toEqual([fresh]));
+    expect(mockFetchAgents).toHaveBeenCalledTimes(2);
+  });
+
   it("hydrates cached agents and stats synchronously before revalidation", async () => {
     const cachedAgents = [createAgent({ id: "cached-agent", name: "Cached", state: "active" })];
     const cachedStats = { ...defaultStats, activeCount: 9 };

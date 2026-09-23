@@ -87,8 +87,9 @@
     "extract-zip": "^2.0.1",
     "postgres": "^3.4.9",
     "tar": "^7.5.22",
+    "typescript": "^5.7.0",
     "yaml": "^2.8.3",
-    "typescript": "^5.7.0"
+    "zod": "^3.25.76"
   },
   "optionalDependencies": {
     "keytar": "^7.9.0"

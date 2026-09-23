@@ -8,6 +8,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { IncomingMessage } from "node:http";
+import { isExternalSessionIngestionRequest } from "./external-session-ingestion-paths.js";
 import { REMOTE_SESSION_COOKIE, readCookie } from "./remote-session.js";
 
 /**
@@ -174,7 +175,7 @@ export function createAuthMiddleware(token: string, options?: { validateRemoteSe
     }
 
     // Always allow exempt paths (liveness probes)
-    if (isExemptPath(req.path)) {
+    if (isExemptPath(req.path) || isExternalSessionIngestionRequest(req)) {
       next();
       return;
     }

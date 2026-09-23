@@ -84,6 +84,15 @@ export interface CostResult {
   stale: boolean;
 }
 
+// FNXC:RemoteAgents 2026-09-18-06:04: Add the currently used native model to Fusion's single catalog. Standard API rates and distinct cache-write price verified at the official model page; existing baseline entries are unchanged.
+const GPT_6_ASTRA_PRICING: ModelPricing = {
+  inputPer1M: 10,
+  outputPer1M: 50,
+  cacheReadPer1M: 1,
+  cacheWritePer1M: 12.5,
+  source: "developers.openai.com/api/docs/models/gpt-6-astra (verified 2026-09-18)",
+};
+
 /**
  * Hand-maintained pricing table, keyed by `provider:model`.
  *
@@ -102,6 +111,8 @@ export interface CostResult {
  *    rate; no distinct cache-write token charge, so cacheWrite = input rate).
  */
 export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
+  "openai:gpt-6-astra": GPT_6_ASTRA_PRICING,
+  "openai-codex:gpt-6-astra": GPT_6_ASTRA_PRICING,
   // ── Anthropic Claude ────────────────────────────────────────────────
   // input / output / cacheRead(0.1×) / cacheWrite(1.25×, 5-min TTL)
   /*

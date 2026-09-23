@@ -37,6 +37,7 @@
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
     "dist/migrations/**",
+    "dist/remote-agents/**",
     "dist/registry-manifest.json",
     "dist/client/**",
     "dist/desktop/**",

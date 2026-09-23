@@ -38,6 +38,8 @@
     "pg:test:status": "node scripts/pg-test-server.mjs status",
     "pg:test:down": "node scripts/pg-test-server.mjs down",
     "smoke:boot": "node scripts/boot-smoke.mjs",
+    "smoke:external-sessions": "node scripts/smoke-external-sessions.mjs",
+    "test:external-sessions": "pnpm --filter @fusion/core exec vitest run src/__tests__/external-session-contract.test.ts src/__tests__/external-session-read-contract.test.ts src/__tests__/postgres/external-sessions.pg.test.ts --silent=passed-only --reporter=dot && pnpm --filter @fusion/dashboard exec vitest run src/routes/__tests__/external-session-ingestion.test.ts src/routes/__tests__/external-session-reads.test.ts src/remote-agents/pricing.test.ts --silent=passed-only --reporter=dot",
     "local": "node scripts/start-local.mjs",
     "dev": "node scripts/dev-with-memory.mjs",
     "dev:watch": "node scripts/dev-with-memory.mjs --watch",
