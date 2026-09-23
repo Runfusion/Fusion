@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const inventoryPath = path.join(repoRoot, "docs/carcuro-capability-inventory.md");
+const productSpecPath = path.join(repoRoot, "docs/carcuro-product-spec.md");
 const inventory = readFileSync(inventoryPath, "utf8");
+const productSpec = readFileSync(productSpecPath, "utf8");
 
 const REQUIRED_DOMAINS = [
   "Inventory P&L",
@@ -71,6 +73,69 @@ test("capability inventory validator rejects missing domain and evidence markers
   const missingDomain = inventory.replace(/^\| Valuation \|.*$/m, "");
   assert.match(validateInventory(missingDomain).join("\n"), /Valuation must occur exactly once/);
 
-  const missingEvidence = inventory.replaceAll("`unknown/unavailable`", "`unknown`" );
+  const missingEvidence = inventory.replaceAll("`unknown/unavailable`", "`unknown`");
   assert.match(validateInventory(missingEvidence).join("\n"), /Missing evidence state: unknown\/unavailable/);
+});
+
+function domainSection(markdown, domain) {
+  const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return markdown.match(new RegExp(`^### ${escaped}\\n([\\s\\S]*?)(?=^### |^## |\\Z)`, "m"))?.[1];
+}
+
+function validateProductSpec(markdown) {
+  const errors = [];
+  const requiredFields = [
+    "User outcome",
+    "Evidence classification",
+    "Acceptance outcome",
+    "Dependencies",
+    "Risks",
+    "Source references",
+    "Ordering/failure semantics",
+  ];
+  for (const domain of REQUIRED_DOMAINS) {
+    const section = domainSection(markdown, domain);
+    if (!section) {
+      errors.push(`Missing product section: ${domain}`);
+      continue;
+    }
+    for (const field of requiredFields) {
+      if (!section.includes(`**${field}:**`)) errors.push(`${domain} missing ${field}`);
+    }
+  }
+  for (const label of ["observed", "inferred", "unknown", "proposed"]) {
+    if (!markdown.includes(`\`${label}\``)) errors.push(`Missing product evidence label: ${label}`);
+  }
+  return errors;
+}
+
+function validateExternalClaim({ label, url, retrieved, kind = "observation" }) {
+  const errors = [];
+  if (!["observed", "inferred", "unknown", "proposed"].includes(label)) errors.push("claim lacks a valid evidence label");
+  if (!/^https?:\/\//.test(url ?? "")) errors.push("claim lacks a source URL");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(retrieved ?? "")) errors.push("claim lacks a retrieval date");
+  if (kind === "inference" && label === "observed") errors.push("inference cannot be labeled observed");
+  return errors;
+}
+
+test("product spec defines evidence-labeled outcomes and failure semantics for every domain", () => {
+  assert.deepEqual(validateProductSpec(productSpec), []);
+  assert.match(productSpec, /https:\/\/www\.carcuro\.com\/.*2026-09-23/s);
+});
+
+test("product spec validator rejects an incomplete domain section", () => {
+  const incomplete = productSpec.replace("- **Risks:** Duplicate/stale listings", "- **Hazards:** Duplicate/stale listings");
+  assert.match(validateProductSpec(incomplete).join("\n"), /Sales channels missing Risks/);
+});
+
+test("external claims require provenance and cannot disguise inference as observation", () => {
+  assert.match(validateExternalClaim({ label: "", url: "", retrieved: "" }).join("\n"), /label.*URL.*date/s);
+  assert.match(
+    validateExternalClaim({ label: "observed", url: "https://example.test", retrieved: "2026-09-23", kind: "inference" }).join("\n"),
+    /inference cannot be labeled observed/,
+  );
+  assert.deepEqual(
+    validateExternalClaim({ label: "observed", url: "https://www.carcuro.com/", retrieved: "2026-09-23" }),
+    [],
+  );
 });
