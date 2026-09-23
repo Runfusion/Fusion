@@ -1,5 +1,65 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.6
+
+### Minor Changes
+
+- 50d9976: summary: Upgrade the bundled Pi runtime and add Meta Muse sign-in and API-key authentication.
+  category: feature
+  dev: Pins the complete Pi runtime closure to 0.86.1.
+- c515e7e: summary: Add Google Antigravity CLI streaming provider support.
+  category: feature
+  dev: Adds managed agy MCP lifecycle, runtime routing, and operator configuration.
+
+### Patch Changes
+
+- 280fa38: summary: Stop repeated resume attempts for tasks waiting on unfinished dependencies.
+  category: fix
+  dev: Check dependency admission before clearing resume state or recovering completed work.
+- 45adc28: summary: Keep pipeline recovery smoke checks within their fixed timeout.
+  category: fix
+  dev: Adds manifest-derived invocation validation and bounded failed-run attribution for the pipeline smoke lane.
+- a9c1214: summary: Keep mobile task popup close controls clear of phone system chrome.
+  category: fix
+  dev: Reserve safe-area block insets inside the mobile task-detail popup shell.
+- b3bbb34: summary: Keep recommendation follow-ups available after source task archival.
+  category: fix
+  dev: Archive snapshots retain recommendation links and support idempotent follow-up creation.
+- 3aa9924: summary: Recover missing workflow implementation evidence before merge instead of terminalizing cards.
+  category: fix
+  dev: Routes typed merge-boundary evidence gaps through the existing guarded implementation recovery path.
+- edb8e3d: summary: Send one safe dashboard mailbox explanation for genuine execution blocks.
+  category: fix
+  dev: Adds bounded, redacted external-block reports and timeout-bounded mailbox delivery.
+- 64baefe: summary: Keep archived recommendation follow-ups compatible with renamed workflow lanes.
+  category: fix
+  dev: Archive eligibility now follows workflow traits while retaining the physical archive snapshot gate.
+- 9539f8a: summary: Prevent stale test cleanup from affecting successor subprocesses.
+  category: fix
+  dev: Fences shard watchdog process-group ownership and retains partial shard timing evidence.
+- 8f0b20d: summary: Keep full-screen mobile sheet Close controls reachable in installed PWAs.
+  category: fix
+- 7f747f6: summary: Recover stalled review gates and failed execution in place while preserving completed work.
+  category: fix
+  dev: Defers unrun merge gates, revives engine-owned parks, fixes overseer retry no-ops, and preserves refusal checkouts.
+- 8d2f682: summary: Restore complete localized catalog keys across supported languages.
+  category: fix
+  dev: Reconciles secondary catalog parity and adds raw-catalog regression coverage.
+- 8fadafc: summary: Keep streamed assistant replies exact when provider events arrive ahead of the display.
+  category: fix
+  dev: Uses completed provider text to reconcile temporary chat streaming output.
+- 5041352: summary: Keep verified Nix development-shell checks binding during task planning and review.
+  category: fix
+  dev: Capability probes now distinguish host and confirmed wrapper availability.
+- 998c76d: summary: Complete stale SQLite migration backups without degrading health.
+  category: fix
+  dev: Recognizes retired schema and fully conflicted PostgreSQL-ahead backup sources while retaining strict failures for unknown or partial data.
+- 5677fc6: summary: Keep PostgreSQL health checks reliable during busy scheduler work.
+  category: fix
+  dev: Adds an independent health session and configurable FUSION_PG_POOL_MAX runtime capacity.
+- 7a730e0: summary: Prevent false task-ID corruption warnings for healthy multi-project PostgreSQL projects.
+  category: fix
+
 ## 0.78.0-beta.5
 
 ### Minor Changes

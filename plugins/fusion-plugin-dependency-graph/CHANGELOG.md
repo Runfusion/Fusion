@@ -1,5 +1,12 @@
 # @fusion-plugin-examples/dependency-graph
 
+## 0.1.68-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.78.0-beta.6
+- @fusion/plugin-sdk@0.78.0-beta.6
+
 ## 0.1.68-beta.5
 
 ### Patch Changes

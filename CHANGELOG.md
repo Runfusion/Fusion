@@ -2,6 +2,39 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.6
+
+### Highlights
+- Pi runtime updated to 0.86.1, adding Meta Muse sign-in and API-key authentication
+- New Google Antigravity CLI streaming provider for running agents
+- Engine recovers stalled review gates and failed runs in place and keeps completed work
+- Mobile task popups and full-screen sheets keep Close controls reachable on phones and PWAs
+- PostgreSQL health checks stay reliable during busy scheduling, with no false task-ID warnings
+
+### New
+- Updated the bundled Pi runtime to 0.86.1 and added Meta Muse sign-in and API-key authentication.
+- Added Google Antigravity CLI as a streaming provider, with managed setup and operator configuration.
+
+### Fixed
+- Stalled review gates and failed runs now recover in place, and completed work is kept.
+- Cards that are missing workflow implementation evidence now go back through recovery before merge instead of failing for good.
+- Tasks waiting on unfinished dependencies no longer trigger repeated resume attempts.
+- A genuine execution block now sends one clear, safe explanation to the dashboard mailbox.
+- Close controls in the mobile task popup no longer sit under the phone's status bar or other system UI.
+- Close controls on full-screen mobile sheets stay reachable in installed PWAs.
+- Streamed assistant replies in chat now match the final text, even when provider events arrive before the display catches up.
+- Recommendation follow-ups are still available after their source task is archived.
+- Archived recommendation follow-ups still work after workflow lanes are renamed.
+- Verified Nix development-shell checks keep applying during task planning and review.
+- Healthy multi-project PostgreSQL setups no longer show false task-ID corruption warnings.
+- PostgreSQL health checks stay reliable while the scheduler is busy.
+- Migration backups from stale SQLite databases now complete without marking health as degraded.
+- Missing translation keys are restored in all supported languages.
+
+### Internal
+- Pipeline recovery smoke checks now finish within their fixed timeout.
+- Cleanup from an old test run no longer affects the test processes that run after it.
+
 ## 0.78.0-beta.5
 
 ### Highlights
