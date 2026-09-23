@@ -45,6 +45,9 @@ Workflow review judges whether the planning artifact satisfies its contract; it 
 
 FNXC:DealersSaaSPlanContract 2026-09-23-13:31:
 Delivering the verified proposal and asking the user to choose is the complete documentation outcome. Product approval intentionally occurs later and must gate hierarchy persistence rather than make the current artifact review unprovable.
+
+FNXC:DealersSaaSPlanContract 2026-09-23-12:05:
+History claims must cover every currently reachable ref and preserve external `scrapeui` mentions as bounded context rather than incorrectly reporting them absent or treating them as inspected dealership source.
 */
 function tableRows(markdown, heading) {
   const section = markdown.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |\\Z)`, "m"));
@@ -80,8 +83,11 @@ function validateInventory(markdown) {
   return errors;
 }
 
-test("capability inventory records all domains and evidence vocabulary", () => {
+test("capability inventory records all domains, evidence vocabulary, and all-ref history", () => {
   assert.deepEqual(validateInventory(inventory), []);
+  assert.match(inventory, /git log --all .*DealersSaaS\|Carcuro\|scrapeui/);
+  assert.match(inventory, /1a952f2f21c6d13bac544d3b9f9e3fab6ebb2e28.*\/srv\/scrapeui-dev/s);
+  assert.match(inventory, /context, not recovered substrate or implementation evidence/);
 });
 
 test("capability inventory validator rejects missing domain and evidence markers", () => {

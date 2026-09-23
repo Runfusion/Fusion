@@ -8,7 +8,7 @@
 - **Measured at:** 2026-09-23 11:45 UTC
 - **Checkout:** branch `fusion/fx-010`, package `fusion-workspace@0.73.0-beta.0`
 - **Review boundary:** the measured revision is the task's recorded base and local `main`; every cited production package path is contract-tested with `git cat-file` at this exact revision rather than inferred from the later task worktree.
-- **Scope:** tracked files and all refs reachable from this Fusion repository. This is not evidence about another repository, an unpushed branch, a deployed Carcuro system, or the mission description's named `scrapeui` substrate.
+- **Scope:** tracked files at the measured revision plus history/content/object-name searches across all refs currently reachable from this Fusion repository. This is not evidence about another repository, an unpushed branch, or a deployed Carcuro system. Reachable remote-ref history mentions an external `scrapeui` working directory, but does not make that directory or its dealership source inspectable here.
 
 ### Evidence vocabulary
 
@@ -23,27 +23,29 @@ No required dealership domain is `code-verified implemented` or `code-verified p
 
 ## Reproducible repository census
 
-Run from the repository root, with the census bounded to the measured revision so later task-authored commits cannot satisfy their own evidence search:
+Run from the repository root. The first and final commands keep current-code claims bounded to the measured revision; the intervening `--all` commands separately inspect every currently reachable ref and distinguish FX-010-authored results from pre-existing history:
 
 ```bash
 measured=38455359f2cc4d91dc10dc6a0d8d7a94ca14b959
 git grep -In -e DealersSaaS -e Carcuro -e scrapeui "$measured" -- ':!pnpm-lock.yaml'
-git log "$measured" --oneline --regexp-ignore-case --grep='dealerssaas\|carcuro\|scrapeui'
-git log "$measured" --name-status --pretty='format:%H %s' -- \
+git log --all --oneline --regexp-ignore-case --grep='dealerssaas\|carcuro\|scrapeui'
+git log --all --name-status --pretty='format:%H %s' -- \
   docs/dealersaas-mission-plan.md 'docs/carcuro-*.md'
-git rev-list --objects "$measured" | grep -Ei 'dealerssaas|carcuro|scrapeui'
+git log --all --format='%H %s' -G'DealersSaaS|Carcuro|scrapeui' -- . ':!pnpm-lock.yaml'
+git rev-list --objects --all | grep -Ei 'dealersaas|carcuro|scrapeui'
 git grep -Il -Ei 'invoice|storefront|sales channel|vehicle|dealership|customer relationship|valuation provider' \
   "$measured" -- ':!pnpm-lock.yaml'
 ```
 
 Bounded results on 2026-09-23, reconciled against the measured revision before the task-authored planning commits:
 
-1. Tracked-content searches for the three names returned zero results before these planning files were added.
-2. All-ref commit-message, requested-path history, and reachable object-name searches returned zero results.
-3. The domain-content search returned only unrelated Fusion planning, merge, and dashboard-test files; manual inspection found no dealership entity, route, persistence table, connector, or UI.
-4. Broad words such as `inventory`, `valuation`, `customer`, and `BI` occur in generic dependency, plugin, AI, task, or reporting contexts. They are not counted as dealer capabilities.
+1. The measured-revision tracked-content search returned zero results for all three names before these planning files were added.
+2. All-ref commit-message searches returned zero results. Requested-path history and object-name searches found only the FX-010-authored planning files on this task branch, not a pre-existing plan or dealer source tree.
+3. The all-ref patch-content search found pre-FX-010 `scrapeui` mentions on reachable remote refs. For example, historical commit `1a952f2f21c6d13bac544d3b9f9e3fab6ebb2e28` describes a Fusion daemon whose working directory was `/srv/scrapeui-dev`; those operational delivery notes do not contain or expose that external directory's dealership implementation. No pre-FX-010 `DealersSaaS` or `Carcuro` content was found.
+4. The measured-revision domain-content search returned only unrelated Fusion planning, merge, and dashboard-test files; manual inspection found no dealership entity, route, persistence table, connector, or UI.
+5. Broad words such as `inventory`, `valuation`, `customer`, and `BI` occur in generic dependency, plugin, AI, task, or reporting contexts. They are not counted as dealer capabilities.
 
-**History conclusion:** neither the requested plan/spec paths nor a DealersSaaS, Carcuro, or `scrapeui` substrate was observed in reachable history. The evidence cannot distinguish “never existed anywhere” from “exists in an unreachable repository/ref,” so no recovery or deletion claim is made.
+**History conclusion:** the requested plan/spec paths and any DealersSaaS or Carcuro implementation were not observed before FX-010 in reachable history. Reachable remote-ref history does establish that an external `/srv/scrapeui-dev` working directory was reported in prior operations, but its repository identity and source are unavailable in this checkout; it is therefore context, not recovered substrate or implementation evidence. The evidence cannot establish whether the requested dealership implementation exists in that external directory or another unreachable repository/ref.
 
 ## Current participant graph
 
@@ -111,4 +113,4 @@ Exactly one row is provided for each requested domain.
 - The plugin SDK is an extension option, not proof of a loaded DealersSaaS plugin.
 - Generic task, mission, goal, report, artifact, and mobile-navigation capabilities are not classified as dealer functionality.
 - Vendor claims and target outcomes are kept in [the product specification](./carcuro-product-spec.md); this inventory reports repository reality.
-- Architecture choice, external providers, legal rules, and the location/availability of a separate `scrapeui` repository remain `unknown/unavailable` pending approval and discovery.
+- Architecture choice, external providers, legal rules, and the identity/content/accessibility of the historically referenced external `/srv/scrapeui-dev` working directory remain `unknown/unavailable` pending approval and discovery.
