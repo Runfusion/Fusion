@@ -123,6 +123,18 @@ jobs:
         if: steps.dist-cache.outputs.cache-hit == 'true'
         run: node scripts/ensure-test-artifacts.mjs --seed-artifact-cache
 
+      # FNXC:FullSuiteReconciliation 2026-09-23-04:48:
+      # Push-to-main shards and Pipeline smoke must reconcile workspace output before
+      # consuming it. The prior exact-cache-only path left cold and incomplete output
+      # to individual test entry points, producing five unstable red lanes while the
+      # PR Gate's mandatory build was green. Keep the hash/cache sequence above: the
+      # source hash is computed after checkout, only exact hits seed the mtime bypass,
+      # and this build repairs any missing or stale output before test execution.
+      - name: Build reconciled workspace artifacts
+        run: pnpm build
+        env:
+          FUSION_CLI_FULL_PACKAGE: "0"
+
       - name: Test (deterministic shard)
         run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 4
 
@@ -319,6 +331,16 @@ jobs:
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
+
+      # FNXC:FullSuiteReconciliation 2026-09-23-04:48:
+      # Pipeline smoke is an independent runtime consumer, so it receives the same
+      # pre-consumer reconciliation as shards rather than relying on a separate
+      # bootstrap path. Fast CLI packaging matches the PR Gate; the PR Build job
+      # remains the full-package coverage surface.
+      - name: Build reconciled workspace artifacts
+        run: pnpm build
+        env:
+          FUSION_CLI_FULL_PACKAGE: "0"
 
       - name: Run deterministic pipeline smoke
         run: pnpm smoke:pipeline

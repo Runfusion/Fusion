@@ -158,6 +158,8 @@ describe("task pipeline smoke", () => {
       "code-review::code-review-step",
       "merge",
       "post-merge-verification",
+      // FNXC:PostMergeFullSuiteEvidence 2026-09-23-06:13: The default coding pipeline must execute the now-required post-merge evidence gate rather than stopping at its optional-group wrapper.
+      "post-merge-verification::post-merge-verification-step",
     ]);
     expect(calls).toEqual([
       "plan",
@@ -167,6 +169,7 @@ describe("task pipeline smoke", () => {
       "custom:completion-summary",
       "custom:code-review-step",
       "merge",
+      "custom:post-merge-verification-step",
     ]);
     expect(mergeContexts).toEqual([
       { workflowId: "builtin-stepwise-final-review-coding", runId: "FN-7228-SMOKE:builtin:coding" },

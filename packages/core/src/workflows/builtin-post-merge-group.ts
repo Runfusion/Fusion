@@ -23,6 +23,39 @@ merger-only fallback code. The group node id is the STABLE per-task enable key
 
 export const POST_MERGE_VERIFICATION_GROUP_ID = "post-merge-verification";
 
+const LEGACY_CODING_DEFAULT_OPTIONAL_GROUP_IDS = ["plan-review", "code-review"] as const;
+const BUILTIN_CODING_WORKFLOW_IDS = new Set([
+  "builtin:coding",
+  "builtin:legacy-coding",
+  "builtin:stepwise-coding",
+]);
+
+/**
+ * FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:41:
+ * Upgrade the historical built-in coding default with the mandatory post-merge
+ * delivery-evidence gate. Only the exact former default is changed; every other
+ * optional-step configuration retains its recorded shape.
+ */
+export function upgradeLegacyCodingPostMergeVerificationStepIds(
+  workflowId: string,
+  stepIds: readonly string[],
+): string[] | undefined {
+  if (!BUILTIN_CODING_WORKFLOW_IDS.has(workflowId)
+    || stepIds.length !== LEGACY_CODING_DEFAULT_OPTIONAL_GROUP_IDS.length
+    || !LEGACY_CODING_DEFAULT_OPTIONAL_GROUP_IDS.every((id) => stepIds.includes(id))) {
+    return undefined;
+  }
+
+  /*
+  FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:41:
+  The former two-review default predates the required post-landing Full Suite evidence gate.
+  Migrate only that exact inherited profile when it is next authoritatively resolved, preserving
+  intentional optional-step configurations while preventing existing default coding tasks from
+  completing without the five-lane CI evidence required by FN-9369.
+  */
+  return [...LEGACY_CODING_DEFAULT_OPTIONAL_GROUP_IDS, POST_MERGE_VERIFICATION_GROUP_ID];
+}
+
 /*
 FNXC:PostMergeFullSuiteEvidence 2026-09-22-01:36:
 An enabled post-merge gate owns the task's required post-landing Full Suite evidence. CI remains
@@ -39,8 +72,9 @@ const POST_MERGE_VERIFICATION_PROMPT = `You are a post-merge verification review
 ## Required post-landing Full Suite evidence
 This enabled gate requires post-landing Full Suite evidence. Do NOT approve until its delivery record names all of the following:
 1. The landed SHA and the first Full Suite push-to-main run at or after that SHA, including the run ID and run SHA.
-2. A conclusion for every Test shard: 1/4, 2/4, 3/4, and 4/4.
-3. All four timing artifacts: test-timings-shard-1, test-timings-shard-2, test-timings-shard-3, and test-timings-shard-4.
+2. A successful conclusion for Pipeline smoke tier.
+3. A successful conclusion for every Test shard: 1/4, 2/4, 3/4, and 4/4.
+4. All four timing artifacts: test-timings-shard-1, test-timings-shard-2, test-timings-shard-3, and test-timings-shard-4.
 
 Pre-landing, unrelated-main, or partial evidence does not satisfy this contract. If the required run or any required evidence is unavailable, return REVISE and state that final completion remains blocked pending the post-landing evidence. Record verified evidence in the task delivery record before approving.
 
@@ -113,6 +147,12 @@ export function postMergeVerificationOptionalGroupNode(column = "done"): Workflo
     prompt: POST_MERGE_VERIFICATION_PROMPT,
     description: "Verify the integrated result after merge proof before final completion",
     gateMode: "gate",
-    defaultOn: false,
+    /*
+    FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:04:
+    Post-merge evidence is a delivery boundary, not an advisory observation. Seed this gate for
+    merge-capable built-ins so completion cannot claim GitHub-hosted Full Suite success before the
+    landed run has proved Pipeline smoke, every shard, and each timing artifact.
+    */
+    defaultOn: true,
   });
 }

@@ -40,6 +40,7 @@ import { normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinition
 import { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
 import { resolveDefaultOnOptionalGroupIds } from "../workflows/workflow-optional-steps.js";
+import { upgradeLegacyCodingPostMergeVerificationStepIds } from "../workflows/builtin-post-merge-group.js";
 import { resolveSwitchReconciliation } from "../workflows/workflow-reconciliation.js";
 import { WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX } from "../store.js";
 import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
@@ -50,6 +51,18 @@ import { createLogger } from "../process/logger.js";
 import { emitBoundedRunAuditWithOutcome } from "../run-audit/emit-bounded-run-audit.js";
 
 const workflowDefinitionLog = createLogger("workflow-definitions");
+
+/*
+FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:41:
+The persisted-selection repair re-enters its own authoritative reader through updateTaskUnlocked.
+Keep this process-local fence keyed by project and task so one repair cannot recurse or leak across
+projects that reuse task IDs.
+*/
+const postMergeVerificationUpgradeInFlight = new Set<string>();
+
+type LegacySelectionUpgradeTestSeam = {
+  __afterLegacyWorkflowSelectionReadForTest?: () => void | Promise<void>;
+};
 
 export async function getAgentLogsByTimeRangeImpl(store: TaskStore,
     taskId: string,
@@ -583,7 +596,87 @@ export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId
     let stepIds: string[] = [];
     const parsed = row.stepIds as unknown;
     if (Array.isArray(parsed)) stepIds = parsed.filter((s): s is string => typeof s === "string");
-    return { workflowId: row.workflowId, stepIds };
+
+    const upgradedStepIds = upgradeLegacyCodingPostMergeVerificationStepIds(row.workflowId, stepIds);
+    const upgradeKey = `${projectId}:${taskId}`;
+    if (!upgradedStepIds || postMergeVerificationUpgradeInFlight.has(upgradeKey)) {
+      return { workflowId: row.workflowId, stepIds };
+    }
+
+    /*
+    FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:41:
+    A persisted selection records optional-group choices rather than dynamically inheriting later
+    defaults. Repair the exact pre-FN-9369 coding default at its authoritative read boundary, before
+    graph execution can evaluate the group, so an existing task receives the same required Full Suite
+    delivery gate as a newly created coding task. The in-flight fence prevents a nested selection read
+    from recursively re-entering this one-time repair.
+    */
+    postMergeVerificationUpgradeInFlight.add(upgradeKey);
+    try {
+      /*
+      FNXC:WorkflowSelectionUpgradeRace 2026-09-23-05:52:
+      An operator can select a different workflow after this optimistic legacy read. Re-read the
+      selection only after acquiring the same per-task advisory fence as selection writers, then
+      update its enabled groups and selection row in that one transaction. This makes a newer
+      operator choice win instead of restoring the stale coding selection from this migration.
+      */
+      await (store as unknown as LegacySelectionUpgradeTestSeam).__afterLegacyWorkflowSelectionReadForTest?.();
+      /*
+      FNXC:WorkflowSelectionUpgradeLocking 2026-09-23-06:01:
+      Selection callers already own the non-reentrant local task lock when they read this
+      authoritative selection. The migration therefore uses only the cross-process advisory
+      transaction fence here: it can re-read and atomically repair the persisted rows without
+      queueing behind its caller and deadlocking a legacy-to-new workflow selection.
+      */
+      const upgraded = await layer.transactionImmediate(async (tx) => {
+          await acquireTaskAdvisoryXactLock(tx, projectId, taskId);
+          const currentRows = await tx
+            .select({ workflowId: schema.project.taskWorkflowSelection.workflowId, stepIds: schema.project.taskWorkflowSelection.stepIds })
+            .from(schema.project.taskWorkflowSelection)
+            .where(and(
+              eq(schema.project.taskWorkflowSelection.projectId, projectId),
+              eq(schema.project.taskWorkflowSelection.taskId, taskId),
+            ))
+            .limit(1);
+          const current = currentRows[0];
+          if (!current) return undefined;
+          const currentStepIds = Array.isArray(current.stepIds)
+            ? current.stepIds.filter((stepId): stepId is string => typeof stepId === "string")
+            : [];
+          const currentUpgrade = upgradeLegacyCodingPostMergeVerificationStepIds(current.workflowId, currentStepIds);
+          if (!currentUpgrade) {
+            return { workflowId: current.workflowId, stepIds: currentStepIds };
+          }
+
+          const updatedAt = new Date().toISOString();
+          const taskUpdated = await tx
+            .update(schema.project.tasks)
+            .set({ enabledWorkflowSteps: currentUpgrade, updatedAt })
+            .where(and(
+              eq(schema.project.tasks.projectId, projectId),
+              eq(schema.project.tasks.id, taskId),
+              isNull(schema.project.tasks.deletedAt),
+            ))
+            .returning({ id: schema.project.tasks.id });
+          if (taskUpdated.length === 0) return undefined;
+          await tx
+            .insert(schema.project.taskWorkflowSelection)
+            .values({ projectId, taskId, workflowId: current.workflowId, stepIds: currentUpgrade, updatedAt })
+            .onConflictDoUpdate({
+              target: [
+                schema.project.taskWorkflowSelection.projectId,
+                schema.project.taskWorkflowSelection.taskId,
+              ],
+              set: { stepIds: currentUpgrade, updatedAt },
+            });
+          return { workflowId: current.workflowId, stepIds: currentUpgrade };
+      });
+      if (!upgraded) return { workflowId: row.workflowId, stepIds };
+      store.laneCache.invalidate(taskId);
+      return upgraded;
+    } finally {
+      postMergeVerificationUpgradeInFlight.delete(upgradeKey);
+    }
 }
 
 export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: string, workflowId: string, stepIds: string[]): Promise<void> {
@@ -595,6 +688,20 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
   /* FNXC:WorkflowCapacity 2026-07-28-18:05: take the cross-node advisory lock before the selection write. */
   await layer.transactionImmediate(async (tx) => {
     await acquireTaskAdvisoryXactLock(tx, projectId, taskId);
+    /*
+    FNXC:WorkflowSelectionUpgradeRace 2026-09-23-05:52:
+    A workflow picker changes both the selection row and the task's enabled groups. Reassert both
+    under this writer's advisory fence so a concurrent legacy-upgrade transaction cannot leave an
+    operator's newer workflow paired with the prior coding groups.
+    */
+    await tx
+      .update(schema.project.tasks)
+      .set({ enabledWorkflowSteps: stepIds, updatedAt })
+      .where(and(
+        eq(schema.project.tasks.projectId, projectId),
+        eq(schema.project.tasks.id, taskId),
+        isNull(schema.project.tasks.deletedAt),
+      ));
     await tx
       .insert(schema.project.taskWorkflowSelection)
       .values({ projectId, taskId, workflowId, stepIds, updatedAt })
