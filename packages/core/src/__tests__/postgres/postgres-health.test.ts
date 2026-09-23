@@ -87,6 +87,26 @@ pgDescribe("PostgreSQL health checks (U8) — VAL-HEALTH-001/002", () => {
     expect(errors).toEqual([]);
   });
 
+  it("keeps health and integrity reads available while runtime capacity is held", async () => {
+    ctx = await setupCtx();
+    const backend = ctx.layer.backend;
+    expect(backend).toBeDefined();
+    const connections = await createConnectionSetFromUrl(backend!, { poolMax: 1, connectTimeoutSeconds: 5 });
+    const isolatedLayer = createAsyncDataLayer(connections);
+    try {
+      const heldRuntime = connections.runtime.execute("SELECT pg_sleep(0.2)");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await expect(checkPostgresHealth(isolatedLayer)).resolves.toEqual([]);
+      await expect(detectTaskIdIntegrityAnomaliesAsync(isolatedLayer.healthDb)).resolves.toMatchObject({
+        status: "ok",
+        anomalies: [],
+      });
+      await heldRuntime;
+    } finally {
+      await isolatedLayer.close();
+    }
+  });
+
   it("VAL-HEALTH-002: unreachable backend surfaces errors", async () => {
     // Create a layer pointing at a bad URL to simulate an unreachable backend.
     const badBackend: ResolvedBackend = {

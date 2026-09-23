@@ -73,8 +73,10 @@ export async function evaluateDashboardPostgresHealth(
   context?: DashboardPostgresHealthContext,
 ): Promise<DashboardPostgresHealthResult> {
   /*
-  FNXC:PostgresHealth 2026-08-09-06:07:
-  A liveness probe must answer when scheduler work saturates the runtime pool. Return a timeout degradation rather than leaving the HTTP request unanswered; migration state remains advisory and cannot make a healthy readiness result fail.
+  FNXC:PostgresHealthTransport 2026-09-23-02:09:
+  A liveness probe must stay independent of scheduler runtime-pool contention.
+  Dedicated connectivity and integrity reads still degrade on actual failure or
+  deadline expiry; migration state remains advisory and cannot make readiness fail.
   */
   const checkedAt = new Date();
   const timeoutMs = context?.probeTimeoutMs ?? 5_000;
@@ -92,7 +94,7 @@ export async function evaluateDashboardPostgresHealth(
 
   const errors = await withDeadline(() => checkPostgresHealth(layer), remaining(), "PostgreSQL health probe").catch((error: unknown) => [
     error instanceof HealthProbeTimeoutError
-      ? `PostgreSQL health probe timed out after ${timeoutMs}ms (connection pool saturated?)`
+      ? `PostgreSQL health probe timed out after ${timeoutMs}ms`
       : `PostgreSQL health check failed: ${errorMessage(error)}`,
   ]);
   if (errors.length > 0) return failedHealth(checkedAt, ...errors);
@@ -107,7 +109,7 @@ export async function evaluateDashboardPostgresHealth(
   let taskIdIntegrity: DashboardTaskIdIntegrityHealth;
   try {
     taskIdIntegrity = await withDeadline(
-      () => detectTaskIdIntegrityAnomaliesAsync(layer.db, { projectId: taskIdIntegrityProjectId }),
+      () => detectTaskIdIntegrityAnomaliesAsync(layer.healthDb, { projectId: taskIdIntegrityProjectId }),
       remaining(),
       "PostgreSQL task-ID integrity probe",
     );
@@ -115,7 +117,7 @@ export async function evaluateDashboardPostgresHealth(
     return failedHealth(
       checkedAt,
       error instanceof HealthProbeTimeoutError
-        ? `PostgreSQL task-ID integrity probe timed out after ${timeoutMs}ms (connection pool saturated?)`
+        ? `PostgreSQL task-ID integrity probe timed out after ${timeoutMs}ms`
         : `PostgreSQL task-ID integrity check failed: ${errorMessage(error)}`,
     );
   }

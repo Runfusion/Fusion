@@ -269,7 +269,7 @@ export async function checkPostgresHealth(layer: AsyncDataLayer): Promise<string
   // server is up but the target database is in a bad state (e.g. waiting for
   // recovery, connection refused at the DB level).
   try {
-    const db = layer.db;
+    const db = layer.healthDb;
     const rows = (await db.execute(
       sql.raw(`
         SELECT datallowconn, now() - pg_postmaster_start_time() AS uptime

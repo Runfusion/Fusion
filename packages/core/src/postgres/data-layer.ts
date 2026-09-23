@@ -136,8 +136,10 @@ export interface TransactionOptions {
  *     surface is stable.
  */
 export interface AsyncDataLayer {
-  /** Schema-typed runtime Drizzle instance for non-transactional queries. */
+  /** Schema-typed runtime Drizzle instance for normal non-transactional queries. */
   readonly db: DrizzleDb;
+  /** Dedicated schema-typed read surface for readiness and integrity checks. */
+  readonly healthDb: DrizzleDb;
   /**
    * FNXC:MultiProjectIsolation 2026-07-10:
    * The central-registry project ID this data layer is bound to, or undefined
@@ -234,9 +236,11 @@ export function createAsyncDataLayer(
   // any caller). We cast to the schema-typed view so callers get
   // compile-time table references via `layer.db`.
   const db = connections.runtime as unknown as DrizzleDb;
+  const healthDb = connections.health as unknown as DrizzleDb;
 
   return {
     db,
+    healthDb,
     projectId: options?.projectId,
     backend: connections.backend,
     async transaction<T>(fn: (tx: DbTransaction) => Promise<T>, options?: TransactionOptions): Promise<T> {

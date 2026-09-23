@@ -25,6 +25,14 @@ The `Default` column below is the same source of truth (`DEFAULT_GLOBAL_SETTINGS
 
 ---
 
+## PostgreSQL runtime pool environment variable
+
+| Environment variable | Default | Valid values | Resolution | Behavior |
+|---|---:|---|---|---|
+| `FUSION_PG_POOL_MAX` | `3` | Integer `1` through `500` | Explicit startup `poolMax` option → environment → default | Sets each store's normal runtime-query pool. Invalid blank, fractional, non-numeric, zero, negative, or above-range values warn safely and use the default. Restart Fusion after changing it. Account for the runtime pool plus one migration session and one independent health session per store when planning external PostgreSQL capacity. |
+
+This setting does not contain credentials. Use it only after confirming that the PostgreSQL server and any pooler have enough connection capacity; it does not change those upstream limits.
+
 ## Signal connector environment variables
 
 Command Center signal connectors are configured with process environment variables read by the dashboard/API server. These values are secrets and are never returned by the connectors-status endpoint; `GET /api/command-center/signals/connectors` reports only per-provider `configured` booleans.
