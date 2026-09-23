@@ -140,7 +140,16 @@ def scan(db, path, provider):
         for line in raw[:end].splitlines():
             if len(line) > MAX_LINE:
                 raise ValueError('Oversized native record; cursor preserved')
-            consume(db, state, json.loads(line), provider)
+            # FNXC:RemoteAgents 2026-09-23-07:55: A COMPLETE line that is not valid JSON can never
+            # become valid, so raising here pinned the cursor and blocked every later record in that
+            # transcript forever. Skip it and report it; incomplete and oversized records still
+            # preserve the cursor, because those can still complete on a later pass.
+            try:
+                record = json.loads(line)
+            except ValueError:
+                print('Skipped malformed native record:', path.name, flush=True)
+                continue
+            consume(db, state, record, provider)
         offset += end
         # A separate bounded tail keeps activity current while old token history
         # catches up. It never contributes usage, so tail/history cannot double bill.
