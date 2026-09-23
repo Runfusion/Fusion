@@ -14,7 +14,7 @@ import { EventEmitter } from "node:events";
 import { ValidatorRunOwnershipLostError, type GeneratedFixFeatureOptions } from "../missions/mission-types.js";
 import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import type { AsyncDataLayer } from "../postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer } from "../postgres/data-layer.js";
 import { boundMissionEventReason, classifyMissionResumeBlockers, FEATURE_LOOP_REPAIR_TRANSITIONS, buildMissionStatusEventMetadata, featureValidationRepairEligibility, FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, normalizeMissionTransitionActorForEvent, renderValidationCause, ROLLUP_OWNED_MILESTONE_STATUSES, ROLLUP_OWNED_MISSION_STATUSES, selectNextSerialMissionSlice, shouldApplyRecomputedStatus, VALIDATION_INFLIGHT_STALE_MAX_AGE_MS } from "../missions/mission-types.js";
 import { normalizeMissionBlockerReason } from "../missions/mission-blockers.js";
 import type {
@@ -131,7 +131,7 @@ import {
   listGoalIdsForMission,
   listMissionIdsForGoal,
   countGoalsByMission,
-  goalExists,
+  getGoal,
   listGoalsByIds,
   createContractAssertion,
   getContractAssertion,
@@ -294,6 +294,14 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return this.layer.db;
   }
 
+  /*
+  FNXC:MissionGoalLinking 2026-09-23-08:58:
+  Mission-goal validation, join writes, and follow-up reads share this explicit layer-owned partition so an administrative session cannot make goal-show and link-goal disagree.
+  */
+  private get goalLinkProjectId(): string {
+    return projectOwnershipPartition(this.layer.projectId);
+  }
+
   // ── ID generation (mirrors sync generateId format) ──────────────────
   private generateId(prefix: string): string {
     const timestamp = Date.now().toString(36).toUpperCase();
@@ -338,8 +346,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   async getMissionWithHierarchy(id: string): Promise<MissionWithHierarchy | undefined> {
     const mission = await getMission(this.db, id);
     if (!mission) return undefined;
-    const goalIds = await listGoalIdsForMission(this.db, id);
-    const goals = await listGoalsByIds(this.db, goalIds);
+    const goalIds = await listGoalIdsForMission(this.db, id, this.goalLinkProjectId);
+    const goals = await listGoalsByIds(this.db, goalIds, this.goalLinkProjectId);
     const goalById = new Map(goals.map((g) => [g.id, g]));
     const linkedGoals = goalIds.map((gid) => goalById.get(gid)).filter((g): g is Goal => Boolean(g));
 
@@ -371,7 +379,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         completedFeatures += features.filter((f) => f.status === "done").length;
       }
     }
-    const linkedGoalCount = (await listGoalIdsForMission(this.db, missionId)).length;
+    const linkedGoalCount = (await listGoalIdsForMission(this.db, missionId, this.goalLinkProjectId)).length;
     const eventCount = await countMissionEvents(this.db, missionId);
     let progressPercent = 0;
     if (totalFeatures > 0) progressPercent = Math.round((completedFeatures / totalFeatures) * 100);
@@ -385,7 +393,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     const allMilestones = await listAllMilestones(this.db);
     const allSlices = await listAllSlices(this.db);
     const allFeatures = await listAllFeatures(this.db);
-    const goalCountByMission = await countGoalsByMission(this.db);
+    const goalCountByMission = await countGoalsByMission(this.db, this.goalLinkProjectId);
     const eventCountByMission = await countEventsByMission(this.db);
 
     const slicesByMilestone = new Map<string, Slice[]>();
@@ -794,16 +802,19 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
 
   // ════════════════ MISSION-GOAL LINKS ════════════════
   async linkGoal(missionId: string, goalId: string): Promise<MissionGoalLink> {
+    const projectId = this.goalLinkProjectId;
     const { link, changed } = await this.layer.transactionImmediate(async (tx) => {
-      if (!(await missionExists(tx, missionId))) throw new Error(`Mission ${missionId} not found`);
-      if (!(await goalExists(tx, goalId))) throw new Error(`Goal ${goalId} not found`);
-      const existing = await getMissionGoalLink(tx, missionId, goalId);
+      if (!(await missionExists(tx, missionId, projectId))) throw new Error(`Mission ${missionId} not found`);
+      const goal = await getGoal(tx, goalId, projectId);
+      if (!goal) throw new Error(`Goal ${goalId} not found`);
+      if (goal.status === "archived") throw new Error(`Goal ${goalId} is archived and cannot be linked`);
+      const existing = await getMissionGoalLink(tx, missionId, goalId, projectId);
       if (existing) return { link: existing, changed: false };
       const createdAt = new Date().toISOString();
-      await insertMissionGoalLink(tx, missionId, goalId, createdAt);
-      const row = await getMissionGoalLink(tx, missionId, goalId);
+      const inserted = await insertMissionGoalLink(tx, missionId, goalId, createdAt, projectId);
+      const row = await getMissionGoalLink(tx, missionId, goalId, projectId);
       if (!row) throw new Error(`Failed to link mission ${missionId} to goal ${goalId}`);
-      return { link: row, changed: true };
+      return { link: row, changed: inserted };
     });
     // Mirror sync: emit mission:goal-linked only when a new link was created.
     if (changed) this.emit("mission:goal-linked", link);
@@ -813,18 +824,18 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   async unlinkGoal(missionId: string, goalId: string): Promise<boolean> {
     // Capture the link row before deletion so the emit payload matches the sync
     // store's mission:goal-unlinked [MissionGoalLink] shape.
-    const link = await getMissionGoalLink(this.db, missionId, goalId);
-    const deleted = await deleteMissionGoalLink(this.db, missionId, goalId);
+    const link = await getMissionGoalLink(this.db, missionId, goalId, this.goalLinkProjectId);
+    const deleted = await deleteMissionGoalLink(this.db, missionId, goalId, this.goalLinkProjectId);
     if (deleted && link) this.emit("mission:goal-unlinked", link);
     return deleted;
   }
 
   async listGoalIdsForMission(missionId: string): Promise<string[]> {
-    return listGoalIdsForMission(this.db, missionId);
+    return listGoalIdsForMission(this.db, missionId, this.goalLinkProjectId);
   }
 
   async listMissionIdsForGoal(goalId: string): Promise<string[]> {
-    return listMissionIdsForGoal(this.db, goalId);
+    return listMissionIdsForGoal(this.db, goalId, this.goalLinkProjectId);
   }
 
   async listGoalIdsForTask(taskId: string): Promise<string[]> {
@@ -847,7 +858,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   async listGoalsForTask(taskId: string): Promise<Goal[]> {
-    return listGoalsByIds(this.db, await this.listGoalIdsForTask(taskId));
+    return listGoalsByIds(this.db, await this.listGoalIdsForTask(taskId), this.goalLinkProjectId);
   }
 
   // ════════════════ MILESTONE OPS ════════════════
