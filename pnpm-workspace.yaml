@@ -5,12 +5,14 @@ ignoredBuiltDependencies:
   - keytar
   - sharp
   - ssh2
-# FNXC:WorkspaceConcurrency 2026-09-23: Cap recursive package commands at 2 so task
-# typechecks cannot fan out 4 concurrent tsc workers (500MB-1.4GB each) and thrash a
-# 12GB desktop (observed 2026-09-23: PSI full 94%, engine HTTP timeouts, runs stuck in
-# swap). pnpm 10.33 ignores the ~/.npmrc workspace-concurrency key entirely (it echoes
-# the value but behavior stays at the 4-project default); workspaceConcurrency here is
-# the live channel, verified with a process-overlap bench (peak 4 -> 2).
+# FNXC:WorkspaceConcurrency 2026-09-23: Cap a single `pnpm -r` run at 2 packages so its tsc workers
+# (500MB-1.4GB each) cannot thrash a 12GB desktop. pnpm 10.33 ignores the ~/.npmrc workspace-concurrency
+# key entirely (it echoes the value but behavior stays at the 4-project default); this key is the live
+# channel, verified with a process-overlap bench (peak 4 -> 2).
+# Scope limit (measured 2026-09-23): this only bounds ONE `pnpm -r` invocation. verify:fast spawns one
+# `pnpm --filter <pkg> typecheck` process per changed package and bypasses it — that 4-wide fan-out is
+# what froze the desktop twice (PSI memory full 80%), and it is bounded by TYPECHECK_PARALLEL_LIMIT in
+# scripts/verify-fast.mjs. Do not treat this key as the fan-out guard.
 workspaceConcurrency: 2
 
 onlyBuiltDependencies:

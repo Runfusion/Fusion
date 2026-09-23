@@ -119,7 +119,15 @@ const cpuCount = (() => {
   try { return Math.max(1, os.cpus()?.length ?? 1); } catch { return 1; }
 })();
 export const STATIC_CHECK_PARALLEL_LIMIT = Math.max(2, Math.min(8, cpuCount - 1));
-export const TYPECHECK_PARALLEL_LIMIT = Math.max(1, Math.min(4, Math.floor(cpuCount / 2)));
+/* FNXC:TestInfrastructure 2026-09-23-21:45: The old cap of 4 came from core count only, and on a
+16-core/12GB desktop verify:fast scheduled 4 concurrent `pnpm --filter <pkg> typecheck` workers at
+1-1.4GB RSS each. Measured 2026-09-23: that 4-wide batch sat in D state at 3-7% CPU per worker for
+10+ minutes (swap thrash, no progress), drove PSI memory full to 80%, and froze the desktop twice.
+Each tsc is memory-bound, not core-bound, so the ceiling must come from RAM: 2 keeps peak typecheck
+RSS near 2.6GB. This is the ONLY guard over that fan-out — `workspaceConcurrency` in
+pnpm-workspace.yaml caps a single `pnpm -r` run, but these are separate pnpm processes per package
+and bypass it entirely. */
+export const TYPECHECK_PARALLEL_LIMIT = Math.max(1, Math.min(2, Math.floor(cpuCount / 2)));
 
 /**
  * Build the scoped typecheck step for a package. Prefers the package's own
