@@ -66,6 +66,31 @@ describe("vitest global teardown worker-root cleanup", () => {
     expect(existsSync(workerRoot)).toBe(false);
   });
 
+  it("removes its root after worker forks rewrite the marker with their own pids", async () => {
+    /*
+    FNXC:TestTeardownOwnership 2026-09-23-01:55:
+    Real forked-worker runs leaked one fusion-test-workers-* root per vitest invocation because
+    each worker fork rewrites the owner marker with its OWN pid (via vitest-setup's
+    ensureWorkerRoot), so the main-process teardown's exact `${pid}\nrunToken=...` match never held
+    and removal was skipped (106 stale roots accumulated, tripping check-test-isolation). Ownership
+    is proven by the shared run token, not the pid: a marker carrying a different pid but the same
+    run token is still this invocation's root and must be removed.
+    */
+    process.env.FUSION_TEST_RUN_TOKEN = "forked-worker-token";
+    const teardown = setup();
+    const workerRoot = remember(process.env.FUSION_TEST_WORKER_ROOT!);
+    makeWorkerChild(workerRoot, "forked");
+
+    const foreignWorkerPid = process.pid + 7;
+    writeFileSync(
+      join(workerRoot, ".fusion-test-worker-root-owner"),
+      `${foreignWorkerPid}\nrunToken=forked-worker-token\n`,
+    );
+    await teardown();
+
+    expect(existsSync(workerRoot)).toBe(false);
+  });
+
   it("does not let a stale teardown remove a successor-owned worker root", async () => {
     process.env.FUSION_TEST_RUN_TOKEN = "stale-run-token";
     const staleTeardown = setup();
