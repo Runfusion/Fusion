@@ -10111,6 +10111,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       let noVerdictRecovered = 0;
+      const noVerdictReviewTaskIds = new Set<string>();
 
       /*
       FNXC:NoVerdictReviewRecovery 2026-09-23-19:50:
@@ -10128,6 +10129,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const gate = await resolvePreMergeGateForTask(this.store, task.id, task.enabledWorkflowSteps, task);
           if (!(task.workflowStepResults ?? []).some((result) =>
             isFailedNoVerdictPreMergeReviewResult(result, gate.requiredPreMergeStepIds))) continue;
+          noVerdictReviewTaskIds.add(task.id);
           /*
           FNXC:NoVerdictReviewRecovery 2026-09-23-20:52:
           Queue admission can claim a review card between this sweep's liveness probe and the
@@ -10253,6 +10255,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const parkedRemediationFailure = isRetryableParkedRemediationFailure(task);
         if (task.status && !parkedRemediationFailure) return false;
         if (executingIds.has(task.id)) return false;
+        /*
+        FNXC:NoVerdictReviewRecovery 2026-09-24-06:03:
+        A restart orphan is re-dispatched above, never converted into remediation in the same sweep.
+        Its failed evidence remains until the replacement verdict arrives, so the ordinary merge door stays closed.
+        */
+        if (noVerdictReviewTaskIds.has(task.id)) return false;
         const budget = revisionBudgetFor(task.id);
         /*
         FNXC:ReviewEmptyContent 2026-08-28-13:14:

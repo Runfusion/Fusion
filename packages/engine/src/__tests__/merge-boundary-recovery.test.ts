@@ -19,7 +19,11 @@ const task = {
 describe("FN-9345 merge-boundary evidence recovery", () => {
   it("moves an FN-9341-shaped review card to its resolved implementation lane without requesting merge", async () => {
     let current = { ...task };
-    const moveTask = vi.fn(async (_id: string, column: string) => (current = { ...current, column }));
+    const moveTaskIf = vi.fn(async (_id: string, column: string, predicate: (candidate: typeof current) => boolean) => {
+      if (!predicate(current)) return { moved: false };
+      current = { ...current, column };
+      return { moved: true };
+    });
     const updateTask = vi.fn().mockResolvedValue(undefined);
     const updateTaskAtomic = vi.fn(async (_id: string, reducer: (value: any) => any) => {
       const patch = reducer(current);
@@ -29,7 +33,7 @@ describe("FN-9345 merge-boundary evidence recovery", () => {
     const logEntry = vi.fn().mockResolvedValue(undefined);
     const result = await routeGraphFailureToExecutionResume({
       store: {
-        moveTask, updateTask, updateTaskAtomic, logEntry, getTaskWorkflowSelection: () => ({ workflowId: "custom:recovery", stepIds: [] }),
+        moveTaskIf, updateTask, updateTaskAtomic, logEntry, getTaskWorkflowSelection: () => ({ workflowId: "custom:recovery", stepIds: [] }),
         replaceActiveTaskWorkflowContinuation: vi.fn().mockResolvedValue(undefined),
         getWorkflowDefinition: async () => ({ ir: { version: "v2", columns: [], nodes: [{ id: "execute", kind: "prompt", config: { seam: "execute" } }], edges: [] } }),
       } as any,
@@ -41,11 +45,14 @@ describe("FN-9345 merge-boundary evidence recovery", () => {
     }, task, "merge", MERGE_BOUNDARY_RECOVERY_VALUE, undefined, absentResultEvidence);
 
     expect(result).toBe(true);
-    expect(moveTask).toHaveBeenCalledWith(task.id, "building", expect.objectContaining({
+    expect(moveTaskIf).toHaveBeenCalledWith(task.id, "building", expect.any(Function), expect.objectContaining({
+      moveSource: "engine",
+      lifecycleReason: "merge-boundary-evidence-recovery",
       preserveProgress: true,
       preserveWorktree: true,
       workflowMoveMetadata: expect.objectContaining({ reason: "merge-boundary-evidence-recovery" }),
     }));
+    expect(current.column).toBe("building");
     expect(updateTaskAtomic).toHaveBeenCalledTimes(2);
     expect(logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("'execute' is being resumed"), undefined, undefined);
   });
