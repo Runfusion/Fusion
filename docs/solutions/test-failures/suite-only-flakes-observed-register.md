@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 2, 13, and 17), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **10 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **4 active observation records** (entries 2, 13, 17, and 18), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **10 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -286,6 +286,27 @@ No product race was established. The terminal writer appends exactly one event a
 | current targeted file | passed, 11/11 |
 
 The test remains on the suite with its original timeout, `events.length === 1`, and `toMatchObject` contract unchanged. A **second sighting** of this exact test requires file-level quarantine in `scripts/lib/test-quarantine.json` and the matching package Vitest exclusion in the same change; do not add retries, widen timeouts, or alter this assertion.
+
+### 18. Triage rate-limit retry log warning timer ordering
+
+- **Status:** Active first sighting — recorded 2026-09-24, unattributed.
+- **File:** `packages/engine/src/__tests__/triage.test.ts`
+- **Exact test:** `specifyTask — status restore failure diagnostics > logs warning when logEntry fails during rate-limit retry`
+- **Observed tree/SHA:** `d486a4c275` (FN-9389 register-only commit).
+- **Observed frequency:** 1 sighting, Full Suite push shard 2 only.
+
+Push Full Suite run [36053028228](https://github.com/Runfusion/Fusion/actions/runs/36053028228), shard 2 artifact `test-timings-shard-2` (`packages/engine/.timings/timings-shard2-1.json`), reported `STACK_TRACE_ERROR` at `triage.test.ts:6701` after 30002 ms. The shard completed 254 sibling tests; the three real-timer diagnostics in this describe passed. This is a high-value file, so it remains in the suite under the first-sighting exception.
+
+No production retry race was established. `withRateLimitRetry` calls the non-awaited retry-log callback before registering its sleep, and a rejected `logEntry` is caught solely to warn without delaying a successful second prompt. The test had waited for any fake timer before advancing 60 seconds; the planning turn's 90-minute guard can exist first, so the original drain could advance before the retry sleep was installed. The regression now stubs the unrelated host capability probe, waits for the observable `Rate limited — retry` log, flushes once to prove the retry timer is registered, keeps the 60-second advancement and warning assertion, and completes the same production `specifyTask` path.
+
+| control | result |
+|---|---|
+| push run 36034454035 (`c76cb158`) | passed in 26.2 ms |
+| push run 35991562171 (`618204ad`) | passed in 39.8 ms |
+| current exact test | passed with the 429 → retry sleep → failed log write → warning → successful retry contract |
+| current four-case diagnostics describe | passed; rate-limit fake-timer and three real-timer warning diagnostics retained |
+
+A **second sighting** of this exact test requires same-change file-level quarantine in `scripts/lib/test-quarantine.json` and a matching `engine-default` Vitest exclusion. Do not add retries, widen the timeout, remove the fake-timer drain, or weaken the warning assertion.
 
 ### Common shape and investigated result
 

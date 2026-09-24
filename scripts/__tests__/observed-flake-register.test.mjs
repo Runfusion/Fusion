@@ -140,6 +140,11 @@ FNXC:TestFlakeRegister 2026-09-24-19:55:
 FN-9389 adds entry 17 after a one-time Full Suite terminal graph-gate mismatch. Its source and
 outbox trace establishes no product race, so pin the active inventory and require its next
 sighting to follow the file-level quarantine policy without weakening the durable contract.
+
+FNXC:TestFlakeRegister 2026-09-24-22:49:
+FN-9390 records the triage retry warning as a high-value first sighting after source tracing
+showed a fake-timer observation race rather than a production retry defect. Keep its active
+status pinned so a repeat executes the file-level quarantine rule without weakening the warning.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -164,6 +169,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
     },
     {
       heading: "17. Terminal graph-gate activity outbox contract",
+      status: "Active first sighting — recorded 2026-09-24, unattributed.",
+    },
+    {
+      heading: "18. Triage rate-limit retry log warning timer ordering",
       status: "Active first sighting — recorded 2026-09-24, unattributed.",
     },
   ]);
