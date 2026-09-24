@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **2 active observation records** (entries 2 and 13), both **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **3 active observation records** (entries 2, 13, and 16), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -236,6 +236,24 @@ The 12-worker snapshots show 21 backends and concurrent template `CREATE DATABAS
 This is the same mode already characterized by entry 6 and by entry 7's A02 lane: a 15s `beforeAll` abort on the DDL-heavy per-file schema-template setup that the one shared Postgres serializes. Two properties make this sighting narrower than the shapes those entries measured. It occurred under the CAPPED gate lane — `PG_MAX_WORKERS = 4` and only two selected files — which `FNXC:PgTestWorkerCap 2026-07-18-18:00` established as the DB-safe ceiling (measured: 6 forks all time out, 4 forks pass in ~42s). And it occurred on the first gate invocation after the cluster had been idle, with every later run in the same shell green, which points at cold-cluster startup cost landing inside the first file's setup budget rather than at fork oversubscription. That correlation is a HYPOTHESIS, not a measurement: reproducing it means stopping the embedded cluster, which was not done because this host also runs a live Fusion instance.
 
 Quarantine was not available as an alternative. Core PostgreSQL files cannot be quarantined inline — the gate-policy assertion requires `quarantinedCoreTests` to remain empty — and a merge-gate eviction of a transactional-invariant file is the owner-escalated decision described in the policy section below. The file carries only 4 tests, which is thin against the usual first-sighting coverage argument, but they are the atomicity invariant for handoff-to-review and one of just two files in the blocking PG lane; recording preserves that rather than trading it away over a single unreproduced cold-start abort. A **second sighting** follows normal escalation.
+
+
+<!--
+FNXC:UpdaterSuiteFlake 2026-09-24-04:54:
+FN-9375 records the first hosted-only updater observation instead of weakening the setup assertions or
+quarantining a high-coverage native suite. A second artifact-backed sighting must exclude the complete
+file through the ledger/config lockstep policy, not add timing tolerance or retries.
+-->
+### 16. Native updater setup mock lifecycle
+
+- **Status:** Active first sighting — recorded 2026-09-24, pending next artifact-backed sighting.
+- **File:** `packages/desktop/src/__tests__/native.test.ts`
+- **Exact tests:** `native integrations > setupAutoUpdater > registers updater listeners and checks for updates`; `native integrations > setupAutoUpdater > sets updater download and install flags`.
+- **Observed tree/SHA:** GitHub Actions Full Suite push run [35920595803](https://github.com/Runfusion/Fusion/actions/runs/35920595803), `2ed9b65c116cf85e19f2428832a335fc56b0fa09`.
+- **Artifact provenance:** complete, unexpired `test-timings-shard-4` artifact `10777232469`, created `2026-09-23T21:18:59Z`; normalized Vitest reporter records identify both exact names.
+- **Local reproduction:** `pnpm --filter @fusion/desktop exec vitest run src/__tests__/native.test.ts --silent=passed-only --reporter=dot` passed, including both subjects.
+- **Coverage rationale:** the file retains broad native integration coverage, including ten updater setup scenarios plus save/open dialogs, notifications, and window-state behavior. A first sighting does not justify removing that coverage.
+- **Next-sighting action:** on a second eligible Full Suite push artifact observation, quarantine the whole file in the same commit by adding its ledger row and matching `packages/desktop/vitest.config.ts` literal exclude, then validate lockstep. Do not widen timeouts, add retries, or weaken assertions.
 
 
 ### 15. Workflow-results preserved-column selector mock ordering

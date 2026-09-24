@@ -149,6 +149,14 @@ describe("FN-9234 review-recapture audit sink health", () => {
     reroute.route.mockResolvedValue({ rerouted: true, reason: "seeded", nodeId: "code-review", workflowStepId: "code-review" });
     const store = { logEntry: vi.fn(async () => undefined), ...(sink.recordRunAuditEvent ? { recordRunAuditEvent: sink.recordRunAuditEvent } : {}) } as any;
     const engine = new ProjectEngine({ projectId: "audit", workingDirectory: process.cwd(), isolationMode: "in-process", maxConcurrent: 1, maxWorktrees: 1 } as any, {} as any, { skipNotifier: true });
+    /*
+    FNXC:NoVerdictReviewRecovery 2026-09-24-04:54:
+    These stale-content cases intentionally contain no failed review result. Model the idle admission
+    probe so the production gate reaches the audit-emitting stale reroute without requiring a runtime
+    TaskStore that this focused sink-health fixture does not start.
+    */
+    vi.spyOn(engine, "isMergePending").mockResolvedValue(false);
+    vi.spyOn(engine, "rerouteFailedNoVerdictPreMergeReview").mockResolvedValue("not-applicable");
     const result = await throughBoundedAudit(mode, sink, () => (engine as any).resolveMergeGateBlocker(store, task, {}));
     expect(result).toBe("task has a pre-merge approval recorded against different content");
     expect(reroute.route).toHaveBeenCalledTimes(1);
