@@ -157,11 +157,30 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
     },
-    {
-      heading: "16. Native updater setup mock lifecycle",
-      status: "Active first sighting — recorded 2026-09-24, pending next artifact-backed sighting.",
-    },
   ]);
+});
+
+test("archived native updater quarantine retains repeat-failure evidence", () => {
+  const register = readFileSync(registerPath, "utf8");
+  const archive = register.match(/## Archive — closed records\n([\s\S]*)$/)?.[1];
+  assert.ok(archive, "Expected an Archive — closed records section");
+  const entry = archive.match(/^### 16\. Native updater setup mock lifecycle\n([\s\S]*?)(?=^### |(?![\s\S]))/m)?.[1];
+  assert.ok(entry, "Expected archived native updater quarantine entry");
+
+  for (const evidence of [
+    "native integrations > setupAutoUpdater > registers updater listeners and checks for updates",
+    "native integrations > setupAutoUpdater > sets updater download and install flags",
+    "35959852349",
+    "35965109937",
+    "35965648898",
+    'expected "vi.fn()" to be called 1 times, but got 2 times',
+    "STACK_TRACE_ERROR",
+    "quarantined 2026-09-24",
+    "2026-10-08",
+  ]) {
+    assert.ok(entry.includes(evidence), `Archived native updater entry is missing ${evidence}`);
+  }
+  assert.match(entry, /^- \*\*Status:\*\* Closed — quarantined/m);
 });
 
 /*

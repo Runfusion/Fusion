@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 2, 13, and 16), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **2 active observation records** (entries 2 and 13), both **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **10 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -238,24 +238,6 @@ This is the same mode already characterized by entry 6 and by entry 7's A02 lane
 Quarantine was not available as an alternative. Core PostgreSQL files cannot be quarantined inline — the gate-policy assertion requires `quarantinedCoreTests` to remain empty — and a merge-gate eviction of a transactional-invariant file is the owner-escalated decision described in the policy section below. The file carries only 4 tests, which is thin against the usual first-sighting coverage argument, but they are the atomicity invariant for handoff-to-review and one of just two files in the blocking PG lane; recording preserves that rather than trading it away over a single unreproduced cold-start abort. A **second sighting** follows normal escalation.
 
 
-<!--
-FNXC:UpdaterSuiteFlake 2026-09-24-04:54:
-FN-9375 records the first hosted-only updater observation instead of weakening the setup assertions or
-quarantining a high-coverage native suite. A second artifact-backed sighting must exclude the complete
-file through the ledger/config lockstep policy, not add timing tolerance or retries.
--->
-### 16. Native updater setup mock lifecycle
-
-- **Status:** Active first sighting — recorded 2026-09-24, pending next artifact-backed sighting.
-- **File:** `packages/desktop/src/__tests__/native.test.ts`
-- **Exact tests:** `native integrations > setupAutoUpdater > registers updater listeners and checks for updates`; `native integrations > setupAutoUpdater > sets updater download and install flags`.
-- **Observed tree/SHA:** GitHub Actions Full Suite push run [35920595803](https://github.com/Runfusion/Fusion/actions/runs/35920595803), `2ed9b65c116cf85e19f2428832a335fc56b0fa09`.
-- **Artifact provenance:** complete, unexpired `test-timings-shard-4` artifact `10777232469`, created `2026-09-23T21:18:59Z`; normalized Vitest reporter records identify both exact names.
-- **Local reproduction:** `pnpm --filter @fusion/desktop exec vitest run src/__tests__/native.test.ts --silent=passed-only --reporter=dot` passed, including both subjects.
-- **Coverage rationale:** the file retains broad native integration coverage, including ten updater setup scenarios plus save/open dialogs, notifications, and window-state behavior. A first sighting does not justify removing that coverage.
-- **Next-sighting action:** on a second eligible Full Suite push artifact observation, quarantine the whole file in the same commit by adding its ledger row and matching `packages/desktop/vitest.config.ts` literal exclude, then validate lockstep. Do not widen timeouts, add retries, or weaken assertions.
-
-
 ### 15. Workflow-results preserved-column selector mock ordering
 
 - **Status:** Closed 2026-09-20 — FN-9336 structurally resolved the request-ordering mock drift. A new sighting re-opens normal escalation.
@@ -324,6 +306,24 @@ Source: [Runfusion/Fusion issue #2862](https://github.com/Runfusion/Fusion/issue
 ## Archive — closed records
 
 Archived records are historical evidence only and never authorize a quarantine decision.
+
+<!--
+FNXC:DesktopTestQuarantine 2026-09-24-07:48:
+FN-9383 received three artifact-backed second sightings for the updater setup pair. The complete
+native suite must be quarantined through the dated ledger and literal Vitest exclusion in the same
+commit, preserving its assertions for a root-cause rescue instead of adding tolerance or retries.
+-->
+### 16. Native updater setup mock lifecycle
+
+- **Status:** Closed — quarantined 2026-09-24 after three artifact-backed second sightings; deletion deadline 2026-10-08.
+- **File:** `packages/desktop/src/__tests__/native.test.ts`
+- **Exact tests:** `native integrations > setupAutoUpdater > registers updater listeners and checks for updates`; `native integrations > setupAutoUpdater > sets updater download and install flags`.
+- **First-sighting tree/SHA:** GitHub Actions Full Suite push run [35920595803](https://github.com/Runfusion/Fusion/actions/runs/35920595803), `2ed9b65c116cf85e19f2428832a335fc56b0fa09`.
+- **First-sighting artifact provenance:** complete, unexpired `test-timings-shard-4` artifact `10777232469`, created `2026-09-23T21:18:59Z`; normalized Vitest reporter records identify both exact names.
+- **Local reproduction at first sighting:** `pnpm --filter @fusion/desktop exec vitest run src/__tests__/native.test.ts --silent=passed-only --reporter=dot` passed, including both subjects.
+- **Repeated Full Suite evidence:** QA downloaded the completed `test-timings-shard-4` artifacts for push runs [35959852349](https://github.com/Runfusion/Fusion/actions/runs/35959852349) (`70f6fc2d43fb68da91f20f890f8f024a381a20aa`, artifact `10791528512`), [35965109937](https://github.com/Runfusion/Fusion/actions/runs/35965109937) (`ee71b2a82f7bede2d906c15e1ad28e32299f4181`, artifact `10794177333`), and [35965648898](https://github.com/Runfusion/Fusion/actions/runs/35965648898) (`d05dd7e8b4d18d47c9de74438d74b8b521cb058e`, artifact `10794277474`). Each artifact records both exact tests as failed.
+- **Failure modes:** the listener case timed out at `native.test.ts:326` with `expected "vi.fn()" to be called 1 times, but got 2 times`; the flags case reported `STACK_TRACE_ERROR` from the Vitest runner.
+- **Disposition:** FN-9383 quarantined the complete file through `scripts/lib/test-quarantine.json` and a matching literal desktop Vitest exclusion. No timeout, retry, skip, assertion, or updater implementation changed. Rescue requires evidence that the tests catch a real regression plus a root-cause fix before the 2026-10-08 deletion deadline.
 
 ### 14. Merge-node paused-abort retry sequence
 
