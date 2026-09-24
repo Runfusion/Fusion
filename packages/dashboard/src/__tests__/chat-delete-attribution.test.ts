@@ -1,9 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { TaskSelfDeleteError, type TaskStore } from "@fusion/core";
 import { createChatFusionToolset, type ChatFusionToolsetOptions } from "../chat.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+const testRootDir = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-chat-delete-attribution-"));
+afterAll(() => fs.rmSync(testRootDir, { recursive: true, force: true }));
 
 /*
 FNXC:ArchiveLogAttribution 2026-09-23-23:59:
@@ -40,7 +43,7 @@ describe("chat delete attribution", () => {
 
     const tools = await createChatFusionToolset({
       taskStore,
-      rootDir: fs.mkdtempSync(path.join(os.tmpdir(), "fusion-chat-delete-attribution-")),
+      rootDir: testRootDir,
       agentId: "agent-77",
       actionGateContext: actionGate,
     });
@@ -61,7 +64,7 @@ describe("chat delete attribution", () => {
 
     const tools = await createChatFusionToolset({
       taskStore,
-      rootDir: fs.mkdtempSync(path.join(os.tmpdir(), "fusion-chat-delete-attribution-")),
+      rootDir: testRootDir,
       agentId: "agent-77",
       actionGateContext: actionGate,
     });
