@@ -178,6 +178,32 @@ test("observed-flake register active count, escalation state, and owners stay sy
   ]);
 });
 
+test("triage timeout first-sighting record retains shard evidence and quarantine escalation", () => {
+  const register = readFileSync(registerPath, "utf8");
+  const sections = readActiveRecordSections(register).filter(
+    ({ heading }) => heading === "18. Triage rate-limit retry log warning timer ordering",
+  );
+  assert.equal(sections.length, 1, "Expected exactly one active triage timeout first-sighting record");
+
+  const [{ body }] = sections;
+  for (const evidence of [
+    "Active first sighting — recorded 2026-09-24, unattributed.",
+    "packages/engine/src/__tests__/triage.test.ts",
+    "specifyTask — status restore failure diagnostics > logs warning when logEntry fails during rate-limit retry",
+    "d486a4c275",
+    "36053028228",
+    "test-timings-shard-2",
+    "packages/engine/.timings/timings-shard2-1.json",
+    "STACK_TRACE_ERROR",
+    "triage.test.ts:6701",
+    "30032 ms",
+    "same-change file-level quarantine in `scripts/lib/test-quarantine.json`",
+    "matching `engine-default` Vitest exclusion",
+  ]) {
+    assert.ok(body.includes(evidence), `Triage timeout record is missing ${evidence}`);
+  }
+});
+
 test("archived native updater quarantine retains repeat-failure evidence", () => {
   const register = readFileSync(registerPath, "utf8");
   const archive = register.match(/## Archive — closed records\n([\s\S]*)$/)?.[1];
