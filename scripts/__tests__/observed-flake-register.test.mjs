@@ -135,6 +135,11 @@ active list drops to entries 2 and 13 and the stated count drops to 2. Entry 1's
 its FN-9146 campaign table stay physically in the active section (readActiveRecordSections
 does not filter by status), so the campaign-evidence assertion below still reads entry 1 in
 place — keep it in expectedSubjectResults exactly like the closed-in-place entry 7.
+
+FNXC:TestFlakeRegister 2026-09-24-19:55:
+FN-9389 adds entry 17 after a one-time Full Suite terminal graph-gate mismatch. Its source and
+outbox trace establishes no product race, so pin the active inventory and require its next
+sighting to follow the file-level quarantine policy without weakening the durable contract.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -156,6 +161,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
     {
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
+    },
+    {
+      heading: "17. Terminal graph-gate activity outbox contract",
+      status: "Active first sighting — recorded 2026-09-24, unattributed.",
     },
   ]);
 });
