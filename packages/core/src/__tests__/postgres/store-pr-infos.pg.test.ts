@@ -13,11 +13,14 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { and, eq } from "drizzle-orm";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
+import { LEGACY_UNSCOPED_PROJECT_ID } from "../../postgres/data-layer.js";
+import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
 
@@ -72,6 +75,20 @@ pgTest("TaskStore updatePrInfo (PostgreSQL)", () => {
     const updated = await store.getTask(task.id);
     expect(updated.prInfo?.number).toBe(42);
     expect(updated.prInfo?.url).toBe("https://github.com/owner/repo/pull/42");
+
+    const [ledgerEntry] = await h.adminDb().select({
+      projectId: schema.project.patchnodeEntries.projectId,
+      taskId: schema.project.patchnodeEntries.taskId,
+      kind: schema.project.patchnodeEntries.kind,
+    }).from(schema.project.patchnodeEntries).where(and(
+      eq(schema.project.patchnodeEntries.projectId, LEGACY_UNSCOPED_PROJECT_ID),
+      eq(schema.project.patchnodeEntries.taskId, task.id),
+    ));
+    expect(ledgerEntry).toEqual({
+      projectId: LEGACY_UNSCOPED_PROJECT_ID,
+      taskId: task.id,
+      kind: "completed",
+    });
   });
 
   it("updates existing PR info with new values", async () => {
