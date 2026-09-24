@@ -57,6 +57,47 @@ pgDescribe("the archive entry's origin column comes from the archive transaction
     expect(entry?.log[0].action).toBe("Task archived from in-progress by engine (engine)");
   });
 
+  it("carries the locked row's mutable state into the snapshot, not the pre-transaction read", async () => {
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-24-00:20:
+    Devin PR-3561 flag "Archive snapshot mixes two row versions": the re-anchored origin named the
+    locked row while status/timestamps stayed on the earlier read's version. The snapshot must be
+    ONE row version — the one the archive transaction read under the lock.
+    */
+    const store = h.store();
+    const task = await store.createTask({column: "todo", title: "raced-state", description: "raced-state"});
+    let racedRow: Awaited<ReturnType<TaskStore["getTask"]>> | undefined;
+    await actInsideTheArchiveWindow(store, task.id, async () => {
+      await store.moveTask(task.id, "in-progress");
+      await store.updateTask(task.id, {title: "renamed-inside-the-window", description: "rewritten-inside-the-window", autoMerge: true, sourceIssue: {id: "ISS-9", provider: "github", type: "issue"}});
+      racedRow = await store.getTask(task.id);
+    });
+
+    await store.archiveTask(task.id, {
+      cleanup: false,
+      auditContext: {agentId: "engine", runId: `auto-archive-${task.id}-3`, callerKind: "engine"},
+    });
+
+    const entry = await findArchivedTaskEntry(h.layer().db, task.id, h.layer().projectId);
+    // Pre-fix: the new column with the pre-move timestamps — two row versions in one record.
+    expect(entry?.updatedAt).toBe(racedRow?.updatedAt);
+    expect(entry?.columnMovedAt).toBe(racedRow?.columnMovedAt);
+    /*
+    Greptile P1 "Archive Snapshot Keeps Stale Fields" (PR-3561): EVERY row-derived field must come
+    from the locked read, not only the re-anchored origin — a concurrent title/description edit is
+    otherwise lost from the archive forever.
+    */
+    expect(entry?.title).toBe("renamed-inside-the-window");
+    expect(entry?.description).toBe("rewritten-inside-the-window");
+    /*
+    Greptile P1 "Raw Row Corrupts Snapshot" + Devin "Archived tasks lose source and branch context"
+    (PR-3561): the locked row is RAW - composite (sourceIssue) and coerced (autoMerge) fields must
+    come hydrated through pgRowToTaskRow/rowToTask, not straight off the row cast to Task.
+    */
+    expect(entry?.autoMerge).toBe(true);
+    expect(entry?.sourceIssue).toEqual(racedRow?.sourceIssue);
+  });
+
   it("emits task:moved naming the lane the transaction read, not the pre-transaction read", async () => {
     const store = h.store();
     const task = await store.createTask({column: "todo", title: "raced-event", description: "raced-event"});

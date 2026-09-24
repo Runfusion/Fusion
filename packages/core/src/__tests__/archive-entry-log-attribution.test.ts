@@ -263,7 +263,11 @@ describe("archiveParentTaskWithLineageGate live-row check for re-anchoring", () 
 
     const result = await archiveParentTaskWithLineageGate(layer, "FN-9001", entry, { entryForOriginColumn: reanchor });
 
-    expect(reanchor).toHaveBeenCalledWith("in progress");
+    /*
+    Greptile P1 "Archive Snapshot Keeps Stale Fields" (PR-3561): the gate also hands the locked row
+    to the re-anchor callback so the entry's row-derived fields can be rebuilt from one row version.
+    */
+    expect(reanchor).toHaveBeenCalledWith("in progress", { id: "FN-9001", column: "in progress", deletedAt: null });
     expect(reanchor).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ archived: true, entry: reanchored, originColumn: "in progress" });
   });

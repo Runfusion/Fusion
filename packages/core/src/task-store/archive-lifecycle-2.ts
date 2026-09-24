@@ -41,10 +41,15 @@ import {resolveArchiveLivenessWipLanes, TaskIsLiveError} from "../tasks/task-arc
 import {writePromptFileAtomic} from "./prompt-file.js";
 
 /**
- * FNXC:ArchiveLogAttribution 2026-09-19-07:22:
- * THE ONE PLACE the cold-log action string is formatted. The initial entry build and the
- * in-transaction re-anchor must produce byte-identical lines for the same column, so the format
- * lives here instead of being restated at the second call site, where it could silently drift.
+ FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+ THE ONE PLACE the cold-log action string is formatted. The initial entry build and the
+ in-transaction re-anchor must produce byte-identical lines for the same column, so the format
+ lives here instead of being restated at the second call site, where it could silently drift.
+
+ FNXC:ArchiveLogAttribution 2026-09-24-00:45:
+ The row mapping lives in `archiveEntryRowFields` - the SAME function the archive transaction's
+ locked-row rebuild spreads (see `entryForOriginColumn`). Never enumerate entry fields at a call
+ site; add them there so both sides stay one row version.
  */
 export function archiveLogActionForOriginColumn(column: string, auditContext?: TaskDeleteAuditContext): string {
   return `Task archived from ${column} by ${auditContext?.callerKind ?? "api-unattributed"} (${auditContext?.agentId ?? "system"})`;
@@ -79,21 +84,21 @@ export function withAuthoritativeArchiveOriginColumn(
   };
 }
 
-export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string, auditContext?: TaskDeleteAuditContext): Promise<ArchivedTaskEntry> {
-    const settings = await store.getSettingsFast();
-    const agentLogMode = settings.archiveAgentLogMode ?? "compact";
-    const [prompt, agentLogFields] = await Promise.all([
-      store.readPromptForArchive(task.id),
-      store.buildArchivedAgentLogFields(task.id, agentLogMode),
-    ]);
-
+/*
+FNXC:ArchiveLogAttribution 2026-09-24-00:45:
+THE ONE row -> cold-entry MAPPING. Extracted so the archive transaction can rebuild the entry's
+row-derived fields from ITS locked read with ZERO field-list drift: `entryForOriginColumn` receives
+the locked row and spreads THIS function's output over the pre-transaction build (captures and
+archive constants - prompt, agent log, log action, archivedAt - come from that build, since captures
+can precede workspace disposal). Greptile P1 "Archive Snapshot Keeps Stale Fields" (PR-3561) is the
+class this fixes: a cold snapshot must be ONE row version. A field added here is automatically
+carried from the locked read; never enumerate entry fields at a call site.
+*/
+export function archiveEntryRowFields(task: Task): Omit<ArchivedTaskEntry, "id" | "lineageId" | "column" | "prompt" | "agentLogMode" | "agentLogSummary" | "agentLogSnapshot" | "agentLog" | "log" | "archivedAt"> {
     return {
-      id: task.id,
-      lineageId: task.lineageId || generateTaskLineageId(),
       title: task.title,
       description: task.description,
       priority: normalizeTaskPriority(task.priority),
-      column: "archived",
       /*
       FNXC:WorkflowLifecycleColumns 2026-08-01-11:30 (PR #2824's finding, fixed):
       CAPTURE THE COLUMN THE CARD WAS IN. This field was only ever COPIED — here, back out of the
@@ -146,8 +151,6 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       including createdTaskId, so archival cannot erase an accepted follow-up link.
       */
       recommendations: task.recommendations,
-      prompt,
-      ...agentLogFields,
       /*
       FNXC:ArchiveLogAttribution 2026-09-04-11:50:
       The single entry said only "Task archived" — no actor, no origin column, no caller class — so an
@@ -161,10 +164,6 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       row, not the row the archive transaction commits under. This is the initial value only;
       `withAuthoritativeArchiveOriginColumn` re-anchors it inside the transaction.
       */
-      log: [{
-        timestamp: archivedAt,
-        action: archiveLogActionForOriginColumn(task.column, auditContext),
-      }],
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       columnMovedAt: task.columnMovedAt,
@@ -174,7 +173,6 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       planningStartedAt: task.planningStartedAt,
       executionStartedAt: task.executionStartedAt,
       executionCompletedAt: task.executionCompletedAt,
-      archivedAt,
       modelPresetId: task.modelPresetId,
       modelProvider: task.modelProvider,
       credentialInstanceId: task.credentialInstanceId,
@@ -204,7 +202,30 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       assigneeUserId: task.assigneeUserId,
       mergeDetails: task.mergeDetails,
     };
-  }
+}
+
+export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string, auditContext?: TaskDeleteAuditContext): Promise<ArchivedTaskEntry> {
+    const settings = await store.getSettingsFast();
+    const agentLogMode = settings.archiveAgentLogMode ?? "compact";
+    const [prompt, agentLogFields] = await Promise.all([
+      store.readPromptForArchive(task.id),
+      store.buildArchivedAgentLogFields(task.id, agentLogMode),
+    ]);
+
+    return {
+      id: task.id,
+      lineageId: task.lineageId || generateTaskLineageId(),
+      column: "archived",
+      ...archiveEntryRowFields(task),
+      prompt,
+      ...agentLogFields,
+      log: [{
+        timestamp: archivedAt,
+        action: archiveLogActionForOriginColumn(task.column, auditContext),
+      }],
+      archivedAt,
+    };
+}
 
 type DeleteTaskBackendOptions = { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; };
 type DeleteTaskClaimResult = { task: Task; claimed: boolean };
@@ -573,23 +594,33 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     returned task, whose `preArchiveColumn` is the restore destination — uses the same re-anchored
     copy.
     */
-    const entryForOriginColumn = (originColumn: string) => withAuthoritativeArchiveOriginColumn(
-      entry,
-      originColumn,
-      auditContext,
+    const entryForOriginColumn = (originColumn: string, lockedRow?: Record<string, unknown>) => {
       /*
-      A card that already carries captured history keeps it: `preArchiveColumn` is then the lane it
-      was FIRST archived from, not a copy of this request's stale read.
-
-      FNXC:ArchiveLogAttribution 2026-09-23-18:15:
-      This nullish check must mirror the `??` fallback in `taskToArchiveEntryImpl` exactly: a `null`
-      `preArchiveColumn` is NOT captured history — the fallback copies the pre-transaction read for
-      it — so `null` triggers the re-anchor just like `undefined`. Keyed on `=== undefined`, a `null`
-      value froze the stale pre-transaction column into the committed snapshot while the action line
-      named the authoritative one.
+      FNXC:ArchiveLogAttribution 2026-09-24-02:10 (Greptile P1 "Raw Row Corrupts Snapshot" + Devin
+      "Archived tasks lose source and branch context", PR-3561):
+      HYDRATE THE LOCKED ROW BEFORE MAPPING. `readTaskRowInTransaction` returns the RAW row: direct
+      columns pass through but composite fields (sourceIssue, branchContext) and coerced types
+      (autoMerge 0/1) do not, so mapping the raw row overwrites the hydrated pre-transaction fields
+      with garbage. `pgRowToTaskRow` + `rowToTask` are the same conversion this module already uses
+      on rows (deleteTaskIfBackendImpl). Then rebuild the row-derived fields from ONE row version
+      (Greptile P1 "Archive Snapshot Keeps Stale Fields"): `archiveEntryRowFields` is the shared
+      mapping - no field list here to drift.
       */
-      { reanchorPreArchiveColumn: task.preArchiveColumn == null },
-    );
+      const lockedTask = lockedRow
+        ? store.rowToTask(store.pgRowToTaskRow(lockedRow as Parameters<typeof store.pgRowToTaskRow>[0]))
+        : undefined;
+      return withAuthoritativeArchiveOriginColumn(
+        lockedTask ? { ...entry, ...archiveEntryRowFields(lockedTask) } : entry,
+        originColumn,
+        auditContext,
+        /*
+        A card that already carries captured history keeps it: `preArchiveColumn` is then the lane it
+        was FIRST archived from, not a copy of this request's stale read. Decided from the LOCKED
+        row when present (the authoritative version of the card).
+        */
+        { reanchorPreArchiveColumn: (lockedTask ? lockedTask.preArchiveColumn : task.preArchiveColumn) == null },
+      );
+    };
 
     /*
     FNXC:SelfHealing 2026-08-21-15:11:

@@ -240,7 +240,7 @@ export async function archiveParentTaskWithLineageGate(
   layer: AsyncDataLayer,
   taskId: string,
   entry: ArchivedTaskEntry,
-  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void>; beforeLineageGate?: () => void | Promise<void>; archivedColumns?: ReadonlySet<string>; revalidateAgainst?: readonly string[]; promptByChildId?: ReadonlyMap<string, string>; evidenceTargetVersionForTest?: (childId: string, computed: number, attempt: number) => number; livenessWipLanes?: ReadonlySet<string>; entryForOriginColumn?: (originColumn: string) => ArchivedTaskEntry } = {},
+  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void>; beforeLineageGate?: () => void | Promise<void>; archivedColumns?: ReadonlySet<string>; revalidateAgainst?: readonly string[]; promptByChildId?: ReadonlyMap<string, string>; evidenceTargetVersionForTest?: (childId: string, computed: number, attempt: number) => number; livenessWipLanes?: ReadonlySet<string>; entryForOriginColumn?: (originColumn: string, lockedRow?: Record<string, unknown>) => ArchivedTaskEntry } = {},
 
 ): Promise<{ archived: true; lineageOutcome?: LineageRemovalOutcome; entry: ArchivedTaskEntry; originColumn: string | undefined } | { archived: false; liveChildIds: string[] } | { archived: false; liveVerdict: ArchiveLivenessVerdict } | { archived: false; missingRow: true }> {
   const now = options.now ?? new Date().toISOString();
@@ -296,7 +296,7 @@ export async function archiveParentTaskWithLineageGate(
       return {archived: false as const, missingRow: true as const};
     }
     const archivedEntry = originColumn !== undefined && options.entryForOriginColumn
-      ? options.entryForOriginColumn(originColumn)
+      ? options.entryForOriginColumn(originColumn, live ?? undefined)
       : entry;
     // Test-only barrier is before this operation's single in-transaction lineage read.
     await options.beforeLineageGate?.();
@@ -322,10 +322,27 @@ export async function archiveParentTaskWithLineageGate(
 
     // 3. Archive snapshot to cold storage (VAL-CROSS-015 — preserves for restore).
     // FNXC:MultiProjectIsolation 2026-07-12: stamped with the bound project.
-    // A link accepted immediately before this lock is durable in the live row; carry it into the
-    // snapshot rather than overwriting it with the caller's pre-lock copy.
-    const lockedEntry = Array.isArray(live?.recommendations)
-      ? { ...archivedEntry, recommendations: live.recommendations as ArchivedTaskEntry["recommendations"] }
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-24-00:20:
+    ONE ROW VERSION IN THE SNAPSHOT. `archivedEntry` was built from the pre-transaction read and only
+    its origin is re-anchored above, so a move landing in the window mixed the new column with the
+    earlier row version's status/timestamps (Devin PR-3561 flag "Archive snapshot mixes two row
+    versions"). CLASS RULE: every row-derived field carried into the committed snapshot comes from
+    THIS locked read. Extend this overlay whenever `taskToArchiveEntryImpl` grows another
+    row-mapped mutable field — that builder carries the mirror note.
+
+    A link accepted immediately before this lock is durable in the live row; carry it into the
+    snapshot rather than overwriting it with the caller's pre-lock copy.
+    */
+    const lockedEntry = live
+      ? {
+          ...archivedEntry,
+          updatedAt: (live.updatedAt ?? archivedEntry.updatedAt) as ArchivedTaskEntry["updatedAt"],
+          columnMovedAt: (live.columnMovedAt ?? undefined) as ArchivedTaskEntry["columnMovedAt"],
+          ...(Array.isArray(live.recommendations)
+            ? { recommendations: live.recommendations as ArchivedTaskEntry["recommendations"] }
+            : {}),
+        }
       : archivedEntry;
     await upsertArchivedTaskEntry(tx, lockedEntry, layer.projectId);
 
