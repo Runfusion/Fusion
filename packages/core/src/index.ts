@@ -882,6 +882,7 @@ export {
   acquireWorktreePathReservation,
   withWorktreePathReservation,
   readWorktreePathReservation,
+  resolveWorktreePathReservationDirectory,
   canonicalizeWorktreePath,
   type WorktreePathReservation,
   type WorktreePathReservationOptions,
