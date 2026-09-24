@@ -195,6 +195,18 @@ describe("scanIdleWorktrees", () => {
     expect(idle).not.toContain("/root/.worktrees/swift-falcon");
   });
 
+  it("excludes registered paths protected by a supplied pre-release liveness probe", async () => {
+    mockedReaddirSync.mockReturnValue([makeDirEntry("review-wt"), makeDirEntry("idle-wt")] as any);
+    mockRegisteredWorktrees("/root", ["review-wt", "idle-wt"]);
+    const store = createMockStore([]);
+
+    const idle = await scanIdleWorktrees("/root", store, undefined, {
+      isPathLive: async (path) => path.endsWith("review-wt"),
+    });
+
+    expect(idle).toEqual(["/root/.worktrees/idle-wt"]);
+  });
+
   it("handles empty .worktrees/ directory", async () => {
     mockedReaddirSync.mockReturnValue([] as any);
     const store = createMockStore([]);

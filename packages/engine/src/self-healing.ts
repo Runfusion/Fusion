@@ -26,8 +26,8 @@ import { execSync } from "node:child_process";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { tmpdir, hostname } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
@@ -47,6 +47,8 @@ import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLane
   hasNonTerminalSteps,
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
+  resolveWorktreePathReservationDirectory,
+  resolveLegacyWorktreesDirLayout,
 } from "@fusion/core";
 import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
@@ -65,7 +67,7 @@ import {
   buildDuplicateReplanExhaustedError,
 } from "./duplicate-marker-clear.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
-import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
+import { RemovalReason, canonicalizePath, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
 import {
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
@@ -129,7 +131,7 @@ import { recoverMergeBoundaryEvidenceGap } from "./executor/route-graph-failure-
 import { reapExpiredFusionBrowserLeasesInProduction } from "./agent-browser-lifecycle.js";
 
 import { advanceIntegrationBranchRef } from "./merge/merger-ref-update-advance.js";
-import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorktreeContainerDir, resolveAiMergeSearchRoots, resolveWorktreesDirScanRoots } from "./worktree/worktree-paths.js";
+import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorktreeContainerDir, resolveAiMergeSearchRoots, resolveWorktreesDir, resolveWorktreesDirScanRoots } from "./worktree/worktree-paths.js";
 import { removeDirectoryWithRetry } from "./worktree/worktree-removal-retry.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
@@ -5237,6 +5239,131 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
   }
 
+  /*
+  FNXC:PreReleaseWorktreeLiveness 2026-09-24-07:03:
+  Pre-release workflow nodes can use a task checkout before execution writes task-row metadata.
+  Cleanup must therefore fence destructive worktree and branch reclamation on task-scoped sessions,
+  a current executor lease, and a matching live local reservation rather than task.worktree alone.
+  Metadata-free deterministic checkouts must be matched across current and legacy scan roots, because
+  a layout migration must not make a live review invisible to either branch or idle-worktree sweeps.
+  Re-check every candidate after Git inspection and immediately before deletion because a session can claim it while inspection awaits.
+  Unreadable reservation state is a destructive-decision fence; readable dead, foreign, or mismatched records are not.
+  */
+  private async isCandidateWorktreeLive(candidatePath: string, settings: Settings): Promise<boolean> {
+    try {
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true });
+      let canonicalCandidate = resolve(candidatePath);
+      try { canonicalCandidate = realpathSync(canonicalCandidate); } catch {}
+      const scanRoots = resolveWorktreesDirScanRoots(this.options.rootDir, settings);
+      const task = tasks.find((entry) => {
+        let canonicalRecordedWorktree = entry.worktree ? resolve(entry.worktree) : null;
+        if (canonicalRecordedWorktree) {
+          try { canonicalRecordedWorktree = realpathSync(canonicalRecordedWorktree); } catch {}
+        }
+        return canonicalRecordedWorktree === canonicalCandidate
+          || scanRoots.some((root) => join(resolve(root), entry.id.toLowerCase()) === canonicalCandidate);
+      });
+      return task ? Boolean(await this.preReleaseWorktreeLiveness(task, canonicalCandidate, settings)) : false;
+    } catch (error) {
+      log.warn(`[self-healing] refusing idle worktree reclaim because task liveness is unreadable: ${String(error)}`);
+      return true;
+    }
+  }
+
+  private preReleaseWorktreeCandidates(task: Task, settings: Settings): string[] {
+    if (task.worktree) return [task.worktree];
+    const roots = [
+      ...resolveWorktreesDirScanRoots(this.options.rootDir, settings),
+      resolveWorktreesDir(this.options.rootDir, settings),
+      ...(settings.worktreesDir ? [] : [resolveLegacyWorktreesDirLayout(this.options.rootDir)]),
+    ];
+    return [...new Set(roots.map((root) => join(root, task.id.toLowerCase())))];
+  }
+
+  private async preReleaseWorktreeLivenessForCandidates(task: Task, candidatePaths: readonly string[], settings: Settings): Promise<"active-session" | "workflow-lease" | "path-reservation" | null> {
+    for (const candidatePath of candidatePaths) {
+      const liveness = await this.preReleaseWorktreeLiveness(task, candidatePath, settings);
+      if (liveness) return liveness;
+    }
+    return null;
+  }
+
+  private async preReleaseWorktreeLiveness(task: Task, candidatePath: string, settings: Settings): Promise<"active-session" | "workflow-lease" | "path-reservation" | null> {
+    if (activeSessionRegistry.pathsForTask(task.id).some((path) => activeSessionRegistry.isPathActive(path))) return "active-session";
+
+    try {
+      const items = await this.store.listWorkflowWorkItemsForTask(task.id);
+      const now = Date.now();
+      if (items.some((item) => item.state === "running"
+        && item.leaseOwner === `executor:${task.id}`
+        && (!item.leaseExpiresAt || Date.parse(item.leaseExpiresAt) > now))) {
+        return "workflow-lease";
+      }
+    } catch (error) {
+      log.warn(`[self-healing] refusing pre-release worktree reclaim for ${task.id}: workflow-item liveness is unreadable: ${String(error)}`);
+      return "workflow-lease";
+    }
+
+    try {
+      const canonicalCandidate = canonicalizePath(candidatePath);
+      const reservationRoots = [
+        ...resolveWorktreesDirScanRoots(this.options.rootDir, settings),
+        resolveWorktreesDir(this.options.rootDir, settings),
+        ...(settings.worktreesDir ? [] : [resolveLegacyWorktreesDirLayout(this.options.rootDir)]),
+      ];
+      for (const reservationRoot of reservationRoots) {
+        const candidateRelativePath = relative(canonicalizePath(reservationRoot), canonicalCandidate);
+        if (candidateRelativePath === "" || candidateRelativePath.startsWith(`..${sep}`)
+          || candidateRelativePath === ".." || isAbsolute(candidateRelativePath)) continue;
+
+        /*
+        FNXC:PreReleaseWorktreeLiveness 2026-09-24-07:13:
+        Reservations key absent paths with resolve(), while the scanner canonicalizes existing paths
+        through symlinks such as /var → /private/var. Preserve each root spelling for the lookup.
+        */
+        const reservationCandidate = join(resolve(reservationRoot), candidateRelativePath);
+        const reservationDirectory = await resolveWorktreePathReservationDirectory({
+          canonicalPath: reservationCandidate,
+          worktreesDir: reservationRoot,
+        });
+        type ReservationEvidence = {
+          state?: unknown;
+          canonicalPath?: unknown;
+          hostname?: unknown;
+          pid?: unknown;
+        };
+        let reservation: ReservationEvidence | null = null;
+        try {
+          reservation = JSON.parse(await readFile(join(reservationDirectory, "state.json"), "utf8")) as ReservationEvidence;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw error;
+        }
+        if (!reservation || typeof reservation !== "object"
+          || (reservation.state !== "held" && reservation.state !== "quarantined")) {
+          throw new Error(`invalid worktree reservation record at ${reservationDirectory}`);
+        }
+        if (reservation.state === "held" && (typeof reservation.canonicalPath !== "string"
+          || typeof reservation.hostname !== "string" || !Number.isInteger(reservation.pid))) {
+          throw new Error(`invalid held worktree reservation record at ${reservationDirectory}`);
+        }
+        if (reservation.state === "held" && reservation.canonicalPath === resolve(reservationCandidate)
+          && reservation.hostname === hostname() && Number.isInteger(reservation.pid) && (reservation.pid as number) > 0) {
+          try {
+            process.kill(reservation.pid as number, 0);
+            return "path-reservation";
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "EPERM") return "path-reservation";
+          }
+        }
+      }
+    } catch (error) {
+      log.warn(`[self-healing] refusing pre-release worktree reclaim for ${task.id}: reservation liveness is unreadable: ${String(error)}`);
+      return "path-reservation";
+    }
+    return null;
+  }
+
   private async inspectOrphanedBranch(branch: string): Promise<{ tipSha: string; uniqueCommitCount: number } | null> {
     try {
       const tipSha = String(execSync(`git rev-parse --verify ${shellQuote(branch)}`, {
@@ -5297,7 +5424,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }) || "");
       const branches = branchesRaw
         .split("\n")
-        .map((line) => line.replace(/^\*\s*/, "").trim())
+        .map((line) => line.replace(/^[*+]\s*/, "").trim())
         .filter(Boolean);
       if (branches.length === 0) return 0;
 
@@ -5317,7 +5444,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         }
         if (activeTaskIds.has(task.id.toUpperCase())) continue;
 
-        const emitDeferredReclaimAudit = async (reason: "active-session" | "recent-execution-started" | "worktree-has-uncommitted-changes", hasActiveSession: boolean, hasUncommittedChanges: boolean): Promise<void> => {
+        const emitDeferredReclaimAudit = async (reason: "active-session" | "workflow-lease" | "path-reservation" | "recent-execution-started" | "worktree-has-uncommitted-changes", hasActiveSession: boolean, hasUncommittedChanges: boolean): Promise<void> => {
           log.debug(`[self-healing] deferring stale-active-branch reclaim for ${task.id}: reason=${reason}`);
           try {
             const auditor = createRunAuditor(this.store, {
@@ -5343,6 +5470,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             log.warn(`Failed to write branch:stale-active-reclaim-deferred run-audit event for ${task.id}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
           }
         };
+
+        const candidatePaths = this.preReleaseWorktreeCandidates(task, settings);
+        const preReleaseLiveness = await this.preReleaseWorktreeLivenessForCandidates(task, candidatePaths, settings);
+        if (preReleaseLiveness) {
+          await emitDeferredReclaimAudit(preReleaseLiveness, preReleaseLiveness === "active-session", false);
+          continue;
+        }
 
         const hasActiveSession = Boolean(task.worktree && activeSessionRegistry.isPathActive(task.worktree));
         if (hasActiveSession) {
@@ -5394,6 +5528,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           log.log(`[self-healing] kept operator-supplied branch ${branch} for ${task.id}`);
           continue;
         }
+
+        const livenessBeforeDeletion = await this.preReleaseWorktreeLivenessForCandidates(task, candidatePaths, settings);
+        if (livenessBeforeDeletion) {
+          await emitDeferredReclaimAudit(livenessBeforeDeletion, livenessBeforeDeletion === "active-session", false);
+          continue;
+        }
+
         await execAsync(`git branch -D ${JSON.stringify(branch)}`, {
           cwd: this.options.rootDir,
           timeout: 120_000,
@@ -16855,7 +16996,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return 0;
       }
 
-      const orphaned = await scanIdleWorktrees(this.options.rootDir, this.store, settings);
+      const orphaned = await scanIdleWorktrees(this.options.rootDir, this.store, settings, {
+        isPathLive: (path) => this.isCandidateWorktreeLive(path, settings),
+      });
       if (orphaned.length === 0) {
         if (!settings.workspaceMode) this.retireEmptyLegacyWorktreesRoot(settings);
         return 0;
@@ -17307,7 +17450,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       // Find idle worktrees that can be safely removed
-      const idle = await scanIdleWorktrees(this.options.rootDir, this.store, settings);
+      const idle = await scanIdleWorktrees(this.options.rootDir, this.store, settings, {
+        isPathLive: (path) => this.isCandidateWorktreeLive(path, settings),
+      });
       if (idle.length === 0) {
         this.retireEmptyLegacyWorktreesRoot(settings);
         return;
