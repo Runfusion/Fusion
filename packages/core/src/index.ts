@@ -3029,6 +3029,7 @@ export type {
 // can build raw queries against the AsyncDataLayer without depending on
 // drizzle-orm directly.
 export { sql as drizzleSql, eq as drizzleEq } from "drizzle-orm";
+export { ExternalSessionFeedback, ExternalFeedbackConflict, feedbackSubmitSchema, feedbackClaimSchema, feedbackAckSchema } from "./external-sessions/feedback.js";
 
 // FNXC:PostgresSchema 2026-07-04-00:00:
 // Re-export the PostgreSQL Drizzle schema namespace so plugin stores (which
@@ -3189,3 +3190,16 @@ export { resolveJiraConfig, resolveJiraEnabled, DEFAULT_JIRA_TOKEN_SECRET_KEY, D
 export type { JiraConfigSettingsSource, ResolvedJiraConfig, ResolveJiraConfigInput, JiraTokenSecretScope } from "./jira/jira-config.js";
 export * from "./cloud-link/index.js";
 export { TASK_LOG_READ_ONLY_SUFFIX, buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage, isTaskLogWriteRefusal } from "./task-store/task-log-write-refusal.js";
+/*
+FNXC:RemoteAgents 2026-09-19-00:00: standalone external-session (remote agent) storage/read
+surfaces from FN-332's predecessor PR lineage. `tasks/overlap-wait-release.js` and the
+`postgres`/`task-store` `dispatch-wake.js` modules this branch used to re-export here belong to
+that OLD lineage's own overlap-wait/dispatch-wake implementation, which origin/main replaced with
+its own (packages/core/src/task-store/overlap-wait-ops.ts + engine-owned dispatch wiring) when this
+PR was rebased onto the reduced fork — those modules no longer exist on this branch, so their
+exports are intentionally dropped rather than reintroduced.
+*/
+export * from "./external-sessions/contract.js";
+export { ExternalSessionStore } from "./external-sessions/store.js";
+export * from "./external-sessions/read-contract.js";
+export { ExternalSessionReader } from "./external-sessions/reader.js";

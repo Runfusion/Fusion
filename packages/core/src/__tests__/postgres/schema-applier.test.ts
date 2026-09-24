@@ -25,12 +25,14 @@ import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
+import { TASK_QUEUE_ORDER_VERSION, TASK_HUMAN_MERGE_APPROVAL_VERSION } from "../../postgres/schema-applier.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   applySchemaBaseline,
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
+  EXTERNAL_SESSIONS_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   assertBinaryNotOlderThanDatabase,
   cePluginSchemaInit,
@@ -173,7 +175,7 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0085");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0087");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -702,7 +704,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 113 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all project, central and archive tables", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -727,7 +729,8 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Plugin tables are added separately
     by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(117);
+    // FNXC:ExternalSessions 2026-09-19-00:00: Migrations 0086 and 0087 add four project-isolated external-session tables after the current 117-table baseline.
+    expect(bySchema.project).toBe(121);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1923,6 +1926,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      "0087",
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2024,6 +2029,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      "0087",
     ]);
   });
 
@@ -2258,6 +2265,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      "0087",
     ]);
   });
 
@@ -2373,6 +2382,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      "0087",
     ]);
   });
 
@@ -2488,6 +2499,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      "0087",
     ]);
   });
 });

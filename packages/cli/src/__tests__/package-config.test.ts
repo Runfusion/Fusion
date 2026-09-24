@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtinModules } from "node:module";
@@ -143,6 +143,7 @@ describe("CLI package.json publishing config", () => {
     expect(pkg.files).toContain("dist/**/*.js.map");
     expect(pkg.files).toContain("dist/client/**");
     expect(pkg.files).toContain("dist/desktop/**");
+    expect(pkg.files).toContain("dist/remote-agents/**");
     expect(pkg.files).toContain("README.md");
   });
 
@@ -175,6 +176,38 @@ describe("CLI package.json publishing config", () => {
     expect(tsupRaw).toContain("ensureDesktopRuntimeAssetsBuilt");
     expect(tsupRaw).toContain("Copied desktop runtime assets to dist/desktop/");
     expect(tsupRaw).not.toContain("join(desktopRuntimeSrc, \"package.json\")");
+  });
+
+  it("stages remote-agent host tools independently of PostgreSQL migrations", () => {
+    const tsupRaw = readFileSync(join(workspaceRoot, "packages", "cli", "tsup.config.ts"), "utf-8");
+    const migrationWarning = tsupRaw.indexOf("WARNING: PostgreSQL migrations source not found");
+    const remoteAgentGuard = tsupRaw.indexOf("if (existsSync(remoteAgentAssetsSrc))");
+
+    expect(migrationWarning).toBeGreaterThan(-1);
+    expect(remoteAgentGuard).toBeGreaterThan(migrationWarning);
+    expect(tsupRaw).toContain("Copied remote-agent host tools to dist/remote-agents/");
+    expect(tsupRaw).toContain("WARNING: remote-agent assets source not found");
+  });
+
+  /*
+  A hand-written asset list went stale when turn_parser.py was added: the packaged collector died at
+  startup with ModuleNotFoundError while every test passed, because tests import from the source tree
+  where the file exists. The staging rule is now derived from the directory, and this asserts the
+  invariant that rule must keep: every module a staged tool imports is itself staged.
+  */
+  it("stages every remote-agent module its host tools import", () => {
+    const assetsDir = join(workspaceRoot, "scripts", "remote-agents");
+    const modules = readdirSync(assetsDir).filter(name => name.endsWith(".py")).map(name => name.replace(/\.py$/, ""));
+    const staged = new Set(modules.filter(name => !name.startsWith("test_")));
+
+    expect(staged.size).toBeGreaterThan(0);
+    for (const module of staged) {
+      const body = readFileSync(join(assetsDir, `${module}.py`), "utf-8");
+      for (const [, imported] of body.matchAll(/^(?:from|import)\s+([a-z_][a-z0-9_]*)/gm)) {
+        if (!modules.includes(imported)) continue;
+        expect(`${module}.py imports ${imported}`).toBe(staged.has(imported) ? `${module}.py imports ${imported}` : "unstaged import");
+      }
+    }
   });
 
   it("excludes runtime directory from npm package (GitHub Releases only)", () => {
