@@ -1,4 +1,5 @@
 import {afterAll, afterEach, beforeAll, beforeEach, expect, it, vi} from "vitest";
+import {__clearFusionSessionIdentityRegistryForTests, registerFusionSessionIdentity} from "@fusion/core";
 import {
   createMockApi,
   createPgExtensionHarness,
@@ -83,6 +84,37 @@ pgDescribe("fn_task_archive archive log attribution", () => {
       expect(opts?.auditContext?.taskId).toBe("FN-007");
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it("falls back to the caller's registered session task when the call carries no ctx.taskId", async () => {
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-23-23:59:
+    Devin PR-3561 bug #2: an agent resolved from its cwd-registered session (no explicit agentId or
+    taskId on the call) still runs ON a task — the registry carries it. Reading raw `ctx.taskId`
+    dropped that identity at the store boundary.
+    */
+    __clearFusionSessionIdentityRegistryForTests();
+    const dispose = registerFusionSessionIdentity(h.rootDir(), {agentId: "worker-7", taskId: "FN-007"});
+    try {
+      const store = h.store();
+      const task = await store.createTask({column: "done", title: "registered task", description: "registered task"});
+      const tool = archiveTool();
+      const spy = vi.spyOn(store, "archiveTask");
+      try {
+        const result = await tool.execute("attr-registered-task", {id: task.id}, undefined, undefined, {
+          cwd: h.rootDir(),
+        });
+        expect(result.isError).not.toBe(true);
+        const opts = spy.mock.calls[0]?.[1] as {auditContext?: {taskId?: string}} | undefined;
+        // Pre-fix: undefined — only raw `ctx.taskId` was forwarded.
+        expect(opts?.auditContext?.taskId).toBe("FN-007");
+      } finally {
+        spy.mockRestore();
+      }
+    } finally {
+      dispose();
+      __clearFusionSessionIdentityRegistryForTests();
     }
   });
 });

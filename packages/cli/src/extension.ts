@@ -3005,7 +3005,14 @@ export default function kbExtension(pi: ExtensionAPI) {
       the archived card — into the caller's-task slot, the same class defect Devin flagged for the
       engine factories. Forward the caller's own `ctx.taskId` (absent for the human operator) instead.
       */
-      const archiveCallerTaskId = (ctx as { taskId?: string }).taskId;
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-23-23:59:
+      The caller's task lives on the resolved principal identity: `ctx.taskId` when the call carries
+      one (explicit agent path), or the task of the cwd-REGISTERED session the principal came from.
+      Reading raw `ctx.taskId` discarded the registered session's task for agents whose calls omit
+      it (Devin PR-3561 bug #2). Operators and ambiguous principals have no caller task.
+      */
+      const archiveCallerTaskId = archivePrincipal.kind === "agent" ? archivePrincipal.identity.taskId : undefined;
       const store = await getStore(ctx.cwd);
       try {
         const task = await store.archiveTask(params.id, {
