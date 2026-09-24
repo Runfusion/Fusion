@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { createChatFusionToolset, type ChatFusionToolsetOptions } from "../chat.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 /*
 FNXC:ArchiveLogAttribution 2026-09-23-23:01:
@@ -20,7 +23,7 @@ it("attributes a project chat archive to the bound agent, with no caller task", 
 
   const tools = await createChatFusionToolset({
     taskStore,
-    rootDir: "/tmp/fusion-chat-archive-attribution",
+    rootDir: fs.mkdtempSync(path.join(os.tmpdir(), "fusion-chat-archive-attribution-")),
     agentId: "agent-77",
     actionGateContext: { agentId: "agent-77", agentName: "Agent 77", isEphemeral: false } as unknown as NonNullable<ChatFusionToolsetOptions["actionGateContext"]>,
   });
