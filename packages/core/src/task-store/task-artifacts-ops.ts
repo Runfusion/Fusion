@@ -346,6 +346,8 @@ export async function clearStaleExecutionStartBranchReferencesImpl(store: TaskSt
     return clearedIds;
 }
 
+import {type TaskDeleteAuditContext} from "../task-delete-attribution.js";
+
 export type ArchiveAllDoneSkipReason =
   | "open-lineage-children"
   | "blocked-by-unarchived-batch-member"
@@ -373,7 +375,7 @@ export interface ArchiveAllDoneResult {
  * retains the pure fake-store seam. removeLineageReferences bypasses the lineage gate, so edges are
  * ordering hints only and cyclic residue drains instead of becoming a lineage skip.
  */
-export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean }): Promise<ArchiveAllDoneResult> {
+export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean; auditContext?: TaskDeleteAuditContext }): Promise<ArchiveAllDoneResult> {
     /*
     FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
     "Archive all done" archived NOTHING on a renamed board.
@@ -438,6 +440,7 @@ export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLin
       const settled = await Promise.allSettled(ids.map((id) => store.archiveTask(id, {
         cleanup: true,
         removeLineageReferences: options?.removeLineageReferences,
+        auditContext: options?.auditContext,
       })));
       for (const [index, result] of settled.entries()) {
         const id = ids[index]!;

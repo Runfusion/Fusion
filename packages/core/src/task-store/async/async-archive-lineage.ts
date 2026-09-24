@@ -240,9 +240,9 @@ export async function archiveParentTaskWithLineageGate(
   layer: AsyncDataLayer,
   taskId: string,
   entry: ArchivedTaskEntry,
-  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void>; beforeLineageGate?: () => void | Promise<void>; archivedColumns?: ReadonlySet<string>; revalidateAgainst?: readonly string[]; promptByChildId?: ReadonlyMap<string, string>; evidenceTargetVersionForTest?: (childId: string, computed: number, attempt: number) => number; livenessWipLanes?: ReadonlySet<string> } = {},
+  options: { removeLineageReferences?: boolean; now?: string; beforeArchive?: (tx: DbTransaction) => Promise<void>; beforeLineageGate?: () => void | Promise<void>; archivedColumns?: ReadonlySet<string>; revalidateAgainst?: readonly string[]; promptByChildId?: ReadonlyMap<string, string>; evidenceTargetVersionForTest?: (childId: string, computed: number, attempt: number) => number; livenessWipLanes?: ReadonlySet<string>; entryForOriginColumn?: (originColumn: string) => ArchivedTaskEntry } = {},
 
-): Promise<{ archived: true; lineageOutcome?: LineageRemovalOutcome } | { archived: false; liveChildIds: string[] } | { archived: false; liveVerdict: ArchiveLivenessVerdict }> {
+): Promise<{ archived: true; lineageOutcome?: LineageRemovalOutcome; entry: ArchivedTaskEntry; originColumn: string | undefined } | { archived: false; liveChildIds: string[] } | { archived: false; liveVerdict: ArchiveLivenessVerdict } | { archived: false; missingRow: true }> {
   const now = options.now ?? new Date().toISOString();
 
   return layer.transactionImmediate(async (tx) => {
@@ -256,12 +256,48 @@ export async function archiveParentTaskWithLineageGate(
     Archive and recommendation-link writes share this project/task advisory fence even when no
     liveness predicate is needed. The snapshot is then built or updated from one serialized state.
     */
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-19-07:22:
+    THE ROW THAT DECIDES, AND THE ROW THAT GETS RECORDED, ARE THE SAME READ. The archived snapshot
+    used to be built by the caller from a `getTask` taken OUTSIDE this transaction, while the guard
+    only re-read the row when `livenessWipLanes` was set — so a card that moved in between was filed
+    under a lane it had already left: the entry's `preArchiveColumn` (its restore destination) and
+    its `Task archived from <column> by ...` line both named the stale column, permanently, in cold
+    storage. `entryForOriginColumn` is the caller's re-anchor for that read.
+
+    The lock is taken UNCONDITIONALLY, not only when the guard is configured. Attribution must not
+    depend on whether live-execution refusal is switched on, and the read below is only
+    authoritative because lane writers take this same key first: without it, READ COMMITTED lets a
+    concurrent move commit between this read and the soft-delete that follows. Deleted rows stay
+    visible so the archived-recommendation snapshot above keeps resolving its row.
+    */
     await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
     const live = await readTaskRowInTransaction(tx, taskId, { includeDeleted: true }, layer.projectId);
     if (options.livenessWipLanes) {
       const verdict = decideArchiveLiveness({column: String(live?.column ?? ""), status: live?.status as string | null | undefined, wipLanes: options.livenessWipLanes});
       if (verdict.live) return {archived: false as const, liveVerdict: verdict};
     }
+    const originColumn = typeof live?.column === "string" ? live.column : undefined;
+    /*
+    FNXC:ArchiveLogAttribution 2026-09-19-07:22, 2026-09-23-23:01 (a re-anchor needs a row to anchor to):
+    A CALLER THAT ASKED FOR THE AUTHORITATIVE COLUMN MUST NOT BE HANDED THE STALE ONE BACK. The
+    read above is forensic (`includeDeleted: true`), so it returns the row even when it was
+    soft-deleted. Un-anchorable rows come in two shapes: physically absent (hard delete, or a row
+    outside this project), and soft-deleted — a deleted row still carries its column (the
+    soft-delete's own physical `archived` state marker), so re-anchoring onto it would record that
+    marker as the origin column and re-claim a row the delete already owns. For a re-anchor caller
+    BOTH shapes are missing: falling back to `entry` would write the very pre-transaction snapshot
+    this re-anchor exists to stop writing, for a task that is gone, then report success on a
+    soft-delete that claimed nothing new. That is a CONFLICT, not a degraded success, so it is
+    reported as one; callers without a re-anchor keep their established fallback to `entry`, deleted
+    rows included.
+    */
+    if (options.entryForOriginColumn && (originColumn === undefined || live?.deletedAt != null)) {
+      return {archived: false as const, missingRow: true as const};
+    }
+    const archivedEntry = originColumn !== undefined && options.entryForOriginColumn
+      ? options.entryForOriginColumn(originColumn)
+      : entry;
     // Test-only barrier is before this operation's single in-transaction lineage read.
     await options.beforeLineageGate?.();
     // 1. Lineage gate — check for live children inside the transaction.
@@ -289,8 +325,8 @@ export async function archiveParentTaskWithLineageGate(
     // A link accepted immediately before this lock is durable in the live row; carry it into the
     // snapshot rather than overwriting it with the caller's pre-lock copy.
     const lockedEntry = Array.isArray(live?.recommendations)
-      ? { ...entry, recommendations: live.recommendations as ArchivedTaskEntry["recommendations"] }
-      : entry;
+      ? { ...archivedEntry, recommendations: live.recommendations as ArchivedTaskEntry["recommendations"] }
+      : archivedEntry;
     await upsertArchivedTaskEntry(tx, lockedEntry, layer.projectId);
 
     // 4. Soft-delete the project row. Documents/artifacts are retained because
@@ -306,9 +342,16 @@ export async function archiveParentTaskWithLineageGate(
 
     // Preserve the public legacy success shape for direct callers; only the serialized boundary
     // supplies revalidation and needs the actual-clear outcome for post-commit reconciliation.
+    // FNXC:ArchiveLogAttribution 2026-09-19-07:22, 2026-09-23-23:01: `entry` is the snapshot this
+    // commit actually stored — lockedEntry, the caller's re-anchored copy carrying the live-row
+    // recommendations read under the lock — so post-commit work cannot fall back to the
+    // pre-transaction read it was fixed to stop using, nor to a copy with pre-lock
+    // recommendations (the archive response must agree with what cold storage holds).
+    // `originColumn` is the lane that same locked read saw: the authoritative origin every
+    // post-commit carrier (the `task:moved` event) must use instead of the stale pre-transaction one.
     return options.revalidateAgainst === undefined
-      ? { archived: true as const }
-      : { archived: true as const, lineageOutcome };
+      ? { archived: true as const, entry: lockedEntry, originColumn }
+      : { archived: true as const, lineageOutcome, entry: lockedEntry, originColumn };
   });
 }
 

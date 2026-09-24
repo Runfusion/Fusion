@@ -3417,7 +3417,7 @@ function toolErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
+export function createTaskArchiveTool(store: TaskStore, caller?: { agentId?: string; taskId?: string }): ToolDefinition {
   return {
     name: "fn_task_archive",
     label: "Archive Task",
@@ -3430,6 +3430,20 @@ export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
       try {
         const task = await store.archiveTask(params.id, {
           removeLineageReferences: params.removeLineageReferences === true,
+          /*
+          FNXC:ArchiveLogAttribution 2026-09-23-23:01:
+          Same caller convention as fn_task_delete, but carrying the CALLER's identity: `agentId` is
+          the bound agent when a host passes one (project chat passes its action-gate agent id),
+          falling back to the legacy `chat` label. `taskId` is the CALLER's task — the self-delete
+          guard's input — never the mutation target, so it is omitted unless the caller genuinely
+          runs on a task of its own.
+          */
+          auditContext: {
+            agentId: caller?.agentId ?? "chat",
+            runId: `chat-archive-${params.id}-${Date.now()}`,
+            ...(caller?.taskId ? { taskId: caller.taskId } : {}),
+            callerKind: "agent-tool",
+          },
         });
         return {
           content: [{ type: "text" as const, text: `Archived ${task.id} → ${task.column}` }],
@@ -3464,7 +3478,7 @@ export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
   };
 }
 
-export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
+export function createTaskDeleteTool(store: TaskStore, caller?: { agentId?: string; taskId?: string }): ToolDefinition {
   return {
     name: "fn_task_delete",
     label: "Delete Task",
@@ -3478,7 +3492,20 @@ export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
         const task = await store.deleteTask(params.id, {
           allowResurrection: params.allowResurrection === true,
           removeLineageReferences: params.removeLineageReferences === true,
-          auditContext: { agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id },
+          /*
+          FNXC:ArchiveLogAttribution 2026-09-23-23:59:
+          Same caller convention as fn_task_archive: `agentId` is the bound agent when a host passes
+          one, falling back to the legacy `chat` label. `taskId` is the CALLER's task — the
+          self-delete guard's input — never the mutation target, so it is omitted unless the caller
+          genuinely runs on a task of its own. The old shape stamped `params.id` (the target) here,
+          which made every fn_task_delete trip TaskSelfDeleteError in both store backends.
+          */
+          auditContext: {
+            agentId: caller?.agentId ?? "chat",
+            runId: `chat-delete-${params.id}-${Date.now()}`,
+            ...(caller?.taskId ? { taskId: caller.taskId } : {}),
+            callerKind: "agent-tool",
+          },
         });
         return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
       } catch (err: unknown) {
