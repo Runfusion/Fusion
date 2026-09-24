@@ -912,9 +912,11 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       /*
-      FNXC:AntigravityProvider 2026-09-20-18:32:
-      Antigravity owns its vendor login. Fusion reports it as ready only when
-      the operator has enabled a supported local agy binary.
+      FNXC:AntigravityProvider 2026-09-24-05:59:
+      Passive authentication polling must not resolve or start the optional agy
+      binary while Antigravity is disabled. Explicit readiness and enable
+      requests retain their on-demand checks; this synthetic row stays present
+      and unauthenticated until the operator enables the provider.
       */
       if (store) {
         let antigravityEnabled = false;
@@ -924,7 +926,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         } catch {
           // best effort
         }
-        const antigravityBinary = await probeAntigravityCliWithStoredBinary();
+        const antigravityBinary = antigravityEnabled
+          ? await probeAntigravityCliWithStoredBinary()
+          : { available: false };
         providers.push({
           id: "antigravity-cli",
           name: "Google Antigravity — via agy CLI",

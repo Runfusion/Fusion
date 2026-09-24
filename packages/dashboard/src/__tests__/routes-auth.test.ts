@@ -2563,6 +2563,68 @@ describe("Droid CLI auth routes", () => {
     );
   });
 
+  it("GET /auth/status leaves disabled Antigravity unauthenticated without probing repeatedly", async () => {
+    const probeSpy = vi.spyOn(runtimeProviderProbesModule, "probeAntigravityCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "agy 1.2.7",
+      probeDurationMs: 8,
+    });
+
+    for (const settings of [{}, { useAntigravityCli: false }]) {
+      store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+        ...createMockGlobalSettingsStore(),
+        getSettings: vi.fn().mockResolvedValue(settings),
+      });
+
+      const res = await GET(buildApp(), "/api/auth/status");
+      expect(res.status).toBe(200);
+      const antigravityProviders = res.body.providers.filter((provider: { id: string }) => provider.id === "antigravity-cli");
+      expect(antigravityProviders).toEqual([
+        expect.objectContaining({ id: "antigravity-cli", authenticated: false, type: "cli" }),
+      ]);
+    }
+
+    expect(probeSpy).not.toHaveBeenCalled();
+  });
+
+  it("GET /auth/status probes enabled Antigravity with its trimmed stored binary path", async () => {
+    const probeSpy = vi.spyOn(runtimeProviderProbesModule, "probeAntigravityCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "agy 1.2.7",
+      binaryPath: "/opt/agy",
+      configuredBinaryPath: "/opt/agy",
+      usingConfiguredBinaryPath: true,
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useAntigravityCli: true, antigravityCliBinaryPath: " /opt/agy " }),
+    });
+
+    const availableRes = await GET(buildApp(), "/api/auth/status");
+
+    expect(availableRes.status).toBe(200);
+    expect(probeSpy).toHaveBeenCalledWith({ binaryPath: "/opt/agy" });
+    expect(availableRes.body.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "antigravity-cli", authenticated: true }),
+    ]));
+
+    probeSpy.mockResolvedValueOnce({
+      available: false,
+      authenticated: false,
+      reason: "agy was not found on PATH.",
+      probeDurationMs: 8,
+    });
+    const unavailableRes = await GET(buildApp(), "/api/auth/status");
+
+    expect(unavailableRes.status).toBe(200);
+    expect(unavailableRes.body.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "antigravity-cli", authenticated: false }),
+    ]));
+  });
+
   it("GET /providers/cursor-cli/status returns ready false when binary unavailable", async () => {
     vi.spyOn(runtimeProviderProbesModule, "probeCursorCliProvider").mockResolvedValue({
       available: false,
