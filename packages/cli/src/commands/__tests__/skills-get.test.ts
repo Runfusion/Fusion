@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,5 +63,16 @@ describe("fn skills get", () => {
 
     await expect(execFile(process.execPath, [builtCli, "skills", "get", "definitely-not-a-skill"], { cwd: cliRoot }))
       .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("computer-use") });
+  });
+
+  it("finishes the built guide before cwd bootstrap configuration", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "fn-skills-get-bootstrap-"));
+    writeFileSync(join(cwd, ".env"), "FUSION_QUIET=1\n");
+    try {
+      const guide = await execFile(process.execPath, [builtCli, "skills", "get", "computer-use"], { cwd });
+      expect(guide.stdout).toContain(COMPUTER_USE_GUIDE_HEADINGS[0]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
