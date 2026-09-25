@@ -671,7 +671,7 @@ async function main() {
    * can delay the built child past the subprocess completion guard under load.
    */
   if (args[0] === "skills" && args[1] === "get") {
-    const { runSkillsGet } = await import("./commands/skills.js");
+    const { runSkillsGet } = await import("./commands/skills-get.js");
     process.exitCode = await runSkillsGet(args.slice(2));
     return;
   }

@@ -1,16 +1,35 @@
-import { execFile as execFileCallback } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { runSkillsGet } from "../skills.js";
+import { runSkillsGet } from "../skills-get.js";
 import { COMPUTER_USE_GUIDE_HEADINGS } from "../computer/guide.js";
 
-const execFile = promisify(execFileCallback);
 const cliRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const builtCli = join(cliRoot, "bin.mjs");
+
+type BuiltCliResult = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+};
+
+function runBuiltCli(args: string[], cwd = cliRoot): Promise<BuiltCliResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [builtCli, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
 
 describe("fn skills get", () => {
   it("prints the in-process computer-use guide", async () => {
@@ -50,28 +69,50 @@ describe("fn skills get", () => {
   });
 
   it("keeps the get branch free of markdown, network, and child-process sources", async () => {
-    const source = await import("node:fs/promises").then(({ readFile }) => readFile(join(cliRoot, "src", "commands", "skills.ts"), "utf8"));
+    const source = await import("node:fs/promises").then(({ readFile }) => readFile(join(cliRoot, "src", "commands", "skills-get.ts"), "utf8"));
     const branch = source.slice(source.indexOf("export async function runSkillsGet"));
     expect(branch).not.toMatch(/\b(?:readFile|readFileSync|fetch|spawn|exec)\s*\(/);
   });
 
   it("prints a guide and version from the same built CLI entry point", async () => {
-    const guide = await execFile(process.execPath, [builtCli, "skills", "get", "computer-use"], { cwd: cliRoot });
-    const version = await execFile(process.execPath, [builtCli, "--version"], { cwd: cliRoot });
+    const guide = await runBuiltCli(["skills", "get", "computer-use"]);
+    const version = await runBuiltCli(["--version"]);
+    expect(guide).toMatchObject({ code: 0, signal: null });
+    expect(version).toMatchObject({ code: 0, signal: null });
     for (const heading of COMPUTER_USE_GUIDE_HEADINGS) expect(guide.stdout).toContain(heading);
     expect(guide.stdout).toContain(`# Fusion computer-use guide (v${version.stdout.trim()})`);
 
-    await expect(execFile(process.execPath, [builtCli, "skills", "get", "definitely-not-a-skill"], { cwd: cliRoot }))
-      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("computer-use") });
-    await expect(execFile(process.execPath, [builtCli, "skills", "get"], { cwd: cliRoot }))
-      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("computer-use") });
+    const unknown = await runBuiltCli(["skills", "get", "definitely-not-a-skill"]);
+    const missing = await runBuiltCli(["skills", "get"]);
+    expect(unknown).toMatchObject({ code: 1, signal: null, stderr: expect.stringContaining("computer-use") });
+    expect(missing).toMatchObject({ code: 1, signal: null, stderr: expect.stringContaining("computer-use") });
+  });
+
+  it("preserves global flag precedence and validation for built guide requests", async () => {
+    const version = await runBuiltCli(["skills", "get", "computer-use", "--version"]);
+    expect(version).toMatchObject({ code: 0, signal: null });
+    expect(version.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+
+    const help = await runBuiltCli(["skills", "get", "computer-use", "--help"]);
+    expect(help).toMatchObject({ code: 0, signal: null });
+    expect(help.stdout).toContain("fn — AI-orchestrated task board");
+
+    const duplicateProject = await runBuiltCli([
+      "skills", "get", "computer-use", "--project", "one", "-P", "two",
+    ]);
+    expect(duplicateProject).toMatchObject({
+      code: 1,
+      signal: null,
+      stderr: expect.stringContaining("Duplicate --project flag"),
+    });
   });
 
   it("finishes the built guide before cwd bootstrap configuration", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "fn-skills-get-bootstrap-"));
     writeFileSync(join(cwd, ".env"), "FUSION_QUIET=1\n");
     try {
-      const guide = await execFile(process.execPath, [builtCli, "skills", "get", "computer-use"], { cwd });
+      const guide = await runBuiltCli(["skills", "get", "computer-use"], cwd);
+      expect(guide).toMatchObject({ code: 0, signal: null });
       expect(guide.stdout).toContain(COMPUTER_USE_GUIDE_HEADINGS[0]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });

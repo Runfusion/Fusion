@@ -415,6 +415,7 @@ const cliBuildConfig = {
    */
   entry: {
     bin: "src/bin.ts",
+    "skills-get-bin": "src/skills-get-bin.ts",
     extension: "src/extension.ts",
     "child-process-worker": "../engine/src/runtimes/child-process-worker.ts",
   },
