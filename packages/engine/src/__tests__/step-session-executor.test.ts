@@ -1242,7 +1242,59 @@ vi.mock("node:child_process", async () => {
         }
       });
     });
-  return { execSync: execSyncFn, exec: execFn, execFile: vi.fn() };
+
+  /*
+  FNXC:WorktreeCleanup 2026-09-25-00:16:
+  execFile must route through the same execSync mock (reconstructing "<file> <args…>" so command
+  matchers keep working) AND expose promisify.custom. An inert `execFile: vi.fn()` never invokes its
+  callback, so `promisify(execFile)` in worktree-backend's assertCleanForDefensiveRemoval (`git status`
+  during defensive worktree removal) returned a promise that NEVER settled — hanging every parallel
+  worktree cleanup test until the 30s timeout (10 tests × 30s = ~300s file wall-time + 10 failures).
+  */
+  const execFileFn: any = vi.fn((file: string, argsOrOpts?: any, optsOrCb?: any, cb?: any) => {
+    let args: string[] = [];
+    let options: any = {};
+    let callback: any;
+    if (typeof argsOrOpts === "function") {
+      callback = argsOrOpts;
+    } else if (Array.isArray(argsOrOpts)) {
+      args = argsOrOpts;
+      if (typeof optsOrCb === "function") {
+        callback = optsOrCb;
+      } else {
+        options = optsOrCb ?? {};
+        callback = cb;
+      }
+    } else {
+      options = argsOrOpts ?? {};
+      callback = typeof optsOrCb === "function" ? optsOrCb : cb;
+    }
+    const cmd = [file, ...args].join(" ");
+    try {
+      const out = execSyncFn(cmd, { ...options, stdio: ["pipe", "pipe", "pipe"] });
+      const stdout = out === undefined ? "" : out.toString();
+      if (typeof callback === "function") callback(null, stdout, "");
+    } catch (err) {
+      if (typeof callback === "function") {
+        const error = err as { stdout?: string; stderr?: string };
+        callback(err, error?.stdout?.toString?.() ?? "", error?.stderr?.toString?.() ?? "");
+      }
+    }
+  });
+  execFileFn[promisify.custom] = (file: string, args?: any, opts?: any) =>
+    new Promise((resolve, reject) => {
+       
+      execFileFn(file, args, opts, (err: any, stdout: string, stderr: string) => {
+        if (err) {
+          (err as Record<string, unknown>).stdout = stdout;
+          (err as Record<string, unknown>).stderr = stderr;
+          reject(err);
+        } else {
+          resolve({ stdout, stderr });
+        }
+      });
+    });
+  return { execSync: execSyncFn, exec: execFn, execFile: execFileFn };
 });
 vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
@@ -2509,10 +2561,8 @@ describe("StepSessionExecutor", () => {
         });
         const settings = makeSettings({ maxParallelSteps: 2 });
 
-        mockedGenerateWorktreeName
-          .mockImplementationOnce(() => "wt-step-0")
-          .mockImplementationOnce(() => "wt-step-1");
-
+        // FNXC:TaskWorktreeNames 2026-09-25-00:16: parallel step worktrees are deterministic
+        // `<taskId>-step-<n>` paths under `.fusion/worktrees`, not generateWorktreeName values.
         let worktreeAddCount = 0;
         mockedExecSync.mockImplementation((cmd: string) => {
           if (cmd.includes("git worktree add")) {
@@ -2531,7 +2581,7 @@ describe("StepSessionExecutor", () => {
         const executionEvents: string[] = [];
 
         mockedCreateFnAgent.mockImplementation(({ cwd }: any) => {
-          if (cwd === "/project/.worktrees/wt-step-0") {
+          if (cwd === "/project/.fusion/worktrees/fn-001-step-0") {
             return Promise.resolve({
               session: makeMockSession(async () => {
                 executionEvents.push("step-0-start");
@@ -2653,11 +2703,6 @@ describe("StepSessionExecutor", () => {
         });
         const settings = makeSettings({ maxParallelSteps: 3 });
 
-        mockedGenerateWorktreeName
-          .mockImplementationOnce(() => "wt-mixed-0")
-          .mockImplementationOnce(() => "wt-mixed-1")
-          .mockImplementationOnce(() => "wt-mixed-2");
-
         let worktreeAddCount = 0;
         mockedExecSync.mockImplementation((cmd: string) => {
           if (cmd.includes("git worktree add")) {
@@ -2698,7 +2743,7 @@ describe("StepSessionExecutor", () => {
             } as any);
           }
 
-          const label = cwd.endsWith("wt-mixed-0") ? "parallel-0" : "parallel-1";
+          const label = cwd.endsWith("fn-001-step-0") ? "parallel-0" : "parallel-1";
           return Promise.resolve({
             session: makeMockSession(async () => {
               events.push(`${label}-start`);
@@ -2808,11 +2853,6 @@ describe("StepSessionExecutor", () => {
         });
         const settings = makeSettings({ maxParallelSteps: 3 });
 
-        mockedGenerateWorktreeName
-          .mockImplementationOnce(() => "wt-clean-0")
-          .mockImplementationOnce(() => "wt-clean-1")
-          .mockImplementationOnce(() => "wt-clean-2");
-
         let worktreeAddCount = 0;
         mockedExecSync.mockImplementation((cmd: string) => {
           if (cmd.includes("git worktree add")) {
@@ -2840,9 +2880,9 @@ describe("StepSessionExecutor", () => {
           .filter((cmd): cmd is string => typeof cmd === "string" && cmd.includes("git worktree remove"));
 
         expect(removeCalls).toHaveLength(2);
-        expect(removeCalls.some((cmd) => cmd.includes("wt-clean-0"))).toBe(true);
-        expect(removeCalls.some((cmd) => cmd.includes("wt-clean-1"))).toBe(true);
-        expect(removeCalls.some((cmd) => cmd.includes("wt-clean-2"))).toBe(false);
+        expect(removeCalls.some((cmd) => cmd.includes("fn-001-step-0"))).toBe(true);
+        expect(removeCalls.some((cmd) => cmd.includes("fn-001-step-1"))).toBe(true);
+        expect(removeCalls.some((cmd) => cmd.includes("fn-001-step-2"))).toBe(false);
         expect(removeCalls.some((cmd) => cmd.includes("/project/.worktrees/main"))).toBe(false);
       });
     });
@@ -2991,7 +3031,7 @@ describe("StepSessionExecutor", () => {
           rootDir: "/project",
           taskId: "FN-001",
           settings,
-          worktreePath: expect.stringContaining("/project/.worktrees/"),
+          worktreePath: expect.stringContaining("/project/.fusion/worktrees/"),
         }),
       );
     });
