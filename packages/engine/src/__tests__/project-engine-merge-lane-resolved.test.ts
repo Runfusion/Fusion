@@ -241,6 +241,13 @@ describe("the other merge-lane surfaces on a renamed board", () => {
       classifyMergeSweepCandidate: vi.fn(async () => ({ admit: true })),
       mergeSweepHoldReasons: new Map<string, string>(),
       internalEnqueueMerge: vi.fn(),
+      /*
+      FNXC:MergeAuthorityHarness 2026-09-25-08:35 (FUSI-020):
+      The merge-gate probe is a collaborator of the sweep, not its subject. Keep
+      it resolved here so the real canMergeTask prototype receives the lane and
+      performs the blocker call that this test is intended to pin.
+      */
+      resolveMergeGateBlocker: vi.fn(async () => undefined),
     };
 
     const admitted = await (ProjectEngine.prototype as unknown as {
@@ -271,6 +278,7 @@ describe("the other merge-lane surfaces on a renamed board", () => {
       hasMergeResolvers: vi.fn(() => false),
       allowInReviewMergeProcessing: vi.fn(async () => true),
       canMergeTask: (ProjectEngine.prototype as unknown as { canMergeTask: (...args: unknown[]) => boolean }).canMergeTask,
+      resolveMergeGateBlocker: vi.fn(async () => undefined),
       schedulePrMergeRetry: vi.fn(),
       clearActiveMergeClaim: vi.fn(),
       clearMergeActive: vi.fn(),

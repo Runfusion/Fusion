@@ -527,7 +527,21 @@ describe("aiMergeTask — agent log persistence", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Bash", "tool", undefined, "merger");
+    /*
+    FNXC:MergerAgentLogProvenance 2026-09-25-09:40 (FUSI-020):
+    `appendAgentLog`'s 4th parameter is `summarizeToolArgs(name, args)`. This
+    agent emits one string `command` arg, so the summary is that command
+    verbatim. The old `undefined` assertion encoded the pre-provenance call
+    shape; assert the real value, not `expect.any(String)`, so a summarizer
+    change cannot silently alter what the agent log records.
+    */
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-050",
+      "Bash",
+      "tool",
+      "git status",
+      "merger",
+    );
   });
 
   it("still fires onAgentText callback alongside logging", async () => {
@@ -1129,8 +1143,12 @@ describe("aiMergeTask — merge details collection", () => {
     );
     expect(mergeDetailsCall).toBeUndefined();
 
-    // Task should still be moved to done
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    // Task should still be moved to done. `moveTask` now carries a third
+    // `{ workflowMoveSource }` provenance argument, so assert the audit marker
+    // rather than the pre-provenance 2-argument call shape.
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   });
 
   it("handles missing shortstat gracefully when show --shortstat fails", async () => {
