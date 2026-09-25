@@ -861,6 +861,29 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   top: calc(100% + 4px);
   right: 12px;
   min-width: 220px;
+  /*
+  FNXC:MobileOverflowMenuScroll 2026-08-24-20:12:
+  RUFU-170: the mobile header overflow menu shared the uncapped pattern fixed on the
+  mobile project switch (.mobile-project-switch-dropdown in ProjectSelector.css):
+  with 8+ menu items the column grew past the viewport bottom and lower entries were
+  unreachable. Cap it with the desktop selector's exact viewport-aware declarations so the
+  menu scrolls internally, and contain overscroll so wheeling to the list end does not
+  scroll the page. The cap lives on the base class (not a media query) so a
+  short-landscape phone in JS mobile mode with a 769-1024px CSS width gets it too.
+
+  FNXC:MobileOverflowMenuScroll 2026-09-04-04:43:
+  Review P1 follow-up: do not fall back to 100vh. Unsupported dvh would keep the larger
+  layout-viewport calculation and leave lower entries below the visible screen. First
+  declaration is the tokenized cap (smaller than typical mobile chrome-visible height).
+  Then 100svh (smallest viewport, chrome expanded) and 100dvh (current visible).
+  */
+  max-height: var(--dropdown-max-height);
+  max-height: min(var(--dropdown-max-height), calc(100svh - var(--dropdown-viewport-gutter)));
+  max-height: min(var(--dropdown-max-height), calc(100dvh - var(--dropdown-viewport-gutter)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-dim) transparent;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -870,6 +893,20 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* RUFU-170: thin scrollbar mirroring .project-selector__dropdown::-webkit-scrollbar. */
+.mobile-overflow-menu::-webkit-scrollbar {
+  width: var(--space-scrollbar);
+}
+
+.mobile-overflow-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mobile-overflow-menu::-webkit-scrollbar-thumb {
+  background-color: var(--text-dim);
+  border-radius: var(--radius-scrollbar);
 }
 
 .mobile-overflow-item {
