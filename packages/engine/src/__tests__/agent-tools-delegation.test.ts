@@ -648,7 +648,10 @@ describe("createDelegateTaskTool", () => {
     );
 
     expect(result).not.toMatchObject({ isError: true });
-    expect(missionStore.claimDefinedFeatureTaskInTransaction).toHaveBeenCalledWith({}, { featureId: "F-001", taskId: "FN-001", missionId: "M-001", sliceId: "SL-001" });
+    expect(missionStore.claimDefinedFeatureTaskInTransaction).toHaveBeenCalledWith({}, {
+      featureId: "F-001", taskId: "FN-001", missionId: "M-001", sliceId: "SL-001",
+      archivedLanes: new Set(["archived"]),
+    });
     expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({ missionId: "M-001", sliceId: "SL-001" }), expect.anything());
   });
 

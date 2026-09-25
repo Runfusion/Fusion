@@ -1461,7 +1461,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    */
   async claimDefinedFeatureTaskInTransaction(
     tx: import("../postgres/data-layer.js").DbTransaction,
-    input: { featureId: string; taskId: string; missionId: string; sliceId: string; requireExistingFeatureLink?: boolean; statusEvent?: { value?: MissionEvent } },
+    input: { featureId: string; taskId: string; missionId: string; sliceId: string; archivedLanes: ReadonlySet<string>; requireExistingFeatureLink?: boolean; statusEvent?: { value?: MissionEvent } },
   ): Promise<MissionFeature> {
     /*
     FNXC:MissionAdmission 2026-07-23-15:30:
@@ -1513,7 +1513,14 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         sql`${schema.project.tasks.deletedAt} is null`,
       ));
     const task = taskRows[0];
-    if (!task || (await this.archivedLanesFor(input.taskId)).has(task.column)) {
+    /*
+    Resolve workflow vocabulary before entering this transaction and pass it in.
+    Borrowing the ordinary task-store connection here deadlocks when every pool
+    slot is already held by a concurrent feature claim waiting for that borrow.
+    Every caller must resolve the task's workflow archive lanes before entering
+    this transaction.
+    */
+    if (!task || input.archivedLanes.has(task.column)) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} is not active in this project`);
     }
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {
@@ -1552,7 +1559,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
 
   async claimDefinedFeatureTask(input: { featureId: string; taskId: string; missionId: string; sliceId: string }): Promise<MissionFeature> {
     const statusEvent: { value?: MissionEvent } = {};
-    const feature = await this.layer.transactionImmediate((tx) => this.claimDefinedFeatureTaskInTransaction(tx, { ...input, requireExistingFeatureLink: true, statusEvent }));
+    const archivedLanes = await this.archivedLanesFor(input.taskId);
+    const feature = await this.layer.transactionImmediate((tx) => this.claimDefinedFeatureTaskInTransaction(tx, { ...input, archivedLanes, requireExistingFeatureLink: true, statusEvent }));
     this.emit("feature:updated", feature);
     if (statusEvent.value) this.emit("mission:event", statusEvent.value);
     this.emit("feature:linked", { feature, taskId: input.taskId });
@@ -1567,8 +1575,13 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    * generic intake path to archive feature.taskId.
    */
   async archiveDefinedFeatureBootstrapDuplicate(input: { featureId: string; taskId: string; duplicateTaskId: string }): Promise<void> {
-    /* Resolved once, outside the transaction: both guards below ask the same question. */
-    const claimedArchivedLanes = await this.archivedLanesFor(input.taskId);
+    /* Resolve workflow vocabulary before holding a pool connection. Three concurrent
+       duplicate reconciliations must not occupy the whole runtime pool while each
+       waits for archivedLanesFor() to borrow a fourth connection. */
+    const [claimedArchivedLanes, duplicateArchivedLanes] = await Promise.all([
+      this.archivedLanesFor(input.taskId),
+      this.archivedLanesFor(input.duplicateTaskId),
+    ]);
     /*
     FNXC:MissionAdmission 2026-07-23-21:10:
     Project-agnostic legacy stores remain scoped to their reserved RLS
@@ -1628,7 +1641,6 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       choice `resolveLifecycleColumns` makes, and multiple archive lanes are not a shape the
       builtin lineages produce.
       */
-      const duplicateArchivedLanes = await this.archivedLanesFor(input.duplicateTaskId);
       const archiveTarget = [...duplicateArchivedLanes][0] ?? "archived";
       await tx.update(schema.project.tasks)
         .set({ column: archiveTarget, updatedAt: new Date().toISOString() })

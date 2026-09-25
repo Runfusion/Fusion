@@ -1196,7 +1196,7 @@ async function resolveApprovedMissionLineage(
 }
 
 type DefinedFeatureBootstrapStore = {
-  claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
+  claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string; archivedLanes: ReadonlySet<string> }) => Promise<unknown>;
   claimDefinedFeatureTask: (input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
   archiveDefinedFeatureBootstrapDuplicate: (input: { featureId: string; taskId: string; duplicateTaskId: string }) => Promise<void>;
 };
@@ -1209,12 +1209,16 @@ type AgentTaskInputWithBootstrap = TaskCreateInput & {
   reconcileCreatedDuplicate?: (duplicate: Task, created: Task) => Promise<void>;
 };
 
-function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageReference | null): Pick<AgentTaskInputWithBootstrap, "afterTaskInsert" | "validateDuplicateCanonical" | "skipSameAgentDuplicateIntake" | "preflightSameAgentDuplicate" | "reconcileCreatedDuplicate"> {
+async function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageReference | null, workflowId?: string): Promise<Pick<AgentTaskInputWithBootstrap, "afterTaskInsert" | "validateDuplicateCanonical" | "skipSameAgentDuplicateIntake" | "preflightSameAgentDuplicate" | "reconcileCreatedDuplicate">> {
   if (!lineage?.bootstrapDefinedFeature) return {};
   const missionStore = store.getMissionStore() as Partial<DefinedFeatureBootstrapStore>;
   if (!missionStore.claimDefinedFeatureTaskInTransaction || !missionStore.claimDefinedFeatureTask || !missionStore.archiveDefinedFeatureBootstrapDuplicate) {
     throw new Error("Defined-feature bootstrap requires the PostgreSQL mission store; no task was created.");
   }
+  const selectedWorkflowId = workflowId ?? (await store.getDefaultWorkflowId()) ?? "builtin:coding";
+  const workflow = await resolveWorkflowIrById(store, selectedWorkflowId);
+  const archivedLanes = new Set(fusionCore.columnsWithFlag(workflow, "archived"));
+  if (archivedLanes.size === 0) archivedLanes.add("archived");
   const claim = (taskId: string) => ({ featureId: lineage.featureId, taskId, missionId: lineage.missionId, sliceId: lineage.sliceId });
   return {
     /*
@@ -1223,7 +1227,7 @@ function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageR
     transaction. Do not replace this hook with create-then-link compensation:
     a failed claim must roll back the task row before any task is observable.
     */
-    afterTaskInsert: async (tx, task) => { await missionStore.claimDefinedFeatureTaskInTransaction!(tx, claim(task.id)); },
+    afterTaskInsert: async (tx, task) => { await missionStore.claimDefinedFeatureTaskInTransaction!(tx, { ...claim(task.id), archivedLanes }); },
     validateDuplicateCanonical: async (task) => { await missionStore.claimDefinedFeatureTask!(claim(task.id)); },
     /*
     FNXC:MissionAdmission 2026-07-23-20:00:
@@ -1677,7 +1681,7 @@ export function createTaskCreateTool(
           priority: params.priority,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
-          ...definedFeatureBootstrapInput(store, lineage),
+          ...(await definedFeatureBootstrapInput(store, lineage, workflowId)),
           source: {
             sourceType: provenance?.sourceType ?? "api",
             sourceAgentId: provenance?.sourceAgentId,
@@ -5974,7 +5978,7 @@ export function createDelegateTaskTool(
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
-          ...definedFeatureBootstrapInput(taskStore, lineage),
+          ...(await definedFeatureBootstrapInput(taskStore, lineage, workflowId)),
           source: {
             sourceType: "api",
             sourceParentTaskId: options?.sourceTaskId,
