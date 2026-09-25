@@ -20,6 +20,7 @@ import type {
 } from "@fusion/core";
 import {
   applyReviewSeverityGate,
+  buildOperatorLanguageDirective,
   computePlanApprovalFingerprint,
   isOpenWorkflowReviewFinding,
   MAX_WORKFLOW_REVIEW_FINDINGS,
@@ -874,7 +875,17 @@ CRITICAL SCOPING RULES — read before doing anything else:
       attemptLabel: string,
     ): Promise<WorkflowStepOutcome> => {
       const stepInstructions = await deps.resolveInstructionsForRole("executor", settings);
-      const stepSystemPrompt = buildSystemPromptWithInstructions(systemPrompt, stepInstructions);
+      /*
+      FNXC:OperatorLanguage 2026-09-16-13:05:
+      RUFU PR review: workflow-step sessions (review gates, completion-summary nodes) author the
+      task-log and verdict prose the operator reads, so the step prompt carries the same operator
+      language directive the heartbeat and chat paths already apply. `"auto"`/unset emits nothing.
+      */
+      const stepOperatorLanguageDirective = buildOperatorLanguageDirective(settings);
+      const stepSystemPrompt = buildSystemPromptWithInstructions(
+        systemPrompt,
+        stepOperatorLanguageDirective ? `${stepInstructions}\n\n${stepOperatorLanguageDirective}` : stepInstructions,
+      );
 
       // Build skill selection context for workflow step session
       const skillContext = await buildSessionSkillContext({

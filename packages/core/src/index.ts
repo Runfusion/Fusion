@@ -120,6 +120,7 @@ export {
   resolveUpdatesExternallyManaged,
 } from "./config/update-management.js";
 export { resolveRequiredCheckNames } from "./config/required-checks.js";
+export { buildOperatorLanguageDirective } from "./config/operator-language.js";
 export { mergeIngestedCheckStates } from "./config/ingested-checks.js";
 export type { IngestedCheckState, IngestedCheckStateValue, MergeablePrCheck } from "./config/ingested-checks.js";
 export { detectImageMimeFromBytes } from "./i18n/image-mime.js";

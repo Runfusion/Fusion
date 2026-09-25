@@ -88,6 +88,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   dismissModalsOnOutsideClick: "globalGeneral.dismissModalsByClickingOutsideHint",
   skipConfirmationDialogs: "globalGeneral.skipConfirmationDialogsHint",
   quickAddSubmitOnEnter: "globalGeneral.quickAddSubmitOnEnterHint",
+  /* FNXC:OperatorLanguage 2026-09-15-07:18: row renders help that states its "Automatic" default. */
+  operatorLanguage: "globalGeneral.operatorLanguageHint",
   persistAgentToolOutput: "globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
   agentToolOutputMaxChars: "globalGeneral.agentToolOutputLimitHint",
   proactiveTaskChatEnabled: "globalGeneral.enableProactiveTaskChatHint",
