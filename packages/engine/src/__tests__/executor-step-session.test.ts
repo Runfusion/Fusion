@@ -1696,6 +1696,118 @@ describe("TaskExecutor loop recovery", () => {
     expect(result).toBe(false);
   });
 
+  /*
+  FNXC:CompactionNoProgress 2026-09-04-16:35:
+  RUFU-187 — the loop-recovery lane must refuse a compaction that mutated the branch but freed
+  nothing. Three things are pinned together, because each alone was the original defect:
+  (1) the operator-visible sentence says "reduced nothing" with the before/after counts and never
+  claims "freed" / "succeeded" / "compacted";
+  (2) the attempt counter IS stored (pending=false) so the second detection fast-fails without
+  touching pi again — pi's second `compact()` can only answer "Already compacted", so a retry is
+  the RUFU-124 loop;
+  (3) one bounded `task:compaction-no-progress` audit row carries ids/counts only (source/before/
+  after/basis), never prose.
+  These drive the REAL `compactSessionContext` against a fake pi session, so classification and
+  consumer are tested through the same seam production uses.
+  */
+  it("handleLoopDetected refuses a non-reducing compaction, counts the attempt, and says it reduced nothing", async () => {
+    const mockSession = createMockSessionForLoopRecovery({
+      compactResult: { summary: "Same", tokensBefore: 50000, estimatedTokensAfter: 50000 },
+    });
+    const { store, executor } = setupExecutorWithActiveSession(mockSession);
+    const recordRunAuditEvent = vi.fn();
+    (store as any).recordRunAuditEvent = recordRunAuditEvent;
+
+    const result = await executor.handleLoopDetected({
+      taskId: "FN-001",
+      reason: "loop",
+      noProgressMs: 600000,
+      inactivityMs: 0,
+      activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
+    });
+
+    expect(result).toBe(false);
+    expect(mockSession.compact).toHaveBeenCalledTimes(1);
+    // Recovery was NOT accepted, so the session must not be steered as if it had a fresh context.
+    expect(mockSession.steer).not.toHaveBeenCalled();
+    // The attempt is counted WITHOUT pending, which is what makes the next detection fast-fail.
+    expect((executor as any).loopRecoveryState.get("FN-001")).toEqual({ attempts: 1, pending: false });
+
+    const cardLogs = (store.logEntry as any).mock.calls.map((call: unknown[]) => String(call[1]));
+    const cardLog = cardLogs.find((message: string) => message.includes("reduced nothing"));
+    expect(cardLog).toBeDefined();
+    expect(cardLog).toContain("before=50000 after=50000");
+    expect(cardLog).toContain("compact-and-resume recovery not accepted");
+    expect(cardLogs.join("\n")).not.toMatch(/freed|compacted successfully|compaction succeeded/i);
+
+    expect(recordRunAuditEvent).toHaveBeenCalledTimes(1);
+    expect(recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: "FN-001",
+      agentId: "executor",
+      domain: "database",
+      mutationType: "task:compaction-no-progress",
+      target: "FN-001",
+      // EXACTLY the four allowed fields — an extra prose field is the run-audit contract violation.
+      metadata: {
+        source: "loop-recovery",
+        tokensBefore: 50000,
+        tokensAfter: 50000,
+        basis: "pi-reported",
+      },
+    }));
+  });
+
+  it("handleLoopDetected does not re-attempt compaction after a no-progress refusal", async () => {
+    const mockSession = createMockSessionForLoopRecovery({
+      compactResult: { summary: "Same", tokensBefore: 50000, estimatedTokensAfter: 51000 },
+    });
+    const { store, executor } = setupExecutorWithActiveSession(mockSession);
+    (store as any).recordRunAuditEvent = vi.fn();
+    const event = {
+      taskId: "FN-001",
+      reason: "loop",
+      noProgressMs: 600000,
+      inactivityMs: 0,
+      activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
+    };
+
+    expect(await executor.handleLoopDetected(event)).toBe(false);
+    expect(await executor.handleLoopDetected(event)).toBe(false);
+
+    // Second detection fast-fails at the attempt ceiling: pi is never asked a second time.
+    expect(mockSession.compact).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleLoopDetected still accepts a genuinely reducing compaction and emits no no-progress audit", async () => {
+    const mockSession = createMockSessionForLoopRecovery({
+      compactResult: { summary: "Smaller", tokensBefore: 150000, estimatedTokensAfter: 40000 },
+    });
+    const { store, executor } = setupExecutorWithActiveSession(mockSession);
+    const recordRunAuditEvent = vi.fn();
+    (store as any).recordRunAuditEvent = recordRunAuditEvent;
+
+    const result = await executor.handleLoopDetected({
+      taskId: "FN-001",
+      reason: "loop",
+      noProgressMs: 600000,
+      inactivityMs: 0,
+      activitySinceProgress: 100,
+      ignoredStepUpdateCount: 0,
+    });
+
+    // Control: the refusal above keys on the non-reduction, not on the harness.
+    expect(result).toBe(true);
+    expect(mockSession.steer).toHaveBeenCalled();
+    expect((executor as any).loopRecoveryState.get("FN-001")).toEqual({ attempts: 1, pending: true });
+    expect(
+      recordRunAuditEvent.mock.calls.filter(
+        (call: unknown[]) => (call[0] as { mutationType?: string }).mutationType === "task:compaction-no-progress",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("handleLoopDetected returns false when compaction hangs", async () => {
     vi.useFakeTimers();
     const mockSession = createMockSessionForLoopRecovery({ compactResult: new Promise(() => {}) });
