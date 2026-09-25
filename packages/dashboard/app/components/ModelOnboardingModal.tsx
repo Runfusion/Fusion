@@ -193,6 +193,16 @@ function getProviderInfoMap(t: (key: string, defaultValue: string) => string): R
         usageDescription: t("setup.apiKeyUsage.orcarouter", "Routes to multiple AI model providers through a single key"),
       },
     },
+    requesty: {
+      description: t("setup.providerDesc.requesty", "Requesty: one OpenAI-compatible gateway for hundreds of models across providers"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.requesty", "Requesty API Key"),
+        setupInstructions: t("setup.apiKeySetup.requesty", "Create an API key on the Requesty API keys page."),
+        dashboardUrl: "https://app.requesty.ai/api-keys",
+        inputPlaceholder: "rqsty-...",
+        usageDescription: t("setup.apiKeyUsage.requesty", "Routes to multiple AI model providers through a single key"),
+      },
+    },
   };
 }
 
@@ -231,6 +241,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "openai-codex": "OpenAI Codex",
   openrouter: "OpenRouter",
   orcarouter: "OrcaRouter",
+  requesty: "Requesty",
   google: "Google",
   gemini: "Gemini",
   minimax: "MiniMax",
@@ -286,7 +297,7 @@ Keep Anthropic subscription OAuth and raw Anthropic API-key auth as separate fir
 FNXC:Onboarding 2026-07-18-03:40:
 The OpenAI Codex subscription card belongs in quick start (it was buried in Advanced), placed directly AFTER the Anthropic subscription and BEFORE the API-key options — subscription sign-ins are the primary first-run path, keys are the fallback.
 */
-const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "orcarouter", "ollama"] as const;
+const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "orcarouter", "requesty", "ollama"] as const;
 
 const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "anthropic",
@@ -298,6 +309,7 @@ const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "openai-codex",
   "openrouter",
   "orcarouter",
+  "requesty",
   "gemini",
   "minimax",
   "kimi",

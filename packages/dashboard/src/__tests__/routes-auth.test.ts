@@ -1141,6 +1141,7 @@ describe("GET /auth/status", () => {
       // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
       "orcarouter",
       "opencode-go",
+      "requesty",
       "tavily",
       "zai",
     ]);
@@ -1298,6 +1299,7 @@ describe("GET /auth/status", () => {
       // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
       "orcarouter",
       "opencode-go",
+      "requesty",
       "tavily",
       "zai",
       "acme-extension",
@@ -1858,6 +1860,7 @@ describe("GET /auth/status", () => {
       // FNXC:ProviderAuth 2026-08-23-23:50: OrcaRouter joined the static API-key catalog (feat 41c23adf15); these pins enumerate that catalog exactly, so a new entry belongs here rather than being filtered out.
       "orcarouter",
       "opencode-go",
+      "requesty",
       "tavily",
       "zai",
     ];

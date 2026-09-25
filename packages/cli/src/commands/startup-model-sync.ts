@@ -6,6 +6,9 @@ const OPENROUTER_DEFAULT_REFERER = "https://runfusion.ai";
 const OPENROUTER_DEFAULT_TITLE = "Fusion";
 const ORCAROUTER_MODELS_URL = "https://api.orcarouter.ai/v1/models";
 const ORCAROUTER_DEFAULT_BASE_URL = "https://api.orcarouter.ai/v1";
+const REQUESTY_MANAGED_MODELS_URL = "https://router.requesty.ai/v1/models/managed";
+const REQUESTY_MODELS_URL = "https://router.requesty.ai/v1/models";
+const REQUESTY_DEFAULT_BASE_URL = "https://router.requesty.ai/v1";
 const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
 
 type ModelConfig = {
@@ -55,6 +58,7 @@ interface OpenRouterProviderPreferences {
 interface SettingsLike {
   openrouterModelSync?: boolean;
   orcarouterModelSync?: boolean;
+  requestyModelSync?: boolean;
   opencodeGoModelSync?: boolean;
   openrouterAppAttribution?: { referer?: string; title?: string };
   openrouterModelFilters?: OpenRouterModelFilters;
@@ -255,6 +259,87 @@ async function syncOrcaRouterModels(options: StartupSyncOptions): Promise<void> 
   log("orcarouter", `Synced ${models.length} models from OrcaRouter API`);
 }
 
+type RequestyModel = {
+  id: string;
+  api?: string;
+  context_window?: number;
+  max_output_tokens?: number;
+  input_price?: number;
+  output_price?: number;
+  cached_price?: number;
+  caching_price?: number;
+  supports_vision?: boolean;
+  supports_reasoning?: boolean;
+};
+
+function toRequestyModels(json: { data?: RequestyModel[] }): ModelConfig[] {
+  return (json.data || [])
+    .filter((model) => model.id && (model.api ?? "chat") === "chat")
+    .map((model) => ({
+      id: model.id,
+      name: model.id,
+      reasoning: model.supports_reasoning === true,
+      input: model.supports_vision ? ["text", "image"] : ["text"],
+      cost: {
+        input: (model.input_price ?? 0) * 1_000_000,
+        output: (model.output_price ?? 0) * 1_000_000,
+        cacheRead: (model.cached_price ?? 0) * 1_000_000,
+        cacheWrite: (model.caching_price ?? 0) * 1_000_000,
+      },
+      contextWindow: model.context_window || 128000,
+      maxTokens: model.max_output_tokens || 16384,
+    }));
+}
+
+/*
+FNXC:RequestyProvider 2026-09-25-12:00:
+Requesty is a named OpenAI-compatible gateway provider, following the OrcaRouter
+catalog-sync pattern. Its catalog uses Requesty's own model shape (`context_window`,
+`max_output_tokens`, per-token `input_price`/`output_price`), so it gets its own
+mapping. Sync lists the curated managed policies from `/v1/models/managed` first
+(short ids such as `claude-sonnet-4-5`), then the full `vendor/model` catalog from
+`/v1/models`; both id forms are accepted verbatim on `POST /v1/chat/completions`.
+Registration names `REQUESTY_API_KEY` like the OrcaRouter entry, and chat requests use the key saved for the `requesty` auth catalog entry. Sync is gated by
+`requestyModelSync` (default true), and requests carry the key only when present.
+*/
+async function syncRequestyModels(options: StartupSyncOptions): Promise<void> {
+  const { authStorage, modelRegistry, log } = options;
+  const apiKey = await authStorage.getApiKey("requesty");
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  const models: ModelConfig[] = [];
+  const seen = new Set<string>();
+  for (const url of [REQUESTY_MANAGED_MODELS_URL, REQUESTY_MODELS_URL]) {
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      log("requesty", `Failed to sync models from ${url}: HTTP ${response.status}`);
+      continue;
+    }
+    const json = await response.json() as { data?: RequestyModel[] };
+    for (const model of toRequestyModels(json)) {
+      if (!seen.has(model.id)) {
+        seen.add(model.id);
+        models.push(model);
+      }
+    }
+  }
+
+  if (models.length === 0) {
+    return;
+  }
+
+  modelRegistry.registerProvider("requesty", {
+    baseUrl: REQUESTY_DEFAULT_BASE_URL,
+    apiKey: "REQUESTY_API_KEY",
+    api: "openai-completions",
+    models,
+  });
+  log("requesty", `Synced ${models.length} models from Requesty API`);
+}
+
 export function normalizeOpencodeGoModel(modelId: string): ModelConfig {
   const trimmed = modelId.trim();
   // Strip the provider prefix (opencode/ or opencode-go/) — the Pi SDK
@@ -388,6 +473,15 @@ export async function syncStartupModels(options: StartupSyncOptions): Promise<vo
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       options.log("orcarouter", `Failed to sync models: ${message}`);
+    }
+  }
+
+  if (settings.requestyModelSync !== false) {
+    try {
+      await syncRequestyModels(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      options.log("requesty", `Failed to sync models: ${message}`);
     }
   }
 
