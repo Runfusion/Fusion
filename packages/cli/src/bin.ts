@@ -160,7 +160,7 @@ async function loadCommandHandlers() {
   const { runPluginCreate, runPluginNew } = await import("./commands/plugin-scaffold.js");
   const { runPluginDev } = await import("./commands/plugin-dev.js");
   const { runPluginPublish } = await import("./commands/plugin-publish.js");
-  const { runSkillsSearch, runSkillsInstall, runSkillsGet } = await import("./commands/skills.js");
+  const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
   const { runComputer } = await import("./commands/computer.js");
   const { runExperimentFinalize } = await import("./commands/experiment-finalize.js");
   const { dispatchUpdateCliArgs } = await import("./commands/update.js");
@@ -300,7 +300,6 @@ async function loadCommandHandlers() {
     runPluginPublish,
     runSkillsSearch,
     runSkillsInstall,
-    runSkillsGet,
     runComputer,
     runExperimentFinalize,
     dispatchUpdateCliArgs,
@@ -690,6 +689,18 @@ async function main() {
 
   const command = args[0];
 
+  /*
+   * FNXC:SkillsGetCompletion 2026-09-25-01:51:
+   * Built-in guide lookups must finish as small, terminal CLI requests. Route
+   * them before onboarding and the full command graph so a rejected guide can
+   * report its existing error and exit code without retaining bootstrap work.
+   */
+  if (command === "skills" && args[1] === "get") {
+    const { runSkillsGet } = await import("./commands/skills.js");
+    process.exitCode = await runSkillsGet(args.slice(2));
+    return;
+  }
+
   const { maybeAutoLaunchOnboarding } = await import("./commands/onboard-autolaunch.js");
   await maybeAutoLaunchOnboarding({ command, args, skipOnboarding });
 
@@ -828,7 +839,6 @@ async function main() {
     runPluginPublish,
     runSkillsSearch,
     runSkillsInstall,
-    runSkillsGet,
     runComputer,
     runExperimentFinalize,
     dispatchUpdateCliArgs,
@@ -2339,12 +2349,6 @@ async function main() {
           }
 
           await runSkillsInstall(filteredArgs, { skill });
-          break;
-        }
-
-        if (subcommand === "get") {
-          const exitCode = await runSkillsGet(args.slice(2));
-          if (exitCode !== 0) process.exit(exitCode);
           break;
         }
 
