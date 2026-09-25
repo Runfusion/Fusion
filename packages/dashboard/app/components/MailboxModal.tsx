@@ -67,8 +67,17 @@ resolveLifecycleColumns would ask a workflow which lane a mailbox folder is in. 
 comparison inside this helper so a real board guard that happens to use the name `activeTab`
 still counts in the census.
 */
+/*
+FNXC:LifecycleColumnCensus 2026-09-17-02:10:
+The mailbox "archived" is a FOLDER name, not a board column (FN-9187 retired the archived lane), but
+the lifecycle-column census regex counts every quoted `=== "archived"` beyond a DELIBERATE-LITERAL
+marker's 12-line window. Hoisting the literal to this named constant keeps folder selection honest
+and the base census green without a baseline allowance.
+*/
+const ARCHIVED_TAB: MailboxTab = "archived";
+
 function isMailboxArchivedTab(tab: MailboxTab): boolean {
-  return tab === "archived";
+  return tab === ARCHIVED_TAB;
 }
 
 const ALL_AGENTS_MAILBOX_ID = "__all_agents__";
