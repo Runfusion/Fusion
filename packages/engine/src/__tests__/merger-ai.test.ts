@@ -35,6 +35,9 @@ import {
   AiMergeBlockedError,
 } from "../merge/merger-ai.js";
 import { EXECUTOR_FAILED_INCOMPLETE_REASON } from "../overseer/planner-overseer.js";
+import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
+import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
+import { getBuiltinWorkflow } from "@fusion/core";
 import { resolveAiMergeRootPath, resolveLegacyAiMergeRootPath } from "../worktree/worktree-paths.js";
 import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
@@ -842,6 +845,133 @@ describe("runAiMerge", () => {
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
     expect(store.updateTaskAtomic).toHaveBeenCalled();
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
+  });
+
+  it("defers no-op completion only to a graph requester that will traverse post-merge evidence", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, {
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [],
+    });
+    store.getTaskWorkflowSelection = vi.fn(() => ({
+      workflowId: "builtin:coding",
+      stepIds: ["post-merge-verification"],
+    }));
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({
+      workflowId: "builtin:coding",
+      stepIds: ["post-merge-verification"],
+    }));
+    const deps = {
+      mergeAgent: vi.fn(async () => undefined),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    };
+
+    await expect(runAiMerge(store, dir, "FN-1", { manual: true }, deps))
+      .rejects.toThrow("has not reported");
+    expect(task.column).toBe("in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
+    expect(store.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
+
+    const result = await runAiMerge(store, dir, "FN-1", {
+      manual: true,
+      graphOwnedPostMergeTraversal: true,
+    }, deps);
+    expect(result).toMatchObject({ noOp: true, mergeConfirmed: true });
+    expect(task.column).toBe("in-review");
+  });
+
+  /*
+  FNXC:PostMergeEvidenceOrderingTest 2026-09-25-20:30:
+  An ancestor/no-op proof and an approved graph gate must meet at the same durable task row.
+  Keep this production-shaped sequence coupled so a future direct-finalization shortcut cannot
+  pass isolated merger, graph, and finalizer tests while stranding the required evidence gate.
+  */
+  it("persists one graph-owned post-merge approval before exactly-once no-op finalization", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(dir, "merge -q fusion/fn-1");
+    const { store, task } = makeStore(dir, {
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [],
+    });
+    const selection = { workflowId: "builtin:coding", stepIds: ["post-merge-verification"] };
+    store.getTaskWorkflowSelection = vi.fn(() => selection);
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selection);
+
+    const merge = await runAiMerge(store, dir, "FN-1", {
+      manual: true,
+      graphOwnedPostMergeTraversal: true,
+    }, {
+      mergeAgent: vi.fn(async () => undefined),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(merge).toMatchObject({ noOp: true, mergeConfirmed: true });
+    expect(task.column).toBe("in-review");
+    expect(task.workflowStepResults).toEqual([]);
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
+
+    const recordWorkflowStepResult = vi.fn(async (_taskId: string, result: Record<string, unknown>) => {
+      const prior = task.workflowStepResults ?? [];
+      task.workflowStepResults = [
+        ...prior.filter((entry: { workflowStepId: string }) => entry.workflowStepId !== result.workflowStepId),
+        result,
+      ];
+      return { scopeCurrent: true, persisted: true, disposition: "applied", persistedResult: result };
+    });
+    const runCustomNode = vi.fn(async () => ({
+      outcome: "success" as const,
+      value: "APPROVE",
+      contextPatch: { notes: "The integrated no-op merge has the required post-merge evidence." },
+    }));
+    const graph = new WorkflowGraphTaskRunner({
+      store: {
+        ...store,
+        getTaskWorkflowSelection: () => selection,
+        getTaskWorkflowSelectionAsync: async () => selection,
+        getWorkflowDefinition: async (id: string) => id === "builtin:coding" ? getBuiltinWorkflow("builtin:coding") : undefined,
+      },
+      seams: {
+        planning: vi.fn(), execute: vi.fn(), review: vi.fn(), merge: vi.fn(), schedule: vi.fn(),
+      },
+      runCustomNode,
+      recordWorkflowStepResult,
+    });
+
+    const graphResult = await graph.run(task, {
+      experimentalFeatures: { workflowGraphExecutor: true, graphNativePostMerge: true },
+    }, "post-merge-verification");
+    expect(graphResult).toMatchObject({ disposition: "completed", outcome: "success" });
+    expect(runCustomNode).toHaveBeenCalledTimes(1);
+    expect(task.workflowStepResults).toEqual([
+      expect.objectContaining({
+        workflowStepId: "post-merge-verification",
+        phase: "post-merge",
+        status: "passed",
+        verdict: "APPROVE",
+      }),
+    ]);
+
+    const finalized = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-1",
+      result: merge,
+      source: "workflow-graph-merge-finalize",
+    });
+    const converged = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-1",
+      result: merge,
+      source: "workflow-graph-merge-finalize",
+    });
+
+    expect(finalized.outcome).toBe("done");
+    expect(converged.outcome).toBe("already-done");
+    expect(task.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledTimes(1);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({
+      workflowMoveSource: "auto-merge-finalization",
+    }));
   });
 
   it("clears only a removed worktree pointer when an operator branch survives early no-op finalization", async () => {

@@ -479,7 +479,11 @@ export interface ProjectEngineOptions {
  * via ProjectManager) gets the full subsystem set, eliminating the class of
  * bugs where a subsystem is forgotten in one code path.
  */
-type MergeResolver = { resolve: (result: MergeResult) => void; reject: (err: Error) => void };
+type MergeResolver = {
+  resolve: (result: MergeResult) => void;
+  reject: (err: Error) => void;
+  graphOwnedPostMergeTraversal?: boolean;
+};
 
 export class ProjectEngine {
   private readonly staleContentRerouteAuditKeys = new Set<string>();
@@ -2721,7 +2725,7 @@ export class ProjectEngine {
    * Returns the full MergeResult so it can be used as the `onMerge` callback
    * in createServer().
    */
-  async onMerge(taskId: string, options: { signal?: AbortSignal } = {}): Promise<MergeResult> {
+  async onMerge(taskId: string, options: { signal?: AbortSignal; graphOwnedPostMergeTraversal?: boolean } = {}): Promise<MergeResult> {
     const signal = options.signal;
     if (signal?.aborted) {
       throw new Error(`Merge request for ${taskId} aborted`);
@@ -2754,6 +2758,7 @@ export class ProjectEngine {
         signal?.removeEventListener("abort", abort);
       };
       const resolver: MergeResolver = {
+        graphOwnedPostMergeTraversal: options.graphOwnedPostMergeTraversal === true,
         resolve: (result) => {
           if (settled) return;
           settled = true;
@@ -2812,7 +2817,7 @@ export class ProjectEngine {
    * it as "manual merge required" and parks the task in review — preserving the
    * contract that autoMerge-off leaves in-review terminal until a human merges.
    */
-  async requestInterpreterMerge(taskId: string, options: { signal?: AbortSignal } = {}): Promise<MergeResult> {
+  async requestInterpreterMerge(taskId: string, options: { signal?: AbortSignal; graphOwnedPostMergeTraversal?: boolean } = {}): Promise<MergeResult> {
     let task: Task | null = null;
     let settings: Settings | undefined;
     const store = this.runtime.getTaskStore();
@@ -2854,7 +2859,7 @@ export class ProjectEngine {
       } as MergeResult;
     }
     // Eligible: route through the normal serialized merge path.
-    return this.onMerge(taskId, options);
+    return this.onMerge(taskId, { ...options, graphOwnedPostMergeTraversal: true });
   }
 
   private setAutomationSubsystemHealth(
@@ -3997,6 +4002,8 @@ export class ProjectEngine {
         // don't start a merge whose queue entry was cleared by stop().
         if (this.shuttingDown) break;
         const hasManualResolver = this.hasMergeResolvers(taskId);
+        const graphOwnedPostMergeTraversal = this.manualMergeResolvers.get(taskId)
+          ?.some((resolver) => resolver.graphOwnedPostMergeTraversal === true) === true;
         /*
         FNXC:MergeQueue 2026-08-28-09:29:
         Waiting-caller dispatches deliberately skip the merge-confirmed fast path in the automatic
@@ -4782,6 +4789,7 @@ export class ProjectEngine {
                 agentStore,
                 pluginRunner: this.getPluginRunner(),
                 signal: abortSignal,
+                graphOwnedPostMergeTraversal,
                 syncGroupPr: this.options.syncGroupPr,
                 onSession: (session: { dispose: () => void }) => {
                   this.activeMergeSession = session;

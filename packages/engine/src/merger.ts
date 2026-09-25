@@ -5100,6 +5100,11 @@ export interface MergerOptions {
   onSession?: (session: { dispose: () => void }) => void;
   /** Abort signal used to stop an in-flight merge when the engine is shutting down. */
   signal?: AbortSignal;
+  /**
+   * True only when the workflow graph caller will immediately traverse its authored post-merge
+   * nodes after this merge resolves. Direct/manual callers must not defer required evidence.
+   */
+  graphOwnedPostMergeTraversal?: boolean;
   /** AgentStore for resolving per-agent custom instructions. */
   agentStore?: import("@fusion/core").AgentStore;
   /** Allow synchronization when local checkout is dirty during merge reconciliation. */

@@ -73,6 +73,8 @@ export interface AutoMergeFinalizationResult {
   task: Task | null;
   previousColumn: string | null;
   reason?: string;
+  /** True only for the graph-owned post-merge gate that must run before retrying finalization. */
+  deferredPostMergeEvidence?: boolean;
 }
 
 export interface FinalizeProvenAutoMergeTaskOptions {
@@ -260,7 +262,18 @@ export async function finalizeProvenAutoMergeTask({
       auditPhase,
     });
     await log?.(`Auto-merge finalization deferred for ${taskId}: ${evidenceBlocker}`);
-    return { outcome: "blocked", task: latest, previousColumn: latest.column, reason: evidenceBlocker };
+    return {
+      outcome: "blocked",
+      task: latest,
+      previousColumn: latest.column,
+      reason: evidenceBlocker,
+      /*
+      FNXC:PostMergeEvidenceOrdering 2026-09-25-20:05:
+      Only an absent result can be claimed by the active graph traversal. A pending or terminal
+      non-approval is durable evidence that must remain a blocker, not a retry signal.
+      */
+      deferredPostMergeEvidence: evidenceBlocker.includes("has not reported") || undefined,
+    };
   }
 
   const validationMergeDetails = buildFinalizationMergeDetails(latest, result);

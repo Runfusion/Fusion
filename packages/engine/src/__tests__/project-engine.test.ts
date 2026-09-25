@@ -1664,6 +1664,27 @@ describe("ProjectEngine manual merge plumbing", () => {
 
     await engine.stop();
   });
+
+  it("forwards graph-owned post-merge traversal through the merge queue", async () => {
+    mocks.runAiMerge.mockResolvedValue({ merged: true, task: { id: "FN-5438" } } as any);
+
+    const engine = createEngine();
+    await engine.start();
+
+    await engine.requestInterpreterMerge("FN-5438");
+
+    expect(mocks.runAiMerge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      "FN-5438",
+      expect.objectContaining({
+        graphOwnedPostMergeTraversal: true,
+        manual: true,
+      }),
+    );
+
+    await engine.stop();
+  });
 });
 
 // FNXC:MergerUnification 2026-06-21-19:05: master-plan U0 made runAiMerge the

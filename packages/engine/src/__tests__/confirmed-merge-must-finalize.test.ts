@@ -52,16 +52,20 @@ describe("FN-180 confirmed merge must finalize", () => {
     } as unknown as Task;
     const store = makeStore(task);
 
-    for (const workflowStepResults of [
-      [],
-      [{ workflowStepId: "post-merge-verification", status: "pending" }],
-      [{ workflowStepId: "post-merge-verification", status: "skipped" }],
-      [{ workflowStepId: "post-merge-verification", status: "failed", verdict: "REVISE" }],
-    ]) {
+    for (const [workflowStepResults, deferredPostMergeEvidence] of [
+      [[], true],
+      [[{ workflowStepId: "post-merge-verification", status: "pending" }], undefined],
+      [[{ workflowStepId: "post-merge-verification", status: "skipped" }], undefined],
+      [[{ workflowStepId: "post-merge-verification", status: "failed", verdict: "REVISE" }], undefined],
+    ] as const) {
       task.workflowStepResults = workflowStepResults as Task["workflowStepResults"];
       for (const source of ["direct-ai-merge", "self-healing"] as const) {
         const result = await finalizeProvenAutoMergeTask({ store, taskId: task.id, source });
-        expect(result).toMatchObject({ outcome: "blocked", reason: expect.stringContaining("post-merge evidence") });
+        expect(result).toMatchObject({
+          outcome: "blocked",
+          reason: expect.stringContaining("post-merge evidence"),
+          deferredPostMergeEvidence,
+        });
         expect(task.column).toBe("in-review");
         expect(store.moveTask).not.toHaveBeenCalled();
       }
