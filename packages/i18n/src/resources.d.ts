@@ -6480,6 +6480,7 @@ export default interface Resources {
         "syncOpenRouterModelListAtStartup": " Sync OpenRouter model list at startup ",
         "syncOpencodeGoModelListAtStartup": " Sync opencode-go model list at startup ",
         "syncOrcaRouterModelListAtStartup": " Sync OrcaRouter model list at startup ",
+        "syncRequestyModelListAtStartup": " Sync Requesty model list at startup ",
         "text": "text",
         "thinkingEffort": "Thinking Effort",
         "throughput": "throughput",
@@ -6488,6 +6489,7 @@ export default interface Resources {
         "usedAutomaticallyIfThePrimaryDefaultModelHits": "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload. No default — unset.",
         "whenEnabledStartupFetchesTheLatestAvailableModels": " When enabled, startup fetches the latest available models from the OpenRouter API so model pickers always include the newest catalog. Default: enabled. ",
         "whenEnabledStartupFetchesTheLatestOrcaRouterModels": " When enabled, startup fetches the latest available models from the OrcaRouter API so model pickers include the OrcaRouter catalog. Default: enabled. ",
+        "whenEnabledStartupFetchesTheLatestRequestyModels": " When enabled, startup fetches the Requesty managed policies and model catalog so model pickers include Requesty models. Default: enabled. ",
         "whenEnabledStartupRefreshesModelsThroughTheLocal": " When enabled, startup refreshes models through the local "
       },
       "header": {
@@ -10248,6 +10250,7 @@ export default interface Resources {
         "openai": "OpenAI API Key",
         "openrouter": "OpenRouter API Key",
         "orcarouter": "OrcaRouter API Key",
+        "requesty": "Requesty API Key",
         "zai": "Zhipu AI API Key"
       },
       "apiKeyPlaceholder": {
@@ -10265,6 +10268,7 @@ export default interface Resources {
         "openai": "Create an API key from your OpenAI dashboard under API keys.",
         "openrouter": "Create an API key from your OpenRouter account key management page.",
         "orcarouter": "Create an API key from your OrcaRouter dashboard.",
+        "requesty": "Create an API key on the Requesty API keys page.",
         "zai": "Create an API key in the Zhipu AI open platform account settings."
       },
       "apiKeyUsage": {
@@ -10275,6 +10279,7 @@ export default interface Resources {
         "openai": "Used for GPT models in task execution and planning",
         "openrouter": "Routes to multiple AI model providers through a single key",
         "orcarouter": "Routes to multiple AI model providers through a single key",
+        "requesty": "Routes to multiple AI model providers through a single key",
         "zai": "Used for GLM models in task execution"
       },
       "providerDesc": {
@@ -10291,6 +10296,7 @@ export default interface Resources {
         "openaiCodex": "Codex models by OpenAI — optimized for coding tasks",
         "openrouter": "OpenRouter — route requests across multiple AI providers",
         "orcarouter": "OrcaRouter — one gateway for multiple AI providers with gateway-level agent security",
+        "requesty": "Requesty: one OpenAI-compatible gateway for hundreds of models across providers",
         "zai": "GLM models by Zhipu AI — strong multilingual support"
       }
     },

@@ -210,6 +210,16 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
         value={form.orcarouterModelSync !== false}
         onChange={(v) => setForm((f) => ({ ...f, orcarouterModelSync: v === true }))}
       />
+      <SettingsToggleRow
+        descriptor={{
+          key: "requestyModelSync",
+          label: t("settings.globalModels.syncRequestyModelListAtStartup", " Sync Requesty model list at startup "),
+          help: t("settings.globalModels.whenEnabledStartupFetchesTheLatestRequestyModels", " When enabled, startup fetches the Requesty managed policies and model catalog so model pickers include Requesty models. Default: enabled. "),
+          scope: "global",
+        }}
+        value={form.requestyModelSync !== false}
+        onChange={(v) => setForm((f) => ({ ...f, requestyModelSync: v === true }))}
+      />
       {/*
       FNXC:SettingsStyling 2026-07-15-17:35:
       Left on hand-rolled markup deliberately: its help text embeds a <code> element for the `opencode models opencode --refresh` command, and the primitives take help as a pre-translated string. Migrating it would mean either dropping the code formatting or splicing the command in as a bare literal, so the row keeps its markup until the descriptor can carry rich help.

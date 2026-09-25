@@ -542,6 +542,12 @@ describe("ProviderIcon", () => {
     expect(screen.getByLabelText("OpenRouter")).toBeInTheDocument();
   });
 
+  it("renders Requesty brand icon for requesty provider", () => {
+    render(<ProviderIcon provider="requesty" />);
+    expect(screen.getByTestId("requesty-icon")).toBeInTheDocument();
+    expect(screen.getByLabelText("Requesty")).toBeInTheDocument();
+  });
+
   it("renders GitHub brand icon for github provider", () => {
     render(<ProviderIcon provider="github" />);
     expect(screen.getByTestId("github-icon")).toBeInTheDocument();
