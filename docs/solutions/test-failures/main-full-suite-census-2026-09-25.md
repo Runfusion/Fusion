@@ -80,15 +80,31 @@ deterministic, not load-dependent flakes.
 (`HANG: pipeline smoke exceeded budget 175000ms (elapsed 175006ms)`). The
 PostgreSQL service log in the same job shows
 `FATAL: password authentication failed for user "runner"` /
-`Role "runner" does not exist` — the smoke lane connects as the OS user, not
-the `POSTGRES_USER=postgres` role the workflow provisions.
+`Role "runner" does not exist`.
 
-## Classification: 0 flakes, 233 named cases are real regressions
+**That log is a lead, not an established cause.** The job provisions the service
+with `POSTGRES_USER=postgres` and exports
+`FUSION_PG_TEST_URL_BASE=postgresql://postgres:***@localhost:5432` plus
+`PGPASSWORD=postgres` (`.github/workflows/full-suite.yml`), so the *configured*
+smoke harness connects as `postgres`. Nothing in the evidence shows the `runner`
+authentication attempt came from that harness rather than from a child process
+that ignored the provisioned URL, and the job-level timeout is a 175 000 ms
+watchdog on the pipeline project — not proof that a connection attempt caused
+the hang. FUSI-037 owns establishing the cause; this census records only the
+two observed facts (watchdog budget exceeded, `runner` auth errors present in
+the same job's service log) and does not attribute the hang to role
+misconfiguration.
+
+## Classification: 0 flakes among the 218 classified cases; 15 unresolved
 
 Checked **before** treating anything as a regression:
 
-- `scripts/lib/test-quarantine.json` -> `"entries": []` — the ledger is empty, so
-  no census file is already quarantined.
+- `scripts/lib/test-quarantine.json` on `main` holds exactly one entry —
+  `packages/desktop/src/__tests__/native.test.ts` (quarantined 2026-09-24,
+  second-sighting rule). The ledger is **not** empty. That file is **not** among
+  the 117 census files, so no census case is already quarantined; the
+  conclusion rests on the file being absent from the inventory below, not on an
+  empty ledger.
 - `docs/solutions/test-failures/suite-only-flakes-observed-register.md` -> the
   only census file it mentions is `src/__tests__/plugin-runner.test.ts`, and that
   record (**entry 3**) is **Closed 2026-08-17 by FN-9141 — rescued (fixture
@@ -98,9 +114,18 @@ Checked **before** treating anything as a regression:
   allow-list, so no eviction applies.
 
 Verdict: **no first-sighting flake record and no quarantine entry is warranted.**
-Every named case is a real regression — a test that asserts a call shape the
-product has since changed, or a harness double that no longer satisfies the
-product's collaborators.
+Of the 233 named cases, **218 carry a supported classification and are real
+regressions** — a test that asserts a call shape the product has since changed,
+or a harness double that no longer satisfies the product's collaborators. The
+remaining **15 cases (`assertion-no-error-line`) are unresolved, not regressions**:
+the shard log truncated their error text, so a matching case set across two runs
+and the ledger check above cannot classify them either way. FUSI-034 reproduces
+each and captures the real error; no cause is asserted for them here.
+
+So this census reports **0 confirmed flakes and 218 confirmed regressions out of
+233 named cases**, with 15 pending. "0 flakes" means nothing in this census has
+been *shown* to be a flake on the evidence available — it is not a claim that a
+flake is impossible among the 15 unresolved cases.
 
 ## Root causes (grouped; 11 families over 233 named cases)
 
@@ -246,9 +271,11 @@ them and capturing the real error before anything is dispositioned.
 | FUSI-034 | `assertion-no-error-line` (classify, do not assume) |
 | FUSI-035 | `runtime-Error` |
 | FUSI-036 | `lifecycle-transition-forbidden` |
-| FUSI-037 | `Pipeline smoke tier` PostgreSQL role misconfiguration |
+| FUSI-037 | `Pipeline smoke tier` watchdog hang (cause unproven — see above) |
 
-216 of the 233 named cases sit in those eight cards; 17 are fixed here.
+216 of the 233 named cases sit in those eight cards (15 of them the
+`assertion-no-error-line` family, which FUSI-034 must classify rather than
+assume); 17 are fixed here.
 
 ## Full per-case census (#3158)
 
@@ -258,6 +285,8 @@ the reading of the first error line (for example a `Number of calls: 0` line
 that reclassifies a case), that detail is quoted inline and the family is named
 there.
 
+| shard | file | suite > case | first error line |
+|---|---|---|---|
 | `Test shard 1/4` | `src/__tests__/auto-recovery-contamination.test.ts` | ContaminationAutoRecoveryHandler > requeues and clears paused state | TypeError: store.getTask is not a function |
 | `Test shard 1/4` | `src/__tests__/ce-workflow-step-executor.test.ts` | CE workflow-step executor integration > runGraphCustomNode skill node (U1/U2) > blocks the merge requester when graph traversal reaches merge before implementation steps finish | AssertionError: expected { outcome: 'failure', …(2) } to deeply equal ObjectContaining{…} |
 | `Test shard 1/4` | `src/__tests__/ce-workflow-step-executor.test.ts` | CE workflow-step executor integration > runGraphCustomNode skill node (U1/U2) > finalizes a merge-confirmed workflow graph task that is stranded before done | AssertionError: expected "vi.fn()" to be called with arguments: [ 'FN-CE-1', 'done', …(1) ] — followed by `Number of calls: 0`, so `moveTask` was never invoked (family `missing-mock-call-other`, not the provenance-arg shape) |
