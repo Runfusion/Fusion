@@ -235,14 +235,43 @@ describe("startup-model-sync", () => {
         requestyModelSync: true,
         opencodeGoModelSync: false,
       }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue("rqsty-secret") },
+      modelRegistry: { registerProvider },
+      log: vi.fn(),
+    });
+
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual({ headers: { Authorization: "Bearer rqsty-secret" } });
+    expect(registerProvider).toHaveBeenCalledWith("requesty", expect.objectContaining({
+      models: [expect.objectContaining({ id: "openai/gpt-4o-mini" })],
+    }));
+  });
+
+  it("fetches only the public Requesty managed list without a saved key", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: [{ id: "claude-sonnet-4-5", api: "chat" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const registerProvider = vi.fn();
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        requestyModelSync: true,
+        opencodeGoModelSync: false,
+      }),
       authStorage: { getApiKey: vi.fn().mockResolvedValue(undefined) },
       modelRegistry: { registerProvider },
       log: vi.fn(),
     });
 
-    expect(fetchMock.mock.calls[1]?.[1]).toEqual({ headers: {} });
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://router.requesty.ai/v1/models/managed",
+    ]);
     expect(registerProvider).toHaveBeenCalledWith("requesty", expect.objectContaining({
-      models: [expect.objectContaining({ id: "openai/gpt-4o-mini" })],
+      models: [expect.objectContaining({ id: "claude-sonnet-4-5" })],
     }));
   });
 

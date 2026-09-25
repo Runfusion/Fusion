@@ -301,6 +301,10 @@ mapping. Sync lists the curated managed policies from `/v1/models/managed` first
 `/v1/models`; both id forms are accepted verbatim on `POST /v1/chat/completions`.
 Registration names `REQUESTY_API_KEY` like the OrcaRouter entry, and chat requests use the key saved for the `requesty` auth catalog entry. Sync is gated by
 `requestyModelSync` (default true), and requests carry the key only when present.
+
+FNXC:RequestyProvider 2026-09-25-12:47:
+`/v1/models` returns 403 without a key, so without a saved key only the public managed list is fetched.
+This avoids a failed request and a sync failure log on every keyless startup.
 */
 async function syncRequestyModels(options: StartupSyncOptions): Promise<void> {
   const { authStorage, modelRegistry, log } = options;
@@ -312,7 +316,9 @@ async function syncRequestyModels(options: StartupSyncOptions): Promise<void> {
 
   const models: ModelConfig[] = [];
   const seen = new Set<string>();
-  for (const url of [REQUESTY_MANAGED_MODELS_URL, REQUESTY_MODELS_URL]) {
+  // The managed list is public; the full catalog needs a key (403 without one).
+  const urls = apiKey ? [REQUESTY_MANAGED_MODELS_URL, REQUESTY_MODELS_URL] : [REQUESTY_MANAGED_MODELS_URL];
+  for (const url of urls) {
     const response = await fetch(url, { headers });
     if (!response.ok) {
       log("requesty", `Failed to sync models from ${url}: HTTP ${response.status}`);
