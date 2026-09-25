@@ -1352,7 +1352,7 @@ function makeStepPrompt(taskId: string, numSteps: number): string {
 describe("StepSessionExecutor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
     // Default: generateWorktreeName returns predictable names
     mockedGenerateWorktreeName.mockReturnValue("test-worktree");
   });
@@ -1670,11 +1670,20 @@ describe("StepSessionExecutor", () => {
       } as any);
 
       // FNXC:EngineTests 2026-07-09-06:00:
-      // executeAll retries the failing step 3× with sleep() delays between attempts. With
-      // useFakeTimers({ shouldAdvanceTime: true }) these sleeps advance REAL wall-clock time if
-      // the test awaits executeAll directly (was 22.6s, ballooning under CI load and busting the
-      // shard-2 watchdog). Fast-forward the retry sleeps via fake timers like the sibling retry
-      // tests below, so the loop completes in milliseconds.
+      // executeAll retries the failing step 3× with sleep() delays between attempts. The beforeEach
+      // installs FROZEN fake timers (plain vi.useFakeTimers()), so these sleeps never advance on
+      // their own — the test must fast-forward them explicitly, like the sibling retry tests below,
+      // so the loop completes in milliseconds.
+      //
+      // FNXC:EngineTests 2026-09-25-00:33:
+      // This file's beforeEach blocks previously used vi.useFakeTimers({ shouldAdvanceTime: true }).
+      // shouldAdvanceTime couples the fake clock to REAL wall-clock rate; combined with the
+      // parallel-execution tests' vi.advanceTimersByTimeAsync(60_000) and the engine project's
+      // 30-second per-test timeout, ten parallel-execution/cleanup tests were stranded until that
+      // per-test timeout fired (~300s file wall-time + 10 spurious timeout failures) even though
+      // the actual test work finishes in ~168ms. Dropping shouldAdvanceTime makes the fake clock
+      // deterministic: every retry/timeout path is advanced explicitly, the retries are still
+      // fully exercised, and the whole file runs green in ~3s. Do NOT re-add shouldAdvanceTime.
       const resultsPromise = executor.executeAll();
       await vi.advanceTimersByTimeAsync(60_000);
       const results = await resultsPromise;
@@ -3196,7 +3205,7 @@ describe("StepSessionExecutor", () => {
 
   describe("context-limit recovery", () => {
     beforeEach(() => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.useFakeTimers();
       vi.clearAllMocks();
     });
 
@@ -3348,7 +3357,7 @@ describe("StepSessionExecutor", () => {
 describe("StepSessionExecutor skillSelection regression (FN-1511)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
     mockedGenerateWorktreeName.mockReturnValue("test-worktree");
   });
 
@@ -3401,7 +3410,7 @@ describe("StepSessionExecutor tool availability", () => {
   }): Promise<any[]> {
     let captured: any[] = [];
 
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
       captured = opts.customTools || [];
       return {
@@ -3539,7 +3548,7 @@ describe("StepSessionExecutor executor model lane hierarchy", () => {
     let capturedProvider: string | undefined;
     let capturedModelId: string | undefined;
 
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
 
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
       capturedProvider = opts.defaultProvider;
@@ -3656,7 +3665,7 @@ describe("StepSessionExecutor credential-instance retargeting", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
     vi.mocked(promptWithAutoRetry).mockImplementation(async (session: any, prompt: string, options?: unknown) =>
       session.prompt(prompt, options),
     );
