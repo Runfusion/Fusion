@@ -341,6 +341,11 @@ import { runGhostBugPreflight, type ExecResult, type ProbeExec } from "./triage-
 import { runConfiguredCommand } from "./executor/configured-command.js";
 import { resolveGraphNodeSessionBoundary } from "./executor/run-graph-custom-node.js";
 import {
+  clearPrincipalHoldBackoff,
+  getActivePrincipalHoldCooldown,
+  recordPrincipalHoldBackoff,
+} from "./executor/execute-workflow-graph.js";
+import {
   detectUnrecognizedDependencyEvidence,
   detectWorktreeDependencyPlan,
   resolveWorktreeDependencyReadiness,
@@ -2052,6 +2057,15 @@ export class TriageProcessor {
       if (this.processing.has(t.id) || this.hasLivePlanningWork(t.id) || t.paused) return false;
       if (t.status === "awaiting-approval" || t.status === "failed" || t.status === "stuck-killed") return false;
       if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
+      /*
+      FNXC:WorkflowAgentRouting 2026-09-23-09:10:
+      A planning hold (`role-pool-exhausted`, `named-principal-unavailable`, a capacity refusal) parks the card
+      on `needs-replan`, and that status write wakes an immediate re-poll that re-admitted the card at once:
+      observed as a card re-specified every ~3s for days, each pass appending a "Planning held" log entry and
+      pinning the engine's main thread. Honor the same cooldown ladder the executor uses for graph-node holds,
+      so a hold that only operator action can clear is re-checked at 15s doubling to 5min instead.
+      */
+      if (getActivePrincipalHoldCooldown(t.id)) return false;
       const couldBeIntake = isTaskStillInPlanningStage(t) && !this.advancedRecoveryReservations.has(t.id);
       const couldBeHold = t.status !== "planning";
       return couldBeIntake || couldBeHold;
@@ -2306,6 +2320,21 @@ export class TriageProcessor {
     const message = "Fast mode intentionally skips specification planning";
     planLog.log(`${task.id}: ${message}`);
     await this.store.logEntry(task.id, message).catch(() => undefined);
+  }
+
+  /*
+  FNXC:WorkflowAgentRouting 2026-09-23-09:10:
+  Records a planning hold on the shared principal-hold ladder and logs it once per distinct reason. The ladder
+  gates rediscovery (see `couldBeCandidate`); logging every repeat is what grew a held card's activity log by
+  tens of thousands of identical entries, and every later read of that card paid for them.
+  */
+  private async recordPlanningHold(taskId: string, reason: string): Promise<void> {
+    const { attempt, repeated } = recordPrincipalHoldBackoff(taskId, reason);
+    if (repeated) {
+      planLog.debug(`${taskId}: planning still held (${reason}), attempt ${attempt}`);
+      return;
+    }
+    await this.store.logEntry(taskId, `Planning held: ${reason}`);
   }
 
   private startAdmittedPlanning(task: Task): void {
@@ -3025,7 +3054,7 @@ export class TriageProcessor {
               workflowRole: routed.role,
               authorityKind: currentTask.assignedAgentId ? "task-assignee" : null,
             });
-            await this.store.logEntry(task.id, `Planning held: workflow-principal-${routed.reason}:${routed.role}`);
+            await this.recordPlanningHold(task.id, `workflow-principal-${routed.reason}:${routed.role}`);
             await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan" });
             return;
           }
@@ -3050,10 +3079,11 @@ export class TriageProcessor {
               attemptId: workflowCapacityAttemptId,
             });
             if (capacity.status === "held") {
-              await this.store.logEntry(task.id, `Planning held: workflow-principal-${capacity.reason}:triage`);
+              await this.recordPlanningHold(task.id, `workflow-principal-${capacity.reason}:triage`);
               await this.updatePlanningStateIfStillCurrent(task, { status: "needs-replan" });
               return;
             }
+            clearPrincipalHoldBackoff(task.id);
             try {
               // FNXC:WorkflowAgentRouting 2026-08-07-23:50: same atomic-replace contract as the
               // held write above — a predecessor continuation at another node must be retired,
