@@ -628,7 +628,10 @@ describe("aiMergeTask — skill selection non-fatal diagnostics (FN-1510/FN-1511
     });
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    // `moveTask` carries a third `{ workflowMoveSource }` provenance argument.
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   });
 
   it("records skill source in context result for debugging", async () => {

@@ -66,9 +66,33 @@ const autoHeal = (task: Task, max: number, isReviewColumn?: boolean): boolean =>
     hasAutoHealableVerificationBufferFailure: (this: unknown, t: unknown, m: number, r?: boolean) => boolean;
   }).hasAutoHealableVerificationBufferFailure.call({}, task, max, isReviewColumn);
 
-const canMerge = (task: Task, max: number, isReviewColumn?: boolean): boolean =>
+/*
+FNXC:MergeAuthorityHarness 2026-09-25-07:55 (FUSI-020):
+`canMergeTask`'s third positional parameter is the RESOLVED REVIEW-LANE SET
+(`reviewColumns?: ReadonlySet<string>`), not a boolean — it forwards
+`reviewColumns.has(task.column)` into `hasAutoHealableVerificationBufferFailure`.
+Passing a boolean here made the call throw `TypeError: reviewColumns.has is not a
+function` in CI, and the sibling sweep harness below threw
+`TypeError: this.resolveMergeGateBlocker is not a function` because
+`enqueueEligibleInReviewTasks` now probes the merge gate per card. Both are stale
+harness shapes against a product signature that moved, NOT product bugs and NOT
+flakes: they reproduce deterministically file-scoped, on two consecutive CI runs,
+and the ledger/register hold no record of them.
+
+The merge-gate probe is a COLLABORATOR of the sweep, not its subject (the subject is
+per-card lane resolution plus the one-IR-read contract), so it is faked the same way
+`isRetryCooldownElapsed` and `isMergePending` already are here. Faking it also keeps
+the one-IR-read assertion honest: the real probe would add its own IR reads and
+silently measure a different contract.
+*/
+const canMerge = (task: Task, max: number, reviewColumns?: ReadonlySet<string>): boolean =>
   (ProjectEngine.prototype as unknown as {
-    canMergeTask: (this: unknown, t: unknown, m: number, r?: boolean) => boolean;
+    canMergeTask: (
+      this: unknown,
+      t: unknown,
+      m: number,
+      reviewColumns?: ReadonlySet<string>,
+    ) => boolean;
   }).canMergeTask.call(
     {
       options: {},
@@ -79,7 +103,7 @@ const canMerge = (task: Task, max: number, isReviewColumn?: boolean): boolean =>
     },
     task,
     max,
-    isReviewColumn,
+    reviewColumns,
   );
 
 describe("auto-heal recognises the board's own review lane", () => {
@@ -106,9 +130,11 @@ describe("auto-heal recognises the board's own review lane", () => {
 
   it("forwards the resolved answer through canMergeTask", () => {
     // Retry-exhausted (5 >= 3) and cooldown not elapsed, so canMergeTask can only return true via
-    // the auto-heal branch — which makes this a direct probe of the forwarding.
-    expect(canMerge(healableTask("signoff"), 3, true)).toBe(true);
-    expect(canMerge(healableTask("signoff"), 3, false)).toBe(false);
+    // the auto-heal branch — which makes this a direct probe of the forwarding. The lane answer
+    // arrives as the resolved SET the product takes, so a set containing the card's own column
+    // is "this card is in review" and one that omits it is "this card is not".
+    expect(canMerge(healableTask("signoff"), 3, new Set(["signoff"]))).toBe(true);
+    expect(canMerge(healableTask("signoff"), 3, new Set(["building"]))).toBe(false);
   });
 });
 
@@ -138,6 +164,14 @@ describe("the in-review enqueue sweep resolves each card's own review lane", () 
         ProjectEngine.prototype["classifyMergeSweepCandidate" as keyof ProjectEngine],
       loadMergeSweepBatch: ProjectEngine.prototype["loadMergeSweepBatch" as keyof ProjectEngine],
       isMergePending: async () => false,
+      /* FNXC:MergeAuthorityHarness 2026-09-25-07:55: the sweep now also probes the merge gate per
+         card, so a fake `this` without that method throws
+         `TypeError: this.resolveMergeGateBlocker is not a function` before it ever reaches the
+         lane assertions. The probe is a COLLABORATOR of the sweep, not its subject, so it is
+         faked like `isMergePending`/`isRetryCooldownElapsed` above; running the real one would
+         also add its own IR reads and silently measure a different contract than the one-IR-read
+         assertion this file exists to pin. */
+      resolveMergeGateBlocker: async () => undefined,
       mergeSweepHoldReasons: new Map<string, string>(),
       hasAutoHealableVerificationBufferFailure:
         ProjectEngine.prototype["hasAutoHealableVerificationBufferFailure" as keyof ProjectEngine],

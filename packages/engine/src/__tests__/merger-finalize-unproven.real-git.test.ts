@@ -303,7 +303,9 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   }, 20_000);
 
   it("FN-213: clears a removed worktree pointer while retaining an operator branch", async () => {
@@ -435,7 +437,9 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   }, 20_000);
 
   it("blocks FN-4653 shape: foreign start-point branch with no FN-owned commits", async () => {

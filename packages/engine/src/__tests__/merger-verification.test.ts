@@ -420,7 +420,9 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   });
 
   it("merge aborts when build fails via fn_report_build_failure tool", async () => {
@@ -559,7 +561,9 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   });
 
   it("merge proceeds when buildCommand is empty string (treated as undefined)", async () => {
@@ -583,7 +587,9 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   });
 
   function setupDependencySyncVerificationScenario({
@@ -1108,7 +1114,9 @@ describe("aiMergeTask — deterministic merge verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringMatching(/^\[timing\] \[verification\] test command succeeded \(exit 0(?:, output exceeded buffer)?\) in \d+ms$/),
@@ -1909,7 +1917,9 @@ describe("aiMergeTask — inferred test command execution", () => {
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(verificationCalls).toContain("pnpm test");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   });
 
   it("logs that test command was inferred from project files", async () => {
@@ -2086,7 +2096,9 @@ describe("aiMergeTask — inferred test command execution", () => {
     expect(verificationCalls).toHaveLength(0);
     // Merge should still succeed
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
+      workflowMoveSource: "merger-complete-task",
+    });
   });
 });
 
@@ -2367,7 +2379,20 @@ describe("aiMergeTask — in-merge verification fix", () => {
     expect(capturedFixOptions.onToolStart).toBeTypeOf("function");
     expect(capturedFixOptions.onToolEnd).toBeTypeOf("function");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Bash", "tool", undefined, "merger");
+    /*
+    FNXC:MergerAgentLogProvenance 2026-09-25-09:40 (FUSI-020):
+    `appendAgentLog`'s 4th argument is `summarizeToolArgs(name, args)`. The fix
+    agent emits a single string `command` arg, so the summary is that command
+    verbatim — assert the real value, not `expect.any(String)`, so a future
+    change to the summarizer cannot silently alter what the log records.
+    */
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-050",
+      "Bash",
+      "tool",
+      "vitest run",
+      "merger",
+    );
 
     const logMessages = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls
       .map((call: any[]) => call[1])
