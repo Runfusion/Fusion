@@ -83,10 +83,10 @@ PostgreSQL service log in the same job shows
 `Role "runner" does not exist`.
 
 **That log is a lead, not an established cause.** The job provisions the service
-with `POSTGRES_USER=postgres` and exports
-`FUSION_PG_TEST_URL_BASE=postgresql://postgres:***@localhost:5432` plus
-`PGPASSWORD=postgres` (`.github/workflows/full-suite.yml`), so the *configured*
-smoke harness connects as `postgres`. Nothing in the evidence shows the `runner`
+with `POSTGRES_USER=postgres` and exports a `postgres`-role connection URL via
+`FUSION_PG_TEST_URL_BASE` plus `PGPASSWORD` (see
+`.github/workflows/full-suite.yml`), so the *configured* smoke harness connects
+as `postgres`. Nothing in the evidence shows the `runner`
 authentication attempt came from that harness rather than from a child process
 that ignored the provisioned URL, and the job-level timeout is a 175 000 ms
 watchdog on the pipeline project — not proof that a connection attempt caused
