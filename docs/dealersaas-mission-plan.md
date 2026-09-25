@@ -1,12 +1,14 @@
 # DealersSaaS → Carcuro mission plan
 
-**Plan of record · proposed / awaiting approval**
+**Status:** `proposed / awaiting approval`
+**Artifact review:** `independent of product approval`
+**Hierarchy actions:** `prohibited before approval`
 
 [← Documentation index](./README.md) · [Capability inventory](./carcuro-capability-inventory.md) · [Product specification](./carcuro-product-spec.md)
 
 ## Executive decision
 
-At measured revision `38455359f2cc4d91dc10dc6a0d8d7a94ca14b959`, this checkout is the Fusion orchestration monorepo and contains no reachable DealersSaaS, Carcuro, or `scrapeui` dealership substrate. The [inventory](./carcuro-capability-inventory.md) records the bounded code/history evidence; the [product specification](./carcuro-product-spec.md) separates repository observations, dated vendor claims, planning inference, unknowns, and proposed outcomes.
+At measured revision `b37d0fe26b4faab376b8a60f3d0c3866cf8b0b7f`, this checkout is the Fusion orchestration monorepo and contains no reachable DealersSaaS, Carcuro, or `scrapeui` dealership substrate. The [inventory](./carcuro-capability-inventory.md) records the bounded code/history evidence; the [product specification](./carcuro-product-spec.md) separates repository observations, dated vendor claims, planning inference, unknowns, and proposed outcomes.
 
 The first approval decision is therefore architectural: implement an isolated dealer domain in this repository using its extension seams, identify and authorize the intended separate substrate repository, or revise the mission. The hierarchy below remains **proposed / awaiting approval** and creates no persisted milestone, slice, feature, goal link, or implementation task.
 
@@ -40,7 +42,7 @@ Unresolved evidence remains unresolved; approval must not silently convert vendo
 
 ## Dependency order and parallelism
 
-The dependency graph is intentionally acyclic. Foundation decisions gate all stateful work. Canonical vehicle/customer/deal facts precede finance and publication. Acquisition/cost facts precede P&L. CRM/deal/document flow precedes invoice generation. Correctable invoice/payment facts precede financial BI. Canonical inventory/media precedes channel/storefront publication. Trusted operational/financial facts and an approved source/freshness policy precede BI and valuation conclusions.
+The dependency graph is intentionally acyclic. Foundation decisions gate all stateful work. Canonical vehicle/customer/deal facts precede finance; canonical vehicle/media facts precede publication. Acquisition/cost facts precede P&L. CRM/deal/document flow precedes invoice generation. Correctable invoice/payment facts precede financial BI. Canonical inventory/media precedes channel/storefront publication. Trusted operational/financial facts and an approved source/freshness policy precede BI and valuation conclusions.
 
 After `F-FOUND-04`, vehicle and CRM slices may proceed in parallel. After canonical vehicle/media and publication semantics exist, the reference channel and storefront projection may proceed in parallel. BI metric work can begin against versioned contracts while invoice implementation proceeds, but financial BI acceptance remains gated on reconciled invoice/payment facts. Valuation provider work may begin after canonical vehicle snapshots and provider policy, independently of storefront rendering.
 

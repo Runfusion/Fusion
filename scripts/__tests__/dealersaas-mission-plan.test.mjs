@@ -50,7 +50,7 @@ FNXC:DealersSaaSPlanContract 2026-09-23-12:05:
 History claims must cover every currently reachable ref and preserve external `scrapeui` mentions as bounded context rather than incorrectly reporting them absent or treating them as inspected dealership source.
 */
 function tableRows(markdown, heading) {
-  const section = markdown.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |\\Z)`, "m"));
+  const section = markdown.match(new RegExp(`^## ${heading}\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m"));
   assert.ok(section, `Missing section: ${heading}`);
   return section[1]
     .split("\n")
@@ -73,6 +73,7 @@ function validateInventory(markdown) {
   }
   if (!/\*\*Measured revision:\*\* `[0-9a-f]{40}`/.test(markdown)) errors.push("Missing measured revision");
   rows.forEach((row) => {
+    if (row.length !== 8) errors.push(`${row[0]} must have exactly eight capability columns (found ${row.length})`);
     if (!row[2]?.startsWith("`code-verified ") && row[2] !== "`unknown/unavailable`") {
       errors.push(`${row[0]} has no valid evidence status`);
     }
@@ -96,11 +97,14 @@ test("capability inventory validator rejects missing domain and evidence markers
 
   const missingEvidence = inventory.replaceAll("`unknown/unavailable`", "`unknown`");
   assert.match(validateInventory(missingEvidence).join("\n"), /Missing evidence state: unknown\/unavailable/);
+
+  const malformedTable = inventory.replace("-e invoice -e rechn", "-E 'invoice|rechn'");
+  assert.match(validateInventory(malformedTable).join("\n"), /must have exactly eight capability columns/);
 });
 
 function domainSection(markdown, domain) {
   const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return markdown.match(new RegExp(`^### ${escaped}\\n([\\s\\S]*?)(?=^### |^## |\\Z)`, "m"))?.[1];
+  return markdown.match(new RegExp(`^### ${escaped}\\n([\\s\\S]*?)(?=^### |^## |(?![\\s\\S]))`, "m"))?.[1];
 }
 
 function validateProductSpec(markdown) {
@@ -239,13 +243,27 @@ function validateHierarchy(markdown) {
   return errors;
 }
 
+function approvalControls(markdown) {
+  const fields = new Map([...markdown.matchAll(/^\*\*([^*]+):\*\* `([^`]+)`$/gm)].map((match) => [match[1], match[2]]));
+  const choices = [...markdown.matchAll(/^- \*\*(Approve|Approve with changes|Revise)\*\*$/gm)].map((match) => match[1]);
+  return {
+    status: fields.get("Status"),
+    artifactReview: fields.get("Artifact review"),
+    hierarchyActions: fields.get("Hierarchy actions"),
+    choices,
+  };
+}
+
 function validateApprovalGate(markdown) {
   const errors = [];
+  const controls = approvalControls(markdown);
+  if (controls.status !== "proposed / awaiting approval") errors.push("Plan status must remain proposed / awaiting approval");
+  if (controls.artifactReview !== "independent of product approval") errors.push("Artifact review must remain independent of product approval");
+  if (controls.hierarchyActions !== "prohibited before approval") errors.push("Hierarchy actions must remain prohibited before approval");
   for (const choice of ["Approve", "Approve with changes", "Revise"]) {
-    const count = [...markdown.matchAll(new RegExp(`^- \\*\\*${choice}\\*\\*$`, "gm"))].length;
+    const count = controls.choices.filter((candidate) => candidate === choice).length;
     if (count !== 1) errors.push(`Approval choice ${choice} must occur exactly once`);
   }
-  if (!/proposed \/ awaiting approval/.test(markdown)) errors.push("Hierarchy lacks awaiting-approval status");
   for (const forbidden of ["hierarchy is approved", "hierarchy is active", "hierarchy is implemented", "hierarchy is delegated", "hierarchy is linked"]) {
     if (markdown.toLowerCase().includes(forbidden)) errors.push(`Forbidden completion claim: ${forbidden}`);
   }
@@ -277,14 +295,14 @@ test("plan contract detects dependency cycles, duplicate labels, premature hiera
   assert.match(validateApprovalGate(missingChoice).join("\n"), /Revise must occur exactly once/);
 });
 
-test("plan preserves the pre-implementation approval gate and separates workflow review", () => {
+test("plan preserves structured pre-implementation approval controls", () => {
   assert.deepEqual(validateApprovalGate(plan), []);
-  assert.match(plan, /Artifact completion boundary.*FX-010 is complete when this evidence-grounded proposal and its explicit user decision request are delivered and verified/s);
-  assert.match(plan, /Workflow review and product approval are separate decisions/);
-  assert.match(plan, /workflow reviewer can approve or revise whether this task faithfully produced the evidence-grounded planning artifact/);
-  assert.match(plan, /No product-approval response is required to complete or review FX-010 itself/);
-  assert.match(plan, /Approval authorizes only a later interaction to persist the agreed Mission hierarchy and hand it to Engineering/);
-  assert.match(plan, /FX-011 must be resolved before the active goal is linked/);
+  assert.deepEqual(approvalControls(plan), {
+    status: "proposed / awaiting approval",
+    artifactReview: "independent of product approval",
+    hierarchyActions: "prohibited before approval",
+    choices: ["Approve", "Approve with changes", "Revise"],
+  });
 });
 
 function localMarkdownLinks(markdown) {

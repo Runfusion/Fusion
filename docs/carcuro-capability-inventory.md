@@ -4,10 +4,10 @@
 
 ## Measurement boundary
 
-- **Measured revision:** `38455359f2cc4d91dc10dc6a0d8d7a94ca14b959`
-- **Measured at:** 2026-09-23 11:45 UTC
-- **Checkout:** branch `fusion/fx-010`, package `fusion-workspace@0.73.0-beta.0`
-- **Review boundary:** the measured revision is the task's recorded base and local `main`; every cited production package path is contract-tested with `git cat-file` at this exact revision rather than inferred from the later task worktree.
+- **Measured revision:** `b37d0fe26b4faab376b8a60f3d0c3866cf8b0b7f`
+- **Measured at:** 2026-09-25 23:58 UTC
+- **Checkout:** branch `fusion/fx-010`, package `fusion-workspace@0.78.0-beta.7`
+- **Review boundary:** the measured revision is the current PR base `main` fetched from `Runfusion/Fusion`; every cited production package path is contract-tested with `git cat-file` at this exact revision rather than inferred from the task worktree.
 - **Scope:** tracked files at the measured revision plus history/content/object-name searches across all refs currently reachable from this Fusion repository. This is not evidence about another repository, an unpushed branch, or a deployed Carcuro system. Reachable remote-ref history mentions an external `scrapeui` working directory, but does not make that directory or its dealership source inspectable here.
 
 ### Evidence vocabulary
@@ -26,7 +26,7 @@ No required dealership domain is `code-verified implemented` or `code-verified p
 Run from the repository root. The first and final commands keep current-code claims bounded to the measured revision; the intervening `--all` commands separately inspect every currently reachable ref and distinguish FX-010-authored results from pre-existing history:
 
 ```bash
-measured=38455359f2cc4d91dc10dc6a0d8d7a94ca14b959
+measured=b37d0fe26b4faab376b8a60f3d0c3866cf8b0b7f
 git grep -In -e DealersSaaS -e Carcuro -e scrapeui "$measured" -- ':!pnpm-lock.yaml'
 git log --all --oneline --regexp-ignore-case --grep='dealerssaas\|carcuro\|scrapeui'
 git log --all --name-status --pretty='format:%H %s' -- \
@@ -68,10 +68,10 @@ Code evidence:
 
 - UI composition: `packages/dashboard/app/App.tsx` (`App`, `registerBundledPluginViews`) and `packages/dashboard/app/components/dashboard/MainContent.tsx` (`MainContent`).
 - Desktop/mobile hosts: `packages/dashboard/app/components/LeftSidebarNav.tsx` (`LeftSidebarNav`) and `packages/dashboard/app/components/MobileNavBar.tsx` (`MobileNavBar`). Neither declares a dealership view.
-- Extension boundary: `packages/dashboard/app/plugins/types.ts` (`PluginDashboardViewRegistration`), `packages/plugin-sdk/src/index.ts` (`definePlugin`), and `docs/PLUGIN_AUTHORING.md`. These contracts show where an extension could attach, not that one exists.
+- Extension boundary: `packages/core/src/plugins/plugin-types.ts` (`PluginDashboardViewDefinition`), `packages/plugin-sdk/src/index.ts` (`definePlugin`), and `docs/PLUGIN_AUTHORING.md`. These contracts show where an extension could attach, not that one exists.
 - API composition: `packages/dashboard/src/routes.ts` (`createApiRoutes`) and `packages/dashboard/src/routes/create-api-routes-mount-sequence.ts` (`CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE`). No dealership registrar appears in the enforced sequence or `packages/dashboard/src/routes/`.
 - Persistence boundary: `packages/core/src/postgres/schema/project.ts` exports project-scoped `tasks`, `missions`, `goals`, `missionGoals`, `milestones`, `slices`, and `runAuditEvents`; it exports no vehicle, customer, deal, invoice, channel listing, storefront, or valuation table.
-- Mission writers (not dealer writers): `packages/core/src/mission-store.ts` (`MissionStore.addMilestone`, `addSlice`, `addFeature`) and `packages/core/src/async-mission-store.ts` (`AsyncMissionStore`).
+- Mission writers (not dealer writers): `packages/core/src/missions/mission-store.ts` (`MissionStore.addMilestone`, `addSlice`, `addFeature`) and `packages/core/src/async-stores/async-mission-store.ts` (`AsyncMissionStore`).
 - Real generic contract tests include `packages/dashboard/src/routes/__tests__/create-api-routes-mount-order.test.ts`, mission-store tests under `packages/core/src/__tests__/`, and dashboard navigation tests. They do not exercise dealer journeys.
 
 ### End-to-end dealership trace result
@@ -85,7 +85,7 @@ Exactly one row is provided for each requested domain.
 | Domain | User outcome | Evidence status | Path/symbol or bounded absence record | Shared dependencies | Blast radius | Principal risk | Confidence |
 |---|---|---|---|---|---|---|---|
 | Inventory P&L | Know per-vehicle acquisition, carrying, preparation, sale, and realized margin facts. | `code-verified absent` | Census found no vehicle/stock/cost/sale model or route; `packages/core/src/postgres/schema/project.ts` contains only generic project entities. | Tenant identity, vehicle/deal facts, money/tax model, audit | Data model, desktop/mobile UI, APIs, imports, reporting | Mutable costs or ambiguous sale boundaries corrupt margin. | High for this checkout |
-| Invoicing | Generate, issue, correct, void, and account for invoices from canonical customer/deal facts. | `code-verified absent` | `git grep -Il -Ei 'invoice|rechn'` produced no production invoice module; no invoice registrar occurs in `CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE`. | Customer/deal identity, tax jurisdiction, immutable numbering, documents | Persistence, PDF/document output, permissions, audit, accounting export | Unsupported legal/tax assumptions or non-auditable corrections. | High for this checkout |
+| Invoicing | Generate, issue, correct, void, and account for invoices from canonical customer/deal facts. | `code-verified absent` | `git grep -Il -i -e invoice -e rechn` produced no production invoice module; no invoice registrar occurs in `CREATE_API_ROUTES_REGISTRAR_MOUNT_SEQUENCE`. | Customer/deal identity, tax jurisdiction, immutable numbering, documents | Persistence, PDF/document output, permissions, audit, accounting export | Unsupported legal/tax assumptions or non-auditable corrections. | High for this checkout |
 | CRM | Maintain customers, contacts, consent, history, and their deals without cross-tenant leakage. | `code-verified absent` | No dealership customer/deal entity, view, API, or table; generic goals/tasks in `packages/core/src/postgres/schema/project.ts` are not CRM. | Tenant/roles, privacy, search, documents, deal model | Identity, UI, import/export, retention, audit | Duplicate identities and unlawful retention/disclosure. | High for this checkout |
 | Sales channels | Publish canonical vehicles to configured marketplaces and reconcile remote state. | `code-verified absent` | No marketplace connector, listing aggregate, sync worker, or dealership channel route found under `packages/dashboard/src/routes/` or tracked manifests. | Vehicle/media, credentials, jobs, idempotency, rate limits | Connectors, secrets, queues, monitoring, UI | Duplicate/stale listings and destructive competing recovery. | High for this checkout |
 | Storefront | Present tenant-branded public inventory with accurate availability and lead capture. | `code-verified absent` | Census found no public dealership catalog, tenant storefront host, lead endpoint, or storefront persistence; `App` is the Fusion operator dashboard. | Vehicle/media, publication state, tenant branding, privacy | Public web delivery, cache/SEO, APIs, CRM handoff | Stale sold inventory, tenant leakage, inaccessible/mobile-poor pages. | High for this checkout |
