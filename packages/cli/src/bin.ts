@@ -659,26 +659,28 @@ async function main() {
     process.exit(0);
   }
 
+  /*
+   * FNXC:PiBootstrapRouting 2026-09-25-08:17:
+   * Help retains global precedence and normal startup's `.fusion` Pi package.
+   * Built-in guide rendering follows it but bypasses Pi setup and cwd reads,
+   * because it has no Pi consumer and must complete without generic bootstrap.
+   */
   if (args.includes("--help") || args.includes("-h")) {
+    configurePiPackage();
     console.log(HELP);
     process.exit(0);
   }
 
-  /*
-   * FNXC:SkillsGetCompletion 2026-09-25-04:52:
-   * Built-in guide requests must write their terminal result without PI package
-   * setup or cwd environment reads, because those generic bootstrap operations
-   * can delay the built child past the subprocess completion guard under load.
-   */
   if (args[0] === "skills" && args[1] === "get") {
     const { runSkillsGet } = await import("./commands/skills-get.js");
     process.exitCode = await runSkillsGet(args.slice(2));
     return;
   }
 
-  // Generic commands retain PI configuration and local environment loading
-  // before application imports that may resolve agent resources or credentials.
   configurePiPackage();
+
+  // Generic commands load local environment values before application imports
+  // that may resolve agent resources or credentials.
   loadLocalEnv();
 
   const hasJsonFlag = args.includes("--json");
