@@ -10,7 +10,9 @@
 // per-run permission gate — see `PermissionGate` below, the narrow structural
 // view this plugin couples to instead of importing `@fusion/engine` internals.
 
+import type { ResolvedMcpServerDefinition } from "@fusion/core";
 import type { AcpConnection } from "./provider.js";
+import type { AcpMcpServer } from "./mcp-forwarding.js";
 
 /** Callbacks the engine wires to surface streamed agent output into Fusion's UI/logs. */
 export interface AcpCallbacks {
@@ -30,28 +32,15 @@ export interface AcpCallbacks {
  * http/sse (Grok advertises mcpCapabilities.http/sse) as well as the classic
  * stdio custom-tools bridge used by Route A.
  */
-export interface AcpMcpServerStdio {
-  name: string;
-  command: string;
-  args: string[];
-  env: { name: string; value: string }[];
-}
+export type { AcpMcpServer } from "./mcp-forwarding.js";
+export type AcpMcpServerStdio = Extract<AcpMcpServer, { command: string }>;
 
-export interface AcpMcpServerHttp {
-  type: "http";
-  name: string;
-  url: string;
-  headers: { name: string; value: string }[];
-}
-
-export interface AcpMcpServerSse {
-  type: "sse";
-  name: string;
-  url: string;
-  headers: { name: string; value: string }[];
-}
-
-export type AcpMcpServer = AcpMcpServerStdio | AcpMcpServerHttp | AcpMcpServerSse;
+/*
+FNXC:AcpMcpTransport 2026-09-25-14:51:
+Runtime options receive Fusion's resolved MCP definitions, while the internal Fusion tool bridge uses
+the legacy ACP stdio shape. Accept both until toAcpMcpServers normalizes them at session/new.
+*/
+export type AcpRuntimeMcpServer = ResolvedMcpServerDefinition | AcpMcpServer;
 
 /** Per-category permission disposition (mirrors the engine policy shape). */
 export type GateDisposition = "allow" | "block" | "require-approval";
@@ -142,7 +131,7 @@ export interface AgentRuntimeOptions {
    * non-empty, the agent can call these tools (each call still routes through the
    * U5 permission floor). Absent/empty preserves Route B's read-only ask posture.
    */
-  mcpServers?: AcpMcpServer[];
+  mcpServers?: AcpRuntimeMcpServer[];
   /**
    * FNXC:GrokAcp 2026-07-11-14:00:
    * Opaque ACP `session/new._meta` for agent-specific setup (Grok pluginDirs /

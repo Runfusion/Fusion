@@ -20,6 +20,7 @@ import {
 import { buildSpawnEnv } from "./process-manager.js";
 import { buildPromptBlocks, extractPromptImagesFromOptions } from "./prompt-builder.js";
 import { startFusionToolBridge, type FusionToolBridge, type ToolLike } from "./tool-bridge.js";
+import { toAcpMcpServers } from "./mcp-forwarding.js";
 import type {
   AgentRuntime,
   AgentRuntimeOptions,
@@ -211,7 +212,12 @@ export class AcpRuntimeAdapter implements AgentRuntime {
           : undefined;
       const opened = await newAcpSession(connection, {
         cwd: options.cwd,
-        mcpServers: [...(options.mcpServers ?? []), ...(toolBridge ? [toolBridge.mcpServer] : [])],
+        mcpServers: toAcpMcpServers(
+          [...(options.mcpServers ?? []), ...(toolBridge ? [toolBridge.mcpServer] : [])],
+          connection.agentCapabilities
+            ? connection.agentCapabilities.mcpCapabilities ?? {}
+            : undefined,
+        ),
         meta: sessionMeta,
       });
       sessionId = opened.sessionId;

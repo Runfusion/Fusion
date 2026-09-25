@@ -418,6 +418,37 @@ describe("AcpRuntimeAdapter custom-tools bridge (FNXC:AcpCustomTools)", () => {
     }
   });
 
+  /*
+  FNXC:AcpMcpWireShape 2026-09-25-14:51:
+  ACP session/new must receive the tool bridge plus resolved Fusion MCP definitions in ACP wire
+  form. Verify the adapter normalizes all supported transports at the protocol boundary.
+  */
+  it("normalizes resolved MCP definitions and appends the Fusion tool bridge", async () => {
+    let captured: { mcpServers?: unknown[] } | undefined;
+    const spy = vi.spyOn(provider, "newAcpSession").mockImplementation(async (_connection, opts) => {
+      captured = opts;
+      return { sessionId: "mcp-wire-session" };
+    });
+    const adapter = makeAdapter();
+    let session: AcpSession | undefined;
+    try {
+      const created = await adapter.createSession(makeOptions({
+        customTools: [{ name: "fn_task_list", execute: async () => "ok" }],
+        mcpServers: [
+          { name: "stdio", transport: "stdio", command: "node", args: ["server.js"], env: { TOKEN: "secret" } },
+        ],
+      }));
+      session = created.session;
+      expect(captured?.mcpServers).toEqual([
+        { name: "stdio", command: "node", args: ["server.js"], env: [{ name: "TOKEN", value: "secret" }] },
+        expect.objectContaining({ name: "fusion-custom-tools", command: process.execPath }),
+      ]);
+    } finally {
+      if (session) await adapter.dispose(session);
+      spy.mockRestore();
+    }
+  });
+
   it("does not add a bridge when no customTools are supplied", async () => {
     let captured: { mcpServers?: unknown[] } | undefined;
     const spy = vi
