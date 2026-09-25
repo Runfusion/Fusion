@@ -63,6 +63,8 @@ describe("fn skills get", () => {
 
     await expect(execFile(process.execPath, [builtCli, "skills", "get", "definitely-not-a-skill"], { cwd: cliRoot }))
       .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("computer-use") });
+    await expect(execFile(process.execPath, [builtCli, "skills", "get"], { cwd: cliRoot }))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("computer-use") });
   });
 
   it("finishes the built guide before cwd bootstrap configuration", async () => {
