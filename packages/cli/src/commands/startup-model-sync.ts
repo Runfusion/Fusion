@@ -9,6 +9,7 @@ const ORCAROUTER_DEFAULT_BASE_URL = "https://api.orcarouter.ai/v1";
 const REQUESTY_MANAGED_MODELS_URL = "https://router.requesty.ai/v1/models/managed";
 const REQUESTY_MODELS_URL = "https://router.requesty.ai/v1/models";
 const REQUESTY_DEFAULT_BASE_URL = "https://router.requesty.ai/v1";
+const REQUESTY_MODELS_TIMEOUT_MS = 15_000;
 const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
 
 type ModelConfig = {
@@ -302,9 +303,10 @@ mapping. Sync lists the curated managed policies from `/v1/models/managed` first
 Registration names `REQUESTY_API_KEY` like the OrcaRouter entry, and chat requests use the key saved for the `requesty` auth catalog entry. Sync is gated by
 `requestyModelSync` (default true), and requests carry the key only when present.
 
-FNXC:RequestyProvider 2026-09-25-12:47:
-`/v1/models` returns 403 without a key, so without a saved key only the public managed list is fetched.
-This avoids a failed request and a sync failure log on every keyless startup.
+FNXC:RequestyProvider 2026-09-25-13:02:
+Both lists are public: keyless `/v1/models` returns 200, and only an invalid key gets 403, so both lists are fetched with or without a saved key.
+Each list is fetched independently: an HTTP error, network error, invalid JSON or timeout on one list is logged and the other list is still registered.
+Each request is bounded by `REQUESTY_MODELS_TIMEOUT_MS`, so a stalled Requesty response cannot hold back the opencode-go sync that runs after it.
 */
 async function syncRequestyModels(options: StartupSyncOptions): Promise<void> {
   const { authStorage, modelRegistry, log } = options;
@@ -316,15 +318,20 @@ async function syncRequestyModels(options: StartupSyncOptions): Promise<void> {
 
   const models: ModelConfig[] = [];
   const seen = new Set<string>();
-  // The managed list is public; the full catalog needs a key (403 without one).
-  const urls = apiKey ? [REQUESTY_MANAGED_MODELS_URL, REQUESTY_MODELS_URL] : [REQUESTY_MANAGED_MODELS_URL];
-  for (const url of urls) {
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      log("requesty", `Failed to sync models from ${url}: HTTP ${response.status}`);
+  for (const url of [REQUESTY_MANAGED_MODELS_URL, REQUESTY_MODELS_URL]) {
+    let json: { data?: RequestyModel[] };
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(REQUESTY_MODELS_TIMEOUT_MS) });
+      if (!response.ok) {
+        log("requesty", `Failed to sync models from ${url}: HTTP ${response.status}`);
+        continue;
+      }
+      json = await response.json() as { data?: RequestyModel[] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log("requesty", `Failed to sync models from ${url}: ${message}`);
       continue;
     }
-    const json = await response.json() as { data?: RequestyModel[] };
     for (const model of toRequestyModels(json)) {
       if (!seen.has(model.id)) {
         seen.add(model.id);
