@@ -46,6 +46,12 @@ describe("startup-model-sync", () => {
       status: 200,
       json: vi.fn().mockResolvedValue({ data: [] }),
     });
+    // Requesty sync also runs by default and reads its managed and full catalogs.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: [] }),
+    });
     vi.stubGlobal("fetch", fetchMock);
   }
 
@@ -95,7 +101,7 @@ describe("startup-model-sync", () => {
     const registerProvider = vi.fn();
 
     await syncStartupModels({
-      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false, orcarouterModelSync: false }),
+      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false, orcarouterModelSync: false, requestyModelSync: false }),
       authStorage: { getApiKey: vi.fn() },
       modelRegistry: { registerProvider },
       log: vi.fn(),
@@ -153,6 +159,91 @@ describe("startup-model-sync", () => {
     expect(orcaCall?.[1]).toEqual({
       headers: { Authorization: "Bearer sk-orca-secret" },
     });
+  });
+
+  it("syncs Requesty managed and catalog models as a named OpenAI-compatible provider", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          data: [{ id: "claude-sonnet-4-5", api: "chat", context_window: 200000, max_output_tokens: 64000, input_price: 0.000003, output_price: 0.000015, supports_reasoning: true, supports_vision: true }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          data: [
+            { id: "openai/gpt-4o-mini", api: "chat", context_window: 128000, max_output_tokens: 16384, input_price: 0.00000015, output_price: 0.0000006 },
+            { id: "claude-sonnet-4-5", api: "chat" },
+            { id: "openai/text-embedding-3-small", api: "embedding" },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const registerProvider = vi.fn();
+    const log = vi.fn();
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        requestyModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue("rqsty-secret") },
+      modelRegistry: { registerProvider },
+      log,
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://router.requesty.ai/v1/models/managed",
+      "https://router.requesty.ai/v1/models",
+    ]);
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual({
+      headers: { Authorization: "Bearer rqsty-secret" },
+    });
+    const requestyCall = registerProvider.mock.calls.find(([name]) => name === "requesty");
+    expect(requestyCall?.[1]).toMatchObject({
+      baseUrl: "https://router.requesty.ai/v1",
+      apiKey: "REQUESTY_API_KEY",
+      api: "openai-completions",
+    });
+    const models = requestyCall?.[1].models as Array<{ id: string; reasoning: boolean; input: string[]; contextWindow: number; cost: { input: number } }>;
+    expect(models.map((model) => model.id)).toEqual(["claude-sonnet-4-5", "openai/gpt-4o-mini"]);
+    expect(models[0]).toMatchObject({ reasoning: true, input: ["text", "image"], contextWindow: 200000 });
+    expect(models[0]?.cost.input).toBeCloseTo(3);
+    expect(log).toHaveBeenCalledWith("requesty", expect.stringContaining("Synced 2 models"));
+  });
+
+  it("keeps the Requesty catalog when the managed list fails", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, json: vi.fn() })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ data: [{ id: "openai/gpt-4o-mini", api: "chat" }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const registerProvider = vi.fn();
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        requestyModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue(undefined) },
+      modelRegistry: { registerProvider },
+      log: vi.fn(),
+    });
+
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual({ headers: {} });
+    expect(registerProvider).toHaveBeenCalledWith("requesty", expect.objectContaining({
+      models: [expect.objectContaining({ id: "openai/gpt-4o-mini" })],
+    }));
   });
 
   it("sends default OpenRouter attribution headers", async () => {
