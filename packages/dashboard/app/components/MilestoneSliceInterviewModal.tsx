@@ -27,6 +27,7 @@ import {
   ChevronDown,
   Minimize2,
 } from "lucide-react";
+import { AiDisclosure } from "./AiDisclosure";
 import { ConversationHistory } from "./ConversationHistory";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { MailboxMessageContent } from "./MailboxMessageContent";
@@ -434,6 +435,7 @@ export function MilestoneSliceInterviewModal({
             </button>
           </div>
         </div>
+        <AiDisclosure kind="ai-interaction" className="planning-ai-disclosure" />
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}

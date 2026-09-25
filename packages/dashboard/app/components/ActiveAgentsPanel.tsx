@@ -7,6 +7,7 @@ import { fetchTaskDetail } from "../api";
 import "./ActiveAgentsPanel.css";
 import { useLiveTranscript } from "../hooks/useLiveTranscript";
 import { resolveHeartbeatIntervalMs } from "../utils/heartbeatIntervals";
+import { AiDisclosure } from "./AiDisclosure";
 import { AgentTaskBadge } from "./AgentTaskBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { getCanonicalStepNumber } from "../lib/step-display";
@@ -195,11 +196,14 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs, activity }:
             )}
           </div>
         ) : (
-          entries.slice(0, 20).map((entry, i) => (
-            <div key={i} className="live-agent-card-line">
-              {entry.text}
-            </div>
-          ))
+          <>
+            <AiDisclosure kind="generated-output" compact />
+            {entries.slice(0, 20).map((entry, i) => (
+              <div key={i} className="live-agent-card-line">
+                {entry.text}
+              </div>
+            ))}
+          </>
         )}
       </div>
       <div className="live-agent-card-footer">
