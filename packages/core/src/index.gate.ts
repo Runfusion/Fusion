@@ -900,6 +900,20 @@ export {
 } from "./tasks/remediation-steps.js";
 export type { RemediationStepInput } from "./tasks/remediation-steps.js";
 export type { AppendRemediationStepsOptions, AppendRemediationStepsResult } from "./task-store/remediation-step-ops.js";
+
+export {
+  openReviewerRunForTask,
+  completeReviewerRunForTask,
+  findLiveReviewerRunForTask,
+  listReviewerRunsForTask,
+  invalidateReviewerRunsForTask,
+} from "./task-store/reviewer-run-ledger.js";
+export type { ReviewerRunRow, ReviewerRunStatus } from "./task-store/reviewer-run-ledger.js";
+export {
+  appendTaskLifecycleEventInTransaction,
+  latestTaskEnteredReviewAt,
+} from "./task-store/lifecycle-outbox.js";
+export type { TaskLifecycleEventInput, TaskEnteredReviewLifecyclePayload } from "./task-store/lifecycle-outbox.js";
 export { evaluateNoCommitsNoOpFinalize } from "./merge/no-commits-finalize-guard.js";
 export type { NoCommitsNoOpFinalizeEvaluation } from "./merge/no-commits-finalize-guard.js";
 export {
