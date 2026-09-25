@@ -10,8 +10,8 @@ import { buildNtfyClickUrl } from "../util/notifier.js";
 export interface WebhookProviderConfig {
   /** Webhook endpoint URL */
   webhookUrl: string;
-  /** Payload format: slack, discord, or generic */
-  webhookFormat: "slack" | "discord" | "generic";
+  /** Payload format: slack, discord, feishu, or generic */
+  webhookFormat: "slack" | "discord" | "feishu" | "generic";
   /** Events to send (empty = all events) */
   events?: string[];
   /** Dashboard host for click-through deep links */
@@ -78,7 +78,8 @@ export class WebhookNotificationProvider implements NotificationProvider {
     }
 
     const webhookFormat =
-      config.webhookFormat === "slack" || config.webhookFormat === "discord" || config.webhookFormat === "generic"
+      config.webhookFormat === "slack" || config.webhookFormat === "discord" ||
+      config.webhookFormat === "feishu" || config.webhookFormat === "generic"
         ? config.webhookFormat
         : "generic";
 
@@ -141,6 +142,35 @@ export class WebhookNotificationProvider implements NotificationProvider {
           providerId: this.getProviderId(),
           error,
         };
+      }
+
+      /*
+       * FNXC:WebhookFeishu 2026-09-18-07:30:
+       * Feishu answers HTTP 200 even when it rejects a payload (body code != 0,
+       * e.g. 19002 "params error, msg_type need", 19021 token invalid), so an
+       * ok-status check alone reports success for messages that never deliver.
+       * Surface the rejection as a failed notification for the feishu format.
+       */
+      if (this.config.webhookFormat === "feishu") {
+        let data: unknown = null;
+        try {
+          data = await response.json();
+        } catch {
+          data = null;
+        }
+        if (data && typeof data === "object" && "code" in data) {
+          const code = data.code;
+          if (typeof code === "number" && code !== 0) {
+            const msgValue = "msg" in data ? data.msg : undefined;
+            const error = `Feishu rejected the webhook payload: code ${code}${typeof msgValue === "string" ? ` (${msgValue})` : ""}`;
+            schedulerLog.log(error);
+            return {
+              success: false,
+              providerId: this.getProviderId(),
+              error,
+            };
+          }
+        }
       }
 
       return { success: true, providerId: this.getProviderId() };
@@ -235,6 +265,17 @@ export class WebhookNotificationProvider implements NotificationProvider {
 
     if (this.config.webhookFormat === "discord") {
       return { content: message };
+    }
+
+    /*
+     * FNXC:WebhookFeishu 2026-09-18-07:09:
+     * Feishu/Lark custom bot webhooks require msg_type + content; a missing msg_type
+     * is rejected with code 19002 ("params error, msg_type need") while still
+     * returning HTTP 200 — so the slack/discord/generic formats silently fail
+     * delivery when pointed at a Feishu bot. Text is the simplest accepted type.
+     */
+    if (this.config.webhookFormat === "feishu") {
+      return { msg_type: "text", content: { text: message } };
     }
 
     const messageId = typeof payload.metadata?.messageId === "string" ? payload.metadata.messageId : undefined;
