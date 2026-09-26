@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **2 active observation records** (entries 2 and 13), both **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **9 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **4 active observation records** (entries 2, 13, 17, and 18), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **10 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -265,6 +265,49 @@ reads, and selection writes by their task, workflow, and project request instead
 
 The failure occurred while validating FN-9334's unrelated resume-eligibility cases. The test's per-case resolved mock was consumed out of order only in the file run, while the isolated test passed; no timeout, retry, assertion, or product behavior was changed. A second sighting requires normal quarantine escalation.
 
+### 17. Terminal graph-gate activity outbox contract
+
+- **Status:** Active first sighting — recorded 2026-09-24, unattributed.
+- **File:** `packages/engine/src/__tests__/agent-activity-writers.test.ts`
+- **Exact test:** `engine agent activity durable writer > persists a terminal graph gate through the production TaskStore outbox facade`
+- **Observed tree/SHA:** `c76cb158f4` (FN-9388).
+- **Observed frequency:** 1 sighting, Full Suite push shard 1 only.
+
+Push Full Suite run [36034454035](https://github.com/Runfusion/Fusion/actions/runs/36034454035), shard 1 artifact `test-timings-shard-1` (`packages/engine/.timings/timings-shard1-1.json`), reported this exact test at line 381: `events[0]` was shown as `{ seq: '2', …(11) }` and did not match the unchanged `workflow:gate-passed` contract. The CI run's full runner output and timing JSON remain in that GitHub Actions run; the incident task document records the inspected command output and planner evidence.
+
+No product race was established. The terminal writer appends exactly one event after the persisted terminal result; `appendAgentActivityEvent` serializes each project-wide counter allocation and stores the type in the same transaction; and `queryAgentActivityEvents` filters by project, task, and `type: "workflow:gate-passed"` before mapping its returned row. Sequence `2` is therefore valid evidence of an earlier event in the same project, not event identity and not a path by which a non-gate row can pass the type filter. The current shard planner still assigns `@fusion/engine --shard=1/2` to Full Suite shard 1, with the runner defaults resolving to 12 workers and concurrency 2.
+
+| control | result |
+|---|---|
+| exact `c76cb158f4`, full file | passed, 11/11 in 10.9s |
+| exact `c76cb158f4`, exact test | passed, 1 passed / 10 skipped |
+| push run 35974858442, instance 3 | passed; exact full name absent from the shard failed set |
+| push run 35991562171, instance 4 | passed |
+| current targeted file | passed, 11/11 |
+
+The test remains on the suite with its original timeout, `events.length === 1`, and `toMatchObject` contract unchanged. A **second sighting** of this exact test requires file-level quarantine in `scripts/lib/test-quarantine.json` and the matching package Vitest exclusion in the same change; do not add retries, widen timeouts, or alter this assertion.
+
+### 18. Triage rate-limit retry log warning timer ordering
+
+- **Status:** Active first sighting — recorded 2026-09-24, unattributed.
+- **File:** `packages/engine/src/__tests__/triage.test.ts`
+- **Exact test:** `specifyTask — status restore failure diagnostics > logs warning when logEntry fails during rate-limit retry`
+- **Observed tree/SHA:** `d486a4c275` (FN-9389 register-only commit).
+- **Observed frequency:** 1 sighting, Full Suite push shard 2 only.
+
+Push Full Suite run [36053028228](https://github.com/Runfusion/Fusion/actions/runs/36053028228), shard 2 artifact `test-timings-shard-2` (`packages/engine/.timings/timings-shard2-1.json`), reported `STACK_TRACE_ERROR` at `triage.test.ts:6701` after 30032 ms. The shard completed 254 sibling tests; the three real-timer diagnostics in this describe passed. This is a high-value file, so it remains in the suite under the first-sighting exception.
+
+No production retry race was established. `withRateLimitRetry` calls the non-awaited retry-log callback before registering its sleep, and a rejected `logEntry` is caught solely to warn without delaying a successful second prompt. The test had waited for any fake timer before advancing 60 seconds; the planning turn's 90-minute guard can exist first, so the original drain could advance before the retry sleep was installed. The regression now stubs the unrelated host capability probe, waits for the observable `Rate limited — retry` log, flushes once to prove the retry timer is registered, keeps the 60-second advancement and warning assertion, and completes the same production `specifyTask` path.
+
+| control | result |
+|---|---|
+| push run 36034454035 (`c76cb158`) | passed in 26.2 ms |
+| push run 35991562171 (`618204ad`) | passed in 39.8 ms |
+| current exact test | passed with the 429 → retry sleep → failed log write → warning → successful retry contract |
+| current four-case diagnostics describe | passed; rate-limit fake-timer and three real-timer warning diagnostics retained |
+
+A **second sighting** of this exact test requires same-change file-level quarantine in `scripts/lib/test-quarantine.json` and a matching `engine-default` Vitest exclusion. Do not add retries, widen the timeout, remove the fake-timer drain, or weaken the warning assertion.
+
 ### Common shape and investigated result
 
 FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test; entry 14 was closed on 2026-09-09 after deterministic diagnosis showed its assertions encoded FN-217-removed lifecycle behavior (see the archived record below). FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, then FN-9131 attributed the mechanism (harness demand scales with fan-out against a fixed cluster supply; the first test in a file eats the 15s budget) and shipped the structural queueing-admission fix, closing the record on 2026-09-12. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 2 and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
@@ -306,6 +349,24 @@ Source: [Runfusion/Fusion issue #2862](https://github.com/Runfusion/Fusion/issue
 ## Archive — closed records
 
 Archived records are historical evidence only and never authorize a quarantine decision.
+
+<!--
+FNXC:DesktopTestQuarantine 2026-09-24-07:48:
+FN-9383 received three artifact-backed second sightings for the updater setup pair. The complete
+native suite must be quarantined through the dated ledger and literal Vitest exclusion in the same
+commit, preserving its assertions for a root-cause rescue instead of adding tolerance or retries.
+-->
+### 16. Native updater setup mock lifecycle
+
+- **Status:** Closed — quarantined 2026-09-24 after three artifact-backed second sightings; deletion deadline 2026-10-08.
+- **File:** `packages/desktop/src/__tests__/native.test.ts`
+- **Exact tests:** `native integrations > setupAutoUpdater > registers updater listeners and checks for updates`; `native integrations > setupAutoUpdater > sets updater download and install flags`.
+- **First-sighting tree/SHA:** GitHub Actions Full Suite push run [35920595803](https://github.com/Runfusion/Fusion/actions/runs/35920595803), `2ed9b65c116cf85e19f2428832a335fc56b0fa09`.
+- **First-sighting artifact provenance:** complete, unexpired `test-timings-shard-4` artifact `10777232469`, created `2026-09-23T21:18:59Z`; normalized Vitest reporter records identify both exact names.
+- **Local reproduction at first sighting:** `pnpm --filter @fusion/desktop exec vitest run src/__tests__/native.test.ts --silent=passed-only --reporter=dot` passed, including both subjects.
+- **Repeated Full Suite evidence:** QA downloaded the completed `test-timings-shard-4` artifacts for push runs [35959852349](https://github.com/Runfusion/Fusion/actions/runs/35959852349) (`70f6fc2d43fb68da91f20f890f8f024a381a20aa`, artifact `10791528512`), [35965109937](https://github.com/Runfusion/Fusion/actions/runs/35965109937) (`ee71b2a82f7bede2d906c15e1ad28e32299f4181`, artifact `10794177333`), and [35965648898](https://github.com/Runfusion/Fusion/actions/runs/35965648898) (`d05dd7e8b4d18d47c9de74438d74b8b521cb058e`, artifact `10794277474`). Each artifact records both exact tests as failed.
+- **Failure modes:** the listener case timed out at `native.test.ts:326` with `expected "vi.fn()" to be called 1 times, but got 2 times`; the flags case reported `STACK_TRACE_ERROR` from the Vitest runner.
+- **Disposition:** FN-9383 quarantined the complete file through `scripts/lib/test-quarantine.json` and a matching literal desktop Vitest exclusion. No timeout, retry, skip, assertion, or updater implementation changed. Rescue requires evidence that the tests catch a real regression plus a root-cause fix before the 2026-10-08 deletion deadline.
 
 ### 14. Merge-node paused-abort retry sequence
 

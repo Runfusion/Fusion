@@ -499,6 +499,7 @@ export async function scanIdleWorktrees(
   rootDir: string,
   store: TaskStore,
   settings?: Pick<Settings, "worktreesDir" | "workspaceMode">,
+  options?: { isPathLive?: (path: string) => Promise<boolean> },
 ): Promise<string[]> {
   /* FNXC:WorkspaceWorktree 2026-08-20-01:20: Group containers are not task worktrees; workspace cleanup uses recorded member paths rather than directory walking. */
   if (settings?.workspaceMode) {
@@ -571,7 +572,10 @@ export async function scanIdleWorktrees(
   // Return registered worktrees on disk that are NOT active. Unregistered
   // directories are intentionally excluded here so recycle mode never adds a
   // broken directory to the warm pool; cleanup handles those separately.
-  return registeredDirs.filter((dir) => !activeWorktrees.has(resolve(dir)));
+  const idle = registeredDirs.filter((dir) => !activeWorktrees.has(resolve(dir)));
+  if (!options?.isPathLive) return idle;
+  const liveness = await Promise.all(idle.map(async (dir) => ({ dir, live: await options.isPathLive!(dir) })));
+  return liveness.filter(({ live }) => !live).map(({ dir }) => dir);
 }
 
 /**

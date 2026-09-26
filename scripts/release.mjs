@@ -35,6 +35,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync, statSync, existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
@@ -486,6 +487,7 @@ function runReleaseSmoke() {
         version: "0.0.0",
         private: true,
         type: "module",
+        dependencies: { "@types/node": "^22.0.0" },
         overrides: { "@runfusion/fusion": `file:${fusionTarballPath}` },
       },
       null,
@@ -524,15 +526,15 @@ function runReleaseSmoke() {
     );
   }
 
-  // Issue #3320: a fast local release build emitted the plugin-sdk runtime but
-  // omitted the declaration targeted by exports["./plugin-sdk"]. Exercise the
-  // published boundary with TypeScript so a missing declaration entrypoint
-  // blocks release instead of shipping an unusable SDK contract.
+  /*
+   * FNXC:PluginSdkDeclarations 2026-09-24-06:07:
+   * The packed SDK declaration exposes drizzle-orm/postgres-js types. Run the compiler installed by the temporary consumer with declaration checking enabled so the release proof catches undeclared type dependencies instead of workspace hoisting.
+   */
   const consumerPath = join(installDir, "plugin-sdk-consumer.ts");
   const consumerTsconfigPath = join(installDir, "plugin-sdk-consumer.tsconfig.json");
   writeFileSync(
     consumerPath,
-    'import { definePlugin } from "@runfusion/fusion/plugin-sdk";\nvoid definePlugin;\n',
+    'import type { FusionPlugin } from "@runfusion/fusion/plugin-sdk";\nexport const plugin: FusionPlugin | null = null;\n',
   );
   writeFileSync(
     consumerTsconfigPath,
@@ -542,11 +544,7 @@ function runReleaseSmoke() {
           module: "NodeNext",
           moduleResolution: "NodeNext",
           noEmit: true,
-          // The public contract here is subpath resolution. Existing SDK
-          // declarations can reference optional database types, so checking
-          // their internals would conflate that separate compatibility issue
-          // with a missing declaration entrypoint.
-          skipLibCheck: true,
+          skipLibCheck: false,
           strict: true,
         },
         files: [consumerPath],
@@ -555,10 +553,12 @@ function runReleaseSmoke() {
       2,
     ),
   );
+  const consumerRequire = createRequire(join(installDir, "package.json"));
+  const consumerTsc = consumerRequire.resolve("typescript/bin/tsc");
   const typecheck = spawnSync(
-    "pnpm",
-    ["exec", "tsc", "--project", consumerTsconfigPath],
-    { cwd: repoRoot, stdio: "pipe", encoding: "utf8", timeout: 120_000 },
+    "node",
+    [consumerTsc, "--project", consumerTsconfigPath],
+    { cwd: installDir, stdio: "pipe", encoding: "utf8", timeout: 120_000 },
   );
   if (typecheck.status !== 0) {
     cleanupSmoke(smokeDir);

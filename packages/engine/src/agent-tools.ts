@@ -3496,6 +3496,8 @@ export interface TaskRetryToolOptions {
    * ProjectEngine owns the reset because its queue can claim outside TaskStore's lock.
    */
   resetInReviewMergeRetry?: (task: Task) => Promise<"reset" | "pending" | "changed" | "unavailable">;
+  /** ProjectEngine-owned re-review fence for failed pre-merge results with no verdict. */
+  rerouteFailedNoVerdictPreMergeReview?: (task: Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
 }
 
 export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOptions = {}): ToolDefinition {
@@ -3530,6 +3532,23 @@ export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOpti
         in review: moving it to the execution rebound would re-run approved work.
         */
         if (isInReviewMergeRetryStall) {
+          const noVerdictOutcome = options.rerouteFailedNoVerdictPreMergeReview
+            ? await options.rerouteFailedNoVerdictPreMergeReview(task)
+            : "not-applicable";
+          if (noVerdictOutcome === "rerouted") {
+            await store.logEntry(params.id, "Retry requested via chat tool (failed no-verdict review re-seeded)");
+            return {
+              content: [{ type: "text" as const, text: `Retried ${params.id} in review (failed review re-seeded)` }],
+              details: { taskId: params.id, newColumn: task.column },
+            };
+          }
+          if (noVerdictOutcome === "pending" || noVerdictOutcome === "unavailable" || noVerdictOutcome === "changed") {
+            return {
+              content: [{ type: "text" as const, text: `Task ${params.id} cannot be retried because review recovery ownership is unavailable, active, or changed` }],
+              details: { taskId: params.id, currentStatus: task.status },
+              isError: true,
+            };
+          }
           /*
           FNXC:MergeRetryAdmission 2026-09-20-02:52:
           A null status is written after queue admission, before the merger persists its transient
@@ -3565,6 +3584,12 @@ export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOpti
               isError: true,
             };
           }
+          /*
+          FNXC:NoVerdictReviewRecovery 2026-09-23-20:36:
+          Only ProjectEngine may re-seed a failed no-verdict gate because it owns the
+          merge queue. A TaskStore-level fallback here could run after that fence releases
+          and create a review continuation alongside a newly admitted merge.
+          */
           await store.logEntry(params.id, "Retry requested via chat tool (in-review merge retry, mergeRetries reset)");
           return {
             content: [{ type: "text" as const, text: `Retried ${params.id} in review (merge retry state cleared)` }],

@@ -8,6 +8,7 @@ import type {
   Agent,
   AgentStore,
   TaskStore,
+  Task,
   RunMutationContext,
   MergeResult,
   ThinkingLevel,
@@ -137,6 +138,8 @@ export abstract class TaskExecutorState {
   protected graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
   protected graphSeamSkillName = new Map<string, string>();
   protected mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
+  /** ProjectEngine-owned fence for automatic failed no-verdict review recovery. */
+  protected rerouteFailedNoVerdictPreMergeReview?: (task: Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
   protected sessionContentionHoldAttempts = new Map<string, number>();
   /**
    * FNXC:CodeOrganization 2026-08-04-07:40:

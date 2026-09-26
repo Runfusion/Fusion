@@ -73,4 +73,15 @@ describe("resolveRequiredPreMergeStepIds", () => {
 
     expect(gate).toMatchObject({ resolution: "selection", provenance: "default", selectionAbsent: false });
   });
+
+  it("retains the exact selection used to classify a gate for transactional recovery fencing", async () => {
+    const selection = { workflowId: "builtin:coding", stepIds: ["code-review"] };
+    const gate = await resolvePreMergeGateForTask({
+      getTaskWorkflowSelection: vi.fn(() => selection),
+      getWorkflowDefinition: vi.fn(),
+    } as never, "FN-9373", undefined);
+
+    expect(gate.expectedWorkflowSelection).toEqual(selection);
+    expect(gate.expectedWorkflowSelection).not.toBe(selection);
+  });
 });

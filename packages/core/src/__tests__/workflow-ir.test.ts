@@ -255,6 +255,34 @@ describe("parseWorkflowIr — review kind markers", () => {
     }
   });
 
+  it.each(["any", "low", "medium", "high", "critical"] as const)("accepts and round-trips %s blockingSeverity on direct review nodes", (blockingSeverity) => {
+    const ir = v2(
+      [{ id: "work", name: "Work", traits: [] }],
+      [
+        { id: "start", kind: "start" },
+        { id: "review", kind: "prompt", config: { reviewKind: "code", blockingSeverity } },
+        { id: "end", kind: "end" },
+      ],
+      [{ from: "start", to: "review" }, { from: "review", to: "end" }],
+    );
+    const parsed = parseWorkflowIr(ir) as WorkflowIrV2;
+    expect(parsed.nodes.find((node) => node.id === "review")?.config?.blockingSeverity).toBe(blockingSeverity);
+    expect(parseWorkflowIr(serializeWorkflowIr(parsed))).toEqual(parsed);
+  });
+
+  it("rejects malformed, unscoped, and unsupported blockingSeverity declarations", () => {
+    const baseNodes = [{ id: "start", kind: "start" }, { id: "end", kind: "end" }];
+    expect(() => parseWorkflowIr(v2([{ id: "work", name: "Work", traits: [] }], [
+      ...baseNodes.slice(0, 1), { id: "bad", kind: "prompt", config: { reviewKind: "code", blockingSeverity: "urgent" } }, ...baseNodes.slice(1),
+    ], [{ from: "start", to: "bad" }, { from: "bad", to: "end" }]))).toThrow(/bad.*invalid blockingSeverity/);
+    expect(() => parseWorkflowIr(v2([{ id: "work", name: "Work", traits: [] }], [
+      ...baseNodes.slice(0, 1), { id: "unscoped", kind: "prompt", config: { blockingSeverity: "high" } }, ...baseNodes.slice(1),
+    ], [{ from: "start", to: "unscoped" }, { from: "unscoped", to: "end" }]))).toThrow(/unscoped.*requires reviewKind/);
+    expect(() => parseWorkflowIr(v2([{ id: "work", name: "Work", traits: [] }], [
+      ...baseNodes.slice(0, 1), { id: "unsupported", kind: "hold", config: { release: "manual", reviewKind: "code", blockingSeverity: "high" } }, ...baseNodes.slice(1),
+    ], [{ from: "start", to: "unsupported" }, { from: "unsupported", to: "end" }]))).toThrow(/unsupported.*unsupported node kind/);
+  });
+
   it("rejects a valid marker on unsupported top-level nodes", () => {
     const ir = v2(
       [{ id: "work", name: "Work", traits: [] }],

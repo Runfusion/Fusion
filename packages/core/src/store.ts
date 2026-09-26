@@ -2490,6 +2490,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         // Preserve the established refusal for cards with neither escape target.
         throw new Error(`Cannot bypass review lane for ${id}: no failed pre-merge review step found`);
       }
+      /*
+      FNXC:NoVerdictReviewRecovery 2026-09-23-19:58:
+      An audited bypass is an outage escape hatch, never a way to erase a real review finding.
+      Keep failed evidence with any open finding merge-blocking so the operator must obtain a fresh
+      review result; resolved and superseded findings remain historical and do not trigger this guard.
+      */
+      if (failedTarget?.findings?.some((finding) => finding.resolution === undefined || finding.resolution === "open")) {
+        throw new Error(`Cannot bypass review lane for ${id}: failed review has open findings`);
+      }
 
       const target = failedTarget ?? {
         workflowStepId: absentStepId!,

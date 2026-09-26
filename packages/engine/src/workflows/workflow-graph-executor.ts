@@ -166,6 +166,7 @@ export const WORKFLOW_INTERRUPTED_NODE_ABORT_KIND_CONTEXT_KEY = "workflow:interr
 export const WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY = "workflow:optionalGroupActive";
 /** Explicit parent marker for template execution; never inferred from template labels or output. */
 export const WORKFLOW_REVIEW_KIND_CONTEXT_KEY = "workflow:reviewKind";
+export const WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY = "workflow:blockingSeverity";
 export const WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND: WorkflowNodeAbortKind = "engine-pause";
 
 export interface WorkflowNodeResult {
@@ -1190,6 +1191,7 @@ export class WorkflowGraphExecutor {
                 ...(contextOverride ?? context),
                 [WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]: node.id,
                 ...(this.workflowReviewKind(node) ? { [WORKFLOW_REVIEW_KIND_CONTEXT_KEY]: this.workflowReviewKind(node) } : {}),
+                ...(this.workflowBlockingSeverity(node) ? { [WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY]: this.workflowBlockingSeverity(node) } : {}),
               };
               return this.executeMaterializedTemplateNode(tNode, task, settings, optionalGroupContext, ir, sig);
             },
@@ -2424,6 +2426,14 @@ export class WorkflowGraphExecutor {
   private workflowReviewKind(node: WorkflowIrNode): WorkflowStepResult["reviewKind"] | undefined {
     return node.config?.reviewKind === "plan" || node.config?.reviewKind === "code"
       ? node.config.reviewKind
+      : undefined;
+  }
+
+  /** The optional-group owns review policy; its template cannot replace that identity. */
+  private workflowBlockingSeverity(node: WorkflowIrNode): "any" | "low" | "medium" | "high" | "critical" | undefined {
+    const value = node.config?.blockingSeverity;
+    return value === "any" || value === "low" || value === "medium" || value === "high" || value === "critical"
+      ? value
       : undefined;
   }
 

@@ -1,8 +1,8 @@
-import {mkdtemp, rm} from "node:fs/promises";
+import {mkdtemp, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {afterEach, describe, expect, it, vi} from "vitest";
-import {acquireWorktreePathReservation, readWorktreePathReservation} from "../tasks/worktree-path-reservation.js";
+import {acquireWorktreePathReservation, readWorktreePathReservation, resolveWorktreePathReservationDirectory} from "../tasks/worktree-path-reservation.js";
 
 const dirs: string[] = [];
 async function fixture() {
@@ -37,6 +37,30 @@ describe("worktree path reservation", () => {
     expect(reconcileQuarantined).toHaveBeenCalledWith(options.canonicalPath);
     expect(next.previousState).toBe("quarantined");
     await next.release();
+    expect(await readWorktreePathReservation(options)).toBeNull();
+  });
+
+  it("reconciles a stale held record and clears it after successful settlement", async () => {
+    const options = await fixture();
+    const first = await acquireWorktreePathReservation(options);
+    await first.release();
+    const directory = await resolveWorktreePathReservationDirectory(options);
+    await writeFile(`${directory}/state.json`, JSON.stringify({
+      pid: 999999,
+      hostname: "stale-host",
+      startedAt: new Date(0).toISOString(),
+      canonicalPath: options.canonicalPath,
+      state: "held",
+      token: "stale-token",
+    }));
+    const reconcileQuarantined = vi.fn().mockResolvedValue(undefined);
+
+    const next = await acquireWorktreePathReservation({...options, reconcileQuarantined});
+
+    expect(next.previousState).toBe("quarantined");
+    expect(reconcileQuarantined).toHaveBeenCalledWith(options.canonicalPath);
+    await next.release();
+    expect(await readWorktreePathReservation(options)).toBeNull();
   });
 
   it("keeps a quarantined path unavailable when successor reconciliation fails", async () => {
@@ -46,7 +70,9 @@ describe("worktree path reservation", () => {
 
     await expect(acquireWorktreePathReservation({...options, reconcileQuarantined: async () => { throw new Error("still occupied"); }})).rejects.toThrow("still occupied");
 
-    expect((await readWorktreePathReservation(options))?.state).toBe("quarantined");
+    const record = await readWorktreePathReservation(options);
+    expect(record?.state).toBe("quarantined");
+    expect(record?.reason).toBe("still occupied");
   });
 
   it("times out rather than waiting forever for a live claim", async () => {

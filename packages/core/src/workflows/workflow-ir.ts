@@ -22,6 +22,7 @@ import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js
 import { THINKING_LEVELS } from "../types.js";
 import { resolveColumnFlags } from "./trait-registry.js";
 import { isValidProviderInstanceId } from "../provider-instance.js";
+import { isReviewBlockingSeverity } from "./review-severity-gate.js";
 // Side-effect import: registers the built-in traits so `resolveColumnFlags`
 // resolves the built-in `merge-blocker`/`intake` flags during save-time
 // validation (U2). Custom/plugin traits that set the same flags resolve too.
@@ -515,6 +516,7 @@ function validateForeach(
   // is a silent no-binding no-op at runtime instead of a typed authoring error.
   for (const inner of templateNodes) {
     validateReviewKind(inner, "nested");
+    validateBlockingSeverity(inner, "nested");
     if (inner.kind === "foreach" || inner.kind === "loop") {
       throw new WorkflowIrError(
         `foreach node '${node.id}' template may not contain nested loop/foreach ('${inner.id}')`,
@@ -659,6 +661,7 @@ function validateLoop(
   }
   for (const inner of templateNodes) {
     validateReviewKind(inner, "nested");
+    validateBlockingSeverity(inner, "nested");
     if (inner.kind === "loop" || inner.kind === "foreach") {
       throw new WorkflowIrError(
         `loop node '${node.id}' template may not contain nested loop/foreach ('${inner.id}')`,
@@ -785,6 +788,7 @@ function validateOptionalGroup(
   }
   for (const inner of templateNodes) {
     validateReviewKind(inner, "nested");
+    validateBlockingSeverity(inner, "nested");
     if (inner.kind === "loop" || inner.kind === "foreach" || inner.kind === "optional-group") {
       throw new WorkflowIrError(
         `optional-group node '${node.id}' template may not contain nested loop/foreach/optional-group ('${inner.id}')`,
@@ -1688,6 +1692,29 @@ function validateReviewKind(node: WorkflowIrNode, placement: "top-level" | "nest
   }
 }
 
+/*
+FNXC:WorkflowReviewSeverity 2026-09-24-06:16:
+A blocking threshold is meaningful only for a persisted direct-review identity. Rejecting malformed,
+unsupported, and template-local declarations at authoring prevents a saved workflow policy from silently
+falling out of graph step materialization.
+*/
+function validateBlockingSeverity(node: WorkflowIrNode, placement: "top-level" | "nested"): void {
+  const value = node.config?.blockingSeverity;
+  if (value === undefined) return;
+  if (!isReviewBlockingSeverity(value)) {
+    throw new WorkflowIrError(`Workflow node '${node.id}' has invalid blockingSeverity '${String(value)}'`);
+  }
+  if (placement === "nested") {
+    throw new WorkflowIrError(`Workflow node '${node.id}' has blockingSeverity in an unsupported nested template placement`);
+  }
+  if (node.config?.reviewKind !== "plan" && node.config?.reviewKind !== "code") {
+    throw new WorkflowIrError(`Workflow node '${node.id}' requires reviewKind when declaring blockingSeverity`);
+  }
+  if (node.kind !== "prompt" && node.kind !== "gate" && node.kind !== "script" && node.kind !== "optional-group") {
+    throw new WorkflowIrError(`Workflow node '${node.id}' has blockingSeverity on unsupported node kind '${node.kind}'`);
+  }
+}
+
 function validateV2(ir: WorkflowIrV2): void {
   validateColumns(ir);
 
@@ -1724,6 +1751,7 @@ function validateV2(ir: WorkflowIrV2): void {
 
   for (const node of ir.nodes) {
     validateReviewKind(node, "top-level");
+    validateBlockingSeverity(node, "top-level");
     validateExtensionMetadata(`Workflow node '${node.id}'`, node.extensions);
     if (node.column !== undefined && !columnIds.has(node.column)) {
       throw new WorkflowIrError(

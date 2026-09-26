@@ -69,6 +69,12 @@ function pidAlive(pid: number): boolean {
 }
 const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
+/** Resolve the operator-safe directory containing this path's durable reservation state. */
+export async function resolveWorktreePathReservationDirectory(options: Pick<WorktreePathReservationOptions, "canonicalPath" | "worktreesDir">): Promise<string> {
+  const canonicalPath = await canonicalizeWorktreePath(options.canonicalPath);
+  return paths(options.worktreesDir, canonicalPath).container;
+}
+
 /** Read the durable record; it is diagnostic only and does not imply ownership. */
 export async function readWorktreePathReservation(options: Pick<WorktreePathReservationOptions, "canonicalPath" | "worktreesDir">): Promise<ReservationRecord | null> {
   const canonicalPath = await canonicalizeWorktreePath(options.canonicalPath);

@@ -1,5 +1,51 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.7
+
+### Patch Changes
+
+- f772db2: summary: Keep merged tasks open until required post-merge evidence is approved.
+  category: fix
+  dev: Fences recovery, finalization, and stale workflow follow-up persistence behind durable post-merge approval.
+- 2ed9b65: summary: Re-run failed pre-merge reviews that finish without a verdict.
+  category: fix
+  dev: Preserves failed review evidence and open findings while fencing re-review dispatches.
+- 7fd86c5: summary: Stop disabled Antigravity status polling from starting the optional CLI.
+  category: fix
+- fa834d4: summary: Recover task checkouts from stale reservations instead of repeating failed review attempts.
+  category: fix
+  dev: Missing native worktree paths now prune stale Git administration before pinned checkout recreation.
+- 0d2709d: summary: Fix plugin SDK declarations for strict consumer typechecking.
+  category: fix
+  dev: Plugin-facing database handles remain installable without traversing private Drizzle declaration internals.
+- d05dd7e: summary: Honor per-review-lane blocking severity in custom workflows.
+  category: fix
+  dev: Stored workflow settings override node thresholds; declaration defaults remain fallbacks.
+- 67c7d80: summary: Preserve active pre-release review worktrees during automatic cleanup.
+  category: fix
+  dev: Cleanup now recognizes task sessions and valid workflow leases before reclaiming a checkout.
+- ee71b2a: summary: Recover interrupted review evidence without stranding approved tasks.
+  category: fix
+  dev: Authorizes only evidence-proven review-to-work recovery and prevents no-verdict review retries from reopening checklist work.
+- d7dbfd4: summary: Return deadlock-paused failed review tasks to their runnable lane on CLI retry.
+  category: fix
+  dev: The CLI retry path now preserves progress while clearing the automatic deadlock pause and merge retry budget.
+- 618204a: summary: Preserve completion history for legacy-compatible task moves.
+  category: fix
+  dev: Normalize unbound PostgreSQL completion-ledger writes to the legacy project partition.
+- 1fbf61c: summary: Ensure rejected built-in guide requests finish reliably.
+  category: fix
+  dev: Routes built-in guide lookups before onboarding and the full command graph.
+- cdce668: summary: Ensure built-in skill guide commands return control promptly.
+  category: fix
+  dev: Adds built-entry coverage for the missing guide-name error alongside guide, version, and unknown-name completion.
+- 14a5a69: summary: Make built-in skill guides return reliably under load.
+  category: fix
+  dev: Defers generic CLI bootstrap work until after built-in guide rendering.
+- bade425: summary: Stop held planning from re-running every few seconds when no planner agent is available.
+  category: fix
+  dev: Planning holds now use the executor's principal-hold cooldown (15s doubling to 5min) during planning discovery and log a hold once per distinct reason.
+
 ## 0.78.0-beta.6
 
 ### Minor Changes

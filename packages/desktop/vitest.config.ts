@@ -26,9 +26,6 @@ const fusionAliases = {
   "@fusion/engine": resolve(__dirname, "../engine/src/index.ts"),
 };
 
-/* FNXC:DesktopTestQuarantine 2026-07-14-19:10: Restore local-server.test.ts after fixing its startup-factory mock. The suite exercises real desktop startup, rollback, provider, plugin, and PostgreSQL ownership regressions, and no quarantine ledger entry remains. */
-const quarantinedDesktopTests: string[] = [];
-
 export default defineConfig({
   resolve: {
     alias: fusionAliases,
@@ -51,7 +48,7 @@ export default defineConfig({
         test: {
           name: "desktop",
           include: ["src/__tests__/**/*.test.ts"],
-          exclude: quarantinedDesktopTests,
+          exclude: ["src/__tests__/native.test.ts"],
           pool: "threads",
           isolate: true,
         },
