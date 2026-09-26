@@ -95,7 +95,7 @@ two observed facts (watchdog budget exceeded, `runner` auth errors present in
 the same job's service log) and does not attribute the hang to role
 misconfiguration.
 
-## Classification: 0 flakes among the 218 classified cases; 15 unresolved
+## Classification: 0 flakes; 17 verified here, 201 grouped by error line, 15 unresolved
 
 Checked **before** treating anything as a regression:
 
@@ -114,39 +114,58 @@ Checked **before** treating anything as a regression:
   allow-list, so no eviction applies.
 
 Verdict: **no first-sighting flake record and no quarantine entry is warranted.**
-Of the 233 named cases, **218 carry a supported classification and are real
-regressions** — a test that asserts a call shape the product has since changed,
-or a harness double that no longer satisfies the product's collaborators. The
-remaining **15 cases (`assertion-no-error-line`) are unresolved, not regressions**:
-the shard log truncated their error text, so a matching case set across two runs
-and the ledger check above cannot classify them either way. FUSI-034 reproduces
-each and captures the real error; no cause is asserted for them here.
+Of the 233 named cases, **17 have a verified cause** — each was reproduced, its
+cause traced to one of the three product changes below, and fixed in this task.
+A further **201 carry a real, reproducible failure with a supported error class
+but an unverified cause**: the shard log names the first error line, which
+establishes *that* the case fails and roughly *how*, not *why*. They are grouped,
+not confirmed, and each is routed to the follow-up that must reproduce it and
+establish the cause. The remaining **15 cases (`assertion-no-error-line`) are
+unresolved**: the shard log truncated their error text, so a matching case set
+across two runs and the ledger check above cannot classify them either way.
+FUSI-034 reproduces each and captures the real error; no cause is asserted for
+them here.
 
-So this census reports **0 confirmed flakes and 218 confirmed regressions out of
-233 named cases**, with 15 pending. "0 flakes" means nothing in this census has
-been *shown* to be a flake on the evidence available — it is not a claim that a
-flake is impossible among the 15 unresolved cases.
+So this census reports **0 confirmed flakes, 17 confirmed regressions fixed
+here, and 201 grouped cases with unverified causes out of 233 named cases**, with
+15 pending. "0 flakes" means nothing in this census has been *shown* to be a
+flake on the evidence available — it is not a claim that a flake is impossible
+among the 201 grouped or 15 unresolved cases.
 
-## Root causes (grouped; 11 families over 233 named cases)
+**A group is not a diagnosis.** Families are keyed mechanically on the first
+error line, so a family label describes a symptom, not a root cause. The clearest
+example is `runtime-Error` (7 cases, FUSI-035): it pools a 30-second test
+timeout (`post-done-continuation-no-wedge.test.ts`), a missing source file
+(`ENOENT … packages/cli/src/commands/research.ts`) and a 5-second timeout
+(`skills-get.test.ts`). None of those establishes that a test asserts an old
+call contract or that a harness double is stale — the definition of a regression
+used in the fixed-here table. They are reproducible failures, so they are real
+work, but their causes are unknown until FUSI-035 reproduces each one. Treat
+every grouped case as **"fails, cause open"** rather than "regression", and let
+the follow-up card earn the diagnosis.
+
+## Families (grouped; 11 families over 233 named cases)
 
 Every row is derived mechanically from the per-case table below, keyed on the
 first error line: `to be called with arguments` splits on the literal argument
 shape (`'done'` / `'Bash'` / other), a leading `TypeError:` that names a missing
 collaborator splits off the four harness families, `TransitionRejectionError`
 is its own family, a `Error:`-prefixed line is runtime, and everything else is
-`assertion-other`. Counts sum to 233.
+`assertion-other`. Counts sum to 233. **A family is a symptom grouping, not a
+diagnosis** — only the `fixed here` column has a verified cause, because only
+those cases were reproduced and traced (see "A group is not a diagnosis" above).
 
 | family | cases | files | fixed here | disposition |
 |---|---|---|---|---|
-| `assertion-other` (value/deep-equal/object-match drift) | 136 | 83 | 0 | regression — FUSI-031 |
-| `missing-mock-call-other` (mock never reached) | 45 | 25 | 0 | regression — FUSI-032 |
+| `assertion-other` (value/deep-equal/object-match drift) | 136 | 83 | 0 | cause open — FUSI-031 |
+| `missing-mock-call-other` (mock never reached) | 45 | 25 | 0 | cause open — FUSI-032 |
 | `assertion-no-error-line` (error text truncated in shard log) | 15 | 6 | 0 | **not yet classified** — FUSI-034 |
 | `moveTask-workflowMoveSource-arg` | 10 | 4 | 10 | **fixed in this task** |
-| `harness-product-drift-TypeError` | 7 | 6 | 1 | regression — FUSI-033 (1 case fixed here) |
-| `runtime-Error` (timeout / ENOENT / non-zero exit) | 7 | 7 | 0 | regression — FUSI-035 |
-| `store-double-missing-getTask` | 5 | 3 | 0 | regression — FUSI-030 |
+| `harness-product-drift-TypeError` | 7 | 6 | 1 | cause open — FUSI-033 (1 case fixed here) |
+| `runtime-Error` (timeout / ENOENT / non-zero exit) | 7 | 7 | 0 | cause open — FUSI-035 |
+| `store-double-missing-getTask` | 5 | 3 | 0 | cause open — FUSI-030 |
 | `harness-missing-resolveMergeGateBlocker` | 3 | 2 | 3 | **fixed in this task** |
-| `lifecycle-transition-forbidden` (FN-217 F2 rank rules) | 2 | 2 | 0 | regression — FUSI-036 |
+| `lifecycle-transition-forbidden` (FN-217 F2 rank rules) | 2 | 2 | 0 | cause open — FUSI-036 |
 | `appendAgentLog-tool-detail-arg` | 2 | 2 | 2 | **fixed in this task** |
 | `canMergeTask-reviewColumns-signature` | 1 | 1 | 1 | **fixed in this task** |
 | **total** | **233** | **117** | **17** | |
@@ -252,15 +271,17 @@ this task's File Scope and are carried by FUSI-030…037, so the Full Suite lane
 stays red on main until those land. The next main push run turning green is the
 operator-visible confirmation and cannot be produced by this branch alone.
 
-## Remaining regression follow-ups (out of this task's scope)
+## Remaining follow-ups (out of this task's scope)
 
 `assertion-other`, `missing-mock-call-other`, `harness-product-drift-TypeError`,
 `runtime-Error`, `store-double-missing-getTask` and
-`lifecycle-transition-forbidden` are each distinct product/test drift in files
-this task's File Scope does not cover; they are carried by the follow-up cards
-named in the family table. `assertion-no-error-line` is not a drift class at all
-— those 15 cases have no error text in the log, so FUSI-034 owns reproducing
-them and capturing the real error before anything is dispositioned.
+`lifecycle-transition-forbidden` each pool cases this task's File Scope does not
+cover. They are carried by the follow-up cards named in the family table, and
+each card's first job is to **establish the cause its family only groups** — the
+family label is a symptom, so a follow-up must not inherit it as a diagnosis.
+`assertion-no-error-line` is not even a symptom class: those 15 cases have no
+error text in the log, so FUSI-034 owns reproducing them and capturing the real
+error before anything is dispositioned.
 
 | follow-up | family |
 |---|---|
@@ -269,13 +290,15 @@ them and capturing the real error before anything is dispositioned.
 | FUSI-032 | `missing-mock-call-other` |
 | FUSI-033 | `harness-product-drift-TypeError` |
 | FUSI-034 | `assertion-no-error-line` (classify, do not assume) |
-| FUSI-035 | `runtime-Error` |
+| FUSI-035 | `runtime-Error` (timeouts and a missing source file, not one drift) |
 | FUSI-036 | `lifecycle-transition-forbidden` |
 | FUSI-037 | `Pipeline smoke tier` watchdog hang (cause unproven — see above) |
 
 216 of the 233 named cases sit in those eight cards (15 of them the
 `assertion-no-error-line` family, which FUSI-034 must classify rather than
-assume); 17 are fixed here.
+assume); 17 are fixed here. **None of the 216 has a verified cause** — they are
+reproducible failures whose cause this census did not establish, so each
+follow-up earns its own diagnosis rather than inheriting the family label.
 
 ## Full per-case census (#3158)
 
