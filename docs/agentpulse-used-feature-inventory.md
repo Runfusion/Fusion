@@ -107,9 +107,9 @@ plus an explicit failure is strictly more useful than an empty pane. Generation 
 opening a session costs nothing. It uses Fusion's own title-summarizer model lane, not AgentPulse's Qwen
 configuration.
 
-Historical import (Phase 6) must carry `sessions` 556 and `events` 96,006, and its
-reconciliation report is what proves parity. Retiring AgentPulse still requires separate
-explicit approval, and the recovery snapshot is retained regardless.
+There is no historical import: the operator dropped the AgentPulse importer on 2026-09-26, because Fusion's
+collectors read native transcripts directly and AgentPulse is not used. Retiring AgentPulse still requires
+separate explicit approval, and the recovery snapshot is retained regardless.
 
 
 ## Parity status as of 2026-09-24

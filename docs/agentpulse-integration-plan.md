@@ -22,7 +22,7 @@ Built on the branch, not merged to fork `main`, not deployed, not accepted:
 
 Absent on both fork `main` `e4fd6ec42` and the branch `7870e8f02`: deep links into sessions and turns, turn history in linked Fusion task detail, and the accessible cost popup. Ownership of these three is undecided; do not start them without an explicit assignment.
 
-Not built by decision: session controls, launch requests, managed sessions and Ask threads (see the used-feature inventory). Phase 6 import, cutover and AgentPulse retirement are held for separate approval.
+Not built by decision: session controls, launch requests, managed sessions and Ask threads (see the used-feature inventory). The AgentPulse history importer is dropped (see Phase 6). Cutover and AgentPulse retirement are held for separate approval.
 Baseline: Fusion fork `a58b374c7`, including upstream `6e6adf393`; AgentPulse fork `04f0dcf`.
 
 ## Outcome
@@ -42,7 +42,7 @@ Use Fusion as the single dashboard for Fusion-managed work and Codex/Claude sess
 | Tokens and costs | Fusion token analytics, TaskCostTab, pricing overrides and refresh support | Provider-normalized accounting, turn breakdowns, cost popup and rankings |
 | Feedback to external sessions | AgentPulse feedback queue | Delivery acknowledgements, host routing and supported runtime injection |
 | AI summaries | Fusion AI configuration; selected Qwen3.5-2B-4bit on m3 | Bounded summary jobs, provenance and last-summarized position |
-| Historical data | AgentPulse session/event store and native transcripts | Resumable import, reconciliation and retention controls |
+| Historical data | Native Codex/Claude transcripts on each host | Fusion collectors read native transcripts directly; no AgentPulse import |
 
 Scope includes the AgentPulse features used in this deployment. Before implementation, inventory additional AgentPulse surfaces—search, alerts, session notes, launch templates and workspace actions—and map each to a Fusion equivalent or a named follow-up. Do not declare complete parity while a used feature has no replacement.
 
@@ -101,7 +101,7 @@ Implementation ledger (historical record of earlier rollouts; not current deploy
 - Phase 3: session-level usage and estimated cost with category rates exist in the Remote agents panel. Current context/capacity, effective-dated rates, an accessible compact cost popup, turn costs and expensive-task rankings are not complete.
 - Phase 4: queued external feedback and delivery receipts exist. Capability-gated stop/resume and full cross-host control acceptance are not complete.
 - Phase 5: an AI-overview foundation exists on a separate branch, but Qwen3.5-2B summaries are not deployed or accepted. Search and collector operations UI remain open.
-- Phase 6: historical AgentPulse import, parity reconciliation, primary-entry cutover and the 24-hour observation gate have not been completed. Standalone AgentPulse remains available for recovery.
+- Phase 6: the AgentPulse history importer is dropped by operator decision (2026-09-26). Primary-entry cutover and the 24-hour observation gate have not been completed. Standalone AgentPulse remains available for recovery.
 
 ### Next work, in order
 
@@ -110,7 +110,7 @@ Implementation ledger (historical record of earlier rollouts; not current deploy
 3. Complete context size/capacity, normalized request and turn usage, effective-dated model prices, accessible detailed cost popup, and expensive-session/turn explanations with unknown-price coverage.
 4. Add only supported host-routed stop/resume controls, prove feedback delivery and command idempotency on disposable sessions across J, m3 and m5, and show queued/unsupported states clearly.
 5. Land and configure bounded Qwen3.5-2B summaries; add searchable output and operations health for lag, spool depth, acknowledgements, parser failures and summary failures.
-6. Import AgentPulse history with resumable native identities and provenance; reconcile counts, text, patches, usage and prices. Run the 24-hour acceptance window and rehearse rollback before switching the primary entry point. Retiring standalone AgentPulse requires separate explicit approval.
+6. No AgentPulse history import (dropped 2026-09-26). Run the 24-hour acceptance window and rehearse rollback before switching the primary entry point. Retiring standalone AgentPulse requires separate explicit approval.
 
 ### Phase 0 — Confirm contracts and preserve recovery data
 
@@ -170,15 +170,20 @@ Implementation ledger (historical record of earlier rollouts; not current deploy
 
 **Gate:** summaries preserve failures and unfinished work; endpoint outages do not block session display. Burst load and an extended disconnect drain successfully without duplicate output or costs.
 
-### Phase 6 — Historical import and cutover
+### Phase 6 — Cutover
 
-- Run a resumable importer from a consistent AgentPulse snapshot through the same normalization rules as live data.
-- Preserve native identities, hosts, timestamps, turns and patches; retain original usage provenance. Do not fabricate missing historical telemetry.
-- Compare counts, representative text/diffs, usage totals and price coverage while both dashboards receive data.
+<!--
+FNXC:RemoteAgents 2026-09-26-23:39:
+The operator dropped the AgentPulse history importer. Fusion's collectors read native Codex/Claude transcripts
+directly, and AgentPulse is not used, so there is no AgentPulse store whose history must be carried over. Do not
+build an importer or a parity reconciliation against AgentPulse rows. Cutover and retirement stay separately gated.
+-->
+
+- No AgentPulse history import. Session history comes from Fusion collectors reading native transcripts directly.
 - Run at least a 24-hour observation window including host/service restarts and a network outage.
 - Switch the primary entry point to Fusion after parity gates pass. Stop AgentPulse ingestion/services only after explicit retirement approval, retaining the recovery snapshot and configuration.
 
-**Gate:** all used features have verified replacements, the reconciliation report explains every discrepancy, and rollback has been rehearsed.
+**Gate:** all used features have verified replacements and rollback has been rehearsed.
 
 ## Validation and rollout discipline
 
