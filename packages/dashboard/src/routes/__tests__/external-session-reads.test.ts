@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
-import { ExternalSessionReader, ExternalSessionTurnReader, externalSessionPageCursor } from "@fusion/core";
+import { ExternalSessionAttribution, ExternalSessionReader, ExternalSessionTurnReader, externalSessionPageCursor } from "@fusion/core";
 import type { ApiRoutesContext } from "../types.js";
 import { registerExternalSessionRoutes } from "../register-external-session-routes.js";
 import { summarizeSessionCost } from "../../remote-agents/session-cost.js";
@@ -29,7 +29,7 @@ describe("project-scoped remote-session reads", () => {
     const s = setup(); const token = randomBytes(32).toString("hex");
     s.req.headers.authorization = `Bearer ${token}`;
     const gate = createAuthMiddleware(randomBytes(32).toString("hex"));
-    for (const path of ["/api/external-sessions", `/api/external-sessions/${id}`]) {
+    for (const path of ["/api/external-sessions", `/api/external-sessions/${id}`, "/api/external-sessions/by-task/FN-1"]) {
       Object.assign(s.req, { method: "GET", path }); const next = vi.fn();
       gate(s.req, s.res, next);
       expect(next).not.toHaveBeenCalled(); expect(s.status).toHaveBeenCalledWith(401);
@@ -86,6 +86,25 @@ describe("project-scoped remote-session reads", () => {
     s.getProjectContext.mockResolvedValue({ projectId: "project-a", store: { getAsyncLayer: () => ({ projectId: "other" }) } });
     await expect(s.handlers.get("/external-sessions/:id")!(s.req, s.res)).rejects.toMatchObject({ statusCode: 503 });
     expect(get).toHaveBeenCalledTimes(1);
+  });
+  // FNXC:ExternalSessionAttribution 2026-09-26-23:39: task detail lists only sessions attribution proves are this task's runs.
+  it("lists a task's proven sessions and rejects malformed task ids or mismatched storage", async () => {
+    const proven = vi.spyOn(ExternalSessionAttribution.prototype, "sessionIdsForTask").mockResolvedValue([id, "b".repeat(64)]);
+    // A proven id whose row vanished between the two reads is dropped, not returned as null.
+    const get = vi.spyOn(ExternalSessionReader.prototype, "get").mockImplementation(async sid => sid === id ? { id } as never : null);
+    const s = setup(); s.req.params = { taskId: "FN-42" } as never;
+    await s.handlers.get("/external-sessions/by-task/:taskId")!(s.req, s.res);
+    expect(proven).toHaveBeenCalledWith("FN-42");
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(s.json).toHaveBeenCalledWith({ schemaVersion: 1, taskId: "FN-42", sessions: [{ id }] });
+    for (const taskId of ["", "FN 1", "../x", "x".repeat(129)]) {
+      s.req.params = { taskId } as never;
+      await expect(s.handlers.get("/external-sessions/by-task/:taskId")!(s.req, s.res)).rejects.toMatchObject({ statusCode: 400 });
+    }
+    s.req.params = { taskId: "FN-42" } as never;
+    s.getProjectContext.mockResolvedValue({ projectId: "project-a", store: { getAsyncLayer: () => ({ projectId: "other" }) } } as never);
+    await expect(s.handlers.get("/external-sessions/by-task/:taskId")!(s.req, s.res)).rejects.toMatchObject({ statusCode: 503 });
+    expect(proven).toHaveBeenCalledTimes(1);
   });
   it("returns paginated turns and rejects malformed turn cursors", async () => {
     const page = { schemaVersion: 1 as const, turns: [], nextCursor: null };

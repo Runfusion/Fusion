@@ -150,6 +150,24 @@ export const registerExternalSessionRoutes: ApiRouteRegistrar = ctx => {
       throw error;
     }
   });
+  /*
+  FNXC:ExternalSessionAttribution 2026-09-26-23:39:
+  Task detail shows the collected turns of the external sessions that ARE this task's runs. Membership comes from
+  `sessionIdsForTask`, which reuses the card attribution, so the two surfaces cannot disagree about a session.
+  An empty list means "no proven run", not "no run": a pre-spawn or contested native id is left out on purpose.
+  Registered before "/external-sessions/:id" to keep the literal segment out of the parameter route.
+  */
+  ctx.router.get("/external-sessions/by-task/:taskId", async (req, res) => {
+    const taskId = req.params.taskId;
+    if (typeof taskId !== "string" || !/^[A-Za-z0-9_.-]{1,128}$/.test(taskId)) throw new ApiError(400, "Invalid task id");
+    const { store, projectId } = await ctx.getProjectContext(req);
+    const layer = store.getAsyncLayer();
+    if (!projectId || !layer || layer.projectId !== projectId) throw new ApiError(503, "External session project storage unavailable");
+    const ids = (await new ExternalSessionAttribution(layer, projectId).sessionIdsForTask(taskId)).slice(0, 50);
+    const reader = new ExternalSessionReader(layer, projectId);
+    const sessions = (await Promise.all(ids.map(id => reader.get(id)))).filter(s => s !== null);
+    res.json({ schemaVersion: 1, taskId, sessions });
+  });
   ctx.router.get("/external-sessions/:id", async (req, res) => {
     const id = externalSessionReadId.safeParse(req.params.id);
     if (!id.success) throw new ApiError(400, "Invalid external session id");

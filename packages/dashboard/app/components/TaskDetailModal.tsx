@@ -68,6 +68,7 @@ import { TaskSummaryTab } from "./TaskSummaryTab";
 import { TaskRecommendationsTab } from "./TaskRecommendationsTab";
 import { MergeDetails } from "./MergeDetails";
 import { TaskCostTab } from "./TaskCostTab";
+import { RemoteAgentTaskSessions } from "./RemoteAgentTaskSessions";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { useNodes } from "../hooks/useNodes";
@@ -6508,6 +6509,8 @@ export function TaskDetailContent({
               <div className="detail-section--cost">
                 <TaskCostTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
               </div>
+              {/* FNXC:RemoteAgents 2026-09-26-23:39: collected turns of this task's proven external runs, shown beside the telemetry that already counts them. */}
+              {projectId && <RemoteAgentTaskSessions taskId={workingTask.id} projectId={projectId} />}
             </div>
           ) : activeTab === "terminal" ? (
             /* FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55: body renders from the kept-alive sibling below the ternary. */

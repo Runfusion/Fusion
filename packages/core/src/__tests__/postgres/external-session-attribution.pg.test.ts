@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { CliSessionStore } from "../../cli/cli-session-store.js";
 import { ExternalSessionAttribution, fusionAdapterFor } from "../../external-sessions/attribution.js";
+import { ExternalSessionStore } from "../../external-sessions/store.js";
 import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../__test-utils__/pg-test-harness.js";
 
 /*
@@ -84,6 +85,36 @@ pgDescribe("external session attribution: provider + native id reconciliation", 
     await other.flush();
     expect((await attribution().resolve([{ sessionId: "ext-7", provider: "codex", nativeSessionId: "native-7" }])).has("ext-7")).toBe(false);
     expect(() => new ExternalSessionAttribution(h.layer(), "other-project")).toThrow();
+  });
+
+  /* FNXC:ExternalSessionAttribution 2026-09-26-23:39: the task -> sessions direction must refuse exactly what
+     the session -> task direction refuses, or task detail would show a run its own card calls unattributed. */
+  let sequence = 0;
+  async function externalSession(provider: string, nativeSessionId: string) {
+    sequence += 1;
+    const ack = await new ExternalSessionStore(h.layer(), { projectId, hostId: "host-1" }).ingest({ schemaVersion: 1,
+      streamId: "spool", sequence, eventId: `event-${sequence}`, collectorVersion: "1.0",
+      session: { provider, nativeSessionId, revision: 1, activity: "working", observedAt: "2026-09-26T00:00:00Z",
+        title: "Session", projectPath: "/p" } });
+    return ack.sessionId;
+  }
+
+  it("lists a task's proven sessions and nothing a card would refuse to attribute", async () => {
+    await cliSession({ id: "cli-9", adapterId: "codex", taskId: "FN-9", nativeSessionId: "run-9" });
+    await cliSession({ id: "cli-9b", adapterId: "claude-code", taskId: "FN-9", nativeSessionId: "run-9b" });
+    await cliSession({ id: "cli-9c", adapterId: "codex", taskId: "FN-9", nativeSessionId: null });
+    await cliSession({ id: "cli-9d", adapterId: "codex", taskId: "FN-9", nativeSessionId: "contested" });
+    await cliSession({ id: "cli-10", adapterId: "codex", taskId: "FN-10", nativeSessionId: "contested" });
+    const mine = await externalSession("codex", "run-9");
+    const mineClaude = await externalSession("claude", "run-9b");
+    await externalSession("claude", "run-9");          // same native id, other runtime: not this run
+    await externalSession("manual-test", "run-9");     // unmapped provider: never attributed
+    await externalSession("codex", "contested");       // two claimants: attributed to neither task
+    await externalSession("codex", "unrelated");
+
+    expect(await attribution().sessionIdsForTask("FN-9")).toEqual([mine, mineClaude].sort());
+    expect(await attribution().sessionIdsForTask("FN-10")).toEqual([]);
+    expect(await attribution().sessionIdsForTask("FN-missing")).toEqual([]);
   });
 
   it("makes no query at all when nothing could possibly match", async () => {
