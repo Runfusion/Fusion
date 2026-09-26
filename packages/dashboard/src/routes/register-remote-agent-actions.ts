@@ -1,6 +1,6 @@
 import { ExternalSessionReader, ExternalSessionFeedback, ExternalFeedbackConflict, feedbackSubmitSchema, externalSessionReadId, ExternalSessionUsageIncrementReader } from "@fusion/core";
 import { ApiError } from "../api-error.js";
-import { summarizeSessionCost, summarizeIncrementCost } from "../remote-agents/session-cost.js";
+import { summarizeSessionCost, summarizeIncrementCost, categoryCharges } from "../remote-agents/session-cost.js";
 import type { ApiRouteRegistrar } from "./types.js";
 import { parseExternalSessionCollectorCredentials } from "./external-session-collector-auth.js";
 
@@ -38,7 +38,8 @@ export const registerRemoteAgentActions: ApiRouteRegistrar = ctx => {
     */
     const increments = await new ExternalSessionUsageIncrementReader(layer, projectId).list(session.id).catch(() => []);
     const incremental = increments.length ? summarizeIncrementCost(increments as never, session.provider, settings) : null;
-    res.json({ usage: summary.usage,
+    // FNXC:RemoteAgents 2026-09-26-23:39: each usage row carries its category charges for the card's cost popover.
+    res.json({ usage: summary.usage.map(u => ({ ...u, charges: categoryCharges(u) })),
       estimatedUsd: incremental ? incremental.estimatedUsd : summary.estimatedUsd,
       partialUsd: incremental ? incremental.partialUsd : summary.partialUsd,
       pricedFromIncrements: incremental !== null,

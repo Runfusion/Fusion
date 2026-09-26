@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { priceUsage } from "./pricing.js";
-import { costDrivers, summarizeTurnCost } from "./session-cost.js";
+import { categoryCharges, costDrivers, summarizeTurnCost } from "./session-cost.js";
 
 const raw = (over: Record<string, unknown> = {}) => ({
   model: "claude-sonnet-5", inputTokens: 100000, cachedInputTokens: 60000, cacheWriteTokens: 20000,
@@ -16,6 +16,15 @@ describe("measured cost drivers", () => {
     // A breakdown that does not add up to the total looks like an explanation while being wrong.
     expect(summed).toBeCloseTo(priced.usd!, 9);
     expect(drivers.totalUsd).toBeCloseTo(priced.usd!, 9);
+  });
+
+  // The cost popover shows these per-record charges; they must add up to the figure beside them.
+  it("gives one record's category charges that sum to its total, and none for an unpriced record", () => {
+    const priced = priceUsage(raw(), "claude_code")!;
+    const charges = categoryCharges(priced)!;
+    expect(Object.values(charges).reduce((a, b) => a + b, 0)).toBeCloseTo(priced.usd!, 9);
+    expect(charges.output).toBeGreaterThan(0);
+    expect(categoryCharges(priceUsage(raw({ model: "model-with-no-rate" }), "claude_code")!)).toBeNull();
   });
 
   it("names the largest measured category rather than guessing a cause", () => {

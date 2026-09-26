@@ -68,3 +68,13 @@ technology announces their size and position; the marker is removed for sighted 
 .remote-overview-group li { display: flex; justify-content: space-between; gap: var(--space-md); font-size: var(--font-size-sm); color: var(--text-muted); }
 .remote-overview-group strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .remote-agent-overview .remote-agent-meta p { margin: 0 0 var(--space-xs); }
+
+/* FNXC:RemoteAgents 2026-09-26-23:39: The cost popover is a disclosure anchored under its trigger; it reuses the card primitive and design tokens only. */
+.remote-cost-popover { position: relative; display: inline-block; }
+.remote-cost-trigger { background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; text-align: start; text-decoration: underline dotted; }
+.remote-cost-panel { position: absolute; inset-inline-start: 0; top: 100%; z-index: var(--z-popover); margin-top: var(--space-xs); padding: var(--space-md); box-shadow: var(--shadow-md); min-width: min(28rem, 90vw); max-width: 90vw; }
+.remote-cost-panel[hidden] { display: none; }
+.remote-cost-table { width: 100%; border-collapse: collapse; margin-block: var(--space-sm); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; }
+.remote-cost-table caption { text-align: start; font-weight: 600; }
+.remote-cost-table th, .remote-cost-table td { text-align: start; padding: var(--space-xs); }
+.remote-cost-table td { text-align: end; }

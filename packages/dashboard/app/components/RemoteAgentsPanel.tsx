@@ -9,6 +9,7 @@ import { RemoteAgentSummary } from "./RemoteAgentSummary";
 import { RemoteAgentOverview } from "./RemoteAgentOverview";
 import { RemoteAgentSearch } from "./RemoteAgentSearch";
 import { RemoteAgentRankings } from "./RemoteAgentRankings";
+import { RemoteAgentCostPopover } from "./RemoteAgentCostPopover";
 import "./RemoteAgentsPanel.css";
 
 type Feedback = { commandId: string; status: string; createdAt: string; expiresAt: string; deliveredAt: string | null };
@@ -307,9 +308,10 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
         {[...sessions].sort((a, b) => b.observation.observedAt.localeCompare(a.observation.observedAt)).map(s => <li key={s.id}>
           <button className="card remote-agent-row" onClick={() => setSelected(s.id)} aria-pressed={selected === s.id}>
             <strong>{s.observation.title || s.nativeSessionId}</strong><span>{s.hostId} · {s.provider} · {s.observation.model ?? "Model unknown"}</span><span>{s.observation.activity} · {s.collectorConnected ? "Connected" : "Collector offline"}{s.activityStale ? " · Activity stale" : ""}</span>
-            <span className="remote-agent-cost">{costLabel(s.cost)}</span>
             {attributionLabel(s.fusion) && <span className="remote-agent-attribution">{attributionLabel(s.fusion)}</span>}
           </button>
+          {/* A sibling of the card button, never inside it: a button cannot contain another button. */}
+          {projectId && <RemoteAgentCostPopover sessionId={s.id} projectId={projectId} label={costLabel(s.cost)} />}
         </li>)}
       </ul>}
       {cursor && <button className="btn btn-sm" onClick={() => void load(cursor)} disabled={loading}>Load more sessions</button>}

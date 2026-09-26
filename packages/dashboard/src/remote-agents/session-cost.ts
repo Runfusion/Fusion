@@ -176,20 +176,32 @@ const CATEGORY_RATE: Record<CostCategory, { count: keyof RemoteUsage; rate: stri
   output: { count: "output", rate: "outputPer1M" },
 };
 
+/**
+ * Per-category charges of ONE priced usage record, or null when it is unpriced. The cost popover and
+ * `costDrivers` both use this, so the breakdown an operator reads is the same arithmetic that ranks sessions.
+ */
+export function categoryCharges(record: RemoteUsage): Record<CostCategory, number> | null {
+  if (record.usd === null || !record.rates) return null;
+  const charges: Record<CostCategory, number> = { freshInput: 0, cachedInput: 0, cacheWrite: 0, cacheWriteHour: 0, output: 0 };
+  for (const [category, { count, rate }] of Object.entries(CATEGORY_RATE) as [CostCategory, { count: keyof RemoteUsage; rate: string }][]) {
+    const tokens = record[count];
+    const perMillion = (record.rates as unknown as Record<string, number | null>)[rate];
+    if (typeof tokens === "number" && typeof perMillion === "number") charges[category] += (tokens * perMillion) / 1_000_000;
+  }
+  return charges;
+}
+
 export function costDrivers(usage: RemoteUsage[]): CostDrivers {
   const charges: Record<CostCategory, number> = { freshInput: 0, cachedInput: 0, cacheWrite: 0, cacheWriteHour: 0, output: 0 };
   let requests = 0;
   let unexplained = 0;
   let totalUsd = 0;
   for (const record of usage) {
-    if (record.usd === null || !record.rates) { unexplained += 1; continue; }
+    const own = categoryCharges(record);
+    if (!own) { unexplained += 1; continue; }
     requests += 1;
-    totalUsd += record.usd;
-    for (const [category, { count, rate }] of Object.entries(CATEGORY_RATE) as [CostCategory, { count: keyof RemoteUsage; rate: string }][]) {
-      const tokens = record[count];
-      const perMillion = (record.rates as unknown as Record<string, number | null>)[rate];
-      if (typeof tokens === "number" && typeof perMillion === "number") charges[category] += (tokens * perMillion) / 1_000_000;
-    }
+    totalUsd += record.usd!;
+    for (const category of Object.keys(charges) as CostCategory[]) charges[category] += own[category];
   }
   let dominant: CostCategory | null = null;
   let dominantUsd = 0;

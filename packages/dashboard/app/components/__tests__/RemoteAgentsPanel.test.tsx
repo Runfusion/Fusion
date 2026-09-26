@@ -80,7 +80,7 @@ describe("standalone remote agents", () => {
       return { sessions: [priced, partial, unknown, empty], nextCursor: null } as never;
     });
     render(<RemoteAgentsPanel projectId="project-a" />);
-    const row = async (title: string) => (await screen.findByText(title)).closest("button")!;
+    const row = async (title: string) => (await screen.findByText(title)).closest("li")!;
     expect(await row("Priced agent")).toHaveTextContent("$1.25 estimated");
     // A partial total must say so and must not be presented as the session total.
     expect(await row("Partly priced agent")).toHaveTextContent("$0.50 priced so far · 2 records unpriced");
@@ -175,7 +175,7 @@ describe("standalone remote agents", () => {
       return { sessions: [recalculated, current], nextCursor: null } as never;
     });
     render(<RemoteAgentsPanel projectId="project-a" />);
-    const row = async (title: string) => (await screen.findByText(title)).closest("button")!;
+    const row = async (title: string) => (await screen.findByText(title)).closest("li")!;
     // Presenting a recomputation as an estimate would read as what the work actually cost.
     expect(await row("Old session")).toHaveTextContent("at today's rates");
     expect(await row("Old session")).not.toHaveTextContent("estimated");
