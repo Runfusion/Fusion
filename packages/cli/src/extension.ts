@@ -2981,11 +2981,49 @@ export default function kbExtension(pi: ExtensionAPI) {
       // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
       const gated = await applyAgentPolicyGateForExtensionTool("fn_task_archive", params as Record<string, unknown>, ctx as ExtensionCallerContext);
       if (gated) return gated;
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-23-18:15:
+      The cold-log line renders `by <callerKind> (<agentId>)`, so hard-coding the tool surface here made
+      every archive read "by agent-tool (pi-extension)" no matter who actually archived the card. Derive
+      the attribution from the caller principal resolved by the extension's standard resolver (same
+      identity forwarding as `missionTransitionActor`): a resolved agent is `agent-tool` carrying its own
+      id, an ambiguous cwd registration fails closed as the unknown-agent sentinel, and the human CLI
+      operator records the same `operator-cli` (`cli`) attribution as the `fn task archive` command
+      (TaskDeleteAttribution vocabulary).
+      */
+      const archivePrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+      const archiveCallerAgentId =
+        archivePrincipal.kind === "agent"
+          ? archivePrincipal.identity.agentId
+          : archivePrincipal.kind === "ambiguous"
+            ? AMBIGUOUS_AGENT_PRINCIPAL_ID
+            : undefined;
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-23-21:39:
+      `TaskDeleteAuditContext.taskId` denotes the CALLER's running task, not the mutation target (it
+      feeds the TaskSelfDeleteError guard on the delete path). The line below forwarded `params.id` —
+      the archived card — into the caller's-task slot, the same class defect Devin flagged for the
+      engine factories. Forward the caller's own `ctx.taskId` (absent for the human operator) instead.
+      */
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-23-23:59:
+      The caller's task lives on the resolved principal identity: `ctx.taskId` when the call carries
+      one (explicit agent path), or the task of the cwd-REGISTERED session the principal came from.
+      Reading raw `ctx.taskId` discarded the registered session's task for agents whose calls omit
+      it (Devin PR-3561 bug #2). Operators and ambiguous principals have no caller task.
+      */
+      const archiveCallerTaskId = archivePrincipal.kind === "agent" ? archivePrincipal.identity.taskId : undefined;
       const store = await getStore(ctx.cwd);
       try {
         const task = await store.archiveTask(params.id, {
           removeLineageReferences: params.removeLineageReferences === true,
           liveExecutionGuard: "refuse",
+          auditContext: {
+            agentId: archiveCallerAgentId ?? "cli",
+            runId: `ext-archive-${params.id}-${Date.now()}`,
+            taskId: archiveCallerTaskId,
+            callerKind: archiveCallerAgentId ? "agent-tool" : "operator-cli",
+          },
         });
         return {
           content: [{ type: "text", text: `Archived ${task.id} → ${columnLabel(task.column)}` }],

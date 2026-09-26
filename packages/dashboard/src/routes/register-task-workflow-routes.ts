@@ -4392,6 +4392,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const task = await scopedStore.archiveTask(req.params.id, {
         cleanup: true,
         removeLineageReferences,
+        // FNXC:ArchiveLogAttribution 2026-09-23-23:01: mirrors the delete route — record what the client SAID it was
+        // (self-reported `x-fusion-client` header; attribution, not authentication).
+        auditContext: {
+          agentId: "system",
+          runId: `synthetic-dashboard-archive-${req.params.id}-${Date.now()}`,
+          callerKind: resolveHttpDeleteCallerKind(req.get(FUSION_CLIENT_HEADER)),
+        },
       });
       res.json(task);
     } catch (err: unknown) {
@@ -4451,7 +4458,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         );
       }
       const { store: scopedStore } = await getProjectContext(req);
-      const result = await scopedStore.archiveAllDone();
+      const result = await scopedStore.archiveAllDone({
+        auditContext: {
+          agentId: "system",
+          runId: `synthetic-dashboard-archive-all-done-${Date.now()}`,
+          callerKind: resolveHttpDeleteCallerKind(req.get(FUSION_CLIENT_HEADER)),
+        },
+      });
       /*
       FNXC:BulkArchiveOrdering 2026-09-05-23:44:
       Per-task archive skips are a successful, inspectable sweep result, not a route failure.

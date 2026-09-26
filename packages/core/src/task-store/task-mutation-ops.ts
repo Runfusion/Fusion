@@ -1722,9 +1722,29 @@ export async function cleanupArchivedTasksImpl(store: TaskStore): Promise<string
           continue;
         }
       }
-      // Guarantee a cold-storage snapshot before the destructive delete.
-      const entry = await store.taskToArchiveEntry(task, task.deletedAt ?? new Date().toISOString());
-      await upsertArchivedTaskEntry(layer.db, entry, layer.projectId);
+      /*
+      FNXC:ArchiveLogAttribution 2026-09-23-23:59:
+      Guarantee a cold-storage snapshot before the destructive delete — but NEVER rebuild over an
+      existing one. This rebuild has no audit context and the tombstone's `column` is the physical
+      `archived` marker, so an unconditional upsert replaced the archive's attributed line
+      (`Task archived from done by operator-cli (cli)`) with `Task archived from archived by
+      api-unattributed (system)`. The cold entry is the authoritative terminal snapshot
+      (FNXC:ArchivedRecommendations): preserve it as-is. A fallback is synthesized ONLY when none
+      exists, naming its origin from the tombstone's own history (`preArchiveColumn`, the lane the
+      card was FIRST archived from) — the legacy plain action string when history names none,
+      never the marker. (Devin PR-3561 bug #1.)
+      */
+      if (!existingEntry) {
+        const originColumn = task.preArchiveColumn;
+        const entry = await store.taskToArchiveEntry(
+          originColumn ? { ...task, column: originColumn } : task,
+          task.deletedAt ?? new Date().toISOString(),
+        );
+        if (!originColumn) {
+          entry.log = [{ timestamp: entry.archivedAt, action: "Task archived" }];
+        }
+        await upsertArchivedTaskEntry(layer.db, entry, layer.projectId);
+      }
 
       await purgeTaskWorkflowSelectionRowsAsyncImpl(store, task.id);
       await layer.db

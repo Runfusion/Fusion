@@ -710,9 +710,9 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
     */
     if (actionGateContext) {
       tools.push(
-        createTaskArchiveTool(taskStore),
+        createTaskArchiveTool(taskStore, { agentId: actionGateContext.agentId }),
         createTaskUnarchiveTool(taskStore),
-        createTaskDeleteTool(taskStore),
+        createTaskDeleteTool(taskStore, { agentId: actionGateContext.agentId }),
         createTaskRetryTool(taskStore, { isMergePending, resetInReviewMergeRetry, rerouteFailedNoVerdictPreMergeReview }),
         createTaskPauseTool(taskStore),
         createTaskUnpauseTool(taskStore),
