@@ -87,7 +87,11 @@ function buildApp(input: {
   activeMergeTaskId?: string | null;
   staleMergingStatusMinAgeMs?: number;
   settings?: { autoMerge?: boolean };
-  engine?: { isMergePending: ReturnType<typeof vi.fn>; enqueueMerge: ReturnType<typeof vi.fn> };
+  engine?: {
+    isMergePending: ReturnType<typeof vi.fn>;
+    enqueueMerge: ReturnType<typeof vi.fn>;
+    rerouteFailedNoVerdictPreMergeReview?: ReturnType<typeof vi.fn>;
+  };
   reconcileLandedReviewTask?: ReturnType<typeof vi.fn>;
   workflowIr?: unknown;
 }) {
@@ -316,6 +320,33 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     expect(updateTask).not.toHaveBeenCalled();
     expect(moveTask).not.toHaveBeenCalled();
     expect(logEntry).not.toHaveBeenCalled();
+  });
+
+  it("re-seeds a failed no-verdict review before the generic merge retry", async () => {
+    const task = mkMergeTask({
+      status: null,
+      mergeRetries: 3,
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        status: "failed",
+        phase: "pre-merge",
+        findings: [{ id: "fn-9372-unfixed-pipeline-smoke", severity: "critical" }],
+      }],
+    });
+    const engine = {
+      isMergePending: vi.fn(),
+      enqueueMerge: vi.fn(),
+      rerouteFailedNoVerdictPreMergeReview: vi.fn().mockResolvedValue("rerouted"),
+    };
+    const { app, updateTask, moveTask, logEntry } = buildApp({ task, engine });
+
+    const res = await performRequest(app, "POST", `/api/tasks/${task.id}/retry`, "{}", { "content-type": "application/json" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(engine.rerouteFailedNoVerdictPreMergeReview).toHaveBeenCalledWith(task);
+    expect(updateTask).not.toHaveBeenCalled();
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("failed no-verdict review re-seeded"));
   });
 
   it("leaves the pre-existing failed-merge retry path unchanged", async () => {

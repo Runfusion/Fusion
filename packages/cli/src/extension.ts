@@ -84,6 +84,7 @@ import {
   workflowDeleteParams,
   workflowSettingsParams,
   traitListParams,
+  isFailedNoVerdictPreMergeReviewResult,
   isInReviewMissingWorktreeSessionStartFailure,
   normalizeAgentLogPaging,
   buildTaskAgentLogReadText,
@@ -2618,6 +2619,25 @@ export default function kbExtension(pi: ExtensionAPI) {
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
           isInReviewMergeRetryStall);
+      const noVerdictGate = !effectiveAutoMergeDisabled && isInReviewStatusNone && retryIr !== undefined
+        ? await fusionCore.resolvePreMergeGateForTask(store, task.id, task.enabledWorkflowSteps, task).catch(() => undefined)
+        : undefined;
+      /*
+      FNXC:NoVerdictReviewRecovery 2026-09-23-20:18:
+      Extension tools have only a TaskStore and cannot observe ProjectEngine's queued-merge owner.
+      Do not create a continuation in the status-none queue window; preserve the failed review for
+      the dashboard's engine-owned retry or the fenced periodic recovery to re-run safely.
+      */
+      const noVerdictReviewRetry = noVerdictGate !== undefined
+        && (task.workflowStepResults ?? []).some((result) =>
+          isFailedNoVerdictPreMergeReviewResult(result, noVerdictGate.requiredPreMergeStepIds));
+      if (noVerdictReviewRetry) {
+        return {
+          content: [{ type: "text", text: `Task ${params.id} has a failed review with no verdict; retry it through the running dashboard or wait for engine recovery` }],
+          isError: true,
+          details: { taskId: params.id, currentStatus: task.status },
+        };
+      }
       /*
       FNXC:MissingWorktreeRetry 2026-07-10-18:30:
       Upstream #1992 requires fn_task_retry to recover an in-review unusable-worktree session-start failure even when status remains merge-active. Keep this status bypass constrained to the centrally classified missing/incomplete/unregistered worktree signature.

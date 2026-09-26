@@ -718,20 +718,26 @@ export class NativeWorktreeBackend implements WorktreeBackend {
       });
       return;
     } catch (error) {
+      const missingPathError = /is not a working tree|no such file or directory|does not exist/i.test(getErrorMessageWithStderr(error));
+      /*
+      FNXC:WorktreeReservationRecovery 2026-09-24-06:01:
+      A missing pinned checkout with Git's matching unregistered-path response is
+      already removed. Every caller, including forceful quarantine recovery, must
+      prune stale administration and succeed without attempting filesystem deletion.
+      */
+      if (!existsSync(input.worktreePath) && missingPathError) {
+        await pruneWorktreeAdminEntries({
+          rootDir: input.rootDir,
+          auditor: this.deps.audit,
+          reason: "remove-missing-fallback",
+          target: input.worktreePath,
+          logger: this.deps.logger,
+        });
+        return;
+      }
       // Defensive callers rely on Git's deletion-boundary dirty check. Never turn
       // that refusal into the recursive filesystem fallback below.
       if (input.force === false) {
-        const missingPathError = /is not a working tree|no such file or directory|does not exist/i.test(getErrorMessageWithStderr(error));
-        if (!existsSync(input.worktreePath) && missingPathError) {
-          await pruneWorktreeAdminEntries({
-            rootDir: input.rootDir,
-            auditor: this.deps.audit,
-            reason: "remove-missing-fallback",
-            target: input.worktreePath,
-            logger: this.deps.logger,
-          });
-          return;
-        }
         throw error;
       }
       if (!isRecoverableNativeWorktreeRemoveError(error)) {

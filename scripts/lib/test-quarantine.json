@@ -1,4 +1,10 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet \u2014 see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date \u2014 the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). scripts/check-quarantine-ledger.mjs mechanically verifies this ledger and concrete `exclude:` array entries stay in lockstep.",
-  "entries": []
+  "entries": [
+    {
+      "file": "packages/desktop/src/__tests__/native.test.ts",
+      "reason": "Second sightings: https://github.com/Runfusion/Fusion/actions/runs/35959852349, https://github.com/Runfusion/Fusion/actions/runs/35965109937, https://github.com/Runfusion/Fusion/actions/runs/35965648898; doubled vi.fn() timeout and STACK_TRACE_ERROR.",
+      "quarantinedAt": "2026-09-24"
+    }
+  ]
 }

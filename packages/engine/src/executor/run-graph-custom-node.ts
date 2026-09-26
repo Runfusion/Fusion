@@ -24,6 +24,7 @@ import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
 import {
+  WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY,
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
   WORKFLOW_REVIEW_KIND_CONTEXT_KEY,
 } from "../workflows/workflow-graph-executor.js";
@@ -407,6 +408,19 @@ export async function runGraphCustomNode(
       : graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "plan" || graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "code"
         ? graphContext[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] as "plan" | "code"
         : undefined;
+    /*
+    FNXC:WorkflowReviewSeverity 2026-09-24-06:16:
+    Optional-group review policy belongs to the group result identity, so its threshold reaches every
+    template node through graph context while a direct review node retains its own validated value.
+    */
+    const declaredBlockingSeverity = cfg.blockingSeverity === "any" || cfg.blockingSeverity === "low"
+      || cfg.blockingSeverity === "medium" || cfg.blockingSeverity === "high" || cfg.blockingSeverity === "critical"
+      ? cfg.blockingSeverity
+      : graphContext?.[WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY] === "any" || graphContext?.[WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY] === "low"
+        || graphContext?.[WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY] === "medium" || graphContext?.[WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY] === "high"
+        || graphContext?.[WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY] === "critical"
+        ? graphContext[WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY]
+        : undefined;
     const effectiveStepId = optionalGroupId ?? node.id;
     const isContentBindingStep = requiresContentReviewProof(effectiveStepId, { reviewKind: declaredReviewKind });
     /*
@@ -785,6 +799,7 @@ export async function runGraphCustomNode(
       ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
       ...(stepThinkingLevel ? { thinkingLevel: stepThinkingLevel } : {}),
       ...(readonlyMcpServers.length > 0 ? { readonlyMcpServers } : {}),
+      ...(declaredBlockingSeverity ? { blockingSeverity: declaredBlockingSeverity } : {}),
     };
     if (cfg.summaryTarget === "task") {
       (step as WorkflowStep & { summaryTarget?: "task" }).summaryTarget = "task";

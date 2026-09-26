@@ -4312,6 +4312,36 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(updated?.mergeRetries).toBe(0);
     });
 
+    it("does not let extension retry reseed a failed no-verdict gate while merge ownership is unknowable", async () => {
+      const store = createStore();
+      const task = await store.createTask({ title: "no-verdict review retry", description: "test", column: "todo" });
+      await store.updateTask(task.id, {
+        steps: [{ name: "Step 0", status: "done" }],
+        enabledWorkflowSteps: ["code-review"],
+        workflowStepResults: [{
+          workflowStepId: "code-review",
+          workflowStepName: "Code Review",
+          phase: "pre-merge",
+          status: "failed",
+          findings: [{ id: "fn-9372-unfixed-pipeline-smoke", severity: "critical" }],
+        }],
+      });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, { status: null, mergeRetries: 2 });
+
+      const retryTool = api.tools.get("fn_task_retry")!;
+      const result = await retryTool.execute("retry-no-verdict-queued-merge", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("running dashboard or wait for engine recovery");
+      const updated = await store.getTask(task.id);
+      expect(updated?.workflowStepResults).toEqual(expect.arrayContaining([expect.objectContaining({
+        workflowStepId: "code-review", status: "failed",
+      })]));
+      expect(updated?.mergeRetries).toBe(2);
+    });
+
     it("retries status-none in-review task with completed steps and no merge attempts in place", async () => {
       const store = createStore();
 

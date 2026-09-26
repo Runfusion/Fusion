@@ -1,6 +1,6 @@
 {
   "name": "@runfusion/fusion",
-  "version": "0.78.0-beta.6",
+  "version": "0.78.0-beta.7",
   "license": "MIT",
   "description": "Fusion CLI: HTTP API server, daemon, dashboard launcher, and task tooling for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -52,8 +52,8 @@
     "prebuild": "node ../../scripts/sync-fusion-skill-tools.mjs",
     "prepack": "node ./scripts/prepare-publish-manifest.mjs prepack",
     "postpack": "node ./scripts/prepare-publish-manifest.mjs postpack",
-    "build": "tsup",
-    "build:package": "cross-env FUSION_CLI_FULL_PACKAGE=1 tsup",
+    "build": "tsup && node scripts/finalize-plugin-sdk-dts.mjs",
+    "build:package": "cross-env FUSION_CLI_FULL_PACKAGE=1 pnpm run build",
     "build:exe": "bun run build.ts",
     "build:exe:all": "bun run build.ts --all",
     "typecheck": "tsc --noEmit",
@@ -67,11 +67,12 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.24.0",
-    "agent-browser": "0.26.0",
     "@earendil-works/pi-ai": "0.86.1",
     "@earendil-works/pi-coding-agent": "0.86.1",
+    "agent-browser": "0.26.0",
     "claude-code-cli-acp": "0.1.1",
     "dockerode": "^5.0.1",
+    "drizzle-orm": "1.0.0-rc.5-5935859",
     "electron": "^33.4.11",
     "embedded-postgres": "15.18.0-beta.17",
     "express": "^5.1.0",
@@ -81,12 +82,14 @@
     "ink-text-input": "^6.0.0",
     "ioredis": "^5.6.0",
     "multer": "^2.1.1",
+    "mysql2": "3.24.4",
     "node-pty": "npm:@lydell/node-pty@1.2.0-beta.15",
+    "playwright-core": "^1.60.0",
+    "postgres": "3.3.5",
     "react": "^19.2.0",
     "react-i18next": "^17.0.8",
-    "ws": "^8.18.0",
-    "playwright-core": "^1.60.0",
-    "typescript": "^5.7.0"
+    "typescript": "5.9.3",
+    "ws": "^8.18.0"
   },
   "optionalDependencies": {
     "sherpa-onnx-node": "1.13.4"

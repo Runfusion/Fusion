@@ -70,6 +70,8 @@ describe("workflow lifecycle direction", () => {
 
   it("requires a known reason whose declared role sets include the actual pair", () => {
     expect(isSanctionedEngineBackwardMove("code-review-revise-remediation", "review", "wip")).toBe(true);
+    expect(isSanctionedEngineBackwardMove("merge-boundary-evidence-recovery", "review", "wip")).toBe(true);
+    expect(isSanctionedEngineBackwardMove("merge-boundary-evidence-recovery", "wip", "hold")).toBe(false);
     expect(isSanctionedEngineBackwardMove("code-review-revise-remediation", "wip", "hold")).toBe(false);
     expect(isSanctionedEngineBackwardMove("missing", "review", "wip")).toBe(false);
     expect(isSanctionedEngineBackwardMove(undefined, "review", "wip")).toBe(false);
@@ -93,7 +95,7 @@ describe("workflow lifecycle direction", () => {
 
   it("admits every retained reason only for its declared role pairs", () => {
     expect(isSanctionedEngineBackwardMove("plan-review-revise-replan", "wip", "hold")).toBe(true);
-    for (const reason of ["code-review-revise-remediation", "verification-failure-remediation", "merge-fix-remediation"]) {
+    for (const reason of ["code-review-revise-remediation", "verification-failure-remediation", "merge-fix-remediation", "merge-boundary-evidence-recovery"]) {
       expect(isSanctionedEngineBackwardMove(reason, "review", "wip")).toBe(true);
       expect(isSanctionedEngineBackwardMove(reason, "wip", "hold")).toBe(false);
     }

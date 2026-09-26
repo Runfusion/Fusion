@@ -135,6 +135,16 @@ active list drops to entries 2 and 13 and the stated count drops to 2. Entry 1's
 its FN-9146 campaign table stay physically in the active section (readActiveRecordSections
 does not filter by status), so the campaign-evidence assertion below still reads entry 1 in
 place — keep it in expectedSubjectResults exactly like the closed-in-place entry 7.
+
+FNXC:TestFlakeRegister 2026-09-24-19:55:
+FN-9389 adds entry 17 after a one-time Full Suite terminal graph-gate mismatch. Its source and
+outbox trace establishes no product race, so pin the active inventory and require its next
+sighting to follow the file-level quarantine policy without weakening the durable contract.
+
+FNXC:TestFlakeRegister 2026-09-24-22:49:
+FN-9390 records the triage retry warning as a high-value first sighting after source tracing
+showed a fake-timer observation race rather than a production retry defect. Keep its active
+status pinned so a repeat executes the file-level quarantine rule without weakening the warning.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -157,7 +167,64 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
     },
+    {
+      heading: "17. Terminal graph-gate activity outbox contract",
+      status: "Active first sighting — recorded 2026-09-24, unattributed.",
+    },
+    {
+      heading: "18. Triage rate-limit retry log warning timer ordering",
+      status: "Active first sighting — recorded 2026-09-24, unattributed.",
+    },
   ]);
+});
+
+test("triage timeout first-sighting record retains shard evidence and quarantine escalation", () => {
+  const register = readFileSync(registerPath, "utf8");
+  const sections = readActiveRecordSections(register).filter(
+    ({ heading }) => heading === "18. Triage rate-limit retry log warning timer ordering",
+  );
+  assert.equal(sections.length, 1, "Expected exactly one active triage timeout first-sighting record");
+
+  const [{ body }] = sections;
+  for (const evidence of [
+    "Active first sighting — recorded 2026-09-24, unattributed.",
+    "packages/engine/src/__tests__/triage.test.ts",
+    "specifyTask — status restore failure diagnostics > logs warning when logEntry fails during rate-limit retry",
+    "d486a4c275",
+    "36053028228",
+    "test-timings-shard-2",
+    "packages/engine/.timings/timings-shard2-1.json",
+    "STACK_TRACE_ERROR",
+    "triage.test.ts:6701",
+    "30032 ms",
+    "same-change file-level quarantine in `scripts/lib/test-quarantine.json`",
+    "matching `engine-default` Vitest exclusion",
+  ]) {
+    assert.ok(body.includes(evidence), `Triage timeout record is missing ${evidence}`);
+  }
+});
+
+test("archived native updater quarantine retains repeat-failure evidence", () => {
+  const register = readFileSync(registerPath, "utf8");
+  const archive = register.match(/## Archive — closed records\n([\s\S]*)$/)?.[1];
+  assert.ok(archive, "Expected an Archive — closed records section");
+  const entry = archive.match(/^### 16\. Native updater setup mock lifecycle\n([\s\S]*?)(?=^### |(?![\s\S]))/m)?.[1];
+  assert.ok(entry, "Expected archived native updater quarantine entry");
+
+  for (const evidence of [
+    "native integrations > setupAutoUpdater > registers updater listeners and checks for updates",
+    "native integrations > setupAutoUpdater > sets updater download and install flags",
+    "35959852349",
+    "35965109937",
+    "35965648898",
+    'expected "vi.fn()" to be called 1 times, but got 2 times',
+    "STACK_TRACE_ERROR",
+    "quarantined 2026-09-24",
+    "2026-10-08",
+  ]) {
+    assert.ok(entry.includes(evidence), `Archived native updater entry is missing ${evidence}`);
+  }
+  assert.match(entry, /^- \*\*Status:\*\* Closed — quarantined/m);
 });
 
 /*

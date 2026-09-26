@@ -6,5 +6,6 @@ export class TaskExecutor extends TaskExecutorGraphFacades {
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void { this.options = { ...this.options, onExecutorLogFlushed: cb }; }
   constructor(store: TaskStore, rootDir: string, options: TaskExecutorOptions = {}) { super(); this.store = store; this.rootDir = rootDir; this.options = options; wireTaskExecutorLifecycle(this); }
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void { this.mergeRequester = requestMerge; }
+  setFailedNoVerdictPreMergeReviewRerouter(reroute: (task: Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">): void { this.rerouteFailedNoVerdictPreMergeReview = reroute; }
   async execute(task: Task): Promise<void> { try { await this.executeCore(task); } finally { if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release(); } }
 }

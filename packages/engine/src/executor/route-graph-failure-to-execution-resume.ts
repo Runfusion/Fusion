@@ -236,6 +236,7 @@ export async function recoverMergeBoundaryEvidenceGap(
   await deps.store.logEntry(live.id, remediation, undefined, deps.getRunContextFor(live.id));
   const moveOptions = {
     moveSource: "engine" as const,
+    lifecycleReason: "merge-boundary-evidence-recovery",
     preserveProgress: true,
     preserveWorktree: true,
     workflowMoveSource: "workflow-graph",
