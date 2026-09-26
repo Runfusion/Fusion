@@ -102,7 +102,7 @@ After `F-FOUND-04`, vehicle and CRM slices may proceed in parallel. After canoni
 
 ##### Feature `F-INV-01` — Create canonical vehicle and inventory lifecycle — proposed / awaiting approval
 
-- **Outcome:** Users create/import, validate, search, update, acquire, hold, reserve, sell, and withdraw a tenant-scoped vehicle without losing source history.
+- **Outcome:** Users create/import, validate, search, update, hold, reserve, and withdraw a tenant-scoped vehicle without losing source history.
 - **Prerequisites:** `F-FOUND-04`.
 - **Affected domains/surfaces:** Inventory P&L, sales channels, storefront, BI, valuation; desktop/mobile vehicle UI, API, persistence/import.
 - **Blast radius:** Central dealer aggregate used by every downstream domain.
@@ -134,7 +134,7 @@ After `F-FOUND-04`, vehicle and CRM slices may proceed in parallel. After canoni
 
 ##### Feature `F-DEAL-01` — Record acquisition and sales deal lifecycle — proposed / awaiting approval
 
-- **Outcome:** Users create and progress acquisition/sales deals linking canonical vehicle and party facts, preserving offers, contracts, status transitions, and cancellation history.
+- **Outcome:** Users create and progress acquisition/sales deals that acquire or sell a vehicle, linking canonical vehicle and party facts while preserving offers, contracts, status transitions, and cancellation history.
 - **Prerequisites:** `F-INV-01`, `F-CRM-01`.
 - **Affected domains/surfaces:** Inventory P&L, CRM, invoicing, BI; deal UI/API, contracts/documents.
 - **Blast radius:** Vehicle availability, customer history, document generation, financial facts.
