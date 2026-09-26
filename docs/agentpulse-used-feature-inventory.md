@@ -26,7 +26,8 @@ evidence; the code surface exists for all of them.
 | Settings | `settings` 9 | **Equivalent.** Fusion global settings. |
 | LLM providers | `llm_providers` 1 | **Equivalent.** Fusion provider/credential settings. |
 | API keys | `api_keys` 1 | **Equivalent.** Collector credentials. |
-| Cost overview / popover | `CostOverview.tsx`, `CostPopover.tsx` | **Done.** Session and card totals, per-turn costs, effective-dated rates, rankings, and the range overview with day/model/server breakdown. |
+| Cost overview | `CostOverview.tsx` | **Built on branch.** Session and card totals, per-turn costs, effective-dated rates, rankings, and the range overview with day/model/server breakdown. |
+| Cost popover | `CostPopover.tsx` | **Missing.** Costs render as inline text only; there is no hover/click/focus popup with token categories, rates and charges (plan Phase 3). |
 
 ## Not used in this deployment — zero rows, not parity requirements
 
@@ -113,14 +114,23 @@ explicit approval, and the recovery snapshot is retained regardless.
 
 ## Parity status as of 2026-09-24
 
-Every capability measured as genuinely used now has a Fusion equivalent:
+Every capability measured as genuinely used has a Fusion equivalent built on branch
+`claude/remote-agents-visibility-20260923`, except the cost popover:
+
+<!--
+FNXC:RemoteAgents 2026-09-26-20:48:
+"Built" in this document means committed on the branch above (`7870e8f02`). It does not mean merged, deployed or
+accepted; none of those is claimed here. The cost popover was earlier marked Done on the strength of inline cost
+labels, which do not provide the accessible popup the plan requires, so it is corrected to Missing.
+-->
 
 | Used capability | Fusion equivalent |
 | --- | --- |
 | Session observation, events | `external_sessions`, durable replay ingestion |
 | Turn history / results | Turn history panel, per-turn cost and context |
 | Full-text search over output | Migration 0089 GIN index, search panel |
-| Cost overview / popover | Card and session totals, per-turn costs, effective-dated rates, rankings, range overview |
+| Cost overview | Card and session totals, per-turn costs, effective-dated rates, rankings, range overview |
+| Cost popover | **Missing** — inline cost text only, no accessible popup |
 | Supervisors, credentials, settings, providers, API keys | Host-scoped collector credentials, Fusion settings |
 
 Still deliberately NOT built, because the corrected measurement showed their entire recorded use falls inside a

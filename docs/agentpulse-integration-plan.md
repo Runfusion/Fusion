@@ -1,8 +1,28 @@
 # AgentPulse integration into Fusion
 
-Status: active implementation. Session collection is deployed; the Phase 1 acceptance gate and Phases 2-6 remain open.
+Status: active implementation. No phase acceptance gate has passed. See **Branch state** below for what is built but not merged, deployed or accepted.
 Prepared: 2026-09-15.
-Last reconciled with fork `main`: 2026-09-23, `f2a1a5552`.
+Last reconciled with fork `main`: 2026-09-26, `e4fd6ec42` against branch `claude/remote-agents-visibility-20260923` at `7870e8f02`.
+
+## Branch state (2026-09-26)
+
+<!--
+FNXC:RemoteAgents 2026-09-26-20:48:
+Keep built, merged, deployed and accepted as four separate claims. The header previously read as if Phases 2-6 had no
+work at all, while the branch carries most of Phases 2, 3 and 5. The deployment notes in the ledger below are a
+historical record of earlier rollouts; they are not evidence of what runs on any host today.
+-->
+
+Built on the branch, not merged to fork `main`, not deployed, not accepted:
+
+- Phase 2: turn history rendering in the Remote agents panel, with prompts, responses, tool counts and expandable file patches.
+- Phase 3: per-turn cost and context use, effective-dated rates priced per revision, frozen cost stamps with an audited operator restamp, expensive session and turn rankings, and a date-range overview.
+- Phase 5: full-text search over collected output, per-server collector health, and operator-triggered AI session summaries.
+- Reconciliation of collected sessions against Fusion's own task runs by native session ID.
+
+Absent on both fork `main` `e4fd6ec42` and the branch `7870e8f02`: deep links into sessions and turns, turn history in linked Fusion task detail, and the accessible cost popup. Ownership of these three is undecided; do not start them without an explicit assignment.
+
+Not built by decision: session controls, launch requests, managed sessions and Ask threads (see the used-feature inventory). Phase 6 import, cutover and AgentPulse retirement are held for separate approval.
 Baseline: Fusion fork `a58b374c7`, including upstream `6e6adf393`; AgentPulse fork `04f0dcf`.
 
 ## Outcome
@@ -73,7 +93,7 @@ PostgreSQL migrations should follow Fusion's existing migration ownership and nu
 
 ## Delivery phases and acceptance gates
 
-Implementation ledger:
+Implementation ledger (historical record of earlier rollouts; not current deployment evidence):
 
 - Phase 0: the architecture and recovery path are recorded. The used-feature inventory, sanitized native fixtures and baseline reconciliation are still incomplete.
 - Phase 1: authenticated Codex/Claude collectors on J, m3 and m5, durable observation replay, host-aware live cards and feedback are deployed. All three host heartbeats advanced after the 2026-09-22 rollout. Identity/reconnect acceptance and the latency targets have not been measured across all hosts.
