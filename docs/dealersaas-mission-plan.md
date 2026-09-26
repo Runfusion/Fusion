@@ -107,7 +107,7 @@ After `F-FOUND-04`, vehicle and CRM slices may proceed in parallel. After canoni
 - **Affected domains/surfaces:** Inventory P&L, sales channels, storefront, BI, valuation; desktop/mobile vehicle UI, API, persistence/import.
 - **Blast radius:** Central dealer aggregate used by every downstream domain.
 - **Principal risks:** VIN duplication, status races, destructive imports, and ambiguous sale/withdraw boundaries.
-- **Acceptance evidence:** Lifecycle/state-machine tests, duplicate/import mutation tests, two-tenant isolation, desktop/mobile journeys, concurrent reserve/sell/withdraw tests.
+- **Acceptance evidence:** Lifecycle/state-machine tests, duplicate/import mutation tests, two-tenant isolation, desktop/mobile journeys, concurrent reserve/withdraw tests.
 - **Deferred discovery:** Vehicle classes, VIN data provider, required fields, and bulk migration format.
 
 ##### Feature `F-INV-02` — Preserve vehicle documents, media, and condition — proposed / awaiting approval
