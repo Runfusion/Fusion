@@ -451,7 +451,13 @@ Fast creation surfaces submit explicit `enabledWorkflowSteps: []` even before op
 
 Optional quality gates are authored directly in the workflow graph as `optional-group` **nodes**. An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs **once per enabled graph attempt**, and passes through (skips) when disabled. The template contains no internal iteration or rework edges (`validateOptionalGroup` rejects them), but the outer graph may re-enter the group for pre-merge fix/re-review remediation governed by `maxRevisions`.
 
-Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", template: { nodes, edges } }`.
+Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, reviewKind?, blockingSeverity?: "any" | "low" | "medium" | "high" | "critical", maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", template: { nodes, edges } }`.
+
+#### Review blocking severity
+
+A direct top-level `prompt`, `gate`, or `script` review node may declare `config.reviewKind: "plan" | "code"` and `config.blockingSeverity`. Review `optional-group` nodes may declare the same pair; their valid threshold is inherited by every review template node while the group retains the single durable review result identity. The accepted threshold values are `"any"`, `"low"`, `"medium"`, `"high"`, and `"critical"`.
+
+`blockingSeverity` is rejected when malformed, placed on an unsupported node, placed in a nested template, or declared without a matching direct `reviewKind`; it is never silently ignored. For a matching review lane, precedence is: an explicitly stored workflow setting (`planReviewBlockingSeverity` or `codeReviewBlockingSeverity`), the node or optional-group threshold, that setting's declaration default, then the built-in plan/code fallback. A declaration default does not override an authored lane threshold.
 
 - `defaultOn` contributes to the runtime/display effective enable set only when the task has no persisted `enabledWorkflowSteps` array; operators can still toggle persisted selections when creating or editing tasks.
 - `maxRevisions` optionally overrides the workflow/project `maxPostReviewFixes` budget for this one optional group's pre-merge fix → re-review loop. Use a non-negative integer for a bounded number of automatic fix passes, `0` to disable automatic fixes for that step, or `"unbounded"` to keep cycling until the step returns `APPROVE` / `APPROVE_WITH_NOTES`. When omitted, generic optional gates keep the global `maxPostReviewFixes` behavior; built-in `plan-review` and most `code-review` groups default to unbounded remediation unless a workflow setting caps them. Compound Engineering authors a two-pass Code Review cap.

@@ -3,7 +3,7 @@ import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
 import { reviewStep } from "../../execution/reviewer.js";
 import * as worktreePool from "../../worktree/worktree-pool.js";
-import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "../executor-test-helpers.js";
+import { createMockStore, createWorkflowRoutingAgentStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "../executor-test-helpers.js";
 
 function createTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -11,10 +11,13 @@ function createTask(overrides: Record<string, unknown> = {}) {
     title: "Reliability ordering",
     description: "",
     column: "in-progress",
-    worktree: "/repo/.worktrees/swift-falcon",
-    branch: "fusion/fn-4851",
-    baseCommitSha: "abc123",
+    /*
+    FNXC:ExecutorToolCapture 2026-09-24-16:50:
+    Begin without a persisted checkout so the graph reaches its fresh implementation session and
+    writes the task-pinned worktree that the completion-tool invariant subsequently observes.
+    */
     taskDoneRetryCount: 0,
+    enabledWorkflowSteps: [],
     dependencies: [],
     steps: [{ name: "Step 1", status: "in-progress" as const }, { name: "Step 2", status: "pending" as const }],
     currentStep: 0,
@@ -43,8 +46,11 @@ async function setup(overrides: Record<string, unknown> = {}) {
     return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() } } as any;
   });
 
-  const executor = new TaskExecutor(store as any, "/repo");
+  const executor = new TaskExecutor(store as any, "/tmp/test", {
+    agentStore: createWorkflowRoutingAgentStore(store).agentStore,
+  });
   await executor.execute(createTask() as any);
+  expect(doneTool, "TaskExecutor should open an implementation session with fn_task_done").toBeDefined();
 
   return { store, doneTool, getTask: () => task };
 }
@@ -54,7 +60,9 @@ describe("FN-4851 reliability interactions: task-done refusals x invariant", () 
     resetExecutorMocks();
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
     mockedExecSync.mockImplementation((cmd: string) => {
-      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo/.worktrees/swift-falcon\n");
+      // FNXC:ExecutorToolCapture 2026-09-24-16:50: The real graph only creates implementation tools after its Git-root probe succeeds.
+      if (cmd.includes("rev-parse --is-inside-work-tree")) return Buffer.from("true\n");
+      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/tmp/test/.fusion/worktrees/fn-4851\n");
       if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("fusion/fn-4851\n");
       if (cmd.includes("rev-list --count")) return Buffer.from("1\n");
       if (cmd.includes("rev-parse HEAD")) return Buffer.from("def456\n");

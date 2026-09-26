@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 import {
+  resolveWorktreePathReservationDirectory,
   nonExecutableDuplicateRedirectReason,
   resolveExplicitDuplicateMarker,
   resolveConsecutiveToolFailureRetryBackoffMs,
@@ -32,6 +33,8 @@ import {
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { isRequiredArtifactReadFailedValue } from "../execution/required-workflow-artifacts.js";
 import { getPromptPath } from "../execution/spec-staleness.js";
+import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
+import { pinnedWorktreePathForTask } from "../worktree/worktree-pinning.js";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
@@ -138,6 +141,28 @@ export type HandleGraphFailureDeps = {
   rerouteFailedNoVerdictPreMergeReview?: (task: Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
   safeLogEntry: AnyFn;
 };
+
+/*
+FNXC:WorktreeReservationRecovery 2026-09-24-06:01:
+A failed pre-merge step that never acquired its checkout has no reviewer verdict to
+bypass. Surface its reservation location so operators repair infrastructure rather
+than treating the failure as review feedback.
+*/
+function isWorktreeAcquisitionFailure(step: { output?: string; error?: string; notes?: string }): boolean {
+  const detail = [step.output, step.error, step.notes].filter((value): value is string => typeof value === "string").join("\n");
+  return /\b(?:failed|could not|unable) to acquire (?:a |the )?(?:task )?worktree\b/i.test(detail)
+    || /\bworktree acquisition\b/i.test(detail);
+}
+
+async function worktreeAcquisitionRemedy(deps: HandleGraphFailureDeps, task: Task): Promise<string> {
+  const settings = await deps.store.getSettings();
+  const pinnedPath = task.worktree ?? pinnedWorktreePathForTask(task.id, settings, deps.rootDir);
+  const reservationDirectory = await resolveWorktreePathReservationDirectory({
+    canonicalPath: pinnedPath,
+    worktreesDir: resolveWorktreesDir(deps.rootDir, settings),
+  });
+  return `Worktree acquisition failed before the review produced a verdict. Inspect the checkout reservation at ${reservationDirectory}, correct the checkout issue, then retry the task.`;
+}
 
 async function retryTerminalFailurePersistence(
   store: TaskStore,
@@ -1287,10 +1312,13 @@ export async function handleGraphFailure(
           const stepName = failedPreMergeStep.workflowStepName || failedPreMergeStep.workflowStepId || "Unknown";
           const blockedMessage = `Workflow graph run ended in '${live.column}' with failed pre-merge step '${stepName}' still blocking merge — remediation was not scheduled`;
           executorLog.warn(`${task.id}: ${blockedMessage}`);
+          const remedy = isWorktreeAcquisitionFailure(failedPreMergeStep)
+            ? await worktreeAcquisitionRemedy(deps, live)
+            : "Retry the task after restoring its remediation checkout or revision policy. Use the privileged review bypass only when this failed review is known to be non-blocking.";
           await deps.store.logEntry(
             task.id,
             blockedMessage,
-            "Retry the task after restoring its remediation checkout or revision policy. Use the privileged review bypass only when this failed review is known to be non-blocking.",
+            remedy,
             deps.getRunContextFor(task.id),
           );
           return;

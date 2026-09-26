@@ -21,8 +21,14 @@ test("release smoke typechecks a consumer of the packed plugin SDK", () => {
   assert.notEqual(smokeStart, -1);
   assert.notEqual(smokeEnd, -1);
   assert.match(smoke, /plugin-sdk-consumer\.ts/);
+  assert.match(smoke, /FusionPlugin/);
   assert.match(smoke, /@runfusion\/fusion\/plugin-sdk/);
-  assert.match(smoke, /spawnSync\(\s*"pnpm",\s*\["exec", "tsc", "--project", consumerTsconfigPath\]/);
+  assert.match(smoke, /dependencies:\s*\{\s*"@types\/node": "\^22\.0\.0"\s*\}/);
+  assert.match(smoke, /skipLibCheck:\s*false/);
+  assert.match(smoke, /createRequire\(join\(installDir, "package\.json"\)\)/);
+  assert.match(smoke, /consumerRequire\.resolve\("typescript\/bin\/tsc"\)/);
+  assert.match(smoke, /spawnSync\(\s*"node",\s*\[consumerTsc, "--project", consumerTsconfigPath\],\s*\{ cwd: installDir,/);
+  assert.doesNotMatch(smoke, /pnpm",\s*\["exec", "tsc"/);
   assert.match(smoke, /timeout: 120_000/);
   assert.match(smoke, /if \(typecheck\.status !== 0\)/);
 });

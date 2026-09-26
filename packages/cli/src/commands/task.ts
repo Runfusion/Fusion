@@ -1697,6 +1697,9 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const retryIr = await resolveWorkflowIrForTask(context.store, id).catch(() => undefined);
     const resolvedReviewColumns = retryIr === undefined ? [] : resolveReviewColumns(retryIr);
     const retryReviewColumns = new Set(resolvedReviewColumns.length > 0 ? resolvedReviewColumns : ["in-review"]);
+    const autoPauseClearPatch = buildAutoPauseClearPatch(task);
+    const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
+    const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
     const isInReviewStatusNone =
       retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
     /*
@@ -1714,6 +1717,14 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const isExecutionFailureInReview =
       hasIncompleteSteps || (task.steps.length === 0 && (task.mergeRetries ?? 0) === 0);
     const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
+    /*
+    FNXC:CliRetryDeadlockRecovery 2026-09-24-10:48:
+    A failed review card carrying the exact automatic deadlock pause is an execution recovery,
+    even after every step completes. Reuse the shared pause-clear contract so explicit user pauses
+    and other pause reasons remain in the in-review merge-retry path.
+    */
+    const isDeadlockAutoPauseRecovery =
+      task.status === "failed" && retryReviewColumns.has(task.column) && clearedDeadlockAutoPause;
     /* FNXC:MergeRetryAdmission 2026-09-20-02:17: a completed review card can lose its
        retry handoff before mergeRetries increments; retain it in review and restart merge. */
     const isInReviewMergeRetryStall = !effectiveAutoMergeDisabled && isInReviewStatusNone && (
@@ -1774,9 +1785,6 @@ export async function runTaskRetry(id: string, projectName?: string) {
     */
     const retryHoldColumn = (await resolveTaskLifecycleColumns(context.store, id))?.hold ?? "todo";
 
-    const autoPauseClearPatch = buildAutoPauseClearPatch(task);
-    const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
-    const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
     // FNXC:TaskWedgeNotifications 2026-08-10-20:15: a human Retry proves intervention and mints a fresh bounded terminal-failure budget.
     await context.store.resetTerminalFailureAutoRecoveryBudget(id);
 
@@ -1802,13 +1810,13 @@ export async function runTaskRetry(id: string, projectName?: string) {
     // In-review retry: distinguish between execution failures (incomplete steps)
     // and merge failures (all steps done).
     if (isInReviewRetry) {
-      if (isExecutionFailureInReview) {
+      if (isExecutionFailureInReview || isDeadlockAutoPauseRecovery) {
         await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));
         await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
           status: null,
           error: null,
           ...autoPauseClearPatch,
-          ...buildManualRetryResetPatch(),
+          ...buildManualRetryResetPatch({ resetMergeRetries: isDeadlockAutoPauseRecovery }),
         }));
         await retryBoardCall(context, id, "log entry", () => context.store.logEntry(
           id,

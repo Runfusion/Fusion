@@ -424,7 +424,11 @@ const cliBuildConfig = {
   esbuildOptions(options: { conditions?: string[] }) {
     options.conditions = [...(options.conditions || []), "source"];
   },
-  noExternal: [/^@fusion\//, /^@fusion-plugin-examples\//],
+  /*
+   * FNXC:PluginSdkDeclarations 2026-09-24-08:11:
+   * Drizzle and its database drivers are published dependencies for SDK declaration resolution, but the CLI runtime must continue bundling them rather than turning existing runtime imports into new external package edges.
+   */
+  noExternal: [/^@fusion\//, /^@fusion-plugin-examples\//, "drizzle-orm", "mysql2", "postgres"],
   // Native module: leave node-pty (aliased to @lydell/node-pty) out of the
   // bundle. esbuild can't statically resolve its conditional native require()s
   // (build/Release/pty.node, build/Debug/conpty.node, ...).

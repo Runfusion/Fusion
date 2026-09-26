@@ -293,6 +293,58 @@ describe("empty review graph-failure settle", () => {
   });
 });
 
+describe("failed pre-merge acquisition guidance", () => {
+  function failedPreMergeResult(output: string) {
+    return {
+      workflowStepId: "plan-review-step",
+      workflowStepName: "Plan Review",
+      phase: "pre-merge",
+      status: "failed",
+      output,
+      startedAt: "2026-08-28T01:00:00.000Z",
+      completedAt: "2026-08-28T01:01:00.000Z",
+    } as any;
+  }
+
+  async function reportFailure(output: string) {
+    const row = task({
+      column: "todo",
+      worktree: "/project/.fusion/worktrees/fn-225-empty",
+      workflowStepResults: [failedPreMergeResult(output)],
+    });
+    const store = createMockStore();
+    store.getTask.mockImplementation(async () => row);
+    setMockSettings(store, { autoMerge: true });
+    const executor = new TaskExecutor(store as any, "/project");
+
+    await (executor as any).handleGraphFailure(row, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["plan-review-step"],
+      context: {},
+    });
+    return store;
+  }
+
+  it("identifies reservation recovery for a failed review worktree acquisition without suggesting bypass", async () => {
+    const store = await reportFailure("Workflow node 'plan-review-step' failed to acquire task worktree: fatal: is not a working tree");
+    const details = store.logEntry.mock.calls.map((call: unknown[]) => call[2]).join("\n");
+
+    expect(details).toContain("Worktree acquisition failed before the review produced a verdict");
+    expect(details).toContain(".fusion-worktree-locks");
+    expect(details).toContain("retry the task");
+    expect(details).not.toContain("review bypass");
+  });
+
+  it("keeps generic review remediation guidance for a reviewer failure", async () => {
+    const store = await reportFailure("Reviewer found an unresolved acceptance-criteria issue.");
+    const details = store.logEntry.mock.calls.map((call: unknown[]) => call[2]).join("\n");
+
+    expect(details).toContain("privileged review bypass");
+    expect(details).not.toContain(".fusion-worktree-locks");
+  });
+});
+
 describe("empty review terminal compare-and-set", () => {
   it("parks once and declines an idempotent second claim", async () => {
     const { row, store, audit } = closeHarness();

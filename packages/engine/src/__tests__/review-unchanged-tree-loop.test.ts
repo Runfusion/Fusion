@@ -145,6 +145,23 @@ describe("unchanged review input reuse", () => {
     expect(subject).not.toHaveProperty("awaitingApprovalReason");
   });
 
+  it("keeps a high finding blocking for a node threshold unless the matching setting is stored", async () => {
+    const subject = task({ worktree: process.cwd(), baseCommitSha: "base-commit" });
+    const step = { ...codeReviewStep(), blockingSeverity: "high" };
+    const run = async (stored: Record<string, unknown>) => {
+      const store = createMockStore();
+      store.getTask.mockImplementation(async () => subject);
+      store.getWorkflowSettingsProjectId = vi.fn(() => "test-project");
+      store.getWorkflowSettingValues = vi.fn(() => stored);
+      const executor = new TaskExecutor(store as any, process.cwd());
+      installReviewer('{"verdict":"REVISE","notes":"Security issue.","findings":[{"id":"high","title":"Risk","body":"Needs mitigation.","severity":"high"}]}');
+      return (executor as any).executeWorkflowStep(subject, step, subject.worktree, {});
+    };
+
+    await expect(run({})).resolves.toMatchObject({ verdict: "REVISE" });
+    await expect(run({ codeReviewBlockingSeverity: "critical" })).resolves.toMatchObject({ verdict: "APPROVE_WITH_NOTES" });
+  });
+
   it("invokes the reviewer again after the authoritative input changes", async () => {
     const subject = task();
     const store = createMockStore();

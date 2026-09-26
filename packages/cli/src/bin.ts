@@ -61,8 +61,6 @@ function configurePiPackage(): void {
   process.env.PI_PACKAGE_DIR = tmp;
 }
 
-configurePiPackage();
-
 /*
  * FNXC:DashboardTuiHeap 2026-06-23-12:08:
  * Live heap profiling showed the dashboard TUI can allocate tens of thousands of React/Ink user-timing entries between renders, pushing server heap near 1GB before GC. Drain the performance timeline frequently so execution memory reflects active work instead of retained dev-mode render diagnostics.
@@ -113,8 +111,6 @@ function loadLocalEnv(): void {
   loadEnvFile(join(cwd, ".env.local"));
 }
 
-loadLocalEnv();
-
 // Command handlers are loaded lazily so --help can return immediately
 // without importing the full command graph.
 async function loadCommandHandlers() {
@@ -160,7 +156,7 @@ async function loadCommandHandlers() {
   const { runPluginCreate, runPluginNew } = await import("./commands/plugin-scaffold.js");
   const { runPluginDev } = await import("./commands/plugin-dev.js");
   const { runPluginPublish } = await import("./commands/plugin-publish.js");
-  const { runSkillsSearch, runSkillsInstall, runSkillsGet } = await import("./commands/skills.js");
+  const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
   const { runComputer } = await import("./commands/computer.js");
   const { runExperimentFinalize } = await import("./commands/experiment-finalize.js");
   const { dispatchUpdateCliArgs } = await import("./commands/update.js");
@@ -300,7 +296,6 @@ async function loadCommandHandlers() {
     runPluginPublish,
     runSkillsSearch,
     runSkillsInstall,
-    runSkillsGet,
     runComputer,
     runExperimentFinalize,
     dispatchUpdateCliArgs,
@@ -653,6 +648,39 @@ function parsePrCreateOptions(args: string[]) {
 
 async function main() {
   const { cleanedArgs: args, projectName, skipOnboarding, quiet } = extractGlobalProjectFlag(process.argv.slice(2));
+
+  // Print version and exit before any application imports. The leaf resolver
+  // keeps this static graph built-ins-only rather than importing the dashboard
+  // resolver. This is what the dashboard's CLI Binary panel probes via
+  // `<bin> --version`; without an early exit, the flag falls through to the
+  // default `dashboard` command and boots the full server.
+  if (args.includes("--version") || args.includes("-v")) {
+    console.log(readOwnCliVersion(import.meta.url) ?? "unknown");
+    process.exit(0);
+  }
+
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(HELP);
+    process.exit(0);
+  }
+
+  /*
+   * FNXC:SkillsGetCompletion 2026-09-25-04:52:
+   * Built-in guide requests must write their terminal result without PI package
+   * setup or cwd environment reads, because those generic bootstrap operations
+   * can delay the built child past the subprocess completion guard under load.
+   */
+  if (args[0] === "skills" && args[1] === "get") {
+    const { runSkillsGet } = await import("./commands/skills.js");
+    process.exitCode = await runSkillsGet(args.slice(2));
+    return;
+  }
+
+  // Generic commands retain PI configuration and local environment loading
+  // before application imports that may resolve agent resources or credentials.
+  configurePiPackage();
+  loadLocalEnv();
+
   const hasJsonFlag = args.includes("--json");
   const hasHelpOrVersionFlag = args.some((arg) => ["--help", "-h", "--version", "-v"].includes(arg));
   const selectedCommand = !args[0] || args[0].startsWith("-") ? "dashboard" : args[0];
@@ -665,22 +693,6 @@ async function main() {
   setQuietMode(effectiveQuiet);
   if (effectiveQuiet) installQuietGate();
   else uninstallQuietGate();
-
-  // Print version and exit before any application imports. The leaf resolver
-// keeps this static graph built-ins-only rather than importing the dashboard
-// resolver. This is what the
-  // dashboard's CLI Binary panel probes via `<bin> --version`; without an
-  // early exit, the flag falls through to the default `dashboard` command and
-  // boots the full server.
-  if (args.includes("--version") || args.includes("-v")) {
-    console.log(readOwnCliVersion(import.meta.url) ?? "unknown");
-    process.exit(0);
-  }
-
-  if (args.includes("--help") || args.includes("-h")) {
-    console.log(HELP);
-    process.exit(0);
-  }
 
   // No subcommand (or only flags) — default to the dashboard command so flags
   // like --no-auth, --port, --host, etc. work without typing `dashboard`.
@@ -828,7 +840,6 @@ async function main() {
     runPluginPublish,
     runSkillsSearch,
     runSkillsInstall,
-    runSkillsGet,
     runComputer,
     runExperimentFinalize,
     dispatchUpdateCliArgs,
@@ -2339,12 +2350,6 @@ async function main() {
           }
 
           await runSkillsInstall(filteredArgs, { skill });
-          break;
-        }
-
-        if (subcommand === "get") {
-          const exitCode = await runSkillsGet(args.slice(2));
-          if (exitCode !== 0) process.exit(exitCode);
           break;
         }
 

@@ -23,6 +23,7 @@ concurrency:
 # Least-privilege token: jobs only read the repo (checkout + cache) and upload
 # workflow artifacts (timings), which needs no extra permission scope.
 permissions:
+  actions: read
   contents: read
 
 # FN-4863: Opt JavaScript actions into Node 24 ahead of GitHub's forced cutover on 2026-06-02.
@@ -353,6 +354,106 @@ jobs:
           path: packages/engine/.pipeline-smoke-report.json
           if-no-files-found: warn
           include-hidden-files: true
+          retention-days: 14
+
+  # FNXC:PostMergeFullSuiteEvidence 2026-09-24-05:14:
+  # Post-merge review needs the four shard payloads and their observed failure set, but Full Suite
+  # is intentionally non-blocking. Preserve a normalized evidence manifest even when the shard
+  # matrix is red; only absent or malformed reporter evidence fails this collector.
+  post-merge-evidence-gate:
+    name: Post-merge Full Suite evidence gate
+    needs: [test-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download required shard timing artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: test-timings-shard-*
+          path: post-merge-evidence
+
+      - name: Validate and normalize shard evidence
+        env:
+          TEST_SHARDS_RESULT: ${{ needs.test-shards.result }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir, readFile, writeFile } from "node:fs/promises";
+          import path from "node:path";
+
+          const requiredArtifacts = [
+            "test-timings-shard-1",
+            "test-timings-shard-2",
+            "test-timings-shard-3",
+            "test-timings-shard-4",
+          ];
+
+          async function jsonFiles(root) {
+            const entries = await readdir(root, { withFileTypes: true });
+            const files = [];
+            for (const entry of entries) {
+              const child = path.join(root, entry.name);
+              if (entry.isDirectory()) files.push(...await jsonFiles(child));
+              else if (entry.isFile() && entry.name.endsWith(".json")) files.push(child);
+            }
+            return files;
+          }
+
+          const shards = [];
+          for (const artifact of requiredArtifacts) {
+            const artifactRoot = path.join("post-merge-evidence", artifact);
+            const files = await jsonFiles(artifactRoot);
+            if (files.length === 0) throw new Error(`${artifact} contains no timing JSON`);
+
+            const reports = [];
+            for (const file of files) {
+              const payload = JSON.parse(await readFile(file, "utf8"));
+              if (!Array.isArray(payload.testResults)) {
+                throw new Error(`${file} is not a Vitest timing reporter payload`);
+              }
+              const failedFullNames = payload.testResults.flatMap((result) => {
+                if (!Array.isArray(result?.assertionResults)) {
+                  throw new Error(`${file} has a malformed Vitest assertion result`);
+                }
+                return result.assertionResults
+                  .filter((assertion) => assertion?.status === "failed" && typeof assertion.fullName === "string")
+                  .map((assertion) => assertion.fullName);
+              });
+              reports.push({
+                path: path.relative("post-merge-evidence", file),
+                testResultCount: payload.testResults.length,
+                failedFullNames: [...new Set(failedFullNames)].sort(),
+              });
+            }
+            shards.push({ artifact, reports });
+          }
+
+          const evidence = {
+            version: 1,
+            run: {
+              repository: process.env.GITHUB_REPOSITORY,
+              runId: process.env.GITHUB_RUN_ID,
+              sha: process.env.GITHUB_SHA,
+              url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            },
+            producers: {
+              testShards: {
+                conclusion: process.env.TEST_SHARDS_RESULT,
+                nonBlocking: true,
+              },
+            },
+            shards,
+          };
+          await writeFile("post-merge-evidence/manifest.json", `${JSON.stringify(evidence, null, 2)}\n`);
+          console.log(`Retained ${shards.length} shard artifacts for post-merge disposition; test-shards=${process.env.TEST_SHARDS_RESULT}.`);
+          NODE
+
+      - name: Retain normalized post-merge evidence
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: post-merge-full-suite-evidence
+          path: post-merge-evidence/manifest.json
+          if-no-files-found: error
           retention-days: 14
 
   # FNXC:CIGateSpeed 2026-07-22-23:30:

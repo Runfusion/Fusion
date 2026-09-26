@@ -106,6 +106,7 @@ describe("unrun pre-merge gate reseed", () => {
 
   it("re-seeds exactly a failed no-verdict code review while retaining its finding evidence", async () => {
     const task = subject({
+      steps: [{ name: "Documentation & Delivery", status: "done" }],
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
@@ -127,6 +128,8 @@ describe("unrun pre-merge gate reseed", () => {
       runId: expect.stringContaining("failed-no-verdict-pre-merge-gate-reseed"),
     }));
     expect(task).toEqual(before);
+    expect(task.steps).toHaveLength(1);
+    expect(task.steps[0]).toMatchObject({ status: "done" });
   });
 
   it.each([
