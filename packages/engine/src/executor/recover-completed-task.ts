@@ -284,9 +284,27 @@ export async function recoverCompletedTask(
     would relocate a card the new board does not own. The hop chain is then verified after it
     runs: a rejected or silently-dropped hop must not leave the card half-re-homed without
     that outcome being explicit.
+
+    FNXC:WorkflowLifecycleColumns 2026-09-26-12:05 (the sandwich is a LANE guard, not a column guard):
+    THE SAME REQUEUE STILL GOT THROUGH WITH THE LANES HELD CONSTANT. A pause/resume abort that
+    re-queued the row during the SECOND lane resolution left the row read describing a card that
+    had since moved: `samePlannerLanes` still returned true — correctly, because a requeue is not
+    what changes a workflow's lanes — the todo -> wip hop was skipped, and the completed card
+    stranded with its work done. The row and the lanes are INDEPENDENT reads; bracketing the row
+    between two lane answers proves the lanes were stable around it, and says nothing about the
+    row's own movement during the closing await. Guarding one read by re-reading the other is not
+    a guard on the first.
+
+    So the row is read LAST, after the lane answer is settled, and that read seeds both
+    `originColumn` and `completionTask`: nothing awaits between it and the moves it feeds. The
+    lane sandwich is kept and still does its own job — each resolution itself awaits a selection
+    read and then a definition read, so two identical answers prove no selection change landed
+    across that whole window. A change arriving after the row read is a race no ordering of reads
+    can win, and the landing check below already names the lane it contradicts. A column that
+    moves between the row read and the first hop is likewise unwinnable here, and is reported by
+    the same landing check rather than silently accepted.
     */
     const lanesBeforeSnapshotRead = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
-    const prePromotionTask = await deps.store.getTask(task.id);
     const plannerLanes = await resolvePlannerLanesForTaskAsync(deps.store, task.id);
     if (!samePlannerLanes(lanesBeforeSnapshotRead, plannerLanes)) {
       const message = `Auto-recovery withheld: the task's planner lanes changed while the promotion snapshot was being read — the lane target and the origin column would come from two different workflow selections`;
@@ -294,6 +312,7 @@ export async function recoverCompletedTask(
       await deps.store.logEntry(task.id, message).catch(() => undefined);
       return false;
     }
+    const prePromotionTask = await deps.store.getTask(task.id);
     const originColumn = prePromotionTask.column;
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (Phase C convergence):

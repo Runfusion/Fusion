@@ -271,6 +271,42 @@ describe("stranded-completed recovery promotes through the task's OWN planner la
     expect(live?.column).toBe("in-progress");
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-09-26-12:05 (column-only mutation during the SECOND lane read):
+  The paired case the async-mutation test above does NOT reach. That test mutates during
+  selection read #1, which lands BEFORE the authoritative `getTask` — so the row read already
+  sees the new column and the test passes on any ordering. The mutation that reproduces the
+  ORIGINAL stranding is a pure column change with the lanes held constant, timed to land during
+  the SECOND lane resolution: `originColumn` is then read from a row that has since been
+  re-queued, `samePlannerLanes` still returns true (the lanes never changed), and the
+  todo -> wip hop is skipped — `handoffTaskToReview` is handed the stale pre-move column and
+  the completed card strands exactly as it did on GDPR-052.
+
+  The lanes sandwich proves the two lane ANSWERS agree. It says nothing about the row, which is
+  a third, independent read: nothing awaits between `getTask` and the moves it feeds ONLY if
+  the row read is the LAST of the three. A lane-only guard cannot stand in for a column guard.
+  */
+  it("re-reads the row after the second lane resolution, so a column-only requeue during it still promotes", async () => {
+    const h = harness(BUILTIN_CODING_WORKFLOW_IR as unknown as WorkflowIr, "in-progress");
+    let selectionReads = 0;
+    h.store.getTaskWorkflowSelectionAsync = vi.fn(async () => {
+      selectionReads += 1;
+      // Second resolution only: the lanes are identical on both sides (same workflow, same
+      // definition), so the sandwich cannot see this. The row is re-queued underneath it.
+      if (selectionReads === 2) h.setLiveColumn("todo");
+      return { workflowId: "builtin:coding", stepIds: [] };
+    });
+
+    const recovered = await h.executor.recoverCompletedTask(completedTaskIn("in-progress") as never);
+
+    expect(selectionReads).toBeGreaterThanOrEqual(2);
+    // The live row was re-queued to `todo` (a hold lane) while the lanes stayed constant, so
+    // the promotion must fire: the re-home hop targets wip, and the handoff gets the LANDED row.
+    expect(recovered).toBe(true);
+    expect(h.moves).toEqual([["FN-STRANDED", "in-progress"]]);
+    expect((h.handoff.mock.calls[0]?.[0] as { column?: string } | undefined)?.column).toBe("in-progress");
+  });
+
   it("does NOT promote a card that is not in a planner lane at all", async () => {
     // The paired negative: "always promote" must not pass for "resolve the lanes". A card in
     // the review lane is already past planning and owns its own handoff.
