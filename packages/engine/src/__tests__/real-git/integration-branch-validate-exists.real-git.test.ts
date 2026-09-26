@@ -121,4 +121,16 @@ describeIfGit("integration branch name validation (real git parity)", () => {
     expect(resolved).toBe("master");
     expect(spawnSync("git", ["rev-parse", "--verify", "-q", "refs/heads/HEAD"], { cwd: repo, stdio: "pipe" }).status).not.toBe(0);
   });
+
+  // FNXC:IntegrationBranchValidation 2026-09-26-12:58:
+  // Exercise real Git argv handling and ref inference; mocked listings cannot validate invocation behavior.
+  it.each([
+    ["async", resolveIntegrationBranch],
+    ["sync", resolveIntegrationBranchSync],
+  ] as const)("infers the local branch without origin/HEAD (%s)", async (_mode, resolveBranch) => {
+    const repo = setupRepo();
+    expect(spawnSync("git", ["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"], { cwd: repo, stdio: "pipe" }).status).toBe(0);
+
+    expect(await resolveBranch(repo, { integrationBranch: "homolog" })).toBe("master");
+  });
 });

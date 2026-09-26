@@ -202,7 +202,11 @@ describe("integration-branch resolver — settings branch existence guard", () =
       return {};
     });
     const branchCalls: string[][] = [];
-    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null, result?: { stdout: string }) => void) => {
+      if (args[0] === "for-each-ref") {
+        cb(null, { stdout: args[2] === "refs/remotes/origin/" ? "origin/develop\n" : "" });
+        return {};
+      }
       if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
         cb(null);
         return {};
@@ -237,6 +241,7 @@ describe("integration-branch resolver — settings branch existence guard", () =
     });
     const branchCalls: string[][] = [];
     execFileSyncMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "for-each-ref") return args[2] === "refs/remotes/origin/" ? "origin/develop\n" : "";
       if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
         return "";
       }
@@ -517,7 +522,11 @@ describe("integration-branch resolver — settings branch existence guard", () =
     // Guards must turn '-m' away BEFORE git runs: any `git branch` invocation here is
     // a bug (the name would land in option position). show-ref probes still answer so
     // the ladder can verify local 'master' during inference.
-    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null, result?: { stdout: string }) => void) => {
+      if (args[0] === "for-each-ref") {
+        cb(null, { stdout: args[2] === "refs/heads/" ? "master\n" : "" });
+        return {};
+      }
       if (args[0] === "branch") {
         branchCalls.push(args);
         cb(null);
@@ -590,6 +599,7 @@ describe("integration-branch resolver — settings branch existence guard", () =
       throw new Error("unset command");
     });
     execFileSyncMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "for-each-ref") return args[2] === "refs/heads/" ? "master\n" : "";
       if (args[0] === "branch") {
         branchCalls.push(args);
         return "";
@@ -844,7 +854,11 @@ describe("integration-branch resolver — settings branch existence guard", () =
     // is probeable (never model a listed remote ref that fails the show-ref probe), so
     // the resolver materializes the local ref instead of rejecting the remote-only name.
     const branchCalls: string[][] = [];
-    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null, result?: { stdout: string }) => void) => {
+      if (args[0] === "for-each-ref") {
+        cb(null, { stdout: args[2] === "refs/heads/" ? "alpha\nbeta\n" : "origin/develop\n" });
+        return {};
+      }
       if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
         cb(null);
         return {};
@@ -885,6 +899,7 @@ describe("integration-branch resolver — settings branch existence guard", () =
 
     const branchCalls: string[][] = [];
     execFileSyncMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "for-each-ref") return args[2] === "refs/heads/" ? "alpha\nbeta\n" : "origin/develop\n";
       if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
         return "";
       }

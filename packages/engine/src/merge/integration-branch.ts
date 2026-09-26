@@ -390,7 +390,9 @@ function parseBranchRefs(stdout: string, dropRemoteHead = false): string[] {
 
 async function listBranchRefs(rootDir: string, refPrefix: string, dropRemoteHead = false): Promise<string[]> {
   try {
-    const { stdout } = await execAsync(`git for-each-ref --format=%(refname:short) ${refPrefix}`, {
+    // FNXC:IntegrationBranchValidation 2026-09-26-12:58:
+    // Keep ref filters out of the shell so Git receives the format and prefix as fixed arguments.
+    const { stdout } = await execFileAsync("git", ["for-each-ref", "--format=%(refname:short)", refPrefix], {
       cwd: rootDir,
       encoding: "utf8",
       timeout: 5_000,
@@ -404,7 +406,7 @@ async function listBranchRefs(rootDir: string, refPrefix: string, dropRemoteHead
 
 function listBranchRefsSync(rootDir: string, refPrefix: string, dropRemoteHead = false): string[] {
   try {
-    const stdout = execSync(`git for-each-ref --format=%(refname:short) ${refPrefix}`, {
+    const stdout = execFileSync("git", ["for-each-ref", "--format=%(refname:short)", refPrefix], {
       cwd: rootDir,
       encoding: "utf8",
       timeout: 5_000,
@@ -439,9 +441,9 @@ async function resolveInferredBranch(rootDir: string): Promise<ReturnType<typeof
 
 /*
 FNXC:EngineProcessRules 2026-09-09-07:17:
-The synchronous branch-inference ladder uses only audited short git plumbing. Its execSync calls
-have explicit timeout/maxBuffer bounds, and refPrefix comes only from this module's fixed local and
-origin ref literals; retain their call-site allowlist entries when editing this fallback path.
+The synchronous branch-inference ladder uses audited, bounded Git plumbing. Its ref-listing calls use
+argv-based `execFileSync` with fixed module-owned prefixes, so shell parsing does not occur; retain
+its call-site allowlist entries when editing this fallback path.
 */
 function resolveInferredBranchSync(rootDir: string): ReturnType<typeof selectIntegrationBranch> {
   return selectIntegrationBranch({

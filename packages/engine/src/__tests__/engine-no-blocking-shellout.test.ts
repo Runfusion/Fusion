@@ -46,7 +46,7 @@ const allowlist: AllowlistEntry[] = [
   plumbing. Its refPrefix values are module-internal literals, both calls set timeout/maxBuffer,
   and the asynchronous ladder remains the default path, so these sites stay call-site audited.
   */
-  { file: "src/merge/integration-branch.ts", line: 146, primitive: "execSync", signature: "const stdout = execSync(`git for-each-ref --format=%(refname:short) ${refPrefix}`, {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merge/integration-branch.ts", line: 409, primitive: "execFileSync", signature: 'const stdout = execFileSync("git", ["for-each-ref", "--format=%(refname:short)", refPrefix], {', reason: SHORT_GIT_PLUMBING },
   { file: "src/merge/integration-branch.ts", line: 203, primitive: "execSync", signature: "const stdout = execSync(\"git symbolic-ref --quiet --short HEAD\", {", reason: SHORT_GIT_PLUMBING },
   // FNXC:IntegrationBranchValidation 2026-09-04-09:12: settings-branch existence guard — argv-based (no shell), fixed literal argv, bounded timeout.
   { file: "src/merge/integration-branch.ts", line: 67, primitive: "execFileSync", signature: 'execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {', reason: SHORT_GIT_PLUMBING },

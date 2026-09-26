@@ -230,21 +230,17 @@ describe("integration-branch resolver", () => {
     execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
       if (command.includes("origin/HEAD")) {
         cb(new Error("no symbolic ref"), { stdout: "" });
-        return {};
-      }
-      if (command.includes("refs/heads/")) {
+      } else if (command.includes("symbolic-ref --quiet --short HEAD")) {
         cb(null, { stdout: "master\n" });
-        return {};
+      } else {
+        cb(null, { stdout: "" });
       }
-      if (command.includes("symbolic-ref --quiet --short HEAD")) {
-        cb(null, { stdout: "master\n" });
-        return {};
-      }
-      cb(null, { stdout: "" });
       return {};
     });
-    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
-      if (args[0] === "show-ref" && args[3] === "refs/heads/master") {
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null, result?: { stdout: string }) => void) => {
+      if (args[0] === "for-each-ref") {
+        cb(null, { stdout: args[2] === "refs/heads/" ? "master\n" : "" });
+      } else if (args[0] === "show-ref" && args[3] === "refs/heads/master") {
         cb(null);
       } else {
         cb(new Error("ref not found"));
@@ -310,21 +306,17 @@ describe("integration-branch resolver", () => {
     execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
       if (command.includes("origin/HEAD")) {
         cb(new Error("no symbolic ref"), { stdout: "" });
-        return {};
-      }
-      if (command.includes("refs/heads/")) {
-        cb(null, { stdout: "develop\nmain\n" });
-        return {};
-      }
-      if (command.includes("symbolic-ref --quiet --short HEAD")) {
+      } else if (command.includes("symbolic-ref --quiet --short HEAD")) {
         cb(null, { stdout: "develop\n" });
-        return {};
+      } else {
+        cb(null, { stdout: "" });
       }
-      cb(null, { stdout: "" });
       return {};
     });
-    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
-      if (args[0] === "show-ref" && args[3] === "refs/heads/main") {
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null, result?: { stdout: string }) => void) => {
+      if (args[0] === "for-each-ref") {
+        cb(null, { stdout: args[2] === "refs/heads/" ? "develop\nmain\n" : "" });
+      } else if (args[0] === "show-ref" && args[3] === "refs/heads/main") {
         cb(null);
       } else {
         cb(new Error("ref not found"));
@@ -339,17 +331,9 @@ describe("integration-branch resolver", () => {
     execMock.mockImplementation((command: string, _opts: object, cb: (error: Error | null, result: { stdout: string }) => void) => {
       if (command.includes("origin/HEAD") || command.includes("symbolic-ref --quiet --short HEAD")) {
         cb(new Error("no symbolic ref"), { stdout: "" });
-        return {};
-      }
-      if (command.includes("refs/heads/")) {
+      } else {
         cb(null, { stdout: "" });
-        return {};
       }
-      if (command.includes("refs/remotes/origin/")) {
-        cb(null, { stdout: "origin/develop\n" });
-        return {};
-      }
-      cb(null, { stdout: "" });
       return {};
     });
     // The listed origin/develop ref is probeable, so under the current contract the
@@ -357,17 +341,17 @@ describe("integration-branch resolver", () => {
     // remote-only name: `git worktree add` and the merge-time CAS need refs/heads/<name>.
     // Never model a remote ref that appears in the listing but fails the show-ref probe.
     const branchCalls: string[][] = [];
-    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
-      if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null, result?: { stdout: string }) => void) => {
+      if (args[0] === "for-each-ref") {
+        cb(null, { stdout: args[2] === "refs/remotes/origin/" ? "origin/develop\n" : "" });
+      } else if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
         cb(null);
-        return {};
-      }
-      if (args[0] === "branch") {
+      } else if (args[0] === "branch") {
         branchCalls.push(args);
         cb(null);
-        return {};
+      } else {
+        cb(missingRefError());
       }
-      cb(missingRefError());
       return {};
     }) as any);
 
@@ -432,7 +416,11 @@ describe("integration-branch resolver", () => {
     // variants must materialize it from refs/remotes/origin/develop and return the same
     // local branch (never model a listed remote ref that fails the show-ref probe).
     const asyncBranchCalls: string[][] = [];
-    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null) => void) => {
+    execFileMock.mockImplementation(((_cmd: string, args: string[], _opts: unknown, cb: (error: Error | null, result?: { stdout: string }) => void) => {
+      if (args[0] === "for-each-ref") {
+        cb(null, { stdout: args[2] === "refs/remotes/origin/" ? "origin/develop\n" : "" });
+        return {};
+      }
       if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
         cb(null);
         return {};
@@ -447,6 +435,7 @@ describe("integration-branch resolver", () => {
     }) as any);
     const syncBranchCalls: string[][] = [];
     execFileSyncMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args[0] === "for-each-ref") return args[2] === "refs/remotes/origin/" ? "origin/develop\n" : "";
       if (args[0] === "show-ref" && args[3] === "refs/remotes/origin/develop") {
         return "";
       }
