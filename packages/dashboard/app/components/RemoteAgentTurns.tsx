@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExternalSessionFileChange, ExternalSessionTurn } from "@fusion/core";
 import { api } from "../api/client/client";
 import { withProjectId } from "../api/client/health";
+import { RemoteAgentCopyLink } from "./RemoteAgentCopyLink";
 
 type TurnCost = { estimatedUsd: number | null; partialUsd: number | null; unpricedRecords: number; usageComplete: boolean; contextTokens: number | null; contextCapacity: number | null; basis?: { asOf: string; source: string; recalculated: boolean; recorded?: boolean } };
 type PricedTurn = ExternalSessionTurn & { cost?: TurnCost | null };
@@ -72,8 +73,15 @@ function FileChange({ change }: { change: ExternalSessionFileChange }) {
   </li>;
 }
 
-function Turn({ turn }: { turn: PricedTurn }) {
-  return <li className="remote-turn card">
+function Turn({ turn, sessionId, projectId, focused }: { turn: PricedTurn; sessionId: string; projectId: string; focused: boolean }) {
+  // A linked turn is scrolled to and focused once, so keyboard and screen-reader users land on it too.
+  const scrollTo = useCallback((node: HTMLLIElement | null) => {
+    if (!node) return;
+    node.scrollIntoView?.({ block: "start" });
+    node.focus({ preventScroll: true });
+  }, []);
+  return <li className={`remote-turn card${focused ? " remote-turn--linked" : ""}`} ref={focused ? scrollTo : undefined}
+    tabIndex={focused ? -1 : undefined} aria-current={focused ? "true" : undefined}>
     <p className="remote-agent-meta">
       <span>Turn {turn.ordinal + 1}</span> · <span>{turn.state}</span> · <span>{durationLabel(turn)}</span>
       {" · "}<span>{turn.toolCallCount === null ? "Tool calls not reported" : `${turn.toolCallCount} tool ${turn.toolCallCount === 1 ? "call" : "calls"}`}</span>
@@ -91,6 +99,7 @@ function Turn({ turn }: { turn: PricedTurn }) {
         ? <p className="remote-agent-meta">{turn.state === "ongoing" ? "This turn is still running." : "No response was collected for this turn."}</p>
         : <pre>{turn.response}</pre>}
     </div>
+    <RemoteAgentCopyLink projectId={projectId} sessionId={sessionId} turnId={turn.nativeTurnId} label="Copy link to turn" />
     {turn.fileChanges.length > 0 && <div className="remote-turn-changes">
       <h5>{turn.fileChanges.length} {turn.fileChanges.length === 1 ? "file changed" : "files changed"}</h5>
       <ul className="remote-turn-files">{turn.fileChanges.map((change, index) => <FileChange key={`${change.path}:${index}`} change={change} />)}</ul>
@@ -98,13 +107,21 @@ function Turn({ turn }: { turn: PricedTurn }) {
   </li>;
 }
 
-export function RemoteAgentTurns({ sessionId, projectId }: { sessionId: string; projectId: string }) {
+/*
+FNXC:RemoteAgents 2026-09-26-23:39: a deep-linked turn may sit in older history, so the list pages backwards on
+its own until the turn appears, bounded by LINK_PAGE_LIMIT. If it is still absent the panel says so rather than
+silently showing the newest turns as if they were the target.
+*/
+const LINK_PAGE_LIMIT = 20;
+
+export function RemoteAgentTurns({ sessionId, projectId, focusTurnId = null }: { sessionId: string; projectId: string; focusTurnId?: string | null }) {
   const [turns, setTurns] = useState<PricedTurn[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const scope = useRef(0);
+  const pagesLoaded = useRef(0);
   const load = useCallback(async (after?: string) => {
     const epoch = scope.current;
     setLoading(true);
@@ -117,6 +134,7 @@ export function RemoteAgentTurns({ sessionId, projectId }: { sessionId: string; 
       if (!Array.isArray(page?.turns)) throw new Error("Turn history response was malformed");
       // Pagination walks older history, so a page is appended rather than replacing what is shown.
       setTurns(current => after ? [...current, ...page.turns.filter(t => !current.some(c => c.nativeTurnId === t.nativeTurnId))] : page.turns);
+      pagesLoaded.current += 1;
       setCursor(page.nextCursor); setError(null); setLoaded(true);
     } catch (e) {
       if (epoch === scope.current) { setError(e instanceof Error ? e.message : "Turn history unavailable"); setLoaded(true); }
@@ -124,15 +142,22 @@ export function RemoteAgentTurns({ sessionId, projectId }: { sessionId: string; 
   }, [projectId, sessionId]);
   useEffect(() => {
     scope.current += 1;
+    pagesLoaded.current = 0;
     setTurns([]); setCursor(null); setError(null); setLoaded(false);
     void load();
   }, [load]);
+  const linkedFound = !!focusTurnId && turns.some(t => t.nativeTurnId === focusTurnId);
+  const keepPaging = !!focusTurnId && !linkedFound && !error && !loading && loaded && !!cursor && pagesLoaded.current < LINK_PAGE_LIMIT;
+  useEffect(() => { if (keepPaging && cursor) void load(cursor); }, [keepPaging, cursor, load]);
+  const linkedMissing = !!focusTurnId && !linkedFound && loaded && !loading && !error && !keepPaging;
   return <section className="remote-agent-turns" aria-labelledby={`remote-turns-${sessionId}`}>
     <h4 id={`remote-turns-${sessionId}`}>Turn history</h4>
     {error && <p role="alert" aria-label="Turn history error">{error}</p>}
     {!error && loaded && !turns.length && <p className="remote-agent-meta">No turns have been collected for this session.</p>}
     {!loaded && loading && <p className="remote-agent-meta">Loading turn history…</p>}
-    {!!turns.length && <ul className="remote-turn-list" aria-label="Collected turns">{turns.map(turn => <Turn key={turn.nativeTurnId} turn={turn} />)}</ul>}
+    {linkedMissing && <p role="status" className="remote-agent-meta">The linked turn is not in {cursor ? `the newest ${turns.length} collected turns` : "this session's collected history"}.</p>}
+    {!!turns.length && <ul className="remote-turn-list" aria-label="Collected turns">{turns.map(turn => <Turn key={turn.nativeTurnId} turn={turn}
+      sessionId={sessionId} projectId={projectId} focused={turn.nativeTurnId === focusTurnId} />)}</ul>}
     {cursor && <button className="btn btn-sm" onClick={() => void load(cursor)} disabled={loading}>Load older turns</button>}
   </section>;
 }

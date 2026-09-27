@@ -10,6 +10,8 @@ import { RemoteAgentOverview } from "./RemoteAgentOverview";
 import { RemoteAgentSearch } from "./RemoteAgentSearch";
 import { RemoteAgentRankings } from "./RemoteAgentRankings";
 import { RemoteAgentCostPopover } from "./RemoteAgentCostPopover";
+import { RemoteAgentCopyLink } from "./RemoteAgentCopyLink";
+import { clearRemoteAgentLink, readRemoteAgentLink } from "../utils/remote-agent-links";
 import "./RemoteAgentsPanel.css";
 
 type Feedback = { commandId: string; status: string; createdAt: string; expiresAt: string; deliveredAt: string | null };
@@ -124,7 +126,7 @@ function feedbackCommandId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionView; projectId: string }) {
+function RemoteAgentDetail({ session, projectId, focusTurnId }: { session: ExternalSessionView; projectId: string; focusTurnId: string | null }) {
   const [detail, setDetail] = useState(session);
   const [cost, setCost] = useState<Cost | null>(null);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
@@ -176,6 +178,7 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
   };
   return <section className="remote-agent-detail card" aria-label="Remote agent details">
     <h3>{detail.observation.title || detail.nativeSessionId}</h3>
+    <RemoteAgentCopyLink projectId={projectId} sessionId={detail.id} label="Copy link to session" />
     <p className="remote-agent-meta">{detail.hostId} · {detail.provider} · {detail.observation.model ?? "Model unknown"}</p>
     <p className="remote-agent-path">{detail.observation.projectPath}</p>
     <p>{detail.observation.activity} · {detail.collectorConnected ? "Collector connected" : "Collector offline"}{detail.activityStale ? " · Activity stale" : ""}</p>
@@ -183,7 +186,7 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
     <h4>Recent activity</h4>
     {detail.observation.recentActivity?.length ? detail.observation.recentActivity.map((a, i) => <article key={`${a.at}:${a.kind}:${i}`} className="remote-agent-activity"><strong>{a.kind}</strong> <time>{new Date(a.at).toLocaleTimeString()}</time><pre>{a.text}</pre></article>) : <p className="remote-agent-meta">No recent native activity reported.</p>}
     <RemoteAgentSummary sessionId={detail.id} projectId={projectId} />
-    <RemoteAgentTurns sessionId={detail.id} projectId={projectId} />
+    <RemoteAgentTurns sessionId={detail.id} projectId={projectId} focusTurnId={focusTurnId} />
     <h4>Session token costs</h4>
     {!cost ? <p>Loading costs…</p> : <>
       <p>Estimated total: <strong>{usd(cost.estimatedUsd)}</strong>{cost.estimatedUsd === null && cost.partialUsd !== null ? ` · Priced subtotal: ${usd(cost.partialUsd)}` : ""}</p>
@@ -221,6 +224,18 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
   const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false);
   const [hosts, setHosts] = useState<HostHealth[]>([]);
   /*
+  FNXC:RemoteAgents 2026-09-26-23:39: a deep link (`remoteSession`, optional `turn`) is consumed once, and only
+  for the project it names, because the panel mounts before useDeepLink has switched project. A linked session
+  outside the loaded page is fetched by id (as is one opened from search or rankings), so older sessions are
+  reachable; a session this project cannot read is reported, never silently swapped for another. Choosing another
+  session drops the linked turn.
+  */
+  const pendingLink = useRef(readRemoteAgentLink());
+  const [focusTurnId, setFocusTurnId] = useState<string | null>(null);
+  const [linked, setLinked] = useState<ListedSession | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const select = useCallback((id: string) => { setSelected(id); setFocusTurnId(null); setLinkError(null); }, []);
+  /*
   FNXC:RemoteAgents 2026-09-23-08:40: Every list request carries a generation, and only the newest one may write.
   Manual Refresh and Load More pass no AbortSignal, so an abort check alone let a response that was already in flight
   when the operator changed project or filters replace the new view's sessions and cursor. The generation also
@@ -250,7 +265,12 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
   }, [projectId]);
   const listPoll = useRef<AbortController | null>(null);
   useEffect(() => {
-    setSessions([]); setSelected(null); setCursor(null);
+    setSessions([]); setSelected(null); setCursor(null); setLinked(null); setFocusTurnId(null); setLinkError(null);
+    const link = pendingLink.current;
+    if (link && projectId && (!link.projectId || link.projectId === projectId)) {
+      pendingLink.current = null; clearRemoteAgentLink();
+      setSelected(link.sessionId); setFocusTurnId(link.turnId);
+    }
     const controller = new AbortController(); listPoll.current = controller; void load(undefined, controller.signal);
     return () => controller.abort();
   }, [load]);
@@ -270,7 +290,16 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
     const list = listPoll.current?.signal; if (list && !list.aborted) void load(undefined, list, true);
     const hostSignal = hostsPoll.current?.signal; if (hostSignal && !hostSignal.aborted) void refreshHosts(hostSignal);
   }, 10000, { enabled: !!projectId });
-  const detail = sessions.find(s => s.id === selected);
+  const inList = sessions.some(s => s.id === selected);
+  useEffect(() => {
+    if (!selected || !projectId || inList || linked?.id === selected || linkError) return;
+    const controller = new AbortController();
+    api<{ session: ExternalSessionView }>(withProjectId(`/external-sessions/${selected}`, projectId), { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) setLinked(data.session); })
+      .catch(() => { if (!controller.signal.aborted) setLinkError("That session was not found in this project."); });
+    return () => controller.abort();
+  }, [selected, projectId, inList, linked?.id, linkError]);
+  const detail = sessions.find(s => s.id === selected) ?? (linked?.id === selected ? linked : undefined);
   const hostSummaries = summarizeHosts(sessions);
   return <div className="remote-agents-panel">
     <div className="remote-agent-filters">
@@ -279,8 +308,8 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
       <button className="btn btn-sm" onClick={() => void load()} disabled={loading}>Refresh</button>
     </div>
     {projectId && <RemoteAgentOverview projectId={projectId} {...(host ? { hostId: host } : {})} />}
-    {projectId && <RemoteAgentSearch projectId={projectId} {...(host ? { hostId: host } : {})} onOpenSession={setSelected} />}
-    {projectId && <RemoteAgentRankings projectId={projectId} {...(host ? { hostId: host } : {})} onOpenSession={setSelected} />}
+    {projectId && <RemoteAgentSearch projectId={projectId} {...(host ? { hostId: host } : {})} onOpenSession={select} />}
+    {projectId && <RemoteAgentRankings projectId={projectId} {...(host ? { hostId: host } : {})} onOpenSession={select} />}
     <section className="remote-agent-hosts" aria-labelledby="remote-agent-hosts-heading">
       <h3 id="remote-agent-hosts-heading">Servers</h3>
       {!hosts.length ? <p className="remote-agent-meta">No collector has reported for this project.</p> : <ul className="remote-agent-host-list">
@@ -301,12 +330,13 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
     </section>
     {!projectId && <p>Select a Fusion project to view its remote agents.</p>}
     {error && <p role="alert" aria-label="Remote agents error">{error}</p>}
+    {linkError && <p role="alert" aria-label="Session not found">{linkError}</p>}
     {projectId && !sessions.length && !error && <p>{loading ? "Loading remote agents…" : "No remote sessions reported for this project."}</p>}
     <p className="remote-agent-meta" role="status" aria-label="Session list status">{projectId && sessions.length ? `${sessions.length} ${sessions.length === 1 ? "session" : "sessions"} shown${loading ? ", refreshing" : ""}.` : ""}</p>
     <div className="remote-agent-layout"><div className="remote-agent-list">
       {!!sessions.length && <ul className="remote-agent-rows" aria-label="Remote agent sessions">
         {[...sessions].sort((a, b) => b.observation.observedAt.localeCompare(a.observation.observedAt)).map(s => <li key={s.id}>
-          <button className="card remote-agent-row" onClick={() => setSelected(s.id)} aria-pressed={selected === s.id}>
+          <button className="card remote-agent-row" onClick={() => select(s.id)} aria-pressed={selected === s.id}>
             <strong>{s.observation.title || s.nativeSessionId}</strong><span>{s.hostId} · {s.provider} · {s.observation.model ?? "Model unknown"}</span><span>{s.observation.activity} · {s.collectorConnected ? "Connected" : "Collector offline"}{s.activityStale ? " · Activity stale" : ""}</span>
             {attributionLabel(s.fusion) && <span className="remote-agent-attribution">{attributionLabel(s.fusion)}</span>}
           </button>
@@ -315,6 +345,6 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
         </li>)}
       </ul>}
       {cursor && <button className="btn btn-sm" onClick={() => void load(cursor)} disabled={loading}>Load more sessions</button>}
-    </div>{detail && projectId && <RemoteAgentDetail key={`${projectId}:${detail.id}`} session={detail} projectId={projectId} />}</div>
+    </div>{detail && projectId && <RemoteAgentDetail key={`${projectId}:${detail.id}`} session={detail} projectId={projectId} focusTurnId={focusTurnId} />}</div>
   </div>;
 }

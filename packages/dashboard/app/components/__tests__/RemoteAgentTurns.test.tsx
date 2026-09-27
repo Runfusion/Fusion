@@ -14,6 +14,42 @@ const turn = (over: Record<string, unknown> = {}) => ({
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 describe("remote agent turn history", () => {
+  /* FNXC:RemoteAgents 2026-09-26-23:39: a deep-linked turn in older history is reached by paging, and a
+     missing one is reported rather than the newest turns standing in for it. */
+  it("pages back to a deep-linked turn and focuses it", async () => {
+    vi.mocked(api).mockImplementation(async path => String(path).includes("cursor=c1")
+      ? { schemaVersion: 1, turns: [turn({ nativeTurnId: "old", ordinal: 0, response: "Old answer" })], nextCursor: null } as never
+      : { schemaVersion: 1, turns: [turn({ nativeTurnId: "new", ordinal: 1, response: "New answer" })], nextCursor: "c1" } as never);
+    const scrolled = vi.fn(); Element.prototype.scrollIntoView = scrolled;
+    render(<RemoteAgentTurns sessionId={sessionId} projectId="project-a" focusTurnId="old" />);
+    const target = (await screen.findByText("Old answer")).closest("li")!;
+    expect(target).toHaveAttribute("aria-current", "true");
+    await waitFor(() => expect(target).toHaveFocus());
+    expect(scrolled).toHaveBeenCalled();
+    expect(screen.getByText("New answer").closest("li")).not.toHaveAttribute("aria-current");
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops paging at the bound and says the linked turn was not found", async () => {
+    let page = 0;
+    vi.mocked(api).mockImplementation(async () => { page += 1;
+      return { schemaVersion: 1, turns: [turn({ nativeTurnId: `t${page}`, ordinal: page })], nextCursor: `c${page}` } as never; });
+    render(<RemoteAgentTurns sessionId={sessionId} projectId="project-a" focusTurnId="never" />);
+    expect(await screen.findByText(/The linked turn is not in the newest 20 collected turns/)).toBeInTheDocument();
+    expect(api).toHaveBeenCalledTimes(20);
+  });
+
+  it("offers a link to each turn", async () => {
+    vi.mocked(api).mockResolvedValue({ schemaVersion: 1, turns: [turn()], nextCursor: null } as never);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<RemoteAgentTurns sessionId={sessionId} projectId="project-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy link to turn" }));
+    await screen.findByText("Link copied");
+    const url = new URL(writeText.mock.calls[0]![0]);
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ project: "project-a", view: "agents", remoteSession: sessionId, turn: "turn-1" });
+  });
+
   it("renders each prompt above its response with measured work time", async () => {
     vi.mocked(api).mockResolvedValue({ schemaVersion: 1, turns: [turn()], nextCursor: null } as never);
     render(<RemoteAgentTurns sessionId={sessionId} projectId="project-a" />);

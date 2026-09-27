@@ -78,3 +78,7 @@ technology announces their size and position; the marker is removed for sighted 
 .remote-cost-table caption { text-align: start; font-weight: 600; }
 .remote-cost-table th, .remote-cost-table td { text-align: start; padding: var(--space-xs); }
 .remote-cost-table td { text-align: end; }
+
+/* FNXC:RemoteAgents 2026-09-26-23:39: a deep-linked turn is marked with the accent border, not colour alone; aria-current carries the same fact for assistive technology. */
+.remote-turn--linked { outline: var(--space-3xs) solid var(--accent); }
+.remote-copy-link { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }

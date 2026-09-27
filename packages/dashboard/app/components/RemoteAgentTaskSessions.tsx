@@ -3,6 +3,7 @@ import type { ExternalSessionView } from "@fusion/core";
 import { api } from "../api/client/client";
 import { withProjectId } from "../api/client/health";
 import { RemoteAgentTurns } from "./RemoteAgentTurns";
+import { remoteAgentLink } from "../utils/remote-agent-links";
 import "./RemoteAgentsPanel.css";
 
 /*
@@ -37,6 +38,7 @@ export function RemoteAgentTaskSessions({ taskId, projectId }: { taskId: string;
         {sessions.map(session => <article key={session.id} className="remote-task-session card">
           <h5>{session.observation.title || session.nativeSessionId}</h5>
           <p className="remote-agent-meta">{session.hostId} · {session.provider} · {session.observation.model ?? "Model unknown"} · {session.observation.activity}</p>
+          <a href={remoteAgentLink(projectId, session.id)}>Open in Remote agents</a>
           <RemoteAgentTurns sessionId={session.id} projectId={projectId} />
         </article>)}
       </>}

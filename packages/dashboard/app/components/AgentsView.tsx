@@ -1,4 +1,5 @@
 import { RemoteAgentsPanel } from "./RemoteAgentsPanel";
+import { readRemoteAgentLink } from "../utils/remote-agent-links";
 import "./AgentsView.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -506,6 +507,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readAgentsSidebarWidth(projectId));
   const [agentView, setAgentView] = useState<"list" | "board" | "org" | "remote">(() => {
     if (typeof window === "undefined") return "list";
+    // FNXC:RemoteAgents 2026-09-26-23:39: a remote-session deep link opens the Remote tab regardless of the saved tab.
+    if (readRemoteAgentLink()) return "remote";
     const saved = getScopedItem("fn-agent-view", projectId);
     return (saved === "list" || saved === "board" || saved === "org" || saved === "remote") ? saved : "list";
   });
