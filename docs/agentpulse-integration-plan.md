@@ -105,7 +105,7 @@ Implementation ledger (historical record of earlier rollouts; not current deploy
 
 ### Next work, in order
 
-1. Let m3's repaired observation spool drain, then verify turn acknowledgements and project-scoped PostgreSQL reads from real Codex and Claude sessions. Diagnose the isolated CLI smoke's `External session project storage unavailable` response; the live J API and focused route/store tests are healthy.
+1. Let m3's repaired observation spool drain, then verify turn acknowledgements and project-scoped PostgreSQL reads from real Codex and Claude sessions. The isolated CLI smoke's `External session project storage unavailable` response is diagnosed and fixed on the branch (`3224af054`): a project registered under a symlinked path (every macOS temp path) bound a path-derived partition instead of its registry id.
 2. Render the persisted turns in Remote agents and linked Fusion task detail: prompt above result, elapsed work time, tool activity, expandable historical file patches, pagination, deep links and explicit unavailable/truncated states. Compare real turns with native output, including the 20-file example if its transcript is available.
 3. Complete context size/capacity, normalized request and turn usage, effective-dated model prices, accessible detailed cost popup, and expensive-session/turn explanations with unknown-price coverage.
 4. Add only supported host-routed stop/resume controls, prove feedback delivery and command idempotency on disposable sessions across J, m3 and m5, and show queued/unsupported states clearly.
