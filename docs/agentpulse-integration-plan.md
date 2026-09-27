@@ -20,7 +20,7 @@ Built on the branch, not merged to fork `main`, not deployed, not accepted:
 - Phase 5: full-text search over collected output, per-server collector health, and operator-triggered AI session summaries.
 - Reconciliation of collected sessions against Fusion's own task runs by native session ID.
 
-Absent on both fork `main` `e4fd6ec42` and the branch `7870e8f02`: deep links into sessions and turns, turn history in linked Fusion task detail, and the accessible cost popup. Ownership of these three is undecided; do not start them without an explicit assignment.
+Deep links into sessions and turns, turn history in linked Fusion task detail, and the accessible cost popup were absent on fork `main` `e4fd6ec42` and on `7870e8f02`. The operator assigned them to the review-prep lane on 2026-09-26; they are now built on this branch, likewise not merged, deployed or accepted. They have unit, route and component tests but no browser acceptance check yet.
 
 Not built by decision: session controls, launch requests, managed sessions and Ask threads (see the used-feature inventory). The AgentPulse history importer is dropped (see Phase 6). Cutover and AgentPulse retirement are held for separate approval.
 Baseline: Fusion fork `a58b374c7`, including upstream `6e6adf393`; AgentPulse fork `04f0dcf`.
