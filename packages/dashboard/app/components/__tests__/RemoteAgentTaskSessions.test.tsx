@@ -23,6 +23,9 @@ describe("collected sessions in task detail", () => {
     expect(await within(card).findByText("Fix the parser")).toBeInTheDocument();
     expect(within(card).getByText("Fixed it")).toBeInTheDocument();
     expect(api).toHaveBeenCalledWith(expect.stringContaining("/external-sessions/by-task/FN-7"), expect.anything());
+    // The link opens this exact session in the Remote agents panel of this project.
+    const link = new URL(within(card).getByRole("link", { name: "Open in Remote agents" }).getAttribute("href")!);
+    expect(Object.fromEntries(link.searchParams)).toMatchObject({ project: "project-a", view: "agents", remoteSession: "a".repeat(64) });
     // Already-counted runs must not read as extra cost on top of the task's figures.
     expect(screen.getByText(/already counted in this task's token and cost figures/)).toBeInTheDocument();
   });

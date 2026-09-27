@@ -38,7 +38,8 @@ export function RemoteAgentTaskSessions({ taskId, projectId }: { taskId: string;
         {sessions.map(session => <article key={session.id} className="remote-task-session card">
           <h5>{session.observation.title || session.nativeSessionId}</h5>
           <p className="remote-agent-meta">{session.hostId} · {session.provider} · {session.observation.model ?? "Model unknown"} · {session.observation.activity}</p>
-          <a href={remoteAgentLink(projectId, session.id)}>Open in Remote agents</a>
+          {/* FNXC:RemoteAgents 2026-09-27-00:20: the dashboard's link-as-action primitive; a bare anchor rendered browser-default blue at about 2:1 contrast on the dark card. */}
+          <a className="btn btn-sm" href={remoteAgentLink(projectId, session.id)}>Open in Remote agents</a>
           <RemoteAgentTurns sessionId={session.id} projectId={projectId} />
         </article>)}
       </>}
