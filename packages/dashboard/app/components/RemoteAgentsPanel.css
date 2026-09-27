@@ -82,3 +82,11 @@ technology announces their size and position; the marker is removed for sighted 
 /* FNXC:RemoteAgents 2026-09-26-23:39: a deep-linked turn is marked with the accent border, not colour alone; aria-current carries the same fact for assistive technology. */
 .remote-turn--linked { outline: var(--space-3xs) solid var(--accent); }
 .remote-copy-link { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+/*
+FNXC:RemoteAgents 2026-09-27-00:20: the cost popover sits beside the card button (a button cannot contain one), and a
+button sizes to its content, so browser acceptance showed the card squeezed to one character wide. Stack the two and
+let the card take the full row width.
+*/
+.remote-agent-rows > li { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-xs); }
+.remote-agent-rows > li > .remote-cost-popover { align-self: flex-start; padding-inline: var(--space-lg); }
+.remote-agent-row { width: 100%; }
