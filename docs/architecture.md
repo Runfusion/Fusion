@@ -406,6 +406,13 @@ Intentional exclusions from shared snapshots:
   - `ResearchStepRunner` owns provider I/O concerns only (provider selection, timeout/abort/provider-error classification, synthesis call execution); it does not read/write run state.
   - `ResearchOrchestrator` owns sequencing and failure policy (phase progression, provider fallback, partial-step continuation, terminal status choice) and interacts with store only through public store methods.
   - Provider substitution must remain data-driven: source metadata can carry provider identity, and fetching should resolve providers per source rather than relying on provider ordering.
+- **Terminal failure contract (FX-012):**
+  - `ResearchStepRunner` is the sole provider/runtime normalization boundary. It maps configuration, denial, rate limit, transient availability, timeout, cancellation, malformed response, and internal errors to a stable failure class/code, retryability, bounded operator detail, and optional remediation.
+  - Provider messages, response bodies, prompts, credentials, stacks, credential-bearing URLs, and absolute paths never enter persisted terminal diagnosis fields. `AsyncResearchStore` replaces terminal prose with code-owned safe text before writing JSONB.
+  - The terminal run row is authoritative and is persisted before bounded lifecycle/error events. Event or audit failure cannot erase or downgrade the row, and terminal immutability prevents late provider work, timers, or shutdown callbacks from changing the winner.
+  - Explicit cancellation wins as `cancelled`; provider/step deadlines use `timed_out`; other classified terminal outcomes use `failed`; successful finalization uses `completed`. Only retryable failed/timed-out rows create store-owned lineage attempts.
+  - `ResearchProviderRegistry.createStepRunner()` is the shared composition seam for both `ProjectEngine` dispatch and direct agent tools. It always supplies synthesis through one complete provider/model pair and is rebuilt after settings refresh between tool runs.
+  - `fn_research_get`, `fn_research_list`, wait-mode `fn_research_run`, dashboard list/detail routes, exports, and `ResearchView` all render the same canonical diagnosis. Legacy rows without one receive a generic safe fallback; completed runs receive no failure guidance.
 - **Boundary note:** research and insights are parallel subsystems sharing host infrastructure, not one table/store family.
 
 ### Task Evaluations
