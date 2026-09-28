@@ -250,6 +250,27 @@ describe("useResearch", () => {
     });
   });
 
+  it("uses canonical diagnosis retryability instead of terminal status or stale lifecycle values", async () => {
+    mockGetResearchRun.mockResolvedValue({
+      run: {
+        id: "RR-2",
+        title: "t",
+        status: "failed",
+        lifecycle: { retryable: true },
+        diagnosis: { classification: "non_retryable", code: "PROVIDER_DENIED", retryable: false, detail: "Provider denied access." },
+      },
+      availability: { available: true },
+    });
+
+    const { result } = renderHook(() => useResearch({ projectId: "p1" }));
+    act(() => result.current.setSelectedRunId("RR-2"));
+
+    await waitFor(() => {
+      expect(result.current.runActionState.retryable).toBe(false);
+      expect(result.current.runActionState.blockingReason).toBe("Run is not retryable");
+    });
+  });
+
   it("subscribes to research SSE events with project query and reconnect handler", async () => {
     renderHook(() => useResearch({ projectId: "p1" }));
 
@@ -257,7 +278,10 @@ describe("useResearch", () => {
       expect(mockSubscribeSse).toHaveBeenCalledWith(
         "/api/events?projectId=p1",
         expect.objectContaining({
-          events: expect.objectContaining({ "research:run:created": expect.any(Function) }),
+          events: expect.objectContaining({
+            "research:run:created": expect.any(Function),
+            "research:run:timed_out": expect.any(Function),
+          }),
           onReconnect: expect.any(Function),
         }),
       );

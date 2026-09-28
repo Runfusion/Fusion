@@ -44,6 +44,78 @@ function rethrowAsApiError(error: unknown, fallback = "Internal server error"): 
   throw new ApiError(500, fallback, { code: "INTERNAL_ERROR" });
 }
 
+type ResearchApiDiagnosis = {
+  classification: string;
+  code: string;
+  retryable: boolean;
+  detail: string;
+  remediation?: string;
+};
+
+const RESEARCH_TERMINAL_STATUSES = new Set(["failed", "cancelled", "timed_out", "retry_exhausted"]);
+const MAX_DIAGNOSTIC_TEXT_LENGTH = 500;
+
+function safeDiagnosticText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  // FNXC:ResearchFailureDiagnostics 2026-09-28-21:05:
+  // API readers expose only bounded operator guidance. Defense-in-depth redaction prevents legacy lifecycle
+  // prose from carrying credentials, authorization headers, URLs with query values, or local paths to clients.
+  return trimmed
+    .replace(/\b(?:sk|pk|api|key|token)-[A-Za-z0-9_-]{8,}\b/gi, "[redacted]")
+    .replace(/\b(authorization|api[_ -]?key|access[_ -]?token|secret|password)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+    .replace(/(?:[A-Za-z]:\\|\/(?:home|Users|var|tmp)\/)\S+/g, "[redacted-path]")
+    .slice(0, MAX_DIAGNOSTIC_TEXT_LENGTH);
+}
+
+function fallbackDiagnosis(run: ResearchRun): ResearchApiDiagnosis {
+  switch (run.status) {
+    case "cancelled":
+      return { classification: "cancelled", code: "RUN_CANCELLED", retryable: false, detail: "Research run was cancelled." };
+    case "timed_out":
+      return {
+        classification: "timed_out",
+        code: "PROVIDER_TIMEOUT",
+        retryable: true,
+        detail: "Research providers did not finish before the run deadline.",
+        remediation: "Retry the run. If timeouts continue, review Research Settings and provider availability.",
+      };
+    case "retry_exhausted":
+      return {
+        classification: "non_retryable",
+        code: "RETRY_EXHAUSTED",
+        retryable: false,
+        detail: "Research run exhausted its retry attempts.",
+        remediation: "Review provider configuration before starting a new run.",
+      };
+    default:
+      return {
+        classification: "non_retryable",
+        code: "INTERNAL_ERROR",
+        retryable: false,
+        detail: "Research run failed without additional diagnostic detail.",
+        remediation: "Review Research Settings and provider authentication, then start a new run.",
+      };
+  }
+}
+
+function toRunDiagnosis(run: ResearchRun): ResearchApiDiagnosis | undefined {
+  if (!RESEARCH_TERMINAL_STATUSES.has(run.status)) return undefined;
+
+  const lifecycle = run.lifecycle as (ResearchRun["lifecycle"] & { remediation?: string; safeDetail?: string; detail?: string }) | undefined;
+  const fallback = fallbackDiagnosis(run);
+  return {
+    classification: lifecycle?.failureClass ?? fallback.classification,
+    code: lifecycle?.errorCode ?? fallback.code,
+    retryable: lifecycle?.retryable ?? fallback.retryable,
+    detail: safeDiagnosticText(lifecycle?.safeDetail ?? lifecycle?.detail ?? lifecycle?.terminalCause) ?? fallback.detail,
+    remediation: safeDiagnosticText(lifecycle?.remediation) ?? fallback.remediation,
+  };
+}
+
 function toRunListItem(run: ResearchRun) {
   return {
     id: run.id,
@@ -51,14 +123,29 @@ function toRunListItem(run: ResearchRun) {
     title: run.topic || run.query,
     status: run.status,
     summary: run.results?.summary,
+    diagnosis: toRunDiagnosis(run),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
 }
 
 function toRunDetail(run: ResearchRun) {
+  const diagnosis = toRunDiagnosis(run);
+  const lifecycle = run.lifecycle
+    ? {
+        ...run.lifecycle,
+        terminalCause: diagnosis?.detail,
+        ...("remediation" in run.lifecycle ? { remediation: diagnosis?.remediation } : {}),
+        ...("safeDetail" in run.lifecycle ? { safeDetail: diagnosis?.detail } : {}),
+        ...("detail" in run.lifecycle ? { detail: diagnosis?.detail } : {}),
+      }
+    : undefined;
   return {
     ...run,
+    // Raw legacy errors and lifecycle prose may contain provider payloads. The bounded diagnosis is the only failure prose returned.
+    error: diagnosis?.detail,
+    lifecycle,
+    diagnosis,
     title: run.topic || run.query,
   };
 }
@@ -227,10 +314,16 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
       const existing = await getStore().getRun(req.params.id);
       if (!existing) throw notFound(`Run not found: ${req.params.id}`);
       if (["completed", "failed", "cancelled", "timed_out", "retry_exhausted"].includes(existing.status)) {
+        const diagnosis = toRunDiagnosis(existing);
         res.status(409).json({
           error: `Run ${req.params.id} cannot be cancelled from status ${existing.status}`,
           code: "INVALID_TRANSITION",
-          details: { code: "INVALID_TRANSITION", retryable: false },
+          details: {
+            code: "INVALID_TRANSITION",
+            retryable: false,
+            setupHint: diagnosis?.remediation,
+            diagnosis,
+          },
         });
         return;
       }
@@ -252,12 +345,15 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
         const run = await getStore().getRun(req.params.id);
         const exhausted = run?.status === "retry_exhausted" || run?.lifecycle?.errorCode === "RETRY_EXHAUSTED";
         const code = exhausted ? "RETRY_EXHAUSTED" : "NON_RETRYABLE_PROVIDER_ERROR";
+        const diagnosis = run ? toRunDiagnosis(run) : undefined;
         res.status(409).json({
-          error: error.message,
+          error: diagnosis?.detail ?? error.message,
           code,
           details: {
             code,
             retryable: false,
+            setupHint: diagnosis?.remediation,
+            diagnosis,
           },
         });
         return;

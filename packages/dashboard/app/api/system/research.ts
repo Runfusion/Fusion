@@ -93,6 +93,9 @@ export type ResearchActionErrorCode =
   | "RETRY_EXHAUSTED"
   | "INVALID_TRANSITION"
   | "NON_RETRYABLE_PROVIDER_ERROR"
+  | "PROVIDER_DENIED"
+  | "MALFORMED_RESPONSE"
+  | "MODEL_CONFIGURATION"
   | "INTERNAL_ERROR";
 
 export interface ResearchActionError extends ApiRequestError {

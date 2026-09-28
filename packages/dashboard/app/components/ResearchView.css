@@ -191,6 +191,37 @@ The title row now comes from the shared .view-header, which supplies the --space
   color: var(--color-error);
 }
 
+/*
+FNXC:ResearchFailureDiagnostics 2026-09-28-21:17:
+Terminal diagnosis is one responsive alert using semantic tokens; detail and remediation wrap instead of clipping on phone layouts.
+*/
+.research-view__diagnosis {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: var(--btn-border-width) solid var(--color-error);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+
+.research-view__diagnosis-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.research-view__diagnosis p {
+  margin: 0;
+}
+
+.research-view__diagnosis-classification {
+  color: var(--text-muted);
+}
+
 .research-view__findings {
   display: flex;
   flex-direction: column;

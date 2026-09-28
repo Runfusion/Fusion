@@ -110,6 +110,52 @@ describe("research-routes", () => {
     expect(Array.isArray(response.body.runs)).toBe(true);
   });
 
+  it("returns the same bounded terminal diagnosis from list and detail readers", async () => {
+    const store = createMockStore({
+      runStatus: "failed",
+      runLifecycle: {
+        failureClass: "non_retryable",
+        errorCode: "MISSING_CREDENTIALS",
+        retryable: false,
+        terminalCause: "Provider rejected api_key=sk-test-secret-value at https://provider.example/private",
+        remediation: "Add provider credentials in Authentication settings.",
+      },
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(createResearchRouter(store as any));
+
+    const [list, detail] = await Promise.all([
+      performGet(app, "/runs"),
+      performGet(app, "/runs/RR-1"),
+    ]);
+
+    expect(list.body.runs[0].diagnosis).toEqual(detail.body.run.diagnosis);
+    expect(detail.body.run.diagnosis).toMatchObject({
+      classification: "non_retryable",
+      code: "MISSING_CREDENTIALS",
+      retryable: false,
+      remediation: "Add provider credentials in Authentication settings.",
+    });
+    expect(JSON.stringify({ list: list.body, detail: detail.body })).not.toContain("sk-test-secret-value");
+    expect(JSON.stringify({ list: list.body, detail: detail.body })).not.toContain("provider.example/private");
+  });
+
+  it("uses a safe diagnosis fallback for legacy terminal rows and none for successful runs", async () => {
+    const failedApp = express();
+    failedApp.use(express.json());
+    failedApp.use(createResearchRouter(createMockStore({ runStatus: "failed" }) as any));
+    const failed = await performGet(failedApp, "/runs/RR-1");
+    expect(failed.body.run.diagnosis).toMatchObject({ code: "INTERNAL_ERROR", retryable: false });
+
+    const completedApp = express();
+    completedApp.use(express.json());
+    completedApp.use(createResearchRouter(createMockStore({ runStatus: "completed" }) as any));
+    const completed = await performGet(completedApp, "/runs/RR-1");
+    expect(completed.body.run.diagnosis).toBeUndefined();
+    expect(completed.body.run.error).toBeUndefined();
+  });
+
   it("supports run status actions, detail fetch, and export formats", async () => {
     const store = createMockStore();
     const app = express();

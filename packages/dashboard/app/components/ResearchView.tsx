@@ -5,7 +5,7 @@ import { resolveResearchFindingId, resolveResearchSettings, type Settings } from
 import { Loader2, Search } from "lucide-react";
 import { fetchAuthStatus, fetchSettings } from "../api";
 import { useResearch } from "../hooks/useResearch";
-import type { ResearchProviderOption } from "../research-types";
+import type { ResearchProviderOption, ResearchRunDetail, ResearchRunDiagnosis } from "../research-types";
 import { ResearchTaskActionModal } from "./ResearchTaskActionModal";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { ViewHeader } from "./ViewHeader";
@@ -21,6 +21,45 @@ interface ResearchViewProps {
 }
 
 const DEFAULT_PROVIDERS: ResearchProviderOption[] = ["web-search", "page-fetch", "github", "local-docs", "llm-synthesis"];
+const AUTHENTICATION_DIAGNOSIS_CODES = new Set(["MISSING_CREDENTIALS", "PROVIDER_DENIED"]);
+const RESEARCH_SETTINGS_DIAGNOSIS_CODES = new Set(["FEATURE_DISABLED", "MODEL_CONFIGURATION"]);
+
+function getVisibleDiagnosis(run: ResearchRunDetail): ResearchRunDiagnosis | undefined {
+  if (!["failed", "timed_out", "cancelled", "retry_exhausted"].includes(run.status)) return undefined;
+  if (run.diagnosis) return run.diagnosis;
+
+  // FNXC:ResearchFailureDiagnostics 2026-09-28-21:14:
+  // Legacy terminal rows still need safe, useful UI without rendering their unclassified raw error field.
+  // The API normally supplies this fallback; keeping the renderer defensive also covers cached pre-upgrade rows.
+  if (run.status === "cancelled") {
+    return { classification: "cancelled", code: "RUN_CANCELLED", retryable: false, detail: "Research run was cancelled." };
+  }
+  if (run.status === "timed_out") {
+    return {
+      classification: "timed_out",
+      code: "PROVIDER_TIMEOUT",
+      retryable: true,
+      detail: "Research providers did not finish before the run deadline.",
+      remediation: "Retry the run. If timeouts continue, review Research Settings and provider availability.",
+    };
+  }
+  if (run.status === "retry_exhausted") {
+    return {
+      classification: "non_retryable",
+      code: "RETRY_EXHAUSTED",
+      retryable: false,
+      detail: "Research run exhausted its retry attempts.",
+      remediation: "Review provider configuration before starting a new run.",
+    };
+  }
+  return {
+    classification: "non_retryable",
+    code: "INTERNAL_ERROR",
+    retryable: false,
+    detail: "Research run failed without additional diagnostic detail.",
+    remediation: "Review Research Settings and provider authentication, then start a new run.",
+  };
+}
 
 const PROVIDER_TO_SOURCE_KEY: Record<ResearchProviderOption, keyof ReturnType<typeof resolveResearchSettings>["enabledSources"]> = {
   "web-search": "webSearch",
@@ -157,6 +196,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
   }, [selectedRun]);
 
   const supportedExportFormats = availability.supportedExportFormats ?? ["markdown", "json", "html"];
+  const visibleDiagnosis = selectedRun ? getVisibleDiagnosis(selectedRun) : undefined;
 
   const apiKeyProviderAuth = useMemo(() => new Map(authProviders.map((provider) => [provider.id, provider.authenticated])), [authProviders]);
   const requiredCredentialProviders = useMemo(() => {
@@ -398,7 +438,29 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
                   {supportedExportFormats.includes("json") && <button className="btn" type="button" disabled={actionLoading === "export-json"} onClick={() => void handleExport("json")}>{t("research.exportJson", "Export JSON")}</button>}
                   {supportedExportFormats.includes("html") && <button className="btn" type="button" disabled={actionLoading === "export-html"} onClick={() => void handleExport("html")}>{t("research.exportHtml", "Export HTML")}</button>}
                 </div>
-                {selectedRun.error && <p className="research-view__error">{selectedRun.error}</p>}
+                {visibleDiagnosis && !uiError && (
+                  <div className="research-view__diagnosis" role="alert" data-testid="research-run-diagnosis">
+                    <div className="research-view__diagnosis-heading">
+                      <strong>{t("research.runDiagnosis", "Run diagnosis")}</strong>
+                      <code>{visibleDiagnosis.code}</code>
+                    </div>
+                    <p>{visibleDiagnosis.detail}</p>
+                    <p className="research-view__diagnosis-classification">
+                      {t("research.failureClassification", "Classification")}: {visibleDiagnosis.classification}
+                    </p>
+                    {visibleDiagnosis.remediation && <p>{visibleDiagnosis.remediation}</p>}
+                    {AUTHENTICATION_DIAGNOSIS_CODES.has(visibleDiagnosis.code) && (
+                      <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("authentication")}>
+                        {t("research.openAuthSettings", "Open Authentication Settings")}
+                      </button>
+                    )}
+                    {RESEARCH_SETTINGS_DIAGNOSIS_CODES.has(visibleDiagnosis.code) && (
+                      <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("research-project")}>
+                        {t("research.openResearchSettings", "Open Research Settings")}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {uiError && (
                   <div className="form-error" role="alert">
                     <p>{uiError.message}</p>

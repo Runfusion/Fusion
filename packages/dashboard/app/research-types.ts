@@ -16,18 +16,28 @@ export interface ResearchAvailability {
   supportedExportFormats?: Array<"markdown" | "json" | "html">;
 }
 
+export interface ResearchRunDiagnosis {
+  classification: string;
+  code: string;
+  retryable: boolean;
+  detail: string;
+  remediation?: string;
+}
+
 export interface ResearchRunListItem {
   id: string;
   query: string;
   title: string;
   status: ResearchRunStatus;
   summary?: string;
+  diagnosis?: ResearchRunDiagnosis;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface ResearchRunDetail extends ResearchRun {
   title: string;
+  diagnosis?: ResearchRunDiagnosis;
 }
 
 export type ResearchRunEvent = ResearchEvent;
