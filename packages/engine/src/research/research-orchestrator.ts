@@ -5,12 +5,13 @@ import type {
   ResearchOrchestrationPhase,
   ResearchOrchestrationStep,
   ResearchRun,
+  ResearchRunFailureClass,
   ResearchSource,
   ResearchSynthesisRequest,
 } from "@fusion/core";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
-import { createLogger, formatError } from "../logger.js";
-import type { ResearchStepRunnerApi } from "./research-step-runner.js";
+import { createLogger } from "../logger.js";
+import { normalizeResearchFailure, type ResearchStepFailure, type ResearchStepRunnerApi } from "./research-step-runner.js";
 
 const log = createLogger("research-orchestrator");
 
@@ -58,6 +59,28 @@ interface ActiveRunState {
 }
 
 const CANCELLATION_GRACE_MS = 2_000;
+
+class ResearchTerminalError extends Error {
+  constructor(readonly failure: ResearchStepFailure) {
+    super(failure.message);
+    this.name = "ResearchTerminalError";
+  }
+}
+
+function selectActionableFailure(failures: ResearchStepFailure[]): ResearchStepFailure {
+  const priority: Record<ResearchRunFailureClass, number> = {
+    cancelled: 100,
+    configuration: 90,
+    provider_denied: 80,
+    malformed_response: 70,
+    timed_out: 60,
+    retryable_transient: 50,
+    non_retryable: 40,
+    internal: 30,
+  };
+  return [...failures].sort((left, right) => priority[right.failureClass] - priority[left.failureClass])[0]
+    ?? normalizeResearchFailure(new Error("Research phase failed"), "research");
+}
 
 export class ResearchOrchestrator {
   private readonly store: ResearchExecutorStore;
@@ -153,27 +176,7 @@ export class ResearchOrchestrator {
   }
 
   async retryRun(runId: string): Promise<string> {
-    const run = await this.store.getRun(runId);
-    if (!run) throw new Error(`Research run not found: ${runId}`);
-    if (run.status !== "failed" && run.status !== "cancelled") {
-      throw new Error(`Research run ${runId} is not retryable (status=${run.status})`);
-    }
-
-    const next = await this.store.createRun({
-      query: run.query,
-      topic: run.topic,
-      providerConfig: run.providerConfig,
-      tags: [...run.tags],
-      metadata: {
-        ...(run.metadata ?? {}),
-        retryOfRunId: run.id,
-      },
-    });
-    await this.store.appendEvent(next.id, {
-      type: "info",
-      message: `Retry run created from ${run.id}`,
-      metadata: { retryOfRunId: run.id },
-    });
+    const next = await this.store.createRetryRun(runId);
     return next.id;
   }
 
@@ -210,6 +213,8 @@ export class ResearchOrchestrator {
       const fetchedSources = await this.runFetching(runId, sources, config, signal);
       const synthesis = await this.runSynthesis(runId, query, fetchedSources, config, signal);
       await this.runFinalizing(runId, synthesis.output, synthesis.citations, synthesis.confidence, signal);
+      this.throwIfAborted(signal);
+      if (!(await this.canWriteRunData(runId))) return;
 
       await this.store.updateStatus(runId, "completed");
       await this.transitionPhase(runId, "completed", "Research run completed");
@@ -217,14 +222,35 @@ export class ResearchOrchestrator {
       if (signal.aborted) {
         await this.onCancelled(runId);
       } else {
-        const { message, detail } = formatError(err);
-        await this.store.appendEvent(runId, {
-          type: "error",
-          message: `Research run failed: ${message}`,
-          metadata: { detail },
-        });
-        await this.store.updateStatus(runId, "failed", { error: message });
-        await this.transitionPhase(runId, "failed", "Research run failed", { error: message });
+        const failure = err instanceof ResearchTerminalError
+          ? err.failure
+          : normalizeResearchFailure(err, "research-run");
+        const terminalStatus = failure.failureClass === "timed_out" ? "timed_out" : "failed";
+        const current = await this.store.getRun(runId);
+        if (current && !["cancelled", "completed", "failed", "timed_out", "retry_exhausted"].includes(current.status)) {
+          /*
+          FNXC:ResearchFailureDiagnostics 2026-09-28-19:16:
+          Persist the authoritative sanitized terminal row before best-effort events. Late provider work and event failures must not erase or replace the winning terminal diagnosis.
+          */
+          await this.store.updateStatus(runId, terminalStatus, {
+            error: failure.message,
+            lifecycle: {
+              ...(current.lifecycle ?? {}),
+              terminalCause: failure.message,
+              failureClass: failure.failureClass,
+              errorCode: failure.errorCode,
+              retryable: failure.retryable,
+              remediation: failure.remediation,
+              providerType: failure.providerType,
+            },
+          });
+          await this.transitionPhase(runId, "failed", "Research run failed", {
+            classification: failure.failureClass,
+            errorCode: failure.errorCode,
+            retryable: failure.retryable,
+            providerType: failure.providerType,
+          });
+        }
       }
     } finally {
       const active = this.activeRuns.get(runId);
@@ -261,6 +287,7 @@ export class ResearchOrchestrator {
     await this.transitionPhase(runId, "searching", "Searching sources");
 
     const allSources: ResearchSource[] = [];
+    const failures: ResearchStepFailure[] = [];
     for (const provider of config.providers) {
       this.throwIfAborted(signal);
       const step = this.createStep(runId, "source-query", "searching", `Search with ${provider.type}`, {
@@ -271,7 +298,8 @@ export class ResearchOrchestrator {
 
       const result = await this.stepRunner.runSourceQuery(query, provider.type, provider.config, signal);
       if (!result.ok || !result.data) {
-        await this.stepFailed(runId, step.id, result.error?.message ?? `Provider ${provider.type} returned no data`, result.error);
+        if (result.error) failures.push(result.error);
+        await this.stepFailed(runId, step.id, result.error?.message ?? "The research provider returned no data.", result.error);
         continue;
       }
 
@@ -296,7 +324,7 @@ export class ResearchOrchestrator {
     }
 
     if (allSources.length === 0) {
-      throw new Error("No sources discovered during search phase");
+      throw new ResearchTerminalError(selectActionableFailure(failures));
     }
 
     return allSources;
@@ -312,6 +340,7 @@ export class ResearchOrchestrator {
     await this.transitionPhase(runId, "fetching", "Fetching source content");
 
     const fetched: ResearchSource[] = [];
+    const failures: ResearchStepFailure[] = [];
     const provider = config.providers[0];
     for (const source of sources.slice(0, config.maxSources)) {
       this.throwIfAborted(signal);
@@ -324,7 +353,8 @@ export class ResearchOrchestrator {
       const providerConfig = sourceProvider ? config.providers.find((p) => p.type === sourceProvider)?.config : provider?.config;
       const result = await this.stepRunner.runContentFetch(source.reference, sourceProvider, providerConfig, signal);
       if (!result.ok || !result.data) {
-        await this.stepFailed(runId, step.id, result.error?.message ?? "Failed to fetch source content", result.error);
+        if (result.error) failures.push(result.error);
+        await this.stepFailed(runId, step.id, result.error?.message ?? "The source content could not be fetched.", result.error);
         continue;
       }
 
@@ -344,7 +374,7 @@ export class ResearchOrchestrator {
     }
 
     if (fetched.length === 0) {
-      throw new Error("No source content fetched");
+      throw new ResearchTerminalError(selectActionableFailure(failures));
     }
 
     return fetched;
@@ -361,6 +391,7 @@ export class ResearchOrchestrator {
     await this.transitionPhase(runId, "synthesizing", "Synthesizing findings");
 
     let final: { output: string; citations: string[]; confidence?: number } | undefined;
+    const failures: ResearchStepFailure[] = [];
 
     for (let round = 1; round <= Math.max(1, config.maxSynthesisRounds); round++) {
       this.throwIfAborted(signal);
@@ -377,7 +408,8 @@ export class ResearchOrchestrator {
       };
       const result = await this.stepRunner.runSynthesis(request, config.synthesisModel, signal);
       if (!result.ok || !result.data) {
-        await this.stepFailed(runId, step.id, result.error?.message ?? "Synthesis failed", result.error);
+        if (result.error) failures.push(result.error);
+        await this.stepFailed(runId, step.id, result.error?.message ?? "Research synthesis failed.", result.error);
         continue;
       }
 
@@ -391,7 +423,7 @@ export class ResearchOrchestrator {
     }
 
     if (!final) {
-      throw new Error("All synthesis rounds failed");
+      throw new ResearchTerminalError(selectActionableFailure(failures));
     }
 
     return final;
@@ -441,19 +473,23 @@ export class ResearchOrchestrator {
     const run = await this.store.getRun(runId);
     if (!run || run.status === "cancelled") return;
     const cancellation = this.cancellation.get(runId);
-    await this.store.appendEvent(runId, {
-      type: "warning",
-      message: "Research run cancelled",
-      metadata: {
-        requestedAt: cancellation?.requestedAt,
-        reason: cancellation?.reason,
-      },
-    });
     await this.store.updateStatus(runId, "cancelled", {
       cancelledAt: new Date().toISOString(),
-      error: cancellation?.reason,
+      error: "The research run was cancelled by the operator.",
+      lifecycle: {
+        ...(run.lifecycle ?? {}),
+        terminalCause: "The research run was cancelled by the operator.",
+        failureClass: "cancelled",
+        errorCode: "RUN_CANCELLED",
+        retryable: false,
+      },
     });
-    await this.transitionPhase(runId, "cancelled", "Research run cancelled");
+    await this.transitionPhase(runId, "cancelled", "Research run cancelled", {
+      requestedAt: cancellation?.requestedAt,
+      classification: "cancelled",
+      errorCode: "RUN_CANCELLED",
+      retryable: false,
+    });
   }
 
   private async transitionPhase(
@@ -518,7 +554,7 @@ export class ResearchOrchestrator {
     runId: string,
     stepId: string,
     errorMessage: string,
-    errorMeta?: Record<string, unknown>,
+    errorMeta?: ResearchStepFailure,
   ): Promise<void> {
     if (!(await this.canWriteRunData(runId))) return;
     await this.store.appendEvent(runId, {

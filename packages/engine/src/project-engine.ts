@@ -10,9 +10,6 @@ import type {
   AutomationStore as AutomationStoreType,
   ScheduledTask,
   AutomationRunResult,
-  ResearchModelSettings,
-  ResearchSynthesisRequest,
-  ResearchSynthesisResult,
   PlannerOverseerRuntimeSnapshot,
   PlannerInterventionSourceLink,
   PlannerOversightStage,
@@ -150,7 +147,6 @@ class WorkspaceMergeDispatchBusyError extends Error {
 import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
 import { ResearchOrchestrator } from "./research/research-orchestrator.js";
 import { ResearchRunDispatcher } from "./research/research-dispatcher.js";
-import { ResearchStepRunner } from "./research/research-step-runner.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
@@ -1310,26 +1306,10 @@ export class ProjectEngine {
       try {
         const researchStore = store.getResearchStore();
         const registry = new ResearchProviderRegistry(settings, cwd);
-        const providers = registry.getAvailableProviders()
-          .map((type) => registry.getProvider(type))
-          .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider));
-        const synthesisProvider = registry.getProvider("llm-synthesis") as ({
-          synthesize?: (
-            request: ResearchSynthesisRequest,
-            modelSelection: { provider?: string; modelId?: string },
-            signal?: AbortSignal,
-          ) => Promise<ResearchSynthesisResult>;
-        } | undefined);
-        const synthesisRunner = typeof synthesisProvider?.synthesize === "function"
-          ? (request: ResearchSynthesisRequest, _modelSettings: ResearchModelSettings, signal?: AbortSignal) => synthesisProvider.synthesize!(request, {
-            provider: settings.researchGlobalDefaults?.synthesisProvider ?? settings.defaultProvider,
-            modelId: settings.researchGlobalDefaults?.synthesisModelId ?? settings.defaultModelId,
-          }, signal)
-          : undefined;
         const layer = store.getAsyncLayer();
         this.researchOrchestrator = new ResearchOrchestrator({
           store: researchStore,
-          stepRunner: new ResearchStepRunner({ providers, synthesisRunner }),
+          stepRunner: registry.createStepRunner(),
           maxConcurrentRuns: settings.researchMaxConcurrentRuns ?? 3,
           ...(layer ? { recallCaptureWriter: createRecallCaptureWriter({ layer, logger: runtimeLog }) } : {}),
         });

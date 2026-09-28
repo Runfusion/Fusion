@@ -1,6 +1,6 @@
-import type { GlobalSettings, ProjectSettings, WebSearchBackend } from "@fusion/core";
+import type { GlobalSettings, ProjectSettings, ResearchModelSettings, ResearchSynthesisRequest, ResearchSynthesisResult, WebSearchBackend } from "@fusion/core";
 import { createLogger } from "../logger.js";
-import type { ResearchProvider } from "./research-step-runner.js";
+import { ResearchStepRunner, type ResearchProvider } from "./research-step-runner.js";
 import type { ResearchProviderType } from "./types.js";
 import { GitHubProvider } from "./providers/github-provider.js";
 import { LLMSynthesisProvider } from "./providers/llm-synthesis-provider.js";
@@ -42,6 +42,35 @@ export class ResearchProviderRegistry {
     this.instantiateProviders();
   }
 
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-09-28-19:12:
+  Engine dispatch and direct agent tools must use the same provider/model composition. Rebuilding this runner after every settings refresh prevents cached credentials or model selections from surviving an operator update.
+  */
+  createStepRunner(): ResearchStepRunner {
+    const providers = this.getAvailableProviders()
+      .map((type) => this.getProvider(type))
+      .filter((provider): provider is ResearchProvider => Boolean(provider));
+    const synthesisProvider = this.getProvider("llm-synthesis") as LLMSynthesisProvider | undefined;
+    const modelSelection = this.resolveSynthesisPair();
+    const synthesisRunner = synthesisProvider
+      ? (request: ResearchSynthesisRequest, _modelSettings: ResearchModelSettings, signal?: AbortSignal): Promise<ResearchSynthesisResult> => synthesisProvider.synthesize(request, modelSelection ?? {}, signal)
+      : undefined;
+    return new ResearchStepRunner({ providers, synthesisRunner });
+  }
+
+  private resolveSynthesisPair(): { provider: string; modelId: string } | undefined {
+    if (this.settings.researchGlobalDefaults?.synthesisProvider && this.settings.researchGlobalDefaults?.synthesisModelId) {
+      return {
+        provider: this.settings.researchGlobalDefaults.synthesisProvider,
+        modelId: this.settings.researchGlobalDefaults.synthesisModelId,
+      };
+    }
+    if (this.settings.defaultProvider && this.settings.defaultModelId) {
+      return { provider: this.settings.defaultProvider, modelId: this.settings.defaultModelId };
+    }
+    return undefined;
+  }
+
   private instantiateProviders(): void {
     const backend = this.resolveSearchBackend();
     const maxResults = Number(this.settings.researchGlobalMaxSearchResults ?? 10);
@@ -55,15 +84,9 @@ export class ResearchProviderRegistry {
     undefined unless BOTH are present) and silently replaces with its own built-in Anthropic
     default. Fall back to the project default pair only when the research override is incomplete.
     */
-    const researchSynthesisPair = this.settings.researchGlobalDefaults?.synthesisProvider
-      && this.settings.researchGlobalDefaults?.synthesisModelId
-      ? {
-        provider: this.settings.researchGlobalDefaults.synthesisProvider,
-        modelId: this.settings.researchGlobalDefaults.synthesisModelId,
-      }
-      : undefined;
-    const synthesisProvider = researchSynthesisPair?.provider ?? this.settings.defaultProvider;
-    const synthesisModelId = researchSynthesisPair?.modelId ?? this.settings.defaultModelId;
+    const synthesisPair = this.resolveSynthesisPair();
+    const synthesisProvider = synthesisPair?.provider;
+    const synthesisModelId = synthesisPair?.modelId;
 
     this.providers = new Map<ResearchProviderType, ResearchProvider>([
       [
