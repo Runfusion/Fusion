@@ -16,6 +16,8 @@ function createMockStore(options?: {
   runId?: string;
   runStatus?: string;
   runLifecycle?: Record<string, unknown>;
+  runError?: string;
+  runEvents?: Array<{ id: string; timestamp: string; type: string; message: string; metadata?: Record<string, unknown> }>;
   missingRun?: boolean;
   missingFinding?: boolean;
   missingTask?: boolean;
@@ -28,7 +30,8 @@ function createMockStore(options?: {
     topic: "test",
     status: options?.runStatus ?? "queued",
     sources: [],
-    events: [],
+    events: options?.runEvents ?? [],
+    error: options?.runError,
     tags: [],
     results: {
       summary: "Run summary",
@@ -113,6 +116,8 @@ describe("research-routes", () => {
   it("returns the same bounded terminal diagnosis from list and detail readers", async () => {
     const store = createMockStore({
       runStatus: "failed",
+      runError: "raw provider body secret=server-only-value",
+      runEvents: [{ id: "EV-1", timestamp: new Date().toISOString(), type: "error", message: "authorization=server-only-value", metadata: { detail: "raw server-only-value" } }],
       runLifecycle: {
         failureClass: "non_retryable",
         errorCode: "MISSING_CREDENTIALS",
@@ -125,9 +130,10 @@ describe("research-routes", () => {
     app.use(express.json());
     app.use(createResearchRouter(store as any));
 
-    const [list, detail] = await Promise.all([
+    const [list, detail, exported] = await Promise.all([
       performGet(app, "/runs"),
       performGet(app, "/runs/RR-1"),
+      performGet(app, "/runs/RR-1/export?format=json"),
     ]);
 
     expect(list.body.runs[0].diagnosis).toEqual(detail.body.run.diagnosis);
@@ -137,8 +143,9 @@ describe("research-routes", () => {
       retryable: false,
       remediation: "Add provider credentials in Authentication settings.",
     });
-    expect(JSON.stringify({ list: list.body, detail: detail.body })).not.toContain("sk-test-secret-value");
-    expect(JSON.stringify({ list: list.body, detail: detail.body })).not.toContain("provider.example/private");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("sk-test-secret-value");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("provider.example/private");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("server-only-value");
   });
 
   it("uses a safe diagnosis fallback for legacy terminal rows and none for successful runs", async () => {

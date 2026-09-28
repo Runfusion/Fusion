@@ -38,9 +38,9 @@ function rethrowAsApiError(error: unknown, fallback = "Internal server error"): 
     const mappedCode = error.code === "not_retryable"
       ? "NON_RETRYABLE_PROVIDER_ERROR"
       : "INVALID_TRANSITION";
-    throw new ApiError(status, error.message, { code: mappedCode, retryable: false });
+    throw new ApiError(status, "The requested research lifecycle action is not allowed.", { code: mappedCode, retryable: false });
   }
-  if (error instanceof Error) throw new ApiError(500, error.message, { code: "INTERNAL_ERROR" });
+  if (error instanceof Error) throw new ApiError(500, fallback, { code: "INTERNAL_ERROR" });
   throw new ApiError(500, fallback, { code: "INTERNAL_ERROR" });
 }
 
@@ -142,9 +142,15 @@ function toRunDetail(run: ResearchRun) {
     : undefined;
   return {
     ...run,
-    // Raw legacy errors and lifecycle prose may contain provider payloads. The bounded diagnosis is the only failure prose returned.
+    // Raw legacy errors and event metadata may contain provider payloads. The bounded diagnosis is the only failure prose returned.
     error: diagnosis?.detail,
     lifecycle,
+    events: run.events.map((event) => ({
+      id: event.id,
+      timestamp: event.timestamp,
+      type: event.type,
+      message: event.type === "error" ? "Research step failed. See the run diagnosis for details." : (safeDiagnosticText(event.message) ?? "Research event"),
+    })),
     diagnosis,
     title: run.topic || run.query,
   };
@@ -347,7 +353,7 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
         const code = exhausted ? "RETRY_EXHAUSTED" : "NON_RETRYABLE_PROVIDER_ERROR";
         const diagnosis = run ? toRunDiagnosis(run) : undefined;
         res.status(409).json({
-          error: diagnosis?.detail ?? error.message,
+          error: diagnosis?.detail ?? "This research outcome is not retryable.",
           code,
           details: {
             code,
@@ -360,7 +366,7 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
       }
       if (error instanceof ResearchLifecycleError && error.code === "invalid_transition") {
         res.status(409).json({
-          error: error.message,
+          error: "The research run cannot be retried from its current status.",
           code: "INVALID_TRANSITION",
           details: { code: "INVALID_TRANSITION", retryable: false },
         });
@@ -377,7 +383,7 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
 
       const format = String(req.query.format ?? "markdown");
       if (format === "json") {
-        res.json({ format, filename: `${run.id}.json`, content: JSON.stringify(run, null, 2) });
+        res.json({ format, filename: `${run.id}.json`, content: JSON.stringify(toRunDetail(run), null, 2) });
         return;
       }
       if (format === "html") {
