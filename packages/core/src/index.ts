@@ -2508,6 +2508,7 @@ export {
   RESEARCH_ORCHESTRATION_PHASES,
   RESEARCH_ORCHESTRATION_STEP_STATUSES,
   RESEARCH_RUN_FAILURE_CLASSES,
+  RESEARCH_ERROR_CODES,
   resolveResearchFindingId,
 } from "./research/research-types.js";
 export type {
@@ -2524,6 +2525,7 @@ export type {
   ResearchRun,
   ResearchRunLifecycle,
   ResearchRunFailureClass,
+  ResearchErrorCode,
   ResearchRunEvent,
   ResearchExport,
   ResearchRunCreateInput,

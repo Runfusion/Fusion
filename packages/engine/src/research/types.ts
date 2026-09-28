@@ -19,8 +19,10 @@ export type ResearchProviderErrorCode =
   | "timeout"
   | "abort"
   | "provider-unavailable"
+  | "missing-configuration"
   | "rate-limited"
   | "auth-failed"
+  | "malformed-response"
   | "network-error";
 
 export class ResearchProviderError extends Error {

@@ -77,6 +77,10 @@ function normalizeStatus(status: ResearchRunStatus | "pending"): ResearchRunStat
 export function defaultErrorCodeForFailureClass(failureClass?: ResearchRunFailureClass): ResearchErrorCode {
   if (failureClass === "timed_out") return "PROVIDER_TIMEOUT";
   if (failureClass === "cancelled") return "RUN_CANCELLED";
+  if (failureClass === "configuration") return "MISSING_CREDENTIALS";
+  if (failureClass === "provider_denied") return "PROVIDER_DENIED";
+  if (failureClass === "malformed_response") return "MALFORMED_RESPONSE";
+  if (failureClass === "retryable_transient") return "PROVIDER_UNAVAILABLE";
   if (failureClass === "non_retryable") return "NON_RETRYABLE_PROVIDER_ERROR";
   return "INTERNAL_ERROR";
 }

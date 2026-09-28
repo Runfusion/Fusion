@@ -42,7 +42,7 @@ export class LLMSynthesisProvider implements ResearchProvider {
     signal?: AbortSignal,
   ): Promise<ResearchSynthesisResult> {
     if (!modelSelection?.provider || !modelSelection?.modelId) {
-      throw new ResearchProviderError({ providerType: "llm-synthesis", code: "provider-unavailable", message: "Synthesis model is not configured" });
+      throw new ResearchProviderError({ providerType: "llm-synthesis", code: "missing-configuration", message: "Synthesis model is not configured" });
     }
 
     const timeoutSignal = AbortSignal.timeout(this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
