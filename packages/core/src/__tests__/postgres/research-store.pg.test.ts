@@ -216,6 +216,49 @@ pgTest("ResearchStore (PostgreSQL backend mode)", () => {
     expect((caught as ResearchLifecycleError).code).toBe("invalid_transition");
   });
 
+  it.each([
+    ["configuration", "MISSING_CREDENTIALS", false, "failed"],
+    ["provider_denied", "PROVIDER_DENIED", false, "failed"],
+    ["malformed_response", "MALFORMED_RESPONSE", false, "failed"],
+    ["retryable_transient", "RATE_LIMITED", true, "failed"],
+    ["timed_out", "PROVIDER_TIMEOUT", true, "timed_out"],
+    ["cancelled", "RUN_CANCELLED", false, "cancelled"],
+  ] as const)("persists sanitized %s terminal diagnosis and bounded event metadata", async (failureClass, errorCode, retryable, status) => {
+    const s = research();
+    const secret = "raw-provider-secret";
+    const run = await s.createRun({ query: `terminal ${failureClass}` });
+    await s.updateStatus(run.id, "running");
+    await s.updateStatus(run.id, status, {
+      error: `raw body ${secret}`,
+      lifecycle: {
+        failureClass,
+        errorCode,
+        retryable,
+        terminalCause: `credential=${secret}`,
+        remediation: `leaked ${secret}`,
+        providerType: "web-search",
+      },
+    });
+
+    const reloaded = await s.getRun(run.id);
+    expect(reloaded).toMatchObject({
+      status,
+      lifecycle: { failureClass, errorCode, retryable, providerType: "web-search" },
+    });
+    expect(reloaded?.lifecycle?.terminalCause).toBeTruthy();
+    expect(JSON.stringify(reloaded)).not.toContain(secret);
+
+    const events = await s.listRunEvents(run.id);
+    const terminal = events.at(-1);
+    expect(terminal).toMatchObject({
+      type: "status_changed",
+      status,
+      classification: failureClass,
+      metadata: { errorCode, retryable, providerType: "web-search" },
+    });
+    expect(JSON.stringify(events)).not.toContain(secret);
+  });
+
   it("deleteRun removes the run", async () => {
     const s = research();
     const run = await s.createRun({ query: "to be deleted" });

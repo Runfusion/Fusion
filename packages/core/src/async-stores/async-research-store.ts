@@ -29,6 +29,7 @@ import {
   defaultErrorCodeForFailureClass,
 } from "../research/research-store.js";
 import type {
+  ResearchErrorCode,
   ResearchEvent,
   ResearchExport,
   ResearchExportFormat,
@@ -49,6 +50,38 @@ type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
 
 function normalizeStatus(status: ResearchRunStatus | "pending"): ResearchRunStatus {
   return status === "pending" ? "queued" : status;
+}
+
+const SAFE_TERMINAL_DIAGNOSTICS: Partial<Record<ResearchErrorCode, { detail: string; remediation?: string }>> = {
+  MISSING_CREDENTIALS: { detail: "The required research provider or model is not configured.", remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run." },
+  PROVIDER_DENIED: { detail: "The research provider rejected authentication or access.", remediation: "Verify provider credentials, account access, and model permissions in Settings → Authentication." },
+  RATE_LIMITED: { detail: "The research provider is rate limited or temporarily unavailable.", remediation: "Retry later or review provider rate limits." },
+  PROVIDER_UNAVAILABLE: { detail: "The research provider is unavailable.", remediation: "Check provider availability and configuration before retrying." },
+  PROVIDER_TIMEOUT: { detail: "The research provider did not respond before the configured deadline.", remediation: "Retry the run. If timeouts continue, verify provider availability and research timeout settings." },
+  MALFORMED_RESPONSE: { detail: "The research provider returned a response Fusion could not validate.", remediation: "Verify the configured provider and model are compatible with research synthesis." },
+  RUN_CANCELLED: { detail: "The research run was cancelled by the operator." },
+  RETRY_EXHAUSTED: { detail: "The research run exhausted its configured retry attempts.", remediation: "Resolve the underlying provider or configuration issue before starting a new run." },
+  NON_RETRYABLE_PROVIDER_ERROR: { detail: "The research provider returned a non-retryable error.", remediation: "Verify provider access and configuration before starting a new run." },
+  INTERNAL_ERROR: { detail: "Research failed because of an unexpected internal error.", remediation: "Review sanitized engine diagnostics and verify the configured research providers." },
+};
+
+function sanitizeTerminalPatch(patch: ResearchRunUpdateInput): ResearchRunUpdateInput {
+  const code = patch.lifecycle?.errorCode;
+  const diagnosis = code ? SAFE_TERMINAL_DIAGNOSTICS[code] : undefined;
+  if (!diagnosis) return patch;
+  const providerType = typeof patch.lifecycle?.providerType === "string" && /^[a-z0-9-]{1,40}$/i.test(patch.lifecycle.providerType)
+    ? patch.lifecycle.providerType
+    : undefined;
+  return {
+    ...patch,
+    error: diagnosis.detail,
+    lifecycle: {
+      ...(patch.lifecycle ?? {}),
+      terminalCause: diagnosis.detail,
+      remediation: diagnosis.remediation,
+      providerType,
+    },
+  };
 }
 
 function rowToRun(row: Record<string, unknown>): ResearchRun {
@@ -354,7 +387,12 @@ export async function updateResearchRun(
 
   const nonMutableKeys = Object.keys(input).filter((key) => key !== "events" && key !== "metadata");
   if (TERMINAL_STATUSES.has(normalizedExistingStatus) && nonMutableKeys.length > 0) {
-    const allowedTerminalMutation = nonMutableKeys.every((key) => key === "status" || key === "lifecycle");
+    const isAllowedTerminalTransition = Boolean(
+      normalizedInputStatus
+      && normalizedInputStatus !== normalizedExistingStatus
+      && VALID_STATUS_TRANSITIONS[normalizedExistingStatus].includes(normalizedInputStatus),
+    );
+    const allowedTerminalMutation = nonMutableKeys.every((key) => key === "status" || key === "lifecycle" || (isAllowedTerminalTransition && key === "error"));
     if (!allowedTerminalMutation) {
       throw new ResearchLifecycleError(`Run ${id} is terminal and immutable`, "terminal_immutable");
     }
@@ -623,7 +661,12 @@ export async function updateResearchStatus(
     };
   }
 
-  const updated = await updateResearchRun(layer.db, runId, patch);
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-09-28-19:27:
+  PostgreSQL persists the sanitized terminal row before its lifecycle event. Event failure may reduce history, but it must never erase the authoritative diagnosis or leak caller/provider prose into JSONB.
+  */
+  const sanitizedPatch = TERMINAL_STATUSES.has(normalizedStatus) ? sanitizeTerminalPatch(patch) : patch;
+  const updated = await updateResearchRun(layer.db, runId, sanitizedPatch);
   if (!updated) return;
 
   await appendResearchLifecycleEvent(layer, runId, {
@@ -631,6 +674,11 @@ export async function updateResearchStatus(
     message: `Status changed to ${normalizedStatus}`,
     status: normalizedStatus,
     classification: updated.lifecycle?.failureClass,
+    metadata: TERMINAL_STATUSES.has(normalizedStatus) ? {
+      errorCode: updated.lifecycle?.errorCode,
+      retryable: updated.lifecycle?.retryable,
+      providerType: updated.lifecycle?.providerType,
+    } : undefined,
   });
 }
 
@@ -697,8 +745,7 @@ export async function createResearchRetryRun(
   const configuredMaxAttempts = maxAttempts ?? run.lifecycle?.maxAttempts ?? 3;
   const nextAttempt = currentAttempt + 1;
   if (nextAttempt > configuredMaxAttempts) {
-    await updateResearchRun(layer.db, runId, {
-      status: "retry_exhausted",
+    await updateResearchStatus(layer, runId, "retry_exhausted", {
       lifecycle: {
         ...(run.lifecycle ?? {}),
         terminalReason: "retry_exhausted",

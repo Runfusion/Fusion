@@ -244,6 +244,16 @@ export class ResearchOrchestrator {
               providerType: failure.providerType,
             },
           });
+          await this.store.appendEvent(runId, {
+            type: "error",
+            message: failure.message,
+            metadata: {
+              classification: failure.failureClass,
+              errorCode: failure.errorCode,
+              retryable: failure.retryable,
+              providerType: failure.providerType,
+            },
+          });
           await this.transitionPhase(runId, "failed", "Research run failed", {
             classification: failure.failureClass,
             errorCode: failure.errorCode,
