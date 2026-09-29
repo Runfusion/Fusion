@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **4 active observation records** (entries 2, 13, 17, and 18), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **10 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **3 active observation records** (entries 2, 13, and 18), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **11 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -265,28 +265,6 @@ reads, and selection writes by their task, workflow, and project request instead
 
 The failure occurred while validating FN-9334's unrelated resume-eligibility cases. The test's per-case resolved mock was consumed out of order only in the file run, while the isolated test passed; no timeout, retry, assertion, or product behavior was changed. A second sighting requires normal quarantine escalation.
 
-### 17. Terminal graph-gate activity outbox contract
-
-- **Status:** Active first sighting — recorded 2026-09-24, unattributed.
-- **File:** `packages/engine/src/__tests__/agent-activity-writers.test.ts`
-- **Exact test:** `engine agent activity durable writer > persists a terminal graph gate through the production TaskStore outbox facade`
-- **Observed tree/SHA:** `c76cb158f4` (FN-9388).
-- **Observed frequency:** 1 sighting, Full Suite push shard 1 only.
-
-Push Full Suite run [36034454035](https://github.com/Runfusion/Fusion/actions/runs/36034454035), shard 1 artifact `test-timings-shard-1` (`packages/engine/.timings/timings-shard1-1.json`), reported this exact test at line 381: `events[0]` was shown as `{ seq: '2', …(11) }` and did not match the unchanged `workflow:gate-passed` contract. The CI run's full runner output and timing JSON remain in that GitHub Actions run; the incident task document records the inspected command output and planner evidence.
-
-No product race was established. The terminal writer appends exactly one event after the persisted terminal result; `appendAgentActivityEvent` serializes each project-wide counter allocation and stores the type in the same transaction; and `queryAgentActivityEvents` filters by project, task, and `type: "workflow:gate-passed"` before mapping its returned row. Sequence `2` is therefore valid evidence of an earlier event in the same project, not event identity and not a path by which a non-gate row can pass the type filter. The current shard planner still assigns `@fusion/engine --shard=1/2` to Full Suite shard 1, with the runner defaults resolving to 12 workers and concurrency 2.
-
-| control | result |
-|---|---|
-| exact `c76cb158f4`, full file | passed, 11/11 in 10.9s |
-| exact `c76cb158f4`, exact test | passed, 1 passed / 10 skipped |
-| push run 35974858442, instance 3 | passed; exact full name absent from the shard failed set |
-| push run 35991562171, instance 4 | passed |
-| current targeted file | passed, 11/11 |
-
-The test remains on the suite with its original timeout, `events.length === 1`, and `toMatchObject` contract unchanged. A **second sighting** of this exact test requires file-level quarantine in `scripts/lib/test-quarantine.json` and the matching package Vitest exclusion in the same change; do not add retries, widen timeouts, or alter this assertion.
-
 ### 18. Triage rate-limit retry log warning timer ordering
 
 - **Status:** Active first sighting — recorded 2026-09-24, unattributed.
@@ -356,6 +334,35 @@ FN-9383 received three artifact-backed second sightings for the updater setup pa
 native suite must be quarantined through the dated ledger and literal Vitest exclusion in the same
 commit, preserving its assertions for a root-cause rescue instead of adding tolerance or retries.
 -->
+<!--
+FNXC:TestFlakeRegister 2026-09-29-07:58:
+FN-9419 quarantines entry 17 after its second identical terminal graph-gate assertion failure.
+The archived evidence must retain both runs and the unchanged strict assertion so rescue requires a root-cause fix rather than tolerance.
+-->
+### 17. Terminal graph-gate activity outbox contract
+
+- **Status:** Closed — quarantined 2026-09-29 after the second sighting triggered the deletion ratchet; deletion deadline 2026-10-13.
+- **File:** `packages/engine/src/__tests__/agent-activity-writers.test.ts`
+- **Exact test:** `engine agent activity durable writer > persists a terminal graph gate through the production TaskStore outbox facade`
+- **Observed tree/SHA:** `c76cb158f4` (FN-9388).
+- **Observed frequency:** 2 sightings, Full Suite push shard 1 only.
+
+Push Full Suite run [36034454035](https://github.com/Runfusion/Fusion/actions/runs/36034454035), shard 1 artifact `test-timings-shard-1` (`packages/engine/.timings/timings-shard1-1.json`), reported this exact test at line 381: `events[0]` was shown as `{ seq: '2', …(11) }` and did not match the unchanged `workflow:gate-passed` contract. The CI run's full runner output and timing JSON remain in that GitHub Actions run; the incident task document records the inspected command output and planner evidence.
+
+No product race was established. The terminal writer appends exactly one event after the persisted terminal result; `appendAgentActivityEvent` serializes each project-wide counter allocation and stores the type in the same transaction; and `queryAgentActivityEvents` filters by project, task, and `type: "workflow:gate-passed"` before mapping its returned row. Sequence `2` is therefore valid evidence of an earlier event in the same project, not event identity and not a path by which a non-gate row can pass the type filter. The current shard planner still assigns `@fusion/engine --shard=1/2` to Full Suite shard 1, with the runner defaults resolving to 12 workers and concurrency 2.
+
+| control | result |
+|---|---|
+| exact `c76cb158f4`, full file | passed, 11/11 in 10.9s |
+| exact `c76cb158f4`, exact test | passed, 1 passed / 10 skipped |
+| push run 35974858442, instance 3 | passed; exact full name absent from the shard failed set |
+| push run 35991562171, instance 4 | passed |
+| current targeted file | passed, 11/11 |
+
+Push Full Suite run [36533908544](https://github.com/Runfusion/Fusion/actions/runs/36533908544), SHA `3471d08566` (FN-9406), repeated the exact terminal graph-gate assertion after 195 seconds while ten sibling cases passed. This was the same assertion as the first sighting, so FN-9419 quarantined the file through the dated ledger and direct `engine-default` exclusion.
+
+The strict production TaskStore outbox path remains untouched: `events.length === 1` and the `toMatchObject({ type: "workflow:gate-passed", ... })` contract are unchanged. No timeout, retry, skip, or assertion weakening was introduced. Rescue requires evidence that the test catches a real regression plus a root-cause fix before the 2026-10-13 deletion deadline.
+
 ### 16. Native updater setup mock lifecycle
 
 - **Status:** Closed — quarantined 2026-09-24 after three artifact-backed second sightings; deletion deadline 2026-10-08.

@@ -141,6 +141,11 @@ FN-9389 adds entry 17 after a one-time Full Suite terminal graph-gate mismatch. 
 outbox trace establishes no product race, so pin the active inventory and require its next
 sighting to follow the file-level quarantine policy without weakening the durable contract.
 
+FNXC:TestFlakeRegister 2026-09-29-07:58:
+FN-9419 records a second sighting of entry 17, so the deletion ratchet moves it from the active
+first-sighting inventory to the archive. Preserve both run identifiers, the exact test identity,
+and the quarantined status as behavioral evidence without weakening the outbox assertion.
+
 FNXC:TestFlakeRegister 2026-09-24-22:49:
 FN-9390 records the triage retry warning as a high-value first sighting after source tracing
 showed a fake-timer observation race rather than a production retry defect. Keep its active
@@ -166,10 +171,6 @@ test("observed-flake register active count, escalation state, and owners stay sy
     {
       heading: "13. Handoff-to-review atomicity PostgreSQL setup hook",
       status: "Active first sighting — recorded 2026-08-23, unattributed.",
-    },
-    {
-      heading: "17. Terminal graph-gate activity outbox contract",
-      status: "Active first sighting — recorded 2026-09-24, unattributed.",
     },
     {
       heading: "18. Triage rate-limit retry log warning timer ordering",
@@ -202,6 +203,25 @@ test("triage timeout first-sighting record retains shard evidence and quarantine
   ]) {
     assert.ok(body.includes(evidence), `Triage timeout record is missing ${evidence}`);
   }
+});
+
+test("archived terminal graph-gate quarantine retains both-sighting evidence", () => {
+  const register = readFileSync(registerPath, "utf8");
+  const archive = register.match(/## Archive — closed records\n([\s\S]*)$/)?.[1];
+  assert.ok(archive, "Expected an Archive — closed records section");
+  const entry = archive.match(/^### 17\. Terminal graph-gate activity outbox contract\n([\s\S]*?)(?=^### |(?![\s\S]))/m)?.[1];
+  assert.ok(entry, "Expected archived terminal graph-gate quarantine entry");
+
+  for (const evidence of [
+    "packages/engine/src/__tests__/agent-activity-writers.test.ts",
+    "engine agent activity durable writer > persists a terminal graph gate through the production TaskStore outbox facade",
+    "36034454035",
+    "36533908544",
+    "quarantined 2026-09-29",
+  ]) {
+    assert.ok(entry.includes(evidence), `Archived terminal graph-gate entry is missing ${evidence}`);
+  }
+  assert.match(entry, /^- \*\*Status:\*\* Closed — quarantined/m);
 });
 
 test("archived native updater quarantine retains repeat-failure evidence", () => {

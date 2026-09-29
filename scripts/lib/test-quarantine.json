@@ -5,6 +5,11 @@
       "file": "packages/desktop/src/__tests__/native.test.ts",
       "reason": "Second sightings: https://github.com/Runfusion/Fusion/actions/runs/35959852349, https://github.com/Runfusion/Fusion/actions/runs/35965109937, https://github.com/Runfusion/Fusion/actions/runs/35965648898; doubled vi.fn() timeout and STACK_TRACE_ERROR.",
       "quarantinedAt": "2026-09-24"
+    },
+    {
+      "file": "packages/engine/src/__tests__/agent-activity-writers.test.ts",
+      "reason": "Second sightings: https://github.com/Runfusion/Fusion/actions/runs/36034454035 and https://github.com/Runfusion/Fusion/actions/runs/36533908544; repeated terminal graph-gate assertion.",
+      "quarantinedAt": "2026-09-29"
     }
   ]
 }
