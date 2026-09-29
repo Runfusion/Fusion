@@ -84,6 +84,8 @@ export async function routeImplementationIncompleteMergeGraphFailure(
     FNXC:LandedReviewRecovery 2026-09-29-03:33:
     Git evidence is asynchronous, so the recovery must validate the same lifecycle
     and merge-proof inputs under the task lock before clearing an engine-owned park.
+    A user pause that races graph failure remains operator-owned and must not have its
+    status, error, or worktree ownership cleared by landed-review recovery.
     The resolved target includes inheritedBaseBranch, so matching baseBranch alone
     cannot prove an inherited-target change still has the same landed evidence.
     A final liveness probe immediately before cleanup lets a newly claimed session
