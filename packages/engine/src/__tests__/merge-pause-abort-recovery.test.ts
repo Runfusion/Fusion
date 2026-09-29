@@ -307,14 +307,25 @@ describe("FN-6735 merge pause-abort recovery", () => {
           baseBranch: "main",
           workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
         });
-        const updateTask = vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(live, patch));
+        const updateTask = vi.fn();
+        const atomicPatches: Array<Record<string, unknown>> = [];
+        const updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: typeof live) => Record<string, unknown> | null) => {
+          const patch = reducer(live);
+          if (patch) {
+            atomicPatches.push(patch);
+            Object.assign(live, patch);
+          }
+          return live;
+        });
+        const activeWorktrees = new Map([[live.id, new Set(["/worktree"])]]);
+        const deleteActiveWorktree = vi.spyOn(activeWorktrees, "delete");
         const deps = {
-          store: { updateTask, logEntry: vi.fn(), getTaskWorkflowSelection: () => undefined },
+          store: { updateTask, updateTaskAtomic, logEntry: vi.fn(), getTaskWorkflowSelection: () => undefined },
           rootDir,
           getRunContextFor: () => undefined,
           clearPausedAborted: vi.fn(),
           hasLiveTaskSessionSurface: vi.fn().mockReturnValue(false),
-          activeWorktrees: new Map([[live.id, new Set(["/worktree"])] ]),
+          activeWorktrees,
           routeGraphFailureToExecutionResume: vi.fn(),
           persistTokenUsage: vi.fn(),
         };
@@ -324,9 +335,13 @@ describe("FN-6735 merge pause-abort recovery", () => {
         expect(live.workflowStepResults).toEqual([{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }]);
         expect(deps.routeGraphFailureToExecutionResume).not.toHaveBeenCalled();
         expect(deps.activeWorktrees.has(live.id)).toBe(false);
+        expect(atomicPatches).toEqual([{ paused: false, pausedReason: null, status: null, error: null }]);
+        expect(deleteActiveWorktree).toHaveBeenCalledTimes(1);
+        expect(updateTask).not.toHaveBeenCalled();
 
         await expect(routeImplementationIncompleteMergeGraphFailure(deps as any, live, "merge")).resolves.toBe(true);
-        expect(updateTask).toHaveBeenCalledTimes(1);
+        expect(updateTaskAtomic).toHaveBeenCalledTimes(2);
+        expect(atomicPatches).toHaveLength(1);
         expect(live.workflowStepResults).toEqual([{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }]);
       } finally {
         rmSync(rootDir, { recursive: true, force: true });
@@ -353,11 +368,12 @@ describe("FN-6735 merge pause-abort recovery", () => {
           workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
         });
         const updateTask = vi.fn();
+        const updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: typeof live) => Record<string, unknown> | null) => reducer(live));
         const logEntry = vi.fn();
         const persistTokenUsage = vi.fn();
         const activeWorktrees = new Map([[live.id, new Set(["/worktree"])]]);
         const deps = {
-          store: { updateTask, logEntry, getTaskWorkflowSelection: () => undefined },
+          store: { updateTask, updateTaskAtomic, logEntry, getTaskWorkflowSelection: () => undefined },
           rootDir,
           getRunContextFor: () => undefined,
           clearPausedAborted: vi.fn(),
@@ -369,6 +385,7 @@ describe("FN-6735 merge pause-abort recovery", () => {
 
         await expect(routeImplementationIncompleteMergeGraphFailure(deps as any, live, "merge")).resolves.toBe(true);
         expect(updateTask).not.toHaveBeenCalled();
+        expect(updateTaskAtomic).toHaveBeenCalledTimes(1);
         expect(logEntry).not.toHaveBeenCalled();
         expect(deps.clearPausedAborted).not.toHaveBeenCalled();
         expect(activeWorktrees.has(live.id)).toBe(true);
@@ -380,9 +397,179 @@ describe("FN-6735 merge pause-abort recovery", () => {
       }
     });
 
+    it("does not clobber an operator-owned row that changed during landed evidence lookup", async () => {
+      const rootDir = mkdtempSync(join(tmpdir(), "fn-9402-operator-race-"));
+      try {
+        execFileSync("git", ["init", "-b", "main", rootDir]);
+        writeFileSync(join(rootDir, "landed.txt"), "landed\n");
+        execFileSync("git", ["-C", rootDir, "add", "landed.txt"]);
+        execFileSync("git", ["-C", rootDir, "-c", "user.name=Fusion", "-c", "user.email=fusion@example.test", "commit", "-m", "fix(FN-6735): landed recovery", "-m", "Fusion-Task-Id: FN-6735"]);
+
+        const live = task({
+          status: "failed",
+          error: "Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge",
+          paused: true,
+          pausedReason: "in-review-stall-deadlock",
+          steps: [],
+          baseBranch: "main",
+          workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
+        });
+        const operatorClaim = {
+          ...live,
+          userPaused: true,
+          pausedReason: "operator hold",
+          error: "operator preserved this review",
+        };
+        const updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: typeof live) => Record<string, unknown> | null) => {
+          expect(reducer(operatorClaim)).toBeNull();
+          return operatorClaim;
+        });
+        const logEntry = vi.fn();
+        const persistTokenUsage = vi.fn();
+        const clearPausedAborted = vi.fn();
+        const activeWorktrees = new Map([[live.id, new Set(["/operator-worktree"])]]);
+
+        await expect(routeImplementationIncompleteMergeGraphFailure({
+          store: { updateTaskAtomic, updateTask: vi.fn(), logEntry, getTaskWorkflowSelection: () => undefined },
+          rootDir,
+          getRunContextFor: () => undefined,
+          clearPausedAborted,
+          hasLiveTaskSessionSurface: vi.fn().mockReturnValue(false),
+          activeWorktrees,
+          routeGraphFailureToExecutionResume: vi.fn(),
+          persistTokenUsage,
+        } as any, live, "merge")).resolves.toBe(true);
+
+        expect(updateTaskAtomic).toHaveBeenCalledTimes(1);
+        expect(clearPausedAborted).not.toHaveBeenCalled();
+        expect(activeWorktrees.get(live.id)).toEqual(new Set(["/operator-worktree"]));
+        expect(logEntry).not.toHaveBeenCalled();
+        expect(persistTokenUsage).not.toHaveBeenCalled();
+        expect(operatorClaim).toMatchObject({ status: "failed", paused: true, userPaused: true, pausedReason: "operator hold", error: "operator preserved this review" });
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
+    });
+
+    it("does not clear a recovery park when an inherited merge target changes during lookup", async () => {
+      const rootDir = mkdtempSync(join(tmpdir(), "fn-9402-inherited-target-race-"));
+      try {
+        execFileSync("git", ["init", "-b", "main", rootDir]);
+        writeFileSync(join(rootDir, "landed.txt"), "landed\n");
+        execFileSync("git", ["-C", rootDir, "add", "landed.txt"]);
+        execFileSync("git", ["-C", rootDir, "-c", "user.name=Fusion", "-c", "user.email=fusion@example.test", "commit", "-m", "fix(FN-6735): landed recovery", "-m", "Fusion-Task-Id: FN-6735"]);
+
+        const live = task({
+          status: "failed",
+          error: "Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge",
+          paused: true,
+          pausedReason: "in-review-stall-deadlock",
+          steps: [],
+          baseBranch: undefined,
+          branchContext: { inheritedBaseBranch: "main" },
+          workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
+        });
+        const inheritedTargetClaim = {
+          ...live,
+          branchContext: { inheritedBaseBranch: "release" },
+        };
+        const updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: typeof live) => Record<string, unknown> | null) => {
+          expect(reducer(inheritedTargetClaim)).toBeNull();
+          return inheritedTargetClaim;
+        });
+        const logEntry = vi.fn();
+        const persistTokenUsage = vi.fn();
+        const clearPausedAborted = vi.fn();
+        const activeWorktrees = new Map([[live.id, new Set(["/operator-worktree"])]]);
+
+        await expect(routeImplementationIncompleteMergeGraphFailure({
+          store: { updateTaskAtomic, updateTask: vi.fn(), logEntry, getTaskWorkflowSelection: () => undefined },
+          rootDir,
+          getRunContextFor: () => undefined,
+          clearPausedAborted,
+          hasLiveTaskSessionSurface: vi.fn().mockReturnValue(false),
+          activeWorktrees,
+          routeGraphFailureToExecutionResume: vi.fn(),
+          persistTokenUsage,
+        } as any, live, "merge")).resolves.toBe(true);
+
+        expect(updateTaskAtomic).toHaveBeenCalledTimes(1);
+        expect(clearPausedAborted).not.toHaveBeenCalled();
+        expect(activeWorktrees.get(live.id)).toEqual(new Set(["/operator-worktree"]));
+        expect(logEntry).not.toHaveBeenCalled();
+        expect(persistTokenUsage).not.toHaveBeenCalled();
+        expect(inheritedTargetClaim).toMatchObject({
+          status: "failed",
+          paused: true,
+          pausedReason: "in-review-stall-deadlock",
+          branchContext: { inheritedBaseBranch: "release" },
+        });
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps a newly live session's worktree registration after atomic landed recovery", async () => {
+      const rootDir = mkdtempSync(join(tmpdir(), "fn-9402-session-race-"));
+      try {
+        execFileSync("git", ["init", "-b", "main", rootDir]);
+        writeFileSync(join(rootDir, "landed.txt"), "landed\n");
+        execFileSync("git", ["-C", rootDir, "add", "landed.txt"]);
+        execFileSync("git", ["-C", rootDir, "-c", "user.name=Fusion", "-c", "user.email=fusion@example.test", "commit", "-m", "fix(FN-6735): landed recovery", "-m", "Fusion-Task-Id: FN-6735"]);
+
+        const live = task({
+          status: "failed",
+          error: "Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge",
+          paused: true,
+          pausedReason: "in-review-stall-deadlock",
+          steps: [],
+          baseBranch: "main",
+          workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
+        });
+        const updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: typeof live) => Record<string, unknown> | null) => {
+          const patch = reducer(live);
+          if (patch) Object.assign(live, patch);
+          return live;
+        });
+        const logEntry = vi.fn();
+        const persistTokenUsage = vi.fn();
+        const clearPausedAborted = vi.fn();
+        const activeWorktrees = new Map([[live.id, new Set(["/stale-worktree"])]]);
+        const hasLiveTaskSessionSurface = vi.fn()
+          .mockReturnValueOnce(false)
+          .mockImplementationOnce(() => {
+            activeWorktrees.set(live.id, new Set(["/new-owner-worktree"]));
+            return true;
+          });
+
+        await expect(routeImplementationIncompleteMergeGraphFailure({
+          store: { updateTaskAtomic, updateTask: vi.fn(), logEntry, getTaskWorkflowSelection: () => undefined },
+          rootDir,
+          getRunContextFor: () => undefined,
+          clearPausedAborted,
+          hasLiveTaskSessionSurface,
+          activeWorktrees,
+          routeGraphFailureToExecutionResume: vi.fn(),
+          persistTokenUsage,
+        } as any, live, "merge")).resolves.toBe(true);
+
+        expect(live).toMatchObject({ status: null, error: null, paused: false, pausedReason: null });
+        expect(hasLiveTaskSessionSurface).toHaveBeenCalledTimes(2);
+        expect(clearPausedAborted).not.toHaveBeenCalled();
+        expect(activeWorktrees.get(live.id)).toEqual(new Set(["/new-owner-worktree"]));
+        expect(logEntry).not.toHaveBeenCalled();
+        expect(persistTokenUsage).not.toHaveBeenCalled();
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
+    });
+
     it.each([
       ["unlanded", { workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }] }],
       ["missing code-review approval", { workflowStepResults: [] }],
+      ["non-approved code review", { workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "REVISE" }] }],
+      ["undefined steps", { steps: undefined }],
+      ["non-empty steps", { steps: [{ status: "done" }] }],
     ])("keeps an empty checklist fail-closed when %s", async (_label, evidence) => {
       const { deps, updateTask } = incompleteDeps(false);
       const live = task({ steps: [], ...evidence });
