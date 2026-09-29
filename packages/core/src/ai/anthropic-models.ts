@@ -7,6 +7,8 @@ export const ANTHROPIC_PROVIDER_ID = "anthropic";
 export const ANTHROPIC_API_KEY_PROVIDER_ID = "anthropic-api-key";
 export const CLAUDE_SONNET_5_MODEL_ID = "claude-sonnet-5";
 export const CLAUDE_FABLE_5_1_MODEL_ID = "claude-fable-5-1";
+export const CLAUDE_OPUS_5_5_MODEL_ID = "claude-opus-5-5";
+export const CLAUDE_SONNET_5_5_MODEL_ID = "claude-sonnet-5-5";
 
 /*
 FNXC:ProviderAuth 2026-08-15-20:57:
@@ -73,6 +75,50 @@ export const SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION: AnthropicProviderRegi
       maxTokens: 128_000,
       compat: {
         supportsDeveloperRole: false,
+      },
+    },
+    /*
+     * FNXC:ModelCatalog 2026-09-29-05:31:
+     * Opus 5.5 and Sonnet 5.5 postdate the pinned pi-ai 0.86.1 catalog. Their
+     * official adaptive-thinking contract matches Fable 5.1, so retain the
+     * capability map and upstream-first merge rather than creating credential-specific rows.
+     */
+    {
+      id: CLAUDE_OPUS_5_5_MODEL_ID,
+      name: "Claude Opus 5.5",
+      reasoning: true,
+      thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+      input: ["text", "image"],
+      cost: {
+        input: 4,
+        output: 20,
+        cacheRead: 0.2,
+        cacheWrite: 5,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      compat: {
+        forceAdaptiveThinking: true,
+        supportsStrictTools: true,
+      },
+    },
+    {
+      id: CLAUDE_SONNET_5_5_MODEL_ID,
+      name: "Claude Sonnet 5.5",
+      reasoning: true,
+      thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+      input: ["text", "image"],
+      cost: {
+        input: 2,
+        output: 10,
+        cacheRead: 0.2,
+        cacheWrite: 2.5,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      compat: {
+        forceAdaptiveThinking: true,
+        supportsStrictTools: true,
       },
     },
     {

@@ -115,6 +115,25 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     cacheWritePer1M: 2.5,
     source: "platform.claude.com/docs/en/pricing",
   },
+  /*
+   * FNXC:ModelCatalog 2026-09-29-05:31:
+   * Anthropic publishes Opus 5.5 and Sonnet 5.5 cache-read and five-minute
+   * cache-write prices explicitly; retain those distinct rates in cost estimates.
+   */
+  "anthropic:claude-opus-5-5": {
+    inputPer1M: 4,
+    outputPer1M: 20,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 5,
+    source: "platform.claude.com/docs/en/about-claude/pricing",
+  },
+  "anthropic:claude-sonnet-5-5": {
+    inputPer1M: 2,
+    outputPer1M: 10,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 2.5,
+    source: "platform.claude.com/docs/en/about-claude/pricing",
+  },
   "anthropic:claude-opus-4-8": {
     inputPer1M: 5,
     outputPer1M: 25,

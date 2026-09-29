@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ANTHROPIC_PROVIDER_ID,
   CLAUDE_FABLE_5_1_MODEL_ID,
+  CLAUDE_OPUS_5_5_MODEL_ID,
+  CLAUDE_SONNET_5_5_MODEL_ID,
   mergeSupplementalAnthropicModels,
   SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION,
 } from "../ai/anthropic-models.js";
@@ -18,48 +20,43 @@ const fable5 = {
 };
 
 describe("supplemental Anthropic models", () => {
-  it("defines Claude Fable 5.1 with its pinned catalog capabilities", () => {
-    expect(SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.models.filter((model) => model.id === CLAUDE_FABLE_5_1_MODEL_ID)).toEqual([{
-      id: CLAUDE_FABLE_5_1_MODEL_ID,
-      name: "Claude Fable 5.1",
+  it.each([
+    [CLAUDE_OPUS_5_5_MODEL_ID, "Claude Opus 5.5", { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }],
+    [CLAUDE_SONNET_5_5_MODEL_ID, "Claude Sonnet 5.5", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }],
+  ])("defines %s with complete pinned catalog capabilities", (id, name, cost) => {
+    expect(SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.models.filter((model) => model.id === id)).toEqual([{
+      id,
+      name,
       reasoning: true,
       thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
       input: ["text", "image"],
-      cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+      cost,
       contextWindow: 1_000_000,
       maxTokens: 128_000,
       compat: { forceAdaptiveThinking: true, supportsStrictTools: true },
     }]);
   });
 
-  it("adds Fable 5.1 to an empty Anthropic catalog and preserves thinking levels", () => {
+  it("adds both 5.5 models to an empty Anthropic catalog with supported thinking levels", () => {
     const registerProvider = vi.fn();
-    const registry = { registerProvider, getAll: () => [] };
-
-    mergeSupplementalAnthropicModels(registry);
+    mergeSupplementalAnthropicModels({ registerProvider, getAll: () => [] });
 
     const config = registerProvider.mock.calls[0]?.[1];
-    const model = config.models.find((entry: { id: string }) => entry.id === CLAUDE_FABLE_5_1_MODEL_ID);
-    expect(model).toMatchObject({ thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" } });
+    for (const id of [CLAUDE_OPUS_5_5_MODEL_ID, CLAUDE_SONNET_5_5_MODEL_ID]) {
+      expect(config.models.find((entry: { id: string }) => entry.id === id)).toMatchObject({
+        thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+      });
+    }
   });
 
-  it("keeps an upstream Fable 5.1 row without duplication", () => {
-    const upstream = {
-      ...fable5,
-      id: CLAUDE_FABLE_5_1_MODEL_ID,
-      name: "Claude Fable 5.1 Upstream",
-      contextWindow: 42,
-    };
+  it.each([CLAUDE_OPUS_5_5_MODEL_ID, CLAUDE_SONNET_5_5_MODEL_ID])("keeps an upstream %s row without duplication", (id) => {
+    const upstream = { ...fable5, id, name: `${id} Upstream`, contextWindow: 42 };
     const registerProvider = vi.fn();
-    const registry = {
-      registerProvider,
-      registeredProviders: new Map([[ANTHROPIC_PROVIDER_ID, { models: [upstream] }]]),
-    };
+    const registry = { registerProvider, registeredProviders: new Map([[ANTHROPIC_PROVIDER_ID, { models: [upstream] }]]) };
 
     mergeSupplementalAnthropicModels(registry);
 
-    const config = registerProvider.mock.calls[0]?.[1];
-    const models = config.models.filter((entry: { id: string }) => entry.id === CLAUDE_FABLE_5_1_MODEL_ID);
+    const models = registerProvider.mock.calls[0]?.[1].models.filter((entry: { id: string }) => entry.id === id);
     expect(models).toHaveLength(1);
     expect(models[0]).toMatchObject({ name: upstream.name, contextWindow: upstream.contextWindow });
   });

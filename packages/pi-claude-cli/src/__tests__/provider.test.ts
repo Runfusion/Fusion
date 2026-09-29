@@ -133,6 +133,8 @@ describe("provider registration (default export)", () => {
 
     for (const id of [
       "claude-sonnet-5",
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
       "claude-fable-5",
       "claude-fable-5-1",
       "claude-opus-4-8",
@@ -144,10 +146,20 @@ describe("provider registration (default export)", () => {
       expect(modelIds.has(id)).toBe(true);
     }
 
+    expect(config.models.find((m: { id: string }) => m.id === "claude-opus-5-5")).toMatchObject({
+      input: ["text", "image"],
+      cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    });
+    expect(config.models.find((m: { id: string }) => m.id === "claude-sonnet-5-5")).toMatchObject({
+      input: ["text", "image"],
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    });
     for (const id of ["claude-fable-5", "claude-fable-5-1"]) {
-      expect(config.models.find((m: { id: string }) => m.id === id)).toMatchObject({
-        cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
-      });
+      expect(config.models.find((m: { id: string }) => m.id === id)).toMatchObject({ cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 } });
     }
   });
 
@@ -173,11 +185,15 @@ describe("provider registration (default export)", () => {
       name: "Claude Fable 5.1 Upstream",
       contextWindow: 654_321,
     };
+    const upstreamOpus55 = { ...upstreamSonnet5, id: "claude-opus-5-5", name: "Claude Opus 5.5 Upstream", contextWindow: 777_777 };
+    const upstreamSonnet55 = { ...upstreamSonnet5, id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 Upstream", contextWindow: 888_888 };
 
     getModelsMock.mockReturnValueOnce([
       ...mockModels,
       upstreamSonnet5,
       upstreamFable51,
+      upstreamOpus55,
+      upstreamSonnet55,
       {
         id: "claude-sonnet-4-6",
         name: "Claude Sonnet 4.6 Upstream",
@@ -195,14 +211,14 @@ describe("provider registration (default export)", () => {
     mod.default(mockPi);
 
     const config = registerProvider.mock.calls[0][1];
-    for (const id of ["claude-sonnet-5", "claude-fable-5-1", "claude-sonnet-4-6"]) {
+    for (const id of ["claude-sonnet-5", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-4-6"]) {
       const matches = config.models.filter(
         (m: { id: string }) => m.id === id,
       );
       expect(matches).toHaveLength(1);
     }
 
-    for (const upstream of [upstreamSonnet5, upstreamFable51]) {
+    for (const upstream of [upstreamSonnet5, upstreamFable51, upstreamOpus55, upstreamSonnet55]) {
       expect(config.models.find((m: { id: string }) => m.id === upstream.id)).toMatchObject({
         name: upstream.name,
         reasoning: upstream.reasoning,

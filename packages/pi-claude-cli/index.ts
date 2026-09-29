@@ -220,6 +220,29 @@ export default function (pi: ExtensionAPI) {
         contextWindow: 1_000_000,
         maxTokens: 128_000,
       },
+      /*
+       * FNXC:ModelCatalog 2026-09-29-05:31:
+       * The pinned Pi catalog predates Claude 5.5. Advertise these verified
+       * subscription-capable aliases here, while the seen-set below preserves a future upstream row unchanged.
+       */
+      {
+        id: "claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: "claude-sonnet-5-5",
+        name: "Claude Sonnet 5.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
       {
         id: "claude-fable-5",
         name: "Claude Fable 5",

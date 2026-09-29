@@ -73,25 +73,27 @@ async function getModels(handler: ReturnType<typeof createModelsHandler>) {
   return json.mock.calls[0]![0] as { models: Array<{ provider: string; id: string; name: string; supportedThinkingLevels?: string[] }> };
 }
 
-describe("FN-9242: Claude Fable 5.1 supplemental Anthropic picker catalog", () => {
-  it.each(["anthropic-api-key", "anthropic-subscription"] as const)("serves one direct Anthropic Fable 5.1 row for %s auth", async (authId) => {
+describe("FN-9409: Claude 5.5 supplemental Anthropic picker catalog", () => {
+  it.each(["anthropic-api-key", "anthropic-subscription"] as const)("serves one direct row per 5.5 model for %s auth", async (authId) => {
     const response = await getModels(createModelsHandler(createRegistry([FABLE_5]), createAuthStorage(authId)));
-    const rows = response.models.filter((model) => model.id === "claude-fable-5-1");
 
-    expect(rows).toEqual([expect.objectContaining({ provider: "anthropic", id: "claude-fable-5-1", name: "Claude Fable 5.1" })]);
-    expect(rows[0]?.supportedThinkingLevels).toEqual(expect.arrayContaining(["xhigh", "max"]));
-    expect(rows[0]?.supportedThinkingLevels).not.toContain("off");
+    for (const [id, name] of [["claude-opus-5-5", "Claude Opus 5.5"], ["claude-sonnet-5-5", "Claude Sonnet 5.5"]]) {
+      const rows = response.models.filter((model) => model.id === id);
+      expect(rows).toEqual([expect.objectContaining({ provider: "anthropic", id, name })]);
+      expect(rows[0]?.supportedThinkingLevels).toEqual(expect.arrayContaining(["xhigh", "max"]));
+      expect(rows[0]?.supportedThinkingLevels).not.toContain("off");
+    }
     expect(response.models.some((model) => model.provider === "anthropic-api-key" || model.provider === "anthropic-subscription")).toBe(false);
     expect(response.models.find((model) => model.id === FABLE_5.id)?.name).toBe(FABLE_5.name);
   });
 
-  it("keeps an upstream Fable 5.1 catalog row without duplication", async () => {
-    const upstream = { ...FABLE_5, id: "claude-fable-5-1", name: "Claude Fable 5.1 Upstream", contextWindow: 12_345 };
+  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("keeps an upstream %s catalog row without duplication", async (id) => {
+    const upstream = { ...FABLE_5, id, name: `${id} Upstream`, contextWindow: 12_345 };
     const response = await getModels(createModelsHandler(createRegistry([FABLE_5, upstream]), createAuthStorage("anthropic-api-key")));
     const rows = response.models.filter((model) => model.provider === "anthropic" && model.id === upstream.id);
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ name: upstream.name });
+    expect(rows[0]).toMatchObject({ name: upstream.name, contextWindow: upstream.contextWindow });
   });
 
   it("keeps the existing catalog available when supplemental registration fails", async () => {

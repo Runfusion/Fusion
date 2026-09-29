@@ -13,10 +13,10 @@ import { SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION } from "../ai/anthropic-mo
 describe("Claude Code identity headers", () => {
   it("emits a lowercase user-agent only for Anthropic OAuth credentials", () => {
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "anthropic", apiKey: "sk-ant-oat-test" })).toEqual({
-      "user-agent": "claude-cli/2.1.251",
+      "user-agent": "claude-cli/2.1.284",
     });
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "anthropic-subscription", apiKey: "sk-ant-oat-test" })).toEqual({
-      "user-agent": "claude-cli/2.1.251",
+      "user-agent": "claude-cli/2.1.284",
     });
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "anthropic-api-key", apiKey: "sk-ant-api-test" })).toEqual({});
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "openrouter", apiKey: "sk-ant-oat-test" })).toEqual({});
@@ -35,7 +35,7 @@ describe("Claude Code identity headers", () => {
 
   it("compares versions numerically", () => {
     expect(compareClaudeCodeVersions("2.1.75", "2.1.251")).toBeLessThan(0);
-    expect(compareClaudeCodeVersions("2.1.251", "2.2.0")).toBeLessThan(0);
+    expect(compareClaudeCodeVersions("2.1.284", "2.2.0")).toBeLessThan(0);
     expect(compareClaudeCodeVersions("2.2.0", "10.0.0")).toBeLessThan(0);
   });
 
