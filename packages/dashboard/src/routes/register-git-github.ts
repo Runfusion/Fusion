@@ -70,6 +70,7 @@ import {
 import type { ApiRoutesContext } from "./types.js";
 import { runGitCommand } from "./resolve-diff-base.js";
 import { assertWorktreePathSafe, isPathWithin, listRegisteredWorktreePaths } from "../git-worktree-safety.js";
+import { getTaskPrimaryPr } from "../task-planner-pr-status.js";
 
 const execAsync = promisify(execCb);
 const PR_ROUTE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
@@ -5950,7 +5951,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         throw notFound("Task has no associated PR");
       }
 
-      const primaryPr = prList[0];
+      const primaryPr = getTaskPrimaryPr(task) ?? prList[0];
 
       // Check if data is stale (>5 minutes since last check)
       const fiveMinutesMs = 5 * 60 * 1000;
@@ -6389,8 +6390,8 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
       const requestedPr = Number.parseInt(String(req.query.pr ?? ""), 10);
       const primaryPr = Number.isInteger(requestedPr) && requestedPr > 0
-        ? prList.find((pr) => pr.number === requestedPr) ?? prList[0]
-        : prList[0];
+        ? prList.find((pr) => pr.number === requestedPr) ?? getTaskPrimaryPr(task) ?? prList[0]
+        : getTaskPrimaryPr(task) ?? prList[0];
       let owner: string;
       let repo: string;
       const badgeParsed = parseBadgeUrl(primaryPr.url);

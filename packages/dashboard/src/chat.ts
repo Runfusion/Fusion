@@ -57,6 +57,7 @@ import {
 } from "./chat-attachment-content.js";
 import { buildTaskPlannerChatContext, TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE } from "./task-planner-chat-context.js";
 import { formatTaskPlannerChatMetrics } from "./task-planner-chat-metrics.js";
+import { formatTaskPlannerPrStatus, resolveTaskPlannerPrStatus } from "./task-planner-pr-status.js";
 import { emitWorkflowSseEvent, type WorkflowSseEventType } from "./sse.js";
 
 import {
@@ -782,6 +783,34 @@ below left the whole 3830-test dashboard suite green. An options-bag property is
 `check-inert-flag-seams.mjs`, which only tracks trailing optional PARAMETERS, so nothing else was
 watching this either. Exporting the factory is the cheapest way to put a test on the producer.
 */
+/*
+FNXC:TaskDetailChatPrStatus 2026-09-29-06:58:
+The task-detail PR reader is parameterless because the synthetic session already supplies the only
+allowed task id. Returning the resolver's bounded status preserves current/stale distinction and
+prevents a model from redirecting a provider read to another task or project.
+*/
+export function createTaskPlannerPrStatusTool(taskStore: TaskStore, taskId: string) {
+  return {
+    name: "fn_task_planner_get_pr_status",
+    label: "Get Current Task Pull Request Status",
+    description: "Read the current pull request checks, review decision, mergeability, and blockers for this task only. The task id is fixed by server context and cannot be changed by tool parameters.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    execute: async () => {
+      try {
+        const status = await resolveTaskPlannerPrStatus(taskStore, taskId);
+        return { content: [{ type: "text" as const, text: formatTaskPlannerPrStatus(status) }], details: status };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `ERROR: Could not load pull request status for the current task ${taskId}: ${message}` }],
+          details: { taskId, error: message },
+          isError: true,
+        };
+      }
+    },
+  };
+}
+
 export function createTaskPlannerMetricsTool(taskStore: TaskStore, taskId: string, getPricingOverrides: () => Promise<Settings["modelPricingOverrides"] | undefined>) {
   return {
     name: "fn_task_planner_get_task_metrics",
@@ -3148,6 +3177,9 @@ export class ChatManager {
       const taskPlannerMetricsTools = this.taskStore && taskPlannerChatTaskId
         ? [createTaskPlannerMetricsTool(this.taskStore, taskPlannerChatTaskId, () => this.getModelPricingOverrides())]
         : [];
+      const taskPlannerPrStatusTools = this.taskStore && taskPlannerChatTaskId
+        ? [createTaskPlannerPrStatusTool(this.taskStore, taskPlannerChatTaskId)]
+        : [];
       /*
       FNXC:TaskDetailPlannerChat 2026-07-01-21:44:
       Done-task planner Chat uses a separate task-scoped refinement tool rather than Activity steering. The tool is registered only for synthetic task-planner sessions whose server-loaded current task is done, accepts only feedback text, and calls TaskStore.refineTask with the bound source id so models cannot route refinements to arbitrary tasks/projects/workflows.
@@ -3187,6 +3219,7 @@ export class ChatManager {
         createAskQuestionTool(),
         ...taskPlannerSteeringTools,
         ...taskPlannerMetricsTools,
+        ...taskPlannerPrStatusTools,
         ...taskPlannerRefinementTools,
         ...messagingTools,
         ...workflowTools,
