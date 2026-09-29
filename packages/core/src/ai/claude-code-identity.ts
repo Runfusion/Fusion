@@ -1,9 +1,4 @@
-import {
-  ANTHROPIC_PROVIDER_ID,
-  CLAUDE_FABLE_5_1_MODEL_ID,
-  CLAUDE_SONNET_5_5_MODEL_ID,
-  toExecutionModelProviderId,
-} from "./anthropic-models.js";
+import { ANTHROPIC_PROVIDER_ID, toExecutionModelProviderId } from "./anthropic-models.js";
 
 /*
 FNXC:ModelCatalog 2026-09-03-05:30:
@@ -16,12 +11,12 @@ export const CLAUDE_CODE_CLIENT_VERSION_ENV = "FUSION_ANTHROPIC_CLAUDE_CODE_VERS
 
 /*
 FNXC:ModelCatalog 2026-09-29-05:31:
-Claude Code 2.1.284 is the official Sonnet 5.5 introduction. Use that documented
-floor for OAuth identity decoration so the bundled 2.1.75 identity cannot hide it.
+Claude Code 2.1.284 is the official Sonnet 5.5 introduction. Keep model identity floors
+independent from Pi catalog ownership so OAuth identity decoration remains stable as Pi adds or removes rows.
 */
 export const ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION: Readonly<Record<string, string>> = {
-  [CLAUDE_FABLE_5_1_MODEL_ID]: "2.1.251",
-  [CLAUDE_SONNET_5_5_MODEL_ID]: "2.1.284",
+  ["claude-fable-5-1"]: "2.1.251",
+  ["claude-sonnet-5-5"]: "2.1.284",
 };
 
 export function parseClaudeCodeVersion(value: string): [number, number, number] | undefined {

@@ -68,8 +68,7 @@ export interface OpenAiCodexProviderRegistration {
  * selectable — the /api/models picker sources rows from the pinned pi-ai
  * ModelRegistry.getAvailable() catalog. At spec time (pi-ai 0.80.3) that pinned catalog
  * did not carry the three GPT-5.6 codenamed ids under "openai-codex", so no picker
- * surfaced them. Mirror the SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION seam
- * (anthropic-models.ts) to additively register them: if a later pi-ai bump already
+ * surfaced them. Use a separate additive registration seam: if a later pi-ai bump already
  * carries an id, the merge below is a dedupe-safe no-op — the existing catalog row
  * always wins, never displaced or duplicated. Field shape (api/baseUrl) is copied
  * from the pinned catalog's openai-codex.models.js entries.

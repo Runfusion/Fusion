@@ -8,7 +8,6 @@ import {
   compareClaudeCodeVersions,
   resolveClaudeCodeClientVersion,
 } from "../ai/claude-code-identity.js";
-import { SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION } from "../ai/anthropic-models.js";
 
 describe("Claude Code identity headers", () => {
   it("emits a lowercase user-agent only for Anthropic OAuth credentials", () => {
@@ -39,10 +38,8 @@ describe("Claude Code identity headers", () => {
     expect(compareClaudeCodeVersions("2.2.0", "10.0.0")).toBeLessThan(0);
   });
 
-  it("keeps the impersonated version at every registered model minimum", () => {
-    const registeredModelIds = new Set(SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.models.map((model) => model.id));
-    for (const [modelId, minimum] of Object.entries(ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION)) {
-      expect(registeredModelIds).toContain(modelId);
+  it("keeps the impersonated version at every declared model identity floor", () => {
+    for (const minimum of Object.values(ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION)) {
       expect(compareClaudeCodeVersions(CLAUDE_CODE_IMPERSONATED_VERSION, minimum)).toBeGreaterThanOrEqual(0);
     }
   });

@@ -121,7 +121,7 @@ describe("provider registration (default export)", () => {
     expect(firstModel.cost).toBeDefined();
   });
 
-  it("includes latest Claude models including Sonnet 5 for the CLI surface", async () => {
+  it("projects every Pi Anthropic catalog row without adding fallback models", async () => {
     const registerProvider = vi.fn();
     const mockPi = { registerProvider, on: vi.fn() } as any;
 
@@ -129,105 +129,43 @@ describe("provider registration (default export)", () => {
     mod.default(mockPi);
 
     const config = registerProvider.mock.calls[0][1];
-    const modelIds = new Set(config.models.map((m: { id: string }) => m.id));
-
-    for (const id of [
-      "claude-sonnet-5",
-      "claude-opus-5-5",
-      "claude-sonnet-5-5",
-      "claude-fable-5",
-      "claude-fable-5-1",
-      "claude-opus-4-8",
-      "claude-opus-4-7",
-      "claude-sonnet-4-6",
-      "claude-sonnet-4-5",
-      "claude-haiku-4-5",
-    ]) {
-      expect(modelIds.has(id)).toBe(true);
-    }
-
-    expect(config.models.find((m: { id: string }) => m.id === "claude-opus-5-5")).toMatchObject({
-      input: ["text", "image"],
-      cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
-      contextWindow: 1_000_000,
-      maxTokens: 128_000,
-    });
-    expect(config.models.find((m: { id: string }) => m.id === "claude-sonnet-5-5")).toMatchObject({
-      input: ["text", "image"],
-      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-      contextWindow: 1_000_000,
-      maxTokens: 128_000,
-    });
-    for (const id of ["claude-fable-5", "claude-fable-5-1"]) {
-      expect(config.models.find((m: { id: string }) => m.id === id)).toMatchObject({ cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 } });
-    }
+    expect(config.models).toEqual(mockModels.map(({ id, name, reasoning, input, cost, contextWindow, maxTokens }) => ({
+      id, name, reasoning, input, cost, contextWindow, maxTokens,
+    })));
+    expect(config.models).not.toContainEqual(expect.objectContaining({ id: "claude-sonnet-5" }));
   });
 
-  it("deduplicates extra models when catalog already includes them", async () => {
+  it("projects a controlled Pi catalog exactly once and retains all projected fields", async () => {
     const registerProvider = vi.fn();
     const mockPi = { registerProvider, on: vi.fn() } as any;
     const getModelsMock = vi.mocked(getBuiltinModels);
-    const upstreamSonnet5 = {
-      id: "claude-sonnet-5",
-      name: "Claude Sonnet 5 Upstream",
+    const upstream = {
+      id: "claude-future-catalog-row",
+      name: "Claude Future Catalog Row",
       api: "anthropic",
       provider: "anthropic",
-      reasoning: false,
-      input: ["text"],
+      reasoning: true,
+      input: ["text", "image"],
       cost: { input: 99, output: 199, cacheRead: 9.9, cacheWrite: 24.75 },
       contextWindow: 123_456,
       maxTokens: 7_654,
     } as any;
-
-    const upstreamFable51 = {
-      ...upstreamSonnet5,
-      id: "claude-fable-5-1",
-      name: "Claude Fable 5.1 Upstream",
-      contextWindow: 654_321,
-    };
-    const upstreamOpus55 = { ...upstreamSonnet5, id: "claude-opus-5-5", name: "Claude Opus 5.5 Upstream", contextWindow: 777_777 };
-    const upstreamSonnet55 = { ...upstreamSonnet5, id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 Upstream", contextWindow: 888_888 };
-
-    getModelsMock.mockReturnValueOnce([
-      ...mockModels,
-      upstreamSonnet5,
-      upstreamFable51,
-      upstreamOpus55,
-      upstreamSonnet55,
-      {
-        id: "claude-sonnet-4-6",
-        name: "Claude Sonnet 4.6 Upstream",
-        api: "anthropic",
-        provider: "anthropic",
-        reasoning: true,
-        input: ["text", "image"],
-        cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-        contextWindow: 200000,
-        maxTokens: 16384,
-      } as any,
-    ] as any);
+    getModelsMock.mockReturnValueOnce([upstream]);
 
     const mod = await import("../../index");
     mod.default(mockPi);
 
     const config = registerProvider.mock.calls[0][1];
-    for (const id of ["claude-sonnet-5", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-4-6"]) {
-      const matches = config.models.filter(
-        (m: { id: string }) => m.id === id,
-      );
-      expect(matches).toHaveLength(1);
-    }
-
-    for (const upstream of [upstreamSonnet5, upstreamFable51, upstreamOpus55, upstreamSonnet55]) {
-      expect(config.models.find((m: { id: string }) => m.id === upstream.id)).toMatchObject({
-        name: upstream.name,
-        reasoning: upstream.reasoning,
-        input: upstream.input,
-        cost: upstream.cost,
-        contextWindow: upstream.contextWindow,
-        maxTokens: upstream.maxTokens,
-      });
-    }
+    expect(config.models).toEqual([{
+      id: upstream.id,
+      name: upstream.name,
+      reasoning: upstream.reasoning,
+      input: upstream.input,
+      cost: upstream.cost,
+      contextWindow: upstream.contextWindow,
+      maxTokens: upstream.maxTokens,
+    }]);
+    expect(config.streamSimple).toEqual(expect.any(Function));
   });
 });
 

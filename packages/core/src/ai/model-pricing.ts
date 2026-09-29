@@ -106,7 +106,7 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
   // input / output / cacheRead(0.1×) / cacheWrite(1.25×, 5-min TTL)
   /*
    * FNXC:ModelCatalog 2026-07-01-22:40:
-   * `anthropic:claude-sonnet-5` is advertised again (works on raw API key + Claude CLI; live-verified), so restore its static pricing. Matches the cost in SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.
+   * `anthropic:claude-sonnet-5` remains a separately maintained usage-accounting record. Catalog discovery is Pi-owned.
    */
   "anthropic:claude-sonnet-5": {
     inputPer1M: 2,

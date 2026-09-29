@@ -2460,34 +2460,19 @@ describe("createFnAgent", () => {
     });
   });
 
-  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("synthesizes direct Anthropic %s when the live registry lacks it", async (modelId) => {
-    getAllMock.mockReturnValue([]);
-    findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
-
-    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
-
-    expect(registerProviderMock).toHaveBeenCalledWith("anthropic", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: modelId })]),
-    }));
-    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: "anthropic", id: modelId } }));
-  });
-
-  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("preserves upstream %s while adding missing supplemental models", async (modelId) => {
+  it("creates an Anthropic session from a Pi-owned catalog row without provider mutation", async () => {
     const upstream = {
-      provider: "anthropic", id: modelId, name: `${modelId} Upstream`, reasoning: true, input: ["text", "image"],
+      provider: "anthropic", id: "claude-future-catalog-row", name: "Claude Future Catalog Row", reasoning: true, input: ["text", "image"],
       cost: { input: 99, output: 199, cacheRead: 9.9, cacheWrite: 24.75 }, contextWindow: 42, maxTokens: 7,
     };
     getAllMock.mockReturnValue([upstream]);
     findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
+    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: upstream.id });
 
-    const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(1);
-    const rows = anthropicRegistrations[0]?.[1].models.filter((model: { id: string }) => model.id === modelId);
-    expect(rows).toEqual([expect.objectContaining({ name: upstream.name, contextWindow: upstream.contextWindow, cost: upstream.cost })]);
+    expect(registerProviderMock).not.toHaveBeenCalledWith("anthropic", expect.anything());
+    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: "anthropic", id: upstream.id } }));
   });
 
   it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {

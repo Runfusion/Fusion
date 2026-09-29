@@ -10,7 +10,7 @@ import multer from "multer";
 import { resolve, sep, join, isAbsolute } from "node:path";
 import * as nodeFs from "node:fs";
 
-import type { AnthropicProviderRegistration, TaskStore, ModelPreset, ThinkingLevel, ProviderInstanceRef } from "@fusion/core";
+import type { TaskStore, ModelPreset, ThinkingLevel, ProviderInstanceRef } from "@fusion/core";
 import {
   type Task,
   type PiExtensionEntry,
@@ -145,10 +145,8 @@ export interface ModelRegistryLike {
   };
   /** Get models that have auth configured. */
   getAvailable(): ModelRegistryModelLike[];
-  /** Optional pi ModelRegistry surface used for supplemental model registration. */
-  getAll?: () => Array<ModelRegistryModelLike & { name?: string; reasoning?: boolean; input?: string[]; cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }; contextWindow?: number; maxTokens?: number; compat?: unknown }>;
-  /** Optional pi ModelRegistry surface used for supplemental model registration. */
-  registerProvider?: (providerName: string, config: AnthropicProviderRegistration) => void;
+  /** Optional pi ModelRegistry surface used for the separate OpenAI Codex compatibility registration. */
+  registerProvider?: (providerName: string, config: never) => void;
 }
 
 /**

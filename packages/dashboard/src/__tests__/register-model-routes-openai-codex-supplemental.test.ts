@@ -3,7 +3,7 @@ FNXC:ModelCatalog 2026-07-09-12:30:
 FN-7745 symptom verification: `/api/models` must surface the three GPT-5.6 codenamed
 OpenAI Codex variants (gpt-5.6-luna/sol/terra) under provider "openai-codex" once that
 provider is configured, additively and deduped against any pinned-catalog row that
-already carries one of the ids — mirroring the mergeSupplementalAnthropicModels seam.
+already carries one of the ids — preserving the separate additive registration seam.
 Pre-fix (before mergeSupplementalOpenAiCodexModels was wired into the route), a mocked
 registry lacking these ids would never surface them even with openai-codex configured;
 this suite encodes that failing-before/passing-after contract plus dedupe and the

@@ -504,23 +504,19 @@ describe("GET /models", () => {
     expect(res.body.models).toEqual([]);
   });
 
-  it("advertises Claude Sonnet 5 for configured direct Anthropic users", async () => {
+  it("advertises Pi-owned Anthropic rows for configured direct Anthropic users without provider mutation", async () => {
     const modelRegistry = createMutableModelRegistry([
-      { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", reasoning: true, contextWindow: 200000 },
+      { id: "claude-future-catalog-row", name: "Claude Future Catalog Row", provider: "anthropic", reasoning: true, contextWindow: 200000 },
       { id: "gpt-4o", name: "GPT-4o", provider: "openai", reasoning: false, contextWindow: 128000 },
     ]);
 
     const res = await GET(buildApp(modelRegistry), "/api/models");
 
     expect(res.status).toBe(200);
-    // Sonnet 5 is re-advertised via SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION (works on API key + CLI).
     expect(res.body.models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ provider: "anthropic", id: "claude-sonnet-4-5" }),
-      expect.objectContaining({ provider: "anthropic", id: "claude-sonnet-5" }),
+      expect.objectContaining({ provider: "anthropic", id: "claude-future-catalog-row" }),
     ]));
-    expect(modelRegistry.registerProvider).toHaveBeenCalledWith("anthropic", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-5" })]),
-    }));
+    expect(modelRegistry.registerProvider).not.toHaveBeenCalledWith("anthropic", expect.anything());
   });
 
   it("does not expose Claude Sonnet 5 when direct Anthropic is not configured", async () => {
@@ -539,32 +535,25 @@ describe("GET /models", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.models).toEqual([]);
-      // Sonnet 5 is merged into the registry from supplemental metadata, but stays hidden
-      // from the response because no Anthropic auth is configured (provider-visibility filter).
-      expect(modelRegistry.models.some((model) => model.id === "claude-sonnet-5")).toBe(true);
-      expect(res.body.models.some((model: { id: string }) => model.id === "claude-sonnet-5")).toBe(false);
+      expect(modelRegistry.models.some((model) => model.id === "claude-sonnet-4-5")).toBe(true);
+      expect(res.body.models.some((model: { id: string }) => model.id === "claude-sonnet-4-5")).toBe(false);
+      expect(modelRegistry.registerProvider).not.toHaveBeenCalledWith("anthropic", expect.anything());
     } finally {
       readFileSpy.mockRestore();
     }
   });
 
-  it("preserves upstream Claude Sonnet 5 while adding missing supplemental models", async () => {
+  it("keeps duplicate Pi Anthropic catalog rows deduplicated without provider mutation", async () => {
     const modelRegistry = createMutableModelRegistry([
-      { id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream", provider: "anthropic", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000 },
+      { id: "claude-future-catalog-row", name: "Claude Future Catalog Row", provider: "anthropic", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000 },
+      { id: "claude-future-catalog-row", name: "Claude Future Catalog Row", provider: "anthropic", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000 },
     ]);
 
     const res = await GET(buildApp(modelRegistry), "/api/models");
 
     expect(res.status).toBe(200);
-    const sonnetFiveRows = res.body.models.filter((model: { provider: string; id: string }) => model.provider === "anthropic" && model.id === "claude-sonnet-5");
-    expect(sonnetFiveRows).toHaveLength(1);
-    // The upstream Sonnet row wins while missing supplemental rows are added.
-    const anthropicRegistrations = (modelRegistry.registerProvider as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(1);
-    expect(anthropicRegistrations[0]?.[1].models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream" }),
-      expect.objectContaining({ id: "claude-fable-5-1", name: "Claude Fable 5.1" }),
-    ]));
+    expect(res.body.models.filter((model: { provider: string; id: string }) => model.provider === "anthropic" && model.id === "claude-future-catalog-row")).toHaveLength(1);
+    expect(modelRegistry.registerProvider).not.toHaveBeenCalledWith("anthropic", expect.anything());
   });
 
   // Regression guard: FN-2370's auto-resolved squash inverted this filter,
