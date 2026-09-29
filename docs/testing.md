@@ -618,7 +618,9 @@ Quarantine is the default when a sighting is reproducible enough to justify evic
 
 1. Add an entry to `scripts/lib/test-quarantine.json`:
    `{ "file": "<repo-relative test path>", "reason": "<why + link to the failing run>", "quarantinedAt": "YYYY-MM-DD" }`
-2. Add a matching one-line `exclude` entry to that package's vitest config.
+2. Add a matching one-line `exclude` entry to that package's vitest config. The CLI is the supported exception: add its package-relative path once to the static `quarantinedCliTests` list. That list is a recognized lockstep source and its `activeQuarantinedCliTests` filter removes an explicitly named file from routine discovery exclusion, so targeted diagnosis continues to run the real test assertions.
+
+This CLI form is a non-blocking package-lane quarantine, not an `engine-core` merge-gate eviction. It retains the test for root-cause rescue or deletion review; the same 14-day clock applies, and timeout widening, retries, and assertion weakening are never rescue evidence.
 
 **The clock:** an entry expires 14 days after `quarantinedAt`. Whoever touches the suite and finds an expired entry deletes the test file, its ledger entry, and its config exclude (git history is the archive). `scripts/check-test-inventory.mjs --diff` stays deliberately unwired in CI because it would fail on exactly these deletions.
 
@@ -626,7 +628,7 @@ Quarantine is the default when a sighting is reproducible enough to justify evic
 
 Run `pnpm check:quarantine-ledger` to print a soonest-deadline-first summary of `scripts/lib/test-quarantine.json`. The command uses the same 14-day deletion clock (`quarantinedAt + 14d`) as the velocity baseline and reports each entry as expired, near-deadline, healthy, or unknown when `quarantinedAt` is missing/invalid. Default mode remains report-only for deadline status.
 
-The checker enforces quarantine lockstep in both directions. It reads only comment-stripped `exclude:` array literals in every `packages/*/vitest.config.ts`; include-shard lists, identifier/spread excludes, and glob/partition values are deliberately out of scope. It reports `missing-file` (a ledger entry names no file), `missing-exclude` (a ledger file lacks its package exclusion), `dangling-exclude` (an exclusion names no file), and `orphan-exclude` (an existing concrete per-file exclusion has no ledger owner or deletion clock). Remove or restore an `orphan-exclude`; never add an expired ledger entry just to restart its clock. `--strict` fails on any of those violations as well as near/expired deadlines.
+The checker enforces quarantine lockstep in both directions. It reads only comment-stripped `exclude:` array literals in every `packages/*/vitest.config.ts`, plus the CLI's statically declared `quarantinedCliTests` list; it never evaluates configuration. Include-shard lists, identifier/spread excludes outside that supported CLI list, and glob/partition values are deliberately out of scope. It reports `missing-file` (a ledger entry names no file), `missing-exclude` (a ledger file lacks its package exclusion), `dangling-exclude` (an exclusion names no file), and `orphan-exclude` (an existing concrete per-file exclusion has no ledger owner or deletion clock). Remove or restore an `orphan-exclude`; never add an expired ledger entry just to restart its clock. `--strict` fails on any of those violations as well as near/expired deadlines.
 
 Flags:
 

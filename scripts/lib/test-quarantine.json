@@ -10,6 +10,11 @@
       "file": "packages/engine/src/__tests__/agent-activity-writers.test.ts",
       "reason": "Second sightings: https://github.com/Runfusion/Fusion/actions/runs/36034454035 and https://github.com/Runfusion/Fusion/actions/runs/36533908544; repeated terminal graph-gate assertion.",
       "quarantinedAt": "2026-09-29"
+    },
+    {
+      "file": "packages/cli/src/commands/__tests__/skills-get.test.ts",
+      "reason": "Second sightings: https://github.com/Runfusion/Fusion/actions/runs/36562243319 and https://github.com/Runfusion/Fusion/actions/runs/36580840868; repeated default-timeout-shaped built guide request failure.",
+      "quarantinedAt": "2026-09-29"
     }
   ]
 }

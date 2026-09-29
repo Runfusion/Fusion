@@ -181,10 +181,6 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "18. Triage rate-limit retry log warning timer ordering",
       status: "Active first sighting — recorded 2026-09-24, unattributed.",
     },
-    {
-      heading: "19. Built skills-get global flag completion",
-      status: "Active first sighting — recorded 2026-09-29, unattributed.",
-    },
   ]);
 });
 
@@ -214,33 +210,27 @@ test("triage timeout first-sighting record retains shard evidence and quarantine
   }
 });
 
-test("built skills-get first-sighting record retains child-close evidence and quarantine escalation", () => {
+test("archived skills-get quarantine retains both-sighting and sibling-coverage evidence", () => {
   const register = readFileSync(registerPath, "utf8");
-  const sections = readActiveRecordSections(register).filter(
-    ({ heading }) => heading === "19. Built skills-get global flag completion",
-  );
-  assert.equal(sections.length, 1, "Expected exactly one active built skills-get first-sighting record");
+  const archive = register.match(/## Archive — closed records\n([\s\S]*)$/)?.[1];
+  assert.ok(archive, "Expected an Archive — closed records section");
+  const entry = archive.match(/^### 19\. Built skills-get global flag completion\n([\s\S]*?)(?=^### |(?![\s\S]))/m)?.[1];
+  assert.ok(entry, "Expected archived skills-get quarantine entry");
 
-  const [{ body }] = sections;
   for (const evidence of [
-    "Active first sighting — recorded 2026-09-29, unattributed.",
+    "Closed — quarantined 2026-09-29 by FN-9425",
+    "deletion deadline 2026-10-13",
     "packages/cli/src/commands/__tests__/skills-get.test.ts",
     "fn skills get > preserves global flag precedence and validation for built guide requests",
-    "7d5e1dccca",
-    "3d051dbfab",
     "36562243319",
-    "36541404695",
-    "test-timings-shard-3",
-    "packages/cli/.timings/timings-shard3-0.json",
-    "11031020537",
-    "STACK_TRACE_ERROR",
-    "skills-get.test.ts:91",
+    "36580840868",
     "5228.5 ms",
-    "4247 ms",
-    "same-change file-level quarantine in `scripts/lib/test-quarantine.json`",
-    "matching CLI Vitest exclusion",
+    "5914.7 ms",
+    "0 newly failed / 0 fixed / 188 still failing",
+    "six sibling cases",
+    "No engine-core merge-gate allow-list changed",
   ]) {
-    assert.ok(body.includes(evidence), `Built skills-get record is missing ${evidence}`);
+    assert.ok(entry.includes(evidence), `Archived skills-get record is missing ${evidence}`);
   }
 });
 

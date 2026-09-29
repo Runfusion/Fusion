@@ -135,6 +135,17 @@ function extractBalancedArray(source, openingBracket) {
   return null;
 }
 
+function extractStringTestPaths(array) {
+  const paths = [];
+  const strings = /"((?:\\.|[^"\\])*)"/g;
+  let stringMatch;
+  while ((stringMatch = strings.exec(array))) {
+    const value = JSON.parse(`"${stringMatch[1]}"`);
+    if (/\.test\.tsx?$/.test(value) && !/[*?{}]/.test(value)) paths.push(value);
+  }
+  return paths;
+}
+
 function extractConcreteExcludes(source) {
   const commentFree = stripComments(source);
   const excludes = [];
@@ -146,15 +157,27 @@ function extractConcreteExcludes(source) {
     if (commentFree[index] !== "[") continue;
     const array = extractBalancedArray(commentFree, index);
     if (array == null) continue;
-    const strings = /"((?:\\.|[^"\\])*)"/g;
-    let stringMatch;
-    while ((stringMatch = strings.exec(array))) {
-      const value = JSON.parse(`"${stringMatch[1]}"`);
-      if (/\.test\.tsx?$/.test(value) && !/[*?{}]/.test(value)) excludes.push(value);
-    }
+    excludes.push(...extractStringTestPaths(array));
     excludePattern.lastIndex = index + array.length;
   }
   return excludes;
+}
+
+/*
+FNXC:QuarantineLockstep 2026-09-29-17:01:
+The CLI keeps quarantines in a static list so direct file requests can bypass normal discovery exclusion.
+Recognize that literal list without evaluating config, while preserving the same two-way ledger ownership as
+ordinary exclude arrays.
+*/
+function extractStaticQuarantinedCliTests(source) {
+  const commentFree = stripComments(source);
+  const declaration = /\bconst\s+quarantinedCliTests\s*:\s*string\[\]\s*=\s*/.exec(commentFree);
+  if (declaration == null) return [];
+  let index = declaration.index + declaration[0].length;
+  while (/\s/.test(commentFree[index] ?? "")) index += 1;
+  if (commentFree[index] !== "[") return [];
+  const array = extractBalancedArray(commentFree, index);
+  return array == null ? [] : extractStringTestPaths(array);
 }
 
 function discoverPackageConfigs(rootDir) {
@@ -184,7 +207,11 @@ export function findLockstepViolations({ rootDir, ledger, packageConfigs = disco
     const configPath = normalizeConfigPath(rootDir, config);
     if (!existsSync(configPath)) continue;
     const relativeConfig = normalizeRepoPath(path.relative(rootDir, configPath));
-    configExcludes.set(relativeConfig, extractConcreteExcludes(readFileSync(configPath, "utf8")));
+    const configSource = readFileSync(configPath, "utf8");
+    configExcludes.set(relativeConfig, [
+      ...extractConcreteExcludes(configSource),
+      ...extractStaticQuarantinedCliTests(configSource),
+    ]);
   }
 
   const violations = [];

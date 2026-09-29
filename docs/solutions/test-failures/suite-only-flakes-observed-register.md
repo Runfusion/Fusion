@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **4 active observation records** (entries 2, 13, 18, and 19), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **11 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **3 active observation records** (entries 2, 13, and 18), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -286,20 +286,6 @@ No production retry race was established. `withRateLimitRetry` calls the non-awa
 
 A **second sighting** of this exact test requires same-change file-level quarantine in `scripts/lib/test-quarantine.json` and a matching `engine-default` Vitest exclusion. Do not add retries, widen the timeout, remove the fake-timer drain, or weaken the warning assertion.
 
-### 19. Built skills-get global flag completion
-
-- **Status:** Active first sighting — recorded 2026-09-29, unattributed.
-- **File:** `packages/cli/src/commands/__tests__/skills-get.test.ts`
-- **Exact test:** `fn skills get > preserves global flag precedence and validation for built guide requests`
-- **Observed tree/SHA:** `7d5e1dccca` (FN-9421).
-- **Observed frequency:** 1 sighting, Full Suite push shard 3 only.
-
-Push Full Suite run [36562243319](https://github.com/Runfusion/Fusion/actions/runs/36562243319), shard 3 timing artifact `test-timings-shard-3` (`packages/cli/.timings/timings-shard3-0.json`; artifact id `11031020537`), reported `STACK_TRACE_ERROR` at `skills-get.test.ts:91` after 5228.5 ms. The six sibling cases in the file passed, including the FN-9395-owned guide/version case. The immediately preceding push run [36541404695](https://github.com/Runfusion/Fusion/actions/runs/36541404695) at `3d051dbfab` passed this exact case in 4247 ms.
-
-FN-9423 rebuilt the CLI and ran the exact file through the built `bin.mjs` entry point successfully. It exercised the version, help, and duplicate-project built-child requests without changing the five-second test budget, adding retries, weakening assertions, or changing guide behavior. FN-9421 did not touch this test or its launcher/parser path, so one suite-only timeout does not establish a production exit defect.
-
-A **second sighting** of this exact test requires same-change file-level quarantine in `scripts/lib/test-quarantine.json` and a matching CLI Vitest exclusion. Do not widen the timeout, add retries, force process termination, or weaken output or exit assertions.
-
 ### Common shape and investigated result
 
 FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test; entry 14 was closed on 2026-09-09 after deterministic diagnosis showed its assertions encoded FN-217-removed lifecycle behavior (see the archived record below). FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, then FN-9131 attributed the mechanism (harness demand scales with fan-out against a fixed cluster supply; the first test in a file eats the 15s budget) and shipped the structural queueing-admission fix, closing the record on 2026-09-12. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 2 and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
@@ -352,7 +338,26 @@ commit, preserving its assertions for a root-cause rescue instead of adding tole
 FNXC:TestFlakeRegister 2026-09-29-07:58:
 FN-9419 quarantines entry 17 after its second identical terminal graph-gate assertion failure.
 The archived evidence must retain both runs and the unchanged strict assertion so rescue requires a root-cause fix rather than tolerance.
+
+FNXC:SkillsGetFlakeRegister 2026-09-29-17:01:
+FN-9425 closes entry 19 after a second independent timeout-shaped Full Suite sighting. Preserve both
+runs and six passing siblings while the 14-day CLI quarantine excludes routine discovery but keeps
+explicit-file diagnostics runnable; timeout, retry, and assertion appeasement remain prohibited.
 -->
+### 19. Built skills-get global flag completion
+
+- **Status:** Closed — quarantined 2026-09-29 by FN-9425 after the second sighting triggered the deletion ratchet; deletion deadline 2026-10-13.
+- **File:** `packages/cli/src/commands/__tests__/skills-get.test.ts`
+- **Exact test:** `fn skills get > preserves global flag precedence and validation for built guide requests`
+- **First-sighting tree/SHA:** `7d5e1dccca` (FN-9421).
+- **Observed frequency:** 2 timeout-shaped sightings, Full Suite push shard 3 only.
+
+Push Full Suite run [36562243319](https://github.com/Runfusion/Fusion/actions/runs/36562243319), shard 3 timing artifact `test-timings-shard-3` (`packages/cli/.timings/timings-shard3-0.json`; artifact id `11031020537`), reported `STACK_TRACE_ERROR` at `skills-get.test.ts:91` after 5228.5 ms. The six sibling cases in the file passed, including the FN-9395-owned guide/version case. The immediately preceding push run [36541404695](https://github.com/Runfusion/Fusion/actions/runs/36541404695) at `3d051dbfab` passed this exact case in 4247 ms.
+
+Push Full Suite run [36580840868](https://github.com/Runfusion/Fusion/actions/runs/36580840868) repeated the exact case after 5914.7 ms. Its failed-set delta against run 36562243319 was 0 newly failed / 0 fixed / 188 still failing, so recurrence across independent main pushes is flake evidence rather than a product regression tied to FN-9423's register-only diff.
+
+FN-9423 rebuilt the CLI and ran the exact file through the built `bin.mjs` entry point successfully. It exercised the version, help, and duplicate-project built-child requests without changing the five-second test budget, adding retries, weakening assertions, or changing guide behavior. FN-9425 quarantined the whole file through the dated ledger and static CLI list; direct naming still runs the file for diagnosis. No engine-core merge-gate allow-list changed. Rescue before 2026-10-13 requires evidence that the test catches a real regression and a root-cause fix; it must not widen the timeout, add retries, force process termination, or weaken output or exit assertions.
+
 ### 17. Terminal graph-gate activity outbox contract
 
 - **Status:** Closed — quarantined 2026-09-29 after the second sighting triggered the deletion ratchet; deletion deadline 2026-10-13.
