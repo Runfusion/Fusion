@@ -10,7 +10,7 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
-import { normalizePlanningSummaryPayload } from "../planning.js";
+import { normalizePlanningSuggestedDependencies, normalizePlanningSummaryPayload } from "../planning.js";
 import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
 import { PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "../issue-image-markup.js";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
@@ -1074,10 +1074,11 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         ? await resolvePlanningGithubTrackingDecision(scopedStore, projectSettings, { owner: sourceContext.sourceIssue.repository.split("/")[0], repo: sourceContext.sourceIssue.repository.split("/")[1], issueNumber: sourceContext.sourceIssue.issueNumber, url: sourceContext.sourceIssue.url ?? "" })
         : undefined;
       // Create the task. Provenance is truthful even when a live importer suppresses tracking.
+      const dependencies = normalizePlanningSuggestedDependencies(summary.suggestedDependencies);
       const task = await scopedStore.createTask({
         title: summary.title,
         description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,
-        dependencies: summary.suggestedDependencies.length > 0 ? summary.suggestedDependencies : undefined,
+        dependencies: dependencies.length > 0 ? dependencies : undefined,
         priority: isTaskPriority(summary.priority) ? summary.priority : DEFAULT_TASK_PRIORITY,
         ...(sourceContext ? { sourceIssue: sourceContext.sourceIssue, source: { sourceType: "github_import" as const, sourceMetadata: sourceContext.sourceMetadata }, ...(trackingDecision?.githubTracking ? { githubTracking: trackingDecision.githubTracking } : {}) } : { source: { sourceType: "api" as const } }),
         branch: resolvedBranch,
