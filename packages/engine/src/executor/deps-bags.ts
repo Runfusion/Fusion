@@ -982,7 +982,8 @@ export function buildRouteGraphMergeFailureToRetryDeps(host: any): any {
 export function buildRouteImplementationIncompleteMergeGraphFailureDeps(host: any): any {
   return {
     ...buildStoreRunContextDeps(host),
-    ...facadeMethods(host, ["clearPausedAborted", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
+    rootDir: host.rootDir,
+    ...facadeMethods(host, ["clearPausedAborted", "hasLiveTaskSessionSurface", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
     activeWorktrees: host.activeWorktrees,
   };
 }

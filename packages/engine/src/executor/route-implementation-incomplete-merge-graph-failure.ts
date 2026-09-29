@@ -13,11 +13,16 @@ import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 import { hasNonTerminalWorkflowSteps } from "./workflow-step-satisfaction.js";
 import { MERGE_BOUNDARY_RECOVERY_VALUE } from "../workflows/workflow-merge-nodes.js";
 import type { MergeBoundaryRecoveryEvidence } from "./workflow-merge-boundary.js";
+import { hasLandedEmptyStepApprovedCodeReview } from "./evaluate-workflow-merge-boundary.js";
+
+export const IMPLEMENTATION_INCOMPLETE_NO_RESUME_MESSAGE = "implementation incomplete with no executable proof to resume — failing instead of retrying merge";
 
 export type RouteImplementationIncompleteMergeGraphFailureDeps = {
   store: TaskStore;
+  rootDir: string;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   clearPausedAborted: (taskId: string) => void;
+  hasLiveTaskSessionSurface: (taskId: string) => boolean;
   activeWorktrees: Map<string, Set<string>>;
   routeGraphFailureToExecutionResume: (
     live: TaskDetail,
@@ -36,6 +41,37 @@ export async function routeImplementationIncompleteMergeGraphFailure(
   failureValue: "implementation-incomplete" | typeof MERGE_BOUNDARY_RECOVERY_VALUE = "implementation-incomplete",
   boundaryEvidence?: MergeBoundaryRecoveryEvidence,
 ): Promise<boolean> {
+  if (
+    !deps.hasLiveTaskSessionSurface(live.id)
+    && await hasLandedEmptyStepApprovedCodeReview(live, deps.rootDir)
+  ) {
+    /*
+    FNXC:LandedReviewRecovery 2026-09-29-03:13:
+    Landed-review recovery may repair an engine-created pause/failure park, but
+    must not rewrite a user pause that raced the graph failure. Returning as
+    handled preserves the human-owned review state and prevents terminal routing
+    from clearing its status, error, or worktree ownership.
+    */
+    if (live.userPaused === true) return true;
+    deps.clearPausedAborted(live.id);
+    deps.activeWorktrees.delete(live.id);
+    const staleFailure = live.status === "failed"
+      && live.error?.includes(IMPLEMENTATION_INCOMPLETE_NO_RESUME_MESSAGE);
+    if (live.paused === true || staleFailure) {
+      await deps.store.updateTask(live.id, {
+        ...(live.paused === true ? { paused: false, pausedReason: null } : {}),
+        ...(staleFailure ? { status: null, error: null } : {}),
+      }, deps.getRunContextFor(live.id));
+    }
+    await deps.store.logEntry(
+      live.id,
+      "Workflow graph merge preserved landed empty-step task for outstanding human review evidence",
+      undefined,
+      deps.getRunContextFor(live.id),
+    );
+    await deps.persistTokenUsage(live.id);
+    return true;
+  }
     /*
     FNXC:WorkflowMerge 2026-07-14-18:20:
     FN-1165 greptile P1s: (1) system-paused implementation-incomplete merge failures must still classify —
@@ -60,7 +96,7 @@ export async function routeImplementationIncompleteMergeGraphFailure(
     }
     // Fail-closed terminal path — release active worktree tracking now that no resume will reuse it.
     deps.activeWorktrees.delete(live.id);
-    const message = `Workflow graph merge blocked at node '${failedNode}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`;
+    const message = `Workflow graph merge blocked at node '${failedNode}': ${IMPLEMENTATION_INCOMPLETE_NO_RESUME_MESSAGE}`;
     executorLog.warn(`${live.id}: ${message}`);
     await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
     if (!(await resolveTerminalColumnsFor(deps.store, live.id)).includes(live.column) && live.error == null) {

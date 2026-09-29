@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MERGE_REGION_KINDS } from "../workflows/workflow-graph-executor.js";
 import {
@@ -239,8 +243,10 @@ describe("FN-6735 merge pause-abort recovery", () => {
         activeWorktrees,
         deps: {
           store: { updateTask, logEntry, getTaskWorkflowSelection: () => undefined },
+          rootDir: "/tmp/no-landed-proof",
           getRunContextFor: () => undefined,
           clearPausedAborted: vi.fn(),
+          hasLiveTaskSessionSurface: vi.fn().mockReturnValue(false),
           activeWorktrees,
           routeGraphFailureToExecutionResume: vi.fn().mockResolvedValue(resume),
           persistTokenUsage: vi.fn(),
@@ -281,6 +287,107 @@ describe("FN-6735 merge pause-abort recovery", () => {
         await routeImplementationIncompleteMergeGraphFailure(deps as any, live, "merge");
         expect(updateTask).not.toHaveBeenCalledWith("FN-6735", expect.objectContaining({ status: "failed" }), undefined);
       }
+    });
+
+    it("preserves an ownership-proven landed empty checklist for outstanding review", async () => {
+      const rootDir = mkdtempSync(join(tmpdir(), "fn-9400-landed-"));
+      try {
+        execFileSync("git", ["init", "-b", "main", rootDir]);
+        writeFileSync(join(rootDir, "landed.txt"), "landed\n");
+        execFileSync("git", ["-C", rootDir, "add", "landed.txt"]);
+        execFileSync("git", ["-C", rootDir, "-c", "user.name=Fusion", "-c", "user.email=fusion@example.test", "commit", "-m", "fix(FN-6735): landed recovery", "-m", "Fusion-Task-Id: FN-6735"]);
+
+        const live = task({
+          column: "checking",
+          status: "failed",
+          error: "Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge",
+          paused: true,
+          pausedReason: "in-review-stall-deadlock",
+          steps: [],
+          baseBranch: "main",
+          workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
+        });
+        const updateTask = vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(live, patch));
+        const deps = {
+          store: { updateTask, logEntry: vi.fn(), getTaskWorkflowSelection: () => undefined },
+          rootDir,
+          getRunContextFor: () => undefined,
+          clearPausedAborted: vi.fn(),
+          hasLiveTaskSessionSurface: vi.fn().mockReturnValue(false),
+          activeWorktrees: new Map([[live.id, new Set(["/worktree"])] ]),
+          routeGraphFailureToExecutionResume: vi.fn(),
+          persistTokenUsage: vi.fn(),
+        };
+
+        await expect(routeImplementationIncompleteMergeGraphFailure(deps as any, live, "merge")).resolves.toBe(true);
+        expect(live).toMatchObject({ column: "checking", status: null, error: null, paused: false, pausedReason: null });
+        expect(live.workflowStepResults).toEqual([{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }]);
+        expect(deps.routeGraphFailureToExecutionResume).not.toHaveBeenCalled();
+        expect(deps.activeWorktrees.has(live.id)).toBe(false);
+
+        await expect(routeImplementationIncompleteMergeGraphFailure(deps as any, live, "merge")).resolves.toBe(true);
+        expect(updateTask).toHaveBeenCalledTimes(1);
+        expect(live.workflowStepResults).toEqual([{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }]);
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
+    });
+
+    it("leaves a user-paused landed checklist untouched through the failure router", async () => {
+      const rootDir = mkdtempSync(join(tmpdir(), "fn-9400-user-paused-landed-"));
+      try {
+        execFileSync("git", ["init", "-b", "main", rootDir]);
+        writeFileSync(join(rootDir, "landed.txt"), "landed\n");
+        execFileSync("git", ["-C", rootDir, "add", "landed.txt"]);
+        execFileSync("git", ["-C", rootDir, "-c", "user.name=Fusion", "-c", "user.email=fusion@example.test", "commit", "-m", "fix(FN-6735): landed recovery", "-m", "Fusion-Task-Id: FN-6735"]);
+
+        const live = task({
+          status: "failed",
+          error: "Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge",
+          paused: true,
+          userPaused: true,
+          pausedReason: "operator hold",
+          steps: [],
+          baseBranch: "main",
+          worktree: "/worktree",
+          workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
+        });
+        const updateTask = vi.fn();
+        const logEntry = vi.fn();
+        const persistTokenUsage = vi.fn();
+        const activeWorktrees = new Map([[live.id, new Set(["/worktree"])]]);
+        const deps = {
+          store: { updateTask, logEntry, getTaskWorkflowSelection: () => undefined },
+          rootDir,
+          getRunContextFor: () => undefined,
+          clearPausedAborted: vi.fn(),
+          hasLiveTaskSessionSurface: vi.fn().mockReturnValue(false),
+          activeWorktrees,
+          routeGraphFailureToExecutionResume: vi.fn(),
+          persistTokenUsage,
+        };
+
+        await expect(routeImplementationIncompleteMergeGraphFailure(deps as any, live, "merge")).resolves.toBe(true);
+        expect(updateTask).not.toHaveBeenCalled();
+        expect(logEntry).not.toHaveBeenCalled();
+        expect(deps.clearPausedAborted).not.toHaveBeenCalled();
+        expect(activeWorktrees.has(live.id)).toBe(true);
+        expect(deps.routeGraphFailureToExecutionResume).not.toHaveBeenCalled();
+        expect(persistTokenUsage).not.toHaveBeenCalled();
+        expect(live).toMatchObject({ status: "failed", paused: true, userPaused: true, pausedReason: "operator hold", worktree: "/worktree" });
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
+    });
+
+    it.each([
+      ["unlanded", { workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }] }],
+      ["missing code-review approval", { workflowStepResults: [] }],
+    ])("keeps an empty checklist fail-closed when %s", async (_label, evidence) => {
+      const { deps, updateTask } = incompleteDeps(false);
+      const live = task({ steps: [], ...evidence });
+      await expect(routeImplementationIncompleteMergeGraphFailure(deps as any, live, "merge")).resolves.toBe(true);
+      expect(updateTask).toHaveBeenCalledWith("FN-6735", expect.objectContaining({ status: "failed" }), undefined);
     });
 
     it("never routes implementation-incomplete failure to a merge requester", async () => {
