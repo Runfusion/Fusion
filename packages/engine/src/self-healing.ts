@@ -2041,6 +2041,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus().then(() => undefined) },
       { name: "reconcile-stale-duplicate-decision", fn: () => this.reconcileStaleDuplicateDecisionPause().then(() => undefined) },
       { name: "reconcile-pending-wedge-notification", fn: () => this.reconcilePendingWedgeNotifications().then(() => undefined) },
+      { name: "reconcile-externally-merged-pr", fn: () => this.reconcileExternallyMergedPrTasks().then(() => undefined) },
       { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks().then(() => undefined) },
       { name: "recover-post-done-noncontinuable-wedge", fn: () => this.recoverPostDoneNonContinuableWedge().then(() => undefined) },
       { name: "recover-completion-handoff-limbo", fn: () => this.recoverCompletionHandoffLimbo().then(() => undefined) },
@@ -3097,6 +3098,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // FNXC:PlanningEvacuation 2026-07-25-23:00: reclaim worktrees acquired at planning time by cards that never executed.
           { name: "reconcile-pre-execution-worktrees", fn: () => this.reconcilePreExecutionWorktrees() },
           { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
+          { name: "reconcile-externally-merged-pr", fn: () => this.reconcileExternallyMergedPrTasks() },
           { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks() },
           { name: "recover-post-done-noncontinuable-wedge", fn: () => this.recoverPostDoneNonContinuableWedge() },
           { name: "recover-completion-handoff-limbo", fn: () => this.recoverCompletionHandoffLimbo() },
@@ -12530,6 +12532,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   // ── Misclassified failure recovery ───────────────────────────────
+
+  /**
+   * Finalize review cards whose durable PR mirror already records an external merge.
+   *
+   * This is deliberately provider-independent: dashboard/CLI adapters write the remote state, and the
+   * TaskStore transition owns proof persistence and lifecycle movement. A closed PR is excluded because
+   * it is not merge evidence; active merger ownership is left untouched for its current owner to settle.
+   */
+  async reconcileExternallyMergedPrTasks(): Promise<number> {
+    const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+    const candidates = new Map<string, Task>();
+    for (const column of reviewColumns) {
+      for (const task of await this.store.listTasks({ column, slim: true })) {
+        const prInfos = task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
+        if (task.deletedAt || task.paused || ["merging", "merging-pr", "merging-fix"].includes(task.status ?? "") || !prInfos.some((pr) => pr.status === "merged")) continue;
+        candidates.set(task.id, task);
+      }
+    }
+
+    let reconciled = 0;
+    for (const task of candidates.values()) {
+      const result = await this.store.applyPrMergedTransition(task.id, {
+        agentId: "self-healing",
+        runId: generateSyntheticRunId("external-pr-reconcile", task.id),
+      }).catch((error) => {
+        log.warn(`External PR reconciliation failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        return { moved: false };
+      });
+      if (result.moved) reconciled++;
+    }
+    return reconciled;
+  }
 
   /**
    * Recover tasks that already merged successfully but never reached `done`.

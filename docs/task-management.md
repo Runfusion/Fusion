@@ -781,7 +781,8 @@ Manual/non-auto-merge behavior:
 - In the dashboard task detail modal (`in-review`), the existing primary footer action can manually drive PR-first completion when `mergeStrategy: "pull-request"` and `autoMerge: false`:
   - `Start PR Review` (no PR linked yet)
   - `Check PR Status` (open PR linked; refreshes PR status from GitHub, does not prompt merge)
-  - `Finish & Close` (PR already merged)
+  - An externally merged PR is reconciled to Done on refresh; its merge commit and timestamp are retained when GitHub provides them. No merge action is offered after reconciliation.
+  - A closed-but-unmerged PR remains in review with an explicit closed-without-merge status so an operator can decide the next action.
 - Manual PR creation first checks for an existing PR on that branch and links it when found.
 - If no PR exists, Fusion pushes the task branch to `origin` before creating the PR.
 - In the dashboard Create-PR modal, if preflight detects merge conflicts with the selected base branch, you can choose **Resolve conflicts with AI**. Fusion resolves the task branch in-place, commits the result, pushes the updated branch to `origin`, and then lets you retry PR creation.
