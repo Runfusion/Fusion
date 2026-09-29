@@ -143,3 +143,6 @@ packages/core/src/postgres/pg_hba_trust.conf
 # recovery can't accidentally `git add` a multi-GB dump into history.
 fusion-pg-*.sql
 fusion-pg-*.dump
+
+# Per-run browser-lane evidence captures (see task-modal-touch-resize-browser.test.ts); never tracked.
+packages/dashboard/test-results/
