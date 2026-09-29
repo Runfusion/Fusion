@@ -150,6 +150,11 @@ FNXC:TestFlakeRegister 2026-09-24-22:49:
 FN-9390 records the triage retry warning as a high-value first sighting after source tracing
 showed a fake-timer observation race rather than a production retry defect. Keep its active
 status pinned so a repeat executes the file-level quarantine rule without weakening the warning.
+
+FNXC:SkillsGetFlakeRegister 2026-09-29-14:00:
+FN-9423 records one built CLI completion timeout only after the real built-entry file test passed.
+The active inventory and evidence check keep the second-sighting quarantine decision tied to the
+exact global-flag child lifecycle without widening its existing test budget.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -175,6 +180,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
     {
       heading: "18. Triage rate-limit retry log warning timer ordering",
       status: "Active first sighting — recorded 2026-09-24, unattributed.",
+    },
+    {
+      heading: "19. Built skills-get global flag completion",
+      status: "Active first sighting — recorded 2026-09-29, unattributed.",
     },
   ]);
 });
@@ -202,6 +211,36 @@ test("triage timeout first-sighting record retains shard evidence and quarantine
     "matching `engine-default` Vitest exclusion",
   ]) {
     assert.ok(body.includes(evidence), `Triage timeout record is missing ${evidence}`);
+  }
+});
+
+test("built skills-get first-sighting record retains child-close evidence and quarantine escalation", () => {
+  const register = readFileSync(registerPath, "utf8");
+  const sections = readActiveRecordSections(register).filter(
+    ({ heading }) => heading === "19. Built skills-get global flag completion",
+  );
+  assert.equal(sections.length, 1, "Expected exactly one active built skills-get first-sighting record");
+
+  const [{ body }] = sections;
+  for (const evidence of [
+    "Active first sighting — recorded 2026-09-29, unattributed.",
+    "packages/cli/src/commands/__tests__/skills-get.test.ts",
+    "fn skills get > preserves global flag precedence and validation for built guide requests",
+    "7d5e1dccca",
+    "3d051dbfab",
+    "36562243319",
+    "36541404695",
+    "test-timings-shard-3",
+    "packages/cli/.timings/timings-shard3-0.json",
+    "11031020537",
+    "STACK_TRACE_ERROR",
+    "skills-get.test.ts:91",
+    "5228.5 ms",
+    "4247 ms",
+    "same-change file-level quarantine in `scripts/lib/test-quarantine.json`",
+    "matching CLI Vitest exclusion",
+  ]) {
+    assert.ok(body.includes(evidence), `Built skills-get record is missing ${evidence}`);
   }
 });
 

@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 2, 13, and 18), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **11 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **4 active observation records** (entries 2, 13, 18, and 19), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **11 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -285,6 +285,20 @@ No production retry race was established. `withRateLimitRetry` calls the non-awa
 | current four-case diagnostics describe | passed; rate-limit fake-timer and three real-timer warning diagnostics retained |
 
 A **second sighting** of this exact test requires same-change file-level quarantine in `scripts/lib/test-quarantine.json` and a matching `engine-default` Vitest exclusion. Do not add retries, widen the timeout, remove the fake-timer drain, or weaken the warning assertion.
+
+### 19. Built skills-get global flag completion
+
+- **Status:** Active first sighting — recorded 2026-09-29, unattributed.
+- **File:** `packages/cli/src/commands/__tests__/skills-get.test.ts`
+- **Exact test:** `fn skills get > preserves global flag precedence and validation for built guide requests`
+- **Observed tree/SHA:** `7d5e1dccca` (FN-9421).
+- **Observed frequency:** 1 sighting, Full Suite push shard 3 only.
+
+Push Full Suite run [36562243319](https://github.com/Runfusion/Fusion/actions/runs/36562243319), shard 3 timing artifact `test-timings-shard-3` (`packages/cli/.timings/timings-shard3-0.json`; artifact id `11031020537`), reported `STACK_TRACE_ERROR` at `skills-get.test.ts:91` after 5228.5 ms. The six sibling cases in the file passed, including the FN-9395-owned guide/version case. The immediately preceding push run [36541404695](https://github.com/Runfusion/Fusion/actions/runs/36541404695) at `3d051dbfab` passed this exact case in 4247 ms.
+
+FN-9423 rebuilt the CLI and ran the exact file through the built `bin.mjs` entry point successfully. It exercised the version, help, and duplicate-project built-child requests without changing the five-second test budget, adding retries, weakening assertions, or changing guide behavior. FN-9421 did not touch this test or its launcher/parser path, so one suite-only timeout does not establish a production exit defect.
+
+A **second sighting** of this exact test requires same-change file-level quarantine in `scripts/lib/test-quarantine.json` and a matching CLI Vitest exclusion. Do not widen the timeout, add retries, force process termination, or weaken output or exit assertions.
 
 ### Common shape and investigated result
 
