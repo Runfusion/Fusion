@@ -10,10 +10,31 @@ from native_parser import CONTEXT_CAPACITY, bounded, claude_message_usage, codex
 
 def _elapsed(start, end):
     try:
-        return max(0, round((datetime.fromisoformat(end.replace('Z', '+00:00')) -
-                             datetime.fromisoformat(start.replace('Z', '+00:00'))).total_seconds() * 1000))
+        return round((datetime.fromisoformat(end.replace('Z', '+00:00')) -
+                      datetime.fromisoformat(start.replace('Z', '+00:00'))).total_seconds() * 1000)
     except (AttributeError, ValueError):
         return None
+
+
+def _finish(turn, at, native_duration=None):
+    """Close a turn at ``at``, reporting only timing the transcript actually supports.
+
+    FNXC:RemoteAgents 2026-09-30-10:59:
+    A resumed or rewritten native transcript can carry a completion event whose timestamp precedes the turn's
+    first prompt. Recording that as the end made a turn that "ends before it starts": Fusion rejects it (HTTP
+    400) on every delivery, and because turns deliver in order, that one record blocked every later turn on
+    the host until the spool filled and collection paused (measured on m3: 2,893 turns, 64 MiB, five days).
+    The old clamp also reported such a turn as a derived 0 ms, a fabricated measurement.
+
+    An end earlier than the start is therefore unknown, not zero: ``endedAt`` stays unset and only a native
+    duration (the provider's own figure) is kept. A consistent end keeps the previous behaviour.
+    """
+    native = native_duration if isinstance(native_duration, int) and not isinstance(native_duration, bool) and native_duration >= 0 else None
+    elapsed = _elapsed(turn['startedAt'], at)
+    consistent = elapsed is not None and elapsed >= 0
+    turn['endedAt'] = at if consistent else None
+    turn['durationMs'] = native if native is not None else (elapsed if consistent else None)
+    turn['durationSource'] = 'native' if native is not None else ('derived' if turn['durationMs'] is not None else None)
 
 
 def _change(path, value):
@@ -137,10 +158,7 @@ def consume_codex(state, event):
         if isinstance(payload.get('last_agent_message'), str):
             turn['response'] = bounded(payload['last_agent_message'], 131072)
         turn['state'] = 'interrupted' if sub == 'turn_aborted' else 'completed'
-        turn['endedAt'] = at
-        duration = payload.get('duration_ms')
-        turn['durationMs'] = duration if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else _elapsed(turn['startedAt'], at)
-        turn['durationSource'] = ('native' if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else 'derived') if turn['durationMs'] is not None else None
+        _finish(turn, at, payload.get('duration_ms'))
         changed = True
     if changed and turn['prompts']:
         turn['revision'] += 1
@@ -211,9 +229,7 @@ def consume_claude(state, event):
             state['calls'][call_id] = dict(name=block.get('name'), input=block.get('input') or {})
             turn['toolCallCount'] += 1; changed = True
         if message.get('stop_reason') in ('end_turn', 'stop_sequence', 'max_tokens') and turn['state'] == 'ongoing':
-            turn['state'] = 'completed'; turn['endedAt'] = at
-            turn['durationMs'] = _elapsed(turn['startedAt'], at)
-            turn['durationSource'] = 'derived' if turn['durationMs'] is not None else None
+            turn['state'] = 'completed'; _finish(turn, at)
             changed = True
     elif kind == 'user':
         result = event.get('toolUseResult') or {}
@@ -242,10 +258,7 @@ def consume_claude(state, event):
             if change:
                 turn['fileChanges'].append(change); changed = True
     elif kind == 'system' and event.get('subtype') == 'turn_duration':
-        duration = event.get('durationMs')
-        turn['state'] = 'completed'; turn['endedAt'] = at
-        turn['durationMs'] = duration if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else _elapsed(turn['startedAt'], at)
-        turn['durationSource'] = ('native' if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else 'derived') if turn['durationMs'] is not None else None
+        turn['state'] = 'completed'; _finish(turn, at, event.get('durationMs'))
         changed = True
     if changed and turn['prompts']:
         turn['revision'] += 1

@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 
-from collector import bind, connect, drain_turns, scan
+from collector import Rejected, bind, connect, drain_turns, scan
 from turn_parser import consume_claude, consume_codex
 
 
@@ -262,3 +262,76 @@ class CodexTurnUsageTests(unittest.TestCase):
         _, state = self.drive(events)
         self.assertEqual(len(state['turn']['usage']), 1)
         self.assertIsNone(state['turn']['usage'][0]['model'])
+
+
+class TurnTimingIntegrityTests(unittest.TestCase):
+    """FNXC:RemoteAgents 2026-09-30-10:59: a completion stamped before the prompt must not produce a turn that
+    ends before it starts (Fusion rejects it forever) nor a fabricated 0 ms duration."""
+
+    def test_claude_completion_before_the_prompt_leaves_the_end_unknown(self):
+        state = {}
+        consume_claude(state, dict(timestamp='2026-09-16T12:02:38.850Z', type='user', uuid='p', message=dict(content='Go')))
+        done = consume_claude(state, dict(timestamp='2026-09-16T11:55:47.216Z', type='assistant',
+                                          message=dict(content=[dict(type='text', text='Done')], stop_reason='end_turn')))
+        self.assertEqual((done['state'], done['endedAt'], done['durationMs'], done['durationSource']), ('completed', None, None, None))
+        # The provider's own duration is still a measurement worth keeping, even when its timestamp is out of order.
+        native = consume_claude(state, dict(timestamp='2026-09-16T11:55:48Z', type='system', subtype='turn_duration', durationMs=3750))
+        self.assertEqual((native['endedAt'], native['durationMs'], native['durationSource']), (None, 3750, 'native'))
+
+    def test_codex_completion_before_the_start_leaves_the_end_unknown(self):
+        state = {}
+        consume_codex(state, dict(type='event_msg', timestamp='2026-09-22T12:00:05Z', payload=dict(type='task_started', turn_id='t')))
+        consume_codex(state, dict(type='event_msg', timestamp='2026-09-22T12:00:06Z', payload=dict(type='user_message', message='Go')))
+        done = consume_codex(state, dict(type='event_msg', timestamp='2026-09-22T12:00:01Z', payload=dict(type='task_complete', last_agent_message='ok')))
+        self.assertEqual((done['endedAt'], done['durationMs'], done['durationSource']), (None, None, None))
+
+    def test_a_consistent_end_is_unchanged(self):
+        state = {}
+        consume_claude(state, dict(timestamp='2026-09-16T12:00:00Z', type='user', uuid='p', message=dict(content='Go')))
+        done = consume_claude(state, dict(timestamp='2026-09-16T12:00:02Z', type='assistant',
+                                          message=dict(content=[dict(type='text', text='Done')], stop_reason='end_turn')))
+        self.assertEqual((done['endedAt'], done['durationMs'], done['durationSource']), ('2026-09-16T12:00:02Z', 2000, 'derived'))
+
+
+class RejectedTurnDeliveryTests(unittest.TestCase):
+    """FNXC:RemoteAgents 2026-09-30-10:59: one record Fusion permanently refuses must not block the turns behind it,
+    while a server-side failure still stops delivery so nothing is lost."""
+
+    def _spool_two_sessions(self, root):
+        db = connect(root / 'spool.sqlite'); bind(db, 'project', 'host')
+        for name, native in (('a.jsonl', 'native-a'), ('b.jsonl', 'native-b')):
+            (root / name).write_text(''.join(json.dumps(e) + '\n' for e in [
+                dict(type='session_meta', timestamp='2026-09-22T12:00:00Z', payload=dict(id=native, cwd='/work')),
+                dict(type='event_msg', timestamp='2026-09-22T12:00:01Z', payload=dict(type='task_started', turn_id='t-' + native)),
+                dict(type='event_msg', timestamp='2026-09-22T12:00:02Z', payload=dict(type='user_message', message='Go')),
+                dict(type='event_msg', timestamp='2026-09-22T12:00:03Z', payload=dict(type='task_complete', last_agent_message='ok')),
+            ]))
+            scan(db, root / name, 'codex')
+        db.execute('DELETE FROM pending'); db.commit()
+        return db
+
+    def test_a_permanently_rejected_turn_is_set_aside_and_later_turns_deliver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = self._spool_two_sessions(Path(directory))
+            sent = []
+            def send(operation, body):
+                sent.append(body['turn']['nativeTurnId'])
+                if len(sent) == 1:
+                    raise Rejected(400)
+                return dict(eventId=body['eventId'], sessionId=body['sessionId'],
+                            nativeTurnId=body['turn']['nativeTurnId'], revision=body['turn']['revision'])
+            self.assertEqual(drain_turns(db, 'project', 'host', send), 1)
+            self.assertEqual(len(sent), 2)
+            self.assertEqual(db.execute('SELECT count(*) FROM turns WHERE revision>acked').fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT value FROM counters WHERE key='rejected_turns'").fetchone()[0], 1)
+            db.close()
+
+    def test_a_server_failure_still_blocks_and_keeps_every_turn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = self._spool_two_sessions(Path(directory))
+            def send(operation, body):
+                raise ValueError('Collector returned HTTP 503')
+            with self.assertRaises(ValueError):
+                drain_turns(db, 'project', 'host', send)
+            self.assertEqual(db.execute('SELECT count(*) FROM turns WHERE revision>acked').fetchone()[0], 2)
+            db.close()

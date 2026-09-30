@@ -104,6 +104,20 @@ def bind(db, project, host):
         db.execute("INSERT OR IGNORE INTO config VALUES ('scope',?)", (scope,))
 
 
+class Rejected(ValueError):
+    """Fusion refused this one record for its content. Retrying the identical record can never succeed."""
+
+    def __init__(self, status):
+        super().__init__(f'Collector record rejected with HTTP {status}')
+        self.status = status
+
+
+# FNXC:RemoteAgents 2026-09-30-10:59: statuses that condemn the record itself. Auth (401/403), a missing route
+# (404, e.g. a Fusion build without remote agents), rate limits (429) and 5xx describe the server, not the record,
+# so they keep blocking and retrying rather than discarding data the server would accept later.
+PERMANENT_REJECTIONS = frozenset({400, 409, 413, 422})
+
+
 def post(url, project, token, operation, body, timeout=5):
     # FNXC:RemoteAgents 2026-09-21-04:51: Host collectors may use WireGuard HTTP, but arbitrary cleartext or credential-bearing destinations must fail before any token-bearing request.
     parsed = urllib.parse.urlsplit(validate_url(url))
@@ -118,6 +132,8 @@ def post(url, project, token, operation, body, timeout=5):
         raw = response.read(262145)
         if len(raw) > 262144:
             raise ValueError('Collector response limit exceeded')
+        if response.status in PERMANENT_REJECTIONS:
+            raise Rejected(response.status)
         if response.status < 200 or response.status >= 300:
             raise ValueError(f'Collector returned HTTP {response.status}')
         return json.loads(raw)
@@ -149,7 +165,18 @@ def drain_turns(db, project, host, send, limit=25):
         session_id = hashlib.sha256(json.dumps([project, host, provider, native], separators=(',', ':')).encode()).hexdigest()
         event_id = hashlib.sha256(json.dumps([session_id, turn_id, revision], separators=(',', ':')).encode()).hexdigest()
         request = dict(schemaVersion=1, eventId=event_id, sessionId=session_id, turn=json.loads(body))
-        ack = send('turn-ingest', request)
+        try:
+            ack = send('turn-ingest', request)
+        except Rejected as rejection:
+            # FNXC:RemoteAgents 2026-09-30-10:59: turns deliver in order, so one record Fusion will never accept
+            # used to block every later turn on the host until the spool filled. Set exactly that revision aside,
+            # count it, and keep going; a later, corrected revision of the same turn is still delivered.
+            with db:
+                db.execute('UPDATE turns SET acked=max(acked,?) WHERE provider=? AND native=? AND turn_id=?',
+                           (revision, provider, native, turn_id))
+            bump(db, 'rejected_turns')
+            print('Turn rejected by Fusion and set aside:', provider, rejection.status, flush=True)
+            continue
         if (ack.get('eventId'), ack.get('sessionId'), ack.get('nativeTurnId')) != (event_id, session_id, turn_id) or ack.get('revision', 0) < revision:
             raise ValueError('Invalid turn ingestion acknowledgement')
         with db:
