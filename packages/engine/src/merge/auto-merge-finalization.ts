@@ -241,14 +241,34 @@ export async function finalizeProvenAutoMergeTask({
   log,
   fence,
 }: FinalizeProvenAutoMergeTaskOptions): Promise<AutoMergeFinalizationResult> {
-  const latest = await store.getTask(taskId).catch(() => null);
-  if (!latest) {
+  const initialTask = await store.getTask(taskId).catch(() => null);
+  if (!initialTask) {
     return { outcome: "missing", task: null, previousColumn: null, reason: "task-not-found" };
   }
+  let latest: Task = initialTask;
 
   // U7: resolve the workflow's complete/merge columns once (byte-identical to
   // done/in-review for builtin:coding).
   const { completeColumn, mergeColumn, isCompleteColumn } = await resolveFinalizationColumns(store, taskId);
+
+  /*
+  FNXC:PostMergeRecovery 2026-09-30-04:56:
+  A successful integration write is irreversible and its proof must become durable before an enabled
+  post-merge gate can defer the terminal move. Previously the evidence check returned first, leaving
+  merge confirmation only in the caller's in-memory MergeResult; a restart then saw no worktree and
+  no proof, so self-healing could only surface and eventually pause the card as a deadlock. Persist
+  only the merge evidence here—never completion or approval—so graph traversal can still produce the
+  required gate result and restart recovery can distinguish landed work from an unmerged branch.
+  */
+  if (result?.mergeConfirmed === true && latest.mergeDetails?.mergeConfirmed !== true) {
+    const persistProof = () => store.updateTaskAtomic(taskId, (current) => ({
+      mergeDetails: buildFinalizationMergeDetails(current, result),
+    }));
+    const persisted = fence
+      ? await fence.write("finalization", persistProof)
+      : await persistProof();
+    if (persisted) latest = persisted;
+  }
 
   const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest);
   if (evidenceBlocker) {

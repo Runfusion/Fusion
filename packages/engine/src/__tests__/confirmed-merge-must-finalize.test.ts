@@ -41,6 +41,37 @@ describe("FN-180 confirmed merge must finalize", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "failed" }));
   });
 
+  it("persists irreversible merge proof before deferring to an absent post-merge result", async () => {
+    const task = {
+      id: "FN-PM-proof-before-gate",
+      column: "in-review",
+      steps: [{ name: "implementation", status: "done" }],
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [],
+    } as unknown as Task;
+    const store = makeStore(task);
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: task.id,
+      source: "workflow-graph-merge-finalize",
+      result: {
+        task,
+        mergeConfirmed: true,
+        commitSha: "abc123",
+      } as never,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "blocked",
+      deferredPostMergeEvidence: true,
+    });
+    expect(task.column).toBe("in-review");
+    expect(task.mergeDetails).toMatchObject({ mergeConfirmed: true, commitSha: "abc123" });
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function));
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("blocks direct and self-healing finalization until the enabled post-merge gate approves", async () => {
     const task = {
       id: "FN-PM-finalize",
