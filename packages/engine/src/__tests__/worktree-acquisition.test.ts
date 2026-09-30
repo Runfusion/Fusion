@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { acquireWorktreePathReservation } from "@fusion/core";
+import { acquireWorktreePathReservation, readWorktreePathReservation } from "@fusion/core";
 import { acquireTaskWorktree, RepoRootWorktreeError, WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import { classifyTaskWorktree } from "../worktree/worktree-pool.js";
 import * as desktopArtifacts from "../worktree/worktree-desktop-artifacts.js";
@@ -523,7 +523,7 @@ describe("acquireTaskWorktree", () => {
     expect(loggerWarn).not.toHaveBeenCalledWith(expect.stringContaining("[object Object]"));
   });
 
-  it("reconciles a durable quarantine for an absent pinned path before recreation", async () => {
+  it("recreates an unregistered pinned checkout after reconciling its stale durable reservation", async () => {
     const rootDir = makeRepo();
     const worktreesDir = join(rootDir, ".worktrees");
     const reservationWorktreesDir = join(rootDir, ".fusion", "worktrees");
@@ -531,6 +531,8 @@ describe("acquireTaskWorktree", () => {
     mkdirSync(worktreesDir, { recursive: true });
     git(rootDir, `git worktree add -b fusion/fn-1 ${JSON.stringify(pinnedPath)} main`);
     rmSync(pinnedPath, { recursive: true, force: true });
+    git(rootDir, "git worktree prune");
+    git(rootDir, "git branch -D fusion/fn-1");
     const failedArchiveReservation = await acquireWorktreePathReservation({
       canonicalPath: pinnedPath,
       worktreesDir: reservationWorktreesDir,
@@ -548,6 +550,17 @@ describe("acquireTaskWorktree", () => {
     expect(result.worktreePath).toBe(pinnedPath);
     expect(existsSync(join(pinnedPath, ".git"))).toBe(true);
     expect(git(rootDir, "git worktree list --porcelain")).toContain(pinnedPath);
+    expect(git(rootDir, "git branch --list fusion/fn-1")).toContain("fusion/fn-1");
+    expect(await readWorktreePathReservation({ canonicalPath: pinnedPath, worktreesDir: reservationWorktreesDir })).toBeNull();
+
+    const second = await acquireTaskWorktree({
+      task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" },
+      rootDir,
+      store,
+      settings: { worktreeNaming: "task-id", recycleWorktrees: false },
+    });
+    expect(second.worktreePath).toBe(pinnedPath);
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-1", expect.stringContaining("is not a working tree"), expect.anything(), expect.anything());
   });
 
   it("refuses quarantine reconciliation when an active session owns the absent pinned path", async () => {

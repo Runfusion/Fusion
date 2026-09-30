@@ -34,7 +34,17 @@ function makeTask(overrides: TaskWithPromptOverride): Task {
 }
 
 function createStore(task: Task, settings: Partial<Settings>): TaskStore {
-  let currentTask = { ...task };
+  let currentTask = {
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-07:57:
+    Direct-merge success fixtures must model the durable approval re-read by the finalizer.
+    Individual refusal cases override this state rather than bypassing the production fence.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true },
+    ...task,
+  };
   const mergedSettings: Settings = {
     ...DEFAULT_SETTINGS,
       mergeIntegrationWorktree: "cwd-main" as const,
@@ -63,6 +73,15 @@ function createStore(task: Task, settings: Partial<Settings>): TaskStore {
         updatedAt: new Date().toISOString(),
       } as Task;
       return currentTask;
+    }),
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      currentTask = { ...currentTask, ...await reducer(currentTask) } as Task;
+      return currentTask;
+    }),
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      if (!await predicate(currentTask)) return { moved: false, task: currentTask };
+      currentTask = { ...currentTask, column, columnMovedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Task;
+      return { moved: true, task: currentTask };
     }),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
@@ -123,7 +142,7 @@ describeIfGit("aiMergeTask direct merge commit routing (real git)", () => {
 
     await aiMergeTask(store, repo, "FN-4069");
 
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(true);
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-4069", "done", expect.any(Function), expect.any(Object));
 
     const subjects = git(repo, `git log --reverse --format=%s ${initSha}..HEAD`).split("\n");
     expect(subjects).toEqual([

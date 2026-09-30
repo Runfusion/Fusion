@@ -453,7 +453,7 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
           ctx.signal.addEventListener("abort", onGraphAbort, { once: true });
         });
         try {
-          const result = await Promise.race([deps.mergeRequester(mergeTask.id, { signal: mergeSignal }), timeout, cancelled]);
+          const result = await Promise.race([deps.mergeRequester(mergeTask.id, { signal: mergeSignal, graphOwnedPostMergeTraversal: true }), timeout, cancelled]);
           if (result === "cancelled") {
             executorLog.warn(`${mergeTask.id}: workflow merge primitive cancelled by graph abort`);
             return { outcome: "failure", value: "merge-cancelled" };
@@ -484,6 +484,19 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
               source: "workflow-graph-merge-finalize",
               log: (message) => executorLog.warn(message),
             });
+            if (finalization.deferredPostMergeEvidence) {
+              /*
+              FNXC:PostMergeEvidenceOrdering 2026-09-25-19:49:
+              A confirmed landing with an enabled evidence gate is a successful merge boundary,
+              not a failed merge. Leave final completion to the graph's post-merge traversal; it
+              persists the actual verdict before the graph-completion finalizer retries.
+              */
+              return {
+                outcome: "success",
+                value: result.noOp ? "merge-noop" : "merged",
+                data: { status: "merged", noOp: result.noOp },
+              };
+            }
             if (finalization.outcome === "blocked" || finalization.outcome === "missing") {
               return {
                 outcome: "failure",

@@ -3598,6 +3598,27 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       stay outside the restart patch, while restart-refused legacy shapes continue through the
       established recovery classifier below.
       */
+      /*
+      FNXC:NoVerdictReviewRecovery 2026-09-23-19:58:
+      A completed status-none review card can be a lost review dispatch rather than a lost merge.
+      Ask ProjectEngine to hold merge admission and arm the exact failed gate before the general stage
+      restart or merge-reset paths; this preserves the failed evidence for the replacement review.
+      */
+      if (isInReviewMergeRetryStall && typeof engine?.rerouteFailedNoVerdictPreMergeReview === "function") {
+        const noVerdictOutcome = await engine.rerouteFailedNoVerdictPreMergeReview(task);
+        if (noVerdictOutcome === "rerouted") {
+          await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (failed no-verdict review re-seeded)");
+          res.json(await scopedStore.getTask(req.params.id));
+          return;
+        }
+        if (noVerdictOutcome === "pending") {
+          throw conflict("Retry is unavailable while a merge is queued or active");
+        }
+        if (noVerdictOutcome === "unavailable") {
+          throw conflict("Retry is unavailable because review recovery ownership is unavailable");
+        }
+      }
+
       let stageRestartRefusal: Extract<Awaited<ReturnType<typeof restartTaskStage>>, { kind: "refused" }> | undefined;
       if (!isMissingWorktreeSessionRetry) {
         // FNXC:TaskRecoveryVocabulary 2026-08-28-01:11: Retry must ask the locked restart

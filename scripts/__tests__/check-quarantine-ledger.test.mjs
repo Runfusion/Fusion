@@ -157,6 +157,39 @@ test("include lists and non-array excludes are deliberately ignored", () => {
   } finally { rmSync(rootDir, { recursive: true, force: true }); }
 });
 
+test("CLI static quarantine list stays in lockstep with its ledger row", () => {
+  const rootDir = tempRoot();
+  try {
+    const file = "packages/cli/src/commands/__tests__/skills-get.test.ts";
+    writeFile(rootDir, file);
+    writeConfig(rootDir, "cli", 'const quarantinedCliTests: string[] = ["src/commands/__tests__/skills-get.test.ts"]; export default { test: { exclude: ["**/node_modules/**", ...quarantinedCliTests] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [healthyEntry(file)] });
+    assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }), []);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
+test("CLI ledger row missing from its static quarantine list is missing-exclude", () => {
+  const rootDir = tempRoot();
+  try {
+    const file = "packages/cli/src/commands/__tests__/skills-get.test.ts";
+    writeFile(rootDir, file);
+    writeConfig(rootDir, "cli", 'const quarantinedCliTests: string[] = []; export default { test: { exclude: ["**/node_modules/**", ...quarantinedCliTests] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [healthyEntry(file)] });
+    assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }).map((row) => row.kind), ["missing-exclude"]);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
+test("CLI static quarantine list without a ledger row is orphan-exclude", () => {
+  const rootDir = tempRoot();
+  try {
+    const file = "packages/cli/src/commands/__tests__/skills-get.test.ts";
+    writeFile(rootDir, file);
+    writeConfig(rootDir, "cli", 'const quarantinedCliTests: string[] = ["src/commands/__tests__/skills-get.test.ts"]; export default { test: { exclude: ["**/node_modules/**", ...quarantinedCliTests] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [] });
+    assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }).map((row) => row.kind), ["orphan-exclude"]);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
 test("comment-only ledger file mention cannot satisfy an exclusion", () => {
   const rootDir = tempRoot();
   try {

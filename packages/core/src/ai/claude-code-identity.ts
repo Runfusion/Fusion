@@ -1,8 +1,4 @@
-import {
-  ANTHROPIC_PROVIDER_ID,
-  CLAUDE_FABLE_5_1_MODEL_ID,
-  toExecutionModelProviderId,
-} from "./anthropic-models.js";
+import { ANTHROPIC_PROVIDER_ID, toExecutionModelProviderId } from "./anthropic-models.js";
 
 /*
 FNXC:ModelCatalog 2026-09-03-05:30:
@@ -10,11 +6,17 @@ Bundled pi-ai freezes its OAuth Claude Code identity at claude-cli/2.1.75, while
 
 The lowercase user-agent key is intentional: pi-ai uses case-sensitive Object.assign header merging, so a differently-cased key would append a second header instead of replacing its stale OAuth entry.
 */
-export const CLAUDE_CODE_IMPERSONATED_VERSION = "2.1.251";
+export const CLAUDE_CODE_IMPERSONATED_VERSION = "2.1.284";
 export const CLAUDE_CODE_CLIENT_VERSION_ENV = "FUSION_ANTHROPIC_CLAUDE_CODE_VERSION";
 
+/*
+FNXC:ModelCatalog 2026-09-29-05:31:
+Claude Code 2.1.284 is the official Sonnet 5.5 introduction. Keep model identity floors
+independent from Pi catalog ownership so OAuth identity decoration remains stable as Pi adds or removes rows.
+*/
 export const ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION: Readonly<Record<string, string>> = {
-  [CLAUDE_FABLE_5_1_MODEL_ID]: "2.1.251",
+  ["claude-fable-5-1"]: "2.1.251",
+  ["claude-sonnet-5-5"]: "2.1.284",
 };
 
 export function parseClaudeCodeVersion(value: string): [number, number, number] | undefined {

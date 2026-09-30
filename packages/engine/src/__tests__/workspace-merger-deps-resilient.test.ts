@@ -61,7 +61,15 @@ function createStore(): TaskStore & { logs: string[] } {
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     // mergeAndReview reads store.getTask().comments for prompt context — return a real task shape.
     getTask: vi.fn(async () => liveTask),
-    moveTask: vi.fn().mockResolvedValue({ id: TASK_ID, column: "done" } as Task),
+    moveTask: vi.fn(async (_id: string, column: Task["column"]) => { liveTask.column = column; return liveTask; }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: The dependency fixture must honor FN-9370's conditional terminal-move predicate.
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(liveTask)) return { moved: false, task: liveTask };
+      void id;
+      void options;
+      liveTask.column = column;
+      return { moved: true, task: liveTask };
+    }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),
   }) as unknown as TaskStore & { logs: string[] };

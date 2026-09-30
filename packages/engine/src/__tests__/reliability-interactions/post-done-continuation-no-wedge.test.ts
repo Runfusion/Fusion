@@ -61,6 +61,24 @@ function createStore(task: Task, settingsOverrides: Record<string, unknown> = {}
     Object.assign(task, normalized, { updatedAt: new Date(Date.now()).toISOString() });
     return task;
   });
+  /*
+  FNXC:EngineTests 2026-09-29-00:13:
+  Model TaskStore's atomic reducer so the exhausted-retry TERMINAL failure path
+  (handleGraphFailure -> retryTerminalFailurePersistence) can persist status="failed"
+  on its first attempt. A store missing updateTaskAtomic makes that call throw on every
+  attempt, and the retry loop's real setTimeout backoff (1s..64s) never advances under this
+  file's frozen fake timers — the whole test stranded until the 30s vitest timeout fired
+  (~30s file wall-time + spurious failure) instead of asserting terminal-failure behavior.
+  */
+  (emitter as any).updateTaskAtomic = vi.fn().mockImplementation(async (
+    taskId: string,
+    updater: (current: Task) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>,
+  ) => {
+    const current = await (emitter as any).getTask(taskId) as Task;
+    const patch = await updater(current);
+    if (patch == null) return current;
+    return (emitter as any).updateTask(taskId, patch as Partial<Task>);
+  });
   (emitter as any).moveTask = vi.fn().mockImplementation(async (_taskId: string, column: Task["column"]) => {
     task.column = column;
     task.updatedAt = new Date(Date.now()).toISOString();

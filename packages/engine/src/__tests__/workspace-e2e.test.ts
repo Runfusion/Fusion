@@ -130,6 +130,12 @@ function createStore(rows: Task[], settings: Partial<Settings> = {}): TaskStore 
       tasks.set(id, next);
       return next;
     }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Preserve FN-9370's live predicate fence for workspace e2e terminal moves.
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      const task = await store.getTask(id) as Task;
+      if (!await predicate(task)) return { moved: false, task };
+      return { moved: true, task: await store.moveTask(id, column, options) };
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
@@ -606,7 +612,7 @@ pgDescribeIfGit("workspace local-only PostgreSQL landing", () => {
     const recordFence = vi.spyOn(store, "recordWorkspaceLeaseFenceRef");
     const recordIntent = vi.spyOn(store, "recordWorkspaceLandIntent");
     const acquired = vi.spyOn(store, "acquireWorkspaceLease");
-    const moveTask = vi.spyOn(store, "moveTask");
+    const moveTaskIf = vi.spyOn(store, "moveTaskIf");
     const realLand = mergerAi.landWorkspaceTask;
     const land = vi.spyOn(mergerAi, "landWorkspaceTask").mockImplementation(async (landStore, task, rootDir, options) =>
       realLand(landStore, task, rootDir, options, {
@@ -652,7 +658,7 @@ pgDescribeIfGit("workspace local-only PostgreSQL landing", () => {
       expect(acquired).toHaveBeenCalledWith(expect.objectContaining({ leaseKey: "repo:repo-a" }));
       expect(recordFence).not.toHaveBeenCalled();
       expect(recordIntent).not.toHaveBeenCalled();
-      expect(moveTask).toHaveBeenCalledTimes(1);
+      expect(moveTaskIf).toHaveBeenCalledTimes(1);
       expect(fx.git("repo-a", "git remote")).toBe("");
     } finally {
       land.mockRestore();

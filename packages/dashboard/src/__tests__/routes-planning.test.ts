@@ -2565,6 +2565,61 @@ describe("Planning Mode Routes", () => {
         expect(createInput.description.match(/## Planning Interview Context/g)).toHaveLength(1);
       });
 
+      it("drops prose dependencies from a summary override while retaining canonical IDs on replay", async () => {
+        const createdTask = {
+          id: "FN-9412",
+          title: "Dependency normalization",
+          description: "Planned task",
+          column: "triage",
+          dependencies: ["KB-42", "ERR-7"],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+        (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const start = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Normalize planning dependencies" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = start.body.sessionId;
+        const summary = {
+          title: "Dependency normalization",
+          description: "Create a task without prose dependencies.",
+          suggestedDependencies: ["KB-42", "Existing failed-no-verdict re-seeding must not race or duplicate automatic waiver for the same attempt.", "ERR-7", "KB-42", ""],
+          keyDeliverables: ["Filter invalid dependencies"],
+        };
+
+        const created = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, summary }),
+          { "Content-Type": "application/json" },
+        );
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+        expect(created.body).not.toHaveProperty("error");
+        expect((store.createTask as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toMatchObject({
+          dependencies: ["KB-42", "ERR-7"],
+        });
+
+        const replay = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, summary }),
+          { "Content-Type": "application/json" },
+        );
+        expect(replay.status).toBe(200);
+        expect(replay.body).toMatchObject({ alreadyCreated: true, task: { id: "FN-9412" } });
+        expect(store.createTask).toHaveBeenCalledTimes(1);
+      });
+
       it.each([
         { label: "null", workflowId: null, expectedWorkflowId: undefined },
         { label: "blank", workflowId: "  ", expectedWorkflowId: undefined },

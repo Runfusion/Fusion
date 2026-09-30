@@ -6,7 +6,8 @@
  * skip-bypass taint / implementation-proof failures.
  */
 import type { TaskDetail, TaskStore, WorkflowIr, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
-import { evaluateForeachMergeProof, evaluateSkipBypassTaint, resolveWorkflowIrForTask } from "@fusion/core";
+import { evaluateForeachMergeProof, evaluateSkipBypassTaint, resolveTaskMergeTarget, resolveWorkflowIrForTask } from "@fusion/core";
+import { findAlreadyMergedTaskCommit } from "../merge/already-merged-detector.js";
 
 export type EvaluateWorkflowMergeBoundaryDeps = {
   store: TaskStore;
@@ -65,6 +66,40 @@ export type GetWorkflowMergeImplementationProofFailureDeps = {
   store: TaskStore;
   evaluateWorkflowMergeBoundary: (task: TaskDetail, runId?: string) => Promise<WorkflowMergeBoundaryProof>;
 };
+
+/**
+ * FNXC:LandedReviewRecovery 2026-09-25-20:03:
+ * An ownership-anchored landed commit plus a passed APPROVE code review is a
+ * narrow exception for an empty historical checklist. Empty steps alone never
+ * prove implementation: unreadable, foreign, unlanded, or unreviewed tasks
+ * continue through the implementation-proof failure path.
+ */
+export async function hasLandedEmptyStepApprovedCodeReview(
+  task: TaskDetail,
+  rootDir: string,
+): Promise<boolean> {
+  if (!Array.isArray(task.steps) || task.steps.length !== 0) return false;
+  const hasApprovedCodeReview = (task.workflowStepResults ?? []).some((result) =>
+    result.workflowStepId === "code-review"
+    && result.status === "passed"
+    && result.verdict === "APPROVE",
+  );
+  if (!hasApprovedCodeReview) return false;
+
+  try {
+    const target = resolveTaskMergeTarget(task);
+    return (await findAlreadyMergedTaskCommit({
+      taskId: task.id,
+      lineageId: task.lineageId,
+      repoDir: rootDir,
+      baseBranch: target.branch,
+      taskBranch: task.branch,
+      baseCommitSha: task.baseCommitSha,
+    })) !== null;
+  } catch {
+    return false;
+  }
+}
 
 export async function getWorkflowMergeImplementationProofFailure(
   deps: GetWorkflowMergeImplementationProofFailureDeps,

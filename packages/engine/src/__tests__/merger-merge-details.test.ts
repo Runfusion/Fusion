@@ -178,15 +178,41 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     log: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-07:57:
+    Merger success cases must carry the approved evidence checked by the conditional finalizer.
+    Explicit blocked-evidence cases override this default and remain in review.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true, commitSha: "mergedcommit123" },
     ...taskOverrides,
   };
 
+  let currentTask = { ...baseTask, prompt: "# test" };
+  const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => {
+    currentTask = { ...currentTask, ...patch } as Task;
+    return currentTask;
+  });
+  const moveTask = vi.fn(async (_id: string, column: Task["column"]) => {
+    currentTask = { ...currentTask, column } as Task;
+    return currentTask;
+  });
+
   return {
-    getTask: vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" }),
+    getTask: vi.fn(async () => currentTask),
     listTasks: vi.fn().mockResolvedValue(allTasks),
-    updateTask: vi.fn().mockResolvedValue(baseTask),
+    updateTask,
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      currentTask = { ...currentTask, ...await reducer(currentTask) } as Task;
+      return currentTask;
+    }),
     pauseTask: vi.fn().mockResolvedValue({ ...baseTask, paused: true }),
-    moveTask: vi.fn().mockResolvedValue({ ...baseTask, column: "done" }),
+    moveTask,
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      if (!await predicate(currentTask)) return { moved: false, task: currentTask };
+      return { moved: true, task: await moveTask(_id, column) };
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
@@ -527,7 +553,7 @@ describe("aiMergeTask — agent log persistence", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Bash", "tool", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Bash", "tool", "git status", "merger");
   });
 
   it("still fires onAgentText callback alongside logging", async () => {
@@ -1129,8 +1155,8 @@ describe("aiMergeTask — merge details collection", () => {
     );
     expect(mergeDetailsCall).toBeUndefined();
 
-    // Task should still be moved to done
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    // The evidence-gated finalizer advances only through its conditional move.
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
   });
 
   it("handles missing shortstat gracefully when show --shortstat fails", async () => {

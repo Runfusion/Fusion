@@ -88,7 +88,14 @@ const SUCCESS_PATH = [
   "code-review::code-review-step",
   "review",
   "merge",
+  /*
+  FNXC:WorkflowGraphTests 2026-09-29-11:04:
+  The post-merge optional group now traverses its template step before terminal success. Keep this
+  full production topology in the shared path so direct merge-region entry cases cannot preserve an
+  obsolete group-only expectation.
+  */
   "post-merge-verification",
+  "post-merge-verification::post-merge-verification-step",
 ];
 // Same path, stopped before the post-merge hop (merge itself failed).
 const MERGE_FAILURE_PATH = SUCCESS_PATH.slice(0, SUCCESS_PATH.indexOf("merge") + 1);

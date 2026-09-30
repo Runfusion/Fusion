@@ -74,13 +74,8 @@ export { customProviderRegistryKey } from "./ai/custom-provider-key.js";
 export {
   ANTHROPIC_PROVIDER_ID,
   ANTHROPIC_API_KEY_PROVIDER_ID,
-  CLAUDE_FABLE_5_1_MODEL_ID,
-  CLAUDE_SONNET_5_MODEL_ID,
-  SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION,
-  mergeSupplementalAnthropicModels,
   toExecutionModelProviderId,
 } from "./ai/anthropic-models.js";
-export type { AnthropicProviderRegistration } from "./ai/anthropic-models.js";
 export {
   ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION,
   buildAnthropicClaudeCodeIdentityHeaders,
@@ -706,6 +701,7 @@ export {
   acquireWorktreePathReservation,
   withWorktreePathReservation,
   readWorktreePathReservation,
+  resolveWorktreePathReservationDirectory,
   canonicalizeWorktreePath,
   type WorktreePathReservation,
   type WorktreePathReservationOptions,
@@ -1210,7 +1206,7 @@ export {
   requiresContentReviewProof,
   resolveUnprovenReviewApproval,
 } from "./merge/pre-merge-approval.js";
-export { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {

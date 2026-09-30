@@ -167,6 +167,42 @@ describe("reliability interactions: in-review stall deadlock disposition", () =>
     manager.stop();
   });
 
+  it("FN-9400: explicit user auto-merge hold remains untouched across repeated stall scans", async () => {
+    const task = {
+      id: "FN-9400-MANUAL-HOLD",
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      autoMerge: false,
+      autoMergeProvenance: "user",
+      status: "failed",
+      error: "Workflow graph merge blocked at node 'merge': implementation incomplete with no executable proof to resume — failing instead of retrying merge",
+      branch: "fusion/fn-9400-manual-hold",
+      worktree: "/tmp/fn-9400-manual-hold",
+      mergeDetails: {},
+      mergeRetries: 0,
+      steps: [],
+      workflowStepResults: [{ workflowStepId: "code-review", status: "passed", verdict: "APPROVE" }],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      log: [],
+    } as any satisfies Task;
+
+    const store = createStore(task, { autoMerge: true });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+    for (const timestamp of ["2026-01-01T00:10:00.000Z", "2026-01-01T00:12:00.000Z", "2026-01-01T00:14:00.000Z"]) {
+      vi.setSystemTime(new Date(timestamp));
+      expect(await manager.surfaceInReviewStalls()).toBe(0);
+    }
+
+    expect(task).toMatchObject({ paused: false, status: "failed" });
+    expect((store.updateTask as any).mock.calls).toHaveLength(0);
+    expect(task.log).toHaveLength(0);
+    expect(((store as any).__auditEvents as any[])).toHaveLength(0);
+
+    manager.stop();
+  });
+
   it("FN-6113: terminal provider errors are ignored when autoMerge is disabled", async () => {
     const task = {
       id: "FN-6113-AUTOMERGE-OFF",
@@ -303,8 +339,9 @@ describe("reliability interactions: in-review stall deadlock disposition", () =>
     expect(task.completionHandoffLimboRecoveryCount).toBe(2);
     expect(task.status).toBeUndefined();
     expect(task.error).toBeUndefined();
-    expect(await manager.surfaceInReviewStalls()).toBe(0);
+    expect(await manager.surfaceInReviewStalls()).toBe(1);
     expect(task.pausedReason).not.toBe("in-review-stall-deadlock");
+    expect(task.log.some((entry: { action: string }) => entry.action.startsWith("In-review stall auto-disposed"))).toBe(false);
     expect(task.log.some((entry: { action: string }) => entry.action.includes("Completion handoff limbo recovery exhausted"))).toBe(false);
 
     manager.stop();

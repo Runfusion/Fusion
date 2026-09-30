@@ -39,6 +39,23 @@ export function evaluateNoCommitsNoOpFinalize(
   const hasCompletedVerification = steps.some((step) =>
     step.status === "done" && VERIFICATION_STEP_NAME.test(step.name ?? ""),
   );
+  /*
+  FNXC:NoCommitReviewSignoff 2026-09-30-04:56:
+  An approved Code Review over the canonical empty review input is the reviewer sign-off named by
+  this guard's refusal text. FN-9422 completed an operational reconciliation, intentionally skipped
+  its conditional source-repair step, and received that exact approval, but the guard ignored all
+  review evidence and self-healing could only repeat the same immutable blocker until deadlock
+  disposal. Accept the narrow empty-input approval for non-verification skips; skipped verification
+  or remediation work remains unconditionally blocking, and ordinary approvals over non-empty code
+  cannot launder reverted implementation work.
+  */
+  const hasApprovedEmptyCodeReview = task.workflowStepResults?.some((result) =>
+    result.workflowStepId === "code-review"
+    && result.reviewKind === "code"
+    && result.status === "passed"
+    && result.verdict === "APPROVE"
+    && result.reviewInputFingerprint === "empty-review-input:v1",
+  ) === true;
 
   // FN-8141: skipped step + empty diff. Applies to ALL tasks regardless of `noCommitsExpected`.
   if (skippedSteps.length > 0) {
@@ -64,7 +81,7 @@ export function evaluateNoCommitsNoOpFinalize(
     const everyNonSkippedDone = steps
       .filter((step) => step.status !== "skipped")
       .every((step) => step.status === "done");
-    if (!(everyNonSkippedDone && noCommitsExpected)) {
+    if (!(everyNonSkippedDone && (noCommitsExpected || hasApprovedEmptyCodeReview))) {
       const names = skippedSteps.map((step) => step.name).join(", ");
       return {
         blocked: true,

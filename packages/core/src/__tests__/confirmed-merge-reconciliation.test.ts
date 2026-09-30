@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "../merge/confirmed-merge-reconciliation.js";
+import { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation } from "../merge/confirmed-merge-reconciliation.js";
 
 describe("confirmed merge reconciliation", () => {
   it("does not re-run stale review or checklist gates after a confirmed merge", () => {
@@ -33,6 +33,41 @@ describe("confirmed merge reconciliation", () => {
   ])("keeps the %s post-merge blocker", (status) => {
     expect(getPostMergeFinalizeBlocker({ status, error: undefined }))
       .toBe(`task is marked '${status}'`);
+  });
+});
+
+describe("required post-merge evidence", () => {
+  const store = {
+    getTaskWorkflowSelection: () => ({
+      workflowId: "builtin:coding",
+      stepIds: ["post-merge-verification"],
+    }),
+  };
+
+  it.each([
+    [undefined, "has not reported"],
+    [{ status: "pending" }, "is not approved"],
+    [{ status: "skipped" }, "is not approved"],
+    [{ status: "failed", verdict: "REVISE" }, "is not approved"],
+  ])("blocks enabled gate evidence that %s", async (result, expected) => {
+    await expect(getRequiredPostMergeEvidenceBlocker(store as never, {
+      id: "FN-PM",
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: result ? [{ workflowStepId: "post-merge-verification", ...result }] : [],
+    } as never)).resolves.toContain(expected);
+  });
+
+  it("accepts durable approval and preserves explicit disablement", async () => {
+    await expect(getRequiredPostMergeEvidenceBlocker(store as never, {
+      id: "FN-PM",
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE_WITH_NOTES" }],
+    } as never)).resolves.toBeUndefined();
+    await expect(getRequiredPostMergeEvidenceBlocker(store as never, {
+      id: "FN-PM-disabled",
+      enabledWorkflowSteps: [],
+      workflowStepResults: [],
+    } as never)).resolves.toBeUndefined();
   });
 });
 

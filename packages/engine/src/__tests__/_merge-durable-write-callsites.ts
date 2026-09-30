@@ -103,6 +103,15 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   captureCurrentPlanEvidenceWhilePlanningLocked: { kind: "writer", reason: "persists or mutates TaskStore state" },
   checkAndRecordUnplannedExecutionBlock: { kind: "writer", reason: "persists or mutates TaskStore state" },
   claimNextToolFailureRetry: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  /*
+  FNXC:MergeReliability 2026-09-24-17:09:
+  FN-9388 classifies overlap-wait operations by their durable episode semantics. Claims, delivery
+  publication, and completion mutate fenced episode ownership or receipts; listing is read-only.
+  */
+  claimTaskOverlapWait: { kind: "writer", reason: "claims and fences durable overlap-wait episode ownership" },
+  completeTaskOverlapWait: { kind: "writer", reason: "persists a fenced overlap-wait receipt and completion phase" },
+  listTaskOverlapWaits: { kind: "non-writer", reason: "reads durable overlap-wait episodes without mutation" },
+  publishTaskOverlapDeliveries: { kind: "writer", reason: "persists delivery snapshots on open overlap-wait episodes" },
   claimTaskVerificationRequest: { kind: "writer", reason: "persists or mutates TaskStore state" },
   claimTaskWedgeNotificationEpisode: { kind: "writer", reason: "persists or mutates TaskStore state" },
   cleanupArchivedTasks: { kind: "writer", reason: "persists or mutates TaskStore state" },

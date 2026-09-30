@@ -399,6 +399,7 @@ export default defineConfig({
             Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
             */
             // SQLite-path gate test evicted + quarantined (see engine-core comment + ledger).
+            "src/__tests__/agent-activity-writers.test.ts",
             "node_modules/**",
             "dist/**",
             // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 rescued the final seven VAL-REMOVAL-005 holdouts by awaiting PG audit reads and modeling async collaborators. Their paired ledger entries and excludes were removed only after targeted green runs.

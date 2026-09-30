@@ -123,14 +123,14 @@ describe("MilestoneSliceInterviewModal", () => {
     });
 
     // Setup stream handlers capture
-    mockConnectMilestoneInterviewStream.mockImplementation((sessionId, projectId, handlers) => {
+    mockConnectMilestoneInterviewStream.mockImplementation((targetId, sessionId, projectId, handlers) => {
       streamHandlers = handlers;
       return {
         close: vi.fn(),
         isConnected: vi.fn(() => true),
       };
     });
-    mockConnectSliceInterviewStream.mockImplementation((sessionId, projectId, handlers) => {
+    mockConnectSliceInterviewStream.mockImplementation((targetId, sessionId, projectId, handlers) => {
       streamHandlers = handlers;
       return {
         close: vi.fn(),
@@ -516,6 +516,59 @@ describe("MilestoneSliceInterviewModal", () => {
   });
 
   describe("comment input", () => {
+    it.each([
+      {
+        targetType: "milestone" as const,
+        targetId: "MS-001",
+        sessionId: "milestone-session-123",
+        start: mockStartMilestoneInterview,
+        apply: mockApplyMilestoneInterview,
+      },
+      {
+        targetType: "slice" as const,
+        targetId: "SL-001",
+        sessionId: "slice-session-123",
+        start: mockStartSliceInterview,
+        apply: mockApplySliceInterview,
+      },
+    ])("applies the edited $targetType summary to its selected target", async ({ targetType, targetId, sessionId, start, apply }) => {
+      start.mockResolvedValue({ sessionId });
+      apply.mockResolvedValue({ id: targetId });
+      const onApplied = vi.fn();
+
+      render(
+        <MilestoneSliceInterviewModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onApplied={onApplied}
+          targetType={targetType}
+          targetId={targetId}
+          targetTitle="Target title"
+          projectId="test-project"
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Start Interview"));
+      await waitFor(() => expect(streamHandlers).toBeDefined());
+      act(() => {
+        streamHandlers.onSummary({ description: "Generated description" });
+      });
+
+      const description = await screen.findByDisplayValue("Generated description");
+      fireEvent.change(description, { target: { value: "Edited description" } });
+      fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+      await waitFor(() => {
+        expect(apply).toHaveBeenCalledWith(
+          targetId,
+          sessionId,
+          { description: "Edited description" },
+          "test-project",
+        );
+        expect(onApplied).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it("submits trimmed Other-only answers for single-select milestone questions", async () => {
       mockStartMilestoneInterview.mockResolvedValue({ sessionId: "session-123" });
 
@@ -554,6 +607,7 @@ describe("MilestoneSliceInterviewModal", () => {
 
       await waitFor(() => {
         expect(mockRespondToMilestoneInterview).toHaveBeenCalledWith(
+          "MS-001",
           "session-123",
           { _other: "Split this differently" },
           "test-project",
@@ -604,6 +658,7 @@ describe("MilestoneSliceInterviewModal", () => {
 
       await waitFor(() => {
         expect(mockRespondToMilestoneInterview).toHaveBeenCalledWith(
+          "MS-001",
           "session-123",
           { _other: "Define a custom scope" },
           "test-project",
@@ -661,6 +716,7 @@ describe("MilestoneSliceInterviewModal", () => {
 
       await waitFor(() => {
         expect(mockRespondToSliceInterview).toHaveBeenCalledWith(
+          "SL-001",
           "slice-session-123",
           { priorities: ["speed"] },
           "test-project",
@@ -714,6 +770,7 @@ describe("MilestoneSliceInterviewModal", () => {
 
       await waitFor(() => {
         expect(mockRespondToSliceInterview).toHaveBeenCalledWith(
+          "SL-001",
           "slice-session-123",
           { _other: "Reframe around dependencies" },
           "test-project",
@@ -764,6 +821,7 @@ describe("MilestoneSliceInterviewModal", () => {
 
       await waitFor(() => {
         expect(mockRespondToSliceInterview).toHaveBeenCalledWith(
+          "SL-001",
           "slice-session-123",
           { _other: "Ask customers first" },
           "test-project",
@@ -816,6 +874,7 @@ describe("MilestoneSliceInterviewModal", () => {
 
       await waitFor(() => {
         expect(mockRespondToSliceInterview).toHaveBeenCalledWith(
+          "SL-001",
           "slice-session-123",
           { priorities: ["speed"], _other: "Preserve manual review" },
           "test-project",
@@ -859,6 +918,7 @@ describe("MilestoneSliceInterviewModal", () => {
 
       await waitFor(() => {
         expect(mockRespondToMilestoneInterview).toHaveBeenCalledWith(
+          "MS-001",
           "session-123",
           expect.objectContaining({ scope: "mvp", _comment: "Keep this aligned with mission MVP" }),
           "test-project",

@@ -17,8 +17,10 @@ and then move it to a column the board does not declare, which is the half-conve
 finding. The function reads the row TWICE by design (a merge can land between checks), and both reads plus
 the move now share one snapshot.
 */
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "../types.js";
+import { TaskStore as DurableTaskStore } from "../store.js";
+import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../__test-utils__/pg-test-harness.js";
 
 import { applyPrMergedTransitionImpl } from "../task-store/merge-queue-ops-2.js";
 
@@ -40,19 +42,41 @@ function harness(column: string, ir: WorkflowIr | undefined) {
   } as unknown as Task;
   const moveTask = vi.fn(async (_id: string, to: string) => ({ ...task, column: to }));
   const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+  let releaseTaskLock = Promise.resolve();
+  const moveTaskIf = vi.fn(async (_id: string, to: string, predicate: (live: Task) => boolean | Promise<boolean>, options: unknown) => {
+    const previous = releaseTaskLock;
+    let release: () => void;
+    releaseTaskLock = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      if (!await predicate(task) || task.column === to) return { task, moved: false };
+      const moved = await moveTask(_id, to, options);
+      task.column = to;
+      return { task: moved, moved: true };
+    } finally {
+      release!();
+    }
+  });
+  const updateTaskUnlocked = vi.fn(async (_id: string, patch: Partial<Task>) => {
+    Object.assign(task, patch);
+    return task;
+  });
 
   const store = {
     getTask: vi.fn(async () => task),
     getTaskWorkflowSelection: () => (ir ? selection : undefined),
     getTaskWorkflowSelectionAsync: async () => (ir ? selection : undefined),
     getWorkflowDefinition: async () => (ir ? { ir } : undefined),
+    withPlanningLifecycleLock: async <T>(_id: string, fn: () => Promise<T>) => fn(),
     moveTask,
+    moveTaskIf,
+    updateTaskUnlocked,
     emit: vi.fn(),
     recordRunAuditEvent: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
   } as unknown as TaskStore;
 
-  return { store, moveTask };
+  return { store, moveTask, moveTaskIf, updateTaskUnlocked };
 }
 
 describe("the PR-merged transition follows the board's own lanes", () => {
@@ -66,6 +90,59 @@ describe("the PR-merged transition follows the board's own lanes", () => {
     expect(result.moved).toBe(true);
     // The destination, not just the admission: a literal `done` would be a column this board lacks.
     expect(moveTask.mock.calls[0]?.[1]).toBe("shipped");
+  });
+
+  it("records authoritative external merge evidence once before completing", async () => {
+    const { store, moveTask } = harness("signoff", RENAMED_IR);
+    const task = await store.getTask("FN-1");
+    task.prInfo = { ...task.prInfo!, mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:00:00.000Z" };
+
+    await expect(applyPrMergedTransitionImpl(store, "FN-1")).resolves.toEqual({ moved: true });
+    expect(store.updateTaskUnlocked).toHaveBeenCalledWith("FN-1", {
+      mergeDetails: expect.objectContaining({ mergeConfirmed: true, commitSha: "external-sha", mergedAt: "2026-09-29T05:00:00.000Z", prNumber: 3 }),
+    });
+    expect(moveTask).toHaveBeenCalledOnce();
+  });
+
+  it.each(["pending", "failed"] as const)("persists external landing evidence but preserves a %s pre-merge gate", async (status) => {
+    const { store, moveTask } = harness("signoff", RENAMED_IR);
+    const task = await store.getTask("FN-1");
+    task.workflowStepResults = [{
+      workflowStepId: "code-review",
+      workflowStepName: "Code Review",
+      phase: "pre-merge",
+      status,
+    }];
+    moveTask.mockImplementation(async (_id: string, _to: string, options: { skipMergeBlocker?: boolean; bypassGuards?: boolean }) => {
+      // Model TaskStore's normal guarded review → complete move: this must remain reachable.
+      if (options.skipMergeBlocker || options.bypassGuards !== false) return { ...task, column: "shipped" };
+      throw new Error("task has incomplete or failed pre-merge workflow steps");
+    });
+
+    await expect(applyPrMergedTransitionImpl(store, "FN-1")).rejects.toThrow("pre-merge workflow steps");
+
+    expect(store.updateTaskUnlocked).toHaveBeenCalledWith("FN-1", {
+      mergeDetails: expect.objectContaining({ mergeConfirmed: true, prNumber: 3 }),
+    });
+    expect(moveTask).toHaveBeenCalledWith("FN-1", "shipped", expect.objectContaining({ bypassGuards: false }));
+  });
+
+  it("serializes concurrent merged observations so only one emits completion", async () => {
+    const { store, moveTask, updateTaskUnlocked } = harness("signoff", RENAMED_IR);
+
+    const results = await Promise.all([
+      applyPrMergedTransitionImpl(store, "FN-1", { agentId: "merger", runId: "run-1" }),
+      applyPrMergedTransitionImpl(store, "FN-1", { agentId: "merger", runId: "run-2" }),
+    ]);
+
+    expect(results).toEqual([
+      { moved: true },
+      { moved: false, skipped: "already-done" },
+    ]);
+    expect(moveTask).toHaveBeenCalledOnce();
+    expect(updateTaskUnlocked).toHaveBeenCalledOnce();
+    expect(store.emit).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(store.recordRunAuditEvent).toHaveBeenCalledOnce());
   });
 
   it("skips a card already in the board's complete column as already-done", async () => {
@@ -96,6 +173,70 @@ describe("the PR-merged transition follows the board's own lanes", () => {
 
     expect(result.moved).toBe(true);
     expect(moveTask.mock.calls[0]?.[1]).toBe("done");
+  });
+});
+
+/*
+FNXC:ExternalPrReconciliation 2026-09-29-06:24:
+Two TaskStore instances model dashboard and engine processes against one project-scoped PostgreSQL
+backend. An external merge may be observed by both at once, but the advisory lock permits exactly one
+review-to-complete transition, event, and audit record while preserving provider-supplied merge evidence.
+*/
+pgDescribe("external PR reconciliation across TaskStore processes", () => {
+  const harness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_external_pr_reconcile",
+    projectId: "project_external_pr_reconcile",
+  });
+  beforeAll(harness.beforeAll);
+  beforeEach(harness.beforeEach);
+  afterEach(harness.afterEach);
+  afterAll(harness.afterAll);
+
+  it("commits one externally merged transition and retains its provider evidence", async () => {
+    const dashboardStore = harness.store();
+    const engineStore = new DurableTaskStore(harness.rootDir(), undefined, { asyncLayer: harness.layer() });
+    await engineStore.init();
+    const task = await dashboardStore.createTask({ description: "Externally merged PR" });
+    await dashboardStore.updateTask(task.id, { enabledWorkflowSteps: [] });
+    await dashboardStore.moveTask(task.id, "in-progress");
+    await dashboardStore.moveTask(task.id, "in-review");
+    await dashboardStore.updatePrInfo(task.id, {
+      url: "https://github.com/runfusion/fusion/pull/9406",
+      number: 9406,
+      status: "merged",
+      title: "External merge",
+      headBranch: "fusion/FN-9406",
+      baseBranch: "main",
+      commentCount: 0,
+      mergeCommitSha: "provider-merge-sha",
+      mergedAt: "2026-09-29T06:24:00.000Z",
+    });
+
+    const dashboardEvents = vi.spyOn(dashboardStore, "emit");
+    const engineEvents = vi.spyOn(engineStore, "emit");
+    const dashboardAudit = vi.spyOn(dashboardStore, "recordRunAuditEvent");
+    const engineAudit = vi.spyOn(engineStore, "recordRunAuditEvent");
+    const outcomes = await Promise.all([
+      applyPrMergedTransitionImpl(dashboardStore, task.id, { agentId: "dashboard", runId: "external-pr-dashboard" }),
+      applyPrMergedTransitionImpl(engineStore, task.id, { agentId: "engine", runId: "external-pr-engine" }),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.moved)).toHaveLength(1);
+    expect(outcomes.filter((outcome) => !outcome.moved)).toEqual([{ moved: false, skipped: "already-done" }]);
+    expect([...dashboardEvents.mock.calls, ...engineEvents.mock.calls].filter(([event]) => event === "task:merged")).toHaveLength(1);
+    const persisted = await dashboardStore.getTask(task.id);
+    expect(persisted).toMatchObject({
+      column: "done",
+      mergeDetails: {
+        mergeConfirmed: true,
+        commitSha: "provider-merge-sha",
+        mergedAt: "2026-09-29T06:24:00.000Z",
+        prNumber: 9406,
+      },
+    });
+    await vi.waitFor(() => {
+      expect([...dashboardAudit.mock.calls, ...engineAudit.mock.calls]).toHaveLength(1);
+    });
   });
 });
 

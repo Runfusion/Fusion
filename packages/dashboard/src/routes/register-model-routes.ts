@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { customProviderRegistryKey, mergeSupplementalAnthropicModels, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
+import { customProviderRegistryKey, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
 import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
@@ -385,20 +385,11 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         runtimeLogger.child("models").warn(`Model registry refresh outcome: ${refreshOutcome}; serving retained catalog`);
       }
       /*
-      FNXC:ModelCatalog 2026-08-12-01:00:
-      FN-8902 bounds and caches only the refresh operation. Supplemental merges and
-      dedupe remain unconditional per request because refresh can replace provider
-      rows; cached, failed, or timed-out paths must return the same live catalog shape.
+      FNXC:ModelCatalog 2026-09-29-05:56:
+      Pi owns Anthropic catalog rows. Keep the OpenAI Codex merge because it is a separate
+      additive compatibility surface, but never mutate the Anthropic provider after refresh.
       */
       if (options.modelRegistry.registerProvider) {
-        mergeSupplementalAnthropicModels(options.modelRegistry as Parameters<typeof mergeSupplementalAnthropicModels>[0], (message) => runtimeLogger.child("models").warn(message));
-        /*
-         * FNXC:ModelCatalog 2026-07-09-12:30:
-         * FN-7745: additively merge the GPT-5.6 codenamed OpenAI Codex variants
-         * (gpt-5.6-luna/sol/terra), mirroring the mergeSupplementalAnthropicModels call
-         * above. Strictly additive/dedupe-safe — an existing pinned-catalog row for any
-         * of the three ids always wins, no row is displaced or duplicated.
-         */
         mergeSupplementalOpenAiCodexModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalOpenAiCodexModels>[0], (message) => runtimeLogger.child("models").warn(message));
       }
       let models: Array<{

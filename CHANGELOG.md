@@ -2,6 +2,29 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.7
+
+### Highlights
+- Engine: merged tasks stay open until required post-merge evidence is approved
+- Pre-merge reviews that end without a verdict now re-run instead of stranding tasks
+- Held planning backs off from 15s up to 5min instead of retrying every few seconds with no planner
+- Task checkouts recover from stale reservations, and cleanup keeps active review worktrees
+- Custom workflows now apply each review lane's blocking severity setting
+
+### Fixed
+- Merged tasks stay open until the required post-merge evidence is approved. Recovery and finalization now wait for that approval.
+- Failed pre-merge reviews that finish without a verdict are re-run. The earlier review evidence and open findings are kept.
+- Interrupted review evidence is recovered without stranding approved tasks. Retries after a review with no verdict no longer reopen finished checklist work.
+- When no planner agent is available, held planning no longer re-runs every few seconds. It backs off from 15s, doubling up to 5min, and logs each distinct hold reason once.
+- Task checkouts now recover from stale reservations instead of repeating failed review attempts.
+- Automatic cleanup now keeps active pre-release review worktrees.
+- Custom workflows now apply the blocking severity set for each review lane.
+- On the CLI, retrying a failed review task that was paused by a deadlock returns it to its runnable lane. Progress is kept.
+- Completion history is kept when tasks move in legacy-compatible ways.
+- When Antigravity status polling is disabled, it no longer starts the optional CLI.
+- Built-in skill guide commands return control promptly and reliably under load, including for rejected or unknown guide requests.
+- The plugin SDK's type declarations now pass strict typechecking in consumer projects.
+
 ## 0.78.0-beta.6
 
 ### Highlights

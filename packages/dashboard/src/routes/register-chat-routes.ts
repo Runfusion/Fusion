@@ -264,6 +264,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       engine?.getMessageStore(),
       engine?.isMergePending?.bind(engine),
       engine?.resetInReviewMergeRetry?.bind(engine),
+      engine?.rerouteFailedNoVerdictPreMergeReview?.bind(engine),
     );
   }
   const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);

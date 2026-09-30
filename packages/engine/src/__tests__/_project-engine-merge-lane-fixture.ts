@@ -2,6 +2,8 @@ type MergeLaneState = {
   mergeQueue: string[];
   mergeActive: Set<string>;
   capacityDeferredMergeTaskIds: Set<string>;
+  mergeRetryResetTaskIds: Set<string>;
+  mergeEnqueueDeferredByRetryReset: Set<string>;
   capacityDeferredMergeReasons: Map<string, string>;
   capacityDeferredMerges: Map<string, unknown>;
   coordinatorAdmittedMergeTaskIds: Set<string>;
@@ -38,6 +40,10 @@ export function seedMergeLaneState<T extends object>(
     mergeQueue: [],
     mergeActive: new Set(),
     capacityDeferredMergeTaskIds: new Set(),
+    /* FNXC:MergeQueue 2026-09-29-11:04: retry-reset admission defers enqueue through two
+       fresh-engine sets; prototype fixtures must seed both or cannot execute the live merge pump. */
+    mergeRetryResetTaskIds: new Set(),
+    mergeEnqueueDeferredByRetryReset: new Set(),
     capacityDeferredMergeReasons: new Map(),
     capacityDeferredMerges: new Map(),
     coordinatorAdmittedMergeTaskIds: new Set(),

@@ -207,14 +207,42 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     log: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-02:14:
+    Successful merger lifecycle fixtures carry the durable approval required by the shared finalizer.
+    Tests for blocked finalization override this evidence explicitly.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
     ...taskOverrides,
   };
 
+  let currentTask = { ...baseTask, prompt: "# test" };
+
   return {
-    getTask: vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" }),
+    getTask: vi.fn(async () => currentTask),
     listTasks: vi.fn().mockResolvedValue(allTasks),
-    updateTask: vi.fn().mockResolvedValue(baseTask),
-    moveTask: vi.fn().mockResolvedValue(baseTask),
+    updateTask: vi.fn(async (_taskId: string, patch: Partial<Task>) => {
+      currentTask = { ...currentTask, ...patch };
+      return currentTask;
+    }),
+    updateTaskAtomic: vi.fn(async (_taskId: string, updater: (task: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      currentTask = { ...currentTask, ...await updater(currentTask) };
+      return currentTask;
+    }),
+    moveTask: vi.fn(async (_taskId: string, column: Task["column"]) => {
+      currentTask = { ...currentTask, column };
+      return currentTask;
+    }),
+    moveTaskIf: vi.fn(async (
+      _taskId: string,
+      column: Task["column"],
+      predicate: (task: Task) => boolean | Promise<boolean>,
+    ) => {
+      if (!await predicate(currentTask)) return { moved: false, task: currentTask };
+      currentTask = { ...currentTask, column };
+      return { moved: true, task: currentTask };
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     emitUsageEvent: vi.fn().mockResolvedValue(undefined),
@@ -270,14 +298,12 @@ describe("auto-merge proven finalization helper", () => {
         landedFiles: ["packages/a/file.ts", "packages/b/file.ts"],
       },
     } as Task;
-    const doneTask = { ...strandedTask, column: "done", status: null, error: null } as Task;
     const store = createMockStore(strandedTask) as unknown as TaskStore & {
       getTask: ReturnType<typeof vi.fn>;
-      moveTask: ReturnType<typeof vi.fn>;
+      moveTaskIf: ReturnType<typeof vi.fn>;
       emit: ReturnType<typeof vi.fn>;
     };
     store.getTask.mockResolvedValue(strandedTask);
-    store.moveTask.mockResolvedValue(doneTask);
 
     const result = await finalizeProvenAutoMergeTask({
       store,
@@ -290,9 +316,10 @@ describe("auto-merge proven finalization helper", () => {
 
     expect(result.outcome).toBe("done");
     expect(result.task?.column).toBe("done");
-    expect(store.moveTask).toHaveBeenCalledWith(
+    expect(store.moveTaskIf).toHaveBeenCalledWith(
       "FN-WS-010",
       "done",
+      expect.any(Function),
       expect.objectContaining({ moveSource: "engine", recoveryRehome: true, preserveProgress: true }),
     );
   });
@@ -320,16 +347,14 @@ describe("auto-merge proven finalization helper", () => {
         landedFiles: ["packages/engine/src/merger-ai.ts"],
       },
     } as Task;
-    const doneTask = { ...strandedTask, column: "done", status: null, error: null, blockedBy: null, overlapBlockedBy: null } as Task;
     const store = createMockStore(strandedTask) as unknown as TaskStore & {
       getTask: ReturnType<typeof vi.fn>;
-      updateTask: ReturnType<typeof vi.fn>;
-      moveTask: ReturnType<typeof vi.fn>;
+      updateTaskAtomic: ReturnType<typeof vi.fn>;
+      moveTaskIf: ReturnType<typeof vi.fn>;
       logEntry: ReturnType<typeof vi.fn>;
       recordRunAuditEvent: ReturnType<typeof vi.fn>;
     };
     store.getTask.mockResolvedValue(strandedTask);
-    store.moveTask.mockResolvedValue(doneTask);
 
     const result = await finalizeProvenAutoMergeTask({
       store,
@@ -341,20 +366,19 @@ describe("auto-merge proven finalization helper", () => {
     });
 
     expect(result.outcome).toBe("done");
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-6897",
-      expect.objectContaining({
-        status: null,
-        error: null,
-        blockedBy: null,
-        overlapBlockedBy: null,
-        mergeRetries: 0,
-        mergeDetails: expect.objectContaining({ commitSha: "f528cd06", mergeConfirmed: true, landedFiles: ["packages/engine/src/merger-ai.ts"] }),
-      }),
-    );
-    expect(store.moveTask).toHaveBeenCalledWith(
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith("FN-6897", expect.any(Function));
+    expect(result.task).toEqual(expect.objectContaining({
+      status: null,
+      error: null,
+      blockedBy: null,
+      overlapBlockedBy: null,
+      mergeRetries: 0,
+      mergeDetails: expect.objectContaining({ commitSha: "f528cd06", mergeConfirmed: true, landedFiles: ["packages/engine/src/merger-ai.ts"] }),
+    }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith(
       "FN-6897",
       "done",
+      expect.any(Function),
       expect.objectContaining({ moveSource: "engine", recoveryRehome: true, preserveProgress: true }),
     );
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -400,15 +424,13 @@ describe("auto-merge proven finalization helper", () => {
         landedFiles: ["packages/desktop/scripts/build.ts"],
       },
     } as Task;
-    const doneTask = { ...strandedTask, column: "done", status: null } as Task;
     const store = createMockStore(strandedTask) as unknown as TaskStore & {
       getTask: ReturnType<typeof vi.fn>;
-      updateTask: ReturnType<typeof vi.fn>;
-      moveTask: ReturnType<typeof vi.fn>;
+      updateTaskAtomic: ReturnType<typeof vi.fn>;
+      moveTaskIf: ReturnType<typeof vi.fn>;
       recordRunAuditEvent: ReturnType<typeof vi.fn>;
     };
     store.getTask.mockResolvedValue(strandedTask);
-    store.moveTask.mockResolvedValue(doneTask);
     mockedExecSync.mockImplementation((cmd: any) => {
       const command = String(cmd);
       if (command.includes("rev-parse --verify")) return "ok\n" as any;
@@ -432,9 +454,10 @@ describe("auto-merge proven finalization helper", () => {
     });
 
     expect(result.outcome).toBe("done");
-    expect(store.moveTask).toHaveBeenCalledWith(
+    expect(store.moveTaskIf).toHaveBeenCalledWith(
       "FN-7360",
       "done",
+      expect.any(Function),
       expect.objectContaining({ moveSource: "engine", preserveProgress: true }),
     );
     expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
@@ -500,8 +523,8 @@ describe("auto-merge proven finalization helper", () => {
     } as Task;
     const store = createMockStore(strandedTask) as unknown as TaskStore & {
       getTask: ReturnType<typeof vi.fn>;
-      updateTask: ReturnType<typeof vi.fn>;
-      moveTask: ReturnType<typeof vi.fn>;
+      updateTaskAtomic: ReturnType<typeof vi.fn>;
+      moveTaskIf: ReturnType<typeof vi.fn>;
       recordRunAuditEvent: ReturnType<typeof vi.fn>;
     };
     store.getTask.mockResolvedValue(strandedTask);
@@ -515,12 +538,13 @@ describe("auto-merge proven finalization helper", () => {
     });
 
     expect(result).toEqual(expect.objectContaining({ outcome: "done" }));
-    expect(store.updateTask).toHaveBeenCalledWith("FN-INCOMPLETE", expect.objectContaining({
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith("FN-INCOMPLETE", expect.any(Function));
+    expect(result.task).toEqual(expect.objectContaining({
       status: null,
       error: null,
       steps: [{ status: "done" }, { status: "skipped" }],
     }));
-    expect(store.moveTask).toHaveBeenCalled();
+    expect(store.moveTaskIf).toHaveBeenCalled();
   });
 
   it("finalizes proven workflow merges even when the task branch still has residue outside the landed patch", async () => {
@@ -541,8 +565,8 @@ describe("auto-merge proven finalization helper", () => {
     } as Task;
     const store = createMockStore(strandedTask) as unknown as TaskStore & {
       getTask: ReturnType<typeof vi.fn>;
-      updateTask: ReturnType<typeof vi.fn>;
-      moveTask: ReturnType<typeof vi.fn>;
+      updateTaskAtomic: ReturnType<typeof vi.fn>;
+      moveTaskIf: ReturnType<typeof vi.fn>;
       recordRunAuditEvent: ReturnType<typeof vi.fn>;
     };
     store.getTask.mockResolvedValue(strandedTask);
@@ -557,11 +581,16 @@ describe("auto-merge proven finalization helper", () => {
     });
 
     expect(result).toEqual(expect.objectContaining({ outcome: "done" }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-BRANCH-PROOF", "done", expect.objectContaining({
-      moveSource: "engine",
-      preserveProgress: true,
-      recoveryRehome: true,
-    }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith(
+      "FN-BRANCH-PROOF",
+      "done",
+      expect.any(Function),
+      expect.objectContaining({
+        moveSource: "engine",
+        preserveProgress: true,
+        recoveryRehome: true,
+      }),
+    );
     expect(mockedExecSync.mock.calls.some(([cmd]) => String(cmd).includes("git diff --name-only"))).toBe(false);
   });
 
@@ -1692,7 +1721,7 @@ describe("aiMergeTask — no-op short-circuit", () => {
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-3834-NOOP", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-3834-NOOP", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-3834-NOOP",
       expect.objectContaining({
@@ -1735,7 +1764,7 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
     // Agent should NOT have been spawned
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
     // Task should still be moved to done
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
   });
 
   it("does not record commitSha when squash is empty (would be pre-merge HEAD)", async () => {
@@ -3148,7 +3177,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       squashSha: "mergedcommit123",
     });
     expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "post-squash audit clean", "status", undefined, "merger");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
   });
 
   it("routes multi-substantive auto branches through rebase range audit", async () => {
@@ -3354,7 +3383,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
     expect(store.appendAgentLog).toHaveBeenCalledWith(
       "FN-050",
       expect.stringContaining("post-rebase audit overlap cleared by deterministic verification"),
@@ -3399,7 +3428,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(/post-rebase range audit blocked auto-completion/);
 
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
     expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
   });
 
@@ -3442,7 +3471,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("could not resolve post-merge audit verification tree for ref landedcommit002"));
     warnSpy.mockRestore();
   });
@@ -3590,7 +3619,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     expect(result.merged).toBe(true);
     expect(mockedAuditSquashMerge).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("post-squash audit clean") || String(message).includes("post-squash audit blocked auto-completion")),
     ).toBe(false);
@@ -3688,7 +3717,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message, type]) => type === "tool_error" && String(message).includes("audit blocked auto-completion")),
     ).toBe(false);
@@ -3707,7 +3736,7 @@ describe("aiMergeTask post-squash audit gate", () => {
 
     expect(result.merged).toBe(true);
     expect(mockedAuditSquashMerge).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", expect.objectContaining({ workflowMoveSource: "merger-complete-task" }));
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.objectContaining({ workflowMoveSource: "auto-merge-finalization" }));
     expect(
       vi.mocked(store.appendAgentLog).mock.calls.some(([, message]) => String(message).includes("post-squash audit blocked auto-completion")),
     ).toBe(false);

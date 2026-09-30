@@ -15,12 +15,15 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { and, eq } from "drizzle-orm";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import { allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "../../merge/task-merge.js";
+import { LEGACY_UNSCOPED_PROJECT_ID } from "../../postgres/data-layer.js";
+import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
 
@@ -52,6 +55,42 @@ pgTest("TaskStore moveTask column transitions (PostgreSQL)", () => {
 
     const done = await store.moveTask(task.id, "done", { moveSource: "engine", skipMergeBlocker: true });
     expect(done.column).toBe("done");
+  });
+
+  it("atomically persists an unbound completion and ledger entry in the legacy partition", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "legacy completion ledger" });
+
+    await store.moveTask(task.id, "todo", { moveSource: "user" });
+    await store.moveTask(task.id, "in-progress", { moveSource: "user" });
+    await store.moveTask(task.id, "in-review", { moveSource: "user", allowDirectInReviewMove: true });
+    const done = await store.moveTask(task.id, "done", { moveSource: "engine", skipMergeBlocker: true });
+
+    const [persistedTask] = await h.adminDb().select({
+      projectId: schema.project.tasks.projectId,
+      column: schema.project.tasks.column,
+    }).from(schema.project.tasks).where(and(
+      eq(schema.project.tasks.projectId, LEGACY_UNSCOPED_PROJECT_ID),
+      eq(schema.project.tasks.id, task.id),
+    ));
+    const [ledgerEntry] = await h.adminDb().select({
+      projectId: schema.project.patchnodeEntries.projectId,
+      taskId: schema.project.patchnodeEntries.taskId,
+      kind: schema.project.patchnodeEntries.kind,
+      occurredAt: schema.project.patchnodeEntries.occurredAt,
+    }).from(schema.project.patchnodeEntries).where(and(
+      eq(schema.project.patchnodeEntries.projectId, LEGACY_UNSCOPED_PROJECT_ID),
+      eq(schema.project.patchnodeEntries.taskId, task.id),
+    ));
+
+    expect(done.column).toBe("done");
+    expect(persistedTask).toEqual({ projectId: LEGACY_UNSCOPED_PROJECT_ID, column: "done" });
+    expect(ledgerEntry).toMatchObject({
+      projectId: LEGACY_UNSCOPED_PROJECT_ID,
+      taskId: task.id,
+      kind: "completed",
+      occurredAt: done.columnMovedAt,
+    });
   });
 
   it("moves an in-progress task back to the workflow's planning column, and REFUSES `triage`", async () => {

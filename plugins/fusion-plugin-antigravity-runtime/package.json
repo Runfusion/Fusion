@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/antigravity-runtime",
-  "version": "0.1.1-beta.0",
+  "version": "0.1.1-beta.1",
   "type": "module",
   "private": true,
   "description": "Google Antigravity agy runtime plugin for Fusion",

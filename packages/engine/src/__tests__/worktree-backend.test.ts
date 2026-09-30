@@ -318,23 +318,18 @@ describe("NativeWorktreeBackend", () => {
     expect(pruneWorktreeAdminEntriesMock).not.toHaveBeenCalled();
   });
 
-  it("preserves the registered-but-missing rethrow contract without a fallback", async () => {
-    const error = { message: "git failed", stderr: "fatal: '/repo/.worktrees/fn-1' is not a working tree" };
-    execMock.mockRejectedValueOnce(error);
-
-    await expect(new NativeWorktreeBackend().remove({ rootDir: "/repo", worktreePath: "/repo/.worktrees/fn-1" })).rejects.toBe(error);
-    expect(rmMock).not.toHaveBeenCalled();
-    expect(pruneWorktreeAdminEntriesMock).not.toHaveBeenCalled();
-  });
-
-  it("prunes a missing defensive worktree registration without recursive fallback", async () => {
+  it.each([
+    [undefined, "the default forceful removal"],
+    [true, "an explicit forceful removal"],
+    [false, "a defensive removal"],
+  ] as const)("prunes a missing unregistered worktree for %s", async (force) => {
     execMock.mockRejectedValueOnce({ stderr: "fatal: '/repo/.worktrees/fn-1' is not a working tree" });
     existsSyncMock.mockReturnValue(false);
 
     await new NativeWorktreeBackend().remove({
       rootDir: "/repo",
       worktreePath: "/repo/.worktrees/fn-1",
-      force: false,
+      force,
     });
 
     expect(rmMock).not.toHaveBeenCalled();

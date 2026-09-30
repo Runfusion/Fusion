@@ -42,7 +42,12 @@ vi.mock("../worktree/review-diff-fingerprint.js", async (importOriginal) => ({
 }));
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
-import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import {
+  WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY,
+  WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
+  WORKFLOW_REVIEW_KIND_CONTEXT_KEY,
+  WorkflowGraphExecutor,
+} from "../workflows/workflow-graph-executor.js";
 import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import {
@@ -327,6 +332,34 @@ describe("CE workflow-step executor integration", () => {
       expect(captured.step.prompt).toContain('Invoke the "compound-engineering:ce-plan" skill');
       // Original node prompt still present after the preamble.
       expect(captured.step.prompt).toContain("Plan the work.");
+    });
+
+    it("materializes direct and optional-group review thresholds on the dispatched step", async () => {
+      const store = createMockStore();
+      store.getTask.mockResolvedValue(baseStepTask() as any);
+      const { executor } = makeExecutor(store);
+      const dispatchedSteps: any[] = [];
+      vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
+        dispatchedSteps.push(args[1]);
+        return { success: true, output: "ok" };
+      });
+      const node = { id: "security-review", kind: "prompt", column: "review", config: { prompt: "Review.", reviewKind: "code", blockingSeverity: "high" } };
+
+      await (executor as any).runGraphCustomNode(node, { id: "FN-CE-1" }, {}, undefined);
+      await (executor as any).runGraphCustomNode(
+        { ...node, id: "group-template-review", config: { prompt: "Review." } },
+        { id: "FN-CE-1" },
+        {},
+        undefined,
+        {
+          [WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]: "security-group",
+          [WORKFLOW_REVIEW_KIND_CONTEXT_KEY]: "code",
+          [WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY]: "high",
+        },
+      );
+
+      expect(dispatchedSteps[0]).toMatchObject({ reviewKind: "code", blockingSeverity: "high" });
+      expect(dispatchedSteps[1]).toMatchObject({ reviewKind: "code", optionalGroupId: "security-group", blockingSeverity: "high" });
     });
 
     it("preserves the graph-start output target when a later prompt step sees edited input and settings", async () => {

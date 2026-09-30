@@ -133,6 +133,7 @@ function createMockMissionStore() {
   const features = new Map<string, MissionFeature>();
   const assertionsByFeature = new Map<string, AssertionRow[]>();
   const validatorRuns = new Map<string, MissionValidatorRun>();
+  let completionApplied = true;
   let runSeq = 0;
 
   const store = {
@@ -171,16 +172,28 @@ function createMockMissionStore() {
       return run;
     }),
     getValidatorRun: vi.fn((id: string) => validatorRuns.get(id)),
-    completeValidatorRun: vi.fn((id: string, status: MissionValidatorRun["status"], summary?: string) => {
+    /*
+    FNXC:ValidatorCompletionEffects 2026-09-29-11:04:
+    Validator completion is an atomic outcome plus effects contract. The production loop proceeds
+    only when the store confirms completionApplied, so this shared fake must return that observable
+    result and retain the effects payload for every pass, failure, and inconclusive assertion.
+    */
+    completeValidatorRun: vi.fn((id: string, status: MissionValidatorRun["status"], summary?: string, _legacy?: undefined, effects?: import("@fusion/core").ValidatorRunCompletionEffects) => {
       const run = validatorRuns.get(id)!;
-      const updated = { ...run, status, summary, completedAt: now(), updatedAt: now() };
+      if (!completionApplied) return { completionApplied: false, run };
+
+      const updated = { ...run, status, summary, completedAt: now(), updatedAt: now(), completionEffects: effects };
       validatorRuns.set(id, updated);
       const feature = features.get(run.featureId);
       if (feature) {
         const loopState = status === "passed" ? "passed" : status === "failed" ? "needs_fix" : status === "blocked" ? "blocked" : "validating";
         features.set(run.featureId, { ...feature, loopState: loopState as any, lastValidatorStatus: status, updatedAt: now() });
       }
-      return updated;
+      for (const verdict of effects?.assertions ?? []) {
+        const assertion = assertionsByFeature.get(run.featureId)?.find((entry) => entry.id === verdict.assertionId);
+        if (assertion) assertion.status = verdict.status;
+      }
+      return { completionApplied: true, run: updated };
     }),
     recordValidatorFailures: vi.fn(() => []),
     createGeneratedFixFeature: vi.fn((sourceFeatureId: string, runId: string) => {
@@ -202,6 +215,7 @@ function createMockMissionStore() {
     _setMission: (m: Mission) => missions.set(m.id, m),
     _setFeature: (f: MissionFeature) => features.set(f.id, f),
     _setAssertions: (featureId: string, rows: AssertionRow[]) => assertionsByFeature.set(featureId, rows),
+    _setCompletionApplied: (applied: boolean) => { completionApplied = applied; },
   };
   return store;
 }
@@ -286,6 +300,19 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     };
   }
 
+  function expectValidatorCompletion(
+    status: "passed" | "failed" | "blocked",
+    effects: import("@fusion/core").ValidatorRunCompletionEffects,
+  ) {
+    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(
+      "VR-1",
+      status,
+      expect.any(String),
+      undefined,
+      effects,
+    );
+  }
+
   function judgePass(assertionIds: string[]) {
     mockSessionHolder.session.state.messages = [
       {
@@ -312,7 +339,15 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     await loop.processTaskOutcome("FN-B");
 
     // No verification capability → behavioral default-to-fail → fix flow.
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "failed", expect.any(String));
+    expectValidatorCompletion("failed", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "failed" }],
+      failures: [expect.objectContaining({
+        featureId: "F-001",
+        assertionId: "CA-1",
+        message: expect.any(String),
+      })],
+    });
     expect(missionStore.createGeneratedFixFeature).toHaveBeenCalled();
     expect(missionStore.getFeature("F-001")?.status).not.toBe("done");
   });
@@ -331,8 +366,11 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     await loop.processTaskOutcome("FN-S");
 
     expect(verify).not.toHaveBeenCalled();
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "passed", expect.any(String));
-    expect(missionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "done");
+    expectValidatorCompletion("passed", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "passed" }],
+    });
+    expect(missionStore.getFeature("F-001")?.loopState).toBe("passed");
   });
 
   it("untyped assertions default to static — legacy judge pass path is preserved", async () => {
@@ -349,7 +387,10 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     await loop.processTaskOutcome("FN-U");
 
     expect(verify).not.toHaveBeenCalled();
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "passed", expect.any(String));
+    expectValidatorCompletion("passed", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "passed" }],
+    });
   });
 
   it("behavioral assertion confirmed by an injected verification capability → passes", async () => {
@@ -367,8 +408,11 @@ describe("Validator behavioral posture (U2 + U3)", () => {
 
     expect(verify).toHaveBeenCalledTimes(1);
     expect(verify.mock.calls[0][0]).toMatchObject({ assertionId: "CA-1", integrationSha: "sha123" });
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "passed", expect.any(String));
-    expect(missionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "done");
+    expectValidatorCompletion("passed", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "passed" }],
+    });
+    expect(missionStore.getFeature("F-001")?.loopState).toBe("passed");
   });
 
   it("behavioral assertion verification inconclusive → blocked, NO fix feature", async () => {
@@ -384,7 +428,10 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     loop.start();
     await loop.processTaskOutcome("FN-INC");
 
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "blocked", expect.any(String));
+    expectValidatorCompletion("blocked", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "blocked" }],
+    });
     expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
     expect(missionStore.getFeature("F-001")?.status).not.toBe("done");
   });
@@ -408,8 +455,14 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     // Only the behavioral assertion is verified.
     expect(verify).toHaveBeenCalledTimes(1);
     expect(verify.mock.calls[0][0]).toMatchObject({ assertionId: "CA-behav" });
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "passed", expect.any(String));
-    expect(missionStore.updateFeatureStatus).toHaveBeenCalledWith("F-001", "done");
+    expectValidatorCompletion("passed", {
+      featureId: "F-001",
+      assertions: [
+        { assertionId: "CA-static", status: "passed" },
+        { assertionId: "CA-behav", status: "passed" },
+      ],
+    });
+    expect(missionStore.getFeature("F-001")?.loopState).toBe("passed");
   });
 
   it("mixed set: behavioral observed wrong → overall fail even though static passes", async () => {
@@ -428,9 +481,75 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     loop.start();
     await loop.processTaskOutcome("FN-MIX2");
 
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "failed", expect.any(String));
+    expectValidatorCompletion("failed", {
+      featureId: "F-001",
+      assertions: [
+        { assertionId: "CA-static", status: "passed" },
+        { assertionId: "CA-behav", status: "failed" },
+      ],
+      failures: [expect.objectContaining({
+        featureId: "F-001",
+        assertionId: "CA-behav",
+        message: "defect still reproduces",
+      })],
+    });
     expect(missionStore.createGeneratedFixFeature).toHaveBeenCalled();
     expect(missionStore.getFeature("F-001")?.status).not.toBe("done");
+  });
+
+  /*
+  FNXC:ValidatorCompletionEffects 2026-09-29-11:18:
+  A declined terminal CAS owns no follow-on work. These production-path cases keep validator
+  assertions pending and prevent both pass notifications and failure remediation after ownership is lost.
+  */
+  it("a declined passing completion preserves pending assertions and emits no pass side effects", async () => {
+    const feature = createMockFeature({ loopState: "implementing", taskId: "FN-DECLINED-PASS", status: "in-progress" });
+    missionStore._setFeature(feature);
+    missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "static" })]);
+    missionStore._setCompletionApplied(false);
+    taskStore._setTask({ id: "FN-DECLINED-PASS", title: "declined pass", log: [] });
+    judgePass(["CA-1"]);
+
+    loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+    const emitSpy = vi.spyOn(loop, "emit");
+    loop.start();
+    await loop.processTaskOutcome("FN-DECLINED-PASS");
+
+    expectValidatorCompletion("passed", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "passed" }],
+    });
+    expect(missionStore.getFeature("F-001")).toMatchObject({ loopState: "implementing" });
+    expect(missionStore.listAssertionsForFeature("F-001")).toMatchObject([{ id: "CA-1", status: "pending" }]);
+    expect(missionStore.logMissionEvent).not.toHaveBeenCalled();
+    expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
+    expect(emitSpy).not.toHaveBeenCalled();
+  });
+
+  it("a declined failed completion creates no Fix Feature or failure event", async () => {
+    proveLandedInspection();
+    const feature = createMockFeature({ loopState: "implementing", taskId: "FN-DECLINED-FAIL", status: "in-progress" });
+    missionStore._setFeature(feature);
+    missionStore._setAssertions("F-001", [assertionRow({ id: "CA-1", type: "behavioral" })]);
+    missionStore._setCompletionApplied(false);
+    taskStore._setTask(landedTask("FN-DECLINED-FAIL", "declined fail"));
+    judgePass(["CA-1"]);
+
+    loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+    const emitSpy = vi.spyOn(loop, "emit");
+    loop.start();
+    await loop.processTaskOutcome("FN-DECLINED-FAIL");
+
+    expectValidatorCompletion("failed", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "failed" }],
+      failures: [expect.objectContaining({ featureId: "F-001", assertionId: "CA-1" })],
+    });
+    expect(missionStore.getFeature("F-001")).toMatchObject({ loopState: "implementing" });
+    expect(missionStore.listAssertionsForFeature("F-001")).toMatchObject([{ id: "CA-1", status: "pending" }]);
+    expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
+    expect(missionStore.logMissionEvent).not.toHaveBeenCalled();
+    expect(emitSpy).not.toHaveBeenCalled();
   });
 
   it("U6/R6: failed verification passes the observed-vs-expected reason to the Fix Feature", async () => {
@@ -503,7 +622,10 @@ describe("Validator behavioral posture (U2 + U3)", () => {
     // No remediation work.
     expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
     // Completed as blocked (no new run status), distinct from a real fail.
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(expect.any(String), "blocked", expect.any(String));
+    expectValidatorCompletion("blocked", {
+      featureId: "F-001",
+      assertions: [{ assertionId: "CA-1", status: "blocked" }],
+    });
 
     const incEvent = (missionStore.logMissionEvent as any).mock.calls.find(
       (c: any[]) => c[3]?.code === "verification_inconclusive",

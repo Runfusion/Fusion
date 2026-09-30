@@ -31,6 +31,13 @@ describe("overseer contained failed execution recovery", () => {
         ],
       },
       logEntry: vi.fn().mockResolvedValue(undefined),
+      /*
+      FNXC:OverseerRecovery 2026-09-24-16:50:
+      FN-9362 made contained recovery re-read the durable row before choosing a lifecycle target.
+      This fixture models that reader from the same mutable task used by its atomic race states,
+      so unchanged, paused, live, and changed outcomes remain observable under the production fence.
+      */
+      getTask: vi.fn(async () => structuredClone(task)),
       updateTaskAtomic: vi.fn(async (_id: string, update: (current: Task) => Partial<Task> | null) => {
         if (state === "paused") Object.assign(task, { userPaused: true });
         if (state === "live") live = true;

@@ -34,6 +34,8 @@ export type WorkflowStepGateMode = "gate" | "advisory";
 
 /** Closed severity vocabulary shared by persisted workflow findings and Review-tab items. */
 export type WorkflowReviewFindingSeverity = "low" | "medium" | "high" | "critical";
+/** Closed authoring vocabulary for the threshold at which review findings block. */
+export type ReviewBlockingSeverity = WorkflowReviewFindingSeverity | "any";
 export type WorkflowReviewFindingResolution = "open" | "resolved-in-review" | "superseded" | "dispute-upheld";
 
 /**
@@ -104,6 +106,8 @@ export interface WorkflowStep {
   toolMode?: WorkflowStepToolMode;
   /** In-memory graph-node config: named MCP servers allowed for this readonly step. */
   readonlyMcpServers?: string[];
+  /** Author-declared threshold for this direct or optional-group review lane. */
+  blockingSeverity?: ReviewBlockingSeverity;
   /** Name of a skill to load into this step's session (e.g.
    *  "compound-engineering:ce-work"). When set, the step session loads the named
    *  skill (discovery + selection) and the engine injects the Fusion workflow-step

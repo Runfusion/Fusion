@@ -122,6 +122,32 @@ describe("self-healing idle-worktree sweeps skip resume-eligible CLI session wor
     expect(cleaned).toBe(1);
   });
 
+  it("cleanupOrphans keeps a metadata-free legacy-root review checkout through scan liveness", async () => {
+    const legacyLivePath = makeLinkedWorktree("fn-9380");
+    const store = createStore({ recycleWorktrees: false });
+    (store as any).listTasks.mockResolvedValue([{
+      id: "FN-9380",
+      column: "todo",
+      worktree: undefined,
+      branch: undefined,
+    }]);
+    (store as any).listWorkflowWorkItemsForTask = vi.fn().mockResolvedValue([{
+      state: "running", leaseOwner: "executor:FN-9380", leaseExpiresAt: null,
+    }]);
+    const scanSpy = vi.spyOn(worktreePool, "scanIdleWorktrees").mockImplementation(async (_root, _store, _settings, options) => {
+      expect(await options?.isPathLive?.(legacyLivePath)).toBe(true);
+      return [freePath];
+    });
+    const removeSpy = vi.spyOn(worktreePool, "removeWorktree").mockResolvedValue(undefined as never);
+
+    const manager = new SelfHealingManager(store, { rootDir });
+    await expect((manager as any).isCandidateWorktreeLive(legacyLivePath, { recycleWorktrees: false })).resolves.toBe(true);
+    await expect((manager as any).cleanupOrphans()).resolves.toBe(1);
+
+    expect(scanSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy.mock.calls.map((call) => (call[0] as { worktreePath: string }).worktreePath)).toEqual([freePath]);
+  });
+
   it("enforceWorktreeCap skips a worktree backing a live (active-session) executor session", async () => {
     makeLinkedWorktree("wt-extra");
     const store = createStore({ maxWorktrees: 1, recycleWorktrees: false });
