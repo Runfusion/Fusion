@@ -160,6 +160,7 @@ import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { mergerLog } from "./logger.js";
 import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
+import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 
 /*
 FNXC:EngineDiagnostics 2026-07-26-10:10:
@@ -11570,20 +11571,25 @@ export async function completeTask(
   taskId: string,
   result: MergeResult,
 ): Promise<void> {
-  mergerLog.log(`${taskId}: completeTask — clearing status, moving to done`);
+  mergerLog.log(`${taskId}: completeTask — finalizing proven merge`);
   const preMoveTask = await store.getTask(taskId);
-  // Clear transient status before moving to done
-  await store.updateTask(taskId, { status: null });
   /*
-  FNXC:MergerMoveAttribution 2026-08-29-07:37:
-  Legacy merger completion remains a forward merge authority. Its own neutral provenance keeps the
-  lifecycle timeline legible without borrowing graph/remediation/plan-approval literals that alter
-  review-entry auditing and reopen field-clearing semantics; plugins observe this source too.
+  FNXC:PostMergeEvidence 2026-09-30-01:54:
+  Every successful merger route, including the retained direct aiMergeTask path, must use the
+  shared finalizer. Durable post-merge approval is re-read within moveTaskIf before completion, so
+  a landed merge remains in review rather than bypassing a missing or superseded evidence gate.
   */
-  // Use moveTask for proper event emission.
-  const task = await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "complete"), {
-    workflowMoveSource: "merger-complete-task",
+  const finalization = await finalizeProvenAutoMergeTask({
+    store,
+    taskId,
+    result,
+    source: "direct-ai-merge",
   });
+  result.task = finalization.task ?? result.task;
+  if (finalization.outcome !== "done" && finalization.outcome !== "already-done") {
+    return;
+  }
+
   const settings = await store.getSettings();
   if (isMergeRequestContractShadowEnabled(settings) && preMoveTask?.autoMerge !== false) {
     const mergeRequestRecord = await store.getMergeRequestRecordAsync(taskId);
@@ -11591,7 +11597,6 @@ export async function completeTask(
       await store.transitionMergeRequestState(taskId, "succeeded");
     }
   }
-  result.task = task;
   try {
     /*
     FNXC:AgentActivityStream 2026-08-09-11:50:
