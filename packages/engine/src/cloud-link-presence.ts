@@ -22,6 +22,7 @@ import {
   type CloudLinkDeviceState,
 } from "@fusion/core";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
+import { createLogger } from "./logger.js";
 import type {
   TunnelProvider,
   TunnelProviderConfig,
@@ -52,6 +53,13 @@ export interface CloudLinkPresenceDeps {
   log?: CloudLinkLog;
 }
 
+/*
+FNXC:CloudLinkDiagnostics 2026-09-30-07:57:
+Cloud Link presence messages are engine diagnostics and must flow through the shared logger.
+The injectable callback remains available for tests and hosts, while the default avoids a bare console sink.
+*/
+const cloudLinkLog = createLogger("cloud-link");
+
 export class CloudLinkPresence {
   private readonly loadState: () => CloudLinkDeviceState | null;
   private readonly heartbeat: typeof cloudHeartbeat;
@@ -79,7 +87,7 @@ export class CloudLinkPresence {
     this.now = deps.now ?? Date.now;
     this.intervalMs = deps.intervalMs ?? CLOUD_LINK_HEARTBEAT_MS;
     this.log = deps.log ?? ((message) => {
-      console.log(`[cloud-link] ${message}`);
+      cloudLinkLog.debug(message);
     });
   }
 

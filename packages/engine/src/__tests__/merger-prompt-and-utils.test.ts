@@ -175,14 +175,40 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     log: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-07:57:
+    Merge completion helpers need approved durable post-merge evidence to reach the finalizer.
+    Tests for blocked evidence must override this fixture state deliberately.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true, commitSha: "mergedcommit123" },
     ...taskOverrides,
   };
 
+  let currentTask = { ...baseTask, prompt: "# test" };
+  const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => {
+    currentTask = { ...currentTask, ...patch } as Task;
+    return currentTask;
+  });
+  const moveTask = vi.fn(async (_id: string, column: Task["column"]) => {
+    currentTask = { ...currentTask, column } as Task;
+    return currentTask;
+  });
+
   return {
-    getTask: vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" }),
+    getTask: vi.fn(async () => currentTask),
     listTasks: vi.fn().mockResolvedValue(allTasks),
-    updateTask: vi.fn().mockResolvedValue(baseTask),
-    moveTask: vi.fn().mockResolvedValue(baseTask),
+    updateTask,
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      currentTask = { ...currentTask, ...await reducer(currentTask) } as Task;
+      return currentTask;
+    }),
+    moveTask,
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      if (!await predicate(currentTask)) return { moved: false, task: currentTask };
+      return { moved: true, task: await moveTask(_id, column) };
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
@@ -597,9 +623,7 @@ describe("push-after-merge", () => {
     expect(result.merged).toBe(true);
     expect(result.pushedToRemote).toBe(false);
     expect(result.pushError).toContain("permission denied");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done", {
-      workflowMoveSource: "merger-complete-task",
-    });
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
 
     // FN-7625: a failed push must not vanish silently — it needs a persisted
     // audit event and a task log entry, not just a process-wide log line.

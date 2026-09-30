@@ -34,7 +34,17 @@ function makeTask(overrides: TaskWithPromptOverride): Task {
 }
 
 function createStore(task: Task, settings: Partial<Settings>): TaskStore {
-  let currentTask = { ...task };
+  let currentTask = {
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-07:57:
+    Direct-merge success fixtures must model the durable approval re-read by the finalizer.
+    Individual refusal cases override this state rather than bypassing the production fence.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true },
+    ...task,
+  };
   const mergedSettings: Settings = {
     ...DEFAULT_SETTINGS,
       mergeIntegrationWorktree: "cwd-main" as const,
@@ -64,6 +74,15 @@ function createStore(task: Task, settings: Partial<Settings>): TaskStore {
         updatedAt: new Date().toISOString(),
       } as Task;
       return currentTask;
+    }),
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      currentTask = { ...currentTask, ...await reducer(currentTask) } as Task;
+      return currentTask;
+    }),
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      if (!await predicate(currentTask)) return { moved: false, task: currentTask };
+      currentTask = { ...currentTask, column, columnMovedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Task;
+      return { moved: true, task: currentTask };
     }),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
@@ -126,7 +145,7 @@ describeIfGit("FN-4424 empty cherry-pick handling (real git)", () => {
 
     await aiMergeTask(store, repo, task.id);
 
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(true);
+    expect(store.moveTaskIf).toHaveBeenCalledWith(task.id, "done", expect.any(Function), expect.any(Object));
     expect(git(repo, "git rev-parse HEAD")).toBe(xSha);
     expect(existsSync(join(repo, ".git", "CHERRY_PICK_HEAD"))).toBe(false);
     const sequencerDir = join(repo, ".git", "sequencer");
@@ -157,7 +176,7 @@ describeIfGit("FN-4424 empty cherry-pick handling (real git)", () => {
 
     await aiMergeTask(store, repo, task.id);
 
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(true);
+    expect(store.moveTaskIf).toHaveBeenCalledWith(task.id, "done", expect.any(Function), expect.any(Object));
     const newShas = git(repo, `git rev-list --reverse ${xSha}..HEAD`).split("\n").filter(Boolean);
     expect(newShas).toHaveLength(1);
     expect(git(repo, "git cat-file -e HEAD:unique.txt && echo present")).toBe("present");
@@ -183,6 +202,6 @@ describeIfGit("FN-4424 empty cherry-pick handling (real git)", () => {
     const store = createStore(task, {});
 
     await expect(aiMergeTask(store, repo, task.id)).rejects.toThrow();
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(false);
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
   }, 20_000);
 });
