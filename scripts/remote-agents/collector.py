@@ -314,6 +314,14 @@ DELIVERY_BACKOFF_BASE_SECONDS = 5
 DELIVERY_BACKOFF_MAX_SECONDS = 300
 
 
+def describe(error):
+    """FNXC:RemoteAgents 2026-09-30-11:10: log the reason, not just the class. A bare "ValueError" hid which of a
+    dozen distinct refusals was stalling delivery on m3. Messages are the collector's own text (status codes,
+    limits); the token is never part of one. Bounded so a pathological message cannot flood the log."""
+    message = str(error).replace('\n', ' ')
+    return f'{type(error).__name__}: {message[:200]}' if message else type(error).__name__
+
+
 def delivery_delay(failures):
     # FNXC:RemoteAgents 2026-09-23-09:40: Consecutive failed delivery rounds back off 5s doubling to 5min, so
     # collectors stop hammering a slow or unreachable Fusion; local scanning continues every loop regardless.
@@ -368,13 +376,13 @@ def deliver(db, args, token):
     except Exception as error:
         delivered = False
         bump(db, 'delivery_failures')
-        print('Fusion delivery unavailable:', type(error).__name__, flush=True)
+        print('Fusion delivery unavailable:', describe(error), flush=True)
     try:
         drain_turns(db, args.project, args.host,
                     lambda operation, body: post(args.url, args.project, token, operation, body, timeout=20))
     except Exception as error:
         delivered = False
-        print('Fusion turn delivery unavailable:', type(error).__name__, flush=True)
+        print('Fusion turn delivery unavailable:', describe(error), flush=True)
     return delivered
 
 
@@ -414,7 +422,7 @@ def main():
                 try:
                     scan(db, path, provider)
                 except Exception as error:
-                    print('Native collection paused:', provider, type(error).__name__, flush=True)
+                    print('Native collection paused:', provider, describe(error), flush=True)
             if args.state.stat().st_size > 512 * 1024 * 1024:
                 raise ValueError('Collector storage capacity reached')
             if args.once:
