@@ -2460,59 +2460,19 @@ describe("createFnAgent", () => {
     });
   });
 
-  it("synthesizes direct Anthropic Claude Sonnet 5 from supplemental metadata when the live registry lacks it", async () => {
-    // Live registry has no anthropic models; mergeSupplementalAnthropicModels re-adds Sonnet 5.
-    getAllMock.mockReturnValue([]);
-    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+  it("creates an Anthropic session from a Pi-owned catalog row without provider mutation", async () => {
+    const upstream = {
+      provider: "anthropic", id: "claude-future-catalog-row", name: "Claude Future Catalog Row", reasoning: true, input: ["text", "image"],
+      cost: { input: 99, output: 199, cacheRead: 9.9, cacheWrite: 24.75 }, contextWindow: 42, maxTokens: 7,
+    };
+    getAllMock.mockReturnValue([upstream]);
+    findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({
-      cwd: "/tmp",
-      systemPrompt: "test",
-      tools: "readonly",
-      defaultProvider: "anthropic",
-      defaultModelId: "claude-sonnet-5",
-    });
+    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: upstream.id });
 
-    // SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION advertises claude-sonnet-5 on the direct provider again.
-    expect(registerProviderMock).toHaveBeenCalledWith("anthropic", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-5" })]),
-    }));
-    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-      model: { provider: "anthropic", id: "claude-sonnet-5" },
-    }));
-  });
-
-  it("preserves upstream Claude Sonnet 5 while adding missing supplemental models", async () => {
-    getAllMock.mockReturnValue([
-      {
-        provider: "anthropic",
-        id: "claude-sonnet-5",
-        name: "Claude Sonnet 5 Upstream",
-        reasoning: true,
-        input: ["text", "image"],
-        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-        contextWindow: 1_000_000,
-        maxTokens: 128_000,
-      },
-    ]);
-    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
-
-    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({
-      cwd: "/tmp",
-      systemPrompt: "test",
-      tools: "readonly",
-      defaultProvider: "anthropic",
-      defaultModelId: "claude-sonnet-5",
-    });
-
-    const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(1);
-    expect(anthropicRegistrations[0]?.[1].models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream" }),
-      expect.objectContaining({ id: "claude-fable-5-1", name: "Claude Fable 5.1" }),
-    ]));
+    expect(registerProviderMock).not.toHaveBeenCalledWith("anthropic", expect.anything());
+    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: "anthropic", id: upstream.id } }));
   });
 
   it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {
@@ -3484,7 +3444,7 @@ describe("createFnAgent", () => {
       expect(result?.auth.headers).toEqual({
         "X-Session-Id": "FN-9245",
         "X-Session-Affinity": "FN-9245",
-        "user-agent": "claude-cli/2.1.251",
+        "user-agent": "claude-cli/2.1.284",
       });
     });
 
@@ -3494,7 +3454,7 @@ describe("createFnAgent", () => {
 
       const result = await runtime.getAuth(anyModel);
 
-      expect(result?.auth.headers).toEqual({ "user-agent": "claude-cli/2.1.251" });
+      expect(result?.auth.headers).toEqual({ "user-agent": "claude-cli/2.1.284" });
     });
   });
 

@@ -135,6 +135,40 @@ describe("evaluateNoCommitsNoOpFinalize", () => {
     expect(result.reason).toContain("Deploy notes");
   });
 
+  it("allows an intentional non-verification skip after approved empty-input Code Review", () => {
+    const result = evaluateNoCommitsNoOpFinalize({
+      noCommitsExpected: false,
+      steps: namedSteps([
+        ["Preflight", "done"],
+        ["Repair source only if reproduced", "skipped"],
+        ["Testing & Verification", "done"],
+      ]),
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        reviewKind: "code",
+        status: "passed",
+        verdict: "APPROVE",
+        reviewInputFingerprint: "empty-review-input:v1",
+      }],
+    });
+
+    expect(result).toEqual({ blocked: false, doneCount: 2, incompleteCount: 1 });
+  });
+
+  it("does not treat a generic approval as empty-diff reviewer sign-off", () => {
+    expect(evaluateNoCommitsNoOpFinalize({
+      noCommitsExpected: false,
+      steps: namedSteps([["Implement", "done"], ["Deploy notes", "skipped"]]),
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        reviewKind: "code",
+        status: "passed",
+        verdict: "APPROVE",
+        reviewInputFingerprint: "non-empty-input",
+      }],
+    })).toMatchObject({ blocked: true });
+  });
+
   it("blocks a skipped remediation step structurally even when its name has no gate word", () => {
     expect(evaluateNoCommitsNoOpFinalize({
       noCommitsExpected: true,

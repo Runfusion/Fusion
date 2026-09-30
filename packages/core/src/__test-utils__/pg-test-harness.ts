@@ -539,6 +539,38 @@ function parseTemplatePid(dbName: string): number | null {
   return Number.isFinite(pid) ? pid : null;
 }
 
+/*
+FNXC:PgTestOrphanSweep 2026-09-28-00:32:
+Slow-test fix (gate reliability): a vitest invocation that is killed or crashes
+before its `afterEach`/`afterAll`/`drop()` runs leaves its per-file databases
+(`uniqueDbName` -> `<prefix>_<pid>_<counter>_<random6>`) behind. Unlike the
+template databases, these per-file databases had NO reclamation path, so across
+many interrupted local runs they accumulated unbounded (measured 1533 leftover
+`fusion_*` databases on one dev box). PostgreSQL CREATE/DROP DATABASE cost grows
+with the catalog size, so at that volume every per-file `beforeAll` CREATE
+DATABASE crossed 7s and the whole pg-gate reported 15s hookTimeouts.
+
+`parsePerFileDbPid` recognizes the per-file naming tail (`_<pid>_<counter>_<random6>`)
+and extracts the owning pid; the golden-template sweep drops any such database
+whose owning pid is dead (`isPidAlive` -> ESRCH). This mirrors the template
+dead-pid sweep and is safe: the current run's own databases share this live pid,
+and a concurrent same-machine run under a different (live) pid is never touched.
+Any name that does not match the strict per-file tail (a real Fusion project DB,
+or a template) returns null and is left alone.
+*/
+function parsePerFileDbPid(dbName: string): number | null {
+  // Never treat a schema-template database as a per-file database; those have
+  // their own dedicated sweep keyed on `parseTemplatePid`.
+  if (dbName.startsWith(`${SCHEMA_TEMPLATE_PREFIX}_`)) return null;
+  // Match the `uniqueDbName` tail: `_<pid>_<counter>_<random6>`. The greedy
+  // prefix backtracks so a prefix ending in digits (e.g. `fusion_u8_health`)
+  // still resolves the pid as the first of the three trailing segments.
+  const match = /^fusion_.*_(\d+)_(\d+)_[a-z0-9]{6}$/.exec(dbName);
+  if (!match) return null;
+  const pid = Number.parseInt(match[1], 10);
+  return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+
 /**
  * FNXC:PgTestTemplateDb 2026-07-16-17:40:
  * A template left behind by a crashed/finished process is only reclaimable if
@@ -605,6 +637,11 @@ export const __pgTestTemplateTestHooks = {
       await gatedDdl(client, `CREATE DATABASE "${templateName}"`);
     });
   },
+  // FNXC:PgTestOrphanSweep 2026-09-28-00:32: exposed for pure-function coverage
+  // of the per-file orphan-sweep name matcher (it must extract the owning pid
+  // for real per-file names and return null for anything else so the sweep can
+  // never drop a template or a legitimate Fusion project database).
+  parsePerFileDbPid,
 };
 
 /*
@@ -701,6 +738,22 @@ function ensureGoldenTemplate(): Promise<string> {
       await client.unsafe(
         `DELETE FROM ${GOLDEN_MARKER_QUALIFIED} WHERE name NOT IN (SELECT datname FROM pg_database)`,
       ).catch(() => {});
+
+      // FNXC:PgTestOrphanSweep 2026-09-28-00:32:
+      // Also reclaim per-file databases orphaned by a killed/crashed run (see
+      // parsePerFileDbPid). Without this, per-file databases accumulate
+      // unbounded and eventually make every CREATE/DROP DATABASE — and thus the
+      // pg-gate's per-file beforeAll — cross the 15s hookTimeout.
+      const perFileRows = await client<{ datname: string }[]>`
+        SELECT datname FROM pg_database
+        WHERE datname LIKE 'fusion\\_%'
+          AND datname NOT LIKE ${SCHEMA_TEMPLATE_PREFIX + "\\_%"}
+      `;
+      for (const row of perFileRows) {
+        const pid = parsePerFileDbPid(row.datname);
+        if (pid === null || isPidAlive(pid)) continue;
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`).catch(() => {});
+      }
 
       // Serialize the build across forks; the winner applies the baseline while
       // the rest block here, then observe the ready marker and skip the build.

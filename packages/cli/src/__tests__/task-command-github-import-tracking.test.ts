@@ -60,6 +60,7 @@ vi.mock("@fusion/dashboard", () => ({
 
 vi.mock("@fusion/engine", () => ({
   installBaselineArchiveWorktreeDisposer: vi.fn(),
+  isFailedNoVerdictPreMergeReviewResult: vi.fn(() => false),
   createFnAgent: vi.fn(),
   SelfHealingManager: vi.fn(),
   runAiMerge: vi.fn(),

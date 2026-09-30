@@ -16,6 +16,12 @@ External integration evidence:
 
 Fusion supports `agy` versions whose bounded `--help` output contains the print-mode `--output-format stream-json` contract and the `mcp add`, `remove`, `enable`, `disable`, and `list` commands below. An unrecognised version is unavailable rather than guessed. The CLI owns login and credentials; Fusion does not read, copy, persist, or log them. Operators authenticate with the vendor-supported login flow before enabling the provider.
 
+## Readiness checks and passive status polling
+
+`GET /api/auth/status` retains an unauthenticated Antigravity provider row when `useAntigravityCli` is unset, false, or unreadable, but does not resolve the configured binary path or start `agy`. This keeps background settings, onboarding, and provider-status refreshes silent for an optional provider the operator has not enabled.
+
+Operator-requested readiness actions remain on-demand checks: `GET /api/providers/antigravity-cli/status` probes the effective binary even while disabled, and `POST /api/auth/antigravity-cli` probes a requested path or an enable request before saving it. Once enabled, `GET /api/auth/status` also probes the stored effective path and reports the provider ready only when that binary is available.
+
 ## Verified non-ACP transport
 
 `agy 1.2.7 --help` verifies this non-ACP print transport:

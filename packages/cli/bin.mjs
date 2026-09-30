@@ -7,12 +7,37 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const distEntry = resolve(packageDir, "dist", "bin.js");
+const skillsGetEntry = resolve(packageDir, "dist", "skills-get-bin.js");
+
+function isSkillsGetInvocation(argv) {
+  const cleanedArgs = [];
+  let hasProjectFlag = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    // Global terminal flags and invalid global flag forms retain full CLI parsing.
+    if (arg === "--version" || arg === "-v" || arg === "--help" || arg === "-h") return false;
+    if (arg === "--quiet" || arg === "-q" || arg === "--skip-onboarding") continue;
+    if (arg === "--project" || arg === "-P") {
+      const projectName = argv[index + 1];
+      if (hasProjectFlag || !projectName || projectName.startsWith("-")) return false;
+      hasProjectFlag = true;
+      index += 1;
+      continue;
+    }
+    cleanedArgs.push(arg);
+  }
+  return cleanedArgs[0] === "skills" && cleanedArgs[1] === "get";
+}
+
+const selectedEntry = isSkillsGetInvocation(globalThis.process.argv.slice(2))
+  ? skillsGetEntry
+  : distEntry;
 
 try {
-  await access(distEntry, constants.F_OK);
+  await access(selectedEntry, constants.F_OK);
 } catch {
   globalThis.console.error(
-    `Fusion CLI build output is missing at ${distEntry}. Run \`pnpm build\` before invoking this source checkout.`,
+    `Fusion CLI build output is missing at ${selectedEntry}. Run \`pnpm build\` before invoking this source checkout.`,
   );
   globalThis.process.exit(1);
 }
@@ -24,4 +49,4 @@ try {
  * awaited QMD child liveness at its source; this shim must not force exit 0,
  * which would truncate `serve`, `dashboard`, or `daemon` as well.
  */
-await import(pathToFileURL(distEntry).href);
+await import(pathToFileURL(selectedEntry).href);

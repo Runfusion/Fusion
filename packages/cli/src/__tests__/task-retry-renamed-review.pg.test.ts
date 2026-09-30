@@ -105,7 +105,11 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
    * transition-validated, so a direct hop is rejected under BOTH vocabularies. Walking it also means
    * the card arrives the way a real one does.
    */
-  async function seedFailedInReviewLane(path: readonly string[], workflowId?: string): Promise<string> {
+  async function seedFailedInReviewLane(
+    path: readonly string[],
+    workflowId?: string,
+    failurePatch: Record<string, unknown> = {},
+  ): Promise<string> {
     const store = h.store();
     const column = path[path.length - 1];
     const task = await store.createTask({
@@ -115,7 +119,7 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
     });
     if (workflowId) await store.writeTaskWorkflowSelection(task.id, workflowId, []);
     for (const step of path) await store.moveTask(task.id, step as never);
-    await store.updateTask(task.id, { status: "failed" } as never);
+    await store.updateTask(task.id, { status: "failed", ...failurePatch } as never);
     store.taskCache.delete(task.id);
 
     /*
@@ -154,6 +158,33 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
     const id = await seedFailedInReviewLane(["drafting", "building", "checking"], wf);
 
     expect(await retriedOutOfReview(id, "checking")).toBe(true);
+  });
+
+  /*
+  FNXC:CliRetryDeadlockRecovery 2026-09-24-10:48:
+  A workflow-renamed review lane must take the same automatic deadlock recovery as the legacy lane.
+  This real command-path fixture proves the hold target is resolved from the task workflow rather
+  than falling back to a literal todo lane after completed work makes it resemble a merge retry.
+  */
+  it("renamed vocabulary: a completed deadlock-paused failure rebounds to its hold lane", async () => {
+    const wf = await seedRenamedWorkflow();
+    const id = await seedFailedInReviewLane(["drafting", "building", "checking"], wf, {
+      error: "merge deadlock",
+      paused: true,
+      pausedReason: "in-review-stall-deadlock",
+      steps: [{ name: "implemented", status: "done" }],
+      mergeRetries: 4,
+    });
+
+    await runTaskRetry(id);
+    h.store().taskCache.delete(id);
+    const updated = await h.store().getTask(id);
+    expect(updated.column).toBe("drafting");
+    expect(updated.status).toBeFalsy();
+    expect(updated.error).toBeFalsy();
+    expect(updated.paused).toBeFalsy();
+    expect(updated.pausedReason).toBeFalsy();
+    expect(updated.mergeRetries).toBe(0);
   });
 
   /*

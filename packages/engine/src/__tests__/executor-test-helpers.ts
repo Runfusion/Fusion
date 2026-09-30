@@ -771,6 +771,16 @@ export function createMockStore() {
     }),
     recordActivity: vi.fn().mockResolvedValue({}),
     moveTask: makeWriteThroughMoveTask(),
+    /*
+    FNXC:PostMergeFinalizationFixture 2026-09-23-11:20:
+    FN-9370's terminal finalization is predicate-fenced. The shared executor fake must read the
+    live write-through row and execute the predicate before moving, matching TaskStore semantics.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      const live = await store.getTask(id) as Task;
+      if (!await predicate(live)) return { moved: false, task: live };
+      return { moved: true, task: await store.moveTask(id, column, options) };
+    }),
     handoffToReview: vi.fn().mockImplementation(async (id: string) => store.moveTask(id, "in-review")),
     mergeTask: vi.fn().mockResolvedValue({}),
     createTask: vi.fn().mockImplementation(async (input: Record<string, unknown>) => ({

@@ -130,10 +130,13 @@ describe("WorkflowGraphExecutor graph-native post-merge steps", () => {
       recordWorkflowStepResult: recorder.record,
     });
 
+    const ir = postMergeIr();
+    expect((ir.nodes.find((node) => node.id === POST_MERGE_ID)?.config?.template as { nodes: Array<{ config?: { gateMode?: string } }> }).nodes[0]?.config?.gateMode)
+      .toBe("advisory");
     const result = await executor.run(
       taskWith([POST_MERGE_ID]),
       { experimentalFeatures: { graphNativePostMerge: true } },
-      postMergeIr(),
+      ir,
     );
 
     // Merge succeeded; post-merge advisory REVISE must NOT flip the run to failure.
@@ -169,6 +172,33 @@ describe("WorkflowGraphExecutor graph-native post-merge steps", () => {
       status: "failed",
       verdict: "REVISE",
     });
+  });
+
+  it("keeps an enabled gate-mode follow-up blocking when its terminal persistence fence is refused", async () => {
+    const records: WorkflowStepResult[] = [];
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler("APPROVE") },
+      recordWorkflowStepResult: async (_taskId, result) => {
+        records.push(result);
+        if (result.status === "pending") {
+          return { scopeCurrent: true, persisted: true, disposition: "applied", persistedResult: result };
+        }
+        return { scopeCurrent: true, persisted: false, disposition: "fence-refused" };
+      },
+    });
+
+    const result = await executor.run(
+      taskWith([POST_MERGE_ID]),
+      { experimentalFeatures: { graphNativePostMerge: true } },
+      postMergeIr({ gateMode: "gate" }),
+    );
+
+    expect(result.outcome).toBe("failure");
+    expect(result.visitedNodeIds).not.toContain("end");
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workflowStepId: POST_MERGE_ID, status: "pending" }),
+      expect.objectContaining({ workflowStepId: POST_MERGE_ID, status: "passed", verdict: "APPROVE" }),
+    ]));
   });
 
   it("flag explicitly OFF (opt-out): the post-merge node is NOT run via the graph and records nothing", async () => {

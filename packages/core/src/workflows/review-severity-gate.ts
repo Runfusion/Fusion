@@ -24,14 +24,14 @@ still blocks, while classified findings continue to respect the configured thres
 */
 
 import type { WorkflowReviewFinding, WorkflowReviewFindingSeverity, WorkflowReviewKind } from "../types.js";
+import type { ReviewBlockingSeverity } from "../types/workflow/workflow-steps.js";
+export type { ReviewBlockingSeverity } from "../types/workflow/workflow-steps.js";
 import { isOpenWorkflowReviewFinding } from "./workflow-step-results.js";
 
 /**
  * Blocking threshold for a review gate. A severity value blocks at that level and above;
  * `"any"` restores the pre-gate behavior where every REVISE blocks regardless of severity.
  */
-export type ReviewBlockingSeverity = WorkflowReviewFindingSeverity | "any";
-
 export const REVIEW_BLOCKING_SEVERITIES = ["any", "low", "medium", "high", "critical"] as const;
 
 export const PLAN_REVIEW_BLOCKING_SEVERITY_SETTING_ID = "planReviewBlockingSeverity";
@@ -80,6 +80,8 @@ export interface ResolveReviewBlockingSeverityInput {
   reviewKind: WorkflowReviewKind;
   /** Effective per-task workflow settings map (stored value ?? declaration default). */
   workflowSettings?: Record<string, unknown>;
+  /** Keys whose effective values came from explicit operator-stored workflow settings. */
+  storedWorkflowSettingKeys?: ReadonlySet<string>;
   /** Authored node override, read from the review group's config. */
   nodeBlockingSeverity?: unknown;
 }
@@ -94,12 +96,14 @@ export interface ResolveReviewBlockingSeverityInput {
 export function resolveReviewBlockingSeverity({
   reviewKind,
   workflowSettings,
+  storedWorkflowSettingKeys,
   nodeBlockingSeverity,
 }: ResolveReviewBlockingSeverityInput): ReviewBlockingSeverity {
   const settingId = BLOCKING_SEVERITY_SETTING_BY_REVIEW_KIND[reviewKind];
-  const stored = workflowSettings?.[settingId];
-  if (isReviewBlockingSeverity(stored)) return stored;
+  const effective = workflowSettings?.[settingId];
+  if (storedWorkflowSettingKeys?.has(settingId) && isReviewBlockingSeverity(effective)) return effective;
   if (isReviewBlockingSeverity(nodeBlockingSeverity)) return nodeBlockingSeverity;
+  if (isReviewBlockingSeverity(effective)) return effective;
   return DEFAULT_BLOCKING_SEVERITY_BY_REVIEW_KIND[reviewKind];
 }
 

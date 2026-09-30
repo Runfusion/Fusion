@@ -137,6 +137,7 @@ vi.mock("../errors/context-limit-detector.js", () => ({
 
 import {
   aiMergeTask,
+  completeTask,
   pushToRemoteAfterMerge,
   findWorktreeUser,
   detectResolvableConflicts,
@@ -183,7 +184,7 @@ const mockedReadFileSync = vi.mocked(mockedReadFileSyncRaw);
 const mockedReaddirSync = vi.mocked(mockedReaddirSyncRaw);
 
 function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = []) {
-  const baseTask: Task = {
+  const task: Task = {
     id: "FN-050",
     title: "Test task",
     description: "Test",
@@ -195,14 +196,38 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     log: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-01:54:
+    The merger fixture models the durable approval required by the shared completion finalizer.
+    Individual fail-closed tests override this state; successful verification tests must exercise
+    the conditional move rather than a legacy unconditional direct move.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true, commitSha: "mergedcommit123" },
     ...taskOverrides,
   };
+  const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(task, patch));
+  const moveTask = vi.fn(async (_id: string, column: Task["column"]) => Object.assign(task, { column }));
+  const moveTaskIf = vi.fn(async (
+    _id: string,
+    column: Task["column"],
+    predicate: (live: Task) => boolean | Promise<boolean>,
+  ) => {
+    if (!await predicate(task)) return { moved: false, task };
+    return { moved: true, task: await moveTask(task.id, column) };
+  });
+  const updateTaskAtomic = vi.fn(async (_id: string, reducer: (current: Task) => Partial<Task>) =>
+    Object.assign(task, reducer(task)),
+  );
 
   return {
-    getTask: vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" }),
+    getTask: vi.fn(async () => ({ ...task, prompt: "# test" })),
     listTasks: vi.fn().mockResolvedValue(allTasks),
-    updateTask: vi.fn().mockResolvedValue(baseTask),
-    moveTask: vi.fn().mockResolvedValue(baseTask),
+    updateTask,
+    updateTaskAtomic,
+    moveTask,
+    moveTaskIf,
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
@@ -210,6 +235,9 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
       ...DEFAULT_SETTINGS,
       mergeIntegrationWorktree: "cwd-main" as const,
     }),
+    getTaskWorkflowSelection: vi.fn(() => undefined),
+    getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
+    getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
     emit: vi.fn(),
     on: vi.fn(),
@@ -420,7 +448,26 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
+  });
+
+  it("keeps a successful merge in review until post-merge evidence approves", async () => {
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const store = createMockStore({
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "failed", verdict: "REVISE" }],
+    });
+
+    const result = { merged: true, mergeConfirmed: true } as MergeResult;
+    await completeTask(store, "FN-050", result);
+
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("merge aborts when build fails via fn_report_build_failure tool", async () => {
@@ -559,7 +606,7 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
   });
 
   it("merge proceeds when buildCommand is empty string (treated as undefined)", async () => {
@@ -583,7 +630,7 @@ describe("aiMergeTask — build verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
   });
 
   function setupDependencySyncVerificationScenario({
@@ -1108,7 +1155,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     const result = await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
       expect.stringMatching(/^\[timing\] \[verification\] test command succeeded \(exit 0(?:, output exceeded buffer)?\) in \d+ms$/),
@@ -1909,7 +1956,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     await aiMergeTask(store, "/tmp/root", "FN-050");
 
     expect(verificationCalls).toContain("pnpm test");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
   });
 
   it("logs that test command was inferred from project files", async () => {
@@ -2086,7 +2133,7 @@ describe("aiMergeTask — inferred test command execution", () => {
     expect(verificationCalls).toHaveLength(0);
     // Merge should still succeed
     expect(result.merged).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-050", "done", expect.any(Function), expect.any(Object));
   });
 });
 
@@ -2355,6 +2402,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
       mergeIntegrationWorktree: "cwd-main" as const,
       testCommand: "vitest run",
       verificationFixRetries: 1,
+      persistAgentThinkingLogPermanent: true,
     });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
@@ -2367,7 +2415,24 @@ describe("aiMergeTask — in-merge verification fix", () => {
     expect(capturedFixOptions.onToolStart).toBeTypeOf("function");
     expect(capturedFixOptions.onToolEnd).toBeTypeOf("function");
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Bash", "tool", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-050",
+      "working on fix",
+      "text",
+      undefined,
+      "merger",
+      expect.objectContaining({ timeToFirstTokenMs: expect.any(Number) }),
+    );
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "diagnosing", "thinking", undefined, "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-050", "Bash", "tool", "vitest run", "merger");
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-050",
+      "Bash",
+      "tool_result",
+      "still failing",
+      "merger",
+      expect.objectContaining({ durationMs: expect.any(Number) }),
+    );
 
     const logMessages = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls
       .map((call: any[]) => call[1])

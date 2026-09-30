@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import type { Settings, Task, TaskStore } from "@fusion/core";
+import { acquireWorktreePathReservation, type Settings, type Task, type TaskStore } from "@fusion/core";
 import { SelfHealingManager, STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS } from "../../self-healing.js";
 import { activeSessionRegistry } from "../../agents/active-session-registry.js";
 
@@ -69,6 +69,7 @@ function makeStore(task: Task): TaskStore & EventEmitter & { auditEvents: any[] 
     getSettings: vi.fn(async () => settings),
     getTask: vi.fn(async () => task),
     listTasks: vi.fn(async () => [task]),
+    listWorkflowWorkItemsForTask: vi.fn(async () => []),
     updateTask: vi.fn(async (_id: string, updates: Partial<Task>) => Object.assign(task, updates)),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
       task.column = column;
@@ -158,6 +159,125 @@ describe("FN-4924 / FN-4949: reclaim-stale-active-branches defers in-flight exec
 
     expect(recovered).toBe(0);
     expect(inspectSpy).not.toHaveBeenCalled();
+    expect(store.auditEvents.some((event) => event.mutationType === "branch:stale-active-reclaim-deferred" && event.metadata?.reason === "active-session")).toBe(true);
+    manager.stop();
+  });
+
+  it("preserves a todo pre-release review branch when task-row worktree metadata is absent", async () => {
+    const repo = makeRepo();
+    tempRoots.push(repo);
+    const branch = createFusionBranch(repo, "FN-9380");
+    const worktree = join(repo, ".worktrees", "fn-9380");
+    mkdirSync(worktree, { recursive: true });
+    const task = makeTask("FN-9380", branch, null, "");
+    task.column = "todo";
+    const store = makeStore(task);
+    activeSessionRegistry.registerPath(worktree, { taskId: task.id, kind: "workflow-step", ownerKey: task.id });
+    const manager = new SelfHealingManager(store as any, { rootDir: repo } as any);
+
+    await expect(manager.reclaimStaleActiveBranches()).resolves.toBe(0);
+    expect(() => sh(`git rev-parse --verify ${branch}`, repo)).not.toThrow();
+    expect((store.updateTask as any).mock.calls.some((call: any[]) => call[1]?.branch === null)).toBe(false);
+    expect(store.auditEvents.some((event) => event.mutationType === "branch:stale-active-reclaim-deferred" && event.metadata?.reason === "active-session")).toBe(true);
+    manager.stop();
+  });
+
+  it("preserves a metadata-free pre-release checkout for a valid executor workflow lease", async () => {
+    const repo = makeRepo();
+    tempRoots.push(repo);
+    const branch = createFusionBranch(repo, "FN-9381");
+    const task = makeTask("FN-9381", branch, null, "");
+    task.column = "todo";
+    const store = makeStore(task);
+    (store.listWorkflowWorkItemsForTask as any).mockResolvedValue([{
+      state: "running", leaseOwner: "executor:FN-9381", leaseExpiresAt: null,
+    }]);
+    const manager = new SelfHealingManager(store as any, { rootDir: repo } as any);
+
+    await expect(manager.reclaimStaleActiveBranches()).resolves.toBe(0);
+    expect(() => sh(`git rev-parse --verify ${branch}`, repo)).not.toThrow();
+    expect(store.auditEvents.some((event) => event.mutationType === "branch:stale-active-reclaim-deferred" && event.metadata?.reason === "workflow-lease")).toBe(true);
+    manager.stop();
+  });
+
+  it("preserves a metadata-free legacy-root checkout for a live matching reservation", async () => {
+    const repo = makeRepo();
+    tempRoots.push(repo);
+    const branch = createFusionBranch(repo, "FN-9383");
+    const legacyWorktreesDir = join(repo, ".worktrees");
+    const worktree = join(legacyWorktreesDir, "fn-9383");
+    mkdirSync(legacyWorktreesDir, { recursive: true });
+    sh(`git worktree add ${JSON.stringify(worktree)} ${branch}`, repo);
+    const task = makeTask("FN-9383", branch, null, "");
+    task.column = "todo";
+    const store = makeStore(task);
+    const manager = new SelfHealingManager(store as any, { rootDir: repo } as any);
+    const reservation = await acquireWorktreePathReservation({
+      canonicalPath: worktree,
+      worktreesDir: legacyWorktreesDir,
+      rootDir: repo,
+    });
+
+    try {
+      await expect(manager.reclaimStaleActiveBranches()).resolves.toBe(0);
+      expect(() => sh(`git rev-parse --verify ${branch}`, repo)).not.toThrow();
+      expect(sh("git worktree list --porcelain", repo)).toContain(`worktree ${realpathSync(worktree)}`);
+      expect((store.updateTask as any).mock.calls.some((call: any[]) => call[1]?.branch === null)).toBe(false);
+      expect(store.auditEvents.some((event) => event.mutationType === "branch:stale-active-reclaim-deferred" && event.metadata?.reason === "path-reservation")).toBe(true);
+    } finally {
+      await reservation.release();
+      manager.stop();
+    }
+  });
+
+  it("preserves a reservation-backed checkout in idle cleanup when the scan root is canonicalized", async () => {
+    const repo = makeRepo();
+    tempRoots.push(repo);
+    const branch = createFusionBranch(repo, "FN-9384");
+    // FNXC:PreReleaseWorktreeLiveness 2026-09-24-07:13: macOS scan paths canonicalize /var to /private/var.
+    const worktreesDir = join(repo, ".fusion", "worktrees");
+    const worktree = join(worktreesDir, "fn-9384");
+    mkdirSync(worktreesDir, { recursive: true });
+    sh(`git worktree add ${JSON.stringify(worktree)} ${branch}`, repo);
+    const task = makeTask("FN-9384", branch, null, "");
+    task.column = "todo";
+    const store = makeStore(task);
+    const manager = new SelfHealingManager(store as any, { rootDir: repo } as any);
+    const reservation = await acquireWorktreePathReservation({
+      canonicalPath: worktree,
+      worktreesDir,
+      rootDir: repo,
+    });
+
+    try {
+      await expect((manager as any).cleanupOrphans()).resolves.toBe(0);
+      expect(sh("git worktree list --porcelain", repo)).toContain(`worktree ${realpathSync(worktree)}`);
+    } finally {
+      await reservation.release();
+      manager.stop();
+    }
+  });
+
+  it("re-checks liveness when a pre-release session starts during branch inspection", async () => {
+    const repo = makeRepo();
+    tempRoots.push(repo);
+    const branch = createFusionBranch(repo, "FN-9382");
+    const task = makeTask("FN-9382", branch, null, "");
+    task.column = "todo";
+    const store = makeStore(task);
+    const manager = new SelfHealingManager(store as any, { rootDir: repo } as any);
+    const preReleasePath = join(repo, ".fusion", "worktrees", "fn-9382");
+    vi.spyOn(manager as any, "inspectOrphanedBranch").mockImplementation(async () => {
+      activeSessionRegistry.registerPath(preReleasePath, {
+        taskId: task.id, kind: "workflow-step", ownerKey: "plan-review",
+      });
+      return { tipSha: "abc123def456", uniqueCommitCount: 0 };
+    });
+
+    await expect(manager.reclaimStaleActiveBranches()).resolves.toBe(0);
+
+    expect(() => sh(`git rev-parse --verify ${branch}`, repo)).not.toThrow();
+    expect((store.updateTask as any).mock.calls.some((call: any[]) => call[1]?.branch === null)).toBe(false);
     expect(store.auditEvents.some((event) => event.mutationType === "branch:stale-active-reclaim-deferred" && event.metadata?.reason === "active-session")).toBe(true);
     manager.stop();
   });

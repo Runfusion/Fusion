@@ -94,6 +94,14 @@ function createStore(task: Task): TaskStore & RecordingStore {
       task.column = column as Task["column"];
       return Promise.resolve(task);
     }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Keep cleanup finalization behind FN-9370's evaluated durable predicate.
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(task)) return { moved: false, task };
+      void options;
+      moveTaskCalls.push({ id, column });
+      task.column = column as Task["column"];
+      return { moved: true, task };
+    }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),
     emit: (event: string, payload?: unknown) => {

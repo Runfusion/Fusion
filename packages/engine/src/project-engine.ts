@@ -114,7 +114,10 @@ import {
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./merge/group-merge-coordinator.js";
 import { rerouteWorkspaceReviewToCodeReview } from "./merge/workspace-review-reroute.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
-import { rerouteUnrunPreMergeGateToReview } from "./merge/pre-merge-gate-reseed.js";
+import {
+  rerouteFailedNoVerdictPreMergeGateToReview,
+  rerouteUnrunPreMergeGateToReview,
+} from "./merge/pre-merge-gate-reseed.js";
 import { WorkspaceEnvironmentError } from "./merge/workspace-integration-target.js";
 import {
   formatAdmissionCapacityQueuedReason,
@@ -476,7 +479,11 @@ export interface ProjectEngineOptions {
  * via ProjectManager) gets the full subsystem set, eliminating the class of
  * bugs where a subsystem is forgotten in one code path.
  */
-type MergeResolver = { resolve: (result: MergeResult) => void; reject: (err: Error) => void };
+type MergeResolver = {
+  resolve: (result: MergeResult) => void;
+  reject: (err: Error) => void;
+  graphOwnedPostMergeTraversal?: boolean;
+};
 
 export class ProjectEngine {
   private readonly staleContentRerouteAuditKeys = new Set<string>();
@@ -898,6 +905,13 @@ export class ProjectEngine {
     // (mergeQueue + mergeActive) to the workspace self-healing reconcilers so they don't
     // re-dispatch / reclaim a task that is mid-dequeue→rawMerge.
     this.runtime.setMergePendingProvider?.((taskId) => this.isMergePending(taskId));
+    /*
+    FNXC:NoVerdictReviewRecovery 2026-09-23-20:52:
+    Automatic self-healing and graph-failure paths must share the same admission fence as manual
+    retry. Wiring this before runtime start keeps a queued merge from appearing between their final
+    ownership check and the idle continuation insert.
+    */
+    this.runtime.setFailedNoVerdictPreMergeReviewRerouter?.((task) => this.rerouteFailedNoVerdictPreMergeReview(task));
     // Workflow-graph interpreter merge seam: routes through the auto-merge
     // eligibility gate (requestInterpreterMerge), NOT the human "merge now"
     // bypass, so a graph merge node can't override an autoMerge-off project.
@@ -1092,6 +1106,56 @@ export class ProjectEngine {
    * Queue admission defers behind the fence, so its later claim cannot be overwritten by
    * the TaskStore-only compare-and-set used for the manual reset.
    */
+  /**
+   * FNXC:NoVerdictReviewRecovery 2026-09-23-19:58:
+   * A failed review with no verdict needs the same ProjectEngine ownership fence as a stalled
+   * merge, but must not first reset merge state. Holding queue admission while the exact review
+   * continuation is atomically seeded prevents a newly queued merger from racing that re-review.
+   */
+  async rerouteFailedNoVerdictPreMergeReview(task: Task): Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable"> {
+    const store = this.runtime.getTaskStore();
+    if (typeof store.updateTaskAtomic !== "function") return "unavailable";
+    if (this.mergeRetryResetTaskIds.has(task.id)) return "pending";
+
+    this.mergeRetryResetTaskIds.add(task.id);
+    try {
+      if (await this.isMergePending(task.id)) return "pending";
+      const live = await store.getTask(task.id);
+      if (live.column !== task.column
+        || live.status !== task.status
+        || (live.mergeRetries ?? 0) !== (task.mergeRetries ?? 0)
+        || live.paused !== task.paused
+        || live.userPaused !== task.userPaused) return "changed";
+      const gate = await resolvePreMergeGateForTask(store, live.id, live.enabledWorkflowSteps, live);
+      const settings = await store.getSettings();
+      const mergeContent = await captureMergeContentDescriptor(live, { workspaceRootDir: store.getRootDir(), settings });
+      const reroute = await rerouteFailedNoVerdictPreMergeGateToReview(store, live, {
+        requiredPreMergeStepIds: gate.requiredPreMergeStepIds,
+        mergeContent,
+        expectedWorkflowSelection: gate.expectedWorkflowSelection,
+      });
+      if (reroute.rerouted) return "rerouted";
+      /*
+      FNXC:NoVerdictReviewRecovery 2026-09-23-20:36:
+      A workflow-selection change is a refusal, not evidence that the failed review
+      disappeared. Keep chat retry inside this engine fence so its generic merge-reset
+      path cannot later seed an old review node after queue admission resumes.
+      */
+      if (reroute.reason === "workflow-selection-changed") return "changed";
+      if (reroute.reason === "active-continuation") return "pending";
+      return "not-applicable";
+    } catch {
+      return "unavailable";
+    } finally {
+      this.mergeRetryResetTaskIds.delete(task.id);
+      if (this.mergeEnqueueDeferredByRetryReset.delete(task.id)) {
+        queueMicrotask(() => {
+          if (!this.shuttingDown) this.internalEnqueueMerge(task.id);
+        });
+      }
+    }
+  }
+
   async resetInReviewMergeRetry(task: Task): Promise<"reset" | "pending" | "changed" | "unavailable"> {
     const store = this.runtime.getTaskStore();
     if (typeof store.updateTaskAtomic !== "function") return "unavailable";
@@ -2661,7 +2725,7 @@ export class ProjectEngine {
    * Returns the full MergeResult so it can be used as the `onMerge` callback
    * in createServer().
    */
-  async onMerge(taskId: string, options: { signal?: AbortSignal } = {}): Promise<MergeResult> {
+  async onMerge(taskId: string, options: { signal?: AbortSignal; graphOwnedPostMergeTraversal?: boolean } = {}): Promise<MergeResult> {
     const signal = options.signal;
     if (signal?.aborted) {
       throw new Error(`Merge request for ${taskId} aborted`);
@@ -2694,6 +2758,7 @@ export class ProjectEngine {
         signal?.removeEventListener("abort", abort);
       };
       const resolver: MergeResolver = {
+        graphOwnedPostMergeTraversal: options.graphOwnedPostMergeTraversal === true,
         resolve: (result) => {
           if (settled) return;
           settled = true;
@@ -2752,7 +2817,7 @@ export class ProjectEngine {
    * it as "manual merge required" and parks the task in review — preserving the
    * contract that autoMerge-off leaves in-review terminal until a human merges.
    */
-  async requestInterpreterMerge(taskId: string, options: { signal?: AbortSignal } = {}): Promise<MergeResult> {
+  async requestInterpreterMerge(taskId: string, options: { signal?: AbortSignal; graphOwnedPostMergeTraversal?: boolean } = {}): Promise<MergeResult> {
     let task: Task | null = null;
     let settings: Settings | undefined;
     const store = this.runtime.getTaskStore();
@@ -2794,7 +2859,7 @@ export class ProjectEngine {
       } as MergeResult;
     }
     // Eligible: route through the normal serialized merge path.
-    return this.onMerge(taskId, options);
+    return this.onMerge(taskId, { ...options, graphOwnedPostMergeTraversal: true });
   }
 
   private setAutomationSubsystemHealth(
@@ -2957,6 +3022,13 @@ export class ProjectEngine {
       requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
       mergeContent,
     });
+    if (mergeContent.kind === "singular" && !await this.isMergePending(task.id)) {
+      // Use the same in-memory admission fence as every other no-verdict recovery owner.
+      const reroute = await this.rerouteFailedNoVerdictPreMergeReview(task);
+      if (reroute === "rerouted") {
+        await store.logEntry(task.id, "[pre-merge] The workflow graph was re-seeded at a failed no-verdict pre-merge review gate.");
+      }
+    }
     if (blocker === PRE_MERGE_STEPS_NOT_RUN_BLOCKER && mergeContent.kind === "singular") {
       const reroute = await rerouteUnrunPreMergeGateToReview(store, task, {
         requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
@@ -3930,6 +4002,8 @@ export class ProjectEngine {
         // don't start a merge whose queue entry was cleared by stop().
         if (this.shuttingDown) break;
         const hasManualResolver = this.hasMergeResolvers(taskId);
+        const graphOwnedPostMergeTraversal = this.manualMergeResolvers.get(taskId)
+          ?.some((resolver) => resolver.graphOwnedPostMergeTraversal === true) === true;
         /*
         FNXC:MergeQueue 2026-08-28-09:29:
         Waiting-caller dispatches deliberately skip the merge-confirmed fast path in the automatic
@@ -4715,6 +4789,7 @@ export class ProjectEngine {
                 agentStore,
                 pluginRunner: this.getPluginRunner(),
                 signal: abortSignal,
+                graphOwnedPostMergeTraversal,
                 syncGroupPr: this.options.syncGroupPr,
                 onSession: (session: { dispose: () => void }) => {
                   this.activeMergeSession = session;

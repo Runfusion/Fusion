@@ -93,6 +93,21 @@ function createStore(task: Task, settings: Record<string, unknown> = {}): TaskSt
       store.task.column = column as Task["column"];
       return Promise.resolve(store.task);
     }),
+    /*
+    FNXC:PostMergeEvidenceFixture 2026-09-23-10:48:
+    FN-9370 moved terminal auto-merge admission to moveTaskIf. This production-shaped store
+    evaluates the live predicate before recording completion, preserving finalization-fence coverage.
+    */
+    moveTaskIf: vi.fn(async (
+      id: string,
+      column: Task["column"],
+      predicate: (live: Task) => boolean | Promise<boolean>,
+    ) => {
+      if (!(await predicate(store.task))) return { task: store.task, moved: false };
+      moveTaskCalls.push({ id, column });
+      store.task.column = column;
+      return { task: store.task, moved: true };
+    }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),
     emit: (event: string, payload?: unknown) => {

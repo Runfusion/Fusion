@@ -67,6 +67,23 @@ describe("optional-group validation", () => {
     );
   });
 
+  it.each(["any", "low", "medium", "high", "critical"] as const)("accepts and round-trips %s blockingSeverity for review groups", (blockingSeverity) => {
+    const parsed = parseWorkflowIr(groupIr({ reviewKind: "code", blockingSeverity })) as WorkflowIrV2;
+    const group = parsed.nodes.find((n) => n.id === "browser-verification");
+    expect(group?.config?.blockingSeverity).toBe(blockingSeverity);
+    expect(parseWorkflowIr(serializeWorkflowIr(parsed))).toEqual(parsed);
+  });
+
+  it("rejects malformed, unscoped, and template-local group blockingSeverity declarations", () => {
+    expect(() => parseWorkflowIr(groupIr({ reviewKind: "code", blockingSeverity: "urgent" }))).toThrow(/invalid blockingSeverity/);
+    expect(() => parseWorkflowIr(groupIr({ blockingSeverity: "high" }))).toThrow(/requires reviewKind/);
+    const template = groupTemplate();
+    template.nodes[0] = { ...template.nodes[0], config: { blockingSeverity: "high" } };
+    expect(() => parseWorkflowIr(groupIr({ reviewKind: "code", blockingSeverity: "high", template }))).toThrow(
+      /verify.*blockingSeverity.*unsupported nested template placement/,
+    );
+  });
+
   it("accepts and round-trips per-step maxRevisions budgets", () => {
     for (const maxRevisions of [2, "unbounded"] as const) {
       const parsed = parseWorkflowIr(groupIr({ maxRevisions })) as WorkflowIrV2;

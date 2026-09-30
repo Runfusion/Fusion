@@ -152,6 +152,19 @@
     "fn-9365-sqlite-migration-verification",
     "fn-9366-postgres-health-pool",
     "fn-9367-task-id-integrity-scope",
+    "fn-9370-post-merge-gate-fences",
+    "fn-9373-pre-merge-review-recovery",
+    "fn-9376-auth-status-antigravity-polling",
+    "fn-9377-worktree-reservation-recovery",
+    "fn-9378-plugin-sdk-declaration-dependencies",
+    "fn-9379-blocking-severity",
+    "fn-9380-preserve-live-pre-release-worktrees",
+    "fn-9381-merge-boundary-recovery",
+    "fn-9384-task-retry-stall",
+    "fn-9385-patchnode-project-partition",
+    "fn-9392-skills-get-exit",
+    "fn-9393-skills-get-exit",
+    "fn-9394-skills-get-completion",
     "fn-thinking-effort-degradation",
     "fuzzy-chats-glide",
     "github-cli-not-planned-reason",
@@ -167,6 +180,7 @@
     "remove-task-archiving",
     "spec-lock-aliases",
     "stas-103-prompt-read-back",
+    "triage-planning-hold-backoff",
     "workflow-admission-holds"
   ]
 }

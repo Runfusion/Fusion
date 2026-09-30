@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { builtinModules } from "node:module";
 import ts from "typescript";
 import { definePlugin, validatePluginManifest } from "@fusion/plugin-sdk";
 import {
@@ -43,6 +44,25 @@ function executableModuleSpecifiers(source: string): string[] {
 
   visit(sourceFile);
   return specifiers;
+}
+
+function packageNameFromSpecifier(specifier: string): string {
+  return specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0];
+}
+
+const nodeBuiltinSpecifiers = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
+
+/**
+ * FNXC:PluginSdkDeclarations 2026-09-24-06:07:
+ * Published SDK declarations may retain external imports after workspace types are bundled. Every non-Node import must be a required published dependency so strict consumer declaration checking never relies on workspace hoisting.
+ */
+function assertDeclarationDependencies(source: string, pkg: { dependencies?: Record<string, string> }): void {
+  for (const specifier of executableModuleSpecifiers(source)) {
+    if (nodeBuiltinSpecifiers.has(specifier)) continue;
+    expect(pkg.dependencies, `declaration import ${specifier} must be a required published dependency`).toHaveProperty(
+      packageNameFromSpecifier(specifier),
+    );
+  }
 }
 
 describe("plugin-sdk export surface", () => {
@@ -168,5 +188,50 @@ describe("plugin-sdk export surface", () => {
       specifier.startsWith("@fusion/"),
     );
     expect(fusionTypeSpecifiers).toEqual([]);
+  });
+
+  it("keeps public Drizzle handles and their declaration dependencies installable", () => {
+    const pkg = JSON.parse(readFileSync(join(workspaceRoot, "packages", "cli", "package.json"), "utf8"));
+    const publishedPkg = applyPrepackTransform(pkg);
+    const declaration = 'import type { PostgresJsDatabase } from "drizzle-orm/postgres-js"; import { EventEmitter } from "node:events";';
+
+    expect(pkg.dependencies).toMatchObject({
+      "drizzle-orm": "1.0.0-rc.5-5935859",
+      mysql2: "3.24.4",
+      postgres: "3.3.5",
+    });
+    expect(publishedPkg.dependencies).toMatchObject({
+      "drizzle-orm": "1.0.0-rc.5-5935859",
+      mysql2: "3.24.4",
+      postgres: "3.3.5",
+    });
+    assertDeclarationDependencies(declaration, pkg);
+    assertDeclarationDependencies(declaration, publishedPkg);
+
+    const distPath = join(workspaceRoot, "packages", "cli", "dist", "plugin-sdk", "index.d.ts");
+    if (existsSync(distPath)) {
+      const emittedDeclaration = readFileSync(distPath, "utf8");
+      expect(emittedDeclaration).toContain("drizzle-orm/postgres-js");
+      expect(emittedDeclaration).toContain("type DrizzleDb = PostgresJsDatabase<Record<string, never>>;");
+      expect(emittedDeclaration).toContain(
+        "type DbTransaction = PostgresJsTransaction<Record<string, never>>;",
+      );
+      assertDeclarationDependencies(emittedDeclaration, pkg);
+      assertDeclarationDependencies(emittedDeclaration, publishedPkg);
+    }
+  });
+
+  it("rejects declaration dependencies supplied only as devDependencies", () => {
+    const pkg = JSON.parse(readFileSync(join(workspaceRoot, "packages", "cli", "package.json"), "utf8"));
+    const devOnly = {
+      ...pkg,
+      dependencies: { ...pkg.dependencies },
+      devDependencies: { ...pkg.devDependencies, "drizzle-orm": pkg.dependencies["drizzle-orm"] },
+    };
+    delete devOnly.dependencies["drizzle-orm"];
+
+    expect(() => assertDeclarationDependencies('import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";', devOnly)).toThrow(
+      /required published dependency/,
+    );
   });
 });

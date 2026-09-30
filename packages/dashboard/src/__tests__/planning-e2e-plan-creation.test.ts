@@ -269,6 +269,30 @@ describe("Planning Mode plan creation E2E", () => {
     expect(store.createTask).toHaveBeenCalledTimes(1);
   });
 
+  it("filters malformed dependencies through the production CLI planning twin without breaking replay idempotency", async () => {
+    const started = await post(app, "/api/planning/start", { initialPlan: "Normalize planning dependencies" });
+    expect(started.status).toBe(201);
+    const session = await getSession(started.body.sessionId);
+    expect(session).toBeDefined();
+    session!.summary = {
+      title: "Dependency normalization",
+      description: "Create a task without prose dependencies.",
+      suggestedSize: "M",
+      suggestedDependencies: ["KB-42", "Existing failed-no-verdict re-seeding must not race or duplicate automatic waiver for the same attempt.", "ERR-7", "KB-42", ""],
+      keyDeliverables: ["Filter invalid dependencies"],
+    };
+
+    const created = await createTaskFromPlanSession(started.body.sessionId, store);
+    expect(created).toMatchObject({ alreadyCreated: false, task: { id: "FN-E2E-001" } });
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      dependencies: ["KB-42", "ERR-7"],
+    }));
+
+    const replay = await createTaskFromPlanSession(started.body.sessionId, store);
+    expect(replay).toMatchObject({ alreadyCreated: true, task: { id: created.task.id } });
+    expect(store.createTask).toHaveBeenCalledTimes(1);
+  });
+
   it("attaches persisted GitHub image URLs through the production CLI planning twin", async () => {
     const initialPlan = [
       "Plan work for GitHub issue: Screenshot report",

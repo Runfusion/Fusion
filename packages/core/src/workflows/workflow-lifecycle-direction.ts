@@ -112,6 +112,14 @@ export const ENGINE_BACKWARD_MOVE_REASONS: Readonly<Record<string, EngineBackwar
   "merge-fix-remediation": {
     from: ["review"], to: ["wip"], summary: "Merge review REVISE requested implementation fixes",
   },
+  /*
+  FNXC:WorkflowMergeRecovery 2026-09-24-06:03:
+  A typed merge-boundary proof gap may re-enter only its durable implementation owner.
+  This pair-limited reason lets that fenced recovery leave review without granting graph-wide backward routing.
+  */
+  "merge-boundary-evidence-recovery": {
+    from: ["review"], to: ["wip"], summary: "Merge-boundary proof recovery resumes its proven implementation owner",
+  },
   "plan-review-revise-replan": {
     from: ["wip"], to: ["hold"], summary: "Plan Review REVISE requested a planning revision",
   },

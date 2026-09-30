@@ -82,7 +82,7 @@ describe("interpreter merge seam", () => {
       const fakeEngine = fakeEngineWith({ autoEligible: true, onMerge });
       const result = await (ProjectEngine.prototype as any).requestInterpreterMerge.call(fakeEngine, "FN-3");
 
-      expect(onMerge).toHaveBeenCalledWith("FN-3", {});
+      expect(onMerge).toHaveBeenCalledWith("FN-3", { graphOwnedPostMergeTraversal: true });
       expect(result.merged).toBe(true);
     });
 

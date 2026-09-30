@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -401,6 +401,14 @@ describe("bin command routing and fallbacks", () => {
     expect(pkg.piConfig?.configDir).toBe(".fusion");
   });
 
+  it("preserves an existing Pi package directory for help", async () => {
+    process.env.PI_PACKAGE_DIR = "already-configured";
+
+    await expect(runBin(["--help"])).rejects.toThrow("process.exit:0");
+
+    expect(process.env.PI_PACKAGE_DIR).toBe("already-configured");
+  });
+
   it("shows help with --help and exits 0", async () => {
     await expect(runBin(["--help"])).rejects.toThrow("process.exit:0");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("fn — AI-orchestrated task board"));
@@ -419,6 +427,13 @@ describe("bin command routing and fallbacks", () => {
       commandMocks.runDashboard.mockResolvedValue({ dispose: vi.fn() });
       await runBin([]);
       expect(commandMocks.runDashboard).toHaveBeenCalled();
+
+      const piPackageDir = process.env.PI_PACKAGE_DIR;
+      expect(piPackageDir).toBeTruthy();
+      const pkg = JSON.parse(readFileSync(join(piPackageDir!, "package.json"), "utf-8")) as {
+        piConfig?: { configDir?: string };
+      };
+      expect(pkg.piConfig?.configDir).toBe(".fusion");
     },
     15000,
   );
@@ -431,6 +446,39 @@ describe("bin command routing and fallbacks", () => {
     },
     15000,
   );
+
+  it("keeps skills get outside Pi and cwd environment bootstrap", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "fn-bin-skills-get-"));
+    const originalCwd = process.cwd();
+    const originalMarker = process.env.FN_SKILLS_GET_CWD_MARKER;
+    const originalExitCode = process.exitCode;
+    writeFileSync(join(cwd, ".env"), "FN_SKILLS_GET_CWD_MARKER=loaded\n");
+
+    try {
+      process.chdir(cwd);
+      for (const [args, expectedExitCode] of [
+        [["skills", "get", "computer-use"], 0],
+        [["skills", "get", "not-a-built-in"], 1],
+        [["skills", "get"], 1],
+      ] as const) {
+        delete process.env.PI_PACKAGE_DIR;
+        delete process.env.FN_SKILLS_GET_CWD_MARKER;
+        process.exitCode = undefined;
+
+        await runBin(args);
+
+        expect(process.exitCode).toBe(expectedExitCode);
+        expect(process.env.PI_PACKAGE_DIR).toBeUndefined();
+        expect(process.env.FN_SKILLS_GET_CWD_MARKER).toBeUndefined();
+      }
+    } finally {
+      process.chdir(originalCwd);
+      if (originalMarker === undefined) delete process.env.FN_SKILLS_GET_CWD_MARKER;
+      else process.env.FN_SKILLS_GET_CWD_MARKER = originalMarker;
+      process.exitCode = originalExitCode;
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   it("errors on duplicate --project flags", async () => {
     await expect(runBin(["task", "list", "--project", "alpha", "-P", "beta"])).rejects.toThrow(

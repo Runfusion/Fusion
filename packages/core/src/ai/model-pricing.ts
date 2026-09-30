@@ -117,7 +117,7 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
   // input / output / cacheRead(0.1×) / cacheWrite(1.25×, 5-min TTL)
   /*
    * FNXC:ModelCatalog 2026-07-01-22:40:
-   * `anthropic:claude-sonnet-5` is advertised again (works on raw API key + Claude CLI; live-verified), so restore its static pricing. Matches the cost in SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.
+   * `anthropic:claude-sonnet-5` remains a separately maintained usage-accounting record. Catalog discovery is Pi-owned.
    */
   "anthropic:claude-sonnet-5": {
     inputPer1M: 2,
@@ -125,6 +125,25 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     cacheReadPer1M: 0.2,
     cacheWritePer1M: 2.5,
     source: "platform.claude.com/docs/en/pricing",
+  },
+  /*
+   * FNXC:ModelCatalog 2026-09-29-05:31:
+   * Anthropic publishes Opus 5.5 and Sonnet 5.5 cache-read and five-minute
+   * cache-write prices explicitly; retain those distinct rates in cost estimates.
+   */
+  "anthropic:claude-opus-5-5": {
+    inputPer1M: 4,
+    outputPer1M: 20,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 5,
+    source: "platform.claude.com/docs/en/about-claude/pricing",
+  },
+  "anthropic:claude-sonnet-5-5": {
+    inputPer1M: 2,
+    outputPer1M: 10,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 2.5,
+    source: "platform.claude.com/docs/en/about-claude/pricing",
   },
   "anthropic:claude-opus-4-8": {
     inputPer1M: 5,

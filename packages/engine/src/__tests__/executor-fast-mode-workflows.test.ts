@@ -956,6 +956,59 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1165-NOOP", "done", expect.objectContaining({ preserveProgress: true }));
   });
 
+  it("lets an enabled post-merge gate run after a no-op merge instead of failing finalization", async () => {
+    const liveTask = task({
+      id: "FN-9399-NOOP",
+      executionMode: "fast",
+      enabledWorkflowSteps: ["post-merge-verification"],
+      column: "in-progress",
+      steps: [],
+      noCommitsExpected: true,
+      branch: null,
+      worktree: null,
+      workflowStepResults: [{
+        workflowStepId: "execute",
+        workflowStepName: "Execute",
+        source: "node",
+        phase: "pre-merge",
+        status: "passed",
+        completedAt: new Date().toISOString(),
+      }],
+      prompt: "# Task\n\n## Steps\n\n### Step 1: Decide\n- [ ] Record no-code decision",
+    });
+    const store = createMockStore();
+    store.getTask.mockResolvedValue(liveTask);
+    store.getTaskWorkflowSelection = vi.fn(() => ({
+      workflowId: "builtin:coding",
+      stepIds: ["post-merge-verification"],
+    }));
+    store.getWorkflowDefinition = vi.fn(async (id: string) => getBuiltinWorkflow(id));
+    store.moveTask.mockResolvedValue({ ...liveTask, column: "in-review" });
+    const executor = new TaskExecutor(store, "/tmp/test") as any;
+    executor.setMergeRequester(vi.fn(async () => ({
+      task: liveTask,
+      merged: true,
+      noOp: true,
+      mergeConfirmed: true,
+      reason: "no-commits-expected",
+    })));
+
+    const result = await executor.createAuthoritativeWorkflowPrimitives({ autoMerge: true }).requestMerge(
+      {
+        run: { runId: "FN-9399-NOOP:builtin:coding", taskId: "FN-9399-NOOP", workflowId: "builtin:coding" },
+        node: { node: { id: "merge" } },
+      },
+      liveTask,
+    );
+
+    expect(result).toMatchObject({ outcome: "success", value: "merge-noop" });
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-9399-NOOP", "done", expect.anything());
+    expect(executor.mergeRequester).toHaveBeenCalledWith("FN-9399-NOOP", expect.objectContaining({
+      signal: expect.any(AbortSignal),
+      graphOwnedPostMergeTraversal: true,
+    }));
+  });
+
   it("fast builtin:coding ignores plan headings and executes one synthetic occurrence", async () => {
     const calls: string[] = [];
     const prompt = `# Task

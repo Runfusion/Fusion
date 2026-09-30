@@ -29,7 +29,7 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.context["node:execute:outcome"]).toBe("success");
     /*
      * FNXC:WorkflowGraphTests 2026-06-29-13:50:
-     * Retry coverage must pin the post-cutover builtin:coding node order. The default path now routes planning through the default-on plan-review group before execute, bypasses default-off browser/post-merge groups at the group node, and runs the default-on code-review template before review and the collapsed legacy merge seam.
+     * Retry coverage must pin the post-cutover builtin:coding node order. The default path routes planning through the default-on plan-review group before execute, bypasses browser verification, runs code review before the collapsed merge seam, then executes the default-on post-merge evidence gate.
      */
     expect(result.visitedNodeIds).toEqual([
       "start",
@@ -46,10 +46,28 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
       "review",
       "merge",
       "post-merge-verification",
+      "post-merge-verification::post-merge-verification-step",
     ]);
     expect(result.visitedNodeIds).not.toContain("workflow-step");
     expect(result.visitedNodeIds).not.toContain("browser-verification::browser-verification-step");
-    expect(result.visitedNodeIds).not.toContain("post-merge-verification::post-merge-verification-step");
+  });
+
+  it("runs an enabled post-merge verification node after the successful merge seam", async () => {
+    const prompt = vi.fn<WorkflowNodeHandler>(async () => ({ outcome: "success" }));
+    const executor = new WorkflowGraphExecutor({ handlers: { prompt } });
+
+    const result = await executor.run(
+      { ...task, enabledWorkflowSteps: ["post-merge-verification"] },
+      { experimentalFeatures: { workflowGraphExecutor: true, graphNativePostMerge: true } },
+      BUILTIN_CODING_WORKFLOW_IR,
+    );
+
+    expect(result.outcome).toBe("success");
+    expect(result.visitedNodeIds).toContain("post-merge-verification::post-merge-verification-step");
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "post-merge-verification-step" }),
+      expect.anything(),
+    );
   });
 
   it("exhausts execute node retries and routes failure to end", async () => {

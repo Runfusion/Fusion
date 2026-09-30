@@ -40,7 +40,7 @@ import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {makeTransitionRejection, makeTransitionPending} from "../tasks/transition-types.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async/async-transition-pending.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
-import type {DbTransaction} from "../postgres/data-layer.js";
+import {projectOwnershipPartition, type DbTransaction} from "../postgres/data-layer.js";
 import {acquireTaskAdvisoryXactLock} from "./task-advisory-lock.js";
 import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
@@ -1253,13 +1253,13 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       FNXC:PatchnodeLedger 2026-08-28-12:16:
       Each genuine entry into the completion lane snapshots this delivery under its columnMovedAt occurrence. The next move overwrites that evidence, so this insert commits in the move transaction and intentionally aborts the move on failure; the move's early return, not conflict handling, prevents duplicate capture.
 
-      FNXC:PatchnodeLedger 2026-08-28-13:35:
-      Completion capture requires the store's real project partition. An unbound writer must fail this transaction instead of manufacturing a legacy project id whose entry the project-scoped feed can never read.
+      FNXC:PatchnodeLedger 2026-09-24-10:51:
+      Completion capture uses the same normalized ownership partition as task persistence. An unbound compatibility layer writes to __legacy_unscoped__ so the ledger and completed task remain queryable together without weakening bound-project isolation.
       */
       if (toColumn === (moveLifecycle?.complete ?? "done") && fromColumn !== toColumn && !internal.terminalFailureApply) {
         await appendPatchnodeEntryInTransaction(
           tx,
-          layer.projectId ?? "",
+          projectOwnershipPartition(layer.projectId),
           buildPatchnodeEntryInput(task, "completed", task.columnMovedAt ?? movedAt),
         );
       }

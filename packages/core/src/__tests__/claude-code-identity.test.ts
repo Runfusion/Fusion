@@ -8,15 +8,14 @@ import {
   compareClaudeCodeVersions,
   resolveClaudeCodeClientVersion,
 } from "../ai/claude-code-identity.js";
-import { SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION } from "../ai/anthropic-models.js";
 
 describe("Claude Code identity headers", () => {
   it("emits a lowercase user-agent only for Anthropic OAuth credentials", () => {
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "anthropic", apiKey: "sk-ant-oat-test" })).toEqual({
-      "user-agent": "claude-cli/2.1.251",
+      "user-agent": "claude-cli/2.1.284",
     });
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "anthropic-subscription", apiKey: "sk-ant-oat-test" })).toEqual({
-      "user-agent": "claude-cli/2.1.251",
+      "user-agent": "claude-cli/2.1.284",
     });
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "anthropic-api-key", apiKey: "sk-ant-api-test" })).toEqual({});
     expect(buildAnthropicClaudeCodeIdentityHeaders({ providerId: "openrouter", apiKey: "sk-ant-oat-test" })).toEqual({});
@@ -35,14 +34,12 @@ describe("Claude Code identity headers", () => {
 
   it("compares versions numerically", () => {
     expect(compareClaudeCodeVersions("2.1.75", "2.1.251")).toBeLessThan(0);
-    expect(compareClaudeCodeVersions("2.1.251", "2.2.0")).toBeLessThan(0);
+    expect(compareClaudeCodeVersions("2.1.284", "2.2.0")).toBeLessThan(0);
     expect(compareClaudeCodeVersions("2.2.0", "10.0.0")).toBeLessThan(0);
   });
 
-  it("keeps the impersonated version at every registered model minimum", () => {
-    const registeredModelIds = new Set(SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.models.map((model) => model.id));
-    for (const [modelId, minimum] of Object.entries(ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION)) {
-      expect(registeredModelIds).toContain(modelId);
+  it("keeps the impersonated version at every declared model identity floor", () => {
+    for (const minimum of Object.values(ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION)) {
       expect(compareClaudeCodeVersions(CLAUDE_CODE_IMPERSONATED_VERSION, minimum)).toBeGreaterThanOrEqual(0);
     }
   });

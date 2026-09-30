@@ -37,8 +37,6 @@ export const logSeverityManifest: SeverityManifestEntry[] = [
   { pkg: "engine", file: "self-healing.ts", anchor: "Auto-archiving ${stale.length}", priorSeverity: "log", severity: "debug" },
   { pkg: "engine", file: "self-healing.ts", anchor: "auto-archive: archived", priorSeverity: "log", severity: "debug" },
   { pkg: "engine", file: "self-healing.ts", anchor: "Auto-archived ${archived} stale done task(s)", priorSeverity: "log", severity: "debug" },
-  { pkg: "engine", file: "cli-runtime/pty-native.ts", anchor: "Pre-loaded native module via dlopen", priorSeverity: "console", severity: "debug" },
-  { pkg: "engine", file: "cli-runtime/pty-native.ts", anchor: "dlopen pre-load failed (continuing)", priorSeverity: "console", severity: "debug" },
   { pkg: "engine", file: "goals/goal-anchoring-audit.ts", anchor: "goal retrieval audit emission skipped", priorSeverity: "console", severity: "debug" },
   { pkg: "engine", file: "runtimes/child-process-worker.ts", anchor: "Child process worker starting", priorSeverity: "log", severity: "debug" },
   /*

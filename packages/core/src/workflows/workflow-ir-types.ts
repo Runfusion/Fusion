@@ -47,7 +47,7 @@ export type WorkflowIrNodeKind =
   | "ask-user"
   | "exit-gate";
 
-import type { WorkflowReviewKind } from "../types/workflow/workflow-steps.js";
+import type { ReviewBlockingSeverity, WorkflowReviewKind } from "../types/workflow/workflow-steps.js";
 
 /** Roles that may launch a durable workflow principal. */
 export type WorkflowAgentRole = "triage" | "executor" | "reviewer" | "merger";
@@ -239,6 +239,8 @@ Built-in Plan Review/spec and Code Review groups have workflow-value overrides (
 export interface WorkflowOptionalGroupConfig {
   /** Optional direct-review classification, legal only on the top-level group. */
   reviewKind?: WorkflowReviewKind;
+  /** Optional threshold inherited by the group's review template nodes. */
+  blockingSeverity?: ReviewBlockingSeverity;
   /** Workflow-author default for whether new tasks enable this group. */
   defaultOn?: boolean;
   /** Display name for the group (editor + per-task toggle surfaces). */

@@ -107,12 +107,11 @@ export async function collectMergeDetailsImpl(store: TaskStore, _id: string, _br
   }
 
 export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
-    const task = await store.getTask(taskId);
     /*
     FNXC:WorkflowLifecycleColumns 2026-08-02-10:20 (fleet: the PR-merged transition):
-    ONE SNAPSHOT for the whole transition — the pre-check, the RE-READ check, and the MOVE TARGET. This
-    function reads the row twice on purpose (a merge can land between the checks), and each read was
-    compared against the default lineage's ids while the move went to the literal `done`.
+    The conditional move supplies ONE LOCKED LIVE ROW for evidence checks and the move target. Earlier
+    versions read twice around separate writes, allowing two observers to independently decide that they
+    had completed the same task before either move became visible.
 
     On a renamed board every one of those answered wrong in the same direction: `column === "done"` never
     matched, so an already-complete card was not skipped as `already-done`; `column !== "in-review"` always
@@ -146,82 +145,100 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
       storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: workflow declares no complete column`);
       return { moved: false, skipped: "no-complete-column" };
     }
-    if (task.column === completeColumn) {
-      return { moved: false, skipped: "already-done" };
-    }
-    if (task.paused) {
-      return { moved: false, skipped: "paused" };
-    }
-    if (task.prInfo?.status !== "merged") {
-      return { moved: false, skipped: "not-merged" };
-    }
-    if (task.column !== reviewColumn) {
-      storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${task.column}`);
-      return { moved: false, skipped: "wrong-column" };
-    }
-
-    const freshTask = await store.getTask(taskId);
-    if (freshTask.column === completeColumn) {
-      return { moved: false, skipped: "already-done" };
-    }
-    if (freshTask.paused) {
-      return { moved: false, skipped: "paused" };
-    }
-    if (freshTask.prInfo?.status !== "merged") {
-      return { moved: false, skipped: "not-merged" };
-    }
-    if (freshTask.column !== reviewColumn) {
-      storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${freshTask.column}`);
-      return { moved: false, skipped: "wrong-column" };
-    }
+    let skipped: "already-done" | "not-merged" | "wrong-column" | "paused" | undefined;
+    let reconciledTask: Task | undefined;
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-14:20 (PR #2733 review — greptile P1, the resolve/move race):
-    THE RACE IS REAL AND `moveTask` IS THE BACKSTOP. If the task's workflow selection changes between the
-    resolution above and this call, `completeColumn` describes the old board while `moveTask` validates against
-    the new one — and it REJECTS an unknown column rather than writing it. So the failure mode is a thrown
-    move and `moved: false`, not a card in a column that does not exist.
-
-    Narrowing the window further (resolve inside the move, or take a workflow lock) is a store-level change:
-    every converted move in this program has the same shape, and moveTask's validation is what makes them all
-    safe. Named here rather than left implicit, because "resolved then moved" reads racy and the reason it is
-    acceptable lives in a different file.
+    FNXC:ExternalPrReconciliation 2026-09-29-06:24:
+    Separate dashboard and engine stores can observe the same external merge concurrently. Use the
+    project-scoped PostgreSQL advisory lock before moveTaskIf re-reads and transitions the task, so only
+    one observer emits completion telemetry; the loser sees the committed complete lane and is a no-op.
     */
-    const movedTask = await store.moveTask(taskId, completeColumn as Column, {
+    return store.withPlanningLifecycleLock(taskId, async () => {
+      const transition = await store.moveTaskIf(taskId, completeColumn as Column, async (live) => {
+        if (live.column === completeColumn) {
+          skipped = "already-done";
+          return false;
+        }
+        if (live.paused) {
+          skipped = "paused";
+          return false;
+        }
+        if (live.prInfo?.status !== "merged") {
+          skipped = "not-merged";
+          return false;
+        }
+        if (live.column !== reviewColumn) {
+          storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${live.column}`);
+          skipped = "wrong-column";
+          return false;
+        }
+
+        // A forge-confirmed merge is landing evidence, never a fabricated pre-merge review approval.
+        const existing = live.mergeDetails;
+        const mergeDetails = {
+          ...existing,
+          mergeConfirmed: true,
+          prNumber: existing?.prNumber ?? live.prInfo.number,
+          ...(existing?.commitSha || !live.prInfo.mergeCommitSha ? {} : { commitSha: live.prInfo.mergeCommitSha }),
+          ...(existing?.mergedAt || !live.prInfo.mergedAt ? {} : { mergedAt: live.prInfo.mergedAt }),
+        };
+        const changed = existing?.mergeConfirmed !== true
+          || (!existing?.commitSha && Boolean(live.prInfo.mergeCommitSha))
+          || (!existing?.mergedAt && Boolean(live.prInfo.mergedAt))
+          || (!existing?.prNumber && Boolean(live.prInfo.number));
+        if (changed) {
+          await store.updateTaskUnlocked(taskId, { mergeDetails });
+          // moveTaskInternal persists this locked snapshot; retain the just-written evidence.
+          live.mergeDetails = mergeDetails;
+          reconciledTask = live;
+        } else {
+          reconciledTask = live;
+        }
+        return true;
+      }, {
       moveSource: "engine",
       preserveProgress: true,
       preserveWorktree: true,
-      skipMergeBlocker: true,
+      // External landing proves a PR result, not unresolved pre-merge review approval.
+      bypassGuards: false,
     });
 
-    store.emit("task:merged", {
-      task: movedTask,
-      branch: movedTask.branch ?? movedTask.prInfo?.headBranch ?? freshTask.branch ?? freshTask.prInfo?.headBranch ?? "",
-      merged: true,
-      worktreeRemoved: false,
-      branchDeleted: false,
-      mergeConfirmed: movedTask.mergeDetails?.mergeConfirmed ?? freshTask.mergeDetails?.mergeConfirmed,
-      mergedAt: movedTask.mergeDetails?.mergedAt ?? freshTask.mergeDetails?.mergedAt,
-      mergeTargetBranch: movedTask.mergeDetails?.mergeTargetBranch ?? freshTask.mergeDetails?.mergeTargetBranch,
-      mergeTargetSource: movedTask.mergeDetails?.mergeTargetSource ?? freshTask.mergeDetails?.mergeTargetSource,
-    } satisfies MergeResult);
+      if (!transition.moved) {
+        return { moved: false, skipped: skipped ?? "already-done" };
+      }
+      const movedTask = transition.task;
+      const freshTask = reconciledTask ?? movedTask;
 
-    if (ctx?.agentId && ctx?.runId) {
-      void emitBoundedRunAudit(store, {
-        taskId,
-        agentId: ctx.agentId,
-        runId: ctx.runId,
-        domain: "database",
-        mutationType: "pr:merged-auto-done",
-        target: taskId,
-        metadata: {
+      store.emit("task:merged", {
+        task: movedTask,
+        branch: movedTask.branch ?? movedTask.prInfo?.headBranch ?? freshTask.branch ?? freshTask.prInfo?.headBranch ?? "",
+        merged: true,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        mergeConfirmed: movedTask.mergeDetails?.mergeConfirmed ?? freshTask.mergeDetails?.mergeConfirmed,
+        mergedAt: movedTask.mergeDetails?.mergedAt ?? freshTask.mergeDetails?.mergedAt,
+        mergeTargetBranch: movedTask.mergeDetails?.mergeTargetBranch ?? freshTask.mergeDetails?.mergeTargetBranch,
+        mergeTargetSource: movedTask.mergeDetails?.mergeTargetSource ?? freshTask.mergeDetails?.mergeTargetSource,
+      } satisfies MergeResult);
+
+      if (ctx?.agentId && ctx?.runId) {
+        void emitBoundedRunAudit(store, {
           taskId,
-          prNumber: freshTask.prInfo?.number,
-          mergeMethod: freshTask.prInfo?.autoMergeStrategy,
-        },
-      });
-    }
+          agentId: ctx.agentId,
+          runId: ctx.runId,
+          domain: "database",
+          mutationType: "pr:merged-auto-done",
+          target: taskId,
+          metadata: {
+            taskId,
+            prNumber: freshTask.prInfo?.number,
+            mergeMethod: freshTask.prInfo?.autoMergeStrategy,
+          },
+        });
+      }
 
-    return { moved: true };
+      return { moved: true };
+    });
   }
 
