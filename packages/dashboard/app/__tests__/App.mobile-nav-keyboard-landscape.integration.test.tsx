@@ -69,6 +69,32 @@ describe("App landscape mobile keyboard seam", () => {
     expect(document.body.style.position).not.toBe("fixed");
   });
 
+  it("restores portrait mobile chrome when a focused textarea dismisses the keyboard", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    Object.defineProperty(window, "screen", { configurable: true, value: { width: 390, height: 844 } });
+    const viewport = installViewport(390, 844);
+    const textarea = document.createElement("textarea");
+    document.body.append(textarea);
+    const { container } = render(<MobileNavKeyboardHarness isMobile />);
+    const nav = container.querySelector(".mobile-nav-bar");
+
+    act(() => { textarea.focus(); textarea.dispatchEvent(new FocusEvent("focusin", { bubbles: true })); });
+    expect(nav).toHaveClass("mobile-nav-bar--keyboard-open");
+
+    viewport.height = 500;
+    act(() => { viewport.dispatchEvent(new Event("resize")); vi.advanceTimersByTime(1_000); });
+    expect(screen.getByTestId("keyboard-open")).toHaveTextContent("true");
+    expect(nav).toHaveClass("mobile-nav-bar--keyboard-open");
+
+    viewport.height = 844;
+    act(() => { viewport.dispatchEvent(new Event("resize")); vi.advanceTimersByTime(1_000); });
+    expect(document.activeElement).toBe(textarea);
+    expect(screen.getByTestId("keyboard-open")).toHaveTextContent("false");
+    expect(screen.getByTestId("footer-hidden")).toHaveTextContent("false");
+    expect(nav).not.toHaveClass("mobile-nav-bar--keyboard-open");
+  });
+
   it("never fabricates landscape keyboard state for a non-mobile host", () => {
     const viewport = installViewport(1280, 430);
     const textarea = document.createElement("textarea");
