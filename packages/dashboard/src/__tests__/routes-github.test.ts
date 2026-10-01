@@ -3934,6 +3934,101 @@ describe("PR conflict refresh + reclaim routes", () => {
     expect(reclaimSpy).not.toHaveBeenCalled();
   });
 
+  it("reconciles an externally merged PR during manual refresh without a forge merge", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-9406",
+      column: "in-review",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/9406",
+        number: 9406,
+        status: "open",
+        title: "PR",
+        headBranch: "fusion/fn-9406",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    /* FNXC:ExternalPrReconciliation 2026-09-29-06:37: GitHub retains historical review decisions after landing; this must not requeue the card before reconciliation. */
+    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({ decision: "CHANGES_REQUESTED", items: [], summary: { approved: 0, changesRequested: 1, commented: 0 } } as any);
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
+      mergeReady: false,
+      blockingReasons: ["PR is merged"],
+      checks: [],
+      prInfo: { ...task.prInfo, status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:00:00.000Z" },
+    } as any);
+
+    const res = await REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/refresh`, JSON.stringify({}), { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updatePrInfoByNumber).toHaveBeenCalledWith(task.id, task.prInfo.number, expect.objectContaining({
+      status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:00:00.000Z",
+    }));
+    expect(store.applyPrMergedTransition).toHaveBeenCalledWith(task.id, expect.objectContaining({ agentId: "dashboard" }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a merged primary before an inverted secondary changes-requested refresh", async () => {
+    const primaryPr = {
+      url: "https://github.com/owner/repo/pull/94061",
+      number: 94061,
+      status: "open",
+      title: "Primary",
+      headBranch: "fusion/fn-9406",
+      baseBranch: "main",
+      commentCount: 0,
+    };
+    const secondaryPr = {
+      url: "https://github.com/owner/repo/pull/94062",
+      number: 94062,
+      status: "open",
+      title: "Secondary",
+      headBranch: "fusion/fn-9406-secondary",
+      baseBranch: "main",
+      commentCount: 0,
+    };
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-9406-multi", column: "in-review", prInfo: primaryPr, prInfos: [primaryPr, secondaryPr] };
+    let mergedApplied = false;
+    (store.getTask as ReturnType<typeof vi.fn>).mockImplementation(async () => mergedApplied ? { ...task, column: "done" } : task);
+    (store.applyPrMergedTransition as ReturnType<typeof vi.fn>).mockImplementation(async () => { mergedApplied = true; });
+
+    let releasePrimary!: (status: unknown) => void;
+    const primaryStatus = new Promise((resolve) => { releasePrimary = resolve; });
+    let secondaryFetched!: () => void;
+    const secondaryFetchedPromise = new Promise<void>((resolve) => { secondaryFetched = resolve; });
+    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockImplementation(async (_owner, _repo, number) => ({
+      decision: number === secondaryPr.number ? "CHANGES_REQUESTED" : "APPROVED",
+      items: [],
+      summary: { approved: number === primaryPr.number ? 1 : 0, changesRequested: number === secondaryPr.number ? 1 : 0, commented: 0 },
+    } as any));
+    vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockImplementation(async (_owner, _repo, number) => {
+      if (number === primaryPr.number) return primaryStatus as any;
+      secondaryFetched();
+      return {
+        mergeReady: false,
+        blockingReasons: ["changes requested"],
+        checks: [],
+        prInfo: { ...secondaryPr, status: "open", mergeable: "clean" },
+      } as any;
+    });
+
+    const responsePromise = REQUEST(buildApp(), "POST", `/api/tasks/${task.id}/pr/refresh`, JSON.stringify({}), { "content-type": "application/json" });
+    await secondaryFetchedPromise;
+    expect(store.moveTask).not.toHaveBeenCalled();
+    releasePrimary({
+      mergeReady: false,
+      blockingReasons: ["PR is merged"],
+      checks: [],
+      prInfo: { ...primaryPr, status: "merged", mergeable: "clean", mergeCommitSha: "external-primary" },
+    });
+
+    const res = await responsePromise;
+    expect(res.status).toBe(200);
+    expect(store.applyPrMergedTransition).toHaveBeenCalledWith(task.id, expect.objectContaining({ agentId: "dashboard" }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("clears persisted conflict diagnostics when PR becomes clean", async () => {
     const task = {
       ...FAKE_TASK_DETAIL,

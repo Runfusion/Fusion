@@ -2839,7 +2839,7 @@
         "packages/engine/src/__tests__/stale-task-reporter.test.ts": 100,
         "packages/engine/src/__tests__/step-execute-skill-loading.test.ts": 100,
         "packages/engine/src/__tests__/step-runner.test.ts": 100,
-        "packages/engine/src/__tests__/step-session-executor.test.ts": 300400,
+        "packages/engine/src/__tests__/step-session-executor.test.ts": 100,
         "packages/engine/src/__tests__/stepwise-workflow-parity.test.ts": 100,
         "packages/engine/src/__tests__/streaming-delta.test.ts": 100,
         "packages/engine/src/__tests__/stuck-task-detector.test.ts": 100,

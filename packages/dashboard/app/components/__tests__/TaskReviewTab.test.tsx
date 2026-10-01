@@ -1371,6 +1371,39 @@ describe("TaskReviewTab", () => {
     expect(onTaskUpdated).toHaveBeenCalledTimes(3);
   });
 
+  it("rolls back a rejected per-task auto-merge change, reports feedback, and remains operable", async () => {
+    const addToast = vi.fn();
+    const task = makeTask({ autoMerge: false, reviewState: { source: "pull-request", items: [], addressing: [] } });
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });
+    apiMocks.updateTask.mockRejectedValueOnce(new Error("request rejected"));
+
+    await renderWithAct(<TaskReviewTab task={task} projectId="project-1" addToast={addToast} />);
+    const select = await screen.findByTestId("task-review-auto-merge-select");
+    fireEvent.change(select, { target: { value: "on" } });
+
+    await waitFor(() => expect(select).toHaveValue("off"));
+    expect(select).toBeEnabled();
+    expect(apiMocks.updateTask).toHaveBeenCalledWith(task.id, { autoMerge: true }, "project-1");
+    expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update"), "error");
+  });
+
+  it("keeps the labeled auto-merge selector operable on mobile after a successful save", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+    });
+    const task = makeTask({ autoMerge: undefined, reviewState: { source: "pull-request", items: [], addressing: [] } });
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });
+    apiMocks.updateTask.mockResolvedValueOnce({ ...task, autoMerge: true });
+
+    await renderWithAct(<TaskReviewTab task={task} addToast={vi.fn()} />);
+    const select = await screen.findByLabelText("Per-task auto-merge");
+    fireEvent.change(select, { target: { value: "on" } });
+
+    await waitFor(() => expect(select).toHaveValue("on"));
+    expect(select).toBeEnabled();
+  });
+
   it("shows effective auto-merge hint for in-review tasks using global default", async () => {
     const inReviewTask = makeTask({ column: "in-review", autoMerge: undefined, reviewState: { source: "pull-request", items: [], addressing: [] } });
     apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: inReviewTask.reviewState, automationStatus: null, emptyMessage: null });

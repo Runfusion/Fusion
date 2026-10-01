@@ -292,6 +292,14 @@ describe("unrun pre-merge gate wedge regression", () => {
     const live = resultlessReviewTask();
     const store = recoveryStore(live);
     const engine = new ProjectEngine({ projectId: "fn-9243", workingDirectory: "/tmp/fn-9243-resultless", isolationMode: "in-process", maxConcurrent: 1, maxWorktrees: 1 } as any, { on: vi.fn(), off: vi.fn() } as any, { skipNotifier: true });
+    /*
+    FNXC:NoVerdictReviewRecovery 2026-09-24-04:54:
+    Merge admission now probes no-verdict recovery before checking the pre-existing unrun-gate
+    fixture. This isolated admission seam has no started runtime, so state the intended idle-queue
+    condition explicitly instead of letting an uninitialized TaskStore hide the producer assertion.
+    */
+    vi.spyOn(engine, "isMergePending").mockResolvedValue(false);
+    vi.spyOn(engine, "rerouteFailedNoVerdictPreMergeReview").mockResolvedValue("not-applicable");
 
     const blocker = await (engine as any).resolveMergeGateBlocker(store, live, { autoMerge: true });
 

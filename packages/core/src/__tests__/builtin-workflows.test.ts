@@ -277,7 +277,7 @@ describe("built-in workflows", () => {
     }
   });
 
-  it("merge-capable built-ins expose a default-off post-merge verification node after merge proof", () => {
+  it("merge-capable built-ins enable post-merge verification after merge proof", () => {
     for (const workflow of BUILTIN_WORKFLOWS) {
       if (workflow.kind === "fragment") continue;
       /*
@@ -295,12 +295,13 @@ describe("built-in workflows", () => {
       expect(postMerge?.kind, workflow.id).toBe("optional-group");
       expect(postMerge?.config, workflow.id).toMatchObject({
         phase: "post-merge",
-        defaultOn: false,
+        defaultOn: true,
       });
       const template = postMerge?.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
       const postMergeStep = template?.nodes?.[0]?.config;
       expect(postMergeStep?.gateMode, workflow.id).toBe("gate");
       expect(postMergeStep?.prompt, workflow.id).toContain("first Full Suite push-to-main run at or after that SHA");
+      expect(postMergeStep?.prompt, workflow.id).toContain("successful conclusion for Pipeline smoke tier");
       expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-1");
       expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-4");
       expect(postMergeStep?.prompt, workflow.id).toContain("Do NOT approve until");
@@ -1360,10 +1361,10 @@ describe("built-in workflows", () => {
       // like one CREATED with builtin:coding — previously select returned [] and silently
       // skipped the gate).
       const expectedGroups: Record<string, string[]> = {
-        "builtin:coding": ["plan-review", "code-review"],
-        "builtin:legacy-coding": ["plan-review", "code-review"],
-        "builtin:marketing": [],
-        "builtin:stepwise-coding": ["plan-review", "code-review"],
+        "builtin:coding": ["plan-review", "code-review", "post-merge-verification"],
+        "builtin:legacy-coding": ["plan-review", "code-review", "post-merge-verification"],
+        "builtin:marketing": ["post-merge-verification"],
+        "builtin:stepwise-coding": ["plan-review", "code-review", "post-merge-verification"],
       };
       for (const workflowId of ["builtin:coding", "builtin:legacy-coding", "builtin:marketing", "builtin:stepwise-coding"]) {
         const task = await store.createTask({ description: `select ${workflowId}`, enabledWorkflowSteps: [] });
@@ -1382,10 +1383,108 @@ describe("built-in workflows", () => {
 
       const detail = await store.getTask(task.id);
       // FNXC:PlanReviewStep/FNXC:CodeReviewStep — builtin:coding carries DEFAULT-ON
-      // `plan-review` and `code-review` optional groups, so the explicit-workflow
+      // pre-merge review and post-merge evidence groups, so the explicit-workflow
       // create path seeds them into the task's enabledWorkflowSteps.
-      expect(detail.enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review"]);
-      expect(await store.getTaskWorkflowSelectionAsync(task.id)).toEqual({ workflowId: "builtin:coding", stepIds: ["plan-review", "code-review"] });
+      expect(detail.enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review", "post-merge-verification"]);
+      expect(await store.getTaskWorkflowSelectionAsync(task.id)).toEqual({ workflowId: "builtin:coding", stepIds: ["plan-review", "code-review", "post-merge-verification"] });
+    });
+
+    it("automatically persists post-merge Full Suite evidence for an existing coding selection", async () => {
+      const task = await store.createTask({
+        description: "coding task selected before post-merge evidence became default-on",
+        workflowId: "builtin:coding",
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+      });
+
+      expect(task.enabledWorkflowSteps).toEqual(["plan-review", "code-review"]);
+
+      /*
+      FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:41:
+      The authoritative selection read is the production path used before graph execution. It must
+      persist the required gate for the exact former default without requiring an operator to re-select
+      the workflow, so an already-created task cannot complete before post-landing CI evidence exists.
+      */
+      await expect(store.getTaskWorkflowSelectionAsync(task.id)).resolves.toEqual({
+        workflowId: "builtin:coding",
+        stepIds: ["plan-review", "code-review", "post-merge-verification"],
+      });
+
+      expect((await store.getTask(task.id)).enabledWorkflowSteps).toEqual([
+        "plan-review",
+        "code-review",
+        "post-merge-verification",
+      ]);
+      expect(await store.getTaskWorkflowSelectionAsync(task.id)).toEqual({
+        workflowId: "builtin:coding",
+        stepIds: ["plan-review", "code-review", "post-merge-verification"],
+      });
+    });
+
+    it("selects a new workflow from a legacy coding selection without deadlocking", async () => {
+      const task = await store.createTask({
+        description: "legacy coding selection changed through the workflow picker",
+        workflowId: "builtin:coding",
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+      });
+      await store.updateTask(task.id, { enabledWorkflowSteps: ["plan-review", "code-review"] });
+      await store.writeTaskWorkflowSelection(task.id, "builtin:coding", ["plan-review", "code-review"]);
+
+      /*
+      FNXC:WorkflowSelectionUpgradeLocking 2026-09-23-06:01:
+      The workflow picker holds the production non-reentrant task lock before it reads the prior
+      selection. Selecting a new workflow from the exact legacy coding shape must complete, proving
+      the read-side upgrade uses its advisory fence without attempting to reacquire that local lock.
+      */
+      await expect(store.selectTaskWorkflow(task.id, "builtin:quick-fix")).resolves.toEqual([
+        "post-merge-verification",
+      ]);
+      expect((await store.getTask(task.id)).enabledWorkflowSteps).toEqual(["post-merge-verification"]);
+      await expect(store.getTaskWorkflowSelectionAsync(task.id)).resolves.toEqual({
+        workflowId: "builtin:quick-fix",
+        stepIds: ["post-merge-verification"],
+      });
+    });
+
+    it("keeps a concurrent operator workflow selection instead of applying the legacy coding upgrade", async () => {
+      const task = await store.createTask({
+        description: "legacy coding selection replaced by an operator",
+        workflowId: "builtin:coding",
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+      });
+      // Seed the exact persisted pre-FN-9369 shape so this race test does not depend on
+      // create-time default materialization timing.
+      await store.updateTask(task.id, { enabledWorkflowSteps: ["plan-review", "code-review"] });
+      await store.writeTaskWorkflowSelection(task.id, "builtin:coding", ["plan-review", "code-review"]);
+      const testStore = store as typeof store & {
+        __afterLegacyWorkflowSelectionReadForTest?: () => void | Promise<void>;
+      };
+      let selected = false;
+      /*
+      FNXC:WorkflowSelectionUpgradeRace 2026-09-23-05:52:
+      Hold the production reader after its optimistic legacy snapshot, then exercise the actual
+      workflow-picker write before the repair obtains its cross-process advisory fence. The persisted
+      operator selection and its enabled groups must win the re-read under that fence.
+      */
+      testStore.__afterLegacyWorkflowSelectionReadForTest = async () => {
+        if (selected) return;
+        selected = true;
+        await store.selectTaskWorkflow(task.id, "builtin:quick-fix");
+      };
+      try {
+        const result = await store.getTaskWorkflowSelectionAsync(task.id);
+        expect(selected).toBe(true);
+        expect(result).toEqual({
+          workflowId: "builtin:quick-fix",
+          stepIds: ["post-merge-verification"],
+        });
+      } finally {
+        delete testStore.__afterLegacyWorkflowSelectionReadForTest;
+      }
+      expect((await store.getTask(task.id)).enabledWorkflowSteps).toEqual(["post-merge-verification"]);
+      await expect(store.getTaskWorkflowSelectionAsync(task.id)).resolves.toEqual({
+        workflowId: "builtin:quick-fix",
+        stepIds: ["post-merge-verification"],
+      });
     });
 
     it("a task can disable code-review by creating with explicit enabledWorkflowSteps excluding it", async () => {
@@ -1407,17 +1506,21 @@ describe("built-in workflows", () => {
       });
     });
 
-    it("create-time stepwise workflowId persists when optional steps are submitted", async () => {
+    it("upgrades the former stepwise default with post-merge evidence", async () => {
       const task = await store.createTask({
-        description: "stepwise with toggles",
+        description: "stepwise with legacy default toggles",
         workflowId: "builtin:stepwise-coding",
         enabledWorkflowSteps: ["plan-review", "code-review"],
       });
 
-      expect((await store.getTask(task.id)).enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review"]);
+      expect((await store.getTask(task.id)).enabledWorkflowSteps ?? []).toEqual([
+        "plan-review",
+        "code-review",
+        "post-merge-verification",
+      ]);
       expect(await store.getTaskWorkflowSelectionAsync(task.id)).toEqual({
         workflowId: "builtin:stepwise-coding",
-        stepIds: ["plan-review", "code-review"],
+        stepIds: ["plan-review", "code-review", "post-merge-verification"],
       });
     });
 
@@ -1441,21 +1544,30 @@ describe("built-in workflows", () => {
       });
     });
 
-    it("reserved-id create-time workflowId persists when optional steps are submitted", async () => {
+    it("upgrades a reserved-id former stepwise default with post-merge evidence", async () => {
       const task = await store.createTaskWithReservedId(
         {
-          description: "reserved stepwise with toggles",
+          description: "reserved stepwise with legacy default toggles",
           workflowId: "builtin:stepwise-coding",
           enabledWorkflowSteps: ["plan-review", "code-review"],
         },
         { taskId: "reserved-stepwise-with-toggles" },
       );
 
-      expect((await store.getTask(task.id)).enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review"]);
+      /*
+      FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:41:
+      Reserved-id creation returns its initial cached shape; the authoritative selection read below
+      is the production graph boundary that persists the migration.
+      */
       expect(await store.getTaskWorkflowSelectionAsync(task.id)).toEqual({
         workflowId: "builtin:stepwise-coding",
-        stepIds: ["plan-review", "code-review"],
+        stepIds: ["plan-review", "code-review", "post-merge-verification"],
       });
+      expect((await store.getTask(task.id)).enabledWorkflowSteps ?? []).toEqual([
+        "plan-review",
+        "code-review",
+        "post-merge-verification",
+      ]);
     });
 
     it("branching built-in project defaults do not throw", async () => {
@@ -1465,32 +1577,34 @@ describe("built-in workflows", () => {
 
       // FNXC:PlanReviewStep/FNXC:CodeReviewStep — builtin:coding/stepwise are interpreter-deferred (they
       // carry optional-group nodes), so DEFAULT-workflow materialization records no legacy
-      // WorkflowStep rows. They DO carry DEFAULT-ON optional-group ids, so the project-default
-      // create path now seeds those ids into enabledWorkflowSteps and records a selection
-      // (mirroring the explicit-workflow path). browser-verification stays off (defaultOn:false).
+      // WorkflowStep rows. They seed their default-on review and post-merge evidence groups into
+      // enabledWorkflowSteps and record a selection (mirroring the explicit-workflow path).
+      // browser-verification stays off (defaultOn:false).
+      const codingDefaultSteps = ["plan-review", "code-review", "post-merge-verification"];
       await store.setDefaultWorkflowId("builtin:coding");
       const codingTask = await store.createTask({ description: "default builtin coding" });
-      expect((await store.getTask(codingTask.id)).enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review"]);
-      expect(await store.getTaskWorkflowSelectionAsync(codingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: ["plan-review", "code-review"] });
+      expect((await store.getTask(codingTask.id)).enabledWorkflowSteps ?? []).toEqual(codingDefaultSteps);
+      expect(await store.getTaskWorkflowSelectionAsync(codingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: codingDefaultSteps });
 
       const reservedCodingTask = await store.createTaskWithReservedId(
         { description: "reserved default builtin coding" },
         { taskId: "reserved-default-builtin-coding" },
       );
-      expect((await store.getTask(reservedCodingTask.id)).enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review"]);
-      expect(await store.getTaskWorkflowSelectionAsync(reservedCodingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: ["plan-review", "code-review"] });
+      expect((await store.getTask(reservedCodingTask.id)).enabledWorkflowSteps ?? []).toEqual(codingDefaultSteps);
+      expect(await store.getTaskWorkflowSelectionAsync(reservedCodingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: codingDefaultSteps });
 
+      const stepwiseDefaultSteps = ["plan-review", "code-review", "post-merge-verification"];
       await store.setDefaultWorkflowId("builtin:stepwise-coding");
       const stepwiseTask = await store.createTask({ description: "default builtin stepwise" });
-      expect((await store.getTask(stepwiseTask.id)).enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review"]);
-      expect(await store.getTaskWorkflowSelectionAsync(stepwiseTask.id)).toEqual({ workflowId: "builtin:stepwise-coding", stepIds: ["plan-review", "code-review"] });
+      expect((await store.getTask(stepwiseTask.id)).enabledWorkflowSteps ?? []).toEqual(stepwiseDefaultSteps);
+      expect(await store.getTaskWorkflowSelectionAsync(stepwiseTask.id)).toEqual({ workflowId: "builtin:stepwise-coding", stepIds: stepwiseDefaultSteps });
 
       const reservedStepwiseTask = await store.createTaskWithReservedId(
         { description: "reserved default builtin stepwise" },
         { taskId: "reserved-default-builtin-stepwise" },
       );
-      expect((await store.getTask(reservedStepwiseTask.id)).enabledWorkflowSteps ?? []).toEqual(["plan-review", "code-review"]);
-      expect(await store.getTaskWorkflowSelectionAsync(reservedStepwiseTask.id)).toEqual({ workflowId: "builtin:stepwise-coding", stepIds: ["plan-review", "code-review"] });
+      expect((await store.getTask(reservedStepwiseTask.id)).enabledWorkflowSteps ?? []).toEqual(stepwiseDefaultSteps);
+      expect(await store.getTaskWorkflowSelectionAsync(reservedStepwiseTask.id)).toEqual({ workflowId: "builtin:stepwise-coding", stepIds: stepwiseDefaultSteps });
     });
 
     it("rejects selecting the PR lifecycle fragment for a task", async () => {

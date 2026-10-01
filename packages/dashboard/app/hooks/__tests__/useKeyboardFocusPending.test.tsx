@@ -22,17 +22,43 @@ describe("useKeyboardFocusPending", () => {
     Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined });
   });
 
-  it("tracks textarea and text input focus, then clears on blur", () => {
-    installViewport();
+  it("bounds pending state to one focus transition after measured keyboard acknowledgement", () => {
+    const viewport = installViewport();
     const textarea = document.createElement("textarea");
-    const input = document.createElement("input");
-    document.body.append(textarea, input);
-    const { result } = renderHook(() => useKeyboardFocusPending(true));
+    document.body.append(textarea);
+    const { result, rerender } = renderHook(
+      ({ keyboardOpen }) => useKeyboardFocusPending(true, keyboardOpen),
+      { initialProps: { keyboardOpen: false } },
+    );
+
     focus(textarea);
     expect(result.current).toBe(true);
+
+    rerender({ keyboardOpen: true });
+    expect(result.current).toBe(false);
+
+    rerender({ keyboardOpen: false });
+    act(() => viewport.dispatchEvent(new Event("resize")));
+    expect(document.activeElement).toBe(textarea);
+    expect(result.current).toBe(false);
+
     act(() => { textarea.blur(); textarea.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
     expect(result.current).toBe(false);
+    focus(textarea);
+    expect(result.current).toBe(true);
+  });
+
+  it("starts a pending transition for text inputs and contenteditable controls", () => {
+    installViewport();
+    const input = document.createElement("input");
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    document.body.append(input, editor);
+    const { result } = renderHook(() => useKeyboardFocusPending(true));
+
     focus(input);
+    expect(result.current).toBe(true);
+    focus(editor);
     expect(result.current).toBe(true);
   });
 

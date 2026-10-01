@@ -300,7 +300,7 @@ pgDescribe("Patchnode ledger (PostgreSQL)", () => {
     expect(entries[0]).toMatchObject({ body: "legacy body", entryId: buildPatchnodeEntryId("completed", task.id, toPatchnodeOccurrenceKey(movedAt)) });
   });
 
-  it("fails both atomic completion writers closed when the store has no project binding", async () => {
+  it("normalizes the async move writer while direct completion remains bound-only", async () => {
     const store = h.store();
     const layer = h.layer() as unknown as { projectId?: string };
     const projectId = layer.projectId!;
@@ -318,11 +318,11 @@ pgDescribe("Patchnode ledger (PostgreSQL)", () => {
         { moveSource: "engine", skipMergeBlocker: true },
         { fromHandoff: false },
         moveTaskReview,
-      )).rejects.toThrow("Patchnode transaction write requires projectId");
+      )).resolves.toMatchObject({ column: "done" });
     } finally {
       layer.projectId = projectId;
     }
-    expect(await store.getTask(moveTaskCandidate.id)).toMatchObject({ column: "in-review" });
+    expect(await store.getTask(moveTaskCandidate.id)).toMatchObject({ column: "done" });
 
     const moveToDoneCandidate = await createWithSummary({ description: "Unbound moveToDone", summary: "must remain pending" });
     await store.moveTask(moveToDoneCandidate.id, "todo", { moveSource: "user" });
@@ -346,7 +346,15 @@ pgDescribe("Patchnode ledger (PostgreSQL)", () => {
         inArray(schema.project.tasks.id, [moveTaskCandidate.id, moveToDoneCandidate.id]),
       ));
     expect(fabricatedRows).toEqual([]);
-    expect(await ledgerRows(moveTaskCandidate.id)).toEqual([]);
+    const legacyMoveLedger = await h.adminDb().select({
+      projectId: schema.project.patchnodeEntries.projectId,
+      taskId: schema.project.patchnodeEntries.taskId,
+      kind: schema.project.patchnodeEntries.kind,
+    }).from(schema.project.patchnodeEntries).where(and(
+      eq(schema.project.patchnodeEntries.projectId, "__legacy_unscoped__"),
+      eq(schema.project.patchnodeEntries.taskId, moveTaskCandidate.id),
+    ));
+    expect(legacyMoveLedger).toEqual([{ projectId: "__legacy_unscoped__", taskId: moveTaskCandidate.id, kind: "completed" }]);
     expect(await ledgerRows(moveToDoneCandidate.id)).toEqual([]);
   });
 

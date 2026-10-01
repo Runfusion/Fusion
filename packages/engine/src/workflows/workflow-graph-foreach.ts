@@ -1,5 +1,5 @@
 import type { TaskDetail, TaskStep, WorkflowIrEdge, WorkflowIrNode } from "@fusion/core";
-import { FAST_LANE_STEP_REVIEW_ROUTE_VALUE, WorkflowIrError, instanceNodeId, isFastExecutionMode, isFastLaneBypassedTemplateNode, resolveMaxReworkCycles } from "@fusion/core";
+import { FAST_LANE_STEP_REVIEW_ROUTE_VALUE, WorkflowIrError, instanceNodeId, isFastExecutionMode, isFastLaneBypassedTemplateNode, resolveMaxReworkCycles, validateStepDependencies } from "@fusion/core";
 
 import type { WorkflowNodeOutcome, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import {
@@ -311,21 +311,12 @@ function resolveDependsOn(steps: TaskStep[], stepIndex: number): number[] {
  * self-reference is the cycle signature we reject.
  */
 function validateDependencyDag(steps: TaskStep[]): string | null {
-  for (let i = 0; i < steps.length; i++) {
-    const deps = steps[i]?.dependsOn;
-    if (!Array.isArray(deps)) continue;
-    for (const d of deps) {
-      if (!Number.isInteger(d) || d < 0 || d >= steps.length) {
-        return `step ${i} depends on out-of-range step ${d}`;
-      }
-      if (d >= i) {
-        // A dependency on an equal/later index is the only way to form a cycle
-        // when edges always point to lower indices; reject it as an audited cycle.
-        return `dependency cycle: step ${i} depends on step ${d} (>= itself)`;
-      }
-    }
+  try {
+    validateStepDependencies(steps);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
-  return null;
 }
 
 /** Find the single template entry node (no non-rework incoming edge). */
@@ -417,13 +408,14 @@ export async function runForeach(
     return { outcome: "success", visitedNodeIds };
   }
 
-  // Dependency-cycle / out-of-range rejection at expansion (KTD-3, audited).
+  // FNXC:StepDependencyValidation 2026-10-01-01:59: Persisted/parser-provided invalid
+  // edges are a repairable plan refusal, never a generic foreach cycle or retry input.
   const dagViolation = validateDependencyDag(env.steps);
   if (dagViolation) {
     schedulerLog.warn(
-      `foreach ${foreachNode.id} for task ${env.task.id}: ${dagViolation} — failing expansion (dependency-cycle)`,
+      `foreach ${foreachNode.id} for task ${env.task.id}: ${dagViolation} — failing expansion (invalid-plan-dependency)`,
     );
-    return { outcome: "failure", value: "dependency-cycle", visitedNodeIds };
+    return { outcome: "failure", value: `invalid-plan-dependency:${dagViolation}`, visitedNodeIds };
   }
 
   /*

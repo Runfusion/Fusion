@@ -105,14 +105,64 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(tasks.get("FN-9304")).toMatchObject({ mergeDetails: { mergeConfirmed: true, commitSha: "abc123" }, branch: null });
   });
 
-  it("reports already-complete without re-mutating a confirmed card", async () => {
+  it("reports confirmed review work as awaiting finalization, not already complete", async () => {
     const { store, updateTaskAtomic } = storeWithTask(baseTask({ mergeDetails: { mergeConfirmed: true, commitSha: "zzz" } }));
     const manager = managerWithStubs(store);
 
     const result = await manager.reconcileLandedReviewTask("FN-9304", { source: "manual" });
 
-    expect(result).toEqual({ outcome: "already-complete" });
+    expect(result).toEqual({ outcome: "ineligible", reason: "awaiting-finalization" });
     expect(updateTaskAtomic).not.toHaveBeenCalled();
+  });
+
+  it("resumes an absent confirmed-merge gate once without moving or remerging", async () => {
+    const task = baseTask({
+      id: "FN-9368", updatedAt: "2026-10-01T06:36:00.000Z", autoMerge: true,
+      mergeDetails: { mergeConfirmed: true, commitSha: "280fa38" },
+      enabledWorkflowSteps: ["post-merge-verification"], workflowStepResults: [],
+    });
+    const { store, moveTask } = storeWithTask(task);
+    const continuations: unknown[] = [];
+    Object.assign(store, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      listWorkflowWorkItemsForTask: vi.fn(async () => continuations),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(async (input) => {
+        if (continuations.length > 0) return { seeded: false, reason: "active-continuation" };
+        continuations.push(input);
+        return { seeded: true, workItemId: "post-merge" };
+      }),
+    });
+    const manager = managerWithStubs(store);
+
+    await expect(manager.reconcileLandedReviewTask(task.id, { source: "manual" })).resolves.toEqual({
+      outcome: "resumed", gateId: "post-merge-verification",
+    });
+    await expect(manager.reconcileLandedReviewTask(task.id, { source: "manual" })).resolves.toEqual({
+      outcome: "raced", reason: "post-merge-continuation-not-idle",
+    });
+    expect(continuations).toHaveLength(1);
+    expect(continuations[0]).toMatchObject({ nodeId: "post-merge-verification", sourceColumn: "in-review", targetColumn: "in-review" });
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "failed", "skipped"] as const)("leaves confirmed %s post-merge evidence blocked", async (status) => {
+    const task = baseTask({
+      autoMerge: true, mergeDetails: { mergeConfirmed: true }, enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status, verdict: "REVISE" }],
+    });
+    const { store } = storeWithTask(task);
+    Object.assign(store, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(),
+    });
+    const manager = managerWithStubs(store);
+
+    await expect(manager.reconcileLandedReviewTask(task.id, { source: "manual" })).resolves.toEqual({
+      outcome: "ineligible", reason: "post-merge-evidence-pending",
+    });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
   });
 
   it("reconciles a present branch after all task-owned content is proven landed", async () => {

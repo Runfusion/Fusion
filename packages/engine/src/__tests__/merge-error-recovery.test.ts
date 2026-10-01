@@ -109,8 +109,10 @@ type MockTaskStore = {
   listTasks: ReturnType<typeof vi.fn>;
   getTask: ReturnType<typeof vi.fn>;
   updateTask: ReturnType<typeof vi.fn>;
+  updateTaskAtomic: ReturnType<typeof vi.fn>;
   addTaskComment: ReturnType<typeof vi.fn>;
   moveTask: ReturnType<typeof vi.fn>;
+  moveTaskIf: ReturnType<typeof vi.fn>;
   logEntry: ReturnType<typeof vi.fn>;
   getActiveMergingTask: ReturnType<typeof vi.fn>;
   createTask: ReturnType<typeof vi.fn>;
@@ -130,6 +132,8 @@ function makeTask(overrides: Partial<MockTask> = {}): MockTask {
     status: null,
     error: null,
     updatedAt: new Date().toISOString(),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:34: Recovery cases test finalization mechanics, so they explicitly opt out of unrelated review-evidence gates.
+    enabledWorkflowSteps: [],
     log: [],
     ...overrides,
   };
@@ -148,6 +152,13 @@ function makeStore({
 } = {}): MockTaskStore {
   const taskSequence = tasks ?? [makeTask(), makeTask()];
   let taskIdx = 0;
+  let liveTask = taskSequence[0] ?? makeTask();
+  const getTask = vi.fn(async () => {
+    const value = taskSequence[Math.min(taskIdx, taskSequence.length - 1)] ?? null;
+    taskIdx += 1;
+    if (value) liveTask = value;
+    return value;
+  });
 
   return {
     getSettings: vi.fn(async () => ({
@@ -173,14 +184,32 @@ function makeStore({
       ...settings,
     })),
     listTasks: vi.fn(async () => listedTasks ?? taskSequence.filter((task): task is MockTask => Boolean(task))),
-    getTask: vi.fn(async () => {
-      const value = taskSequence[Math.min(taskIdx, taskSequence.length - 1)] ?? null;
-      taskIdx += 1;
-      return value;
-    }),
+    getTask,
     updateTask: updateTask ?? vi.fn(async () => undefined),
+    /*
+    FNXC:PostMergeFinalizationFixture 2026-09-23-11:34:
+    Successful terminal moves reconcile the same current row atomically. Keep the recovery fake
+    write-through so assertions exercise the finalization path rather than failing on mock drift.
+    */
+    updateTaskAtomic: vi.fn(async (_id: string, mutate: (current: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      const patch = await mutate(liveTask as Task);
+      Object.assign(liveTask, patch);
+      return liveTask;
+    }),
     addTaskComment: vi.fn(async () => undefined),
-    moveTask: vi.fn(async () => undefined),
+    moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
+      liveTask.column = column;
+      return liveTask;
+    }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Recovery tests evaluate FN-9370's live completion predicate before moving.
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      const live = await getTask(id) as MockTask;
+      if (!await predicate(live as Task)) return { moved: false, task: live };
+      void options;
+      live.column = column;
+      liveTask = live;
+      return { moved: true, task: live };
+    }),
     logEntry: vi.fn(async () => undefined),
     getActiveMergingTask: vi.fn(() => null),
     createTask: vi.fn(async (input: { description: string }) => ({
@@ -557,7 +586,7 @@ describe("ProjectEngine merge error recovery", () => {
     vi.useRealTimers();
   });
 
-  it("parks merge-confirmed tasks in stable failed state when finalization is blocked by incomplete steps", async () => {
+  it("reconciles incomplete pre-merge steps after a confirmed merge", async () => {
     const store = makeStore({
       tasks: [
         makeTask({
@@ -575,12 +604,9 @@ describe("ProjectEngine merge error recovery", () => {
     });
     await runMergeCycle(engine);
 
-    expect(store.moveTask).not.toHaveBeenCalledWith(TASK_ID, "done");
-    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, {
-      status: "failed",
-      error: "Merge confirmed but finalization blocked: task has incomplete steps",
-    });
-    expect(store.logEntry).toHaveBeenCalledWith(
+    expect(store.moveTaskIf).toHaveBeenCalledWith(TASK_ID, "done", expect.any(Function), expect.anything());
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(TASK_ID, expect.any(Function));
+    expect(store.logEntry).not.toHaveBeenCalledWith(
       TASK_ID,
       expect.stringContaining("finalization blocked"),
     );
@@ -601,11 +627,8 @@ describe("ProjectEngine merge error recovery", () => {
     const engine = createEngine(store);
     await runMergeCycle(engine);
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.objectContaining({ paused: false, status: null, error: null }),
-    );
-    expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "done", expect.objectContaining({ moveSource: "engine" }));
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(TASK_ID, expect.any(Function));
+    expect(store.moveTaskIf).toHaveBeenCalledWith(TASK_ID, "done", expect.any(Function), expect.objectContaining({ moveSource: "engine" }));
   });
 
   it("auto-finalizes merge-confirmed tasks with stale transient merging status", async () => {
@@ -622,11 +645,8 @@ describe("ProjectEngine merge error recovery", () => {
     const engine = createEngine(store);
     await runMergeCycle(engine);
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.objectContaining({ paused: false, status: null, error: null }),
-    );
-    expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "done", expect.objectContaining({ moveSource: "engine" }));
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(TASK_ID, expect.any(Function));
+    expect(store.moveTaskIf).toHaveBeenCalledWith(TASK_ID, "done", expect.any(Function), expect.objectContaining({ moveSource: "engine" }));
     expect(store.updateTask).not.toHaveBeenCalledWith(
       TASK_ID,
       expect.objectContaining({
@@ -636,19 +656,15 @@ describe("ProjectEngine merge error recovery", () => {
     );
   });
 
-  it("reconciles merge-confirmed tasks when finalize refresh finds todo ownership", async () => {
+  it("defers merge-confirmed tasks when the refreshed row remains queued in todo", async () => {
     const store = makeStore({
-      tasks: [
-        makeTask({
-          mergeDetails: { mergeConfirmed: true },
-        }),
-        makeTask({
-          column: "todo",
-          status: "queued",
-          overlapBlockedBy: "FN-9999",
-          mergeDetails: { mergeConfirmed: true },
-        }),
-      ],
+      listedTasks: [makeTask({ mergeDetails: { mergeConfirmed: true } })],
+      tasks: [makeTask({
+        column: "todo",
+        status: "queued",
+        overlapBlockedBy: "FN-9999",
+        mergeDetails: { mergeConfirmed: true },
+      })],
     });
 
     const engine = createEngine(store);
@@ -659,30 +675,12 @@ describe("ProjectEngine merge error recovery", () => {
       mergeRetries: 3,
       error: expect.stringContaining("Invalid transition"),
     });
-    expect(store.updateTask).toHaveBeenCalledWith(
-      TASK_ID,
-      expect.objectContaining({ status: null, error: null, blockedBy: null, overlapBlockedBy: null }),
-    );
-    expect(store.moveTask).toHaveBeenCalledWith(
-      TASK_ID,
-      "done",
-      expect.objectContaining({ moveSource: "engine", recoveryRehome: true }),
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalledWith(
       TASK_ID,
       expect.stringContaining("Auto-merge finalization repaired column mismatch"),
     );
-    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      domain: "database",
-      mutationType: "task:auto-merge-finalize-column-mismatch-reconciled",
-      target: TASK_ID,
-      metadata: expect.objectContaining({
-        previousColumn: "todo",
-        targetColumn: "done",
-        status: "queued",
-        overlapBlockedBy: "FN-9999",
-      }),
-    }));
   });
 
   it("logs when non-conflict direct merge error recovery update fails", async () => {

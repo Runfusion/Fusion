@@ -52,6 +52,7 @@ const pgTest = pgDescribe;
 pgTest("MissionStore (PostgreSQL backend mode)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_mission_store",
+    poolMax: 3,
     /* FNXC:MissionStatusWrites 2026-08-10-13:49: Defined-feature bootstrap validates task ownership through a bound project partition. */
     projectId: "mission-store-pg-test",
   });
@@ -544,6 +545,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         taskId: inserted.id,
         missionId: mission.id,
         sliceId: slice.id,
+        archivedLanes: new Set(["archived"]),
       }),
     } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> });
 
@@ -554,6 +556,84 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         metadata: expect.objectContaining({ featureId: feature.id, from: "defined", to: "triaged", source: "defined-feature-claim" }),
       }),
     ]));
+  });
+
+  it("does not exhaust the runtime pool when concurrent feature claims resolve task activity", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Concurrent claims" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const features = await Promise.all(
+      ["A", "B", "C"].map((title) => m.addFeature(slice.id, { title: `Feature ${title}` })),
+    );
+
+    const tasks = await Promise.all(features.map((feature) => h.store().createTask({
+      description: `bootstrap ${feature.id}`,
+      missionId: mission.id,
+      sliceId: slice.id,
+      afterTaskInsert: (tx: DbTransaction, inserted: { id: string }) => m.claimDefinedFeatureTaskInTransaction(tx, {
+        featureId: feature.id,
+        taskId: inserted.id,
+        missionId: mission.id,
+        sliceId: slice.id,
+        archivedLanes: new Set(["archived"]),
+      }),
+    } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> })));
+
+    expect(await Promise.all(features.map((feature) => m.getFeature(feature.id))))
+      .toEqual(expect.arrayContaining(tasks.map((task) => expect.objectContaining({ taskId: task.id, status: "triaged" }))));
+    await expect(h.store().asyncLayer!.ping()).resolves.toBeUndefined();
+  });
+
+  it("releases the transaction after an archived bootstrap task is rejected", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Rejected claim cleanup" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const features = await Promise.all(
+      ["A", "B", "C"].map((label) => m.addFeature(slice.id, { title: `Feature ${label}` })),
+    );
+    let waitingClaims = 0;
+    let releaseClaims!: () => void;
+    const allClaimsWaiting = new Promise<void>((resolve) => { releaseClaims = resolve; });
+
+    const outcomes = await Promise.allSettled(features.map((feature) => h.store().createTask({
+      description: `custom-lane archived bootstrap ${feature.id}`,
+      column: "vaulted",
+      missionId: mission.id,
+      sliceId: slice.id,
+      afterTaskInsert: async (tx: DbTransaction, inserted: { id: string }) => {
+        waitingClaims += 1;
+        if (waitingClaims === features.length) releaseClaims();
+        await allClaimsWaiting;
+        return m.claimDefinedFeatureTaskInTransaction(tx, {
+          featureId: feature.id,
+          taskId: inserted.id,
+          missionId: mission.id,
+          sliceId: slice.id,
+          archivedLanes: new Set(["vaulted"]),
+        });
+      },
+    } as TaskCreateInput & { afterTaskInsert: (tx: DbTransaction, task: { id: string }) => Promise<void> })));
+
+    expect(outcomes).toEqual(features.map((feature) => expect.objectContaining({
+      status: "rejected",
+      reason: expect.objectContaining({ message: expect.stringContaining(`Cannot bootstrap feature ${feature.id}: task`) }),
+    })));
+    await expect(Promise.all(features.map((feature) => m.getFeature(feature.id))))
+      .resolves.toEqual(features.map(() => expect.objectContaining({ status: "defined", taskId: undefined })));
+
+    let pingTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await expect(Promise.race([
+        h.store().asyncLayer!.ping(),
+        new Promise<never>((_, reject) => {
+          pingTimeout = setTimeout(() => reject(new Error("PostgreSQL pool remained exhausted after rollbacks")), 1_000);
+        }),
+      ])).resolves.toBeUndefined();
+    } finally {
+      clearTimeout(pingTimeout);
+    }
   });
 
   it("does not overwrite an existing task directory on a creation collision", async () => {
@@ -591,6 +671,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
         taskId,
         missionId: mission.id,
         sliceId: slice.id,
+        archivedLanes: new Set(["archived"]),
       }),
     );
     const writeTaskJson = vi.spyOn(taskStore, "writeTaskJsonFile").mockRejectedValueOnce(new Error("injected task-file failure"));
@@ -747,6 +828,31 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     });
 
     expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "archived" });
+  });
+
+  it("does not exhaust the runtime pool when concurrent duplicate cleanup resolves archive lanes", async () => {
+    const m = missions();
+    const taskStore = h.store();
+    const cases = await Promise.all(["A", "B", "C"].map(async (label) => {
+      const mission = await m.createMission({ title: `Concurrent duplicate ${label}` });
+      const milestone = await m.addMilestone(mission.id, { title: "MS" });
+      const slice = await m.addSlice(milestone.id, { title: "SL" });
+      const feature = await m.addFeature(slice.id, { title: `Feature ${label}` });
+      const claimedTask = await taskStore.createTask({ description: `canonical ${label}`, missionId: mission.id, sliceId: slice.id });
+      await m.linkFeatureToTask(feature.id, claimedTask.id);
+      const duplicateTask = await taskStore.createTask({ description: `duplicate ${label}`, missionId: mission.id, sliceId: slice.id });
+      return { feature, claimedTask, duplicateTask };
+    }));
+
+    await Promise.all(cases.map(({ feature, claimedTask, duplicateTask }) => m.archiveDefinedFeatureBootstrapDuplicate({
+      featureId: feature.id,
+      taskId: claimedTask.id,
+      duplicateTaskId: duplicateTask.id,
+    })));
+
+    await expect(Promise.all(cases.map(({ duplicateTask }) => taskStore.getTask(duplicateTask.id))))
+      .resolves.toEqual(expect.arrayContaining(cases.map(({ duplicateTask }) => expect.objectContaining({ id: duplicateTask.id, column: "archived" }))));
+    await expect(taskStore.asyncLayer!.ping()).resolves.toBeUndefined();
   });
 
   /*

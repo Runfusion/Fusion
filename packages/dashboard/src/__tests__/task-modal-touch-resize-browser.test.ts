@@ -43,6 +43,19 @@ const fn8607Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-86
 const fn8806Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8806");
 const fn115Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-115");
 
+/*
+FNXC:ModalTouchGeometry 2026-09-21-09:45:
+FN-9311 reserves VIEWPORT_PADDING (16px) + TABLET_TOUCH_GEOMETRY_INSET (16px) on every edge for
+tablet-touch geometry so a clamped panel's 44px corner/edge resize handle never paints past the
+visible viewport edge. The tablet-touch maximum panel extent is therefore viewport - 2*(16+16) =
+viewport - 64 (desktop mouse geometry keeps the tighter viewport - VIEWPORT_PADDING clamp). These
+constants mirror packages/dashboard/app/components/FloatingWindow.tsx; keep them in lockstep.
+*/
+const TABLET_TOUCH_TOTAL_INSET = 16 + 16;
+function tabletTouchMax(viewport: number): number {
+  return viewport - 2 * TABLET_TOUCH_TOTAL_INSET;
+}
+
 async function touchDrag(cdp: Cdp, point: Point, delta = { x: 48, y: 36 }) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: point.x, y: point.y, id: 1 }] });
   for (const fraction of [0.25, 0.5, 0.75, 1]) {
@@ -237,9 +250,19 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       expect(newTaskAfterHeaderDrag.height).toBe(newTaskBeforeHeaderDrag.height);
 
       const newTaskTarget = "[data-testid='floating-window-resize-se']";
-      const newTaskPoint = await targetCenter(page, newTaskTarget);
+      let newTaskPoint = await targetCenter(page, newTaskTarget);
       expect(await page.evaluate((point) => document.elementFromPoint(point.x, point.y)?.getAttribute("data-resize-hit-target"), newTaskPoint)).toBe("true");
-      const newTaskBeforeResize = await rect(page, newTaskPanel);
+      let newTaskBeforeResize = await rect(page, newTaskPanel);
+      // FN-9311: the tablet-touch clamp (viewport - 64) is now below the New Task modal's desktop
+      // default width on the narrower 768px boundary, so the panel loads already pinned to the
+      // clamp. Retract it through the northwest handle first, then prove the required southeast
+      // gesture grows it again rather than asserting growth against an already-maxed panel.
+      if (newTaskBeforeResize.width >= tabletTouchMax(width) || newTaskBeforeResize.height >= tabletTouchMax(height)) {
+        await touchDrag(cdp, await targetCenter(page, `${newTaskPanel} [data-testid='floating-window-resize-nw']`), { x: 96, y: 72 });
+        await page.waitForTimeout(100);
+        newTaskBeforeResize = await rect(page, newTaskPanel);
+        newTaskPoint = await targetCenter(page, newTaskTarget);
+      }
       await touchDrag(cdp, newTaskPoint);
       await page.waitForTimeout(100);
       const newTaskAfterResize = await rect(page, newTaskPanel);
@@ -379,11 +402,16 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     };
     /*
     FNXC:ModalTouchGeometry 2026-07-26-20:08:
-    Task Detail and New Task share FloatingWindow's zero-inset tablet geometry while preserving
-    desktop content density and 44px touch handles.
+    Task Detail and New Task share FloatingWindow's tablet geometry while preserving desktop content
+    density and 44px touch handles.
+
+    FNXC:ModalTouchGeometry 2026-09-21-09:45:
+    FN-9311 replaced the former zero-inset tablet geometry with a reserved TABLET_TOUCH_GEOMETRY_INSET
+    so 44px resize handles stay reachable, so the tablet panel width is now the desktop width clamped
+    down to the tablet-touch maximum (viewport - 64) rather than always matching desktop exactly.
     */
     expect(tabletTaskDetail.overlay.paddingBlockStart).toBe(desktopTaskDetail.overlay.paddingBlockStart);
-    expect(tabletTaskDetail.panel.width).toBe(desktopTaskDetail.panel.width);
+    expect(tabletTaskDetail.panel.width).toBe(Math.min(desktopTaskDetail.panel.width, tabletTouchMax(768)));
     expect(tabletTaskDetail.panel.x).toBeGreaterThanOrEqual(0);
     expect(tabletTaskDetail.overlay.paddingInlineStart).toBe(desktopTaskDetail.overlay.paddingInlineStart);
     expect(tabletTaskDetail.overlay.paddingInlineEnd).toBe(desktopTaskDetail.overlay.paddingInlineEnd);
@@ -409,7 +437,7 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
     expect(tabletNewTask.body.paddingBlockEnd).toBe(desktopNewTask.body.paddingBlockEnd);
     expect(tabletNewTask.overlay.paddingBlockStart).toBe(desktopNewTask.overlay.paddingBlockStart);
     expect(tabletNewTask.overlay.paddingBlockEnd).toBe(desktopNewTask.overlay.paddingBlockEnd);
-    expect(tabletNewTask.panel.width).toBe(desktopNewTask.panel.width);
+    expect(tabletNewTask.panel.width).toBe(Math.min(desktopNewTask.panel.width, tabletTouchMax(768)));
     // Floating New Task repositions into the tablet viewport; its panel width and zero overlay
     // inset remain the desktop-density contract rather than inheriting task-detail placement.
     expect(tabletNewTask.panel.x).toBeGreaterThanOrEqual(0);
@@ -493,7 +521,10 @@ describe.runIf(executablePath)("Task modal tablet touch resize browser regressio
       let beforeResize = await rect(page, modal.panelSelector);
       // AgentListModal's production default reaches the tablet width clamp. Retract it through the
       // existing northwest control first, then prove the required southeast gesture grows it again.
-      if (beforeResize.width >= width - 32 || beforeResize.height >= height - 32) {
+      // FN-9311: the clamp is now viewport - 64 for tablet-touch geometry, so detect "at the clamp"
+      // against that inset rather than the stale viewport - 32 threshold (which sat above the
+      // reachable maximum and silently skipped the retraction).
+      if (beforeResize.width >= tabletTouchMax(width) || beforeResize.height >= tabletTouchMax(height)) {
         await touchDrag(cdp, await targetCenter(page, `${modal.panelSelector} [data-testid='floating-window-resize-nw']`), { x: 96, y: 72 });
         await page.waitForTimeout(100);
         beforeResize = await rect(page, modal.panelSelector);

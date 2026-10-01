@@ -15,6 +15,7 @@ vi.mock("@fusion/engine", () => ({
     reconcileLandedReviewTask = reconcile;
   },
   isInReviewMissingWorktreeSessionStartFailure: vi.fn(),
+  isFailedNoVerdictPreMergeReviewResult: vi.fn(() => false),
   installBaselineArchiveWorktreeDisposer: vi.fn(),
   runAiMerge: vi.fn(),
   landWorkspaceTask: vi.fn(),
@@ -70,6 +71,13 @@ describe("runTaskReconcile", () => {
     await runTaskReconcile("FN-9304", "project");
     expect(reconcile).toHaveBeenCalledWith("FN-9304", { source: "manual", requireAutoMergeEligible: false });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("abc123"));
+  });
+
+  it("reports a resumed post-merge gate as successful recovery", async () => {
+    reconcile.mockResolvedValue({ outcome: "resumed", gateId: "post-merge-verification" });
+    await expect(runTaskReconcile("FN-9442", "project")).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("post-merge-verification"));
+    expect(exit).not.toHaveBeenCalled();
   });
 
   it("reports an already-complete card as a successful no-op", async () => {

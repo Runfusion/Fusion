@@ -91,6 +91,9 @@ import {
   buildTaskLineageTrailer,
   evaluateNoCommitsNoOpFinalize,
   getTaskMergeBlocker,
+  isOpenWorkflowReviewFinding,
+  allowsAutoMergeProcessing,
+  resolveEffectiveAutoMerge,
   isPreMergeStepsNotRunBlocker,
   PreMergeStepsNotRunError,
   normalizeMergeConflictStrategy,
@@ -160,6 +163,8 @@ import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { mergerLog } from "./logger.js";
 import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
+import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
+import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 
 /*
 FNXC:EngineDiagnostics 2026-07-26-10:10:
@@ -5100,6 +5105,11 @@ export interface MergerOptions {
   onSession?: (session: { dispose: () => void }) => void;
   /** Abort signal used to stop an in-flight merge when the engine is shutting down. */
   signal?: AbortSignal;
+  /**
+   * True only when the workflow graph caller will immediately traverse its authored post-merge
+   * nodes after this merge resolves. Direct/manual callers must not defer required evidence.
+   */
+  graphOwnedPostMergeTraversal?: boolean;
   /** AgentStore for resolving per-agent custom instructions. */
   agentStore?: import("@fusion/core").AgentStore;
   /** Allow synchronization when local checkout is dirty during merge reconciliation. */
@@ -6879,11 +6889,26 @@ export async function aiMergeTask(
   if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
     throw new Error(`Cannot merge ${taskId}: merge gate could not resolve the task workflow`);
   }
+  const settings = await mergeEffectiveSettings(store, task, await store.getSettings());
+  const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: rootDir, settings });
+  const receipts = await store.getStaleReviewCallbackWaiverReceipts(taskId);
+  /*
+  FNXC:StaleReviewCallbackWaiver 2026-10-01-04:24:
+  The direct merger door reads TaskStore-issued receipts and the same live content/policy facts as
+  the shared evaluator. A skipped carrier alone is never merge authority, including manual doors.
+  */
   const mergeBlocker = getTaskMergeBlocker(task, {
     manual: options.manual === true,
     reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
     /* FNXC:LegacyPreMergeGate 2026-08-23-08:32: Legacy tasks without a persisted optional-group selection predate graph gates. New planned tasks always persist an explicit list, including Review Level 0's []. */
     requiredPreMergeStepIds: Array.isArray(task.enabledWorkflowSteps) ? mergeGate.requiredPreMergeStepIds : undefined,
+    mergeContent,
+    staleReviewCallbackWaiver: {
+      projectId: store.getProjectId() ?? "",
+      effectiveAutoMerge: options.manual !== true && allowsAutoMergeProcessing(task, settings) && resolveEffectiveAutoMerge(task, settings),
+      hasOpenFindings: task.workflowStepResults?.some((result) => result.findings?.some(isOpenWorkflowReviewFinding)) === true,
+      receipts,
+    },
   });
   if (mergeBlocker) {
     /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: an unrun enabled gate is a deferral (typed), not a failure — see PreMergeStepsNotRunError. */
@@ -6896,7 +6921,6 @@ export async function aiMergeTask(
   // merger's flat reads (strictScopeEnforcement, verificationFixRetries,
   // buildRetryCount, titleSummarizer lanes — all threaded from here via
   // executeMergeAttempt) pick up workflow values. Behavior-inert by default.
-  const settings = await mergeEffectiveSettings(store, task, await store.getSettings());
   // U7 (R10): resolve the merge trait's policy (strategy / fileScope / rules)
   // from the task's workflow when the workflowColumns flag is ON, falling back
   // to the existing settings knobs otherwise. Read-through only — merge
@@ -11565,20 +11589,25 @@ export async function completeTask(
   taskId: string,
   result: MergeResult,
 ): Promise<void> {
-  mergerLog.log(`${taskId}: completeTask — clearing status, moving to done`);
+  mergerLog.log(`${taskId}: completeTask — finalizing proven merge`);
   const preMoveTask = await store.getTask(taskId);
-  // Clear transient status before moving to done
-  await store.updateTask(taskId, { status: null });
   /*
-  FNXC:MergerMoveAttribution 2026-08-29-07:37:
-  Legacy merger completion remains a forward merge authority. Its own neutral provenance keeps the
-  lifecycle timeline legible without borrowing graph/remediation/plan-approval literals that alter
-  review-entry auditing and reopen field-clearing semantics; plugins observe this source too.
+  FNXC:PostMergeEvidence 2026-09-30-01:54:
+  Every successful merger route, including the retained direct aiMergeTask path, must use the
+  shared finalizer. Durable post-merge approval is re-read within moveTaskIf before completion, so
+  a landed merge remains in review rather than bypassing a missing or superseded evidence gate.
   */
-  // Use moveTask for proper event emission.
-  const task = await store.moveTask(taskId, await resolveMergerLifecycleColumn(store, taskId, "complete"), {
-    workflowMoveSource: "merger-complete-task",
+  const finalization = await finalizeProvenAutoMergeTask({
+    store,
+    taskId,
+    result,
+    source: "direct-ai-merge",
   });
+  result.task = finalization.task ?? result.task;
+  if (finalization.outcome !== "done" && finalization.outcome !== "already-done") {
+    return;
+  }
+
   const settings = await store.getSettings();
   if (isMergeRequestContractShadowEnabled(settings) && preMoveTask?.autoMerge !== false) {
     const mergeRequestRecord = await store.getMergeRequestRecordAsync(taskId);
@@ -11586,7 +11615,6 @@ export async function completeTask(
       await store.transitionMergeRequestState(taskId, "succeeded");
     }
   }
-  result.task = task;
   try {
     /*
     FNXC:AgentActivityStream 2026-08-09-11:50:

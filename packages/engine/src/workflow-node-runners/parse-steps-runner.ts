@@ -1,4 +1,4 @@
-import { FAST_LANE_STEP_NAME, getStepParser, isFastExecutionMode, isRemediationStep } from "@fusion/core";
+import { FAST_LANE_STEP_NAME, getStepParser, isFastExecutionMode, isRemediationStep, validateStepDependencies } from "@fusion/core";
 import type { TaskDetail, TaskStep, WorkflowIrNode } from "@fusion/core";
 
 import type { WorkflowNodeHandler, WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
@@ -149,6 +149,13 @@ export class ParseStepsNodeRunner implements WorkflowNodeRunner {
       if (Array.isArray(s.dependsOn)) step.dependsOn = s.dependsOn;
       return step;
     });
+    try {
+      validateStepDependencies(steps);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.audit("parse-error", `parse-steps node '${node.id}' rejected invalid dependencies: ${message}`);
+      return { outcome: "failure", value: "parse-error" };
+    }
     if (cfg.implementationOnlySteps === true) {
       /*
       FNXC:PlanningDocumentationStep 2026-08-26-05:56:

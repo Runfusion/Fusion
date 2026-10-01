@@ -42,19 +42,27 @@ const confirmQuestion: PlanningQuestion = {
 };
 
 describe("normalizePlanningSummaryPayload", () => {
-  it("normalizes core summary fields without deepen themes", () => {
+  it("normalizes core summary fields and retains only canonical dependency IDs", () => {
     const summary = normalizePlanningSummaryPayload({
       title: "A plan",
       description: "A description",
       suggestedSize: "M",
-      suggestedDependencies: ["FN-1", "FN-1", ""],
+      suggestedDependencies: [" FN-1 ", "FN-1", "KB-42", "ERR-7", "", 7, "Identity service", "Existing failed-no-verdict re-seeding must not race or duplicate automatic waiver for the same attempt."],
       keyDeliverables: ["Ship"],
     }, { title: "Fallback", description: "Fallback desc" });
     expect(summary.title).toBe("A plan");
     expect(summary.description).toBe("A description");
-    expect(summary.suggestedDependencies).toEqual(["FN-1"]);
+    expect(summary.suggestedDependencies).toEqual(["FN-1", "KB-42", "ERR-7"]);
     expect(summary.keyDeliverables).toEqual(["Ship"]);
     expect(summary).not.toHaveProperty("deepeningThemes");
+  });
+
+  it.each([undefined, null, [], ["", "  ", 7, {}]])("normalizes missing or malformed dependency suggestions to an empty list", (suggestedDependencies) => {
+    expect(normalizePlanningSummaryPayload({
+      title: "A plan",
+      description: "A description",
+      suggestedDependencies,
+    }).suggestedDependencies).toEqual([]);
   });
 });
 

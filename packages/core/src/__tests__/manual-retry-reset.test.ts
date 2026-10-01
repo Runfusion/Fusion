@@ -5,6 +5,7 @@ import {
   MANUAL_RETRY_RESET_COUNTER_KEYS,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
+  buildManualRetryResetPatchIfCurrent,
 } from "../tasks/manual-retry-reset.js";
 
 const RETRY_SUMMARY_COUNTER_REGEX = /toCount\(task\.(\w+)\)/g;
@@ -29,11 +30,22 @@ describe("buildAutoPauseClearPatch", () => {
     })).toEqual({});
   });
 
-  it("does not clear unrelated automatic pause reasons", () => {
+  it("clears the branch-conflict auto-pause for a fresh retry", () => {
     expect(buildAutoPauseClearPatch({
       paused: true,
       userPaused: undefined,
       pausedReason: "branch-conflict-unrecoverable",
+    })).toEqual({
+      paused: false,
+      pausedReason: null,
+    });
+  });
+
+  it("does not clear an unrelated automatic pause reason", () => {
+    expect(buildAutoPauseClearPatch({
+      paused: true,
+      userPaused: undefined,
+      pausedReason: "token_budget_exceeded",
     })).toEqual({});
   });
 
@@ -43,6 +55,32 @@ describe("buildAutoPauseClearPatch", () => {
       userPaused: undefined,
       pausedReason: IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
     })).toEqual({});
+  });
+});
+
+describe("buildManualRetryResetPatchIfCurrent", () => {
+  const expected = {
+    branch: "fusion/fn-9434",
+    worktree: "/tmp/fn-9434",
+    status: "failed",
+    error: "branch conflict",
+    paused: true,
+    pausedReason: "branch-conflict-unrecoverable",
+  } as never;
+
+  it("refuses a stale retry after a scheduler replaces the checkout", () => {
+    expect(buildManualRetryResetPatchIfCurrent({
+      ...expected,
+      worktree: "/tmp/fn-9434-replacement",
+    }, expected, { status: null })).toBeNull();
+  });
+
+  it("clears only the current branch-conflict automatic pause", () => {
+    expect(buildManualRetryResetPatchIfCurrent(expected, expected, { status: null })).toMatchObject({
+      status: null,
+      paused: false,
+      pausedReason: null,
+    });
   });
 });
 

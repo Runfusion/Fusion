@@ -43,6 +43,10 @@ export interface PrInfo {
   lastCommentAt?: string;
   lastCheckedAt?: string;
   lastReviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  /** Provider-supplied commit SHA for an observed merged PR; absent when the forge did not expose one. */
+  mergeCommitSha?: string;
+  /** Provider-supplied merge timestamp for an observed merged PR; never synthesized from refresh time. */
+  mergedAt?: string;
 }
 
 export type IssueState = "open" | "closed";

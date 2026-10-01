@@ -59,4 +59,17 @@ describe("CLI quarantine ledger lockstep", () => {
       expect(Number.isNaN(Date.parse(entry.quarantinedAt))).toBe(false);
     }
   });
+
+  it("retains the FN-9425 skills-get quarantine exactly once", () => {
+    const quarantinedFile = "src/commands/__tests__/skills-get.test.ts";
+    const configPaths = parseQuarantinedCliTests(readFileSync(configPath, "utf8"));
+    const ledger = JSON.parse(readFileSync(ledgerPath, "utf8")) as { entries: QuarantineEntry[] };
+    const entries = ledger.entries.filter((entry) => entry.file === `${cliPathPrefix}${quarantinedFile}`);
+
+    expect(configPaths.filter((path) => path === quarantinedFile)).toHaveLength(1);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      quarantinedAt: "2026-09-29",
+    });
+  });
 });

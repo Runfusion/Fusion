@@ -22,9 +22,13 @@ function store(settings: Record<string, unknown> = {}) {
   };
 }
 
-function mockClient(mergeResult: typeof prInfo | Error, mergeReady = true) {
+function mockClient(
+  mergeResult: typeof prInfo | Error,
+  mergeReady = true,
+  observedPrInfo: Record<string, unknown> = prInfo,
+) {
   vi.spyOn(GitHubClient.prototype, "getPrMergeStatus").mockResolvedValue({
-    prInfo: { ...prInfo, headOid: "checked-head", mergeable: "clean" },
+    prInfo: { ...observedPrInfo, headOid: "checked-head", mergeable: "clean" },
     mergeReady,
     blockingReasons: [],
     checks: [],
@@ -81,14 +85,22 @@ describe("mergeTaskPr native auto-merge", () => {
     expect(scopedStore.applyPrMergedTransition).toHaveBeenCalledWith("FN-8", expect.any(Object));
   });
 
-  it("preserves direct merge fencing when the setting is disabled", async () => {
+  it("reconciles a freshly observed external merge before rejecting stale direct-merge readiness", async () => {
     const scopedStore = store();
-    const GitHubClient = mockClient({ ...prInfo, status: "merged" });
+    const GitHubClient = mockClient(
+      prInfo,
+      false,
+      { ...prInfo, status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:58:00.000Z" },
+    );
 
-    await mergeTaskPr(scopedStore as never, { id: "FN-8", prInfo } as never, undefined);
+    const result = await mergeTaskPr(scopedStore as never, { id: "FN-8", prInfo } as never, undefined);
 
-    expect(GitHubClient.prototype.mergePr).toHaveBeenCalledWith(expect.objectContaining({ expectedHeadOid: "checked-head" }));
-    expect(GitHubClient.prototype.mergePr).not.toHaveBeenCalledWith(expect.objectContaining({ auto: true }));
+    expect(result.status).toBe("merged");
+    expect(scopedStore.updatePrInfo).toHaveBeenCalledWith("FN-8", expect.objectContaining({
+      status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:58:00.000Z",
+    }));
+    expect(scopedStore.applyPrMergedTransition).toHaveBeenCalledWith("FN-8", expect.any(Object));
+    expect(GitHubClient.prototype.mergePr).not.toHaveBeenCalled();
   });
 
   it("records an unavailable native auto-merge error without transitioning", async () => {

@@ -65,7 +65,7 @@ describe("attachAnthropicClaudeCodeIdentityHeaders", () => {
             "Existing-Header": "preserved",
             "X-Session-Id": "session-1",
             "X-Session-Affinity": "session-1",
-            "user-agent": "claude-cli/2.1.251",
+            "user-agent": "claude-cli/2.1.284",
           },
         },
       });
@@ -91,7 +91,7 @@ describe("attachAnthropicClaudeCodeIdentityHeaders", () => {
     const runtime = makeRuntime(async () => ({ auth: { apiKey: "sk-ant-oat-test" } }));
     attachAnthropicClaudeCodeIdentityHeaders(runtime);
     await expect(runtime.getAuth("anthropic" as never)).resolves.toEqual({
-      auth: { apiKey: "sk-ant-oat-test", headers: { "user-agent": "claude-cli/2.1.251" } },
+      auth: { apiKey: "sk-ant-oat-test", headers: { "user-agent": "claude-cli/2.1.284" } },
     });
   });
 
@@ -102,7 +102,8 @@ describe("attachAnthropicClaudeCodeIdentityHeaders", () => {
   it("overrides pi-ai's stale OAuth identity and meets every declared model minimum", async () => {
     const { source, version: bundledVersion } = readBundledClaudeCodeVersion();
     expect(compareClaudeCodeVersions(CLAUDE_CODE_IMPERSONATED_VERSION, bundledVersion)).toBeGreaterThan(0);
-    expect(compareClaudeCodeVersions(bundledVersion, "2.1.251")).toBeLessThan(0);
+    expect(compareClaudeCodeVersions(bundledVersion, "2.1.284")).toBeLessThan(0);
+    expect(ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION["claude-sonnet-5-5"]).toBe("2.1.284");
     expect(source).toContain('"user-agent": `claude-cli/${claudeCodeVersion}`');
     expect(Object.keys(buildAnthropicClaudeCodeIdentityHeaders({
       providerId: "anthropic",
@@ -123,6 +124,6 @@ describe("attachAnthropicClaudeCodeIdentityHeaders", () => {
     for (const minimum of Object.values(ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION)) {
       expect(compareClaudeCodeVersions(effectiveVersion!, minimum)).toBeGreaterThanOrEqual(0);
     }
-    expect(compareClaudeCodeVersions(effectiveVersion!, "2.1.251")).toBeGreaterThanOrEqual(0);
+    expect(compareClaudeCodeVersions(effectiveVersion!, "2.1.284")).toBeGreaterThanOrEqual(0);
   });
 });

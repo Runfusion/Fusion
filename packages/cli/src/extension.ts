@@ -17,6 +17,7 @@ import {
   COLUMN_LABELS,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
+  buildManualRetryResetPatchIfCurrent,
   validateNodeOverrideChange,
   type Task,
   type ColumnId,
@@ -84,6 +85,7 @@ import {
   workflowDeleteParams,
   workflowSettingsParams,
   traitListParams,
+  isFailedNoVerdictPreMergeReviewResult,
   isInReviewMissingWorktreeSessionStartFailure,
   normalizeAgentLogPaging,
   buildTaskAgentLogReadText,
@@ -2520,10 +2522,14 @@ export default function kbExtension(pi: ExtensionAPI) {
       const gated = await applyAgentPolicyGateForExtensionTool("fn_task_unpause", params as Record<string, unknown>, ctx as ExtensionCallerContext);
       if (gated) return gated;
       const store = await getStore(ctx.cwd);
-      const task = await store.pauseTask(params.id, false);
+      const snapshot = await store.getTask(params.id);
+      if (!snapshot) throw new Error(`Task ${params.id} not found`);
+      const task = await store.pauseTask(params.id, false, undefined, {
+        expectedUpdatedAt: snapshot.updatedAt,
+      });
 
       return {
-        content: [{ type: "text", text: `Unpaused ${task.id}` }],
+        content: [{ type: "text", text: task.paused ? `Unpause for ${task.id} was superseded by a newer lifecycle update` : `Unpaused ${task.id}` }],
         details: { taskId: task.id },
       };
     },
@@ -2618,6 +2624,25 @@ export default function kbExtension(pi: ExtensionAPI) {
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
           isInReviewMergeRetryStall);
+      const noVerdictGate = !effectiveAutoMergeDisabled && isInReviewStatusNone && retryIr !== undefined
+        ? await fusionCore.resolvePreMergeGateForTask(store, task.id, task.enabledWorkflowSteps, task).catch(() => undefined)
+        : undefined;
+      /*
+      FNXC:NoVerdictReviewRecovery 2026-09-23-20:18:
+      Extension tools have only a TaskStore and cannot observe ProjectEngine's queued-merge owner.
+      Do not create a continuation in the status-none queue window; preserve the failed review for
+      the dashboard's engine-owned retry or the fenced periodic recovery to re-run safely.
+      */
+      const noVerdictReviewRetry = noVerdictGate !== undefined
+        && (task.workflowStepResults ?? []).some((result) =>
+          isFailedNoVerdictPreMergeReviewResult(result, noVerdictGate.requiredPreMergeStepIds));
+      if (noVerdictReviewRetry) {
+        return {
+          content: [{ type: "text", text: `Task ${params.id} has a failed review with no verdict; retry it through the running dashboard or wait for engine recovery` }],
+          isError: true,
+          details: { taskId: params.id, currentStatus: task.status },
+        };
+      }
       /*
       FNXC:MissingWorktreeRetry 2026-07-10-18:30:
       Upstream #1992 requires fn_task_retry to recover an in-review unusable-worktree session-start failure even when status remains merge-active. Keep this status bypass constrained to the centrally classified missing/incomplete/unregistered worktree signature.
@@ -2636,11 +2661,24 @@ export default function kbExtension(pi: ExtensionAPI) {
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      const applyRetryReset = async (patch: Parameters<typeof store.updateTask>[1]) => {
+        if (typeof store.updateTaskAtomic !== "function") {
+          return store.updateTask(params.id, patch);
+        }
+        let applied = false;
+        const updated = await store.updateTaskAtomic(params.id, (live) => {
+          const guardedPatch = buildManualRetryResetPatchIfCurrent(live, task, patch);
+          if (guardedPatch) applied = true;
+          return guardedPatch;
+        });
+        if (!applied) throw new Error("Retry was superseded by a newer task lifecycle update");
+        return updated;
+      };
       // FNXC:TaskWedgeNotifications 2026-08-10-20:15: an operator retry ends the prior terminal-failure episode and mints a fresh budget.
       await store.resetTerminalFailureAutoRecoveryBudget(params.id);
 
       if (isMissingWorktreeSessionRetry) {
-        await store.updateTask(params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           worktree: null,
@@ -2663,7 +2701,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       // In-review retry: distinguish between execution failures and merge failures.
       if (isInReviewRetry) {
         if (isExecutionFailureInReview) {
-          await store.updateTask(params.id, {
+          await applyRetryReset({
             status: null,
             error: null,
             ...autoPauseClearPatch,
@@ -2685,7 +2723,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           };
         }
 
-        await store.updateTask(params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           ...autoPauseClearPatch,
@@ -2699,7 +2737,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       // Clear failure state and move to todo for other columns
-      await store.updateTask(params.id, {
+      await applyRetryReset({
         status: null,
         error: null,
         ...autoPauseClearPatch,

@@ -1196,7 +1196,7 @@ async function resolveApprovedMissionLineage(
 }
 
 type DefinedFeatureBootstrapStore = {
-  claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
+  claimDefinedFeatureTaskInTransaction: (tx: DbTransaction, input: { featureId: string; taskId: string; missionId: string; sliceId: string; archivedLanes: ReadonlySet<string> }) => Promise<unknown>;
   claimDefinedFeatureTask: (input: { featureId: string; taskId: string; missionId: string; sliceId: string }) => Promise<unknown>;
   archiveDefinedFeatureBootstrapDuplicate: (input: { featureId: string; taskId: string; duplicateTaskId: string }) => Promise<void>;
 };
@@ -1209,12 +1209,16 @@ type AgentTaskInputWithBootstrap = TaskCreateInput & {
   reconcileCreatedDuplicate?: (duplicate: Task, created: Task) => Promise<void>;
 };
 
-function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageReference | null): Pick<AgentTaskInputWithBootstrap, "afterTaskInsert" | "validateDuplicateCanonical" | "skipSameAgentDuplicateIntake" | "preflightSameAgentDuplicate" | "reconcileCreatedDuplicate"> {
+async function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageReference | null, workflowId?: string): Promise<Pick<AgentTaskInputWithBootstrap, "afterTaskInsert" | "validateDuplicateCanonical" | "skipSameAgentDuplicateIntake" | "preflightSameAgentDuplicate" | "reconcileCreatedDuplicate">> {
   if (!lineage?.bootstrapDefinedFeature) return {};
   const missionStore = store.getMissionStore() as Partial<DefinedFeatureBootstrapStore>;
   if (!missionStore.claimDefinedFeatureTaskInTransaction || !missionStore.claimDefinedFeatureTask || !missionStore.archiveDefinedFeatureBootstrapDuplicate) {
     throw new Error("Defined-feature bootstrap requires the PostgreSQL mission store; no task was created.");
   }
+  const selectedWorkflowId = workflowId ?? (await store.getDefaultWorkflowId()) ?? "builtin:coding";
+  const workflow = await resolveWorkflowIrById(store, selectedWorkflowId);
+  const archivedLanes = new Set(fusionCore.columnsWithFlag(workflow, "archived"));
+  if (archivedLanes.size === 0) archivedLanes.add("archived");
   const claim = (taskId: string) => ({ featureId: lineage.featureId, taskId, missionId: lineage.missionId, sliceId: lineage.sliceId });
   return {
     /*
@@ -1223,7 +1227,7 @@ function definedFeatureBootstrapInput(store: TaskStore, lineage: MissionLineageR
     transaction. Do not replace this hook with create-then-link compensation:
     a failed claim must roll back the task row before any task is observable.
     */
-    afterTaskInsert: async (tx, task) => { await missionStore.claimDefinedFeatureTaskInTransaction!(tx, claim(task.id)); },
+    afterTaskInsert: async (tx, task) => { await missionStore.claimDefinedFeatureTaskInTransaction!(tx, { ...claim(task.id), archivedLanes }); },
     validateDuplicateCanonical: async (task) => { await missionStore.claimDefinedFeatureTask!(claim(task.id)); },
     /*
     FNXC:MissionAdmission 2026-07-23-20:00:
@@ -1677,7 +1681,7 @@ export function createTaskCreateTool(
           priority: params.priority,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
-          ...definedFeatureBootstrapInput(store, lineage),
+          ...(await definedFeatureBootstrapInput(store, lineage, workflowId)),
           source: {
             sourceType: provenance?.sourceType ?? "api",
             sourceAgentId: provenance?.sourceAgentId,
@@ -2374,6 +2378,9 @@ export function createTaskPromptWriteTool(
       confirmation could run, so the validated prompt-then-scope compensation remains sequential.
       */
       try {
+        // FNXC:StepDependencyValidation 2026-10-01-01:59: Prompt publication must refuse
+        // invalid Markdown dependencies before it mutates the authoritative plan.
+        fusionCore.parseStepHeadings(params.content);
         /*
         FNXC:TaskReset 2026-08-22-04:49:
         A triage attempt captured before Reset can outlive the route's non-reentrant planning lock.
@@ -3496,6 +3503,8 @@ export interface TaskRetryToolOptions {
    * ProjectEngine owns the reset because its queue can claim outside TaskStore's lock.
    */
   resetInReviewMergeRetry?: (task: Task) => Promise<"reset" | "pending" | "changed" | "unavailable">;
+  /** ProjectEngine-owned re-review fence for failed pre-merge results with no verdict. */
+  rerouteFailedNoVerdictPreMergeReview?: (task: Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
 }
 
 export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOptions = {}): ToolDefinition {
@@ -3530,6 +3539,23 @@ export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOpti
         in review: moving it to the execution rebound would re-run approved work.
         */
         if (isInReviewMergeRetryStall) {
+          const noVerdictOutcome = options.rerouteFailedNoVerdictPreMergeReview
+            ? await options.rerouteFailedNoVerdictPreMergeReview(task)
+            : "not-applicable";
+          if (noVerdictOutcome === "rerouted") {
+            await store.logEntry(params.id, "Retry requested via chat tool (failed no-verdict review re-seeded)");
+            return {
+              content: [{ type: "text" as const, text: `Retried ${params.id} in review (failed review re-seeded)` }],
+              details: { taskId: params.id, newColumn: task.column },
+            };
+          }
+          if (noVerdictOutcome === "pending" || noVerdictOutcome === "unavailable" || noVerdictOutcome === "changed") {
+            return {
+              content: [{ type: "text" as const, text: `Task ${params.id} cannot be retried because review recovery ownership is unavailable, active, or changed` }],
+              details: { taskId: params.id, currentStatus: task.status },
+              isError: true,
+            };
+          }
           /*
           FNXC:MergeRetryAdmission 2026-09-20-02:52:
           A null status is written after queue admission, before the merger persists its transient
@@ -3565,6 +3591,12 @@ export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOpti
               isError: true,
             };
           }
+          /*
+          FNXC:NoVerdictReviewRecovery 2026-09-23-20:36:
+          Only ProjectEngine may re-seed a failed no-verdict gate because it owns the
+          merge queue. A TaskStore-level fallback here could run after that fence releases
+          and create a review continuation alongside a newly admitted merge.
+          */
           await store.logEntry(params.id, "Retry requested via chat tool (in-review merge retry, mergeRetries reset)");
           return {
             content: [{ type: "text" as const, text: `Retried ${params.id} in review (merge retry state cleared)` }],
@@ -5949,7 +5981,7 @@ export function createDelegateTaskTool(
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),
-          ...definedFeatureBootstrapInput(taskStore, lineage),
+          ...(await definedFeatureBootstrapInput(taskStore, lineage, workflowId)),
           source: {
             sourceType: "api",
             sourceParentTaskId: options?.sourceTaskId,

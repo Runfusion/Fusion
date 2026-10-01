@@ -108,6 +108,11 @@ function createStore(task: Task, settings: Partial<Settings> = {}) {
       task.column = column;
       return task;
     }),
+    // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Push finalization executes FN-9370's durable move predicate against the live task.
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      if (!await predicate(task)) return { moved: false, task };
+      return { moved: true, task: await store.moveTask(id, column, options) };
+    }),
     logEntry: vi.fn(async (_taskId: string, message: string) => { logs.push(message); }),
     appendAgentLog: vi.fn(async (_taskId: string, message: string) => { logs.push(message); }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),

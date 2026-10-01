@@ -208,8 +208,14 @@ pgTest("TaskStore.updateStep step-order guard (PostgreSQL)", () => {
     );
   });
 
+  /*
+   * FNXC:StepDependencyValidation 2026-10-01-22:44:
+   * FN-9435 makes malformed persisted dependency metadata terminal rather than treating it as
+   * legacy sequential ordering. Refusing before mutation preserves the target step and leaves a
+   * durable integrity record that operators can use to repair the corrupt plan.
+   */
   it.each([{ dependsOn: [2] }, { dependsOn: [99] }, { dependsOn: [-1] }, { dependsOn: [1.5] }])(
-    "falls back to strict ordering for malformed dependsOn %j",
+    "terminally refuses malformed persisted dependsOn %j before mutating the target step",
     async ({ dependsOn }) => {
       const store = h.store();
       const task = await h.createTaskWithSteps();
@@ -223,9 +229,8 @@ pgTest("TaskStore.updateStep step-order guard (PostgreSQL)", () => {
 
       expect(updated.steps[2].status).toBe("pending");
       expect(updated.log.map((entry) => entry.action)).toContainEqual(
-        expect.stringContaining("[integrity-warning] invalid dependsOn"),
+        expect.stringContaining("[integrity-error] invalid step dependencies"),
       );
-      expect(updated.log.at(-1)?.action).toContain("earlier step 0");
     },
   );
 

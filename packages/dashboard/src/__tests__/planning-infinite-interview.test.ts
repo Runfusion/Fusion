@@ -828,7 +828,7 @@ describe("reactive Planning Mode question contract", () => {
           description: "Deliver a secure, observable recovery experience.",
           suggestedSize: "L",
           priority: "high",
-          suggestedDependencies: ["Identity service"],
+          suggestedDependencies: [],
           keyDeliverables: ["Add recovery token flow", "Test recovery audit events"],
         },
       }),
@@ -848,7 +848,7 @@ describe("reactive Planning Mode question contract", () => {
       priority: "high",
       proposedChanges: ["Change the affected workflow to support: Build secure account recovery"],
       acceptanceCriteria: ["The requested outcome works end to end for: Build secure account recovery"],
-      suggestedDependencies: ["Identity service"],
+      suggestedDependencies: [],
       keyDeliverables: ["Add recovery token flow", "Test recovery audit events"],
       suggestedRefinements: ["Scope and user experience", "Technical approach and integration", "Validation and rollout"],
     });

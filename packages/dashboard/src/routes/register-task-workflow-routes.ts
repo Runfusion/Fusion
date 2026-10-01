@@ -64,6 +64,7 @@ import {
   runDeterministicDuplicateGuard,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
+  buildManualRetryResetPatchIfCurrent,
   reconcileDeterministicDuplicate,
   extractIntentSignature,
   findNearDuplicates,
@@ -3598,6 +3599,27 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       stay outside the restart patch, while restart-refused legacy shapes continue through the
       established recovery classifier below.
       */
+      /*
+      FNXC:NoVerdictReviewRecovery 2026-09-23-19:58:
+      A completed status-none review card can be a lost review dispatch rather than a lost merge.
+      Ask ProjectEngine to hold merge admission and arm the exact failed gate before the general stage
+      restart or merge-reset paths; this preserves the failed evidence for the replacement review.
+      */
+      if (isInReviewMergeRetryStall && typeof engine?.rerouteFailedNoVerdictPreMergeReview === "function") {
+        const noVerdictOutcome = await engine.rerouteFailedNoVerdictPreMergeReview(task);
+        if (noVerdictOutcome === "rerouted") {
+          await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (failed no-verdict review re-seeded)");
+          res.json(await scopedStore.getTask(req.params.id));
+          return;
+        }
+        if (noVerdictOutcome === "pending") {
+          throw conflict("Retry is unavailable while a merge is queued or active");
+        }
+        if (noVerdictOutcome === "unavailable") {
+          throw conflict("Retry is unavailable because review recovery ownership is unavailable");
+        }
+      }
+
       let stageRestartRefusal: Extract<Awaited<ReturnType<typeof restartTaskStage>>, { kind: "refused" }> | undefined;
       if (!isMissingWorktreeSessionRetry) {
         // FNXC:TaskRecoveryVocabulary 2026-08-28-01:11: Retry must ask the locked restart
@@ -3635,6 +3657,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      const applyRetryReset = async (patch: Parameters<typeof scopedStore.updateTask>[1]) => {
+        let applied = false;
+        const updated = await scopedStore.updateTaskAtomic(req.params.id, (live) => {
+          const guardedPatch = buildManualRetryResetPatchIfCurrent(live, task, patch);
+          if (guardedPatch) applied = true;
+          return guardedPatch;
+        });
+        if (!applied) throw new Error("Retry was superseded by a newer task lifecycle update");
+        return updated;
+      };
       // FNXC:TaskWedgeNotifications 2026-08-10-20:15: dashboard Retry is explicit operator intervention, so it clears the spent generic-terminal budget.
       await scopedStore.resetTerminalFailureAutoRecoveryBudget(req.params.id);
 
@@ -3646,7 +3678,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         */
         const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
         await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
-        await scopedStore.updateTask(req.params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           worktree: null,
@@ -3677,7 +3709,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           */
           const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
           await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
-          await scopedStore.updateTask(req.params.id, {
+          await applyRetryReset({
             status: null,
             error: null,
             ...autoPauseClearPatch,
@@ -3694,7 +3726,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           return;
         }
 
-        await scopedStore.updateTask(req.params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           ...autoPauseClearPatch,
@@ -3732,7 +3764,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         return;
       }
 
-      await scopedStore.updateTask(req.params.id, {
+      await applyRetryReset({
         status: retrySpecification ? "needs-replan" : null,
         error: null,
         worktree: null,
@@ -5036,8 +5068,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/unpause", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      await scopedStore.getTask(req.params.id);
-      const updated = await scopedStore.pauseTask(req.params.id, false);
+      const snapshot = await scopedStore.getTask(req.params.id);
+      const updated = await scopedStore.pauseTask(req.params.id, false, undefined, {
+        expectedUpdatedAt: snapshot.updatedAt,
+      });
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -5157,7 +5191,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         source: "manual",
         requireAutoMergeEligible: false,
       });
-      if (result.outcome === "reconciled" || result.outcome === "already-complete") {
+      if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "already-complete") {
         return res.json(result);
       }
       return res.status(409).json(result);

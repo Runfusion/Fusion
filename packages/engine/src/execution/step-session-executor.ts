@@ -205,8 +205,8 @@ export function parseStepFileScopes(prompt: string): Map<number, string[]> {
 
   if (!prompt) return result;
 
-  /* FNXC:WorkflowSteps 2026-09-05-22:06: FN-9260 requires annotated headings to share the canonical matcher. */
-  const splits = matchStepHeadings(prompt).map(({ index, headingNumber }) => ({ index, stepNum: headingNumber }));
+  /* FNXC:StepDependencyValidation 2026-10-01-01:59: Heading labels are display-only; scopes follow parsed ordinal positions. */
+  const splits = matchStepHeadings(prompt).map(({ index }) => ({ index }));
 
   if (splits.length === 0) return result;
 
@@ -214,10 +214,8 @@ export function parseStepFileScopes(prompt: string): Map<number, string[]> {
     const start = splits[i].index;
     const end = i + 1 < splits.length ? splits[i + 1].index : prompt.length;
     const section = prompt.slice(start, end);
-    const stepNum = splits[i].stepNum;
-
     const paths = extractPathsFromSection(section);
-    result.set(stepNum, paths);
+    result.set(i, paths);
   }
 
   return result;
@@ -234,10 +232,9 @@ export function normalizeAuthoredStepScopes(
 ): Map<number, string[]> {
   if (stepCount === 0) return scopes;
 
-  const offset = resolveAuthoredStepHeadingOffset([...scopes.keys()]);
+  // Parsed scopes are already keyed by ordinal step position.
   const normalized = new Map<number, string[]>();
-  for (const [heading, paths] of scopes) {
-    const index = heading - offset;
+  for (const [index, paths] of scopes) {
     if (index >= 0 && index < stepCount) normalized.set(index, paths);
   }
   const complete = new Map<number, string[]>();
@@ -655,16 +652,13 @@ function scopePromptToWorktree(prompt: string, rootDir?: string, worktreePath?: 
  * Extract the content of a specific step from the PROMPT.md.
  */
 function extractStepSection(prompt: string, stepIndex: number): string {
-  /* FNXC:WorkflowSteps 2026-09-05-22:06: FN-9260 requires annotated step bodies to be sliced by the canonical matcher. */
-  const splits = matchStepHeadings(prompt).map(({ index, headingNumber }) => ({ index, stepNum: headingNumber }));
-
-  const offset = resolveAuthoredStepHeadingOffset(splits.map((split) => split.stepNum));
-  const targetSplit = splits.find((s) => s.stepNum === stepIndex + offset);
+  /* FNXC:StepDependencyValidation 2026-10-01-01:59: Authored sections follow parsed ordinal positions, not visible labels. */
+  const splits = matchStepHeadings(prompt);
+  const targetSplit = splits[stepIndex];
   if (!targetSplit) return "";
 
-  const splitPos = splits.indexOf(targetSplit);
   const start = targetSplit.index;
-  const end = splitPos + 1 < splits.length ? splits[splitPos + 1].index : prompt.length;
+  const end = stepIndex + 1 < splits.length ? splits[stepIndex + 1].index : prompt.length;
 
   return prompt.slice(start, end).trim();
 }

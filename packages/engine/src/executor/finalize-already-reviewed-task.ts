@@ -6,7 +6,14 @@
  * blocker remains; otherwise log deferral. Uses resolved resume lanes (not literals).
  */
 import type { TaskStore } from "@fusion/core";
-import { getTaskMergeBlocker, resolvePreMergeGateForTask } from "@fusion/core";
+import {
+  allowsAutoMergeProcessing,
+  getTaskMergeBlocker,
+  isOpenWorkflowReviewFinding,
+  resolveEffectiveAutoMerge,
+  resolvePreMergeGateForTask,
+} from "@fusion/core";
+import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { ResumeLanes } from "./resolve-resume-lanes.js";
 
@@ -46,9 +53,22 @@ export async function finalizeAlreadyReviewedTask(
     await deps.store.logEntry(taskId, "Task already in-review; merge deferred", "merge gate could not resolve the task workflow", deps.getRunContextFor(taskId));
     return "blocked";
   }
+  const settings = await deps.store.getSettings();
+  const mergeContent = await captureMergeContentDescriptor(latestTask, {
+    workspaceRootDir: deps.store.getRootDir(),
+    settings,
+  });
+  const receipts = await deps.store.getStaleReviewCallbackWaiverReceipts(taskId);
   const blocker = getTaskMergeBlocker(latestTask, {
     reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set([resumeReviewLane ?? "in-review"]),
     requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
+    mergeContent,
+    staleReviewCallbackWaiver: {
+      projectId: deps.store.getProjectId() ?? "",
+      effectiveAutoMerge: allowsAutoMergeProcessing(latestTask, settings) && resolveEffectiveAutoMerge(latestTask, settings),
+      hasOpenFindings: latestTask.workflowStepResults?.some((result) => result.findings?.some(isOpenWorkflowReviewFinding)) === true,
+      receipts,
+    },
   });
   if (blocker) {
     await deps.store.logEntry(taskId, "Task already in-review; merge deferred", blocker, deps.getRunContextFor(taskId));

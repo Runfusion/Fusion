@@ -53,6 +53,7 @@ Reconciliation-scoped auto-recover/reclaim events the self-healing sweep surface
 | `task:auto-archive-failure-budget-exhausted` | Self-healing abandons a repeatedly failing stale-task archive and surfaces it for operator action. |
 | `task:reclaim-phantom-executor-binding` | Self-healing proves an in-memory executor-active binding is stale and requeues the task. |
 | `task:reconcile-orphaned-pending-step-results` | Self-healing rewrites orphaned `pending` workflow-step results (no live session) to `failed`. |
+| `task:stale-review-callback-waived` | A bounded self-healing audit emitted after an eligible stale code-review callback receipt is committed. Metadata is IDs, receipt presence, fixed actor/reason, prior status, and threshold category only; it excludes reviewer output, findings, lease owners, paths, and errors. Audit failure never changes the durable waiver. |
 | `task:reconcile-unproven-review-approval` | Self-healing rewrites singular content-review approvals without input proof to recoverable `failed` results. |
 | `task:reconcile-stale-duplicate-decision` | Self-healing clears a recurring duplicate-decision pause with no canonical target. |
 | `task:reconcile-stale-agent-assignment` | Self-healing clears stale durable Agent.taskId/state drift while preserving file-scope leases. |
@@ -126,3 +127,4 @@ Missing implementation proof is normally repaired through the workflow's durable
 ### Compaction honesty event
 
 `task:compaction-no-progress` records a context compaction that pi ran to completion (it returned a summary and appended the CompactionEntry) but deterministically did not shrink the context (tokens-after >= tokens-before), so the executor must not treat it as reclaimed headroom. Both executor lanes that consume `compactSessionContext` emit it — the loop-detected compact-and-resume recovery and the token-cap callback — distinguished only by their `source` (`loop-recovery` / `token-cap`). Metadata is ids/counts/fixed enums only: `source`, `tokensBefore`, `tokensAfter`, and `basis` (`pi-reported` when pi supplied the after-count, `pure-estimate` when it was recomputed with pi's per-message estimator). No summary text, prompt content, or error prose is ever recorded. Both lanes emit through the FN-9175 bounded best-effort seam so a hostile telemetry sink can neither block the refusal nor change the recovery decision, and the event is intentionally outside the curated delivery-pipeline event catalogue.
+

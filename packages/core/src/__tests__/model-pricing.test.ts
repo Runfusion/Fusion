@@ -46,6 +46,26 @@ describe("model-pricing", () => {
     expect(result.usd).toBeCloseTo(4, 2);
   });
 
+  it.each([
+    ["claude-opus-5-5", 10.1],
+    ["claude-sonnet-5-5", 5.1],
+  ])("prices %s across input, output, cache-read, and cache-write tokens", (model, expectedUsd) => {
+    const usage = {
+      inputTokens: 1_000_000,
+      outputTokens: 200_000,
+      cachedTokens: 500_000,
+      cacheWriteTokens: 400_000,
+    };
+    const explicit = costFor(usage, { provider: "anthropic", model });
+    const bare = costFor(usage, { model });
+
+    expect(lookupPricing({ provider: "anthropic", model })).toBe(MODEL_PRICING[`anthropic:${model}`]);
+    expect(lookupPricing({ model })).toBe(MODEL_PRICING[`anthropic:${model}`]);
+    expect(explicit).toMatchObject({ unavailable: false, stale: false });
+    expect(explicit.usd).toBeCloseTo(expectedUsd, 6);
+    expect(bare.usd).toBeCloseTo(expectedUsd, 6);
+  });
+
   it("prices Claude Fable 5.1 instead of reporting it as unavailable", () => {
     const result = costFor(
       {

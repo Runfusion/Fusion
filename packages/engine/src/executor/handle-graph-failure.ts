@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 import {
+  resolveWorktreePathReservationDirectory,
   nonExecutableDuplicateRedirectReason,
   resolveExplicitDuplicateMarker,
   resolveConsecutiveToolFailureRetryBackoffMs,
@@ -32,11 +33,16 @@ import {
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { isRequiredArtifactReadFailedValue } from "../execution/required-workflow-artifacts.js";
 import { getPromptPath } from "../execution/spec-staleness.js";
+import { resolveWorktreesDir } from "../worktree/worktree-paths.js";
+import { pinnedWorktreePathForTask } from "../worktree/worktree-pinning.js";
 import { executorLog } from "../logger.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
-import { rerouteUnrunPreMergeGateToReview } from "../merge/pre-merge-gate-reseed.js";
+import {
+  rerouteFailedNoVerdictPreMergeGateToReview,
+  rerouteUnrunPreMergeGateToReview,
+} from "../merge/pre-merge-gate-reseed.js";
 import { MERGE_BOUNDARY_RECOVERY_VALUE, MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
@@ -131,8 +137,32 @@ export type HandleGraphFailureDeps = {
   routeResetParsePinMismatchToRetry: AnyFn;
   routeRetryableRemediationGraphFailureToPreMergeFix: AnyFn;
   routeUnusableWorktreeGraphFailureToRecovery: AnyFn;
+  /** ProjectEngine fence used by production automatic no-verdict recovery. */
+  rerouteFailedNoVerdictPreMergeReview?: (task: Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
   safeLogEntry: AnyFn;
 };
+
+/*
+FNXC:WorktreeReservationRecovery 2026-09-24-06:01:
+A failed pre-merge step that never acquired its checkout has no reviewer verdict to
+bypass. Surface its reservation location so operators repair infrastructure rather
+than treating the failure as review feedback.
+*/
+function isWorktreeAcquisitionFailure(step: { output?: string; error?: string; notes?: string }): boolean {
+  const detail = [step.output, step.error, step.notes].filter((value): value is string => typeof value === "string").join("\n");
+  return /\b(?:failed|could not|unable) to acquire (?:a |the )?(?:task )?worktree\b/i.test(detail)
+    || /\bworktree acquisition\b/i.test(detail);
+}
+
+async function worktreeAcquisitionRemedy(deps: HandleGraphFailureDeps, task: Task): Promise<string> {
+  const settings = await deps.store.getSettings();
+  const pinnedPath = task.worktree ?? pinnedWorktreePathForTask(task.id, settings, deps.rootDir);
+  const reservationDirectory = await resolveWorktreePathReservationDirectory({
+    canonicalPath: pinnedPath,
+    worktreesDir: resolveWorktreesDir(deps.rootDir, settings),
+  });
+  return `Worktree acquisition failed before the review produced a verdict. Inspect the checkout reservation at ${reservationDirectory}, correct the checkout issue, then retry the task.`;
+}
 
 async function retryTerminalFailurePersistence(
   store: TaskStore,
@@ -915,6 +945,37 @@ export async function handleGraphFailure(
       const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
       const mergeGraphFailure = isMergeGraphFailure(failedNode);
       const failureValue = graphFailureValue(result);
+      /*
+      FNXC:StepDependencyValidation 2026-10-01-02:31:
+      Foreach validates persisted/parser-supplied edges before allocating an instance. Its typed
+      refusal is a plan-repair boundary, not an executor failure: preserve the diagnostic for
+      triage and return before generic retry or terminal graph-failure handling can obscure it.
+      */
+      if (
+        !live.paused
+        && !live.userPaused
+        && !live.deletedAt
+        && typeof failureValue === "string"
+        && failureValue.startsWith("invalid-plan-dependency:")
+      ) {
+        const diagnostic = failureValue.slice("invalid-plan-dependency:".length).trim() || "Invalid step dependency graph";
+        await deps.store.updateTask(live.id, {
+          status: "needs-replan",
+          error: null,
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        }, deps.getRunContextFor(live.id));
+        await deps.store.logEntry(
+          live.id,
+          "AI spec revision requested",
+          `Step dependency validation rejected the plan: ${diagnostic}`,
+          deps.getRunContextFor(live.id),
+        );
+        executorLog.warn(`${live.id}: invalid plan dependency parked for planner repair: ${diagnostic}`);
+        deps.activeWorktrees.delete(live.id);
+        await deps.persistTokenUsage(live.id);
+        return;
+      }
       const recoveryCode = result.context?.["workflow:merge-boundary-recovery-code"];
       const recoveryMissingIds = result.context?.["workflow:merge-boundary-missing-instance-ids"];
       const recoveryNonTerminalNodeId = result.context?.["workflow:merge-boundary-non-terminal-node-id"];
@@ -1192,6 +1253,31 @@ export async function handleGraphFailure(
         const failedPreMergeStep = latestFailedPreMergeWorkflowStep(live);
         if (failedPreMergeStep) {
           /*
+          FNXC:NoVerdictReviewRecovery 2026-09-23-20:52:
+          Graph-failure recovery can race a just-queued merger after its last durable probe.
+          Production delegates to ProjectEngine's admission fence; the direct helper remains only
+          for isolated executor fixtures that do not construct a ProjectEngine.
+          */
+          const noVerdictReroute = await (async () => {
+            if (deps.rerouteFailedNoVerdictPreMergeReview) {
+              return deps.rerouteFailedNoVerdictPreMergeReview(live);
+            }
+            const gate = await resolvePreMergeGateForTask(deps.store, live.id, live.enabledWorkflowSteps, live);
+            const settings = await deps.store.getSettings();
+            const mergeContent = await captureMergeContentDescriptor(live, { workspaceRootDir: deps.rootDir, settings });
+            return rerouteFailedNoVerdictPreMergeGateToReview(deps.store, live, {
+              requiredPreMergeStepIds: gate.requiredPreMergeStepIds,
+              mergeContent,
+              expectedWorkflowSelection: gate.expectedWorkflowSelection,
+            });
+          })().catch(() => undefined);
+          if (noVerdictReroute && (typeof noVerdictReroute === "string" ? noVerdictReroute === "rerouted" : noVerdictReroute.rerouted)) {
+            const message = `Workflow graph re-seeded at failed no-verdict pre-merge review gate '${typeof noVerdictReroute === "string" ? "unknown" : noVerdictReroute.nodeId ?? "unknown"}'`;
+            executorLog.warn(`${task.id}: ${message}`);
+            await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+            return;
+          }
+          /*
           FNXC:LifecycleContainment 2026-08-30-12:57:
           A graph route may end in review without traversing its remediation edge. Before parking a
           blocking failed gate, use the same producer that live review uses; Code Review's fallback
@@ -1257,10 +1343,13 @@ export async function handleGraphFailure(
           const stepName = failedPreMergeStep.workflowStepName || failedPreMergeStep.workflowStepId || "Unknown";
           const blockedMessage = `Workflow graph run ended in '${live.column}' with failed pre-merge step '${stepName}' still blocking merge — remediation was not scheduled`;
           executorLog.warn(`${task.id}: ${blockedMessage}`);
+          const remedy = isWorktreeAcquisitionFailure(failedPreMergeStep)
+            ? await worktreeAcquisitionRemedy(deps, live)
+            : "Retry the task after restoring its remediation checkout or revision policy. Use the privileged review bypass only when this failed review is known to be non-blocking.";
           await deps.store.logEntry(
             task.id,
             blockedMessage,
-            "Retry the task after restoring its remediation checkout or revision policy. Use the privileged review bypass only when this failed review is known to be non-blocking.",
+            remedy,
             deps.getRunContextFor(task.id),
           );
           return;

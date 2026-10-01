@@ -11,6 +11,10 @@ export {
   type TaskResetRetainedBranch,
 } from "./worktree/reset-branch-cleanup.js";
 export { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
+export {
+  isFailedNoVerdictPreMergeReviewResult,
+  rerouteFailedNoVerdictPreMergeGateToReview,
+} from "./merge/pre-merge-gate-reseed.js";
 export { planningLivenessRegistry, registerPlanningLivenessProbe, isPlanningLive } from "./agents/planning-liveness.js";
 export {
   classifyReportHealth,

@@ -177,6 +177,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "executing", "resumingUnpaused", "activeSessions", "activeStepExecutors",
       "deferredTerminalParksInFlight",
       "activeWorkflowStepSessions", "activeCliTaskSessions", "activeWorkflowGraphAbortControllers",
+      "rerouteFailedNoVerdictPreMergeReview",
     ]),
     ...facadeMethods(host, [
       "getRunContextFor", "clearCompletedTaskWatchdog", "clearPausedAborted", "execute",
@@ -981,7 +982,8 @@ export function buildRouteGraphMergeFailureToRetryDeps(host: any): any {
 export function buildRouteImplementationIncompleteMergeGraphFailureDeps(host: any): any {
   return {
     ...buildStoreRunContextDeps(host),
-    ...facadeMethods(host, ["clearPausedAborted", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
+    rootDir: host.rootDir,
+    ...facadeMethods(host, ["clearPausedAborted", "hasLiveTaskSessionSurface", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
     activeWorktrees: host.activeWorktrees,
   };
 }

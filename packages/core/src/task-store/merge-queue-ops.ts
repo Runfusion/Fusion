@@ -20,6 +20,7 @@ import {isFusionDeletableBranch} from "../branch/branch-assignment.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
 import {appendTaskStepReport} from "../workflows/task-step-reports.js";
 import {buildStepLedgerReopenLog, evaluateStepLedgerSeal, STEP_LEDGER_REFUSAL_MARKER_PREFIX} from "./step-ledger-seal.js";
+import {validateStepDependencies} from "../tasks/step-parsers.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
 
@@ -105,6 +106,21 @@ async function mutateStepImpl(store: TaskStore, id: string, stepIndex: number, s
           promptStepsUnavailable = err instanceof Error ? err.message : String(err);
           storeLog.warn(`[task-detail] failed to auto-init steps from PROMPT.md for ${id}: ${promptStepsUnavailable}`);
         }
+      }
+
+      // FNXC:StepDependencyValidation 2026-10-01-01:59: Direct and raced writes must not
+      // treat malformed persisted dependency metadata as a sequential fallback.
+      try {
+        validateStepDependencies(task.steps);
+      } catch (error) {
+        const diagnostic = error instanceof Error ? error.message : String(error);
+        const timestamp = new Date().toISOString();
+        task.log ??= [];
+        task.log.push({ timestamp, action: `[integrity-error] invalid step dependencies: ${diagnostic}` });
+        await store.atomicWriteTaskJson(dir, task);
+        if (store.isWatching) store.taskCache.set(id, { ...task });
+        store.emit("task:updated", task);
+        return { task, startResult: { accepted: false, disposition: "terminal" as const } };
       }
 
       // Initialize log array if missing (for legacy tasks)

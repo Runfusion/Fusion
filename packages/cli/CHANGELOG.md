@@ -1,5 +1,111 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.7
+
+### Patch Changes
+
+- f772db2: summary: Keep merged tasks open until required post-merge evidence is approved.
+  category: fix
+  dev: Fences recovery, finalization, and stale workflow follow-up persistence behind durable post-merge approval.
+- 2ed9b65: summary: Re-run failed pre-merge reviews that finish without a verdict.
+  category: fix
+  dev: Preserves failed review evidence and open findings while fencing re-review dispatches.
+- 7fd86c5: summary: Stop disabled Antigravity status polling from starting the optional CLI.
+  category: fix
+- fa834d4: summary: Recover task checkouts from stale reservations instead of repeating failed review attempts.
+  category: fix
+  dev: Missing native worktree paths now prune stale Git administration before pinned checkout recreation.
+- 0d2709d: summary: Fix plugin SDK declarations for strict consumer typechecking.
+  category: fix
+  dev: Plugin-facing database handles remain installable without traversing private Drizzle declaration internals.
+- d05dd7e: summary: Honor per-review-lane blocking severity in custom workflows.
+  category: fix
+  dev: Stored workflow settings override node thresholds; declaration defaults remain fallbacks.
+- 67c7d80: summary: Preserve active pre-release review worktrees during automatic cleanup.
+  category: fix
+  dev: Cleanup now recognizes task sessions and valid workflow leases before reclaiming a checkout.
+- ee71b2a: summary: Recover interrupted review evidence without stranding approved tasks.
+  category: fix
+  dev: Authorizes only evidence-proven review-to-work recovery and prevents no-verdict review retries from reopening checklist work.
+- d7dbfd4: summary: Return deadlock-paused failed review tasks to their runnable lane on CLI retry.
+  category: fix
+  dev: The CLI retry path now preserves progress while clearing the automatic deadlock pause and merge retry budget.
+- 618204a: summary: Preserve completion history for legacy-compatible task moves.
+  category: fix
+  dev: Normalize unbound PostgreSQL completion-ledger writes to the legacy project partition.
+- 1fbf61c: summary: Ensure rejected built-in guide requests finish reliably.
+  category: fix
+  dev: Routes built-in guide lookups before onboarding and the full command graph.
+- cdce668: summary: Ensure built-in skill guide commands return control promptly.
+  category: fix
+  dev: Adds built-entry coverage for the missing guide-name error alongside guide, version, and unknown-name completion.
+- 14a5a69: summary: Make built-in skill guides return reliably under load.
+  category: fix
+  dev: Defers generic CLI bootstrap work until after built-in guide rendering.
+- bade425: summary: Stop held planning from re-running every few seconds when no planner agent is available.
+  category: fix
+  dev: Planning holds now use the executor's principal-hold cooldown (15s doubling to 5min) during planning discovery and log a hold once per distinct reason.
+
+## 0.78.0-beta.6
+
+### Minor Changes
+
+- 50d9976: summary: Upgrade the bundled Pi runtime and add Meta Muse sign-in and API-key authentication.
+  category: feature
+  dev: Pins the complete Pi runtime closure to 0.86.1.
+- c515e7e: summary: Add Google Antigravity CLI streaming provider support.
+  category: feature
+  dev: Adds managed agy MCP lifecycle, runtime routing, and operator configuration.
+
+### Patch Changes
+
+- 280fa38: summary: Stop repeated resume attempts for tasks waiting on unfinished dependencies.
+  category: fix
+  dev: Check dependency admission before clearing resume state or recovering completed work.
+- 45adc28: summary: Keep pipeline recovery smoke checks within their fixed timeout.
+  category: fix
+  dev: Adds manifest-derived invocation validation and bounded failed-run attribution for the pipeline smoke lane.
+- a9c1214: summary: Keep mobile task popup close controls clear of phone system chrome.
+  category: fix
+  dev: Reserve safe-area block insets inside the mobile task-detail popup shell.
+- b3bbb34: summary: Keep recommendation follow-ups available after source task archival.
+  category: fix
+  dev: Archive snapshots retain recommendation links and support idempotent follow-up creation.
+- 3aa9924: summary: Recover missing workflow implementation evidence before merge instead of terminalizing cards.
+  category: fix
+  dev: Routes typed merge-boundary evidence gaps through the existing guarded implementation recovery path.
+- edb8e3d: summary: Send one safe dashboard mailbox explanation for genuine execution blocks.
+  category: fix
+  dev: Adds bounded, redacted external-block reports and timeout-bounded mailbox delivery.
+- 64baefe: summary: Keep archived recommendation follow-ups compatible with renamed workflow lanes.
+  category: fix
+  dev: Archive eligibility now follows workflow traits while retaining the physical archive snapshot gate.
+- 9539f8a: summary: Prevent stale test cleanup from affecting successor subprocesses.
+  category: fix
+  dev: Fences shard watchdog process-group ownership and retains partial shard timing evidence.
+- 8f0b20d: summary: Keep full-screen mobile sheet Close controls reachable in installed PWAs.
+  category: fix
+- 7f747f6: summary: Recover stalled review gates and failed execution in place while preserving completed work.
+  category: fix
+  dev: Defers unrun merge gates, revives engine-owned parks, fixes overseer retry no-ops, and preserves refusal checkouts.
+- 8d2f682: summary: Restore complete localized catalog keys across supported languages.
+  category: fix
+  dev: Reconciles secondary catalog parity and adds raw-catalog regression coverage.
+- 8fadafc: summary: Keep streamed assistant replies exact when provider events arrive ahead of the display.
+  category: fix
+  dev: Uses completed provider text to reconcile temporary chat streaming output.
+- 5041352: summary: Keep verified Nix development-shell checks binding during task planning and review.
+  category: fix
+  dev: Capability probes now distinguish host and confirmed wrapper availability.
+- 998c76d: summary: Complete stale SQLite migration backups without degrading health.
+  category: fix
+  dev: Recognizes retired schema and fully conflicted PostgreSQL-ahead backup sources while retaining strict failures for unknown or partial data.
+- 5677fc6: summary: Keep PostgreSQL health checks reliable during busy scheduler work.
+  category: fix
+  dev: Adds an independent health session and configurable FUSION_PG_POOL_MAX runtime capacity.
+- 7a730e0: summary: Prevent false task-ID corruption warnings for healthy multi-project PostgreSQL projects.
+  category: fix
+
 ## 0.78.0-beta.5
 
 ### Minor Changes

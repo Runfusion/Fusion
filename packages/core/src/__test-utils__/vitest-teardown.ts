@@ -34,6 +34,25 @@ function isEnoent(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
+/*
+FNXC:TestTeardownOwnership 2026-09-23-01:55:
+FN-9349's ownership proof originally required the marker file to EXACTLY equal the
+`${pid}\nrunToken=...` string globalSetup wrote. In real forked-worker runs that check never
+passes: each worker fork re-writes the marker with its OWN pid via vitest-setup's ensureWorkerRoot(),
+so by teardown the marker carries a worker pid, never the main pid globalSetup captured. Teardown
+then skipped removal and leaked one fusion-test-workers-* root per vitest invocation (106 stale roots
+accumulated, tripping check-test-isolation). The single-process unit tests masked it because pid is
+constant there. The durable ownership signal is the RUN TOKEN, which is shared across a run's main
+process and all its worker forks (env-inherited) and differs only for a genuine successor invocation.
+Prove ownership by run token, not by the pid-bearing full string.
+*/
+export function parseWorkerRootOwnerRunToken(markerContent: string): string {
+  for (const line of markerContent.split(/\r?\n/)) {
+    if (line.startsWith("runToken=")) return line.slice("runToken=".length);
+  }
+  return "";
+}
+
 export function removeLegacyTopLevelHomeRoots(tempRoot = tmpdir()): void {
   /*
   FNXC:TestIsolation 2026-06-14-00:36:
@@ -88,7 +107,8 @@ export default function setup(): () => Promise<void> {
   // prior interrupted run.
   const workerRoot = resolve(mkdtempSync(join(tmpdir(), "fusion-test-workers-")));
   const runToken = process.env[FUSION_TEST_RUN_TOKEN_ENV];
-  const tokenLine = runToken && runToken.trim().length > 0 ? `runToken=${runToken}\n` : "";
+  const ownerRunToken = runToken && runToken.trim().length > 0 ? runToken : "";
+  const tokenLine = ownerRunToken ? `runToken=${ownerRunToken}\n` : "";
   const ownerMarker = `${process.pid}\n${tokenLine}`;
   let ownsWorkerRoot = false;
   try {
@@ -129,7 +149,13 @@ export default function setup(): () => Promise<void> {
     */
     if (ownsWorkerRoot) {
       try {
-        if (readFileSync(join(workerRoot, WORKER_ROOT_OWNER_FILE), "utf8") === ownerMarker) {
+        // Match on the run token (shared across this run's main process and its
+        // worker forks) rather than the pid-bearing full marker, which workers
+        // legitimately rewrite with their own pid during the run.
+        const markerRunToken = parseWorkerRootOwnerRunToken(
+          readFileSync(join(workerRoot, WORKER_ROOT_OWNER_FILE), "utf8"),
+        );
+        if (markerRunToken === ownerRunToken) {
           removeWorkerRootWithRetry(workerRoot);
         }
       } catch {

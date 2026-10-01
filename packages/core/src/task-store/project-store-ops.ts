@@ -118,7 +118,28 @@ function sameDependencySet(actual: readonly string[], expected: readonly string[
     && actual.every((dependency, index) => dependency === expected[index]);
 }
 
-export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: string, task: Task, auditInput?: RunAuditEventInput, planningInvalidation?: PlanningDependencyInvalidation, specPlanPrompt?: string,): Promise<void> {
+/** Signals an opt-in atomic update whose commit-time ownership predicate changed. */
+export class TaskAtomicPersistGuardRefusedError extends Error {
+  constructor() {
+    super("Task atomic persistence guard refused the update");
+    this.name = "TaskAtomicPersistGuardRefusedError";
+  }
+}
+
+/**
+ * FNXC:LandedReviewRecovery 2026-10-01-00:38:
+ * An in-memory predicate can reject before a write begins, but a checkout claim
+ * can commit while the update waits on PostgreSQL. These compare-and-set values
+ * make that claim a condition of the final UPDATE rather than an observation.
+ */
+export type TaskAtomicPersistFence = {
+  expectedUpdatedAt: string;
+  expectedCheckedOutBy: string | null;
+  expectedCheckoutNodeId: string | null;
+  expectedCheckoutLeaseEpoch: number;
+};
+
+export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: string, task: Task, auditInput?: RunAuditEventInput, planningInvalidation?: PlanningDependencyInvalidation, specPlanPrompt?: string, shouldPersist?: () => boolean, persistFence?: TaskAtomicPersistFence,): Promise<void> {
     const id = store.getTaskIdFromDir(dir);
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:10:
     // Backend mode: upsert the task row + audit event in one async Drizzle
@@ -139,6 +160,14 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
     const existingRow = await layer.transactionImmediate(async (tx) => {
       const persist = async () => {
       const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      /*
+      FNXC:LandedReviewRecovery 2026-10-01-00:29:
+      An opt-in in-memory ownership predicate must run after the transaction's
+      final row read and immediately before its durable mutation. Its durable
+      compare-and-set fence must also constrain the UPDATE, because another
+      session can claim the row after that probe and before PostgreSQL writes.
+      */
+      if (shouldPersist?.() === false) throw new TaskAtomicPersistGuardRefusedError();
       /*
       FNXC:SpecLock 2026-08-11-02:04:
       A full PROMPT.md rewrite publishes evidence and clears approval in this task-row transaction,
@@ -199,10 +228,20 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
           */
           const updateConds = [eq(schema.project.tasks.id, id)];
           if (layer.projectId) updateConds.push(eq(schema.project.tasks.projectId, layer.projectId));
-          await tx
+          if (persistFence) {
+            updateConds.push(
+              eq(schema.project.tasks.updatedAt, persistFence.expectedUpdatedAt),
+              sql`COALESCE(${schema.project.tasks.checkedOutBy}, '') = ${persistFence.expectedCheckedOutBy ?? ""}`,
+              sql`COALESCE(${schema.project.tasks.checkoutNodeId}, '') = ${persistFence.expectedCheckoutNodeId ?? ""}`,
+              sql`COALESCE(${schema.project.tasks.checkoutLeaseEpoch}, 0) = ${persistFence.expectedCheckoutLeaseEpoch}`,
+            );
+          }
+          const persisted = await tx
             .update(schema.project.tasks)
             .set(setValues as never)
-            .where(and(...updateConds));
+            .where(and(...updateConds))
+            .returning({ id: schema.project.tasks.id });
+          if (persistFence && persisted.length === 0) throw new TaskAtomicPersistGuardRefusedError();
         }
       } else {
         // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.
@@ -501,6 +540,7 @@ export async function tryClaimCheckoutImpl(store: TaskStore, taskId: string, cla
     const projectScope = layer.projectId ? sql`AND project_id = ${layer.projectId}` : sql``;
     const rows = await layer.db.execute(sql`
       UPDATE project.tasks SET
+        updated_at = ${now},
         checked_out_by = ${claim.agentId},
         checked_out_at = COALESCE(checked_out_at, ${now}),
         checkout_node_id = ${claim.nodeId},

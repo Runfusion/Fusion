@@ -193,7 +193,7 @@ describe("log severity spam contract (source)", () => {
     expect(sh).toMatch(/log\.debug\(`\[\$\{stage\}\] \$\{task\.id\}: triple-proof not satisfied — no action/);
     expect(sh).toMatch(/log\.debug\("Started"\)/);
     expect(sh).toMatch(/log\.log\(`Recovered \$\{recovered\}/);
-    expect(wt).toMatch(/worktreePoolLog\.debug\(`Rehydrate skipped \(not on disk\)/);
+    expect(wt).toMatch(/worktreePoolLog\.debug\(`Ignoring task \$\{task\.id\} worktree metadata/);
     expect(ntfy).toMatch(/schedulerLog\.debug\(\s*`NtfyNotificationProvider send event=/);
     expect(ntfy).toMatch(/schedulerLog\.debug\(\s*`NtfyNotificationProvider delivery event=/);
     expect(notify).toMatch(/schedulerLog\.debug\(`NotificationService\.maybeNotify suppressed duplicate key=/);
@@ -227,7 +227,7 @@ describe("log severity spam contract (source)", () => {
     expect(merger).toMatch(/mergerLog\.debug\(`\$\{taskId\}: merge details stored/);
     expect(merger).toMatch(/mergerLog\.debug\(`\$\{taskId\}: git pull --rebase succeeded/);
     expect(merger).toMatch(/mergerLog\.debug\(`\$\{taskId\}: merge attempt \$\{attemptNum\}\/3/);
-    expect(merger).toMatch(/mergerLog\.log\(`\$\{taskId\}: completeTask — clearing status, moving to done`\)/);
+    expect(merger).toMatch(/mergerLog\.log\(`\$\{taskId\}: completeTask — finalizing proven merge`\)/);
     expect(merger).toMatch(/mergerLog\.log\(`\$\{taskId\}: conflicts detected, AI will resolve`\)/);
     expect(merger).toMatch(/mergerLog\.log\(`\$\{taskId\}: pushed merged result/);
     expect(merger).not.toMatch(/mergerLog\.log\(`Auto-resolved \$\{filePath\} using --ours`\)/);

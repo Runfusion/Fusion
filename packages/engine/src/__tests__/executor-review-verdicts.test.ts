@@ -23,6 +23,7 @@ import {
   mockedFindWorktreeUser,
   mockedStepSessionExecutor,
   mockedWithRateLimitRetry,
+  mockedExec,
   mockedExecSync,
   mockedExistsSync,
   selectImplementationSessionCall,
@@ -63,7 +64,6 @@ function moveTaskCallsTo(store: { moveTask: { mock: { calls: unknown[][] } } }, 
 describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
   });
 
   it("does NOT dispose active sessions when enginePaused transitions false→true", async () => {
@@ -301,7 +301,6 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
 describe("workflow routing fixture", () => {
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
   });
 
   /*
@@ -389,9 +388,18 @@ async function captureToolsWithStore(
   if (taskOverride && Object.keys(taskOverride).length > 0) {
     await store.updateTask("FN-001", taskOverride);
   }
-  mockedExistsSync.mockReturnValue(true);
+  /*
+  FNXC:ExecutorToolCapture 2026-09-24-16:50:
+  The pinned worktree acquisition fixture treats an existing synthetic worktree as a real Git
+  checkout and refuses its unprovable registration. Preserve resetExecutorMocks' absent-path
+  default so this capture reaches the implementation session that owns fn_task_add_dep.
+  */
 
+  mockedExistsSync.mockImplementation((path) => !/[\\/]worktrees[\\/]/.test(String(path)));
   let capturedTools: any[] = [];
+  mockedExecSync.mockImplementation((command: string) =>
+    command.includes("rev-parse --is-inside-work-tree") ? Buffer.from("true\n") : Buffer.from(""),
+  );
   mockedCreateFnAgent.mockImplementation(async (opts: any) => {
     capturedTools = [...capturedTools, ...(opts.customTools || [])];
     return {
@@ -439,7 +447,6 @@ async function captureToolsWithStore(
 describe("Code review verdict enforcement - fn_task_update blocking", () => {
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
   });
 
   it("registers research runtime tools in customTools when researchView experimental flag is enabled", async () => {
@@ -651,7 +658,6 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
 
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
   });
 
   it("warns when fn_task_update marks a second step in-progress", async () => {
@@ -725,7 +731,6 @@ describe("fn_task_add_dep tool", () => {
 
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
   });
 
   it("adds a valid dependency via store.updateTask when confirm=true", async () => {
@@ -883,7 +888,15 @@ describe("fn_task_add_dep tool", () => {
       throw new Error(`Task ${id} not found`);
     });
 
-    mockedExistsSync.mockReturnValue(true);
+    /*
+    FNXC:ExecutorToolCapture 2026-09-24-16:50:
+    Use fresh mocked acquisition so the dependency tool is registered in the implementation session
+    before this abort-cleanup test invokes it.
+    */
+    mockedExistsSync.mockImplementation((path) => !/[\\/]worktrees[\\/]/.test(String(path)));
+    mockedExecSync.mockImplementation((command: string) =>
+      command.includes("rev-parse --is-inside-work-tree") ? Buffer.from("true\n") : Buffer.from(""),
+    );
 
     const disposeFn = vi.fn();
     let capturedTools: any[] = [];
@@ -933,13 +946,13 @@ describe("fn_task_add_dep tool", () => {
     });
 
     // Worktree removal should have been attempted
-    const worktreeRemoveCalls = mockedExecSync.mock.calls.filter(
+    const worktreeRemoveCalls = mockedExec.mock.calls.filter(
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree remove"),
     );
     expect(worktreeRemoveCalls.length).toBeGreaterThan(0);
 
     // Branch deletion should have been attempted
-    const branchDeleteCalls = mockedExecSync.mock.calls.filter(
+    const branchDeleteCalls = mockedExec.mock.calls.filter(
       (c) => typeof c[0] === "string" && (c[0] as string).includes("branch -D") && (c[0] as string).includes("fusion/fn-dep"),
     );
     expect(branchDeleteCalls.length).toBeGreaterThan(0);

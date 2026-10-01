@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { createFusionAuthStorage, createFusionCredentialStore, createFusionModelRegistry, getFusionAuthPath } from "../auth/auth-storage.js";
 
 function encodeBase64Url(value: string): string {
@@ -471,6 +472,25 @@ describe("createFusionAuthStorage", () => {
       const credentialStore = createFusionCredentialStore(authStorage);
 
       expect(await credentialStore.read("anthropic")).toBeUndefined();
+    });
+
+    it("exposes Pi-owned Anthropic catalog rows without Fusion provider registration", async () => {
+      const authStorage = createFusionAuthStorage();
+      const registry = await createFusionModelRegistry(authStorage, homeDir);
+      const upstream = getBuiltinModels("anthropic");
+      const expected = upstream.find((model) => model.id === "claude-fable-5-1");
+
+      expect(expected).toBeDefined();
+      expect(registry.getAll()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          provider: "anthropic",
+          id: expected?.id,
+          name: expected?.name,
+          contextWindow: expected?.contextWindow,
+          maxTokens: expected?.maxTokens,
+          cost: expected?.cost,
+        }),
+      ]));
     });
 
     it("routes Meta OAuth-only ModelRuntime reads and refresh writes through meta-subscription", async () => {

@@ -705,6 +705,8 @@ export type DatabaseMutationType =
   { taskId, column, orphanedCount, resultCount }.
   */
   | "task:reconcile-orphaned-pending-step-results"
+  /** Receipt-backed automatic waiver of an orphaned required singular code-review callback. */
+  | "task:stale-review-callback-waived"
   /**
    * Rewrites already-persisted singular content approvals that lack review-input proof to failed.
    * Metadata is ids/counts/outcomes-only:

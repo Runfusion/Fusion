@@ -202,14 +202,40 @@ export function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Tas
     log: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-07:57:
+    Shared merger success fixtures include the durable post-merge approval required by finalization.
+    Tests that exercise refusal override the workflow result explicitly.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true, commitSha: "mergedcommit123" },
     ...taskOverrides,
   };
 
+  let currentTask = { ...baseTask, prompt: "# test" };
+  const updateTask = vi.fn(async (_id: string, patch: Partial<Task>) => {
+    currentTask = { ...currentTask, ...patch } as Task;
+    return currentTask;
+  });
+  const moveTask = vi.fn(async (_id: string, column: Task["column"]) => {
+    currentTask = { ...currentTask, column } as Task;
+    return currentTask;
+  });
+
   return {
-    getTask: vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" }),
+    getTask: vi.fn(async () => currentTask),
     listTasks: vi.fn().mockResolvedValue(allTasks),
-    updateTask: vi.fn().mockResolvedValue(baseTask),
-    moveTask: vi.fn().mockResolvedValue(baseTask),
+    updateTask,
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      currentTask = { ...currentTask, ...await reducer(currentTask) } as Task;
+      return currentTask;
+    }),
+    moveTask,
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      if (!await predicate(currentTask)) return { moved: false, task: currentTask };
+      return { moved: true, task: await moveTask(_id, column) };
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
@@ -221,6 +247,8 @@ export function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Tas
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
     getVerificationCacheHit: vi.fn().mockReturnValue(null),
     recordVerificationCachePass: vi.fn(),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
   } as unknown as TaskStore;
 }
 

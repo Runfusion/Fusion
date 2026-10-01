@@ -392,8 +392,9 @@ export async function seedWorkspaceCodeReviewContinuationIfIdle(
   input: WorkflowWorkItemUpsertInput & {
     kind: "task";
     expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
+    expectedTaskUpdatedAt?: string;
   },
-): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed"; workItemId?: string }> {
+): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed" | "task-state-changed"; workItemId?: string }> {
   return layer.transactionImmediate(async (tx) => withTaskWorkflowSerialization(tx, layer.projectId, input.taskId, async () => {
     /*
     FNXC:PreMergeGateRecovery 2026-09-22-02:03:
@@ -423,6 +424,19 @@ export async function seedWorkspaceCodeReviewContinuationIfIdle(
         || current?.stepIds.some((id, index) => id !== expected?.stepIds[index])) {
         return { seeded: false, reason: "workflow-selection-changed" as const };
       }
+    }
+    /*
+    FNXC:PostMergeRecovery 2026-10-01-04:43:
+    Recovery may schedule a missing post-merge gate only against the task snapshot that proved
+    eligibility. Fence operator holds, new evidence, and concurrent task changes under the same
+    advisory lock as the idle continuation insert; a lost race performs no mutation.
+    */
+    if (input.expectedTaskUpdatedAt !== undefined) {
+      const [task] = await tx.select({ updatedAt: schema.project.tasks.updatedAt }).from(schema.project.tasks).where(and(
+        projectScopeFor(schema.project.tasks.projectId, layer.projectId),
+        eq(schema.project.tasks.id, input.taskId),
+      )).limit(1);
+      if (!task || task.updatedAt !== input.expectedTaskUpdatedAt) return { seeded: false, reason: "task-state-changed" as const };
     }
     const active = await tx.select({ id: schema.project.workflowWorkItems.id }).from(schema.project.workflowWorkItems).where(and(
       projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),

@@ -491,27 +491,73 @@ describe("Full suite workflow (.github/workflows/full-suite.yml)", () => {
     expect(workflow.jobs?.["test-inventory-guard"]).toBeDefined();
   });
 
-  it("keeps full clones where real-git tests need history", () => {
+  it("keeps full clones where real-git consumers need history", () => {
     const shardSteps = workflow.jobs?.["test-shards"]?.steps ?? [];
     const slowSteps = workflow.jobs?.["test-slow"]?.steps ?? [];
-    for (const steps of [shardSteps, slowSteps]) {
+    const pipelineSteps = workflow.jobs?.["test-pipeline-smoke"]?.steps ?? [];
+    for (const steps of [shardSteps, slowSteps, pipelineSteps]) {
       expect(
         steps.some((step: any) => step.uses?.includes("actions/checkout") && step.with?.["fetch-depth"] === 0),
       ).toBe(true);
     }
   });
 
-  it("still uploads per-shard timing artifacts for snapshot refresh", () => {
-    expect(content).toContain("test-timings-shard-${{ matrix.shard }}");
+  it("keeps PostgreSQL healthy for the Full Suite runtime consumers", () => {
+    for (const jobName of ["test-shards", "test-pipeline-smoke"]) {
+      const job = workflow.jobs?.[jobName];
+      expect(job?.services?.postgres?.image).toBe("postgres:15");
+      expect(job?.services?.postgres?.options).toContain("pg_isready");
+      expect(job?.env?.FUSION_PG_TEST_URL_BASE).toBe("postgresql://postgres:postgres@localhost:5432");
+      expect(job?.env?.PGPASSWORD).toBe("postgres");
+    }
   });
 
-  it("does not spend action minutes on a pre-test workspace build", () => {
-    const testSteps = workflow.jobs?.["test-shards"]?.steps ?? [];
-    expect(
-      testSteps.some(
-        (step: any) => step.name === "Build" || (typeof step.run === "string" && step.run.includes("pnpm build")),
-      ),
-    ).toBe(false);
+  it("reconciles workspace artifacts before every Full Suite runtime consumer", () => {
+    const shardSteps = workflow.jobs?.["test-shards"]?.steps ?? [];
+    const pipelineSteps = workflow.jobs?.["test-pipeline-smoke"]?.steps ?? [];
+    const assertReconciledBuild = (steps: any[], consumer: (step: any) => boolean) => {
+      const buildIndex = steps.findIndex((step: any) => step.name === "Build reconciled workspace artifacts");
+      const consumerIndex = steps.findIndex(consumer);
+      expect(buildIndex).toBeGreaterThanOrEqual(0);
+      expect(steps[buildIndex]?.run).toContain("pnpm build");
+      expect(steps[buildIndex]?.env?.FUSION_CLI_FULL_PACKAGE).toBe("0");
+      expect(consumerIndex).toBeGreaterThan(buildIndex);
+    };
+
+    // The source hash is calculated from checked-out sources before the exact-only
+    // restore. A cold or incomplete cache cannot reach the shard consumer without
+    // the mandatory reconciliation build.
+    const shardHashIndex = shardSteps.findIndex((step: any) => step.name === "Compute dist source hash");
+    const shardCacheIndex = shardSteps.findIndex((step: any) => step.name === "Cache built dist artifacts");
+    const shardSeedIndex = shardSteps.findIndex(
+      (step: any) => typeof step.run === "string" && step.run.includes("--seed-artifact-cache"),
+    );
+    expect(shardHashIndex).toBeGreaterThanOrEqual(0);
+    expect(shardCacheIndex).toBeGreaterThan(shardHashIndex);
+    expect(shardSteps[shardSeedIndex]?.if).toContain("cache-hit == 'true'");
+    assertReconciledBuild(
+      shardSteps,
+      (step) => typeof step.run === "string" && step.run.includes("pnpm test:ci:shard"),
+    );
+    expect(shardSteps.findIndex((step: any) => step.name === "Build reconciled workspace artifacts")).toBeGreaterThan(
+      shardSeedIndex,
+    );
+
+    assertReconciledBuild(
+      pipelineSteps,
+      (step) => typeof step.run === "string" && step.run.includes("pnpm smoke:pipeline"),
+    );
+  });
+
+  it("always retains hidden per-shard timing artifacts for post-landing evidence", () => {
+    const timingStep = (workflow.jobs?.["test-shards"]?.steps ?? []).find(
+      (step: any) => step.name === "Upload per-shard test timings",
+    );
+    expect(timingStep?.if).toBe("always()");
+    expect(timingStep?.with?.name).toBe("test-timings-shard-${{ matrix.shard }}");
+    expect(timingStep?.with?.["include-hidden-files"]).toBe(true);
+    expect(timingStep?.with?.path).toContain("packages/*/.timings/timings-*.json");
+    expect(content).toContain("test-timings-shard-${{ matrix.shard }}");
   });
 
   /*

@@ -13,6 +13,12 @@ import {
   createTask,
   connectPlanningStream,
   connectMissionInterviewStream,
+  respondToMilestoneInterview,
+  respondToSliceInterview,
+  applyMilestoneInterview,
+  applySliceInterview,
+  connectMilestoneInterviewStream,
+  connectSliceInterviewStream,
   assignTask,
   fetchAgentTasks,
   archiveTask,
@@ -390,6 +396,56 @@ describe("Mission assertion backfill API", () => {
   });
 });
 
+describe("milestone and slice interview API routes", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {}));
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it.each([
+    {
+      type: "milestone",
+      targetId: "MS-001",
+      sessionId: "opaque-milestone-session",
+      respond: respondToMilestoneInterview,
+      apply: applyMilestoneInterview,
+    },
+    {
+      type: "slice",
+      targetId: "SL-001",
+      sessionId: "opaque-slice-session",
+      respond: respondToSliceInterview,
+      apply: applySliceInterview,
+    },
+  ])("sends $type responses and summaries to the selected target", async ({ targetId, sessionId, respond, apply }) => {
+    const responses = { scope: "focused" };
+    const summary = { description: "Edited target summary" };
+
+    await respond(targetId, sessionId, responses, "project-a");
+    await apply(targetId, sessionId, summary, "project-a");
+
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining(`/missions/${targetId.startsWith("MS-") ? "milestones" : "slices"}/${targetId}/interview/respond?projectId=project-a`),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ sessionId, responses }) }),
+    );
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining(`/missions/${targetId.startsWith("MS-") ? "milestones" : "slices"}/${targetId}/interview/apply?projectId=project-a`),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ sessionId, summary }) }),
+    );
+
+    for (const [url] of (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(url).not.toContain(`/missions/${targetId.startsWith("MS-") ? "milestones" : "slices"}/${sessionId}/`);
+    }
+  });
+});
+
 describe("resilient SSE reconnect", () => {
   const OriginalEventSource = globalThis.EventSource;
   const originalFetch = globalThis.fetch;
@@ -462,6 +518,18 @@ describe("resilient SSE reconnect", () => {
       value: OriginalEventSource,
     });
     globalThis.fetch = originalFetch;
+  });
+
+  it.each([
+    { targetId: "MS-001", sessionId: "opaque-milestone-session", connect: connectMilestoneInterviewStream, route: "milestones" },
+    { targetId: "SL-001", sessionId: "opaque-slice-session", connect: connectSliceInterviewStream, route: "slices" },
+  ])("connects the $route interview stream with separate target and session IDs", ({ targetId, sessionId, connect, route }) => {
+    const connection = connect(targetId, sessionId, "project-a", {});
+    const stream = ControlledEventSource.instances[0]!;
+
+    expect(stream.url).toContain(`/missions/${route}/${targetId}/interview/${sessionId}/stream?projectId=project-a`);
+    expect(stream.url).not.toContain(`/missions/${route}/${sessionId}/interview/`);
+    connection.close();
   });
 
   it("reconnects with backoff and deduplicates replayed events", () => {

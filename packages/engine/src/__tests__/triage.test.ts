@@ -24,9 +24,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { planLog } from "../logger.js";
 
-const { mockReviewStep, mockCreateFnAgent } = vi.hoisted(() => ({
+const { mockReviewStep, mockCreateFnAgent, mockProbeEnvironmentCapabilities } = vi.hoisted(() => ({
   mockReviewStep: vi.fn(),
   mockCreateFnAgent: vi.fn(),
+  mockProbeEnvironmentCapabilities: vi.fn().mockResolvedValue({ capabilities: [], degraded: true }),
 }));
 
 const TRIAGE_POLICY_PROMPT = resolveAgentPrompt("triage");
@@ -81,6 +82,17 @@ vi.mock("@fusion/core", async (importOriginal) => {
     resolveAgentPrompt: vi.fn(original.resolveAgentPrompt),
   });
 });
+
+/*
+FNXC:TriagePlanningRetry 2026-09-24-22:49:
+Triage retry coverage owns the planner path, not a host command inventory. Stub the independent
+capability probe so fake-timer tests can deterministically reach the production 429 callback
+without waiting for a child-process completion that fake time does not advance.
+*/
+vi.mock("../environment/environment-capabilities.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../environment/environment-capabilities.js")>(),
+  probeEnvironmentCapabilities: mockProbeEnvironmentCapabilities,
+}));
 
 
 describe("fn_task_list resilience (FN-6573)", () => {
@@ -6752,10 +6764,23 @@ describe("specifyTask — status restore failure diagnostics", () => {
       no longer reaches the retry sleep and advancing 60s scheduled nothing — the promise never
       settled. Drain pending async setup until the sleep exists instead of guessing a tick count;
       this only flushes setup, it does not relax the retry assertions below.
+
+      FNXC:TriagePlanningRetry 2026-09-24-22:49:
+      Planning now creates its 90-minute turn timeout before `promptWithFallback` rejects. Waiting
+      for any timer mistakes that guard for the retry sleep and leaves the 429 retry unadvanced.
+      Wait for the observable retry log, then flush once to assert the retry timer is registered before
+      retaining the existing 60-second advance; this proves callback-before-sleep under the production path.
       */
-      for (let tick = 0; tick < 20 && vi.getTimerCount() === 0; tick += 1) {
+      for (
+        let tick = 0;
+        tick < 100 && !store.logEntry.mock.calls.some(([, message]) => String(message).includes("Rate limited — retry"));
+        tick += 1
+      ) {
         await vi.advanceTimersByTimeAsync(0);
       }
+      expect(store.logEntry).toHaveBeenCalledWith("FN-207", expect.stringContaining("Rate limited — retry"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(60_000);
       await expect(specifyPromise).resolves.toBeUndefined();
       expect(warnSpy).toHaveBeenCalledWith(

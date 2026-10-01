@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { executorLog } from "../logger.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockStore, mockedCreateFnAgent, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
@@ -104,20 +104,25 @@ describe("FN-4482 plan-only scope leak guard", () => {
   });
 
   /*
-  FNXC:EngineTests 2026-09-22-04:17:
+  FNXC:EngineTests 2026-09-22-06:48:
   The timing artifact's `undefined.execute` was an acquisition prerequisite failure, not a scope-guard
-  result: its synthetic `/repo` root reached the real pinned-worktree owner and failed while creating
-  the missing parent. Exercise that failure first, then a separately constructed valid root, so a
-  previous failed acquisition cannot mask the successor run's completion-tool capture. Temporary roots
-  keep the production owner out of the protected repository and are removed after each independent run.
+  result. Model an invalid worktree root with a test-owned file instead of a protected absolute path:
+  GitHub runners report EACCES for the latter while local hosts can report ENOENT. Exercise that real
+  pinned-worktree owner failure first, then a separately constructed valid root, so a previous failure
+  cannot mask the successor run's completion-tool capture. Temporary roots keep the production owner
+  out of the protected repository and are removed after each independent run.
   */
-  it("reproduces the missing-root acquisition failure before a valid root captures completion", async () => {
-    const failed = await setup({ rootDir: "/missing-artifact-root", unstaged: ["docs/foo.md"] });
+  it("reproduces invalid-root acquisition failure before a valid root captures completion", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fn-9360-invalid-root-"));
+    temporaryRoots.add(parent);
+    const invalidRoot = join(parent, "not-a-directory");
+    await writeFile(invalidRoot, "fixture root is a file");
+    const failed = await setup({ rootDir: invalidRoot, unstaged: ["docs/foo.md"] });
 
     expect(failed.tool).toBeUndefined();
     expect(failed.store.updateTask).toHaveBeenCalledWith("FN-4482", expect.objectContaining({
       status: "failed",
-      error: expect.stringContaining("ENOENT: no such file or directory, mkdir '/missing-artifact-root'"),
+      error: expect.stringContaining("ENOTDIR"),
     }));
 
     resetExecutorMocks();

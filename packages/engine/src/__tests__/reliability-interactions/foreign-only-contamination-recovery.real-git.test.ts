@@ -49,6 +49,8 @@ describe("reliability interaction: foreign-only contamination recovery", () => {
   it("reanchors foreign-only branch and preserves foreign branch commits", async () => {
     const { repoDir, baseSha, worktreePath } = await setupRepo();
     const store = {
+      getTask: vi.fn(async () => ({ column: "in-review" })),
+      logEntry: vi.fn(async () => {}),
       moveTask: vi.fn(async () => {}),
       updateTask: vi.fn(async () => {}),
     } as any;
@@ -61,9 +63,20 @@ describe("reliability interaction: foreign-only contamination recovery", () => {
       baseCommitSha: baseSha,
       baseBranch: "main",
       executionStartBranch: "fusion/fn-y",
+      /*
+      FNXC:LifecycleContainment 2026-09-22-14:05:
+      A recovery snapshot can become stale while its real-git repair awaits. The persisted column
+      must remain the authority so a concurrent operator move is never rebound from this old value.
+      */
+      column: "todo",
     } as any, { repoDir, taskStore: store, runAudit, integrationBranch: "main" });
 
     expect(result.recovered).toBe(true);
+    expect(store.getTask).toHaveBeenCalledWith("FN-8001");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-8001",
+      expect.stringContaining("'in-review'"),
+    );
     expect(["reanchor", "branch-discard"]).toContain(result.subtype);
     if (result.subtype === "reanchor") {
       expect(await run("git rev-parse fusion/fn-x", repoDir)).toBe(baseSha);

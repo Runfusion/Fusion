@@ -638,6 +638,15 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   grokCliBinaryPath: "managed via GrokCliProviderCard in the Authentication section, not a plain description field",
   useOmpCli: "managed via OmpCliProviderCard in the Authentication section, not a plain description field",
   ompCliBinaryPath: "managed via OmpCliProviderCard in the Authentication section, not a plain description field",
+  /*
+   * FNXC:AntigravitySettingsDefaults 2026-09-23-01:45:
+   * FN-9364 keeps Antigravity CLI enablement and its machine-local binary override out of
+   * locale description mapping because AntigravityCliProviderCard owns both controls in the
+   * Authentication section. The default-description census must still classify them so future
+   * schema additions cannot silently bypass operator-facing ownership.
+   */
+  useAntigravityCli: "managed via AntigravityCliProviderCard in the Authentication section, not a plain description field",
+  antigravityCliBinaryPath: "managed via AntigravityCliProviderCard in the Authentication section, not a plain description field",
   vitestAutoKillEnabled: "dashboard TUI memory guard, no Settings UI field",
   vitestKillThresholdPct: "dashboard TUI memory guard, no Settings UI field",
   agentMemoryInclusionMode: "not yet exposed as a distinct Settings field",
@@ -697,6 +706,11 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   memoryBackendUrl: "project-scoped TencentDB gateway URL row (rendered in MemorySection only for the tencentdb backend); canonical schema default is empty (`''`) = use the runtime DEFAULT_GATEWAY_URL (http://127.0.0.1:8420), conveyed by the row's placeholder/help, not a description-field claim",
   stashApiKey: "Stash API-key secret override, not rendered as a settings field (the primary key lives in the global secrets store `stash-api-key` per MemorySection help, never in settings); canonical schema default is empty (`''`) = use the resolved global secret",
 };
+
+const ANTIGRAVITY_CARD_ALLOWLIST_KEYS = [
+  "useAntigravityCli",
+  "antigravityCliBinaryPath",
+] as const;
 
 const CHAT_DEFAULT_ALLOWLIST_KEYS = [
   "chatNewSessionMode",
@@ -782,6 +796,18 @@ describe("FN-7505 settings default-value description guard", () => {
       SETTING_DESCRIPTION_KEYS,
       "FN-8993 requires knowledgeGraphDir to stay out of SETTING_DESCRIPTION_KEYS",
     ).not.toHaveProperty("knowledgeGraphDir");
+  });
+
+  it("pins Antigravity card-owned defaults as allowlisted rather than locale-mapped", () => {
+    for (const settingKey of ANTIGRAVITY_CARD_ALLOWLIST_KEYS) {
+      expect(DEFAULT_SETTINGS).toHaveProperty(settingKey);
+
+      const reason = NOT_SURFACED_ALLOWLIST[settingKey];
+      expect(reason).toEqual(expect.any(String));
+      expect(reason).not.toBe("");
+      expect(reason).toContain("AntigravityCliProviderCard");
+      expect(SETTING_DESCRIPTION_KEYS).not.toHaveProperty(settingKey);
+    }
   });
 
   it("chat default allowlist reasons name their real host and carry no retired-flow claim", () => {

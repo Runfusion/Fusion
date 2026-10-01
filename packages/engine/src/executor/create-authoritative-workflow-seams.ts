@@ -312,7 +312,7 @@ export function createAuthoritativeWorkflowSeams(
           signal.addEventListener("abort", onGraphAbort, { once: true });
         });
         try {
-          const result = await Promise.race([deps.mergeRequester(mergeTask.id, signal ? { signal } : undefined), timeout, cancelled]);
+          const result = await Promise.race([deps.mergeRequester(mergeTask.id, { signal, graphOwnedPostMergeTraversal: true }), timeout, cancelled]);
           if (result === "cancelled") {
             executorLog.warn(`${mergeTask.id}: graph merge seam cancelled by graph abort`);
             return { outcome: "failure", value: "merge-cancelled" };
