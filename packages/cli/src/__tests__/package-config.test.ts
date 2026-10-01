@@ -237,6 +237,35 @@ describe("CLI package.json publishing config", () => {
     assertRuntimeDepsAreNotOptionalPeers(applyPrepackTransform(pkg), "published manifest");
   });
 
+  /**
+   * FNXC:PluginSdkDeclarations 2026-09-24-07:14:
+   * The public SDK declaration exposes drizzle-orm/postgres-js types. Its checked release graph requires the postgres driver and mysql2 declarations, so all three remain direct source and packed dependencies.
+   */
+  /*
+   * FNXC:PluginSdkDeclarations 2026-09-24-07:34:
+   * Full package builds share the ordinary build entry, so finalization must be
+   * attached there instead of only to a side script that release builds bypass.
+   */
+  it("finalizes plugin SDK declarations from the full build path", () => {
+    expect(pkg.scripts.build).toContain("node scripts/finalize-plugin-sdk-dts.mjs");
+    expect(pkg.scripts["build:package"]).toBe("cross-env FUSION_CLI_FULL_PACKAGE=1 pnpm run build");
+  });
+
+  it("keeps the plugin SDK declaration dependency closure in published manifests", () => {
+    const publishedPkg = applyPrepackTransform(pkg);
+    for (const manifest of [pkg, publishedPkg]) {
+      expect(manifest.dependencies).toHaveProperty("drizzle-orm", "1.0.0-rc.5-5935859");
+      expect(manifest.dependencies).toHaveProperty("mysql2", "3.24.4");
+      expect(manifest.dependencies).toHaveProperty("postgres", "3.3.5");
+      expect(manifest.devDependencies).not.toHaveProperty("drizzle-orm");
+      expect(manifest.devDependencies).not.toHaveProperty("mysql2");
+      expect(manifest.devDependencies).not.toHaveProperty("postgres");
+      expect(manifest.peerDependencies).not.toHaveProperty("drizzle-orm");
+      expect(manifest.peerDependencies).not.toHaveProperty("mysql2");
+      expect(manifest.peerDependencies).not.toHaveProperty("postgres");
+    }
+  });
+
   /*
   FNXC:PublishBoundary 2026-07-19-21:20:
   FN-8413 / issue #2355 requires the root published manifest to carry every
@@ -322,6 +351,11 @@ describe("CLI package.json publishing config", () => {
     const externals = extractStringArray("external");
     const noExternalRegexes = extractRegexes("noExternal");
     const noExternalStrings = extractStringArray("noExternal");
+    /*
+     * FNXC:PluginSdkDeclarations 2026-09-24-08:11:
+     * These packages remain bundled into the CLI runtime while also shipping as required dependencies because public SDK declarations import their type surfaces.
+     */
+    const BUNDLED_DECLARATION_DEPENDENCIES = new Set(["drizzle-orm", "mysql2", "postgres"]);
 
     // Externals that intentionally aren't direct deps. Each entry needs a reason —
     // when adding to this list, document *why* it doesn't need to be a runtime dep
@@ -428,9 +462,18 @@ describe("CLI package.json publishing config", () => {
       }
     });
 
-    it("noExternal (bundled) modules are not also runtime deps", () => {
+    it("keeps declaration-only runtime dependencies bundled", () => {
+      const deps = Object.keys(pkg.dependencies || {});
+      for (const dep of BUNDLED_DECLARATION_DEPENDENCIES) {
+        expect(deps).toContain(dep);
+        expect(noExternalStrings).toContain(dep);
+      }
+    });
+
+    it("noExternal (bundled) modules are not also runtime deps unless declarations require them", () => {
       const deps = Object.keys(pkg.dependencies || {});
       for (const dep of deps) {
+        if (BUNDLED_DECLARATION_DEPENDENCIES.has(dep)) continue;
         for (const re of noExternalRegexes) {
           expect(
             re.test(dep),

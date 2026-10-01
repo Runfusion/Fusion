@@ -12,6 +12,29 @@ Set `BOOT_SMOKE_TIMINGS=1` when invoking `pnpm smoke:boot` to print per-attempt 
 
 Gate membership is the explicit allow-list in `packages/engine/vitest.config.ts` (`engine-core` project). Admission requires evidence of value (the test catches real regressions); tests never graduate in by default. A flaky gate test is evicted by deleting its allow-list line — the eviction PR does not need the flaky test to pass. The whole `engine-core` project must stay under ~60s wall-clock.
 
+### Shard watchdog and timing-artifact ownership
+
+The shard watchdog owns only the detached process group captured when it spawns a command. Timeout, forwarded cancellation, and wrapper-exit cleanup must not signal after the tracked child has reported exit; this prevents a late cleanup path from addressing a recycled process-group ID. Core's test subprocess guard similarly replaces its complete ownership record on duplicate registration, including close/error listeners and timer, so an old callback cannot clear a successor record. Global teardown also removes a worker root only while its marker still matches the setup closure that created it; a partial startup or stale teardown preserves a successor-owned root and its live sibling.
+
+Use `pnpm test:ci:shard --shard 2 --total 4` to reproduce a shard lane and `node scripts/ci-test-shard.mjs --dry-run --total 4` to inspect its current mapping. The Full Suite artifact step remains `if: always()` and retains `test-timings-shard-1` through `test-timings-shard-4`; a partially failing run can refresh timings that reached reporter finalization without discarding valid measurements from commands that did not. The Full Suite and Pipeline smoke tiers are non-blocking post-merge signals, and Pipeline smoke is an independent surface rather than evidence of shard-watchdog behavior.
+
+<!-- FNXC:FullSuiteReconciliation 2026-09-23-11:48: FN-9371 confirmed the pre-consumer build is necessary cache safety but is not a full-suite success claim; later red runs executed it successfully while independent workload failures remained observable. -->
+### Full Suite runtime reconciliation
+
+FN-9369 added a required fast-CLI workspace build before every Full Suite shard and Pipeline smoke consumer. The contract remains: `test-shards` computes its source hash after checkout, restores only an exact `dist-*` key, seeds the artifact hash cache only for an exact hit, and builds before its shard command; `test-pipeline-smoke` builds before its independent smoke command. Parsed workflow tests pin that ordering, so cold, partial, and stale output cannot bypass reconciliation.
+
+FN-9371 rechecked terminal run `35837857934` (`f772db2c90`) and its timing and Pipeline smoke artifacts. The common FN-9370 regression was stale test infrastructure: merger, recovery, executor, and workspace fixtures omitted the new conditional `moveTaskIf` finalization seam, while Pipeline smoke inherited the hosted post-merge evidence gate even though a local scenario cannot produce a post-landing Full Suite record. Every evidenced production-shaped fixture now executes the live predicate before its terminal move, and Pipeline smoke explicitly disables only that external delivery gate, preserving its real planning, graph, merge, and finalization stages. Green PR Checks are not a Full Suite control because PR Checks run the curated Gate rather than the shard and Pipeline smoke workloads; retain artifacts and route any independently named failure to its production owner.
+
+The Full Suite remains push-only and non-blocking, retains SHA-keyed no-cancel concurrency, full Git history for real-Git consumers, PostgreSQL readiness, four shards, and timing artifact uploads. The residual PR differences—pull-request cancellation, shallow Gate checkout, and Gate-only incremental cache namespace—are intentional and are not runtime-consumer reconciliation differences.
+
+#### FN-9371 Engine slow disposition
+
+Run `35837857934` reported nine direct stale-fixture failures after FN-9370 changed auto-merge finalization to require `moveTaskIf`. The affected production-shaped stores in `merger-ai-dependency-install.slow.test.ts` and `workspace-merger-idempotency.slow.test.ts` now evaluate the live predicate and return its conditional move result. This is separate from the Pipeline smoke overrun and the shard failures; no timeout, retry, skip, or coverage reduction is permitted as a disposition.
+
+### Required post-landing Full Suite evidence
+
+The default-on workflow `post-merge-verification` gate makes Full Suite evidence a blocking task-completion requirement for merge-capable built-ins without changing branch protection. The gate must refuse approval until the delivery record identifies the landed SHA, the first Full Suite push-to-main run at or after that SHA with its run ID and SHA, conclusions for Pipeline smoke and Test shards 1/4 through 4/4, and all four `test-timings-shard-1` through `test-timings-shard-4` artifacts. Full Suite conclusions are non-blocking signals: a failed lane needs an explicit evidence-backed disposition, not a fabricated successful conclusion. The `post-merge-full-suite-evidence` artifact retains the normalized per-shard failed-name set and producer conclusion for that review. A pre-landing run, an unrelated main run, partial artifacts, or local verification are not substitutes; record the verified GitHub-hosted evidence and every non-success disposition in the task delivery record before final approval.
+
 <!-- FNXC:MergeGatePerformance 2026-08-16-10:41: FN-9122 corrected the W33 composition ledger: all 15 static validators, all 21 engine-core files, every PG/unit canary, nonzero propagation, and CI-shape-after-success remain blocking; a timing win that weakens any of those contracts is not accepted. -->
 **Static-validator and lane ordering:** `test:gate:static` declares the 15 canonical, directly runnable read-only validators. `scripts/run-static-gate-checks.mjs` starts them concurrently and waits for **every** result, so zero, one, or multiple policy failures remain fail-closed and observable before tests start. It then starts `engine-core`, `test:pg-gate`, and `test:unit-gate` concurrently; the shell waits for all **three** and returns nonzero if any fail. CI-shape runs only after that successful wait.
 
@@ -607,11 +630,17 @@ deterministic mock-provider scripts under `testMode: true`.
 Prerequisites are Git and reachable test PostgreSQL. Start the latter with
 `pnpm pg:test:up`; the wrapper fails with that actionable instruction when either
 prerequisite is absent (or accepts `--allow-skip` only for an explicit local
-non-execution). The workflow project is intentionally excluded from `engine-default`
-and `engine-core` so it cannot expand `pnpm test` or the merge gate. The non-blocking
-`Pipeline smoke tier` job in `.github/workflows/full-suite.yml` runs after merge with
-`fetch-depth: 0` and a PostgreSQL service; never add it to `pr-checks.yml`, branch
-protection, or the engine-core allow-list.
+non-execution). On Darwin, where the embedded PostgreSQL helper is unavailable, point
+`FUSION_PG_TEST_URL_BASE` at a manually provisioned Docker PostgreSQL service and run
+`pnpm --filter @fusion/engine exec vitest run --project=engine-pipeline-smoke` as the
+supported substitute. The wrapper pins its child to three Vitest workers: this prevents
+the workspace-wide worker setting from oversubscribing the lane's single PostgreSQL
+service while keeping the fixed 175-second watchdog budget unchanged. The workflow
+project is intentionally excluded from `engine-default` and `engine-core` so it cannot
+expand `pnpm test` or the merge gate. The non-blocking `Pipeline smoke tier` job in
+`.github/workflows/full-suite.yml` runs after merge with `fetch-depth: 0` and a
+PostgreSQL service; never add it to `pr-checks.yml`, branch protection, or the
+engine-core allow-list.
 
 <!-- FNXC:PipelineSmoke 2026-09-12-22:57: FN-9291 keeps the opt-in lane observable from the ordinary engine test project without making its Git/PostgreSQL composition part of the merge gate. -->
 **Import-integrity ratchet:** Engine TypeScript configuration excludes `src/__tests__/**/*`, and this opt-in project is excluded from `engine-default`. Consequently, a test-only named import of a deleted engine export can evade typecheck, build, `verify:fast`, and the merge gate until the full smoke lane runs. `pipeline-smoke-import-integrity.test.ts` runs in `engine-default` and resolves each non-type named relative import from pipeline-smoke modules against its runtime module namespace, failing with the importer, specifier, and missing binding. When product behavior is removed, delete the tests that assert that retired behavior in the same change rather than restoring a compatibility stub.
@@ -722,7 +751,9 @@ Quarantine is the default when a sighting is reproducible enough to justify evic
 
 1. Add an entry to `scripts/lib/test-quarantine.json`:
    `{ "file": "<repo-relative test path>", "reason": "<why + link to the failing run>", "quarantinedAt": "YYYY-MM-DD" }`
-2. Add a matching one-line `exclude` entry to that package's vitest config.
+2. Add a matching one-line `exclude` entry to that package's vitest config. The CLI is the supported exception: add its package-relative path once to the static `quarantinedCliTests` list. That list is a recognized lockstep source and its `activeQuarantinedCliTests` filter removes an explicitly named file from routine discovery exclusion, so targeted diagnosis continues to run the real test assertions.
+
+This CLI form is a non-blocking package-lane quarantine, not an `engine-core` merge-gate eviction. It retains the test for root-cause rescue or deletion review; the same 14-day clock applies, and timeout widening, retries, and assertion weakening are never rescue evidence.
 
 **The clock:** an entry expires 14 days after `quarantinedAt`. Whoever touches the suite and finds an expired entry deletes the test file, its ledger entry, and its config exclude (git history is the archive). `scripts/check-test-inventory.mjs --diff` stays deliberately unwired in CI because it would fail on exactly these deletions.
 
@@ -730,7 +761,7 @@ Quarantine is the default when a sighting is reproducible enough to justify evic
 
 Run `pnpm check:quarantine-ledger` to print a soonest-deadline-first summary of `scripts/lib/test-quarantine.json`. The command uses the same 14-day deletion clock (`quarantinedAt + 14d`) as the velocity baseline and reports each entry as expired, near-deadline, healthy, or unknown when `quarantinedAt` is missing/invalid. Default mode remains report-only for deadline status.
 
-The checker also enforces the quarantine lockstep. It reads only comment-stripped `exclude:` array literals in every `packages/*/vitest.config.ts`; include-shard lists and identifier/spread excludes are deliberately out of scope. It reports `missing-file` (a ledger entry names no file), `missing-exclude` (a ledger file lacks its package exclusion), and `dangling-exclude` (an exclusion names no file). `--strict` fails on any of those violations as well as near/expired deadlines.
+The checker enforces quarantine lockstep in both directions. It reads only comment-stripped `exclude:` array literals in every `packages/*/vitest.config.ts`, plus the CLI's statically declared `quarantinedCliTests` list; it never evaluates configuration. Include-shard lists, identifier/spread excludes outside that supported CLI list, and glob/partition values are deliberately out of scope. It reports `missing-file` (a ledger entry names no file), `missing-exclude` (a ledger file lacks its package exclusion), `dangling-exclude` (an exclusion names no file), and `orphan-exclude` (an existing concrete per-file exclusion has no ledger owner or deletion clock). Remove or restore an `orphan-exclude`; never add an expired ledger entry just to restart its clock. `--strict` fails on any of those violations as well as near/expired deadlines.
 
 Flags:
 

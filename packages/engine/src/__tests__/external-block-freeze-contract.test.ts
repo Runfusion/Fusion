@@ -18,6 +18,12 @@ function blockedTask(): TaskDetail {
       origin: "host-environment",
       code: "ENOSPC",
       message: "no space left on device, write",
+      report: {
+        verifiedCondition: "Session-isolated MCP support was verified unavailable.",
+        stopReason: "Persistent configuration was not changed.",
+        unimplementedWork: "Remaining implementation was not performed.",
+        unblockCondition: "Provide a supported session-scoped interface.",
+      },
       source: "agent-declaration",
       blockedAt: "2026-08-28T04:20:00.000Z",
       resume: { column: "in-progress", nodeId: "steps#0:step-execute", currentStep: 0, worktree: "/worktrees/fn-209", branch: "fusion/fn-209" },
@@ -47,5 +53,6 @@ describe("external-block graph freeze contract", () => {
     expect(updateTask).not.toHaveBeenCalled();
     expect(moveTask).not.toHaveBeenCalled();
     expect(deps.clearTerminalStepFailuresForRetry).not.toHaveBeenCalled();
+    expect(blockedTask().externalBlock?.report?.unblockCondition).toBe("Provide a supported session-scoped interface.");
   });
 });

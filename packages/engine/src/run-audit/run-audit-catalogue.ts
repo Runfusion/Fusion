@@ -44,6 +44,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   "task:empty-merge-finalize-blocked-no-landed-proof",
   "task:finalize-unproven-blocked",
   "task:merge-boundary-unproven-parked",
+  "task:merge-boundary-evidence-recovered",
   "task:merge-admission-deferred-live-execution",
   "task:reconcile-confirmed-merge-checklist",
   "task:finalize-lost-work-blocked",
@@ -61,6 +62,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
 
   "task:reclaim-phantom-executor-binding",
   "task:reconcile-orphaned-pending-step-results",
+  "task:stale-review-callback-waived",
   "task:reconcile-unproven-review-approval",
   "task:reconcile-stale-duplicate-decision",
   "task:reconcile-stale-agent-assignment",
@@ -122,6 +124,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "Finalize is blocked because finalization has not been proven against the landing truth.",
   "task:merge-boundary-unproven-parked":
     "A terminal merge-boundary proof failure is parked with bounded best-effort audit telemetry.",
+  "task:merge-boundary-evidence-recovered":
+    "Self-healing resumes durable unfinished implementation after re-verifying a historic proofless boundary park.",
   "task:merge-admission-deferred-live-execution":
     "Merge admission deferred because a live execution signal still owns the task.",
   "task:reconcile-confirmed-merge-checklist":
@@ -143,6 +147,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "Self-healing proves an in-memory executor-active binding is stale and requeues the task.",
   "task:reconcile-orphaned-pending-step-results":
     "Self-healing rewrites orphaned 'pending' workflow-step results (no live session) to 'failed'.",
+  "task:stale-review-callback-waived":
+    "Self-healing records a receipt-backed waiver for an eligible stale code-review callback.",
   "task:reconcile-unproven-review-approval":
     "Self-healing rewrites singular content-review approvals without input proof to recoverable failed results.",
   "task:reconcile-stale-duplicate-decision":

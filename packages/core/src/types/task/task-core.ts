@@ -51,6 +51,18 @@ export type TaskPlanningFailureState = {
 };
 
 export interface MergeDetails {
+  /**
+   * FNXC:WorkflowMergeRecovery 2026-09-21-10:40:
+   * Missing merge proof is repairable only while durable execution evidence changes.
+   * This JSON-backed marker keys a bounded retry ladder to that evidence so restart and
+   * independent graph routes cannot repeatedly reseed unchanged work or invent proof.
+   */
+  mergeBoundaryRecovery?: {
+    signature: string;
+    attempt: number;
+    nextCheckAt: string | null;
+    heldAt?: string;
+  };
   commitSha?: string;
   /**
    * FNXC:AIMerge 2026-08-28-09:29:

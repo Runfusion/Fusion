@@ -362,7 +362,7 @@ The quality of your spec directly determines execution quality, review churn, an
 - Access to the project's files so you can understand context
 
 ## Environment feasibility
-When an \`## Environment Capabilities\` section is supplied, no acceptance criterion, completion criterion, or required verification command may depend on a runtime listed unavailable. Specify a runnable substitute instead and record the ideal-but-impossible check under an \`## Environment Constraints\` heading marked explicitly non-blocking. Never state that a plan is blocked because a runtime is missing.
+When an \`## Environment Capabilities\` section is supplied, require a runnable substitute only for a runtime confirmed unavailable without an applicable confirmed wrapper. A documented or configured command using a confirmed wrapper remains binding even when its inner executable is absent from the host PATH. Commands not listed are UNKNOWN, never absent; never state that a plan is blocked because a runtime is missing.
 
 ## What you produce
 Write a complete PROMPT.md specification to the given path using the write tool.
@@ -426,11 +426,12 @@ Follow this structure exactly:
 
 ## Steps
 
-> Optional: a step heading may carry a \`(depends: N,M)\` annotation listing literal \`### Step N\`
-> heading numbers (0-based; Step 0 is Preflight) — e.g. \`### Step 3 (depends: 1): Title\`. Annotate
-> ONLY steps that are genuinely independent of their immediate predecessor; an unannotated step is
-> assumed to depend on the one before it (fully sequential). Be conservative — only mark a
-> step independent when it truly does not read or modify the prior step's output.
+> Optional: a step heading may carry a \`(depends: N,M)\` annotation listing 1-based positions in the
+> parsed step list — visible \`### Step N\` labels are display text, not identifiers. For example,
+> \`### Step 12 (depends: 1): Title\` depends on the first parsed step. \`(depends:)\` is an explicit
+> independent root; an unannotated step depends on the preceding parsed step. JSON \`depends\` remains
+> a separate 0-based API. Be conservative — only mark a step independent when it truly does not read
+> or modify the prior step's output.
 
 ### Step 0: Preflight
 

@@ -4,24 +4,24 @@
 
 ## Latest baseline
 
-- Cycle: **2026-W38**
-- Captured at: **2026-09-17T22:38:00.094Z**
-- Timing snapshot: `scripts/test-timings.json` captured at **2026-08-16T06:04:55.815Z**
+- Cycle: **2026-W39**
+- Captured at: **2026-09-25T23:47:49.366Z**
+- Timing snapshot: `scripts/test-timings.json` captured at **2026-09-21T10:10:41.653Z**
 - Quarantine ledger: `scripts/lib/test-quarantine.json`
 
 ## Metrics
 
 | Metric | Current | Delta vs previous |
 |---|---:|---:|
-| Merge gate wall-time (`pnpm test:gate`) | 11.4s | -2.6s |
-| Boot smoke wall-time (`pnpm smoke:boot`) | 26.1s | +5.7s |
-| Changed-only test wall-time (`pnpm test`) | 18.4s | +950ms |
-| Quarantine / flake count | 0 | 0 |
+| Merge gate wall-time (`pnpm test:gate`) | 11.9s | +442ms |
+| Boot smoke wall-time (`pnpm smoke:boot`) | 25.5s | -610ms |
+| Changed-only test wall-time (`pnpm test`) | unavailable | n/a |
+| Quarantine / flake count | 3 | +3 |
 | Deletion-due quarantines | 0 | n/a |
 
 ## Measurement failures
 
-- None recorded.
+- Changed-only tests (`pnpm test`): exit 1 after 2m 16s
 
 ## Measurement notes
 
@@ -29,7 +29,7 @@
 
 ## Timing snapshot notes
 
-- Timing snapshot is 32 days old; verify slowest-file attribution before treating the table as the current culprit.
+- No stale or missing timing metadata detected in the rendered slowest-file rows.
 
 ## Slowest 20 test files
 
@@ -37,31 +37,31 @@
 |---:|---|---|---:|
 | 1 | `packages/core/src/__tests__/postgres/schema-applier.test.ts` | @fusion/core | 1m 13s |
 | 2 | `packages/dashboard/src/__tests__/task-modal-touch-resize-browser.test.ts` | @fusion/dashboard | 1m 03s |
-| 3 | `packages/cli/src/__tests__/extension.test.ts` | @runfusion/fusion | 42.8s |
-| 4 | `packages/engine/src/__tests__/lifecycle-column-census.test.ts` | @fusion/engine | 42.4s |
-| 5 | `packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts` | @fusion/engine | 36.9s |
+| 3 | `packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts` | @fusion/engine | 38.1s |
+| 4 | `packages/engine/src/__tests__/merger-ai.test.ts` | @fusion/engine | 36.7s |
+| 5 | `packages/engine/src/__tests__/workspace-merger.test.ts` | @fusion/engine | 35.6s |
 | 6 | `packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx` | @fusion/dashboard | 30.2s |
-| 7 | `packages/cli/src/__tests__/bin.test.ts` | @runfusion/fusion | 29.3s |
-| 8 | `packages/engine/src/__tests__/merger-ai.test.ts` | @fusion/engine | 22.6s |
-| 9 | `packages/core/src/__tests__/postgres/startup-factory-integration.test.ts` | @fusion/core | 21.8s |
-| 10 | `packages/core/src/__tests__/postgres/sqlite-migrator.test.ts` | @fusion/core | 20.4s |
-| 11 | `packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx` | @fusion/dashboard | 20.3s |
-| 12 | `packages/engine/src/__tests__/reliability-interactions/merge-runner-spawn-enoent-prevention.test.ts` | @fusion/engine | 19.3s |
-| 13 | `packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx` | @fusion/dashboard | 19.0s |
-| 14 | `packages/engine/src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts` | @fusion/engine | 18.4s |
-| 15 | `packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx` | @fusion/dashboard | 18.0s |
-| 16 | `packages/dashboard/app/components/__tests__/SettingsModal.generalProject.test.tsx` | @fusion/dashboard | 17.6s |
-| 17 | `packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx` | @fusion/dashboard | 17.5s |
-| 18 | `packages/engine/src/__tests__/pi-create-fn-agent.test.ts` | @fusion/engine | 17.5s |
-| 19 | `packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx` | @fusion/dashboard | 16.6s |
-| 20 | `packages/cli/src/commands/dashboard-tui/__tests__/app.test.tsx` | @runfusion/fusion | 15.6s |
+| 7 | `packages/engine/src/__tests__/reliability-interactions/post-done-continuation-no-wedge.test.ts` | @fusion/engine | 30.2s |
+| 8 | `packages/engine/src/__tests__/reliability-interactions/branch-recovery-live-zero-commits.test.ts` | @fusion/engine | 30.0s |
+| 9 | `packages/cli/src/__tests__/bin.test.ts` | @runfusion/fusion | 29.3s |
+| 10 | `packages/engine/src/__tests__/lifecycle-column-census.test.ts` | @fusion/engine | 27.3s |
+| 11 | `packages/core/src/__tests__/postgres/startup-factory-integration.test.ts` | @fusion/core | 21.8s |
+| 12 | `packages/core/src/__tests__/postgres/sqlite-migrator.test.ts` | @fusion/core | 20.4s |
+| 13 | `packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx` | @fusion/dashboard | 20.3s |
+| 14 | `packages/engine/src/__tests__/self-healing-workspace.test.ts` | @fusion/engine | 19.6s |
+| 15 | `packages/engine/src/__tests__/workspace-merger-lease.test.ts` | @fusion/engine | 19.4s |
+| 16 | `packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx` | @fusion/dashboard | 19.0s |
+| 17 | `packages/engine/src/__tests__/workspace-push-after-merge.test.ts` | @fusion/engine | 18.4s |
+| 18 | `packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx` | @fusion/dashboard | 18.0s |
+| 19 | `packages/engine/src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts` | @fusion/engine | 18.0s |
+| 20 | `packages/dashboard/app/components/__tests__/SettingsModal.generalProject.test.tsx` | @fusion/dashboard | 17.6s |
 
 ## Quarantine age buckets
 
 | Age bucket | Count |
 |---|---:|
-| 0-6 days | 0 |
-| 7-13 days | 0 |
+| 0-6 days | 2 |
+| 7-13 days | 1 |
 | deletion due (>=14 days) | 0 |
 | unknown/future | 0 |
 
@@ -75,16 +75,16 @@
 
 | Row | Captured at | Gate | Boot smoke | `pnpm test` | Quarantine count |
 |---|---|---:|---:|---:|---:|
-| Previous | 2026-08-16T06:01:44.671Z | 14.0s | 20.4s | 17.5s | 0 |
-| Latest | 2026-09-17T22:38:00.094Z | 11.4s | 26.1s | 18.4s | 0 |
-| Delta | — | -2.6s | +5.7s | +950ms | 0 |
+| Previous | 2026-09-17T22:38:00.094Z | 11.4s | 26.1s | 18.4s | 0 |
+| Latest | 2026-09-25T23:47:49.366Z | 11.9s | 25.5s | unavailable | 3 |
+| Delta | — | +442ms | -610ms | n/a | +3 |
 
 _Future weekly rows append to `scripts/test-velocity-history.json`; compare the latest row against the previous row before posting to #leads._
 
 ## Post to #leads
 
 ```text
-FN-6612 weekly test velocity: gate 11.4s (-2.6s), boot smoke 26.1s (+5.7s), pnpm test 18.4s (+950ms), quarantine ledger 0 (0). Slowest file: packages/core/src/__tests__/postgres/schema-applier.test.ts at 1m 13s. Deletion-due quarantines: 0.
+FN-6612 weekly test velocity: gate 11.9s (+442ms), boot smoke 25.5s (-610ms), pnpm test unavailable (n/a), quarantine ledger 3 (+3). Slowest file: packages/core/src/__tests__/postgres/schema-applier.test.ts at 1m 13s. Deletion-due quarantines: 0.
 ```
 
 ## How to refresh

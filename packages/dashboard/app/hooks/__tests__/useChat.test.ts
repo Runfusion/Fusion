@@ -1569,7 +1569,7 @@ describe("useChat", () => {
       chunks: ["Trailing", " "],
       expected: "Trailing ",
     },
-  ])("prefers streamed text over done snapshot (%s)", async ({ chunks, expected }) => {
+  ])("replaces streamed text with the done snapshot (%s)", async ({ chunks, expected }) => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
     mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
@@ -1596,6 +1596,7 @@ describe("useChat", () => {
       expect(result.current.activeSession?.id).toBe("session-001");
     });
 
+    const authoritative = expected.replace(/\s+/g, "");
     act(() => {
       result.current.sendMessage("Hello!");
       for (const chunk of chunks) {
@@ -1607,7 +1608,7 @@ describe("useChat", () => {
           id: "msg-003",
           sessionId: "session-001",
           role: "assistant",
-          content: expected.replace(/\s+/g, ""),
+          content: authoritative,
           thinkingOutput: null,
           metadata: null,
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -1618,7 +1619,7 @@ describe("useChat", () => {
     await waitFor(() => {
       expect(result.current.messages.find((message) => message.id === "msg-003")).toEqual(expect.objectContaining({
         id: "msg-003",
-        content: expected,
+        content: authoritative,
       }));
     });
   });

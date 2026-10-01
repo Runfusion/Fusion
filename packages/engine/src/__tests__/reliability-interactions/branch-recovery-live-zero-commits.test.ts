@@ -24,6 +24,8 @@ function createStore(): TaskStore & EventEmitter {
   const emitter = new EventEmitter() as TaskStore & EventEmitter;
   (emitter as any).getSettings = vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false });
   (emitter as any).listTasks = vi.fn();
+  // Recovery re-reads each candidate under its liveness fence before mutating it.
+  (emitter as any).getTask = vi.fn().mockResolvedValue(null);
   (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
@@ -47,7 +49,7 @@ describe("reliability interactions: live-zero reclaim", () => {
     vi.restoreAllMocks();
   });
 
-  it("restart recovery and reclaim sweep converge to todo + null worktree for live-zero case", async () => {
+  it("restart recovery and reclaim sweep retain review lane while clearing live-zero metadata", async () => {
     const taskState: any = {
       id: "FN-9100",
       column: "in-review",
@@ -104,10 +106,28 @@ describe("reliability interactions: live-zero reclaim", () => {
     await recovery.recoverInterruptedRuns();
     const healing = new SelfHealingManager(statefulStore, { rootDir: "/tmp/test" });
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
+    /*
+    FNXC:SelfHealingTests 2026-09-22-03:57:
+    The live-zero branch inspection proves the remembered checkout can be discarded, and review
+    recovery evaluates that post-conflict liveness state before it considers a lifecycle action.
+    Model the unusable checkout explicitly so this fixture reaches production metadata cleanup;
+    lifecycle containment separately keeps the already-reclaimed row in the review lane.
+    */
+    vi.spyOn(worktreePool, "classifyTaskWorktree").mockResolvedValue({
+      ok: false,
+      classification: "missing",
+      reason: "reclaimed live-zero checkout is no longer usable",
+    } as any);
     const reclaimed = await healing.reclaimSelfOwnedBranchConflicts();
 
     expect(reclaimed).toBe(1);
-    expect(taskState.column).toBe("todo");
+    /*
+    FNXC:LifecycleContainment 2026-09-22-03:57:
+    A self-healing reclaim may discard zero-commit checkout metadata, but without a named revision
+    it must not move a review card backward. Keep this regression on the production in-place
+    recovery contract while proving the unsafe branch/worktree pointers are cleared.
+    */
+    expect(taskState.column).toBe("in-review");
     expect(taskState.worktree).toBeNull();
     expect(taskState.branch).toBeNull();
   });
@@ -126,12 +146,21 @@ describe("reliability interactions: live-zero reclaim", () => {
   });
 
   it("is idempotent across two sweeps", async () => {
+    const candidate = {
+      id: "FN-9102",
+      column: "in-review",
+      checkedOutBy: null,
+      branch: "fusion/fn-9102",
+      worktree: "/tmp/live",
+      paused: true,
+      pausedReason: "branch-conflict-unrecoverable",
+      lineageId: "lin-9102",
+    };
+    (store.getTask as any).mockResolvedValue(candidate);
     (store.listTasks as any)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { id: "FN-9102", column: "in-review", checkedOutBy: null, branch: "fusion/fn-9102", worktree: "/tmp/live", paused: true, pausedReason: "branch-conflict-unrecoverable", lineageId: "lin-9102" },
-      ])
+      .mockResolvedValueOnce([candidate])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);

@@ -18,7 +18,7 @@ import type {
   WorkflowRuntimePrimitives,
 } from "../execution/runtime-primitives.js";
 import { WorkflowPlanningService } from "../workflows/workflow-planning-service.js";
-import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
+import { MERGE_BOUNDARY_RECOVERY_VALUE } from "../workflows/workflow-merge-nodes.js";
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SEAM_GOVERNING_NODE_CONTEXT_KEY,
@@ -373,13 +373,28 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
           runId: ctx.run.runId,
         });
         /*
-        FNXC:WorkflowMerge 2026-08-20-00:50:
-        FN-9157 turns an unprovable boundary into a terminal graph failure. Do not
-        attach data.status:failed: direct merge-attempt classification rewrites an
-        unknown reason to merge-failed and re-enters the bounded retry.
+        FNXC:WorkflowMergeRecovery 2026-09-20-18:37:
+        A boundary proof gap must fail closed before mergeRequester, but it is
+        recoverable when the task still has durable unfinished implementation.
+        Return the typed graph remediation value rather than terminalizing the
+        card; the graph-failure router fences and resumes the existing owner.
         */
         if (mergeBoundary.blocked) {
-          return { outcome: "failure", value: MERGE_BOUNDARY_UNPROVEN_VALUE };
+          /*
+          FNXC:WorkflowMergeRecovery 2026-09-20-19:59:
+          Preserve the classified proof gap on the graph result. The recovery
+          owner must be selected from durable IR/results, never inferred from an
+          empty-diff review or a fabricated checklist completion.
+          */
+          return {
+            outcome: "failure",
+            value: MERGE_BOUNDARY_RECOVERY_VALUE,
+            contextPatch: {
+              "workflow:merge-boundary-recovery-code": mergeBoundary.blocked.evidence.code,
+              "workflow:merge-boundary-non-terminal-node-id": mergeBoundary.blocked.evidence.nonTerminalNodeId,
+              "workflow:merge-boundary-missing-instance-ids": mergeBoundary.blocked.evidence.missingInstanceIds,
+            },
+          };
         }
         const mergeTask = mergeBoundary.task;
         /*
@@ -438,7 +453,7 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
           ctx.signal.addEventListener("abort", onGraphAbort, { once: true });
         });
         try {
-          const result = await Promise.race([deps.mergeRequester(mergeTask.id, { signal: mergeSignal }), timeout, cancelled]);
+          const result = await Promise.race([deps.mergeRequester(mergeTask.id, { signal: mergeSignal, graphOwnedPostMergeTraversal: true }), timeout, cancelled]);
           if (result === "cancelled") {
             executorLog.warn(`${mergeTask.id}: workflow merge primitive cancelled by graph abort`);
             return { outcome: "failure", value: "merge-cancelled" };
@@ -469,6 +484,19 @@ export function createAuthoritativeWorkflowPrimitivesFromExecutor(
               source: "workflow-graph-merge-finalize",
               log: (message) => executorLog.warn(message),
             });
+            if (finalization.deferredPostMergeEvidence) {
+              /*
+              FNXC:PostMergeEvidenceOrdering 2026-09-25-19:49:
+              A confirmed landing with an enabled evidence gate is a successful merge boundary,
+              not a failed merge. Leave final completion to the graph's post-merge traversal; it
+              persists the actual verdict before the graph-completion finalizer retries.
+              */
+              return {
+                outcome: "success",
+                value: result.noOp ? "merge-noop" : "merged",
+                data: { status: "merged", noOp: result.noOp },
+              };
+            }
             if (finalization.outcome === "blocked" || finalization.outcome === "missing") {
               return {
                 outcome: "failure",

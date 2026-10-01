@@ -24,16 +24,27 @@ describe("resolveReviewBlockingSeverity", () => {
     expect(DEFAULT_CODE_REVIEW_BLOCKING_SEVERITY).toBe("critical");
   });
 
-  it("prefers a stored workflow setting over the node value and the default", () => {
+  it("prefers only an explicitly stored matching workflow setting over the node value", () => {
     expect(resolveReviewBlockingSeverity({
       reviewKind: "plan",
       workflowSettings: { planReviewBlockingSeverity: "any" },
+      storedWorkflowSettingKeys: new Set(["planReviewBlockingSeverity"]),
       nodeBlockingSeverity: "critical",
     })).toBe("any");
     expect(resolveReviewBlockingSeverity({
       reviewKind: "code",
       workflowSettings: { codeReviewBlockingSeverity: "low" },
+      storedWorkflowSettingKeys: new Set(["codeReviewBlockingSeverity"]),
     })).toBe("low");
+  });
+
+  it("prefers a node value over a declaration-defaulted effective setting", () => {
+    expect(resolveReviewBlockingSeverity({
+      reviewKind: "code",
+      workflowSettings: { codeReviewBlockingSeverity: "critical" },
+      storedWorkflowSettingKeys: new Set(),
+      nodeBlockingSeverity: "high",
+    })).toBe("high");
   });
 
   it("falls back to the node value, then the default, ignoring invalid values", () => {
@@ -48,7 +59,12 @@ describe("resolveReviewBlockingSeverity", () => {
   it("reads each review kind from its own setting key", () => {
     // A plan-review override must not leak into code review's threshold.
     const settings = { planReviewBlockingSeverity: "any" };
-    expect(resolveReviewBlockingSeverity({ reviewKind: "code", workflowSettings: settings })).toBe("critical");
+    expect(resolveReviewBlockingSeverity({
+      reviewKind: "code",
+      workflowSettings: settings,
+      storedWorkflowSettingKeys: new Set(["planReviewBlockingSeverity"]),
+      nodeBlockingSeverity: "high",
+    })).toBe("high");
   });
 });
 

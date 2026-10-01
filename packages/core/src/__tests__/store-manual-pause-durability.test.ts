@@ -57,6 +57,33 @@ describe("TaskStore manual pause durability", () => {
     expect(persisted.userPaused).toBeUndefined();
   });
 
+  it("does not let an unpause snapshot erase a newer scheduler pause", async () => {
+    let persisted = {
+      id: "FN-004",
+      column: "in-progress",
+      status: "failed",
+      paused: true,
+      pausedReason: "branch-conflict-unrecoverable",
+      updatedAt: "2026-10-01T08:00:00.000Z",
+      log: [],
+    } as unknown as Task;
+    const store = {
+      withTaskLock: async (_id: string, operation: () => Promise<Task>) => operation(),
+      taskDir: () => "/tmp/FN-004",
+      readTaskJson: async () => ({ ...persisted, log: [...(persisted.log ?? [])] }),
+      atomicWriteTaskJson: async (_dir: string, task: Task) => { persisted = task; },
+      isWatching: false,
+      emit: () => undefined,
+    } as unknown as TaskStore;
+
+    const result = await pauseTaskImpl(store, "FN-004", false, undefined, {
+      expectedUpdatedAt: "2026-10-01T07:59:00.000Z",
+    });
+
+    expect(result).toMatchObject({ paused: true, pausedReason: "branch-conflict-unrecoverable" });
+    expect(persisted).toMatchObject({ paused: true, pausedReason: "branch-conflict-unrecoverable" });
+  });
+
   it("clears the durable user-pause latch when unpaused", async () => {
     let persisted = {
       id: "FN-003",

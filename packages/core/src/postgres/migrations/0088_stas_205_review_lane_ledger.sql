@@ -58,5 +58,10 @@ ALTER TABLE project.task_lifecycle_events
 -- FNXC:ReviewLaneDispatch 2026-09-19-19:39 (PR rebase onto main's force-replaced
 -- history): renumbered 0084 -> 0086; the new history's own migrations already
 -- claim 0084 (overlap sync) and 0085 (drop excluded upstream feature schema).
-INSERT INTO public.fusion_schema_migrations (version) VALUES ('0086')
+-- FNXC:MigrationVersionCollision 2026-10-01-18:19: upstream FN-9429 claimed 0086 for its own stale
+-- callback receipts migration, so two migrations shared ONE marker and `applied.includes("0086")`
+-- could skip either of them. The ledger re-issues at 0088 — the slot the deployed line recorded —
+-- leaving 0087 free for the overlap-owner FK repair. Databases that recorded this block as 0086
+-- re-run this idempotent SQL and record 0088; the applier probe still decides on real objects.
+INSERT INTO public.fusion_schema_migrations (version) VALUES ('0088')
   ON CONFLICT (version) DO NOTHING;

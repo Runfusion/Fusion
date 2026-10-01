@@ -1,4 +1,4 @@
-import { classifyTerminalFailureAutoRecovery, type TerminalFailureAutoRecoveryDecision, type Task } from "@fusion/core";
+import { buildTaskExternalBlockReport, classifyTerminalFailureAutoRecovery, type TaskExternalBlockReport, type TerminalFailureAutoRecoveryDecision, type Task } from "@fusion/core";
 import { hasTransientMergeRecoveryOwner } from "../errors/transient-merge-error-classifier.js";
 import { NO_PROGRESS_REQUEUE_BUDGET_EXHAUSTED_PREFIX } from "../healing/no-progress-requeue-budget.js";
 
@@ -8,6 +8,8 @@ export interface TaskWedgeDescriptor {
   reason: string;
   action: string;
   gate?: string;
+  /** Present only for an accepted external-block freeze; never use raw task error prose. */
+  externalBlockReport?: TaskExternalBlockReport;
 }
 
 /** Durable evidence that a failed snapshot remains assigned to a bounded automatic recovery path. */
@@ -172,6 +174,28 @@ export function shouldWithholdWedgeAlertForAutoRecovery(task: Task, options: { a
 
 export function describeTaskWedge(task: Task): TaskWedgeDescriptor | null {
   if (isTaskProgressing(task)) return null;
+  /*
+  FNXC:ExternalBlockMailbox 2026-09-22-02:24:
+  Only the classified durable freeze can open an external-block mailbox episode. Missing graph
+  evidence and recovery-owned failures never reach this branch, so notification cannot become a
+  second recovery authority or weaken merge-boundary proof.
+  */
+  if (
+    task.status === "blocked"
+    && task.paused === true
+    && task.pausedReason === "external-block"
+    && task.userPaused !== true
+    && task.autoMerge !== false
+    && task.externalBlock
+  ) {
+    const report = buildTaskExternalBlockReport(task.externalBlock, task.externalBlock.report);
+    return {
+      reasonKey: `external-block:${task.externalBlock.origin}:${task.externalBlock.code}`,
+      reason: report.stopReason,
+      action: report.unblockCondition,
+      externalBlockReport: report,
+    };
+  }
   const error = task.error ?? "";
   const hasPauseProof = task.paused === true || task.status === "paused";
   if (hasPauseProof && task.pausedReason === "completed-blocked") {

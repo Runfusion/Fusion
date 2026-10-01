@@ -10,14 +10,17 @@ import { git, hasGit, hasPg, makeReliabilityFixture } from "./_helpers.js";
 async function stageMergeBranch(store: TaskStore, rootDir: string, taskId: string, fileName: string): Promise<void> {
   const task = await store.getTask(taskId);
   const branch = `fusion/${taskId.toLowerCase()}`;
-  const worktreePath = join(`${rootDir}-worktrees`, taskId.toLowerCase());
+  const worktreePath = join(rootDir, ".fusion/worktrees", taskId.toLowerCase());
   await store.updateTask(taskId, {
     baseBranch: "",
     branch,
+    branchWriteOrigin: "engine",
     column: "in-review",
     worktree: worktreePath,
     steps: (task?.steps ?? []).map((step) => ({ ...step, status: "done" as const })),
     currentStep: (task?.steps ?? []).length ?? 0,
+    // These branch-routing fixtures isolate merger behavior from unrelated review gates.
+    enabledWorkflowSteps: [],
   } as any);
   git(rootDir, `git checkout -b ${branch}`);
   await mkdir(join(rootDir, "packages/engine/src"), { recursive: true });
@@ -25,17 +28,18 @@ async function stageMergeBranch(store: TaskStore, rootDir: string, taskId: strin
   git(rootDir, `git add ${JSON.stringify(`packages/engine/src/${fileName}.ts`)}`);
   git(rootDir, `git commit -m ${JSON.stringify(`feat: add ${fileName}`)}`);
   git(rootDir, "git checkout main");
+  git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
   await store.enqueueMergeQueue(taskId);
 }
 
-function listAuditEvents(store: TaskStore) {
-  const persisted = store.getRunAuditEvents();
+async function listAuditEvents(store: TaskStore) {
+  const persisted = await store.getRunAuditEventsAsync();
   const transient = Array.isArray((store as any).__audits) ? (store as any).__audits : [];
   return [...transient, ...persisted] as Array<{ mutationType?: string; metadata?: Record<string, unknown> }>;
 }
 
-function findGateEvent(store: TaskStore, groupId: string) {
-  return listAuditEvents(store).find((event) =>
+async function findGateEvent(store: TaskStore, groupId: string) {
+  return (await listAuditEvents(store)).find((event) =>
     event.mutationType === "merge:branch-group-promotion-gated" && (event.metadata as any)?.groupId === groupId,
   );
 }
@@ -46,14 +50,14 @@ describe("FN-5783 reliability interactions: branch group automerge precedence", 
     try {
       const { rootDir, store, task } = fixture;
       await stageMergeBranch(store, rootDir, task.id, "fn5783Eligible");
-      const group = store.createBranchGroup({ sourceType: "planning", sourceId: "PS-5783", branchName: "fusion/groups/fn-5783", autoMerge: true });
+      const group = await store.createBranchGroup({ sourceType: "planning", sourceId: "PS-5783", branchName: "fusion/groups/fn-5783", autoMerge: true });
       await store.setTaskBranchGroup(task.id, group.id);
       await store.updateTask(task.id, {
         autoMerge: false,
         branchContext: { groupId: group.id, source: "planning", assignmentMode: "shared" },
       } as any);
       await aiMergeTask(store, rootDir, task.id);
-      expect(findGateEvent(store, group.id)?.metadata).toMatchObject({ groupId: group.id, groupAutoMerge: true, effectiveEligible: true, reason: "eligible" });
+      expect((await findGateEvent(store, group.id))?.metadata).toMatchObject({ groupId: group.id, groupAutoMerge: true, effectiveEligible: true, reason: "eligible" });
     } finally {
       await fixture.cleanup();
     }
@@ -64,14 +68,14 @@ describe("FN-5783 reliability interactions: branch group automerge precedence", 
     try {
       const { rootDir, store, task } = fixture;
       await stageMergeBranch(store, rootDir, task.id, "fn5783Disabled");
-      const group = store.createBranchGroup({ sourceType: "mission", sourceId: "M-5783", branchName: "fusion/groups/fn-5783-disabled", autoMerge: false });
+      const group = await store.createBranchGroup({ sourceType: "mission", sourceId: "M-5783", branchName: "fusion/groups/fn-5783-disabled", autoMerge: false });
       await store.setTaskBranchGroup(task.id, group.id);
       await store.updateTask(task.id, {
         autoMerge: true,
         branchContext: { groupId: group.id, source: "mission", assignmentMode: "shared" },
       } as any);
       await aiMergeTask(store, rootDir, task.id);
-      expect(findGateEvent(store, group.id)?.metadata).toMatchObject({ groupId: group.id, groupAutoMerge: false, effectiveEligible: false, reason: "group-automerge-disabled" });
+      expect((await findGateEvent(store, group.id))?.metadata).toMatchObject({ groupId: group.id, groupAutoMerge: false, effectiveEligible: false, reason: "group-automerge-disabled" });
     } finally {
       await fixture.cleanup();
     }

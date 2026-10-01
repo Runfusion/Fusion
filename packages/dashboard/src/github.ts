@@ -539,6 +539,8 @@ interface GhPrViewJson {
   baseRefName: string;
   headRefName: string;
   headRefOid?: string;
+  mergedAt?: string | null;
+  mergeCommit?: { oid?: string | null } | null;
   comments: Array<{
     id: string;
     body: string;
@@ -783,6 +785,8 @@ function toPrInfo(input: {
   isDraft?: boolean;
   commentCount?: number;
   mergeable?: PrConflictState;
+  mergeCommitSha?: string;
+  mergedAt?: string;
   lastCommentAt?: string;
   lastCheckedAt?: string;
 }): PrInfo {
@@ -798,6 +802,8 @@ function toPrInfo(input: {
     isDraft: input.isDraft,
     draft: input.isDraft,
     mergeable: input.mergeable,
+    mergeCommitSha: input.mergeCommitSha,
+    mergedAt: input.mergedAt,
     lastCommentAt: input.lastCommentAt,
     lastCheckedAt: input.lastCheckedAt,
   };
@@ -1873,7 +1879,7 @@ export class GitHubClient {
     const pr = await runGhJsonAsync<GhPrViewJson>([
       "pr", "view", String(number),
       "--repo", `${resolved.owner}/${resolved.repo}`,
-      "--json", "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,reviewDecision,mergeable,mergeStateStatus",
+      "--json", "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,mergeCommit,reviewDecision,mergeable,mergeStateStatus",
     ]);
     const mergeable = mapPrConflictState(pr.mergeable, pr.mergeStateStatus);
     /* FNXC:PrMergeRequiredChecks 2026-08-09-06:39: named checks need the unfiltered list so an absent check blocks; retain the legacy required-only request when unset. */
@@ -1896,6 +1902,8 @@ export class GitHubClient {
       isDraft: pr.isDraft,
       commentCount: 0,
       mergeable,
+      mergeCommitSha: pr.mergeCommit?.oid ?? undefined,
+      mergedAt: pr.mergedAt ?? undefined,
     });
     const normalizedChecks = checks.map((check) => ({
       name: check.name,
@@ -1947,6 +1955,8 @@ export class GitHubClient {
               baseRefName
               headRefName
               headRefOid
+              mergedAt
+              mergeCommit { oid }
               comments { totalCount }
               commits(last: 1) {
                 nodes {
@@ -1999,6 +2009,8 @@ export class GitHubClient {
             baseRefName: string;
             headRefName: string;
             headRefOid?: string | null;
+            mergedAt?: string | null;
+            mergeCommit?: { oid?: string | null } | null;
             comments: { totalCount: number };
             commits: {
               nodes: Array<{
@@ -2078,6 +2090,8 @@ export class GitHubClient {
       isDraft: pr.isDraft,
       commentCount: pr.comments.totalCount,
       mergeable,
+      mergeCommitSha: pr.mergeCommit?.oid ?? undefined,
+      mergedAt: pr.mergedAt ?? undefined,
     });
     const ingested = requiredCheckNames.length > 0 && pr.headRefOid?.trim() && resolveIngestedChecks
       ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: pr.headRefOid }).catch(() => [])

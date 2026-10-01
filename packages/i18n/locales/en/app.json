@@ -7681,7 +7681,8 @@
     "filter": "Filter skills",
     "noMatches": "No matching skills",
     "loadError": "Skills could not be loaded.",
-    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries"
+    "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries",
+    "snippetsTitle": "Chat snippets"
   },
   "specEditor": {
     "edit": "Edit",
@@ -9605,7 +9606,8 @@
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "newWorkflow": "New workflow",
+    "plan": "Plan"
   },
   "workspace": {
     "projectRoot": "Project Root",

@@ -108,8 +108,14 @@ function planningItem(taskId: string): WorkflowWorkItem {
 }
 
 pgDescribe("planning-continuation terminal columns, measured on a live store", () => {
+  /*
+  FNXC:PatchnodeProjectScope 2026-09-22-03:44:
+  Recovery rehomes can complete a task and record project-owned delivery history. Bind this live
+  harness so that Patchnode transaction receives the store's non-empty project partition.
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_plan_cont",
+    projectId: "fusion-planning-continuation-e2e",
   });
 
   beforeAll(h.beforeAll);

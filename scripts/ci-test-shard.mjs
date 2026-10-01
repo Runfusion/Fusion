@@ -1120,11 +1120,11 @@ export function writeTimings(options = {}) {
   }
 
   const capturedAt = options.capturedAt ?? new Date().toISOString();
-  const snapshot = buildTimingsSnapshot(inputs, { projectRoot, capturedAt, packages: options.packages });
+  const freshSnapshot = buildTimingsSnapshot(inputs, { projectRoot, capturedAt, packages: options.packages });
 
-  if (Object.keys(snapshot.packages).length === 0) {
+  if (Object.keys(freshSnapshot.packages).length === 0) {
     console.warn("[ci-test-shard] timing inputs yielded zero packages; snapshot unchanged.");
-    return { written: false, snapshot, reason: "empty" };
+    return { written: false, snapshot: freshSnapshot, reason: "empty" };
   }
 
   const existing = readTimingsSnapshot(snapshotPath);
@@ -1134,6 +1134,26 @@ export function writeTimings(options = {}) {
     );
     return { written: false, snapshot: existing, reason: "newer-snapshot" };
   }
+
+  /*
+  FNXC:CITestSharding 2026-09-21-10:09:
+  FN-9349 requires a failed shard's successfully finalized reporter files to
+  refresh their own measurements without discarding valid timings from commands
+  that did not reach reporter finalization. Fresh files win; explicit pruning
+  remains the only path that removes a no-longer-live file from the snapshot.
+  */
+  const packages = { ...(existing?.packages ?? {}) };
+  for (const [packageName, freshPackage] of Object.entries(freshSnapshot.packages)) {
+    packages[packageName] = {
+      ...packages[packageName],
+      ...freshPackage,
+      files: {
+        ...(packages[packageName]?.files ?? {}),
+        ...(freshPackage.files ?? {}),
+      },
+    };
+  }
+  const snapshot = { ...freshSnapshot, packages };
 
   writeTimingSnapshot(snapshotPath, snapshot);
   const pkgCount = Object.keys(snapshot.packages).length;

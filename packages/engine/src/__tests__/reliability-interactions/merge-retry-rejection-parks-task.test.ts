@@ -117,6 +117,11 @@ describe("routeGraphMergeFailureToRetry — rejected merge requester", () => {
     resetExecutorMocks();
   });
 
+  it("defers a resultless pre-merge gate instead of terminally failing the card", async () => {
+    const { store } = await runRejectedRetryScenario("Cannot merge FN-GDPR53-T: task has enabled pre-merge workflow steps that never ran");
+    expect(store.updateTask.mock.calls.some((call: unknown[]) => (call[1] as any)?.status === "failed")).toBe(false);
+  });
+
   it("parks a callback that resolves without durable merge admission", async () => {
     const task = makeTask(await mkdtemp(join(tmpdir(), "fusion-gdpr53-admission-wt-")));
     const store = createMockStore();

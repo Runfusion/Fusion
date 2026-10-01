@@ -1,6 +1,6 @@
 import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import { resolveFastLaneRoute, type FastLaneTask } from "../workflows/workflow-fast-lane.js";
-import type { WorkflowIrResolverStore } from "../workflows/workflow-ir-resolver.js";
+import type { WorkflowIrResolverStore, WorkflowSelection } from "../workflows/workflow-ir-resolver.js";
 import { resolveWorkflowIrForTaskWithProvenance } from "../workflows/workflow-ir-resolver.js";
 import { resolveReviewColumns } from "../workflows/workflow-lifecycle-traits.js";
 import {
@@ -54,6 +54,8 @@ export type ResolvedPreMergeGate = {
   provenance: "selection" | "default";
   selectionAbsent?: boolean;
   resolution: PreMergeGateResolution;
+  /** Exact selection used to resolve this gate; recovery passes it to the transactional seed fence. */
+  expectedWorkflowSelection: WorkflowSelection | null;
 };
 
 /*
@@ -102,6 +104,21 @@ export async function resolvePreMergeGateForTask(
   cachedSelectionStore.getTaskWorkflowSelectionAsync = async () => selection as never;
   const resolved = await resolveWorkflowIrForTaskWithProvenance(cachedSelectionStore, taskId);
   const selectionAbsent = resolution === "not-workflow-aware" || resolution === "no-selection";
+  /*
+  FNXC:NoVerdictReviewRecovery 2026-09-23-20:18:
+  Recovery must seed against the exact selection that produced its required-gate decision. Returning
+  a copied selection lets the transactional continuation writer reject an operator workflow change
+  rather than re-running a coincidentally named node from a stale classification.
+  */
+  const expectedWorkflowSelection = selection && typeof selection === "object"
+    && typeof (selection as Partial<WorkflowSelection>).workflowId === "string"
+    && Array.isArray((selection as Partial<WorkflowSelection>).stepIds)
+    && (selection as Partial<WorkflowSelection>).stepIds!.every((stepId) => typeof stepId === "string")
+    ? {
+      workflowId: (selection as WorkflowSelection).workflowId,
+      stepIds: [...(selection as WorkflowSelection).stepIds],
+    }
+    : null;
   return {
     reviewColumns: new Set(resolveReviewColumns(resolved.ir)),
     requiredPreMergeStepIds: resolution === "not-workflow-aware"
@@ -110,5 +127,6 @@ export async function resolvePreMergeGateForTask(
     provenance: resolution === "read-failed" ? "default" : resolved.source,
     selectionAbsent,
     resolution,
+    expectedWorkflowSelection,
   };
 }

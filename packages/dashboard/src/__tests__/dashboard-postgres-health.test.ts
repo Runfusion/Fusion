@@ -24,7 +24,7 @@ FNXC:PostgresHealth 2026-07-14-23:45:
 Dashboard health must derive the live PostgreSQL layer from TaskStore, fail closed when that layer is unavailable, and surface task-ID detector failures instead of converting them into an "ok" report.
 */
 describe("evaluateDashboardPostgresHealth", () => {
-  const layer = { db: {} } as AsyncDataLayer;
+  const layer = { db: {}, healthDb: {} } as AsyncDataLayer;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -43,9 +43,31 @@ describe("evaluateDashboardPostgresHealth", () => {
     const result = await evaluateDashboardPostgresHealth(store);
 
     expect(healthMocks.checkPostgresHealth).toHaveBeenCalledWith(layer);
-    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(layer.db);
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(layer.healthDb, { projectId: undefined });
     expect(result.database.healthy).toBe(true);
     expect(result.taskIdIntegrity.status).toBe("ok");
+  });
+
+  it("prefers the engine project context for task-ID integrity partitioning", async () => {
+    const boundLayer = { ...layer, projectId: "layer-project" } as AsyncDataLayer;
+    const store = { getAsyncLayer: () => boundLayer } as TaskStore;
+
+    await evaluateDashboardPostgresHealth(store, undefined, { projectId: " daemon-project " });
+
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(boundLayer.healthDb, {
+      projectId: "daemon-project",
+    });
+  });
+
+  it("uses the bound data-layer partition when engine context is absent", async () => {
+    const boundLayer = { ...layer, projectId: "layer-project" } as AsyncDataLayer;
+    const store = { getAsyncLayer: () => boundLayer } as TaskStore;
+
+    await evaluateDashboardPostgresHealth(store);
+
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).toHaveBeenCalledWith(boundLayer.healthDb, {
+      projectId: "layer-project",
+    });
   });
 
   it("surfaces durable failed and running cutovers without an age threshold", async () => {
@@ -125,7 +147,7 @@ describe("evaluateDashboardPostgresHealth", () => {
     const result = await pending;
 
     expect(result.database.corruptionErrors).toEqual([
-      "PostgreSQL health probe timed out after 25ms (connection pool saturated?)",
+      "PostgreSQL health probe timed out after 25ms",
     ]);
     vi.useRealTimers();
   });
@@ -140,7 +162,7 @@ describe("evaluateDashboardPostgresHealth", () => {
     const result = await pending;
 
     expect(result.database.corruptionErrors).toEqual([
-      "PostgreSQL task-ID integrity probe timed out after 25ms (connection pool saturated?)",
+      "PostgreSQL task-ID integrity probe timed out after 25ms",
     ]);
     vi.useRealTimers();
   });
@@ -186,7 +208,7 @@ describe("evaluateDashboardPostgresHealth", () => {
     const result = await pending;
 
     expect(result.database.corruptionErrors).toEqual([
-      "PostgreSQL health probe timed out after 5000ms (connection pool saturated?)",
+      "PostgreSQL health probe timed out after 5000ms",
     ]);
     vi.useRealTimers();
   });

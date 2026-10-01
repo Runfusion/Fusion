@@ -73,6 +73,66 @@ describe("i18n gate regression coverage", () => {
     }
   });
 
+  /*
+   * FNXC:i18n-CatalogParity 2026-09-22-00:40:
+   * Restored archive, snippets, and workflow labels must resolve from each selected catalog.
+   * Raw-catalog assertions prevent English fallback from hiding a future missing-key regression.
+   */
+  it("keeps repaired archive, snippets, and workflow copy translated in every secondary app catalog", () => {
+    for (const locale of SUPPORTED_LOCALES.filter((locale) => locale !== "en")) {
+      const app = readCatalog(locale, "app");
+      for (const keyPath of ["board.archived", "skills.snippetsTitle", "workflowSwitcher.plan"]) {
+        expect(getStringAtPath(app, keyPath), `${locale} app.${keyPath}`).toBeTruthy();
+      }
+    }
+  });
+
+  /*
+   * FNXC:i18n-CatalogParity 2026-09-22-00:56:
+   * Restored Antigravity and workflow state entries must preserve the meaning of each source string.
+   * A non-empty generic category label masks missing translations just as effectively as fallback copy.
+   */
+  /*
+   * FNXC:i18n-CatalogParity 2026-09-22-01:13:
+   * Restored archive, scheduling, validation, provider, and workflow entries each describe a distinct UI state.
+   * Keep the raw catalog values distinct so a generic category label cannot silently replace source-specific copy.
+   */
+  it("keeps restored provider, archive, settings, validation, and workflow states distinct", () => {
+    for (const locale of SUPPORTED_LOCALES.filter((locale) => locale !== "en")) {
+      const app = readCatalog(locale, "app");
+      const providerName = getStringAtPath(app, "setup.antigravityCli.providerName");
+      const providerStates = [
+        "setup.antigravityCli.binaryNotFound",
+        "setup.antigravityCli.binaryPathPlaceholder",
+        "setup.antigravityCli.connected",
+        "setup.antigravityCli.enable",
+      ].map((keyPath) => getStringAtPath(app, keyPath));
+      expect(providerName, `${locale} Antigravity provider name`).toContain("agy");
+      expect(providerStates, `${locale} Antigravity states`).not.toContain(providerName);
+
+      const archiveValues = [
+        "column.collapseArchivedLabel",
+        "column.expandArchivedLabel",
+        "listView.archiveUnavailable",
+        "listView.bulkArchiveNoTasks",
+        "settings.scheduling.archiveAgentLog",
+        "settings.scheduling.autoArchiveDuplicateTasksHelp",
+        "scriptsModal.nameErrorMsg",
+        "scriptsModal.nameHint",
+      ].map((keyPath) => getStringAtPath(app, keyPath));
+      expect(archiveValues, `${locale} archive, settings, and validation copy`).not.toContain("");
+      expect(archiveValues[0], `${locale} archive collapse action`).not.toBe(archiveValues[1]);
+      expect(archiveValues[2], `${locale} archive unavailable state`).not.toBe(archiveValues[3]);
+      expect(archiveValues[4], `${locale} archive setting label`).not.toBe(archiveValues[5]);
+      expect(archiveValues[6], `${locale} script validation`).not.toBe(archiveValues[7]);
+
+      const workflowStates = ["workflowSwitcher.todo", "workflowSwitcher.inProgress", "workflowSwitcher.done"].map((keyPath) =>
+        getStringAtPath(app, keyPath),
+      );
+      expect(new Set(workflowStates).size, `${locale} workflow states`).toBe(workflowStates.length);
+    }
+  });
+
   it("keeps the top-level documents destination renamed to Artifacts while preserving keys", () => {
     const enApp = readCatalog("en", "app");
     expect(getStringAtPath(enApp, "nav.documents")).toBe("Artifacts");

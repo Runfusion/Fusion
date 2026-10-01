@@ -44,8 +44,14 @@ import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js
 import { DEFAULT_VOCAB, RENAMED_VOCAB, MERGED_VOCAB, MERGED_RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live merge safeguards E2E: real store, real refusals", () => {
+  /*
+  FNXC:PatchnodeProjectScope 2026-09-22-03:44:
+  Completion writes are project-owned. Bind this live terminal-finalization harness so the real
+  Patchnode transaction receives the same non-empty partition as the store and workflow config.
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_merge_safeguards_e2e",
+    projectId: "fusion-merge-safeguards-e2e",
   });
 
   beforeAll(h.beforeAll);

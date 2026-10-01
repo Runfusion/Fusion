@@ -560,8 +560,8 @@ describe("WorkflowGraphExecutor parallel/worktree foreach (U10)", () => {
     expect(backend.integrationOrder).toEqual([0, 1, 2]);
   });
 
-  it("dependency cycle at expansion fails audited", async () => {
-    // Step 1 depends on step 2 (a forward reference → cycle signature).
+  it("invalid persisted forward dependency fails before allocating an instance", async () => {
+    // Storage index 2 is a future prerequisite for parsed position 2.
     const task = taskWithSteps([{ dependsOn: [] }, { dependsOn: [2] }, { dependsOn: [] }]);
     const backend = makeFakeBackend();
     const { result } = await runScenario(

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { inspectBranchConflict } from "../execution/branch-conflicts.js";
+import { inspectBareBranchCollision, inspectBranchConflict, listUniqueBranchCommits } from "../execution/branch-conflicts.js";
 
 const execAsync = promisify(exec);
 
@@ -62,6 +62,46 @@ describe("inspectBranchConflict zero-unique behavior", () => {
 
     const result = await inspectBranchConflict({ repoDir, branchName: "fusion/fn-9001", conflictingWorktreePath: stalePath, requestingTaskId: "FN-9001", ownerTaskId: "FN-9001", startPoint: "main" });
     expect(["tip-already-merged", "fully-subsumed"]).toContain(result.kind);
+  }, 20_000);
+
+  it("uses the current integration branch rather than an old task base", async () => {
+    const repoDir = await setupRepo();
+    const oldBase = await run("git rev-parse HEAD", repoDir);
+    await run("git checkout -b fusion/fn-9001", repoDir);
+    await appendFile(path.join(repoDir, "note.txt"), "task change\n", "utf-8");
+    await run("git add note.txt && git commit -m 'feat(FN-9001): task change' -m 'Fusion-Task-Id: FN-9001'", repoDir);
+    const taskTip = await run("git rev-parse HEAD", repoDir);
+    await run("git checkout main", repoDir);
+    await run(`git merge --no-ff ${taskTip} -m 'merge task work'`, repoDir);
+
+    const livePath = path.join(repoDir, "wt-live-9001-current-base");
+    await run(`git worktree add ${JSON.stringify(livePath)} fusion/fn-9001`, repoDir);
+    const stalePath = path.join(repoDir, "wt-stale-9001-current-base");
+    await mkdir(stalePath, { recursive: true });
+
+    const unique = await listUniqueBranchCommits(repoDir, "main", "fusion/fn-9001");
+    expect(unique.commits).toHaveLength(0);
+    const result = await inspectBranchConflict({
+      repoDir,
+      branchName: "fusion/fn-9001",
+      conflictingWorktreePath: stalePath,
+      requestingTaskId: "FN-9001",
+      ownerTaskId: "FN-9001",
+      startPoint: oldBase,
+      integrationRef: "main",
+    });
+    expect(result.kind).toBe("tip-already-merged");
+    await run(`git worktree remove --force ${JSON.stringify(livePath)}`, repoDir);
+
+    const bare = await inspectBareBranchCollision({
+      repoDir,
+      branchName: "fusion/fn-9001",
+      conflictingWorktreePath: path.join(repoDir, "absent-9001"),
+      requestingTaskId: "FN-9001",
+      startPoint: oldBase,
+      integrationRef: "main",
+    });
+    expect(bare.kind).toBe("tip-already-merged");
   }, 20_000);
 
   it("returns reclaimable when branch still has unique commit", async () => {

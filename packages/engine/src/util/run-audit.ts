@@ -705,6 +705,8 @@ export type DatabaseMutationType =
   { taskId, column, orphanedCount, resultCount }.
   */
   | "task:reconcile-orphaned-pending-step-results"
+  /** Receipt-backed automatic waiver of an orphaned required singular code-review callback. */
+  | "task:stale-review-callback-waived"
   /**
    * Rewrites already-persisted singular content approvals that lack review-input proof to failed.
    * Metadata is ids/counts/outcomes-only:
@@ -891,6 +893,8 @@ export type DatabaseMutationType =
    * stall the terminal park.
    */
   | "task:merge-boundary-unproven-parked"
+  /** FNXC:WorkflowMergeRecovery 2026-09-20-19:38: Self-healing resumes a historic proofless park only after durable unfinished work and lifecycle ownership are re-verified. Metadata is ids/outcomes-only. */
+  | "task:merge-boundary-evidence-recovered"
   /** FNXC:MergeExecutionExclusion 2026-08-23-08:25: FN-180 records live-execution admission deferrals with ids and fixed signal/source/outcome enums only. */
   | "task:merge-admission-deferred-live-execution"
   /** FNXC:ConfirmedMergeFinalization 2026-08-23-08:25: FN-180 records counts-only reconciliation of stale checklist state after durable merge proof. */

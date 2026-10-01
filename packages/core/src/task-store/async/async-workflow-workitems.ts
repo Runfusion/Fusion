@@ -55,6 +55,14 @@ const TERMINAL_WORKFLOW_WORK_ITEM_STATES: ReadonlySet<string> = new Set([
 
 const ACTIVE_TASK_CONTINUATION_STATES: WorkflowWorkItemState[] = [...ACTIVE_WORKFLOW_WORK_ITEM_STATES];
 
+/** A conditional recovery lost to a current workflow owner; no row was retired. */
+export class ActiveTaskContinuationError extends Error {
+  constructor(taskId: string) {
+    super(`active task continuation exists for ${taskId}`);
+    this.name = "ActiveTaskContinuationError";
+  }
+}
+
 /**
  * FNXC:WorkflowSerialization 2026-07-26-12:00:
  * FN-8592 serializes a task's workflow continuation decisions on the logical
@@ -307,6 +315,15 @@ export async function replaceActiveTaskWorkflowContinuation(
       eq(schema.project.workflowWorkItems.kind, "task"),
       inArray(schema.project.workflowWorkItems.state, ACTIVE_TASK_CONTINUATION_STATES),
     ));
+    /*
+    FNXC:WorkflowMergeRecovery 2026-09-20-20:12:
+    Boundary-evidence repair may seed a continuation only while the graph is idle.
+    Unlike an intentional successor handoff, it must refuse a live owner rather
+    than retiring it; every task-continuation writer shares this advisory lock.
+    */
+    if (input.onlyIfNoActiveTaskContinuation && activeRows.length > 0) {
+      throw new ActiveTaskContinuationError(input.taskId);
+    }
     for (const row of activeRows as WorkflowWorkItemRow[]) {
       if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
       await transitionWorkflowWorkItem(layer, row.id, "succeeded", { leaseOwner: null, leaseExpiresAt: null, lastError: null }, tx);
@@ -372,9 +389,55 @@ an idle graph atomically, rather than replacing a live continuation or relying o
 */
 export async function seedWorkspaceCodeReviewContinuationIfIdle(
   layer: AsyncDataLayer,
-  input: WorkflowWorkItemUpsertInput & { kind: "task" },
-): Promise<{ seeded: boolean; reason?: "active-continuation"; workItemId?: string }> {
+  input: WorkflowWorkItemUpsertInput & {
+    kind: "task";
+    expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
+    expectedTaskUpdatedAt?: string;
+  },
+): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed" | "task-state-changed"; workItemId?: string }> {
   return layer.transactionImmediate(async (tx) => withTaskWorkflowSerialization(tx, layer.projectId, input.taskId, async () => {
+    /*
+    FNXC:PreMergeGateRecovery 2026-09-22-02:03:
+    A recovery continuation must be tied to the workflow selection that identified its missing gate.
+    Selection writes share this advisory lock, so validate the selected workflow inside the seed
+    transaction; a changed selection leaves the failed park intact for reclassification instead of
+    seeding an unrelated review node.
+    */
+    if (input.expectedWorkflowSelection !== undefined) {
+      const rows = await tx.select({
+        workflowId: schema.project.taskWorkflowSelection.workflowId,
+        stepIds: schema.project.taskWorkflowSelection.stepIds,
+      }).from(schema.project.taskWorkflowSelection).where(and(
+        projectScopeFor(schema.project.taskWorkflowSelection.projectId, layer.projectId),
+        eq(schema.project.taskWorkflowSelection.taskId, input.taskId),
+      )).limit(1);
+      const row = rows[0];
+      const current = row
+        ? {
+          workflowId: row.workflowId,
+          stepIds: Array.isArray(row.stepIds) ? row.stepIds.filter((id): id is string => typeof id === "string") : [],
+        }
+        : null;
+      const expected = input.expectedWorkflowSelection;
+      if (current?.workflowId !== expected?.workflowId
+        || current?.stepIds.length !== expected?.stepIds.length
+        || current?.stepIds.some((id, index) => id !== expected?.stepIds[index])) {
+        return { seeded: false, reason: "workflow-selection-changed" as const };
+      }
+    }
+    /*
+    FNXC:PostMergeRecovery 2026-10-01-04:43:
+    Recovery may schedule a missing post-merge gate only against the task snapshot that proved
+    eligibility. Fence operator holds, new evidence, and concurrent task changes under the same
+    advisory lock as the idle continuation insert; a lost race performs no mutation.
+    */
+    if (input.expectedTaskUpdatedAt !== undefined) {
+      const [task] = await tx.select({ updatedAt: schema.project.tasks.updatedAt }).from(schema.project.tasks).where(and(
+        projectScopeFor(schema.project.tasks.projectId, layer.projectId),
+        eq(schema.project.tasks.id, input.taskId),
+      )).limit(1);
+      if (!task || task.updatedAt !== input.expectedTaskUpdatedAt) return { seeded: false, reason: "task-state-changed" as const };
+    }
     const active = await tx.select({ id: schema.project.workflowWorkItems.id }).from(schema.project.workflowWorkItems).where(and(
       projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
       eq(schema.project.workflowWorkItems.taskId, input.taskId),

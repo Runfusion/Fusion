@@ -12,6 +12,7 @@ import { runWithFusionSessionIdentity, resolveFusionSessionPrincipal, type Setti
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { GitHubClient } from "../github.js";
 import {
   ChatManager,
   __setBuildAgentChatPrompt,
@@ -1444,6 +1445,41 @@ describe("ChatManager.sendMessage", () => {
     expect(mockChatStore.addMessage.mock.calls.at(-1)?.[1].content).toBe("Complete streamed answer.");
   });
 
+  it("replaces longer corrupt streamed text with the completed authoritative turn", async () => {
+    const events: Array<{ type: string; data: any }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => events.push(event));
+    const authoritative = "Clean Input/Output result.";
+    mockChatStore.addMessage.mockImplementation((sessionId, input) => ({
+      id: input.role === "user" ? "msg-user" : "msg-assistant",
+      sessionId,
+      role: input.role,
+      content: input.content,
+      thinkingOutput: null,
+      metadata: null,
+      attachments: undefined,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }));
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => options.onText?.("Clean Input/ Output result.Clean Input/Output result.")),
+        dispose: vi.fn(),
+        state: { messages: [
+          { role: "assistant", content: "Prior turn must remain excluded." },
+          { role: "user", content: "Question" },
+          { role: "assistant", content: authoritative },
+        ] },
+      },
+    }));
+
+    await createChatManager().sendMessage("chat-001", "Question");
+    unsubscribe();
+
+    const persisted = mockChatStore.addMessage.mock.calls.at(-1)?.[1];
+    const done = events.find((event) => event.type === "done");
+    expect(persisted.content).toBe(authoritative);
+    expect(done?.data.message.content).toBe(authoritative);
+  });
+
   it("excludes assistant messages from prior turns during reconciliation", async () => {
     __setCreateFnAgent(async (options: any) => ({
       session: {
@@ -2342,12 +2378,43 @@ describe("ChatManager.sendMessage", () => {
             comments: [{ text: "User wants planner chat", author: "user" }],
             steeringComments: [{ text: "Keep Activity intact", author: "user" }],
             log: [{ level: "info", message: "Activity transcript loaded" }],
+            prInfo: {
+              url: "https://github.com/owner/repo/pull/42",
+              number: 42,
+              status: "open",
+              title: "Task PR",
+              headBranch: "fusion/fn-9408",
+              baseBranch: "main",
+              commentCount: 0,
+            },
           };
         }
         return { id, title: "Selected-project dependency", column: "done" };
       }),
       getSettings: vi.fn().mockResolvedValue({}),
+      updatePrInfoByNumber: vi.fn().mockResolvedValue(undefined),
     };
+    /*
+    FNXC:TaskDetailChatPrStatus 2026-09-29-07:16:
+    The production ChatManager registration must expose both independent PR blockers in one
+    server-bound response, even when a caller supplies a foreign task id.
+    */
+    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
+      decision: "REVIEW_REQUIRED",
+      checks: [{ name: "ci/build", required: true, state: "failure" }],
+      summary: { blockingReasons: ["required checks not successful: ci/build (failure)", "PR is behind its base branch"] },
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task PR",
+        headBranch: "fusion/fn-9408",
+        baseBranch: "main",
+        commentCount: 0,
+        headOid: "checked-sha",
+        mergeable: "behind",
+      },
+    } as any);
     const chatManager = new ChatManager(
       mockChatStore as any,
       "/tmp/test",
@@ -2391,6 +2458,23 @@ describe("ChatManager.sendMessage", () => {
     expect(createOptions.systemPrompt).toContain("destructive removals");
     expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_add_steering");
     expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_get_task_metrics");
+    expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_get_pr_status");
+    const prStatusTool = createOptions.customTools.find((tool: { name: string }) => tool.name === "fn_task_planner_get_pr_status");
+    const prStatus = await prStatusTool.execute("call-1", { task_id: "FOREIGN-TASK" });
+    expect(taskStore.getTask).toHaveBeenLastCalledWith("TEST-002");
+    expect(prStatus.details).toMatchObject({
+      availability: "fresh",
+      rollup: "failure",
+      pr: { headSha: "checked-sha" },
+      checks: [{ name: "ci/build", required: true, state: "failure" }],
+      blockers: ["required checks not successful: ci/build (failure)", "PR is behind its base branch"],
+      stale: false,
+    });
+    expect(prStatus.content[0]?.text).toContain("ci/build: failure");
+    expect(prStatus.content[0]?.text).toContain("behind its base branch");
+    expect(prStatus.content[0]?.text).toContain("Head SHA: checked-sha");
+    expect(prStatus.content[0]?.text).toContain("Last checked:");
+    expect(taskStore.updatePrInfoByNumber).toHaveBeenCalledWith("TEST-002", 42, expect.objectContaining({ headOid: "checked-sha", checkRollup: "failure" }));
     expect(mockChatStore.addMessage).toHaveBeenCalledWith("chat-001", expect.objectContaining({
       role: "user",
       content: "How should I plan this?",
@@ -2517,6 +2601,7 @@ describe("ChatManager.sendMessage", () => {
     const createOptions = createResolvedSession.mock.calls[0]?.[0];
     const toolNames = (createOptions.customTools ?? []).map((tool: { name: string }) => tool.name);
     expect(toolNames).not.toContain("fn_task_planner_get_task_metrics");
+    expect(toolNames).not.toContain("fn_task_planner_get_pr_status");
     expect(toolNames).not.toContain("fn_task_planner_create_refinement");
   });
 

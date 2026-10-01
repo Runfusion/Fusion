@@ -1818,13 +1818,14 @@ export function useChat(
             flushPendingMessage();
             return;
           }
+          /*
+           * FNXC:AssistantTextCapture 2026-09-22-02:30:
+           * The done snapshot is the persisted completed turn and must replace any temporary
+           * streaming bubble when they disagree; queued mutable provider partials can corrupt
+           * an accumulator without changing the final model record.
+           */
           const assistantMessage: ChatMessageInfo = finalMessage
-            ? {
-                ...mapChatMessageToInfo(finalMessage),
-                // FN-4835 (downstream of FN-3817): the streamed accumulator is
-                // the authoritative wire transcript, so keep it when present.
-                ...(accumulated.text.length > 0 ? { content: accumulated.text } : {}),
-              }
+            ? mapChatMessageToInfo(finalMessage)
             : {
                 id: messageId || `msg-${Date.now()}`,
                 sessionId: activeSession.id,

@@ -35,6 +35,12 @@ Fusion stores multi-project and multi-node coordination state in **PostgreSQL**:
 
 **Multi-node (shared board):** every Fusion node sets the **same external** `DATABASE_URL`. A direct URL needs no duplicate `DATABASE_MIGRATION_URL`; set that override only when the runtime URL is a transaction pooler or schema work needs a separate direct endpoint. All nodes share one database; execution (worktrees, agent processes) stays per node.
 
+## PostgreSQL runtime pool capacity
+
+`FUSION_PG_POOL_MAX` sets the normal runtime-query pool capacity for each Fusion store. It accepts only an integer from `1` through `500`; the default is `3`. Resolution is explicit startup `poolMax` option first, then `FUSION_PG_POOL_MAX`, then the default. Blank, fractional, non-numeric, zero, negative, and above-range environment values produce a safe warning and retain the default rather than being coerced or clamped.
+
+Restart Fusion after changing this setting. Each store uses the configured runtime pool plus one dedicated migration session and one dedicated health session, so account for `FUSION_PG_POOL_MAX + 2` potential connections per active store when sizing a shared external PostgreSQL deployment. Raising the pool can help scheduler bursts only when the PostgreSQL server and pooler have sufficient capacity; it does not replace database connection limits or pooler configuration.
+
 Core `central` tables (names as exposed by the data layer; SQL uses snake_case):
 
 - `projects`

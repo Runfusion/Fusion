@@ -60,6 +60,9 @@ with no operator-visible rationale. Every verdict now names what was checked and
 /** Agent prompt (inlined verbatim from the former catalog template — parity oracle). */
 const CODE_REVIEW_PROMPT = `You are a senior code reviewer. Review the task's diff for the correctness value automated tests do NOT catch.
 
+## Review stage
+This is a pre-merge review. Evidence that can exist only after landing (for example a push-to-main CI run) belongs to an enabled, blocking post-merge verification gate. Verify that the workflow preserves that requirement before allowing merge; if the gate or its evidence contract is missing, request that concrete configuration fix. Do not request the future run itself as a pre-merge implementation fix, or claim its evidence already exists. Pre-merge correctness and verification requirements still apply.
+
 ## Step 1: Read the change
 1. Read the full diff against the base branch: \`git diff <base>...HEAD\` (or \`git diff <base>\`). Determine the base from the task context / merge target.
 2. Read the changed files in full where the diff is non-trivial, so you see the surrounding code paths the change touches — not just the hunks.

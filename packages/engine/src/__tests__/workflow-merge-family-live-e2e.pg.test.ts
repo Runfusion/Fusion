@@ -38,8 +38,14 @@ import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live merge finalization E2E: real store, renamed complete column", () => {
+  /*
+  FNXC:PatchnodeProjectScope 2026-09-22-03:44:
+  Completion writes are project-owned. Bind this live merge-finalization harness so its Patchnode
+  transaction uses the same non-empty partition as the store and workflow config.
+  */
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_merge_family_e2e",
+    projectId: "fusion-merge-family-e2e",
   });
 
   beforeAll(h.beforeAll);

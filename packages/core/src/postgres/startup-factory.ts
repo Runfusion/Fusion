@@ -514,6 +514,7 @@ async function bootSchemaBackendOnce(
         })
       : await createConnectionSetFromUrl(resolvedBackend, {
           poolMax: options.poolMax,
+          env,
           bypassProjectIsolation,
         });
     await applySchemaBaseline(connections.migration);
@@ -1237,6 +1238,7 @@ export async function createTaskStoreForBackend(
     await connections.close();
     connections = await createConnectionSetFromUrl(resolvedBackend, {
       poolMax: options.poolMax,
+      env,
       projectId: resolvedProjectId,
       useRuntimeRole: runtimeRoleRows[0]?.usable === true,
     });
@@ -1313,6 +1315,7 @@ export async function createTaskStoreForBackend(
         })
       : await createConnectionSetFromUrl(resolvedBackend, {
           poolMax: 1,
+          env,
           bypassProjectIsolation: true,
         });
     try {

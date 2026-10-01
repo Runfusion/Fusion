@@ -117,6 +117,28 @@ test("existing ledger file with its exclusion has no violations", () => {
   } finally { rmSync(rootDir, { recursive: true, force: true }); }
 });
 
+test("an existing concrete exclude without a ledger row is an orphan-exclude and fails strict mode", () => {
+  const rootDir = tempRoot();
+  try {
+    writeFile(rootDir, "packages/engine/src/orphan.test.ts");
+    writeConfig(rootDir, "engine", 'export default { test: { exclude: ["src/orphan.test.ts"] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [] });
+    const violations = findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) });
+    assert.deepEqual(violations.map((row) => row.kind), ["orphan-exclude"]);
+    assert.equal(main(["--strict"], { rootDir, ledgerPath, stdout: captureStream().stream, stderr: captureStream().stream, now: fixedNow }), 1);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
+test("duplicate concrete exclusions produce one deterministic orphan-exclude", () => {
+  const rootDir = tempRoot();
+  try {
+    writeFile(rootDir, "packages/engine/src/orphan.test.ts");
+    writeConfig(rootDir, "engine", 'export default { test: { exclude: ["src/orphan.test.ts", "src/orphan.test.ts"] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [] });
+    assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }).map((row) => row.kind), ["orphan-exclude"]);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
 test("exclude array naming a nonexistent test is dangling-exclude", () => {
   const rootDir = tempRoot();
   try {
@@ -132,6 +154,39 @@ test("include lists and non-array excludes are deliberately ignored", () => {
     writeConfig(rootDir, "dashboard", 'const skipListDashboardGlobs = []; export default { test: { include: ["app/missing.test.ts"], exclude: skipListDashboardGlobs } };');
     const ledgerPath = writeLedger(rootDir, { entries: [] });
     assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }), []);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
+test("CLI static quarantine list stays in lockstep with its ledger row", () => {
+  const rootDir = tempRoot();
+  try {
+    const file = "packages/cli/src/commands/__tests__/skills-get.test.ts";
+    writeFile(rootDir, file);
+    writeConfig(rootDir, "cli", 'const quarantinedCliTests: string[] = ["src/commands/__tests__/skills-get.test.ts"]; export default { test: { exclude: ["**/node_modules/**", ...quarantinedCliTests] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [healthyEntry(file)] });
+    assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }), []);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
+test("CLI ledger row missing from its static quarantine list is missing-exclude", () => {
+  const rootDir = tempRoot();
+  try {
+    const file = "packages/cli/src/commands/__tests__/skills-get.test.ts";
+    writeFile(rootDir, file);
+    writeConfig(rootDir, "cli", 'const quarantinedCliTests: string[] = []; export default { test: { exclude: ["**/node_modules/**", ...quarantinedCliTests] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [healthyEntry(file)] });
+    assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }).map((row) => row.kind), ["missing-exclude"]);
+  } finally { rmSync(rootDir, { recursive: true, force: true }); }
+});
+
+test("CLI static quarantine list without a ledger row is orphan-exclude", () => {
+  const rootDir = tempRoot();
+  try {
+    const file = "packages/cli/src/commands/__tests__/skills-get.test.ts";
+    writeFile(rootDir, file);
+    writeConfig(rootDir, "cli", 'const quarantinedCliTests: string[] = ["src/commands/__tests__/skills-get.test.ts"]; export default { test: { exclude: ["**/node_modules/**", ...quarantinedCliTests] } };');
+    const ledgerPath = writeLedger(rootDir, { entries: [] });
+    assert.deepEqual(findLockstepViolations({ rootDir, ledger: readLedger(ledgerPath) }).map((row) => row.kind), ["orphan-exclude"]);
   } finally { rmSync(rootDir, { recursive: true, force: true }); }
 });
 

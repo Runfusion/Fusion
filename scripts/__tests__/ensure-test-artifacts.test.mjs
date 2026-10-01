@@ -14,6 +14,7 @@ import {
 } from "../ensure-test-artifacts.mjs";
 
 const ENGINE_ENTRY = REQUIRED_BUILD_PACKAGES.find((pkg) => pkg.name === "@fusion/engine");
+const ANTIGRAVITY_ENTRY = REQUIRED_BUILD_PACKAGES.find((pkg) => pkg.name === "@fusion-plugin-examples/antigravity-runtime");
 
 /**
  * A git stub that returns a fixed blob sha for engine src, and reports it as a
@@ -124,6 +125,36 @@ test("ensureTestArtifacts rebuilds @fusion/engine when dist is missing", () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0].cmd, "pnpm");
   assert.deepEqual(calls[0].args, ["--filter", "@fusion/engine", "build"]);
+});
+
+test("ensureTestArtifacts restores missing Antigravity exports once without retaining bootstrap state", () => {
+  assert.deepEqual(ANTIGRAVITY_ENTRY?.requiredArtifacts, [
+    "plugins/fusion-plugin-antigravity-runtime/dist/index.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/probe.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/runtime-adapter.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/cli-spawn.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/mcp-config-transaction.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/prompt-transport.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/stream-parser.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/tool-bridge.js",
+    "plugins/fusion-plugin-antigravity-runtime/dist/mcp-schema-server.cjs",
+  ]);
+
+  const calls = [];
+  let missingArtifact = "plugins/fusion-plugin-antigravity-runtime/dist/runtime-adapter.js";
+  const existsFn = (fullPath) => missingArtifact === undefined || !fullPath.endsWith(missingArtifact);
+
+  const rebuilt = ensureTestArtifacts("/repo", (cmd, args, cwd) => calls.push({ cmd, args, cwd }), existsFn);
+  missingArtifact = undefined;
+  const healthyRepeat = ensureTestArtifacts("/repo", (cmd, args, cwd) => calls.push({ cmd, args, cwd }), existsFn);
+
+  assert.deepEqual(rebuilt, ["@fusion-plugin-examples/antigravity-runtime"]);
+  assert.deepEqual(calls, [{
+    cmd: "pnpm",
+    args: ["--filter", "@fusion-plugin-examples/antigravity-runtime", "build"],
+    cwd: "/repo",
+  }]);
+  assert.deepEqual(healthyRepeat, []);
 });
 
 test("detectMissingArtifacts flags dependency-graph when dist/dashboard-view.js is missing", () => {

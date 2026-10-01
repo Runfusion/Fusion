@@ -1212,7 +1212,8 @@
     "workflow": {
       "edit": "",
       "new": ""
-    }
+    },
+    "archived": "已封存工作"
   },
   "branchGroup": {
     "abandonGroup": "",
@@ -1430,14 +1431,6 @@
     "agentRepliesFailed": "部分代理無法回覆：{{agents}}",
     "noDefaultModelConfigured": "請先在設定中設定預設聊天模型，再建立對話。",
     "newChatOpenInNewWindowHint": "",
-    "minimizeAllChats": "最小化所有聊天",
-    "restoreAllChats": "還原所有聊天",
-    "slashSuggestions": "斜線建議",
-    "loadingSlashSuggestions": "正在載入建議…",
-    "snippetSuggestion": "插入已儲存的提示詞",
-    "snippetSuggestions": "片段建議",
-    "conversationIdCopied": "",
-    "copyConversationId": "",
     "questionOptionalLabel": "",
     "questionSelectHintWithOptional": ""
   },
@@ -1552,7 +1545,18 @@
     "sortTaskIdDescHint": "",
     "replannedTasks_one": "Replanned {{count}} task{{plural}}",
     "replannedTasks_other": "Replanned {{count}} task{{plural}}",
-    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed"
+    "replanPartialFailure": "Replanned {{replanned}} of {{total}} tasks; {{failed}} failed",
+    "archiveAllDoneAriaLabel": "封存所有已完成工作",
+    "archiveAllDoneTitle": "封存所有已完成工作",
+    "archiveAllMessage_other": "要封存 {{count}} 個已完成工作嗎？",
+    "archiveAllTitle": "封存所有已完成工作",
+    "archivedTasks_other": "已封存 {{count}} 個工作",
+    "archivedTasksWithSkips_other": "已封存 {{archived}} 個工作；略過 {{skipped}} 個：{{ids}}",
+    "collapseArchivedLabel": "收合已封存工作",
+    "collapseArchivedTitle": "收合已封存工作",
+    "expandArchivedLabel": "展開已封存工作",
+    "expandArchivedTitle": "展開已封存工作",
+    "failedToArchive": "封存工作失敗"
   },
   "commandCenter": {
     "activity": {
@@ -2579,10 +2583,7 @@
     "fileHeader": "文件",
     "fileMatches": "匹配的文件",
     "taskHeader": "任務",
-    "taskMatches": "匹配的任務",
-    "conversationHeader": "",
-    "conversationMatches": "",
-    "untitledConversation": ""
+    "taskMatches": "匹配的任務"
   },
   "git": {
     "addComment": "Add comment",
@@ -3131,11 +3132,7 @@
     "viewProjects": "查看專案",
     "viewUsage": "查看用量",
     "workflows": "工作流程",
-    "workingBranch": "工作分支",
-    "unreadArtifacts_one": "",
-    "unreadArtifacts_other": "",
-    "unreadRecommendations_one": "",
-    "unreadRecommendations_other": ""
+    "workingBranch": "工作分支"
   },
   "health": {
     "activeTasks": "活躍任務",
@@ -3441,7 +3438,20 @@
     "statusReplan": "重新規劃",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": ""
+    "bulkDeleteSummary": "",
+    "archiveSelected": "封存所選工作",
+    "archiveSelectedTitle": "封存已完成的所選工作",
+    "archiveUnavailable": "封存操作無法使用",
+    "archiveViaButton": "工作只能透過「封存」按鈕封存",
+    "bulkArchiveDone_other": "封存 {{count}} 個已完成工作",
+    "bulkArchiveMessage_other": "要封存 {{count}} 個所選工作嗎？",
+    "bulkArchiveNoTasks": "沒有可封存的所選工作（僅能封存已完成工作）",
+    "bulkArchiveSummary": "已封存 {{archived}} 個 · 略過 {{skipped}} 個 · 失敗 {{failed}} 個",
+    "bulkArchiveTitle": "封存所選工作",
+    "bulkDeleteArchiveSummary": "已封存 {{archived}} 個，已刪除 {{deleted}} 個，失敗 {{failed}} 個",
+    "bulkDeleteNoTasks": "沒有可刪除的所選工作（不包括已封存工作）",
+    "bulkDeleteWithDoneMessage": "要刪除 {{deletable}} 個工作，還是封存 {{done}} 個已完成工作並刪除其餘工作？",
+    "lineageArchiveMessage": "{{taskId}} 有 {{children}} 個譜系子工作將其參照為來源父項。\n\n要先解除這些參照再繼續封存嗎？"
   },
   "mailbox": {
     "agent": "代理",
@@ -4234,14 +4244,7 @@
     "todos": "待辦",
     "usage": "用量",
     "workflows": "工作流程",
-    "patchnode": "",
-    "artifactsUnreadAriaLabel_one": "",
-    "artifactsUnreadAriaLabel_other": "",
-    "artifactsUnreadDotAriaLabel": "",
-    "recommendations": "",
-    "recommendationsUnreadAriaLabel_one": "",
-    "recommendationsUnreadAriaLabel_other": "",
-    "recommendationsUnreadDotAriaLabel": ""
+    "patchnode": ""
   },
   "newTaskModal": {
     "addDependencies": "新增相依性",
@@ -5401,7 +5404,8 @@
     "hideDone": "",
     "noActiveTasks": "",
     "noTasksYet": "",
-    "showDone": ""
+    "showDone": "",
+    "archivedCopy": "已封存工作"
   },
   "routine": {
     "andMore_one": "",
@@ -5732,8 +5736,6 @@
     "confirmDelete": "確認刪除",
     "confirmDeleteNamed": "確認刪除 {{name}}",
     "deleteScriptNamed": "刪除 {{name}}",
-    "description": "描述（選填）",
-    "descriptionPlaceholder": "此指令碼用來做什麼？",
     "editScriptNamed": "編輯 {{name}}",
     "failedToDelete": "無法刪除指令碼",
     "failedToLoadScripts": "載入腳本失敗",
@@ -5754,7 +5756,9 @@
     "scriptNamePlaceholder": "例如，build、test、lint",
     "scriptNameRequired": "需要指令碼名稱",
     "scriptUpdated": "指令碼已更新",
-    "title": "指令碼"
+    "title": "指令碼",
+    "nameErrorMsg": "名稱只能包含字母、數字、連字號和底線（不可有空格）",
+    "nameHint": "僅限字母、數字、連字號和底線"
   },
   "secrets": {
     "accessPolicyAuto": "自動",
@@ -6239,12 +6243,7 @@
       "noLimitOnAgentToolOutput": "",
       "noLimitOnAgentToolOutputHint": "",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": "",
-      "chatSubmitOnEnter": "",
-      "chatSubmitOnEnterHint": "",
-      "chatSubmitOnEnterAuto": "",
-      "chatSubmitOnEnterAlways": "",
-      "chatSubmitOnEnterNever": ""
+      "quickAddSubmitOnEnterHint": ""
     },
     "globalModels": {
       "modelOverrides": "",
@@ -6995,7 +6994,12 @@
       "triageDuplicateResolutionHelp": "將分流偵測到的重複項攔截並要求保留/刪除決策（預設），或不攔截而自動保留/刪除。",
       "triageDuplicateResolutionPrompt": "攔截並決策（預設）",
       "triageDuplicateResolutionKeep": "自動保留",
-      "triageDuplicateResolutionDelete": "自動刪除"
+      "triageDuplicateResolutionDelete": "自動刪除",
+      "archiveAgentLog": "封存代理程式記錄",
+      "archiveCompletedTasksAfterDays": "在以下天數後封存已完成工作",
+      "autoArchiveDuplicateTasks": "自動封存重複工作",
+      "autoArchiveDuplicateTasksHelp": "建立時自動封存偵測為相同代理程式重複項的工作（預設關閉）。關閉時，重複項會保留在原處，並顯示黃色「重複」標記及「保留／封存」操作。",
+      "doNotArchiveAgentLogs": "不封存代理程式記錄"
     },
     "title": "設定",
     "worktrees": {
@@ -7532,7 +7536,30 @@
     "gitPrerequisiteMissingBody": "Fusion could not find `git` on the server host running Fusion. Install Git there before cloning repositories, initializing projects, or registering Git-backed workspaces.",
     "gitPrerequisiteMissingTitle": "Install Git before project setup",
     "gitPrerequisiteReadyTitle": "Git prerequisite ready",
-    "gitPrerequisiteWindows": "Windows: install Git for Windows and restart the Fusion host shell or service."
+    "gitPrerequisiteWindows": "Windows: install Git for Windows and restart the Fusion host shell or service.",
+    "antigravityCli": {
+      "active": "Antigravity 已啟用",
+      "binaryNotFound": "找不到 Antigravity 執行檔",
+      "binaryPathHelp": "指定 Antigravity 執行檔的路徑。保留空白即可自動偵測。",
+      "binaryPathLabel": "Antigravity 執行檔路徑",
+      "binaryPathPlaceholder": "例如：/usr/local/bin/antigravity",
+      "connected": "已連線至 Antigravity {{version}}",
+      "description": "將 Antigravity 作為 AI 供應者",
+      "detectedPrompt": "已偵測到 Antigravity。要使用它嗎？",
+      "disable": "停用 Antigravity",
+      "disabling": "正在停用 Antigravity…",
+      "enable": "啟用 Antigravity",
+      "enabling": "正在啟用 Antigravity…",
+      "notConnected": "Antigravity 未連線",
+      "pathCleared": "已清除 Antigravity 路徑",
+      "pathSaved": "已儲存 Antigravity 路徑",
+      "probing": "正在偵測 Antigravity…",
+      "providerName": "Google Antigravity — 透過 agy CLI",
+      "saveAndTestPath": "儲存並測試路徑",
+      "savingPath": "正在儲存路徑…",
+      "test": "測試",
+      "testing": "正在測試 Antigravity…"
+    }
   },
   "shell": {
     "activePill": "作用中",
@@ -7622,37 +7649,7 @@
     "noMatches": "No matching skills",
     "loadError": "Skills could not be loaded.",
     "hiddenUnavailable": "Hidden skills include disabled or not-discovered entries",
-    "snippetsReservedName": "此名稱已保留給聊天命令。",
-    "snippetsInvalidName": "請使用 1–48 個字母、數字、底線或連字號。",
-    "snippetsPromptRequired": "請輸入此片段的提示詞。",
-    "snippetsPromptTooLong": "提示詞最多可包含 {{count}} 個字元。",
-    "snippetsDuplicateName": "已存在同名片段。",
-    "snippetsLimitReached": "最多可儲存 {{count}} 個片段。",
-    "snippetsSaveError": "無法儲存片段。請重新整理後再試一次。",
-    "snippetsDeleteError": "無法刪除片段。請重新整理後再試一次。",
-    "snippetsTitle": "聊天片段",
-    "snippetsCount": "已儲存 {{count}} 個",
-    "snippetsDescription": "儲存可重複使用的提示詞，然後在任何聊天中輸入 /名稱，即可插入而不會傳送。",
-    "snippetsLoading": "正在載入片段...",
-    "snippetsLoadError": "無法重新整理片段。仍顯示上次載入的清單。",
-    "snippetsFormLabel": "聊天片段編輯器",
-    "snippetsNameLabel": "名稱",
-    "snippetsNameHelp": "字母、數字、底線或連字號；最多 48 個字元。",
-    "snippetsPromptLabel": "提示詞",
-    "snippetsPromptHelp": "{{count}} / {{max}} 個字元",
-    "snippetsSaving": "正在儲存...",
-    "snippetsSaveChanges": "儲存變更",
-    "snippetsAdd": "新增片段",
-    "snippetsEmpty": "尚未儲存片段。",
-    "snippetsEdit": "編輯 /{{name}}",
-    "snippetsDelete": "刪除 /{{name}}",
-    "tabSkills": "技能",
-    "tabSnippets": "片段",
-    "tabsLabel": "技能與片段區段",
-    "skillsDescription": "瀏覽、啟用並安裝此專案可用的技能。",
-    "snippetsEmptyHint": "在此建立片段，然後在任何聊天中輸入 /名稱 即可插入。",
-    "refreshSkillsLabel": "重新整理技能",
-    "refreshSnippetsLabel": "重新整理片段"
+    "snippetsTitle": "聊天片段"
   },
   "specEditor": {
     "edit": "編輯",
@@ -7861,9 +7858,7 @@
   },
   "taskDetail": {
     "actions": {
-      "menuBtn": "操作",
-      "oversightHeading": "",
-      "priorityHeading": ""
+      "menuBtn": "操作"
     },
     "agent": {
       "assignBtn": "指派代理",
@@ -7952,7 +7947,10 @@
       "linkedIssueTitle": "關聯的 GitHub Issue",
       "message": "刪除 {{id}}？",
       "moreOptions": "更多選項",
-      "title": "刪除任務"
+      "title": "刪除任務",
+      "archivedAfterUnlink": "解除參照後已封存工作 {{id}}",
+      "archiveInstead": "改為封存",
+      "archiveUnlinkPrompt": "要先解除這些參照再繼續封存嗎？"
     },
     "deps": {
       "addBtn": "添加依賴",
@@ -8100,7 +8098,12 @@
       "deleteTitle": "刪除重複任務",
       "triageActions": "This task stays paused until you clear this flag or delete it. Delete it if the work is already covered.",
       "dismissBtn": "Mark the duplicate flag for {{id}} as read",
-      "dismissed": "Duplicate flag cleared for {{id}}"
+      "dismissed": "Duplicate flag cleared for {{id}}",
+      "archiveBtn": "封存",
+      "archiveConfirm": "確認封存",
+      "archived": "工作 {{id}} 已封存",
+      "archiveMessage": "要將 {{id}} 作為 {{duplicateOf}} 的重複項封存嗎？",
+      "archiveTitle": "封存工作"
     },
     "nextRecoveryAt": "下次恢復時間：{{time}}",
     "no": "否",
@@ -8872,7 +8875,17 @@
       "copy": "",
       "replanCapCopy": "",
       "title": ""
-    }
+    },
+    "archive": "封存",
+    "archived": "工作 {{taskId}} 已封存",
+    "archivedUnlinked": "工作 {{taskId}} 已封存並解除關聯",
+    "archiveFailed": "封存工作 {{taskId}} 失敗：{{error}}",
+    "archiveLineageConflict": "無法封存 {{taskId}}，因為它有 {{children}} 個譜系子工作",
+    "archiveTask": "封存工作",
+    "unarchive": "取消封存",
+    "unarchived": "工作 {{taskId}} 已取消封存",
+    "unarchiveFailed": "取消封存工作 {{taskId}} 失敗：{{error}}",
+    "unarchiveTask": "取消封存工作"
   },
   "terminal": {
     "arrowKeysLabel": "",
@@ -9508,15 +9521,16 @@
   },
   "workflowSwitcher": {
     "countsAria": "{{planLabel}}: {{plan}}, {{progressLabel}}: {{progress}}, {{reviewLabel}}: {{review}}{{mergingSuffix}}",
-    "plan": "規劃",
-    "progress": "進行中",
     "label": "Workflow",
     "merging": "",
     "mergingTitle": "",
-    "review": "審查",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "newWorkflow": "New workflow",
+    "done": "已完成",
+    "inProgress": "進行中",
+    "todo": "待辦",
+    "plan": "計畫"
   },
   "workspace": {
     "projectRoot": "項目根目錄",
@@ -9761,11 +9775,7 @@
     "openTask": "",
     "close": "",
     "loading": "",
-    "retry": "",
-    "zoomIn": "",
-    "zoomOut": "",
-    "resetZoom": "",
-    "zoomLevel": ""
+    "retry": ""
   },
   "taskHistory": {
     "stage": {
@@ -9834,23 +9844,5 @@
     "lines": "lines",
     "showLess": "Show less",
     "showMore": "Show more ({{count}} {{lineLabel}})"
-  },
-  "recommendations": {
-    "count": "",
-    "createError": "",
-    "createTask": "",
-    "created": "",
-    "creating": "",
-    "emptyDescription": "",
-    "emptyTitle": "",
-    "loadError": "",
-    "loadMore": "",
-    "loading": "",
-    "loadingMore": "",
-    "retryCreate": "",
-    "source": "",
-    "title": "",
-    "truncated": "",
-    "viewTask": ""
   }
 }

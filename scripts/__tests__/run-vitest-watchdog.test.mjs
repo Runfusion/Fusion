@@ -126,6 +126,49 @@ test("runWithWatchdog: clean exit propagates code 0, no kill", async () => {
   assert.deepEqual(killed, []);
 });
 
+test("runWithWatchdog: captures the detached group identity once for cancellation", async () => {
+  const child = makeFakeChild();
+  const killed = [];
+  const p = runWithWatchdog({
+    command: "fake",
+    args: [],
+    budgetMs: 10_000,
+    graceMs: 100,
+    label: "captured-group",
+    log: () => {},
+    spawn: fakeSpawn(child),
+    killGroup: (sig, groupId) => killed.push([sig, groupId]),
+  });
+
+  child.pid = 123456;
+  process.emit("SIGHUP");
+  child.emit("close", 0, null);
+  await p;
+
+  assert.deepEqual(killed, [["SIGHUP", 999999]]);
+});
+
+test("runWithWatchdog: does not signal a child that already exited before close", async () => {
+  const child = makeFakeChild();
+  const killed = [];
+  const p = runWithWatchdog({
+    command: "fake",
+    args: [],
+    budgetMs: 10_000,
+    label: "late-close",
+    log: () => {},
+    spawn: fakeSpawn(child),
+    killGroup: (sig) => killed.push(sig),
+  });
+
+  child.exitCode = 0;
+  process.emit("SIGTERM");
+  child.emit("close", 0, null);
+  await p;
+
+  assert.deepEqual(killed, []);
+});
+
 test("runWithWatchdog: non-zero exit code is propagated unchanged", async () => {
   const child = makeFakeChild();
   const p = runWithWatchdog({

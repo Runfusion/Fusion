@@ -80,6 +80,7 @@ function resultlessReviewTask(overrides: Partial<Task> = {}): Task {
 function recoveryStore(task: Task) {
   const seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async () => ({ seeded: true }));
   return {
+    updateTaskAtomic: vi.fn(async (_id: string, reduce: (t: Task) => Partial<Task> | null) => { const patch = reduce(task); if (patch) Object.assign(task, patch); return task; }),
     getTask: vi.fn(async () => task),
     getSettings: vi.fn(async () => ({ autoMerge: true })),
     getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["code-review"] })),
@@ -129,10 +130,176 @@ describe("unrun pre-merge gate wedge regression", () => {
     expect(enqueueMerge).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])("recovers a failed unrun gate after engine stall pause=%s without merging", async (paused) => {
+    const live = resultlessReviewTask({ status: "failed", paused, workflowIrPin: "old-ir", workflowIrPinNodeId: "merge",
+      pausedReason: paused ? "in-review-stall-deadlock" : undefined,
+      error: "AUTO_MERGE_RETRY_REJECTED: Cannot merge FN-9243-resultless: task has enabled pre-merge workflow steps that never ran" });
+    const store = recoveryStore(live);
+    const enqueueMerge = vi.fn();
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless", enqueueMerge } as any).recoverMergeableReviewTasks();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "code-review" }));
+    expect(live).toMatchObject({ status: null, error: null, paused: false, column: "in-review", workflowIrPin: null, workflowIrPinNodeId: null });
+    expect(enqueueMerge).not.toHaveBeenCalled();
+  });
+
+  it("reclassifies against a workflow selected after the failed-park claim", async () => {
+    const live = resultlessReviewTask({
+      status: "failed",
+      enabledWorkflowSteps: ["code-review", "security-review"],
+      error: "task has enabled pre-merge workflow steps that never ran",
+    });
+    const store = recoveryStore(live);
+    const replacementIr = {
+      ...codingIr,
+      name: "replacement-review-workflow",
+      nodes: codingIr.nodes.map((node) => node.id === "code-review" ? { ...node, id: "security-review" } : node),
+    };
+    let selection = { workflowId: "old-review-workflow", stepIds: ["code-review"] };
+    store.getTaskWorkflowSelection.mockImplementation(() => selection);
+    store.getTaskWorkflowSelectionAsync.mockImplementation(async () => selection);
+    store.getWorkflowDefinition.mockImplementation(async (workflowId: string) => ({
+      id: workflowId,
+      ir: workflowId === "replacement-review-workflow" ? replacementIr : codingIr,
+    }));
+    store.listWorkflowDefinitions.mockResolvedValue([
+      { id: "old-review-workflow", ir: codingIr },
+      { id: "replacement-review-workflow", ir: replacementIr },
+    ]);
+    store.updateTaskAtomic.mockImplementation(async (_id: string, reduce: (task: Task) => Partial<Task> | null) => {
+      const patch = reduce(live);
+      if (patch) Object.assign(live, patch);
+      selection = { workflowId: "replacement-review-workflow", stepIds: ["security-review"] };
+      return live;
+    });
+
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+
+    expect(live).toMatchObject({ status: null, error: null });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "security-review" }));
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalledWith(expect.objectContaining({ nodeId: "code-review" }));
+  });
+
+  it("retains the failed park when selection changes before its continuation seed", async () => {
+    const error = "task has enabled pre-merge workflow steps that never ran";
+    const live = resultlessReviewTask({ status: "failed", error });
+    const store = recoveryStore(live);
+    let selection = { workflowId: "old-review-workflow", stepIds: ["code-review"] };
+    store.getTaskWorkflowSelection.mockImplementation(() => selection);
+    store.getTaskWorkflowSelectionAsync.mockImplementation(async () => selection);
+    store.seedWorkspaceCodeReviewContinuationIfIdle.mockImplementation(async (input: { expectedWorkflowSelection?: typeof selection }) => {
+      selection = { workflowId: "replacement-review-workflow", stepIds: ["security-review"] };
+      return input.expectedWorkflowSelection?.workflowId === selection.workflowId
+        ? { seeded: true }
+        : { seeded: false, reason: "workflow-selection-changed" };
+    });
+
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+
+    expect(live).toMatchObject({ status: "failed", error });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: "code-review",
+      expectedWorkflowSelection: { workflowId: "old-review-workflow", stepIds: ["code-review"] },
+    }));
+  });
+
+  it.each([
+    { userPaused: true }, { paused: true, pausedReason: "manual" },
+    { deletedAt: "2026-09-01" }, { autoMerge: false }, { error: "unrelated failure" },
+  ])("preserves operator holds and unrelated failures: %j", async (hold) => {
+    const live = resultlessReviewTask({ status: "failed", error: "task has enabled pre-merge workflow steps that never ran", ...hold });
+    const store = recoveryStore(live);
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("does not release an unrun-gate park while a continuation owns it", async () => {
+    const live = resultlessReviewTask({ status: "failed", error: "task has enabled pre-merge workflow steps that never ran" });
+    const store = recoveryStore(live);
+    store.listWorkflowWorkItemsForTask.mockResolvedValue([{ state: "running" }]);
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("lets an operator pause win the recovery claim race", async () => {
+    const live = resultlessReviewTask({ status: "failed", error: "task has enabled pre-merge workflow steps that never ran" });
+    const store = recoveryStore(live);
+    store.updateTaskAtomic.mockImplementation(async (_id: string, reduce: (t: Task) => unknown) => {
+      live.userPaused = true;
+      expect(reduce(live)).toBeNull();
+      return live;
+    });
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(live.status).toBe("failed");
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("retains a failure when unfinished implementation still blocks the gate", async () => {
+    const live = resultlessReviewTask({ status: "failed", error: "task has enabled pre-merge workflow steps that never ran", steps: [{ name: "Implement", status: "pending" }] });
+    const store = recoveryStore(live);
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("recovers the task in its renamed review lane", async () => {
+    const live = resultlessReviewTask({ column: "checking", status: "failed", error: "task has enabled pre-merge workflow steps that never ran" });
+    const store = recoveryStore(live);
+    const ir = { ...codingIr, columns: codingIr.columns.map((column) => column.id === "in-review" ? { ...column, id: "checking" } : column),
+      nodes: codingIr.nodes.map((node) => node.column === "in-review" ? { ...node, column: "checking" } : node) };
+    store.getTaskWorkflowSelection.mockReturnValue({ workflowId: "custom-review", stepIds: ["code-review"] });
+    store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "custom-review", stepIds: ["code-review"] });
+    store.getWorkflowDefinition.mockResolvedValue({ id: "custom-review", ir });
+    store.listWorkflowDefinitions.mockResolvedValue([{ id: "custom-review", ir }]);
+    store.listTasks.mockImplementation(async (options: { column: string }) => options.column === "checking" ? [live] : []);
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "code-review", sourceColumn: "checking" }));
+    expect(live.column).toBe("checking");
+    expect(live.status).toBeNull();
+  });
+
+  it("leaves unsupported workspace parks visible", async () => {
+    const live = resultlessReviewTask({ status: "failed", error: "task has enabled pre-merge workflow steps that never ran", workspaceWorktrees: {} });
+    const store = recoveryStore(live);
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(live.status).toBe("failed");
+  });
+
+  it("continues recovering other cards when one candidate cannot be inspected", async () => {
+    const first = resultlessReviewTask({ id: "FN-broken", status: "failed", error: "task has enabled pre-merge workflow steps that never ran" });
+    const live = resultlessReviewTask({ status: "failed", error: first.error });
+    const store = recoveryStore(live);
+    store.listTasks.mockImplementation(async (options: { column: string }) => options.column === "in-review" ? [first, live] : []);
+    store.listWorkflowWorkItemsForTask.mockImplementation(async (id: string) => { if (id === first.id) throw new Error("temporary read failure"); return []; });
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(first.status).toBe("failed");
+    expect(live.status).toBeNull();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledWith(expect.objectContaining({ taskId: live.id }));
+  });
+
+  it.each([undefined, "still-pinned"])("recovers drift only after the stale pin was cleared: %s", async (workflowIrPin) => {
+    const live = resultlessReviewTask({ status: "failed", workflowIrPin,
+      error: "Workflow drift park: the workflow definition changed under this run. Stale IR pin cleared — requeue the task." });
+    const store = recoveryStore(live);
+    await new SelfHealingManager(store, { rootDir: "/tmp/fn-9243-resultless" }).recoverMergeableReviewTasks();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).toHaveBeenCalledTimes(workflowIrPin ? 0 : 1);
+    expect(live.status).toBe(workflowIrPin ? "failed" : null);
+  });
+
   it("uses merge admission to schedule the producer while retaining its blocker", async () => {
     const live = resultlessReviewTask();
     const store = recoveryStore(live);
     const engine = new ProjectEngine({ projectId: "fn-9243", workingDirectory: "/tmp/fn-9243-resultless", isolationMode: "in-process", maxConcurrent: 1, maxWorktrees: 1 } as any, { on: vi.fn(), off: vi.fn() } as any, { skipNotifier: true });
+    /*
+    FNXC:NoVerdictReviewRecovery 2026-09-24-04:54:
+    Merge admission now probes no-verdict recovery before checking the pre-existing unrun-gate
+    fixture. This isolated admission seam has no started runtime, so state the intended idle-queue
+    condition explicitly instead of letting an uninitialized TaskStore hide the producer assertion.
+    */
+    vi.spyOn(engine, "isMergePending").mockResolvedValue(false);
+    vi.spyOn(engine, "rerouteFailedNoVerdictPreMergeReview").mockResolvedValue("not-applicable");
 
     const blocker = await (engine as any).resolveMergeGateBlocker(store, live, { autoMerge: true });
 

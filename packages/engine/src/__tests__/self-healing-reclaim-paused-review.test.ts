@@ -37,6 +37,22 @@ function createStore(): TaskStore & EventEmitter {
   (emitter as any).listTasks = vi.fn();
   (emitter as any).getTask = vi.fn().mockResolvedValue({ column: "in-review" });
   (emitter as any).updateTask = vi.fn(withBranchWriteProvenance(async () => undefined));
+  (emitter as any).updateTaskAtomic = vi.fn(async (id: string, updater: (task: Task) => Partial<Task> | null) => {
+    const suffix = id.toLowerCase();
+    const current = {
+      id,
+      branch: `fusion/${suffix}`,
+      worktree: `/tmp/${suffix}`,
+      status: "failed",
+      error: undefined,
+      paused: true,
+      pausedReason: "branch-conflict-unrecoverable",
+      userPaused: undefined,
+    } as Task;
+    const patch = updater(current);
+    if (patch) await (emitter as any).updateTask(id, patch);
+    return { ...current, ...patch };
+  });
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).handoffToReview = vi.fn().mockImplementation(async (taskId: string) => {
     await (emitter as any).moveTask(taskId, "in-review");
@@ -87,7 +103,6 @@ describe("self-healing reclaim paused review", () => {
 
     expect(recovered).toBe(1);
     expect(store.updateTask).toHaveBeenCalledWith("FN-4485", expect.objectContaining({ paused: false, pausedReason: undefined, status: null, error: null }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4485", "in-progress", expect.objectContaining({ moveSource: "engine" }));
     expect(store.logEntry).toHaveBeenCalledWith("FN-4485", expect.stringContaining("[recovery] reclaim-paused-review"));
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "branch:auto-reclaim",
@@ -140,7 +155,7 @@ describe("self-healing reclaim paused review", () => {
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(0);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4487", "in-review");
+    expect((store as any).updateTaskAtomic).toHaveBeenCalledWith("FN-4487", expect.any(Function));
   });
 
   it("does not reclaim userPaused tasks without branch-conflict paused reason", async () => {

@@ -123,6 +123,26 @@ describe("FN-8141 fn_task_done honest blocked exit", () => {
     expect(result.content[0].text).toContain("frozen as Blocked");
   });
 
+  it("persists a sanitized four-part report only with an accepted external block", async () => {
+    const { tool, getTask } = await setup();
+    await tool.execute("id", {
+      outcome: "blocked", obstacle: "outside-worktree", reason: "ENOSPC: no space left on device",
+      blockedReport: {
+        verifiedCondition: "Session-isolated MCP support was verified unavailable.",
+        stopReason: "Persistent configuration was not changed.",
+        unimplementedWork: "Remaining implementation was not performed.",
+        unblockCondition: "Provide a supported session-scoped interface.",
+      },
+    });
+
+    expect(getTask().externalBlock.report).toEqual({
+      verifiedCondition: "Session-isolated MCP support was verified unavailable.",
+      stopReason: "Persistent configuration was not changed.",
+      unimplementedWork: "Remaining implementation was not performed.",
+      unblockCondition: "Provide a supported session-scoped interface.",
+    });
+  });
+
   it("refuses the FN-243 missing-interpreter declaration without mutating lifecycle state", async () => {
     const reason = "Implementation is committed in 1fc8057. JavaScript tests, typecheck, and build pass, but the required Python regression command cannot run because neither python nor python3 is installed in the execution host.";
     const { store, tool, getTask } = await setup();

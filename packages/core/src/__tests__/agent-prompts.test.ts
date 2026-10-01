@@ -394,8 +394,8 @@ describe("resolveAgentPrompt", () => {
 
     expect(standardPrompt).toContain("## Environment feasibility");
     expect(standardPrompt).toContain("## Environment Capabilities");
-    expect(standardPrompt).toContain("## Environment Constraints");
-    expect(standardPrompt).toContain("Never state that a plan is blocked because a runtime is missing");
+    expect(standardPrompt).toContain("confirmed wrapper remains binding");
+    expect(standardPrompt).toContain("never state that a plan is blocked because a runtime is missing");
     expect(fastPrompt).not.toContain("## Environment feasibility");
     expect(concisePrompt).not.toContain("## Environment feasibility");
   });

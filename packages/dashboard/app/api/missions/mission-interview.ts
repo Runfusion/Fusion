@@ -311,13 +311,20 @@ export function startMilestoneInterview(
   });
 }
 
+/*
+FNXC:MilestoneSliceInterview 2026-09-29-02:03:
+Target interview routes identify the selected milestone or slice, while the opaque session ID remains
+in the request body or stream segment. Sending the session ID as the target route parameter fails the
+server's MS-/SL- identifier validation and prevents completed interviews from applying.
+*/
 /** Submit a response to a milestone interview question */
 export function respondToMilestoneInterview(
+  milestoneId: string,
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
 ): Promise<TargetInterviewResponse> {
-  return api<TargetInterviewResponse>(buildMilestoneInterviewUrl(sessionId, "/respond", projectId), {
+  return api<TargetInterviewResponse>(buildMilestoneInterviewUrl(milestoneId, "/respond", projectId), {
     method: "POST",
     body: JSON.stringify({ sessionId, responses }),
   });
@@ -325,6 +332,7 @@ export function respondToMilestoneInterview(
 
 /** Connect to milestone interview SSE stream and handle events */
 export function connectMilestoneInterviewStream(
+  milestoneId: string,
   sessionId: string,
   projectId: string | undefined,
   handlers: {
@@ -337,7 +345,7 @@ export function connectMilestoneInterviewStream(
   },
   options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
-  const url = buildApiUrl(buildMilestoneInterviewUrl(sessionId, `/${encodeURIComponent(sessionId)}/stream`, projectId));
+  const url = buildApiUrl(buildMilestoneInterviewUrl(milestoneId, `/${encodeURIComponent(sessionId)}/stream`, projectId));
   let keepAlive: { stop: () => void } | null = null;
   let connection: { close: () => void; isConnected: () => boolean } | null = null;
 
@@ -416,11 +424,12 @@ export function connectMilestoneInterviewStream(
 
 /** Apply milestone interview results to the milestone */
 export function applyMilestoneInterview(
+  milestoneId: string,
   sessionId: string,
   summary?: TargetInterviewSummary,
   projectId?: string,
 ): Promise<Milestone> {
-  return api<Milestone>(buildMilestoneInterviewUrl(sessionId, "/apply", projectId), {
+  return api<Milestone>(buildMilestoneInterviewUrl(milestoneId, "/apply", projectId), {
     method: "POST",
     body: JSON.stringify({ sessionId, summary }),
   });
@@ -448,11 +457,12 @@ export function startSliceInterview(
 
 /** Submit a response to a slice interview question */
 export function respondToSliceInterview(
+  sliceId: string,
   sessionId: string,
   responses: Record<string, unknown>,
   projectId?: string,
 ): Promise<TargetInterviewResponse> {
-  return api<TargetInterviewResponse>(buildSliceInterviewUrl(sessionId, "/respond", projectId), {
+  return api<TargetInterviewResponse>(buildSliceInterviewUrl(sliceId, "/respond", projectId), {
     method: "POST",
     body: JSON.stringify({ sessionId, responses }),
   });
@@ -460,6 +470,7 @@ export function respondToSliceInterview(
 
 /** Connect to slice interview SSE stream and handle events */
 export function connectSliceInterviewStream(
+  sliceId: string,
   sessionId: string,
   projectId: string | undefined,
   handlers: {
@@ -472,7 +483,7 @@ export function connectSliceInterviewStream(
   },
   options?: { maxReconnectAttempts?: number },
 ): { close: () => void; isConnected: () => boolean } {
-  const url = buildApiUrl(buildSliceInterviewUrl(sessionId, `/${encodeURIComponent(sessionId)}/stream`, projectId));
+  const url = buildApiUrl(buildSliceInterviewUrl(sliceId, `/${encodeURIComponent(sessionId)}/stream`, projectId));
   let keepAlive: { stop: () => void } | null = null;
   let connection: { close: () => void; isConnected: () => boolean } | null = null;
 
@@ -551,11 +562,12 @@ export function connectSliceInterviewStream(
 
 /** Apply slice interview results to the slice */
 export function applySliceInterview(
+  sliceId: string,
   sessionId: string,
   summary?: TargetInterviewSummary,
   projectId?: string,
 ): Promise<Slice> {
-  return api<Slice>(buildSliceInterviewUrl(sessionId, "/apply", projectId), {
+  return api<Slice>(buildSliceInterviewUrl(sliceId, "/apply", projectId), {
     method: "POST",
     body: JSON.stringify({ sessionId, summary }),
   });

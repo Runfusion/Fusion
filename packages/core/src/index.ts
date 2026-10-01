@@ -88,13 +88,13 @@ export { customProviderRegistryKey } from "./ai/custom-provider-key.js";
 export {
   ANTHROPIC_PROVIDER_ID,
   ANTHROPIC_API_KEY_PROVIDER_ID,
-  CLAUDE_FABLE_5_1_MODEL_ID,
-  CLAUDE_SONNET_5_MODEL_ID,
+  CLAUDE_OPUS_5_5_MODEL_ID,
+  CLAUDE_SONNET_5_5_MODEL_ID,
   SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION,
   mergeSupplementalAnthropicModels,
   toExecutionModelProviderId,
 } from "./ai/anthropic-models.js";
-export type { AnthropicProviderRegistration } from "./ai/anthropic-models.js";
+export type { AnthropicModelRegistration, AnthropicProviderRegistration } from "./ai/anthropic-models.js";
 export {
   ANTHROPIC_MODEL_MIN_CLAUDE_CODE_VERSION,
   buildAnthropicClaudeCodeIdentityHeaders,
@@ -539,6 +539,8 @@ export {
   parseStepHeadings,
   matchStepHeadings,
   parseJsonSteps,
+  validateStepDependencies,
+  StepDependencyValidationError,
   resolveAuthoredStepHeadingOffset,
   __resetStepParserRegistryForTests,
 } from "./tasks/step-parsers.js";
@@ -548,6 +550,8 @@ export type {
   StepParseResult,
   ParsedStep,
   StepParserRegistrationReason,
+  StepDependencyCoordinate,
+  StepDependencyValidationReason,
 } from "./tasks/step-parsers.js";
 export {
   registerDefaultWorkflowHooks,
@@ -884,6 +888,7 @@ export {
   acquireWorktreePathReservation,
   withWorktreePathReservation,
   readWorktreePathReservation,
+  resolveWorktreePathReservationDirectory,
   canonicalizeWorktreePath,
   type WorktreePathReservation,
   type WorktreePathReservationOptions,
@@ -1284,6 +1289,7 @@ export {
   MANUAL_RETRY_RESET_COUNTER_KEYS,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
+  buildManualRetryResetPatchIfCurrent,
 } from "./tasks/manual-retry-reset.js";
 export {
   RESTART_STAGE_FENCE_REASON,
@@ -1295,9 +1301,10 @@ export {
   isTaskExternallyBlocked,
   buildTaskExternalBlockPatch,
   buildTaskExternalBlockClearPatch,
+  buildTaskExternalBlockReport,
   formatTaskExternalBlockReason,
 } from "./tasks/task-external-block.js";
-export type { TaskExternalBlock, TaskExternalBlockOrigin } from "./tasks/task-external-block.js";
+export type { TaskExternalBlock, TaskExternalBlockOrigin, TaskExternalBlockReport } from "./tasks/task-external-block.js";
 export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
 export type {
   TaskColumnRestartEntryNode,
@@ -1437,7 +1444,8 @@ export {
   requiresContentReviewProof,
   resolveUnprovenReviewApproval,
 } from "./merge/pre-merge-approval.js";
-export { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export type { RequiredPostMergeEvidenceDecision } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {
@@ -3049,6 +3057,7 @@ export {
 export {
   WORKFLOW_STEP_NOT_RUN_REASONS,
   isWorkflowStepNotRun,
+  deriveStaleReviewCallbackAttemptId,
   type WorkflowStepNotRunReason,
   upsertWorkflowStepResult,
   normalizeWorkflowReviewFindings,

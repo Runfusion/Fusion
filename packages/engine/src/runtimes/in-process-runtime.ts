@@ -1100,7 +1100,7 @@ export class InProcessRuntime
   private mergeEnqueuer?: (taskId: string) => boolean;
   private mergeRequester?: (
     taskId: string,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; graphOwnedPostMergeTraversal?: boolean },
   ) => Promise<import("@fusion/core").MergeResult>;
   private clearMergeActive?: (taskId: string) => void;
   private activeMergeTaskIdProvider?: () => string | null;
@@ -1113,6 +1113,8 @@ export class InProcessRuntime
    * self-healing reconcilers to avoid re-dispatching / reclaiming a task mid-dequeue→rawMerge.
    */
   private mergePendingProvider?: (taskId: string) => boolean | Promise<boolean>;
+  /** ProjectEngine-owned no-verdict re-review fence, forwarded to automatic recovery owners. */
+  private failedNoVerdictPreMergeReviewRerouter?: (task: import("@fusion/core").Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">;
   /** Tracks whether startup recovery was intentionally deferred due to pause state. */
   private startupRecoveryDeferred = false;
   /** Prevent duplicate unpause recovery dispatches from racing each other. */
@@ -1740,6 +1742,9 @@ export class InProcessRuntime
       if (this.mergeRequester) {
         this.executor.setMergeRequester(this.mergeRequester);
       }
+      if (this.failedNoVerdictPreMergeReviewRerouter) {
+        this.executor.setFailedNoVerdictPreMergeReviewRerouter(this.failedNoVerdictPreMergeReviewRerouter);
+      }
 
       await yieldEventLoop();
 
@@ -2034,6 +2039,7 @@ export class InProcessRuntime
         recoverFailedPreMergeStep: (task) => this.executor.recoverFailedPreMergeWorkflowStep(task),
         /* FNXC:LifecycleContainment 2026-08-30-13:36: without this wiring the sweep's claim never reaches the recovery, so a refusal releases its claim and is re-narrated every five minutes. */
         recoverFailedPreMergeStepDetailed: (task, options) => this.executor.recoverFailedPreMergeWorkflowStepDetailed(task, options),
+        rerouteFailedNoVerdictPreMergeReview: this.failedNoVerdictPreMergeReviewRerouter,
         getExecutingTaskIds: () => this.executor?.getExecutingTaskIds() ?? new Set<string>(),
         clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean; externallyBlocked?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
         /*
@@ -2569,7 +2575,7 @@ export class InProcessRuntime
   setMergeRequester(
     requestMerge: (
       taskId: string,
-      options?: { signal?: AbortSignal },
+      options?: { signal?: AbortSignal; graphOwnedPostMergeTraversal?: boolean },
     ) => Promise<import("@fusion/core").MergeResult>,
   ): void {
     this.mergeRequester = requestMerge;
@@ -2594,6 +2600,13 @@ export class InProcessRuntime
 
   setMergePendingProvider(isMergePending: (taskId: string) => boolean | Promise<boolean>): void {
     this.mergePendingProvider = isMergePending;
+  }
+
+  setFailedNoVerdictPreMergeReviewRerouter(
+    reroute: (task: import("@fusion/core").Task) => Promise<"rerouted" | "pending" | "changed" | "unavailable" | "not-applicable">,
+  ): void {
+    this.failedNoVerdictPreMergeReviewRerouter = reroute;
+    this.executor?.setFailedNoVerdictPreMergeReviewRerouter(reroute);
   }
 
   /**

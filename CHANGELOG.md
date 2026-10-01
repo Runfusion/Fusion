@@ -2,6 +2,62 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.7
+
+### Highlights
+- Engine: merged tasks stay open until required post-merge evidence is approved
+- Pre-merge reviews that end without a verdict now re-run instead of stranding tasks
+- Held planning backs off from 15s up to 5min instead of retrying every few seconds with no planner
+- Task checkouts recover from stale reservations, and cleanup keeps active review worktrees
+- Custom workflows now apply each review lane's blocking severity setting
+
+### Fixed
+- Merged tasks stay open until the required post-merge evidence is approved. Recovery and finalization now wait for that approval.
+- Failed pre-merge reviews that finish without a verdict are re-run. The earlier review evidence and open findings are kept.
+- Interrupted review evidence is recovered without stranding approved tasks. Retries after a review with no verdict no longer reopen finished checklist work.
+- When no planner agent is available, held planning no longer re-runs every few seconds. It backs off from 15s, doubling up to 5min, and logs each distinct hold reason once.
+- Task checkouts now recover from stale reservations instead of repeating failed review attempts.
+- Automatic cleanup now keeps active pre-release review worktrees.
+- Custom workflows now apply the blocking severity set for each review lane.
+- On the CLI, retrying a failed review task that was paused by a deadlock returns it to its runnable lane. Progress is kept.
+- Completion history is kept when tasks move in legacy-compatible ways.
+- When Antigravity status polling is disabled, it no longer starts the optional CLI.
+- Built-in skill guide commands return control promptly and reliably under load, including for rejected or unknown guide requests.
+- The plugin SDK's type declarations now pass strict typechecking in consumer projects.
+
+## 0.78.0-beta.6
+
+### Highlights
+- Pi runtime updated to 0.86.1, adding Meta Muse sign-in and API-key authentication
+- New Google Antigravity CLI streaming provider for running agents
+- Engine recovers stalled review gates and failed runs in place and keeps completed work
+- Mobile task popups and full-screen sheets keep Close controls reachable on phones and PWAs
+- PostgreSQL health checks stay reliable during busy scheduling, with no false task-ID warnings
+
+### New
+- Updated the bundled Pi runtime to 0.86.1 and added Meta Muse sign-in and API-key authentication.
+- Added Google Antigravity CLI as a streaming provider, with managed setup and operator configuration.
+
+### Fixed
+- Stalled review gates and failed runs now recover in place, and completed work is kept.
+- Cards that are missing workflow implementation evidence now go back through recovery before merge instead of failing for good.
+- Tasks waiting on unfinished dependencies no longer trigger repeated resume attempts.
+- A genuine execution block now sends one clear, safe explanation to the dashboard mailbox.
+- Close controls in the mobile task popup no longer sit under the phone's status bar or other system UI.
+- Close controls on full-screen mobile sheets stay reachable in installed PWAs.
+- Streamed assistant replies in chat now match the final text, even when provider events arrive before the display catches up.
+- Recommendation follow-ups are still available after their source task is archived.
+- Archived recommendation follow-ups still work after workflow lanes are renamed.
+- Verified Nix development-shell checks keep applying during task planning and review.
+- Healthy multi-project PostgreSQL setups no longer show false task-ID corruption warnings.
+- PostgreSQL health checks stay reliable while the scheduler is busy.
+- Migration backups from stale SQLite databases now complete without marking health as degraded.
+- Missing translation keys are restored in all supported languages.
+
+### Internal
+- Pipeline recovery smoke checks now finish within their fixed timeout.
+- Cleanup from an old test run no longer affects the test processes that run after it.
+
 ## 0.78.0-beta.5
 
 ### Highlights

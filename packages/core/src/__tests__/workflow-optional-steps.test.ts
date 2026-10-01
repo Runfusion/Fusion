@@ -146,7 +146,7 @@ describe("resolveWorkflowOptionalSteps (optional-group nodes)", () => {
         name: "Post-merge verification",
         description: "",
         phase: "post-merge" as const,
-        defaultOn: false,
+        defaultOn: true,
         reportingOnly: false,
       },
     ];
@@ -177,12 +177,13 @@ describe("resolveWorkflowOptionalSteps (optional-group nodes)", () => {
     expect(resolveDefaultOnOptionalGroupIds(ir)).toEqual(["plan-review", "code-review"]);
   });
 
-  it("seeds default-on optional groups but not browser-verification for the built-ins", () => {
+  it("seeds review and post-merge evidence groups but not browser-verification for the built-ins", () => {
     // resolveDefaultOnOptionalGroupIds drives which groups a new task gets enabled by
-    // default: review groups are on, browser-verification is off.
-    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
-    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
-    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
+    // default: pre-merge review and post-merge evidence are on, while browser verification is off.
+    const expected = ["plan-review", "code-review", "post-merge-verification"];
+    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_CODING_WORKFLOW_IR)).toEqual(expected);
+    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(expected);
+    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)).toEqual(expected);
   });
 });
 

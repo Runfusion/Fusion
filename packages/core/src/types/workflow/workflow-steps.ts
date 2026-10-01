@@ -34,6 +34,8 @@ export type WorkflowStepGateMode = "gate" | "advisory";
 
 /** Closed severity vocabulary shared by persisted workflow findings and Review-tab items. */
 export type WorkflowReviewFindingSeverity = "low" | "medium" | "high" | "critical";
+/** Closed authoring vocabulary for the threshold at which review findings block. */
+export type ReviewBlockingSeverity = WorkflowReviewFindingSeverity | "any";
 export type WorkflowReviewFindingResolution = "open" | "resolved-in-review" | "superseded" | "dispute-upheld";
 
 /**
@@ -104,6 +106,8 @@ export interface WorkflowStep {
   toolMode?: WorkflowStepToolMode;
   /** In-memory graph-node config: named MCP servers allowed for this readonly step. */
   readonlyMcpServers?: string[];
+  /** Author-declared threshold for this direct or optional-group review lane. */
+  blockingSeverity?: ReviewBlockingSeverity;
   /** Name of a skill to load into this step's session (e.g.
    *  "compound-engineering:ce-work"). When set, the step session loads the named
    *  skill (discovery + selection) and the engine injects the Fusion workflow-step
@@ -471,6 +475,22 @@ export interface WorkflowStepResult {
    */
   /** Bounded, single-level history of prior terminal-failure attempts this entry replaced. Read-only; never affects merge-blocking or recovery selection. */
   priorAttempts?: WorkflowStepResult[];
+  /*
+  FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+  A lost callback may be waived only by a store-attested receipt. This carrier deliberately records
+  no reviewer approval and is distinct from operator bypass fields, so copied task JSON cannot
+  manufacture authority at the merge gate.
+  */
+  automatedStaleCallbackWaiver?: {
+    receiptId: string;
+    policyVersion: "fn-9429-v1";
+    actor: "system:stale-review-callback-waiver";
+    reason: "proven-stale-code-review-callback";
+    issuedAt: string;
+    priorStatus: "pending" | "failed";
+    /** Immutable identity of the exact attempt replaced by this carrier. */
+    attemptId: string;
+  };
 }
 
 /**

@@ -222,7 +222,13 @@ describe("core audit emitters tolerate hostile sinks", () => {
         getTask: vi.fn(async () => task),
         getTaskWorkflowSelection: () => undefined,
         getTaskWorkflowSelectionAsync: async () => undefined,
-        moveTask: vi.fn(async () => ({ ...task, column: "done" })),
+        withPlanningLifecycleLock: async <T>(_id: string, fn: () => Promise<T>) => fn(),
+        updateTaskUnlocked: vi.fn(async (_id: string, patch: object) => Object.assign(task, patch)),
+        moveTaskIf: vi.fn(async (_id: string, to: string, predicate: (live: typeof task) => boolean | Promise<boolean>) => {
+          if (!await predicate(task) || task.column === to) return { task, moved: false };
+          task.column = to;
+          return { task, moved: true };
+        }),
         emit: vi.fn(),
       };
       await expect(applyPrMergedTransitionImpl(owner as never, task.id, { agentId: "merger", runId: "run-9177" })).resolves.toEqual({ moved: true });

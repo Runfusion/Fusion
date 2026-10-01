@@ -292,6 +292,43 @@ test("writeTimings writes snapshot to scripts/test-timings.json under a project 
   }
 });
 
+test("writeTimings retains prior valid files when a failed shard finalizes only some reporters", () => {
+  const root = tmpRoot();
+  try {
+    const inputDir = path.join(root, ".timings");
+    mkdirSync(inputDir, { recursive: true });
+    writeFileSync(path.join(inputDir, "timings-shard2-0.json"), JSON.stringify(makeReport(root, [
+      { rel: "packages/core/fresh.test.ts", durationMs: 500 },
+    ])));
+    const snapshotPath = path.join(root, TIMINGS_SNAPSHOT_RELATIVE);
+    mkdirSync(path.dirname(snapshotPath), { recursive: true });
+    writeFileSync(snapshotPath, JSON.stringify({
+      capturedAt: "2026-06-02T00:00:00.000Z",
+      packages: {
+        "@fusion/core": { files: { "packages/core/fresh.test.ts": 100, "packages/core/retained.test.ts": 700 } },
+        "@fusion/engine": { files: { "packages/engine/retained.test.ts": 900 } },
+      },
+    }));
+
+    const result = writeTimings({
+      projectRoot: root,
+      inputDir,
+      snapshotPath,
+      packages: PACKAGES,
+      capturedAt: "2026-06-03T00:00:00.000Z",
+    });
+
+    assert.equal(result.written, true);
+    assert.deepEqual(result.snapshot.packages["@fusion/core"].files, {
+      "packages/core/fresh.test.ts": 500,
+      "packages/core/retained.test.ts": 700,
+    });
+    assert.equal(result.snapshot.packages["@fusion/engine"].files["packages/engine/retained.test.ts"], 900);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("writeTimings refuses to overwrite a newer snapshot", () => {
   const root = tmpRoot();
   try {

@@ -2460,59 +2460,34 @@ describe("createFnAgent", () => {
     });
   });
 
-  it("synthesizes direct Anthropic Claude Sonnet 5 from supplemental metadata when the live registry lacks it", async () => {
-    // Live registry has no anthropic models; mergeSupplementalAnthropicModels re-adds Sonnet 5.
+  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("synthesizes direct Anthropic %s when the live registry lacks it", async (modelId) => {
     getAllMock.mockReturnValue([]);
-    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+    findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({
-      cwd: "/tmp",
-      systemPrompt: "test",
-      tools: "readonly",
-      defaultProvider: "anthropic",
-      defaultModelId: "claude-sonnet-5",
-    });
+    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
 
-    // SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION advertises claude-sonnet-5 on the direct provider again.
     expect(registerProviderMock).toHaveBeenCalledWith("anthropic", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-5" })]),
+      models: expect.arrayContaining([expect.objectContaining({ id: modelId })]),
     }));
-    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-      model: { provider: "anthropic", id: "claude-sonnet-5" },
-    }));
+    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: "anthropic", id: modelId } }));
   });
 
-  it("preserves upstream Claude Sonnet 5 while adding missing supplemental models", async () => {
-    getAllMock.mockReturnValue([
-      {
-        provider: "anthropic",
-        id: "claude-sonnet-5",
-        name: "Claude Sonnet 5 Upstream",
-        reasoning: true,
-        input: ["text", "image"],
-        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-        contextWindow: 1_000_000,
-        maxTokens: 128_000,
-      },
-    ]);
-    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("preserves upstream %s while adding missing supplemental models", async (modelId) => {
+    const upstream = {
+      provider: "anthropic", id: modelId, name: `${modelId} Upstream`, reasoning: true, input: ["text", "image"],
+      cost: { input: 99, output: 199, cacheRead: 9.9, cacheWrite: 24.75 }, contextWindow: 42, maxTokens: 7,
+    };
+    getAllMock.mockReturnValue([upstream]);
+    findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({
-      cwd: "/tmp",
-      systemPrompt: "test",
-      tools: "readonly",
-      defaultProvider: "anthropic",
-      defaultModelId: "claude-sonnet-5",
-    });
+    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
 
     const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
     expect(anthropicRegistrations).toHaveLength(1);
-    expect(anthropicRegistrations[0]?.[1].models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream" }),
-      expect.objectContaining({ id: "claude-fable-5-1", name: "Claude Fable 5.1" }),
-    ]));
+    const rows = anthropicRegistrations[0]?.[1].models.filter((model: { id: string }) => model.id === modelId);
+    expect(rows).toEqual([expect.objectContaining({ name: upstream.name, contextWindow: upstream.contextWindow, cost: upstream.cost })]);
   });
 
   it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {
@@ -3484,7 +3459,7 @@ describe("createFnAgent", () => {
       expect(result?.auth.headers).toEqual({
         "X-Session-Id": "FN-9245",
         "X-Session-Affinity": "FN-9245",
-        "user-agent": "claude-cli/2.1.251",
+        "user-agent": "claude-cli/2.1.284",
       });
     });
 
@@ -3494,7 +3469,7 @@ describe("createFnAgent", () => {
 
       const result = await runtime.getAuth(anyModel);
 
-      expect(result?.auth.headers).toEqual({ "user-agent": "claude-cli/2.1.251" });
+      expect(result?.auth.headers).toEqual({ "user-agent": "claude-cli/2.1.284" });
     });
   });
 

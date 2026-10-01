@@ -34,7 +34,17 @@ function createStore(
   settings: Partial<Settings> = {},
   branchGroup?: BranchGroup,
 ): TaskStore {
-  let currentTask = { ...task };
+  let currentTask = {
+    /*
+    FNXC:PostMergeEvidence 2026-09-30-07:57:
+    Direct-merge success fixtures must model the durable approval re-read by the finalizer.
+    Individual refusal cases override this state rather than bypassing the production fence.
+    */
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true },
+    ...task,
+  };
   const mergedSettings: Settings = {
     ...DEFAULT_SETTINGS,
       mergeIntegrationWorktree: "cwd-main" as const,
@@ -64,6 +74,15 @@ function createStore(
       } as Task;
       return currentTask;
     }),
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: Task) => Partial<Task> | Promise<Partial<Task>>) => {
+      currentTask = { ...currentTask, ...await reducer(currentTask) } as Task;
+      return currentTask;
+    }),
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>) => {
+      if (!await predicate(currentTask)) return { moved: false, task: currentTask };
+      currentTask = { ...currentTask, column, columnMovedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Task;
+      return { moved: true, task: currentTask };
+    }),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
     updateSettings: vi.fn(async () => mergedSettings),
@@ -77,6 +96,8 @@ function createStore(
     getBranchGroup: vi.fn(() => branchGroup ?? null),
     recordBranchGroupMemberLanded: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
+    enqueueMergeQueue: vi.fn(async () => undefined),
+    recordActivity: vi.fn(async () => undefined),
   } as unknown as TaskStore;
 }
 
@@ -206,8 +227,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
         ([, patch]) => Array.isArray(patch?.modifiedFiles) && patch.modifiedFiles.length === 0,
       ),
     ).toBe(false);
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.some(([, column]) => column === "done")).toBe(false);
-    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
   }, 20_000);
 
   it("FN-6461: demotes no-commits proven no-op tasks when skipped work outweighs done work", async () => {
@@ -256,8 +276,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(store.updateTask).toHaveBeenCalledWith("FN-NO-COMMITS", expect.objectContaining({
       error: expect.stringContaining("skipped verification step"),
     }));
-    expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-NO-COMMITS", "done");
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-NO-COMMITS",
       expect.stringContaining("Finalize blocked (no-commits incomplete-work guard)"),
@@ -303,7 +322,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-NO-COMMITS-DONE", "done", expect.any(Function), expect.any(Object));
   }, 20_000);
 
   it("FN-213: clears a removed worktree pointer while retaining an operator branch", async () => {
@@ -354,6 +373,67 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(result.task.branchContext?.branchOverride).toEqual(branchOverride);
   }, 20_000);
 
+  it("FN-9430: records an activity when a stale reuse pointer is reacquired", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "fusion-merger-reacquire-activity-"));
+    repos.push(repo);
+    git(repo, "git init -b main");
+    git(repo, 'git config user.email "test@example.com"');
+    git(repo, 'git config user.name "Test User"');
+    git(repo, "git commit --allow-empty -m 'init'");
+    const baseSha = git(repo, "git rev-parse HEAD");
+    git(repo, "git checkout -b operator/fn-9430");
+    writeFileSync(join(repo, "reacquire.txt"), "reacquire\n", "utf-8");
+    git(repo, "git add reacquire.txt && git commit -m 'test(FN-9430): add reacquire fixture'");
+    git(repo, "git checkout main");
+    const worktree = join(repo, ".operator-worktree");
+    git(repo, `git worktree add -q ${JSON.stringify(worktree)} operator/fn-9430`);
+    const branchOverride = { by: "operator" as const, at: "2026-09-30T08:17:00.000Z", branch: "operator/fn-9430" };
+    const task = {
+      id: "FN-9430",
+      title: "FN-9430",
+      description: "FN-9430",
+      column: "in-review",
+      branch: "operator/fn-9430",
+      branchContext: { branchOverride },
+      worktree: join(repo, ".stale-operator-worktree"),
+      baseBranch: "main",
+      baseCommitSha: baseSha,
+      dependencies: [],
+      steps: [{ name: "Verify", status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt: "# FN-9430",
+    } as unknown as Task;
+    const store = createStore(task, { mergeIntegrationWorktree: "reuse-task-worktree" as any });
+
+    await expect(aiMergeTask(store, repo, task.id)).rejects.toThrow("head-branch-mismatch");
+
+    /*
+    FNXC:MergeWorktreeReacquisition 2026-09-30-08:17:
+    A stale task pointer must reacquire a usable branch worktree and record that recovery.
+    The activity payload preserves the same recovered branch and worktree that the store persists.
+    */
+    const reacquireUpdate = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls
+      .map(([, patch]) => patch)
+      .find((patch) => typeof patch?.worktree === "string");
+    const [activity] = (store.recordActivity as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(reacquireUpdate).toEqual(expect.objectContaining({ branch: expect.any(String), worktree: expect.any(String) }));
+    expect(activity).toEqual({
+      type: "task:merge-worktree-reacquired",
+      taskId: "FN-9430",
+      taskTitle: "FN-9430",
+      details: expect.stringContaining("Merge worktree reacquired"),
+      metadata: expect.objectContaining({
+        reason: expect.any(String),
+        branch: reacquireUpdate?.branch,
+        worktreePath: reacquireUpdate?.worktree,
+        source: expect.any(String),
+      }),
+    });
+  }, 20_000);
+
   it("FN-6461: demotes no-commits empty-own-diff fast-path before cleanup", async () => {
     const repo = mkdtempSync(join(tmpdir(), "fusion-merger-no-commits-empty-own-"));
     repos.push(repo);
@@ -390,8 +470,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
     expect(result.merged).toBe(false);
     expect(result.error).toContain("done=1, incomplete=1");
     expect(store.updateTask).toHaveBeenCalledWith("FN-EMPTY-BLOCK", expect.objectContaining({ error: expect.any(String) }));
-    expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-EMPTY-BLOCK", "done");
+    expect(store.moveTaskIf).not.toHaveBeenCalled();
     expect(git(repo, "git show-ref --verify --quiet refs/heads/fusion/fn-empty-block; echo $?")).toBe("0");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-EMPTY-BLOCK",
@@ -435,7 +514,7 @@ describeIfGit("aiMergeTask finalize no-op unproven reproduction (real git)", () 
 
     expect(result.merged).toBe(true);
     expect(result.noOp).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-EMPTY-DONE", "done");
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-EMPTY-DONE", "done", expect.any(Function), expect.any(Object));
   }, 20_000);
 
   it("blocks FN-4653 shape: foreign start-point branch with no FN-owned commits", async () => {

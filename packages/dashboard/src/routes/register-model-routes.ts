@@ -385,20 +385,13 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         runtimeLogger.child("models").warn(`Model registry refresh outcome: ${refreshOutcome}; serving retained catalog`);
       }
       /*
-      FNXC:ModelCatalog 2026-08-12-01:00:
-      FN-8902 bounds and caches only the refresh operation. Supplemental merges and
-      dedupe remain unconditional per request because refresh can replace provider
-      rows; cached, failed, or timed-out paths must return the same live catalog shape.
+      FNXC:ModelCatalog 2026-10-01-02:51:
+      Refresh can replace provider rows, including on retained-catalog paths. Reapply the
+      upstream-first Anthropic compatibility merge on every request so Pi 0.86.1 exposes the
+      two 5.5 records without replacing newer upstream metadata or credential configuration.
       */
       if (options.modelRegistry.registerProvider) {
-        mergeSupplementalAnthropicModels(options.modelRegistry as Parameters<typeof mergeSupplementalAnthropicModels>[0], (message) => runtimeLogger.child("models").warn(message));
-        /*
-         * FNXC:ModelCatalog 2026-07-09-12:30:
-         * FN-7745: additively merge the GPT-5.6 codenamed OpenAI Codex variants
-         * (gpt-5.6-luna/sol/terra), mirroring the mergeSupplementalAnthropicModels call
-         * above. Strictly additive/dedupe-safe — an existing pinned-catalog row for any
-         * of the three ids always wins, no row is displaced or duplicated.
-         */
+        mergeSupplementalAnthropicModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalAnthropicModels>[0], (message) => runtimeLogger.child("models").warn(message));
         mergeSupplementalOpenAiCodexModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalOpenAiCodexModels>[0], (message) => runtimeLogger.child("models").warn(message));
       }
       let models: Array<{

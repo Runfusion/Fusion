@@ -15,6 +15,15 @@ export const PIPELINE_SMOKE_PROJECT = "engine-pipeline-smoke";
 export const PIPELINE_SMOKE_SCENARIO_COUNT = PIPELINE_SCENARIO_MANIFEST.length;
 /* FNXC:PipelineSmoke 2026-08-25-06:55: The fixed 175s ceiling is a regression detector, not a knob for hiding overruns. */
 export const PIPELINE_SMOKE_DURATION_BUDGET_MS = 175_000;
+/*
+FNXC:PipelineSmoke 2026-09-22-01:58:
+The smoke project drives several real Git/PostgreSQL scenarios. Keep this child envelope aligned
+with the project-level three-worker configuration: the project configuration determines Vitest's
+effective concurrency, while this environment prevents an inherited workspace value from expanding
+other config defaults. Three workers let Linux CI progress across independent fixture files without
+contending with the inherited six-worker fan-out for its PostgreSQL service.
+*/
+export const PIPELINE_SMOKE_MAX_WORKERS = 3;
 export const DEFAULT_REPORT_PATH = join(ENGINE_DIR, ".pipeline-smoke-report.json");
 
 function testCountFrom(report) {
@@ -116,7 +125,7 @@ export async function runPipelineSmoke({ spawn: prerequisiteSpawn = spawnSync, w
   try {
     for (let iteration = 1; iteration <= resolved.repeat; iteration += 1) {
       const vitestPath = join(reportDir, `vitest-${iteration}.json`); const scenarioPath = join(reportDir, `scenarios-${iteration}.jsonl`); startedAt = now();
-      const result = await watchdog({ command: "pnpm", args: ["exec", "vitest", "run", `--project=${PIPELINE_SMOKE_PROJECT}`, "--silent=passed-only", "--reporter=dot", "--reporter=json", `--outputFile=${vitestPath}`], cwd: ENGINE_DIR, env: { ...process.env, FUSION_PIPELINE_SMOKE_REPORT: scenarioPath }, budgetMs: resolved.budgetMs, label: "pipeline smoke", spawn: watchdogSpawn, log: warn });
+      const result = await watchdog({ command: "pnpm", args: ["exec", "vitest", "run", `--project=${PIPELINE_SMOKE_PROJECT}`, "--silent=passed-only", "--reporter=dot", "--reporter=json", `--outputFile=${vitestPath}`], cwd: ENGINE_DIR, env: { ...process.env, FUSION_PIPELINE_SMOKE_REPORT: scenarioPath, VITEST_MAX_WORKERS: String(PIPELINE_SMOKE_MAX_WORKERS) }, budgetMs: resolved.budgetMs, label: "pipeline smoke", spawn: watchdogSpawn, log: warn });
       const durationMs = now() - startedAt; attempt = { result, vitestPath, scenarioPath };
       if (result.timedOut) throw new Error("pipeline smoke timed out; watchdog terminated the Vitest process group");
       if (result.signal) throw new Error(`pipeline smoke terminated by signal ${result.signal}`);

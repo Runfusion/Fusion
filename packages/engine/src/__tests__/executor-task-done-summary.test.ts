@@ -6,7 +6,7 @@ import {
   createMockStore,
   createWorkflowRoutingAgentStore,
   mockedCreateFnAgent,
-  mockedExistsSync,
+  mockedExecSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
 
@@ -71,6 +71,7 @@ async function setupTaskDoneTool(currentTaskOverrides: Record<string, unknown> =
 
   const executor = createRoutingExecutor(store);
   await executor.execute(createBaseTask() as any);
+  expect(capturedTool, "TaskExecutor should open an implementation session with fn_task_done").not.toBeNull();
 
   return {
     store,
@@ -88,7 +89,14 @@ function getSummaryUpdateCalls(store: ReturnType<typeof createMockStore>) {
 describe("TaskExecutor fn_task_done summary persistence", () => {
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
+    /*
+    FNXC:ExecutorToolCapture 2026-09-24-16:50:
+    Keep the synthetic pinned path absent for fresh mocked acquisition and make the real repository
+    probe succeed; forcing existsSync true routes this test into an unprovable registered-worktree path.
+    */
+    mockedExecSync.mockImplementation((command: string) =>
+      command.includes("rev-parse --is-inside-work-tree") ? Buffer.from("true\n") : Buffer.from(""),
+    );
   });
 
   it("replaces the summary on the first completion when no prior summary or workflow results exist", async () => {

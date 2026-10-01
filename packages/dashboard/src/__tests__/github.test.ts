@@ -1723,6 +1723,28 @@ describe("GitHubClient", () => {
       ]);
     });
 
+    it("preserves provider merge evidence for an externally merged PR", async () => {
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce({
+          number: 42,
+          url: "https://github.com/owner/repo/pull/42",
+          title: "Merged PR",
+          state: "MERGED",
+          reviewDecision: "APPROVED",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          baseRefName: "main",
+          headRefName: "fusion/fn-9406",
+          mergedAt: "2026-09-29T05:00:00.000Z",
+          mergeCommit: { oid: "external-sha" },
+        })
+        .mockResolvedValueOnce([]);
+
+      const result = await client.getPrMergeStatus("owner", "repo", 42);
+
+      expect(result.prInfo).toMatchObject({ status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:00:00.000Z" });
+    });
+
     it("maps DIRTY merge-state to conflicting even when mergeable is unknown", async () => {
       mockRunGhJsonAsync
         .mockResolvedValueOnce({

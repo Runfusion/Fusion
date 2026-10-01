@@ -1815,7 +1815,8 @@ describe("TaskDetailModal", () => {
 
     it.each([
       [{ status: "open" as const }, "Check PR Status"],
-      [{ status: "merged" as const }, "Finish & Close"],
+      [{ status: "merged" as const }, "Pull request merged"],
+      [{ status: "closed" as const }, "Pull request closed without merging"],
     ])("shows %s footer label in manual PR flow", async (prInfoStatus, expectedLabel) => {
       const { fetchSettings } = await import("../../api");
       vi.mocked(fetchSettings).mockResolvedValueOnce({
@@ -1849,8 +1850,13 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(await screen.findByRole("button", { name: expectedLabel })).toBeTruthy();
+      const action = await screen.findByRole("button", { name: expectedLabel });
       expect(screen.queryByText("Merge & Close")).toBeNull();
+      if (prInfoStatus.status !== "open") {
+        expect(action).toBeDisabled();
+        fireEvent.click(action);
+        expect(noopMerge).not.toHaveBeenCalled();
+      }
     });
 
     it("shows linked PR number in detail metadata for in-review tasks", () => {

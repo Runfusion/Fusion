@@ -4,6 +4,8 @@ import {
   createConnectionSetFromUrl,
   verifyConnection,
   DatabaseConnectionError,
+  resolvePoolMax,
+  DEFAULT_POOL_MAX,
   type ResolvedBackend,
 } from "../../postgres/connection.js";
 import { resolveBackendWithOptions } from "../../postgres/backend-resolver.js";
@@ -26,6 +28,22 @@ const PG_AVAILABLE =
  * elsewhere, or FUSION_PG_TEST_SKIP=1 to skip integration tests.
  */
 const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
+
+describe("connection: runtime pool configuration", () => {
+  it("uses default, valid environment, and explicit override precedence", () => {
+    expect(resolvePoolMax({ env: {} })).toBe(DEFAULT_POOL_MAX);
+    expect(resolvePoolMax({ env: { FUSION_PG_POOL_MAX: "12" } })).toBe(12);
+    expect(resolvePoolMax({ poolMax: 7, env: { FUSION_PG_POOL_MAX: "12" } })).toBe(7);
+  });
+
+  it.each(["", "1.5", "nope", "0", "-1", "501"])("warns and falls back for invalid environment value %j", (value) => {
+    const warnings: string[] = [];
+    expect(resolvePoolMax({ env: { FUSION_PG_POOL_MAX: value }, onWarning: (message) => warnings.push(message) }))
+      .toBe(DEFAULT_POOL_MAX);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("FUSION_PG_POOL_MAX");
+  });
+});
 
 describe("connection: createConnectionSet (embedded mode guard)", () => {
   it("throws in embedded mode without a resolved URL", async () => {
@@ -110,6 +128,35 @@ pgDescribe("connection: external PostgreSQL integration (VAL-CONN-002)", () => {
     // Execute a simple query via the Drizzle runtime instance.
     const result = await connections.runtime.execute("SELECT 1 as val");
     expect(result).toBeDefined();
+  });
+
+  it("reserves dedicated health and migration work outside the runtime pool", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
+    const runtimeRows = await connections.runtime.execute("SELECT pg_backend_pid() AS pid") as unknown as Array<{ pid: number }>;
+    const healthRows = await connections.health.execute("SELECT pg_backend_pid() AS pid") as unknown as Array<{ pid: number }>;
+    const migrationRows = await connections.migration.execute("SELECT pg_backend_pid() AS pid") as unknown as Array<{ pid: number }>;
+    expect(new Set([runtimeRows[0]?.pid, healthRows[0]?.pid, migrationRows[0]?.pid]).size).toBe(3);
+  });
+
+  it("keeps health probes available while the one-slot runtime pool is busy", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
+    const heldRuntime = connections.runtime.execute("SELECT pg_sleep(0.2)");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await expect(connections.ping()).resolves.toBeUndefined();
+    await expect(connections.health.execute("SELECT 1")).resolves.toBeDefined();
+    await heldRuntime;
   });
 
   it("reserves migration work on a session separate from the runtime pool", async () => {

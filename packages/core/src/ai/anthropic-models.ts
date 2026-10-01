@@ -1,35 +1,21 @@
-import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../provider-instance.js";
 import type { ThinkingLevel } from "../types/board/board.js";
-
-type AnthropicModelInput = "text" | "image";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../provider-instance.js";
 
 export const ANTHROPIC_PROVIDER_ID = "anthropic";
 export const ANTHROPIC_API_KEY_PROVIDER_ID = "anthropic-api-key";
-export const CLAUDE_SONNET_5_MODEL_ID = "claude-sonnet-5";
-export const CLAUDE_FABLE_5_1_MODEL_ID = "claude-fable-5-1";
+export const CLAUDE_OPUS_5_5_MODEL_ID = "claude-opus-5-5";
+export const CLAUDE_SONNET_5_5_MODEL_ID = "claude-sonnet-5-5";
 
-/*
-FNXC:ProviderAuth 2026-08-15-20:57:
-Anthropic's subscription and API-key card ids identify credential/auth surfaces, not pi-ai providers. Normalize stale persisted selections before model lookup or runtime session creation so subscription OAuth continues to execute through pi-ai's built-in `anthropic` provider without registering a fake provider.
-*/
-export function toExecutionModelProviderId(providerId: string): string {
-  return providerId === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID || providerId === ANTHROPIC_API_KEY_PROVIDER_ID
-    ? ANTHROPIC_PROVIDER_ID
-    : providerId;
-}
+type AnthropicModelInput = "text" | "image";
 
-interface AnthropicModelRegistration {
+export interface AnthropicModelRegistration {
   id: string;
   name: string;
+  api?: "anthropic-messages";
   reasoning: boolean;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
   input: AnthropicModelInput[];
-  cost: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-  };
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
   contextWindow: number;
   maxTokens: number;
   compat?: Record<string, unknown>;
@@ -38,68 +24,16 @@ interface AnthropicModelRegistration {
 export interface AnthropicProviderRegistration {
   name: string;
   baseUrl: string;
+  api?: "anthropic-messages";
   apiKey: string;
-  api: "anthropic-messages";
+  oauth?: unknown;
   models: AnthropicModelRegistration[];
 }
 
-/*
- * FNXC:ModelCatalog 2026-07-01-22:40:
- * Re-advertise `claude-sonnet-5`: the pinned pi-ai builtin registry ships opus-4-8/sonnet-4-6/fable-5 but NOT sonnet-5, and FN-7374 removed the static row expecting the live registry to carry it — so Sonnet 5 was left visible on no surface at all. FN-7374's "404 for direct accounts" premise is disproven by a live probe: `claude-sonnet-5` returns 200 on `api.anthropic.com/v1` with a raw `ANTHROPIC_API_KEY`, and runs via the Claude CLI/`pi-claude-cli` (claude.ai backend). It DOES 403 (scope) on subscription-OAuth `/v1`, so OAuth-only users fall back to the runtime actionable-failure path; keep it advertised so API-key and CLI users can select it.
- *
- * FNXC:ModelCatalog 2026-09-02-01:01:
- * Fable 5.1 postdates pinned pi-ai 0.86.1, so register it additively and dedupe against
- * the live catalog so a future upstream row wins unchanged. Thread its thinkingLevelMap
- * through this mapper because /api/models derives supported thinking levels from it.
- */
-export const SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION: AnthropicProviderRegistration = {
-  name: "Anthropic",
-  baseUrl: "https://api.anthropic.com/v1",
-  apiKey: "$ANTHROPIC_API_KEY",
-  api: "anthropic-messages",
-  models: [
-    {
-      id: CLAUDE_SONNET_5_MODEL_ID,
-      name: "Claude Sonnet 5",
-      reasoning: true,
-      input: ["text", "image"],
-      cost: {
-        input: 2,
-        output: 10,
-        cacheRead: 0.2,
-        cacheWrite: 2.5,
-      },
-      contextWindow: 1_000_000,
-      maxTokens: 128_000,
-      compat: {
-        supportsDeveloperRole: false,
-      },
-    },
-    {
-      id: CLAUDE_FABLE_5_1_MODEL_ID,
-      name: "Claude Fable 5.1",
-      reasoning: true,
-      thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
-      input: ["text", "image"],
-      cost: {
-        input: 10,
-        output: 50,
-        cacheRead: 1,
-        cacheWrite: 12.5,
-      },
-      contextWindow: 1_000_000,
-      maxTokens: 128_000,
-      compat: {
-        forceAdaptiveThinking: true,
-        supportsStrictTools: true,
-      },
-    },
-  ],
-};
-
-type AnthropicModelLike = Partial<Omit<AnthropicModelRegistration, "name" | "compat" | "thinkingLevelMap">> & {
+type AnthropicModelLike = Partial<Omit<AnthropicModelRegistration, "name" | "api" | "compat" | "thinkingLevelMap">> & {
   id: string;
   name?: unknown;
+  api?: string;
   provider?: string;
   compat?: unknown;
   thinkingLevelMap?: unknown;
@@ -114,11 +48,47 @@ type RegistryWithProviderState = AnthropicModelRegistryLike & {
   registeredProviders?: Map<string, Partial<AnthropicProviderRegistration>>;
 };
 
+/*
+FNXC:ModelCatalog 2026-10-01-02:51:
+The bundled Pi 0.86.1 Anthropic catalog omits Claude Opus 5.5 and Claude Sonnet 5.5 even though Fusion already has their published usage prices and OAuth identity support. Supply only these additive compatibility rows until Pi includes them; upstream rows always win unchanged.
+*/
+export const SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION: AnthropicProviderRegistration = {
+  name: "Anthropic",
+  baseUrl: "https://api.anthropic.com/v1",
+  apiKey: "$ANTHROPIC_API_KEY",
+  api: "anthropic-messages",
+  models: [
+    {
+      id: CLAUDE_OPUS_5_5_MODEL_ID,
+      name: "Claude Opus 5.5",
+      reasoning: true,
+      thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+      input: ["text", "image"],
+      cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      compat: { forceAdaptiveThinking: true, supportsStrictTools: true },
+    },
+    {
+      id: CLAUDE_SONNET_5_5_MODEL_ID,
+      name: "Claude Sonnet 5.5",
+      reasoning: true,
+      thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" },
+      input: ["text", "image"],
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      compat: { forceAdaptiveThinking: true, supportsStrictTools: true },
+    },
+  ],
+};
+
 function toAnthropicModelRegistration(model: AnthropicModelLike): AnthropicModelRegistration {
   const supplemental = SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.models.find((entry) => entry.id === model.id);
   return {
     id: model.id,
     name: String(model.name ?? supplemental?.name ?? model.id),
+    api: model.api === "anthropic-messages" ? model.api : supplemental?.api,
     reasoning: model.reasoning ?? supplemental?.reasoning ?? false,
     thinkingLevelMap: typeof model.thinkingLevelMap === "object" && model.thinkingLevelMap !== null
       ? { ...(model.thinkingLevelMap as Record<string, string | null>) }
@@ -134,12 +104,12 @@ function toAnthropicModelRegistration(model: AnthropicModelLike): AnthropicModel
 }
 
 function cloneAnthropicProviderRegistration(config: AnthropicProviderRegistration): AnthropicProviderRegistration {
-  return {
-    ...config,
-    models: config.models.map((model) => toAnthropicModelRegistration(model)),
-  };
+  return { ...config, models: config.models.map((model) => toAnthropicModelRegistration(model)) };
 }
 
+/**
+ * Add Fusion's temporary Anthropic compatibility records without replacing rows supplied by Pi.
+ */
 export function mergeSupplementalAnthropicModels(
   modelRegistry: AnthropicModelRegistryLike,
   logWarning: (message: string) => void = () => {},
@@ -147,7 +117,7 @@ export function mergeSupplementalAnthropicModels(
   try {
     const registryWithState = modelRegistry as RegistryWithProviderState;
     const registeredProvider = registryWithState.registeredProviders?.get(ANTHROPIC_PROVIDER_ID);
-    const registeredModels = registeredProvider?.models?.map((model) => toAnthropicModelRegistration(model)) ?? [];
+    const registeredModels = registeredProvider?.models ?? [];
     const currentModels = registeredModels.length > 0
       ? registeredModels
       : modelRegistry.getAll?.()
@@ -168,4 +138,14 @@ export function mergeSupplementalAnthropicModels(
     const message = error instanceof Error ? error.message : String(error);
     logWarning(`Failed to merge supplemental ${ANTHROPIC_PROVIDER_ID} models: ${message}`);
   }
+}
+
+/*
+FNXC:ProviderAuth 2026-08-15-20:57:
+Anthropic's subscription and API-key card ids identify credential/auth surfaces, not pi-ai providers. Normalize stale persisted selections before model lookup or runtime session creation so subscription OAuth continues to execute through pi-ai's built-in `anthropic` provider without registering a fake provider.
+*/
+export function toExecutionModelProviderId(providerId: string): string {
+  return providerId === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID || providerId === ANTHROPIC_API_KEY_PROVIDER_ID
+    ? ANTHROPIC_PROVIDER_ID
+    : providerId;
 }

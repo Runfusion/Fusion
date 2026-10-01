@@ -104,6 +104,8 @@ export interface WorkflowWorkItemUpsertInput {
   workflowRole?: "triage" | "executor" | "reviewer" | "merger" | null;
   authorityKind?: "task-assignee" | "review-node-override" | "column-binding" | "role-pool" | null;
   nodeInstanceId?: string | null;
+  /** Recovery-only fence: refuse rather than retiring an owner that became active. */
+  onlyIfNoActiveTaskContinuation?: boolean;
   now?: string;
 }
 

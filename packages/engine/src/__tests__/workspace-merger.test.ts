@@ -78,7 +78,19 @@ function createStore(settings: Record<string, unknown> = {}): TaskStore & Record
     getTask: vi.fn(async () => currentWorkspaceTask ?? { id: TASK_ID, column: "in-review", branch: BRANCH, comments: [], steeringComments: [], steps: [], log: [] }),
     moveTask: vi.fn((id: string, column: string) => {
       moveTaskCalls.push({ id, column });
-      return Promise.resolve({ id, column } as Task);
+      const task = currentWorkspaceTask ?? ({ id, column } as Task);
+      task.column = column;
+      return Promise.resolve(task);
+    }),
+    /*
+    FNXC:PostMergeFinalizationFixture 2026-09-23-11:20:
+    Workspace finalization shares FN-9370's durable conditional move. Evaluate the predicate
+    against the mutable task before recording the transition so this test cannot bypass the fence.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {
+      const task = await store.getTask(id) as Task;
+      if (!await predicate(task)) return { moved: false, task };
+      return { moved: true, task: await store.moveTask(id, column, options) };
     }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),

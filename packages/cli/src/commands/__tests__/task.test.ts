@@ -136,6 +136,9 @@ vi.mock("@fusion/engine", () => ({
   reconcileUnownedStaleMergeStamp: vi.fn().mockResolvedValue(false),
   // FNXC:CliTests 2026-07-12-07:10: task.ts imports isInReviewMissingWorktreeSessionStartFailure from @fusion/engine (FN-7798 in-review stale worktree guard); the hand-written engine mock must surface it.
   isInReviewMissingWorktreeSessionStartFailure: vi.fn(() => false),
+  isFailedNoVerdictPreMergeReviewResult: vi.fn((result: { status?: string; verdict?: string; phase?: string; workflowStepId?: string }, required: ReadonlySet<string>) =>
+    result.status === "failed" && result.verdict === undefined && (result.phase ?? "pre-merge") === "pre-merge" && required.has(result.workflowStepId ?? "")),
+  rerouteFailedNoVerdictPreMergeGateToReview: vi.fn().mockResolvedValue({ rerouted: false }),
 }));
 
 // Mock @fusion/dashboard
@@ -3042,6 +3045,8 @@ describe("runTaskRetry", () => {
         moveTask: mockMoveTask,
         logEntry: mockLogEntry,
         getSettings: vi.fn().mockResolvedValue({ autoMerge: true }),
+        getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["code-review"] })),
+        getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["code-review"] })),
       } as unknown as TaskStore,
     });
   });
@@ -3292,6 +3297,23 @@ describe("runTaskRetry", () => {
       "FN-001",
       "Retry requested from CLI (in-review merge retry, mergeRetries reset)",
     );
+  });
+
+  it("defers a failed no-verdict review to an engine-owned recovery instead of resetting merge state", async () => {
+    const task = makeTask({
+      column: "in-review",
+      status: null,
+      mergeRetries: 3,
+      steps: [{ status: "done" }],
+      enabledWorkflowSteps: ["code-review"],
+      workflowStepResults: [{ workflowStepId: "code-review", status: "failed", phase: "pre-merge", findings: [{ id: "fn-9372-unfixed-pipeline-smoke", severity: "critical" }] }],
+    });
+    mockGetTask.mockResolvedValue(task);
+
+    await expect(runTaskRetry("FN-001")).rejects.toThrow("running dashboard or wait for engine recovery");
+
+    expect(mockUpdateTask).not.toHaveBeenCalled();
+    expect(mockMoveTask).not.toHaveBeenCalled();
   });
 
   it("retries a stranded in-review task with status none and completed steps in place", async () => {

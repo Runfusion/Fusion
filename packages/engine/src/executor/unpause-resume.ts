@@ -13,6 +13,7 @@
  */
 import type { Task, TaskStore } from "@fusion/core";
 import { executorLog } from "../logger.js";
+import { getUnmetSchedulingDependencies } from "../scheduler.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { isTaskWorkComplete } from "./task-predicates.js";
 
@@ -63,6 +64,17 @@ export async function dispatchUnpauseResume(
     if (pauseLabel) {
       executorLog.debug(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
       return false;
+    }
+
+    // A dependency hold emits task:updated too. Check admission without writing:
+    // clearing the hold then re-queuing in execute would emit another update and
+    // restart this loop after the single-flight claim is released.
+    if (task.dependencies?.length) {
+      const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
+      const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
+      if (getUnmetSchedulingDependencies(liveTask, tasks).length > 0) {
+        return false;
+      }
     }
 
     // Re-check after await: a concurrent graph claim may have won meanwhile.

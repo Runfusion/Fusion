@@ -1,63 +1,37 @@
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { TaskStore } from "@fusion/core";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
 import { ProjectEngine } from "../../project-engine.js";
+import { hasPg, makeReliabilityFixture } from "./_helpers.js";
 
+/*
+FNXC:QuarantineLockstep 2026-09-22-02:16:
+The SQLite runtime is retired, but user hard-cancel remains a live merge-request lifecycle contract.
+Exercise it through the PostgreSQL reliability fixture so this test remains in its real lane instead of preserving a stale SQLite exclusion.
+*/
 describe("FN-5743 hard-cancel merge-request cutover", () => {
-  let rootDir: string;
-  let globalDir: string;
-  let store: TaskStore;
+  it.skipIf(!hasPg)("cancels pending merge request on user in-review->todo hard-cancel", async () => {
+    const fixture = await makeReliabilityFixture();
+    try {
+      const { store, task } = fixture;
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.handoffToReview(task.id, {
+        ownerAgentId: "agent",
+        evidence: { reason: "fn_task_done", runId: "run-1", agentId: "agent" },
+      });
 
-  beforeEach(async () => {
-    rootDir = mkdtempSync(join(tmpdir(), "kb-fn-5743-hard-cancel-"));
-    globalDir = join(rootDir, ".fusion-global");
-    store = new TaskStore(rootDir, globalDir);
-    await store.init();
-  });
+      await store.upsertMergeRequestRecord(task.id, { state: "queued", attemptCount: 1 });
+      store.setCompletionHandoffAcceptedMarker(task.id, { source: "executor:fn_task_done" });
 
-  afterEach(async () => {
-    store.close();
-    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  });
+      await store.moveTask(task.id, "todo", { moveSource: "user" });
 
-  it("cancels pending merge request on user in-review->todo hard-cancel", async () => {
-    const task = await store.createTask({ description: "FN-5743 hard-cancel" });
-    await store.moveTask(task.id, "todo");
-    await store.moveTask(task.id, "in-progress");
-    await store.handoffToReview(task.id, {
-      ownerAgentId: "agent",
-      evidence: { reason: "fn_task_done", runId: "run-1", agentId: "agent" },
-    });
+      expect((await store.getMergeRequestRecordAsync(task.id))?.state).toBe("cancelled");
+      expect(await store.getCompletionHandoffAcceptedMarker(task.id)).toBeNull();
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 30_000);
 
-    await store.upsertMergeRequestRecord(task.id, { state: "queued", attemptCount: 1 });
-    store.setCompletionHandoffAcceptedMarker(task.id, { source: "executor:fn_task_done" });
-
-    await store.moveTask(task.id, "todo", { moveSource: "user" });
-
-    expect(store.getMergeRequestRecord(task.id)?.state).toBe("cancelled");
-    expect(store.getCompletionHandoffAcceptedMarker(task.id)).toBeNull();
-  });
-
-  it("does not cancel merge request on engine in-review->todo rebound", async () => {
-    const task = await store.createTask({ description: "FN-5743 engine rebound" });
-    await store.moveTask(task.id, "todo");
-    await store.moveTask(task.id, "in-progress");
-    await store.handoffToReview(task.id, {
-      ownerAgentId: "agent",
-      evidence: { reason: "fn_task_done", runId: "run-2", agentId: "agent" },
-    });
-
-    await store.upsertMergeRequestRecord(task.id, { state: "queued", attemptCount: 1 });
-    store.setCompletionHandoffAcceptedMarker(task.id, { source: "executor:fn_task_done" });
-
-    await store.moveTask(task.id, "todo", { moveSource: "engine" as any });
-
-    expect(store.getMergeRequestRecord(task.id)?.state).toBe("queued");
-    expect(store.getCompletionHandoffAcceptedMarker(task.id)).not.toBeNull();
-  });
 
   it("transient merge retry uses merge-request state transitions without todo rebound", async () => {
     let state = "running";

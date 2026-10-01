@@ -79,7 +79,7 @@ import {
   filterCustomToolsForReadonly,
 } from "../workflows/workflow-step-tool-policy.js";
 import { executorLog } from "../logger.js";
-import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { mergeEffectiveSettingsWithProvenance } from "../project/effective-settings.js";
 import { injectReviewAdvisoryNotes } from "./workflow-step-failure-injection.js";
 import { parseAwaitInputQuestionToolCall } from "./await-input-parse.js";
 import {
@@ -332,12 +332,20 @@ export async function executeWorkflowStep(
     const planReviewConvergenceContext = isPlanReviewStep
       ? buildGraphPlanReviewConvergenceContext(latestTaskForUserComments, planReviewRevisionKey)
       : "";
+    /*
+    FNXC:EnvironmentCapabilities 2026-09-22-03:05:
+    Graph Plan Review uses the same project-root evidence as triage, so host-only absence cannot demote a confirmed wrapper gate between planning and review.
+    */
     const planReviewEnvironmentCapabilities = isPlanReviewStep
       ? await probeEnvironmentCapabilities({
         extraCommands: [
           ...extractCommandBinaries(settings.testCommand),
           ...extractCommandBinaries(settings.buildCommand),
         ],
+        testCommand: settings.testCommand,
+        buildCommand: settings.buildCommand,
+        rootDir: deps.rootDir,
+        projectId: deps.store.getProjectId?.() ?? deps.rootDir,
       }).catch((): EnvironmentCapabilityProbe => ({ capabilities: [], degraded: true }))
       : undefined;
     const planReviewEnvironmentCapabilitiesBlock = planReviewEnvironmentCapabilities
@@ -552,12 +560,15 @@ CRITICAL SCOPING RULES — read before doing anything else:
      * Merge the per-task effective workflow settings first, exactly as the remediation path does — the
      * merge is scoped to review-kind nodes so non-review steps pay nothing.
      */
+    const resolvedReviewSettings = reviewFindingsContract
+      ? await mergeEffectiveSettingsWithProvenance(deps.store, task, settings)
+      : undefined;
     const reviewBlockingSeverity = reviewFindingsContract
       ? resolveReviewBlockingSeverity({
         reviewKind: workflowStepMetadata.reviewKind as WorkflowReviewKind,
-        workflowSettings: await mergeEffectiveSettings(deps.store, task, settings)
-          .catch(() => settings) as unknown as Record<string, unknown>,
-        nodeBlockingSeverity: (workflowStep as WorkflowStep & { blockingSeverity?: unknown }).blockingSeverity,
+        workflowSettings: resolvedReviewSettings?.settings as unknown as Record<string, unknown>,
+        storedWorkflowSettingKeys: resolvedReviewSettings?.storedKeys,
+        nodeBlockingSeverity: workflowStep.blockingSeverity,
       })
       : undefined;
     /*

@@ -187,9 +187,13 @@ describe("schema-applier: immutable migration identities", () => {
     FNXC:ReviewLaneDispatch 2026-09-19-19:39 (PR rebase onto main's force-replaced history): renumbered
     0079 -> 0081 -> 0082 -> 0084 -> 0086; the ledger migration and the schema baseline ceiling now sit
     at the next open slot after 0085 on this history.
+    FNXC:MigrationVersionCollision 2026-10-01-18:19: upstream FN-9429 has since claimed 0086 for its own
+    receipts migration, so the ledger re-issues at 0088 and the ceiling follows. Two migrations sharing
+    one version string would let `applied.includes(...)` report one of them applied while its SQL never
+    ran, which is exactly the silent-skip failure this identity test exists to catch.
     */
-    expect(REVIEW_LANE_LEDGER_VERSION).toBe("0086");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0086");
+    expect(REVIEW_LANE_LEDGER_VERSION).toBe("0088");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0088");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
