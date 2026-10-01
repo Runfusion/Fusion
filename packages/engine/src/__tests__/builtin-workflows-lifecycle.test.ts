@@ -165,6 +165,10 @@ async function drive(workflowId: string, ir: WorkflowIr, options: DriveOptions =
   const boundary: WorkflowColumnBoundary = {
     currentColumn: () => inner.currentColumn(),
     detectDrift: () => inner.detectDrift(),
+    preflightNodeEntry: async (node) => {
+      currentNodeId = node.id;
+      return await inner.preflightNodeEntry?.(node);
+    },
     onNodeEntry: async (node) => {
       currentNodeId = node.id;
       const before = parkCount();
@@ -235,6 +239,7 @@ async function drive(workflowId: string, ir: WorkflowIr, options: DriveOptions =
     primitives,
     columnBoundary: boundary,
     handlers: {
+      prompt: async (node) => (fail(node) ? failed : { outcome: "success", value: "APPROVE" }),
       "pr-create": prSuccess,
       "pr-respond": prSuccess,
       "pr-merge": prSuccess,

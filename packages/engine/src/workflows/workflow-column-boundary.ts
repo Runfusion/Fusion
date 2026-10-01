@@ -260,7 +260,13 @@ export function createWorkflowColumnBoundary(
     const col = findWorkflowColumn(deps.ir, columnId);
     return col ? resolveColumnFlags(col) : {};
   };
-  let preflightNodeId: string | undefined;
+  /*
+  FNXC:WorkflowColumnBoundary 2026-10-01-05:32:
+  A deferred post-merge gate preflights its parent before traversing template children.
+  Children also enter this shared boundary, so deferred state is keyed by node identity rather
+  than a single slot; a child must never consume the approved parent's deferred completion hop.
+  */
+  const preflightedNodeIds = new Set<string>();
 
   const validateNodeEntry = async (node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> => {
     const toColumn = node.column;
@@ -348,14 +354,13 @@ export function createWorkflowColumnBoundary(
 
     async preflightNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
       const entry = await validateNodeEntry(node);
-      if (entry.kind === "entered") preflightNodeId = node.id;
+      if (entry.kind === "entered") preflightedNodeIds.add(node.id);
       return entry;
     },
 
     async onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
       const toColumn = node.column;
-      const wasPreflighted = preflightNodeId === node.id;
-      preflightNodeId = undefined;
+      const wasPreflighted = preflightedNodeIds.delete(node.id);
       if (!wasPreflighted) {
         const entry = await validateNodeEntry(node);
         if (entry.kind === "suspended") return entry;

@@ -225,12 +225,18 @@ describe("WorkflowGraphExecutor graph-native post-merge steps", () => {
   it("moves a gate-mode post-merge approval to Done only after its durable result", async () => {
     const ir = postMergeIr({ gateMode: "gate" });
     const moves: string[] = [];
+    const pinnedNodeIds: string[] = [];
+    const auditNodeIds: string[] = [];
     const boundary = createWorkflowColumnBoundary({
       taskId: "FN-post-merge-gate-approved",
       workflowId: "post-merge-test",
       ir,
       initialColumn: "review",
       moveTask: async (toColumn) => { moves.push(toColumn); },
+      pinNodeEntry: async (pin) => { pinnedNodeIds.push(pin.nodeId); },
+      emitAudit: async (event) => {
+        if (event.type === "task:column-transition") auditNodeIds.push(event.nodeId);
+      },
     });
     const executor = new WorkflowGraphExecutor({
       handlers: { prompt: handler("APPROVE") },
@@ -247,6 +253,9 @@ describe("WorkflowGraphExecutor graph-native post-merge steps", () => {
     expect(result.outcome).toBe("success");
     expect(moves.filter((column) => column === "done")).toEqual(["done"]);
     expect(boundary.currentColumn()).toBe("done");
+    // The inner template entry must not consume the parent gate's deferred preflight.
+    expect(pinnedNodeIds.filter((nodeId) => nodeId === POST_MERGE_ID)).toEqual([POST_MERGE_ID]);
+    expect(auditNodeIds.filter((nodeId) => nodeId === POST_MERGE_ID)).toEqual([POST_MERGE_ID]);
   });
 
   it("keeps an enabled gate-mode follow-up blocking when its terminal persistence fence is refused", async () => {
