@@ -865,12 +865,35 @@ export class WorkflowGraphExecutor {
           return { outcome: "success" };
         }
 
+        const deferPostMergeGateColumnEntry = node.kind === "optional-group"
+          && node.config?.phase === "post-merge"
+          && isWorkflowOptionalGroupEnabled(task.enabledWorkflowSteps, node.id, node.config.defaultOn === true)
+          && (node.config.template as { nodes?: Array<{ config?: { gateMode?: unknown } }> } | undefined)
+            ?.nodes?.some((inner) => inner.config?.gateMode === "gate") === true;
+
         // U1: cross the lifecycle column boundary on node entry (KTD-1/2/3). A
         // columnless node, a same-column node, or a hold→wip boundary produces no
         // move; the controller owns that decision. Runs BEFORE the node executes,
         // so an execute failure parks the card in the column it just entered.
-        const boundary = await this.deps.columnBoundary?.onNodeEntry(node);
-        if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+        /*
+        FNXC:InReviewRecovery 2026-10-01-03:40:
+        A gate-mode post-merge node can occupy the complete column, but its terminal verdict is
+        still a required finalization condition. Defer that column crossing until durable approval
+        so a REVISE cannot leave a completed card whose required post-merge gate failed.
+        */
+        if (deferPostMergeGateColumnEntry) {
+          /*
+          FNXC:InReviewRecovery 2026-10-01-03:49:
+          A deferred Done transition must not defer the node-entry pause and pin fence. Preflight
+          the gate before it can dispatch work, then let the boundary consume that entry only after
+          durable approval authorizes the column move.
+          */
+          const boundary = await this.deps.columnBoundary?.preflightNodeEntry?.(node);
+          if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+        } else {
+          const boundary = await this.deps.columnBoundary?.onNodeEntry(node);
+          if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+        }
 
         /*
         FNXC:FastLane 2026-08-29-03:05:
@@ -1594,9 +1617,19 @@ export class WorkflowGraphExecutor {
           Advisory post-merge observations retain their result but cannot select a failure edge.
           Gate-mode post-merge and all pre-merge REVISE verdicts remain blocking.
           */
-          return await traverseChildren(node, effectiveVerdict === "REVISE" && (stepPhase === "pre-merge" || requiredPostMergeGate)
-            ? { outcome: "failure", value: "REVISE" }
-            : result);
+          const nodeResult = effectiveVerdict === "REVISE" && (stepPhase === "pre-merge" || requiredPostMergeGate)
+            ? { outcome: "failure" as const, value: "REVISE" }
+            : result;
+          if (
+            deferPostMergeGateColumnEntry
+            && nodeResult.outcome === "success"
+            && effectiveStepStatus === "passed"
+            && hasAuthoritativeApproval
+          ) {
+            const boundary = await this.deps.columnBoundary?.onNodeEntry(node);
+            if (boundary?.kind === "suspended") throw new WorkflowGraphSuspended(boundary);
+          }
+          return await traverseChildren(node, nodeResult);
         }
 
         const workflowAction = node.config?.workflowAction;
