@@ -17,12 +17,35 @@ import { hasLandedEmptyStepApprovedCodeReview } from "./evaluate-workflow-merge-
 
 export const IMPLEMENTATION_INCOMPLETE_NO_RESUME_MESSAGE = "implementation incomplete with no executable proof to resume — failing instead of retrying merge";
 
+function codeReviewEvidence(task: Pick<Task, "workflowStepResults">): Array<{
+  status: string;
+  verdict: string | undefined;
+  reviewInputFingerprint: string | undefined;
+}> {
+  return (task.workflowStepResults ?? [])
+    .filter((result) => result.workflowStepId === "code-review")
+    .map((result) => ({
+      status: result.status,
+      verdict: result.verdict,
+      reviewInputFingerprint: result.reviewInputFingerprint,
+    }));
+}
+
 function hasApprovedCodeReview(task: Pick<Task, "workflowStepResults">): boolean {
-  return (task.workflowStepResults ?? []).some((result) =>
-    result.workflowStepId === "code-review"
-    && result.status === "passed"
-    && result.verdict === "APPROVE",
+  return codeReviewEvidence(task).some((result) =>
+    result.status === "passed" && result.verdict === "APPROVE",
   );
+}
+
+function hasSameCodeReviewEvidence(current: Task, snapshot: TaskDetail): boolean {
+  const currentEvidence = codeReviewEvidence(current);
+  const snapshotEvidence = codeReviewEvidence(snapshot);
+  return currentEvidence.length === snapshotEvidence.length
+    && currentEvidence.every((result, index) => (
+      result.status === snapshotEvidence[index]?.status
+      && result.verdict === snapshotEvidence[index]?.verdict
+      && result.reviewInputFingerprint === snapshotEvidence[index]?.reviewInputFingerprint
+    ));
 }
 
 function isCurrentLandedReviewRecovery(
@@ -34,6 +57,7 @@ function isCurrentLandedReviewRecovery(
   return current.id === snapshot.id
     && current.column === snapshot.column
     && current.columnMovedAt === snapshot.columnMovedAt
+    && current.updatedAt === snapshot.updatedAt
     && current.status === snapshot.status
     && current.error === snapshot.error
     && current.paused === snapshot.paused
@@ -46,6 +70,7 @@ function isCurrentLandedReviewRecovery(
     && current.baseCommitSha === snapshot.baseCommitSha
     && Array.isArray(current.steps)
     && current.steps.length === 0
+    && hasSameCodeReviewEvidence(current, snapshot)
     && hasApprovedCodeReview(current)
     && current.userPaused !== true
     && (current.paused === true || staleFailure);
@@ -79,29 +104,48 @@ export async function routeImplementationIncompleteMergeGraphFailure(
     !deps.hasLiveTaskSessionSurface(live.id)
     && await hasLandedEmptyStepApprovedCodeReview(live, deps.rootDir)
   ) {
-    let recovered = false;
+    let recoveryCandidate = false;
+    let sessionClaimedBeforeCommit = false;
+    const recoveryPersistFence = {
+      expectedUpdatedAt: live.updatedAt,
+      expectedCheckedOutBy: live.checkedOutBy ?? null,
+      expectedCheckoutNodeId: live.checkoutNodeId ?? null,
+      expectedCheckoutLeaseEpoch: live.checkoutLeaseEpoch ?? 0,
+    };
     /*
-    FNXC:LandedReviewRecovery 2026-09-29-03:33:
+    FNXC:LandedReviewRecovery 2026-10-01-00:29:
     Git evidence is asynchronous, so the recovery must validate the same lifecycle
     and merge-proof inputs under the task lock before clearing an engine-owned park.
-    A user pause that races graph failure remains operator-owned and must not have its
-    status, error, or worktree ownership cleared by landed-review recovery.
+    A user pause or review-evidence replacement that races graph failure remains
+    operator-owned and must not have its status, error, or worktree ownership cleared.
     The resolved target includes inheritedBaseBranch, so matching baseBranch alone
     cannot prove an inherited-target change still has the same landed evidence.
-    A final liveness probe immediately before cleanup lets a newly claimed session
-    retain its pause state and active-worktree registration.
+    The reducer probe cannot alone fence an asynchronous persistence path: a session
+    can claim after it returns. The durable checkout fence makes the final UPDATE
+    compare the row version and lease fields captured under the task lock, so a
+    claim that commits while recovery waits rejects the stale pause/error patch;
+    the final probe still protects destructive cleanup.
     */
     await deps.store.updateTaskAtomic(live.id, (current) => {
       if (!isCurrentLandedReviewRecovery(current, live)) return null;
-      recovered = true;
+      if (deps.hasLiveTaskSessionSurface(live.id)) return null;
+      recoveryCandidate = true;
+      recoveryPersistFence.expectedUpdatedAt = current.updatedAt;
+      recoveryPersistFence.expectedCheckedOutBy = current.checkedOutBy ?? null;
+      recoveryPersistFence.expectedCheckoutNodeId = current.checkoutNodeId ?? null;
+      recoveryPersistFence.expectedCheckoutLeaseEpoch = current.checkoutLeaseEpoch ?? 0;
       const staleFailure = current.status === "failed"
         && current.error?.includes(IMPLEMENTATION_INCOMPLETE_NO_RESUME_MESSAGE) === true;
       return {
         ...(current.paused === true ? { paused: false, pausedReason: null } : {}),
         ...(staleFailure ? { status: null, error: null } : {}),
       };
-    }, deps.getRunContextFor(live.id));
-    if (!recovered) return true;
+    }, deps.getRunContextFor(live.id), () => {
+      if (!deps.hasLiveTaskSessionSurface(live.id)) return true;
+      sessionClaimedBeforeCommit = true;
+      return false;
+    }, recoveryPersistFence);
+    if (!recoveryCandidate || sessionClaimedBeforeCommit) return true;
     if (deps.hasLiveTaskSessionSurface(live.id)) return true;
 
     deps.clearPausedAborted(live.id);

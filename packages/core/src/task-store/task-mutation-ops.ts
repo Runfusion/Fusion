@@ -57,6 +57,7 @@ import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { invalidateSupersededRepositoryScopeReviews } from "../tasks/repository-scope.js";
+import { TaskAtomicPersistGuardRefusedError, type TaskAtomicPersistFence } from "./project-store-ops.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -377,14 +378,19 @@ export async function renewCheckoutLeaseImpl(store: TaskStore, taskId: string, u
     return current;
 }
 
-export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater: ( current: Task, ) => Parameters<TaskStore["updateTask"]>[1] | null | undefined | Promise<Parameters<TaskStore["updateTask"]>[1] | null | undefined>, runContext?: RunMutationContext,): Promise<Task> {
+export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater: ( current: Task, ) => Parameters<TaskStore["updateTask"]>[1] | null | undefined | Promise<Parameters<TaskStore["updateTask"]>[1] | null | undefined>, runContext?: RunMutationContext, shouldPersist?: () => boolean, persistFence?: TaskAtomicPersistFence,): Promise<Task> {
     return store.withTaskLock(id, async () => {
       const current = await store.readTaskJson(store.taskDir(id));
       const updates = await updater(current);
       if (!updates || Object.values(updates).every((value) => value === undefined)) {
         return current;
       }
-      return store.updateTaskUnlocked(id, updates, runContext);
+      try {
+        return await store.updateTaskUnlocked(id, updates, runContext, shouldPersist, persistFence);
+      } catch (error) {
+        if (error instanceof TaskAtomicPersistGuardRefusedError) return current;
+        throw error;
+      }
     });
   }
 
