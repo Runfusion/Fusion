@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ResearchStepRunner } from "../research/research-step-runner.js";
+import { LLMSynthesisProvider } from "../research/providers/llm-synthesis-provider.js";
 import { ResearchProviderError } from "../research/types.js";
 
 describe("ResearchStepRunner", () => {
@@ -150,6 +151,68 @@ describe("ResearchStepRunner", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toMatchObject({ code: "timeout", failureClass: "timed_out", errorCode: "PROVIDER_TIMEOUT", retryable: true });
+  });
+
+  it("classifies malformed production synthesis responses", async () => {
+    const session = {
+      state: { messages: [{ role: "assistant", content: "not valid synthesis JSON" }] },
+      dispose: vi.fn(),
+    };
+    const provider = new LLMSynthesisProvider({
+      projectRoot: process.cwd(),
+      createAgent: vi.fn(async () => ({ session })) as never,
+      prompt: vi.fn(async () => undefined) as never,
+    });
+
+    await expect(provider.synthesize(
+      { query: "q", sources: [], round: 1 },
+      { provider: "mock", modelId: "scripted" },
+    )).rejects.toMatchObject({ code: "malformed-response", retryable: false, message: "The synthesis provider returned an invalid response." });
+    expect(session.dispose).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["Missing API key opaque-secret-123456", "missing-configuration"],
+    ["403 forbidden: model access denied opaque-secret-123456", "auth-failed"],
+    ["429 rate limit exceeded opaque-secret-123456", "rate-limited"],
+  ] as const)("sanitizes production synthesis runtime failures as %s", async (message, code) => {
+    const provider = new LLMSynthesisProvider({
+      projectRoot: process.cwd(),
+      createAgent: vi.fn(async () => { throw new Error(message); }) as never,
+      prompt: vi.fn(async () => undefined) as never,
+    });
+
+    let caught: unknown;
+    try {
+      await provider.synthesize({ query: "q", sources: [], round: 1 }, { provider: "mock", modelId: "scripted" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code, providerType: "llm-synthesis" });
+    expect(JSON.stringify(caught)).not.toContain("opaque-secret-123456");
+  });
+
+  it("accepts a valid production synthesis response unchanged", async () => {
+    const output = JSON.stringify({
+      summary: "answer",
+      findings: [{ statement: "finding", citations: ["[1]"] }],
+      confidence: 0.8,
+      followUps: [],
+    });
+    const session = {
+      state: { messages: [{ role: "assistant", content: output }] },
+      dispose: vi.fn(),
+    };
+    const provider = new LLMSynthesisProvider({
+      projectRoot: process.cwd(),
+      createAgent: vi.fn(async () => ({ session })) as never,
+      prompt: vi.fn(async () => undefined) as never,
+    });
+
+    await expect(provider.synthesize(
+      { query: "q", sources: [{ id: "S-1", type: "web", reference: "https://example.test", status: "completed" }], round: 1 },
+      { provider: "mock", modelId: "scripted" },
+    )).resolves.toMatchObject({ output, citations: ["https://example.test"], confidence: 0.8 });
   });
 
   it("leaves successful synthesis unchanged", async () => {

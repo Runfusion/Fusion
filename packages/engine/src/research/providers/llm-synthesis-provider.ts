@@ -2,6 +2,7 @@ import type { ResearchProviderConfig, ResearchSource, ResearchSynthesisRequest, 
 import type { ResearchProvider } from "../research-step-runner.js";
 import { createLogger } from "../../logger.js";
 import { createFnAgent, promptWithFallback } from "../../pi.js";
+import { isOperatorActionableAgentError } from "../../errors/transient-error-detector.js";
 import { ResearchProviderError } from "../types.js";
 
 const log = createLogger("research:llm-synthesis");
@@ -13,6 +14,8 @@ const SMALL_MODEL_CONTEXT_CHARS = 30_000;
 export interface LLMSynthesisProviderOptions {
   projectRoot: string;
   timeoutMs?: number;
+  createAgent?: typeof createFnAgent;
+  prompt?: typeof promptWithFallback;
 }
 
 export class LLMSynthesisProvider implements ResearchProvider {
@@ -56,7 +59,7 @@ export class LLMSynthesisProvider implements ResearchProvider {
        * FNXC:McpConfig 2026-06-26-00:00:
        * Research synthesis is a readonly provider constructed with projectRoot/model options only; it has no TaskStore or secrets reader at this seam, so configured MCP servers are intentionally not resolved here.
        */
-      const { session } = await createFnAgent({
+      const { session } = await (this.options.createAgent ?? createFnAgent)({
         cwd: this.options.projectRoot,
         tools: "readonly",
         builtinToolsAllowlist: [...SYNTHESIS_BUILTIN_WEB_TOOLS],
@@ -67,7 +70,7 @@ export class LLMSynthesisProvider implements ResearchProvider {
 
       try {
         await Promise.race([
-          promptWithFallback(session, prompt),
+          (this.options.prompt ?? promptWithFallback)(session, prompt),
           new Promise<never>((_, reject) => {
             requestSignal.addEventListener(
               "abort",
@@ -90,6 +93,7 @@ export class LLMSynthesisProvider implements ResearchProvider {
         if (!responseText) {
           throw new ResearchProviderError({ providerType: "llm-synthesis", code: "provider-unavailable", message: "No synthesis response received" });
         }
+        validateSynthesisResponse(responseText);
 
         return {
           output: responseText,
@@ -108,14 +112,9 @@ export class LLMSynthesisProvider implements ResearchProvider {
       if (error instanceof DOMException && error.name === "AbortError") {
         throw new ResearchProviderError({ providerType: "llm-synthesis", code: "abort", message: "Synthesis aborted", cause: error });
       }
-      log.warn("llm synthesis failed", { error });
-      throw new ResearchProviderError({
-        providerType: "llm-synthesis",
-        code: "provider-unavailable",
-        message: error instanceof Error ? error.message : "Synthesis failed",
-        retryable: true,
-        cause: error,
-      });
+      const classified = classifySynthesisRuntimeError(error);
+      log.warn("llm synthesis failed", { code: classified.code });
+      throw classified;
     }
   }
 
@@ -137,6 +136,73 @@ export class LLMSynthesisProvider implements ResearchProvider {
 
     return kept.length > 0 ? kept : ordered.slice(0, 1);
   }
+}
+
+type SynthesisPayload = {
+  summary: string;
+  findings: Array<{ statement: string; citations: string[] }>;
+  confidence: number;
+  followUps: string[];
+};
+
+function parseSynthesisJson(text: string): unknown {
+  const jsonBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? text;
+  try {
+    return JSON.parse(jsonBlock);
+  } catch {
+    return undefined;
+  }
+}
+
+export function validateSynthesisResponse(text: string): SynthesisPayload {
+  const parsed = parseSynthesisJson(text);
+  const valid = typeof parsed === "object" && parsed !== null
+    && typeof (parsed as SynthesisPayload).summary === "string"
+    && Array.isArray((parsed as SynthesisPayload).findings)
+    && (parsed as SynthesisPayload).findings.every((finding) =>
+      typeof finding === "object" && finding !== null
+      && typeof finding.statement === "string"
+      && Array.isArray(finding.citations)
+      && finding.citations.every((citation) => typeof citation === "string"))
+    && typeof (parsed as SynthesisPayload).confidence === "number"
+    && Number.isFinite((parsed as SynthesisPayload).confidence)
+    && (parsed as SynthesisPayload).confidence >= 0
+    && (parsed as SynthesisPayload).confidence <= 1
+    && Array.isArray((parsed as SynthesisPayload).followUps)
+    && (parsed as SynthesisPayload).followUps.every((query) => typeof query === "string");
+  if (!valid) {
+    throw new ResearchProviderError({
+      providerType: "llm-synthesis",
+      code: "malformed-response",
+      message: "The synthesis provider returned an invalid response.",
+      retryable: false,
+    });
+  }
+  return parsed as SynthesisPayload;
+}
+
+export function classifySynthesisRuntimeError(error: unknown): ResearchProviderError {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-10-01-04:45:
+  Synthesis runtime errors are reduced to fixed provider classifications before leaving this boundary. Never propagate runtime messages because authentication failures may contain credential material or raw provider response bodies.
+  */
+  if (/\b(?:429|rate[\s_-]*limit(?:ed)?|too many requests)\b/i.test(message)) {
+    return new ResearchProviderError({ providerType: "llm-synthesis", code: "rate-limited", message: "The synthesis provider is rate limited.", retryable: true, cause: error });
+  }
+  if (/\b(?:missing|no|not configured|could not find)\b[\s\S]{0,80}\b(?:credential|api[\s_-]*key|token|provider|model)\b/i.test(message)) {
+    return new ResearchProviderError({ providerType: "llm-synthesis", code: "missing-configuration", message: "The synthesis provider or model is not configured.", retryable: false, cause: error });
+  }
+  if (isOperatorActionableAgentError(message)) {
+    return new ResearchProviderError({ providerType: "llm-synthesis", code: "auth-failed", message: "The synthesis provider rejected authentication or model access.", retryable: false, cause: error });
+  }
+  return new ResearchProviderError({
+    providerType: "llm-synthesis",
+    code: "provider-unavailable",
+    message: "The synthesis provider is temporarily unavailable.",
+    retryable: true,
+    cause: error,
+  });
 }
 
 function isLargeModel(modelId?: string): boolean {
