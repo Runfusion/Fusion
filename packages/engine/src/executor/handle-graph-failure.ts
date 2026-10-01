@@ -945,6 +945,37 @@ export async function handleGraphFailure(
       const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
       const mergeGraphFailure = isMergeGraphFailure(failedNode);
       const failureValue = graphFailureValue(result);
+      /*
+      FNXC:StepDependencyValidation 2026-10-01-02:31:
+      Foreach validates persisted/parser-supplied edges before allocating an instance. Its typed
+      refusal is a plan-repair boundary, not an executor failure: preserve the diagnostic for
+      triage and return before generic retry or terminal graph-failure handling can obscure it.
+      */
+      if (
+        !live.paused
+        && !live.userPaused
+        && !live.deletedAt
+        && typeof failureValue === "string"
+        && failureValue.startsWith("invalid-plan-dependency:")
+      ) {
+        const diagnostic = failureValue.slice("invalid-plan-dependency:".length).trim() || "Invalid step dependency graph";
+        await deps.store.updateTask(live.id, {
+          status: "needs-replan",
+          error: null,
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        }, deps.getRunContextFor(live.id));
+        await deps.store.logEntry(
+          live.id,
+          "AI spec revision requested",
+          `Step dependency validation rejected the plan: ${diagnostic}`,
+          deps.getRunContextFor(live.id),
+        );
+        executorLog.warn(`${live.id}: invalid plan dependency parked for planner repair: ${diagnostic}`);
+        deps.activeWorktrees.delete(live.id);
+        await deps.persistTokenUsage(live.id);
+        return;
+      }
       const recoveryCode = result.context?.["workflow:merge-boundary-recovery-code"];
       const recoveryMissingIds = result.context?.["workflow:merge-boundary-missing-instance-ids"];
       const recoveryNonTerminalNodeId = result.context?.["workflow:merge-boundary-non-terminal-node-id"];

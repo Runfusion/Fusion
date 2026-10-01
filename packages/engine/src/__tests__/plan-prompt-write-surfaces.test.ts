@@ -8,8 +8,8 @@ import { createTaskPromptWriteTool as createPlanReviewPromptWriteTool } from "..
 const TASK_ID = "FN-142";
 const CONTENT = "# Verified plan";
 
-async function runTool(tool: { execute: (...args: any[]) => Promise<any> }) {
-  return tool.execute("call-prompt", { content: CONTENT }, undefined, undefined, undefined);
+async function runTool(tool: { execute: (...args: any[]) => Promise<any> }, content = CONTENT) {
+  return tool.execute("call-prompt", { content }, undefined, undefined, undefined);
 }
 
 function getText(result: any): string {
@@ -43,6 +43,18 @@ describe("planning prompt-write surfaces", () => {
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 
+  it("rejects an invalid Markdown dependency before either prompt-write surface mutates", async () => {
+    const invalid = "### Step 12: First\n### Step 8 (depends: 0): Second";
+    const triage = createProductionShapedStore();
+    const review = createProductionShapedStore();
+    const triageResult = await runTool(createTriagePromptWriteTool(triage.store, TASK_ID), invalid);
+    const reviewResult = await runTool(createPlanReviewPromptWriteTool({ store: review.store, getRunContextFor: vi.fn() } as any, TASK_ID), invalid);
+    expect(getText(triageResult)).toContain("step 2 depends on invalid step 0 (zero)");
+    expect(getText(reviewResult)).toContain("step 2 depends on invalid step 0 (zero)");
+    expect(triage.updateTask).not.toHaveBeenCalled();
+    expect(review.updateTask).not.toHaveBeenCalled();
+  });
+
   it("confirms Plan Review repair writes through the shared worker registration", async () => {
     const { store, updateTask } = createProductionShapedStore();
     const runContext = { agentId: "review-agent", runId: "run-143" } as RunMutationContext;
@@ -71,7 +83,7 @@ describe("planning prompt-write surfaces", () => {
     const result = await runTool(createTriagePromptWriteTool(store, TASK_ID));
 
     expect(updateTask).toHaveBeenCalledTimes(1);
-    expect(getTask).toHaveBeenCalledTimes(2);
+    expect(getTask).toHaveBeenCalledTimes(1);
     expect(getText(result)).toContain("could not be verified");
   });
 });

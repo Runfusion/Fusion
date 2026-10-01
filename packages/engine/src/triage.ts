@@ -62,7 +62,7 @@ import {
   deriveFallbackTaskTitle,
   resolveTaskOutputLanguage,
   parsePlanningPlanMd,
-  matchStepHeadings,
+  parseStepHeadings,
   loadWorkspaceConfig,
   isLegacyWorkspaceWorktreeLayout,
   resolveWorkspaceTaskWorktreeDir,
@@ -4826,16 +4826,14 @@ export class TriageProcessor {
       return "PROMPT.md file not found or empty";
     }
 
-    /*
-    FNXC:PlanValidation 2026-09-04-01:47:
-    Heading numbering is engine-provable structure because the number is the execution index, not
-    Plan Review's AI quality judgement. Reject bad sequences before they can misroute step sessions.
-    */
-    const headingNumbers = matchStepHeadings(promptContent).map((match) => match.headingNumber);
-    if (headingNumbers.length > 0 && !headingNumbers.every((heading, index) => heading === index)) {
-      const diagnostic = `Step headings must be contiguous 0-based execution indices (observed: ${headingNumbers.join(", ")}). Renumber from Step 0 and update prose cross-references.`;
+    // FNXC:StepDependencyValidation 2026-10-01-01:59: Visible heading labels are prose;
+    // parse-time positional validation is the one deterministic admission contract.
+    try {
+      parseStepHeadings(promptContent);
+    } catch (error) {
+      const diagnostic = error instanceof Error ? error.message : String(error);
       planLog.warn(`${taskId}: ${diagnostic}`);
-      await this.store.logEntry(taskId, "Generated plan validation failed: invalid step heading numbering");
+      await this.store.logEntry(taskId, `Generated plan validation failed: ${diagnostic}`);
       return diagnostic;
     }
 

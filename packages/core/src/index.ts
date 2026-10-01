@@ -532,6 +532,8 @@ export {
   parseStepHeadings,
   matchStepHeadings,
   parseJsonSteps,
+  validateStepDependencies,
+  StepDependencyValidationError,
   resolveAuthoredStepHeadingOffset,
   __resetStepParserRegistryForTests,
 } from "./tasks/step-parsers.js";
@@ -541,6 +543,8 @@ export type {
   StepParseResult,
   ParsedStep,
   StepParserRegistrationReason,
+  StepDependencyCoordinate,
+  StepDependencyValidationReason,
 } from "./tasks/step-parsers.js";
 export {
   registerDefaultWorkflowHooks,
