@@ -1,11 +1,70 @@
 import type { Task, WorkflowStepResult } from "../types.js";
 import { PLAN_REVIEW_GROUP_ID } from "../workflows/builtin-plan-review-group.js";
 import { FAST_MODE_BYPASS_ACTOR } from "../workflows/workflow-fast-lane.js";
-import { isWorkflowStepNotRun } from "../workflows/workflow-step-results.js";
+import { deriveStaleReviewCallbackAttemptId, isWorkflowStepNotRun } from "../workflows/workflow-step-results.js";
 import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
 
 export type PreMergeApprovalState = "approved" | "missing" | "not-approved" | "stale-content" | "unprovable-content";
 export type PreMergeApproval = { workflowStepId: string; state: PreMergeApprovalState; repositories?: string[] };
+
+/** Store-issued, project-scoped authority for one automatic stale-callback waiver. */
+export type StaleReviewCallbackWaiverReceipt = {
+  id: string;
+  projectId: string;
+  taskId: string;
+  workflowStepId: string;
+  attemptId: string;
+  policyVersion: "fn-9429-v1";
+  actor: "system:stale-review-callback-waiver";
+  reason: "proven-stale-code-review-callback";
+  issuedAt: string;
+  state: "issued" | "revoked";
+};
+
+export const STALE_REVIEW_CALLBACK_WAIVER_POLICY_VERSION = "fn-9429-v1" as const;
+export const STALE_REVIEW_CALLBACK_WAIVER_ACTOR = "system:stale-review-callback-waiver" as const;
+export const STALE_REVIEW_CALLBACK_WAIVER_REASON = "proven-stale-code-review-callback" as const;
+
+/*
+FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+Merge authority is the exact receipt supplied by a TaskStore-scoped reader, never task JSON alone.
+The comparison also derives receipt identity from the immediately preserved prior attempt, so an
+otherwise complete carrier copied onto a newer same-step attempt remains a blocking failed review.
+*/
+export function hasValidStaleReviewCallbackWaiver(
+  result: WorkflowStepResult,
+  context: {
+    projectId?: string;
+    taskId?: string;
+    requiredPreMergeStepIds?: ReadonlySet<string>;
+    singularScope: boolean;
+    effectiveAutoMerge: boolean;
+    hasOpenFindings: boolean;
+    receipts?: readonly StaleReviewCallbackWaiverReceipt[];
+  },
+): boolean {
+  const carrier = result.automatedStaleCallbackWaiver;
+  const priorAttempt = result.priorAttempts?.[0];
+  const priorAttemptId = priorAttempt && deriveStaleReviewCallbackAttemptId(priorAttempt);
+  if (!carrier || result.status !== "skipped" || result.verdict !== undefined
+    || (result.phase ?? "pre-merge") !== "pre-merge" || result.reviewKind !== "code"
+    || !priorAttempt || priorAttempt.workflowStepId !== result.workflowStepId
+    || priorAttempt.status !== carrier.priorStatus || priorAttemptId !== carrier.attemptId
+    || !context.singularScope || !context.effectiveAutoMerge || context.hasOpenFindings
+    || !context.requiredPreMergeStepIds?.has(result.workflowStepId)
+    || !context.projectId || !context.taskId || !Array.isArray(context.receipts)) return false;
+  const matches = context.receipts.filter((receipt) => receipt.id === carrier.receiptId
+    && receipt.projectId === context.projectId
+    && receipt.taskId === context.taskId
+    && receipt.workflowStepId === result.workflowStepId
+    && receipt.attemptId === carrier.attemptId
+    && receipt.policyVersion === carrier.policyVersion
+    && receipt.actor === carrier.actor
+    && receipt.reason === carrier.reason
+    && receipt.issuedAt === carrier.issuedAt
+    && receipt.state === "issued");
+  return matches.length === 1;
+}
 
 /** The merge gate's sole definition of a review whose approval binds source content. */
 export function requiresContentReviewProof(
@@ -73,20 +132,40 @@ export function resolveUnprovenReviewApproval(
 }
 
 export function evaluatePreMergeApprovals(
-  task: Pick<Task, "workflowStepResults" | "repositoryScope">,
-  options: { requiredPreMergeStepIds?: ReadonlySet<string>; mergeContent?: MergeContentDescriptor } = {},
+  task: Pick<Task, "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "id">>,
+  options: {
+    requiredPreMergeStepIds?: ReadonlySet<string>;
+    mergeContent?: MergeContentDescriptor;
+    /** Authoritative records loaded by TaskStore for the current project/task only. */
+    staleReviewCallbackWaiver?: {
+      projectId: string;
+      effectiveAutoMerge: boolean;
+      hasOpenFindings: boolean;
+      receipts: readonly StaleReviewCallbackWaiverReceipt[];
+    };
+  } = {},
 ): PreMergeApproval[] {
   const required = options.requiredPreMergeStepIds;
   if (!required?.size) return [];
   const results = task.workflowStepResults ?? [];
-  return [...required].map((workflowStepId) => evaluateStep(workflowStepId, results, task, options.mergeContent));
+  return [...required].map((workflowStepId) => evaluateStep(workflowStepId, results, task, options.mergeContent, options));
 }
 
 function evaluateStep(
   workflowStepId: string,
   results: readonly WorkflowStepResult[],
-  task: Pick<Task, "repositoryScope">,
+  task: Pick<Task, "repositoryScope"> & Partial<Pick<Task, "id">>,
   descriptor: MergeContentDescriptor | undefined,
+  options: {
+    requiredPreMergeStepIds?: ReadonlySet<string>;
+    mergeContent?: MergeContentDescriptor;
+    staleReviewCallbackWaiver?: {
+      projectId: string;
+      effectiveAutoMerge: boolean;
+      hasOpenFindings: boolean;
+      receipts: readonly StaleReviewCallbackWaiverReceipt[];
+    };
+  },
 ): PreMergeApproval {
   const result = results.filter((candidate) => candidate.workflowStepId === workflowStepId).at(-1);
   // Workspace Code Review persists its positive proof in repositoryScope so it survives
@@ -111,8 +190,17 @@ function evaluateStep(
     */
     const isPlanDomain = workflowStepId === PLAN_REVIEW_GROUP_ID || result.reviewKind === "plan";
     const notRunApproves = isWorkflowStepNotRun(result) && !requiresExplicitVerdict && !isPlanDomain;
+    const receiptWaiver = hasValidStaleReviewCallbackWaiver(result, {
+      projectId: options.staleReviewCallbackWaiver?.projectId,
+      taskId: task.id,
+      requiredPreMergeStepIds: options.requiredPreMergeStepIds,
+      singularScope: descriptor?.kind === "singular",
+      effectiveAutoMerge: options.staleReviewCallbackWaiver?.effectiveAutoMerge === true,
+      hasOpenFindings: options.staleReviewCallbackWaiver?.hasOpenFindings === true,
+      receipts: options.staleReviewCallbackWaiver?.receipts,
+    });
     const approved = (result.status === "passed" && (requiresExplicitVerdict ? approvedVerdict : (result.verdict === undefined || approvedVerdict)))
-      || (result.status === "skipped" && !!result.bypassedBy)
+      || (result.status === "skipped" && (!!result.bypassedBy || receiptWaiver))
       || notRunApproves;
     /*
     FNXC:PreMergeApproval 2026-09-06-00:47:

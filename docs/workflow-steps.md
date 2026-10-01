@@ -1089,3 +1089,9 @@ Review-to-fix remediation waves are unbounded while actionable evidence changes.
 ### Merge-boundary evidence recovery (FN-9345)
 
 Merge admission is fail-closed: Fusion never invokes a merge requester when required implementation evidence is missing. If an unfinished durable checklist reaches a resolved review lane without its implementation proof, the graph records an operator-visible evidence-recovery message and returns the card to the workflow's resolved implementation lane with progress and its worktree preserved. This named remediation is limited to the typed boundary condition; paused, deleted, terminal, externally blocked, and settled cards are not moved. A later merge attempt must re-evaluate durable proof—Fusion never creates checklist completion, node results, approvals, or no-commit outcomes to satisfy the boundary.
+
+#### Receipt-backed stale callback waiver (FN-9429)
+
+For an effective automatic singular-repository task, a required pre-merge node explicitly declared `reviewKind: "code"` may be waived when its callback is proven stale for at least 15 minutes. Fusion requires no active session, execution lock, or runtime owner, no fresh review lease, no pause or WIP ownership, no manual PR, and no unresolved finding. The terminal `skipped` carrier is not reviewer approval and records no approving verdict.
+
+The carrier opens a gate only with its exact project-scoped TaskStore-issued receipt, bound to the task, step, prior attempt, fixed system actor/reason, policy version, and issuance time. Activity, audit rows, and copied result JSON are diagnostic only and cannot authorize a waiver. Plan, unclassified/non-review, workspace, non-required, held, and content-unprovable cases remain blocked; operators continue to use the audited review-lane bypass for excluded cases.

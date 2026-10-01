@@ -3053,6 +3053,7 @@ export {
 export {
   WORKFLOW_STEP_NOT_RUN_REASONS,
   isWorkflowStepNotRun,
+  deriveStaleReviewCallbackAttemptId,
   type WorkflowStepNotRunReason,
   upsertWorkflowStepResult,
   normalizeWorkflowReviewFindings,

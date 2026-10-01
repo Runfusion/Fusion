@@ -2557,6 +2557,7 @@ Keep this gate-safe barrel's workflow-step-results re-exports in SYNC with the m
 export {
   WORKFLOW_STEP_NOT_RUN_REASONS,
   isWorkflowStepNotRun,
+  deriveStaleReviewCallbackAttemptId,
   type WorkflowStepNotRunReason,
   upsertWorkflowStepResult,
   normalizeWorkflowReviewFindings,

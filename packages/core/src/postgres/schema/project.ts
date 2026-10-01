@@ -2664,6 +2664,29 @@ export const chatRoomMessages = projectSchema.table("chat_room_messages", {
  * adding a table requires updating both the definition and the registry
  * entry (drift signal).
  */
+/*
+FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+A receipt is a separate project-scoped authority record, not task JSON. The composite identity binds
+one issued waiver to the precise task, step, and immutable prior attempt.
+*/
+export const staleReviewCallbackWaiverReceipts = projectSchema.table("stale_review_callback_waiver_receipts", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
+  taskId: text("task_id").notNull(),
+  workflowStepId: text("workflow_step_id").notNull(),
+  attemptId: text("attempt_id").notNull(),
+  policyVersion: text("policy_version").notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  issuedAt: text("issued_at").notNull(),
+  state: text("state").notNull().default("issued"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] }).onDelete("cascade"),
+  unique("stale_review_callback_waiver_receipts_attempt_unique").on(t.projectId, t.taskId, t.workflowStepId, t.attemptId),
+  index("idxStaleReviewCallbackWaiverReceiptsTask").on(t.projectId, t.taskId),
+]);
+
 export const projectTableNames = [
   "tasks", "config", "boards", "project_auth_users", "project_auth_memberships",
   "project_auth_providers", "project_auth_sessions", "task_reviewer_runs",
@@ -2713,4 +2736,5 @@ export const projectTableNames = [
   "task_lifecycle_consumer_receipts", "task_lifecycle_consumer_registrations",
   "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
   "unplanned_execution_blocks", "workflow_agent_capacity_leases", "task_overlap_waits",
+  "stale_review_callback_waiver_receipts",
 ] as const;

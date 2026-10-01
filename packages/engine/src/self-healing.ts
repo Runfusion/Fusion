@@ -51,7 +51,7 @@ import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLane
   resolveWorktreePathReservationDirectory,
   resolveLegacyWorktreesDirLayout,
 } from "@fusion/core";
-import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
+import { deriveStaleReviewCallbackAttemptId, finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
 import { classifyStaleContentPark } from "./merge/stale-content-park.js";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
@@ -8880,7 +8880,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           the one thing its own header says it must never do.
           */
           if (orphanedPendingWipColumns.has(task.column)) continue;
-          if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
+          if (!task.workflowStepResults?.some((result) => result.status === "pending" || (result.status === "failed" && result.verdict === undefined && result.reviewKind === "code"))) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
@@ -8928,6 +8928,85 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               localNodeLeaseIdentity,
             ).kind === "adopt";
           };
+          /*
+          FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+          A singular, required declared code-review callback can be waived only after the same
+          liveness and lease checks used by orphan repair. Receipt issuance re-runs this synchronous
+          predicate under the task advisory transaction; excluded rows retain the historic failed
+          rewrite and are never silently approved.
+          */
+          const issueWaiver = (this.store as TaskStore & { issueStaleReviewCallbackWaiver?: TaskStore["issueStaleReviewCallbackWaiver"] }).issueStaleReviewCallbackWaiver;
+          if (issueWaiver && settings && !fresh.paused && !fresh.userPaused && !orphanedPendingWipColumns.has(fresh.column)) {
+            const pendingCodeReview = fresh.workflowStepResults?.find((result) => (result.status === "pending" || (result.status === "failed" && result.verdict === undefined))
+              && result.reviewKind === "code" && (result.phase ?? "pre-merge") === "pre-merge"
+              && !result.findings?.some((finding) => finding.resolution === undefined || finding.resolution === "open"));
+            const pendingStartedAt = Date.parse(pendingCodeReview?.startedAt ?? "");
+            const staleForWaiver = Number.isFinite(pendingStartedAt)
+              && Date.now() - pendingStartedAt >= PLAN_REVIEW_LEASE_STALENESS_MS;
+            if (pendingCodeReview && staleForWaiver && !isSessionLive(fresh.id) && !hasLiveReviewLease(pendingCodeReview)
+              && allowsAutoMergeProcessing(fresh, settings) && resolveEffectiveAutoMerge(fresh, settings) === true
+              && fresh.workspaceWorktrees === undefined) {
+              const gate = await resolvePreMergeGateForTask(this.store, fresh.id, fresh.enabledWorkflowSteps, fresh).catch(() => undefined);
+              const selection = await this.store.getTaskWorkflowSelectionAsync(fresh.id).catch(() => undefined);
+              const content = await captureMergeContentDescriptor(fresh, { workspaceRootDir: this.options.rootDir, settings }).catch(() => undefined);
+              if (gate?.reviewColumns.has(fresh.column)
+                && gate.requiredPreMergeStepIds.has(pendingCodeReview.workflowStepId)
+                && selection && content?.kind === "singular") {
+                const attemptId = deriveStaleReviewCallbackAttemptId(pendingCodeReview);
+                if (!attemptId) continue;
+                const outcome = await issueWaiver.call(this.store, fresh.id, {
+                  workflowStepId: pendingCodeReview.workflowStepId,
+                  attemptId,
+                  expectedStatus: pendingCodeReview.status as "pending" | "failed",
+                  expectedStartedAt: pendingCodeReview.startedAt,
+                  expectedCompletedAt: pendingCodeReview.completedAt,
+                  expectedWorkflowSelection: selection,
+                  /*
+                  FNXC:StaleReviewCallbackWaiver 2026-10-01-04:24:
+                  This closure runs after the advisory-locked reread. Revalidate every mutable
+                  candidate fact, especially the review lease, so a callback renewed between the
+                  sweep read and receipt transaction remains owned and untouched.
+                  */
+                  canIssue: (current) => {
+                    const currentCandidate = [...(current.workflowStepResults ?? [])].reverse().find(
+                      (result) => result.workflowStepId === pendingCodeReview.workflowStepId,
+                    );
+                    const currentStartedAt = Date.parse(currentCandidate?.startedAt ?? "");
+                    return current.column === fresh.column
+                      && gate.reviewColumns.has(current.column)
+                      && JSON.stringify(current.enabledWorkflowSteps ?? []) === JSON.stringify(fresh.enabledWorkflowSteps ?? [])
+                      && JSON.stringify(current.repositoryScope ?? null) === JSON.stringify(fresh.repositoryScope ?? null)
+                      && currentCandidate?.status === pendingCodeReview.status
+                      && currentCandidate.startedAt === pendingCodeReview.startedAt
+                      && currentCandidate.completedAt === pendingCodeReview.completedAt
+                      && currentCandidate.reviewKind === "code"
+                      && (currentCandidate.phase ?? "pre-merge") === "pre-merge"
+                      && !current.workflowStepResults?.some((result) => result.findings?.some(
+                        (finding) => finding.resolution === undefined || finding.resolution === "open",
+                      ))
+                      && Number.isFinite(currentStartedAt)
+                      && Date.now() - currentStartedAt >= PLAN_REVIEW_LEASE_STALENESS_MS
+                      && !hasLiveReviewLease(currentCandidate)
+                      && !current.paused
+                      && !current.userPaused
+                      && current.workspaceWorktrees === undefined
+                      && allowsAutoMergeProcessing(current, settings)
+                      && resolveEffectiveAutoMerge(current, settings) === true
+                      && !isSessionLive(current.id);
+                  },
+                });
+                if (outcome.applied) {
+                  recovered += 1;
+                  void emitBoundedRunAudit(this.store, {
+                    mutationType: "task:stale-review-callback-waived" as const,
+                    target: fresh.id,
+                    metadata: { taskId: fresh.id, workflowStepId: pendingCodeReview.workflowStepId, receiptIssued: true, actor: "system:stale-review-callback-waiver", reason: "proven-stale-code-review-callback", priorStatus: pendingCodeReview.status, threshold: "15-minutes" },
+                  });
+                  continue;
+                }
+              }
+            }
+          }
           /*
           FNXC:OrphanedPendingSteps 2026-09-07-05:09:
           FN-9270 proved a persistence failure can leave a pending row without any restart. This

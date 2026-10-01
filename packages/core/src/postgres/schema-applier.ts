@@ -89,7 +89,7 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:PatchnodeLedger 2026-08-28-12:16: the permanent ledger table must exist before TaskStore can commit a completion move atomically with its entry. */
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
 /* FNXC:OverlapWaitSynchronization 2026-09-17-00:22: advance the ceiling so an upgraded project has the durable wait table before any overlap-marker transition tries to record into it. Renumbered 0074->0084 (2026-09-18): upstream's own migrations 0074 (FN-323 project notes) through 0083 (FN-514) are absent from this branch by design (it excludes their source commits), but the numeric slots are real and must not be reused, or a database that ran the real 0074..0083 would be misread as compatible with this branch's different 0074. */
-export const SCHEMA_BASELINE_VERSION = "0085";
+export const SCHEMA_BASELINE_VERSION = "0086";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -276,6 +276,8 @@ export const CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION = "0073";
 export const OVERLAP_WAIT_SYNC_VERSION = "0084";
 /** FNXC:ForkedProductLine 2026-09-18-19:40: relocates (never deletes) tables/columns owned by upstream features this binary permanently excludes, out of the active `project` schema and into `deprecated_excluded_features`. */
 export const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION = "0085";
+/** FN-9429: project-scoped authority receipts for automated stale callback waivers. */
+export const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION = "0086";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -545,6 +547,7 @@ const TASK_PLANNING_FAILURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_9273_
 const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_fn_9275_chat_messages_session_recency_index.sql");
 const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0084_fn_332_overlap_sync.sql");
 const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0085_drop_excluded_upstream_feature_schema.sql");
+const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0086_fn_9429_stale_review_callback_waiver_receipts.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -690,6 +693,7 @@ export async function applySchemaBaseline(
     const chatMessagesSessionRecencyIndexAlreadyApplied = applied.includes(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION);
     const overlapWaitSyncAlreadyApplied = applied.includes(OVERLAP_WAIT_SYNC_VERSION);
     const dropExcludedUpstreamFeatureSchemaAlreadyApplied = applied.includes(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION);
+    const staleReviewCallbackWaiverReceiptsAlreadyApplied = applied.includes(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1631,6 +1635,19 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const staleReviewCallbackWaiverReceiptsMissing = ((await tx.execute(sql`
+      SELECT COALESCE((
+        SELECT NOT (c.relrowsecurity AND c.relforcerowsecurity)
+        FROM pg_class c
+        WHERE c.oid = to_regclass('project.stale_review_callback_waiver_receipts')
+      ), true) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!staleReviewCallbackWaiverReceiptsAlreadyApplied || staleReviewCallbackWaiverReceiptsMissing) {
+      const migrationSql = await readFile(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

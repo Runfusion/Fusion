@@ -49,6 +49,9 @@ import {
   getPlannerInterventionTimeline,
   getPrimaryPrInfo,
   getTaskMergeBlocker,
+  isOpenWorkflowReviewFinding,
+  allowsAutoMergeProcessing,
+  resolveEffectiveAutoMerge,
   isFusionDeletableBranch,
   isPreMergeStepsNotRunBlocker,
   PreMergeStepsNotRunError,
@@ -991,10 +994,17 @@ async function assertMergeGateStillOpen(
   `paused`, `queued`, or any other blocking status still revokes.
   */
   const gateView: Task = isMergeActiveStatus(task.status) ? { ...task, status: undefined } : task;
+  const receipts = await ctx.store.getStaleReviewCallbackWaiverReceipts(task.id);
   const blocker = getTaskMergeBlocker(gateView, {
     reviewColumns: gate.reviewColumns.size ? gate.reviewColumns : new Set(["in-review"]),
     requiredPreMergeStepIds: gate.requiredPreMergeStepIds,
     mergeContent,
+    staleReviewCallbackWaiver: {
+      projectId: ctx.store.getProjectId() ?? "",
+      effectiveAutoMerge: allowsAutoMergeProcessing(task, ctx.settings) && resolveEffectiveAutoMerge(task, ctx.settings),
+      hasOpenFindings: task.workflowStepResults?.some((result) => result.findings?.some(isOpenWorkflowReviewFinding)) === true,
+      receipts,
+    },
   });
   if (blocker) throw new MergeGateRevokedError(`Merge gate revoked for ${task.id}: ${blocker}`);
 }
@@ -1601,11 +1611,18 @@ export async function runAiMerge(
     throw new Error(`Cannot merge ${taskId}: merge gate could not resolve the task workflow`);
   }
   const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: projectRootDir, settings });
+  const receipts = await store.getStaleReviewCallbackWaiverReceipts(taskId);
   const blocker = getTaskMergeBlocker(task, {
     manual: options.manual === true,
     reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
     requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
     mergeContent,
+    staleReviewCallbackWaiver: {
+      projectId: store.getProjectId() ?? "",
+      effectiveAutoMerge: options.manual !== true && allowsAutoMergeProcessing(task, settings) && resolveEffectiveAutoMerge(task, settings),
+      hasOpenFindings: task.workflowStepResults?.some((result) => result.findings?.some(isOpenWorkflowReviewFinding)) === true,
+      receipts,
+    },
   });
   /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: an unrun enabled gate is a deferral (typed), not a failure. */
   if (blocker && isPreMergeStepsNotRunBlocker(blocker)) throw new PreMergeStepsNotRunError(taskId);

@@ -2746,3 +2746,7 @@ When the desktop shell cannot start its embedded local Fusion runtime, its failu
 ### Failed review diagnostics
 
 A failed pre-merge workflow gate shows **Code Review blocked** (or the gate's configured name) on board cards, desktop/mobile lists, and the task detail Pull Request tab, even when the task has no top-level status. The tooltip or detail diagnostic includes the recorded failure reason. Ordinary review waits remain quiet; disabled gates, superseded attempts, advisory failures, and passed gates do not produce this badge. Paused cards retain their pause indication.
+
+### Stale code-review callback diagnostics
+
+Eligible automatic singular tasks can show activity that a proven stale Code Review callback was waived after the 15-minute liveness and lease safety window. This is a system receipt-backed waiver, not an approval or the operator bypass action. If a task remains blocked, inspect its workflow result and activity for an active owner, fresh lease, manual/paused state, workspace scope, open finding, or another unfinished gate; use the existing operator recovery only where the task is excluded from automatic handling.

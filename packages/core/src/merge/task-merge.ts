@@ -435,6 +435,7 @@ export function getTaskMergeBlocker(
     */
     requiredPreMergeStepIds?: ReadonlySet<string>;
     mergeContent?: MergeContentDescriptor;
+    staleReviewCallbackWaiver?: NonNullable<Parameters<typeof evaluatePreMergeApprovals>[1]>["staleReviewCallbackWaiver"];
   } = {},
 ): string | undefined {
   /*
@@ -632,7 +633,7 @@ export function clearMergeConfirmedTransientStatus(status: string | undefined): 
 
 export function getTaskHardMergeBlocker(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "repositoryScope">,
-  options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string>; mergeContent?: MergeContentDescriptor } = {},
+  options: { reviewColumns?: ReadonlySet<string>; requiredPreMergeStepIds?: ReadonlySet<string>; mergeContent?: MergeContentDescriptor; staleReviewCallbackWaiver?: NonNullable<Parameters<typeof evaluatePreMergeApprovals>[1]>["staleReviewCallbackWaiver"] } = {},
 ): string | undefined {
   return getTaskMergeBlocker({
     ...task,
@@ -644,6 +645,7 @@ export function getTaskHardMergeBlocker(
     reviewColumns: options.reviewColumns,
     requiredPreMergeStepIds: options.requiredPreMergeStepIds,
     mergeContent: options.mergeContent,
+    staleReviewCallbackWaiver: options.staleReviewCallbackWaiver,
   });
 }
 
