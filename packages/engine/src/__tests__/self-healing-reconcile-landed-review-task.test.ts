@@ -105,13 +105,13 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(tasks.get("FN-9304")).toMatchObject({ mergeDetails: { mergeConfirmed: true, commitSha: "abc123" }, branch: null });
   });
 
-  it("reports already-complete without re-mutating a confirmed card", async () => {
+  it("reports confirmed review work as awaiting finalization, not already complete", async () => {
     const { store, updateTaskAtomic } = storeWithTask(baseTask({ mergeDetails: { mergeConfirmed: true, commitSha: "zzz" } }));
     const manager = managerWithStubs(store);
 
     const result = await manager.reconcileLandedReviewTask("FN-9304", { source: "manual" });
 
-    expect(result).toEqual({ outcome: "already-complete" });
+    expect(result).toEqual({ outcome: "ineligible", reason: "awaiting-finalization" });
     expect(updateTaskAtomic).not.toHaveBeenCalled();
   });
 

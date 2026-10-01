@@ -14,6 +14,7 @@ import {
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
 import { cleanupLandedTaskWorktree } from "./post-landing-worktree-cleanup.js";
 import type { MergeWriteFence } from "./merge-write-fence.js";
+import { resumeMissingPostMergeGate } from "./post-merge-gate-reseed.js";
 
 /*
 FNXC:WorkflowMergeFinalization 2026-07-19-07:20 (U7 / R2/R3/KTD-1):
@@ -272,6 +273,16 @@ export async function finalizeProvenAutoMergeTask({
 
   const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest);
   if (evidenceBlocker) {
+    /*
+    FNXC:PostMergeRecovery 2026-10-01-04:43:
+    A recovery finalizer has no active graph left to traverse the post-merge edge. Give an absent
+    gate back to the graph through its idle continuation fence instead of silently parking forever.
+    */
+    if (evidenceBlocker.includes("has not reported")) {
+      const resume = () => resumeMissingPostMergeGate(store, taskId);
+      if (fence) await fence.write("finalization", resume);
+      else await resume();
+    }
     await recordFinalizationAudit({
       store,
       audit,

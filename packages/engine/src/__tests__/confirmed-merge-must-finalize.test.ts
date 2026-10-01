@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Task, TaskStore } from "@fusion/core";
+import { resolveWorkflowIrForTask, type Task, type TaskStore } from "@fusion/core";
+import { executingTaskLock } from "../agents/active-session-registry.js";
 
 import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
 
@@ -170,5 +171,105 @@ describe("FN-180 confirmed merge must finalize", () => {
     expect(task.status).toBeNull();
     expect(task.error).toBeNull();
     expect(store.updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function));
+  });
+});
+
+/* FNXC:PostMergeRecovery 2026-10-01-04:43: Lost graph traversal must schedule real evidence, never manufacture approval. */
+describe("missing post-merge continuation recovery", () => {
+  function recoveryFixture() {
+    const task = {
+      id: "FN-9368", column: "in-review", updatedAt: "2026-10-01T04:43:00.000Z",
+      autoMerge: true, steps: [], mergeDetails: { mergeConfirmed: true },
+      enabledWorkflowSteps: ["post-merge-verification"], workflowStepResults: [],
+    } as unknown as Task;
+    const store = makeStore(task);
+    const items: unknown[] = [];
+    store.listWorkflowWorkItemsForTask = vi.fn(async () => items) as never;
+    store.seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async (input) => {
+      if (items.length) return { seeded: false, reason: "active-continuation" as const };
+      items.push(input);
+      return { seeded: true, workItemId: "post-merge-continuation" };
+    });
+    return { task, store, items };
+  }
+
+  it("resumes the missing gate exactly once across repeated finalization polls, without merging or completing", async () => {
+    const { task, store, items } = recoveryFixture();
+    for (const source of ["merge-confirmed-fast-path", "self-healing", "direct-ai-merge"] as const) {
+      await expect(finalizeProvenAutoMergeTask({ store, taskId: task.id, source }))
+        .resolves.toMatchObject({ outcome: "blocked", deferredPostMergeEvidence: true });
+    }
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      nodeId: "post-merge-verification", state: "runnable", kind: "task",
+      sourceColumn: "in-review", targetColumn: "in-review", expectedTaskUpdatedAt: task.updatedAt,
+      expectedWorkflowSelection: { workflowId: "builtin:coding", stepIds: ["post-merge-verification"] },
+    });
+    expect(task.workflowStepResults).toEqual([]);
+    expect(task.column).toBe("in-review");
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { paused: true }, { userPaused: true }, { autoMerge: false },
+    { mergeDetails: undefined }, { deletedAt: "2026-10-01T04:43:00.000Z" },
+  ])("preserves an ineligible task %j", async (patch) => {
+    const { task, store } = recoveryFixture();
+    Object.assign(task, patch);
+    await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "failed", "skipped", "passed"] as const)("does not replace existing %s evidence", async (status) => {
+    const { task, store } = recoveryFixture();
+    task.workflowStepResults = [{ workflowStepId: "post-merge-verification", status, verdict: "REVISE" }] as Task["workflowStepResults"];
+    await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(task.workflowStepResults[0].status).toBe(status);
+  });
+
+  it.each([{ globalPause: true }, { enginePaused: true }])("preserves engine pause %j", async (settings) => {
+    const { task, store } = recoveryFixture();
+    store.getSettings = vi.fn(async () => settings) as never;
+    await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("leaves active execution to traverse its own post-merge edge", async () => {
+    const { task, store } = recoveryFixture();
+    executingTaskLock.tryClaim(task.id);
+    try {
+      await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "direct-ai-merge" });
+      expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    } finally { executingTaskLock.release(task.id); }
+  });
+
+  it("resolves custom gate ids rather than hardcoding the builtin gate", async () => {
+    const { task, store, items } = recoveryFixture();
+    const ir = structuredClone(await resolveWorkflowIrForTask(store, task.id));
+    const gate = ir.nodes.find((node) => node.id === "post-merge-verification")!;
+    gate.id = "delivery-evidence";
+    for (const edge of ir.edges) {
+      if (edge.from === "post-merge-verification") edge.from = gate.id;
+      if (edge.to === "post-merge-verification") edge.to = gate.id;
+    }
+    task.enabledWorkflowSteps = [gate.id];
+    const selection = { workflowId: "WF-custom", stepIds: task.enabledWorkflowSteps };
+    store.getTaskWorkflowSelection = vi.fn(() => selection);
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => selection);
+    store.getWorkflowDefinition = vi.fn(async () => ({ ir })) as never;
+    await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ nodeId: "delivery-evidence" });
+  });
+
+  it("does not claim recovery after the fenced insert loses a task-state race", async () => {
+    const { task, store } = recoveryFixture();
+    store.seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async () => ({ seeded: false, reason: "task-state-changed" }));
+    await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(store.logEntry).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,4 @@
+import { resumeMissingPostMergeGate } from "./merge/post-merge-gate-reseed.js";
 /**
  * SelfHealingManager — enables unattended multi-day/week operation by
  * providing automatic recovery from common failure modes.
@@ -880,7 +881,7 @@ export type LandedReviewReconcileResult =
   | { outcome: "already-complete" }
   | { outcome: "not-landed"; baseBranch: string }
   | { outcome: "raced"; reason: string }
-  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" };
+  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" | "post-merge-evidence-pending" | "awaiting-finalization" };
 
 export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Auto-unpause state ──────────────────────────────────────────────
@@ -3458,6 +3459,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
+            if (evidenceBlocker.includes("has not reported")) await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3580,6 +3582,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
+            if (evidenceBlocker.includes("has not reported")) await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3822,6 +3825,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (live.mergeDetails?.mergeConfirmed === true) {
               const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, live);
               if (evidenceBlocker) {
+                if (evidenceBlocker.includes("has not reported")) await resumeMissingPostMergeGate(this.store, live.id);
                 log.debug(`${live.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
                 continue;
               }
@@ -14016,9 +14020,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (isWorkspaceTask(task)) return { outcome: "ineligible", reason: "workspace" };
     const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     if (!reviewColumns.has(task.column)) {
-      return task.mergeDetails?.mergeConfirmed ? { outcome: "already-complete" } : { outcome: "ineligible", reason: "not-in-review" };
+      const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
+      return task.column === completeLane && task.mergeDetails?.mergeConfirmed
+        && !await getRequiredPostMergeEvidenceBlocker(this.store, task)
+        ? { outcome: "already-complete" } : { outcome: "ineligible", reason: "not-in-review" };
     }
-    if (task.mergeDetails?.mergeConfirmed) return { outcome: "already-complete" };
+    if (task.mergeDetails?.mergeConfirmed) {
+      /* FNXC:PostMergeRecovery 2026-10-01-04:43: Landed is not complete while required evidence is absent. */
+      if (this.options.isTaskActive?.(task.id)) return { outcome: "ineligible", reason: "executing" };
+      const blocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
+      if (blocker?.includes("has not reported")) await resumeMissingPostMergeGate(this.store, task.id);
+      return { outcome: "ineligible", reason: blocker ? "post-merge-evidence-pending" : "awaiting-finalization" };
+    }
     /*
     FNXC:LandedReviewReconciliation 2026-09-20-03:09:
     External landing proves content reachability, not workflow approval. Reconciliation must retain
