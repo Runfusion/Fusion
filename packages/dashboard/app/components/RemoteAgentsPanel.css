@@ -1,0 +1,18 @@
+.remote-agents-panel { overflow-y: auto; padding: var(--space-lg); min-height: 0; flex: 1; }
+.remote-agent-filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-lg); margin-bottom: var(--space-lg); }
+.remote-agent-filters label, .remote-agent-detail form { display: flex; flex-direction: column; gap: var(--space-sm); }
+.remote-agent-layout { display: flex; flex-wrap: wrap; align-items: start; gap: var(--space-lg); }
+.remote-agent-list { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-md); }
+.remote-agent-row { display: flex; flex-direction: column; gap: var(--space-sm); text-align: start; padding: var(--space-lg); color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
+.remote-agent-row[aria-pressed="true"] { background: var(--bg-secondary); }
+.remote-agent-detail { flex: 2; min-width: 0; padding: var(--space-lg); overflow-wrap: anywhere; }
+.remote-agent-detail h4 { margin-top: var(--space-xl); }
+.remote-agent-meta { color: var(--text-muted); font-size: var(--font-size-sm); }
+.remote-agent-path, .remote-agent-activity pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); }
+.remote-agent-activity { padding-block: var(--space-md); }
+.remote-agent-usage { margin-block: var(--space-lg); }
+.remote-agent-usage dl { display: grid; grid-template-columns: 1fr auto; gap: var(--space-sm); }
+.remote-agent-usage dd { margin: 0; }
+.remote-agent-detail textarea { width: 100%; resize: vertical; }
+.remote-agent-receipts small { display: block; color: var(--text-muted); }
+@media (max-width: 48rem) { .remote-agent-layout { flex-direction: column; } .remote-agent-list, .remote-agent-detail { width: 100%; } }
