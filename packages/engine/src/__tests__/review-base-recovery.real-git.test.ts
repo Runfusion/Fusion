@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveDiffBaseRef } from "../executor/worktree-git-refs.js";
-import { resolveContentReviewInputProof, computeCodeReviewInputFingerprint } from "../worktree/review-diff-fingerprint.js";
+import { resolveContentReviewInputProof, computeCodeReviewInputFingerprint, probeReviewDiffFingerprint } from "../worktree/review-diff-fingerprint.js";
 
 const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -40,6 +40,19 @@ describe("review base recovery", () => {
     expect(files).toBe("task.txt");
     const fingerprint = await computeCodeReviewInputFingerprint(dir, base);
     await expect(resolveContentReviewInputProof(dir, stored)).resolves.toEqual({ kind: "fingerprint", fingerprint });
+  });
+
+  it("recovers the oversized stale-base failure without widening the Git buffer", async () => {
+    const { dir, git, commit, stored } = fixture();
+    const base = commit("upstream.txt", "x".repeat(11 * 1024 * 1024) + "\n");
+    git("checkout", "-b", "fusion/fx-012");
+    commit("task.txt", "task\n");
+    await expect(probeReviewDiffFingerprint(dir, stored)).resolves.toEqual({
+      state: "unavailable", reason: "git-diff-too-large",
+    });
+    await expect(resolveContentReviewInputProof(dir, stored)).resolves.toEqual({
+      kind: "fingerprint", fingerprint: await computeCodeReviewInputFingerprint(dir, base),
+    });
   });
 
   it("does not erase task work when integration refs already contain HEAD", async () => {
