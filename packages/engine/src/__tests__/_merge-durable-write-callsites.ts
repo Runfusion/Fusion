@@ -328,7 +328,15 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   appends mutate task steps. Project identity is a synchronous scoped read and stays non-writer.
   */
   appendRemediationSteps: { kind: "writer", reason: "persists task remediation steps" },
+  /*
+  FNXC:MergeReliability 2026-10-01-22:44:
+  FN-9429 adds an attested stale-callback waiver receipt. Reading receipts is merge-gate input only,
+  while issuing one replaces durable receipt state and must remain a writer even when current merge
+  entry points do not issue it.
+  */
   getProjectId: { kind: "non-writer", reason: "returns the bound project identity without persistence" },
+  getStaleReviewCallbackWaiverReceipts: { kind: "non-writer", reason: "reads project-scoped stale review callback waiver receipts without mutation" },
+  issueStaleReviewCallbackWaiver: { kind: "writer", reason: "issues or replaces an attested stale review callback waiver receipt" },
   listPatchnodeEntries: { kind: "writer", reason: "may reconcile and persist the patchnode ledger before reading" },
   reconcilePatchnodeLedger: { kind: "writer", reason: "reconciles durable patchnode ledger entries" },
   recordPatchnodeCompletion: { kind: "writer", reason: "persists a patchnode completion ledger entry" },
