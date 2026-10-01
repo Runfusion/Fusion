@@ -133,12 +133,16 @@ export class ResearchOrchestrator {
 
     const queued = await this.store.getRun(runId);
     if (queued?.status === "retry_waiting") {
-      await this.store.updateStatus(runId, "queued");
+      await this.store.updateStatusIfCurrent(runId, ["retry_waiting"], "queued");
     }
 
     await this.semaphore.run(async () => {
       await this.store.updateRun(runId, { query, startedAt: new Date().toISOString(), error: null });
-      await this.store.updateStatus(runId, "running");
+      const started = await this.store.updateStatusIfCurrent(runId, ["queued"], "running");
+      if (!started) {
+        if ((await this.store.getRun(runId))?.status === "cancelling") await this.onCancelled(runId);
+        return;
+      }
       await this.runPhases(runId, query, config, controller.signal);
     });
 
@@ -154,7 +158,7 @@ export class ResearchOrchestrator {
     await this.store.requestCancellation(runId);
 
     if (!active) {
-      await this.store.updateStatus(runId, "cancelled", { error: "Cancelled by user" });
+      await this.store.updateStatusIfCurrent(runId, ["cancelling"], "cancelled", { error: "Cancelled by user" });
       return true;
     }
 
@@ -216,8 +220,8 @@ export class ResearchOrchestrator {
       this.throwIfAborted(signal);
       if (!(await this.canWriteRunData(runId))) return;
 
-      await this.store.updateStatus(runId, "completed");
-      await this.transitionPhase(runId, "completed", "Research run completed");
+      const completed = await this.store.updateStatusIfCurrent(runId, ["running"], "completed");
+      if (completed) await this.transitionPhase(runId, "completed", "Research run completed");
     } catch (err) {
       if (signal.aborted) {
         await this.onCancelled(runId);
@@ -227,12 +231,15 @@ export class ResearchOrchestrator {
           : normalizeResearchFailure(err, "research-run");
         const terminalStatus = failure.failureClass === "timed_out" ? "timed_out" : "failed";
         const current = await this.store.getRun(runId);
-        if (current && !["cancelled", "completed", "failed", "timed_out", "retry_exhausted"].includes(current.status)) {
+        if (current) {
           /*
+          FNXC:ResearchFailureDiagnostics 2026-10-01-04:45:
+          Completion, timeout, and failure may win only while the authoritative row is running. The store compares and persists atomically, so a cancellation request committed first remains the winner and late provider work emits no contradictory terminal events.
+
           FNXC:ResearchFailureDiagnostics 2026-09-28-19:16:
           Persist the authoritative sanitized terminal row before best-effort events. Late provider work and event failures must not erase or replace the winning terminal diagnosis.
           */
-          await this.store.updateStatus(runId, terminalStatus, {
+          const wonTerminal = await this.store.updateStatusIfCurrent(runId, ["running"], terminalStatus, {
             error: failure.message,
             lifecycle: {
               ...(current.lifecycle ?? {}),
@@ -244,6 +251,7 @@ export class ResearchOrchestrator {
               providerType: failure.providerType,
             },
           });
+          if (!wonTerminal) return;
           await this.store.appendEvent(runId, {
             type: "error",
             message: failure.message,
@@ -483,7 +491,7 @@ export class ResearchOrchestrator {
     const run = await this.store.getRun(runId);
     if (!run || run.status === "cancelled") return;
     const cancellation = this.cancellation.get(runId);
-    await this.store.updateStatus(runId, "cancelled", {
+    const cancelled = await this.store.updateStatusIfCurrent(runId, ["cancelling", "running"], "cancelled", {
       cancelledAt: new Date().toISOString(),
       error: "The research run was cancelled by the operator.",
       lifecycle: {
@@ -494,6 +502,7 @@ export class ResearchOrchestrator {
         retryable: false,
       },
     });
+    if (!cancelled) return;
     await this.transitionPhase(runId, "cancelled", "Research run cancelled", {
       requestedAt: cancellation?.requestedAt,
       classification: "cancelled",

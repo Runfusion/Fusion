@@ -600,24 +600,17 @@ export async function setResearchResults(handle: QueryHandle, runId: string, res
  * cancelled→cancelledAt+retryable=false; timed_out→retryable=true+timeoutAt;
  * retry_exhausted→retryable=false+errorCode), then appends a status_changed lifecycle event.
  */
-export async function updateResearchStatus(
-  layer: AsyncDataLayer,
-  runId: string,
+function createResearchStatusPatch(
+  run: ResearchRun,
   status: ResearchRunStatus,
   extra?: Partial<ResearchRun>,
-): Promise<void> {
-  const run = await getResearchRun(layer.db, runId);
-  if (!run) throw new Error(`Research run not found: ${runId}`);
-
+): ResearchRunUpdateInput {
   const normalizedStatus = normalizeStatus(status as ResearchRunStatus | "pending");
   const now = new Date().toISOString();
   const patch: ResearchRunUpdateInput = {
     ...(extra ?? {}),
     status: normalizedStatus,
-    lifecycle: {
-      ...(run.lifecycle ?? {}),
-      ...(extra?.lifecycle ?? {}),
-    },
+    lifecycle: { ...(run.lifecycle ?? {}), ...(extra?.lifecycle ?? {}) },
   };
 
   if (normalizedStatus === "running" && !run.startedAt) patch.startedAt = now;
@@ -636,50 +629,87 @@ export async function updateResearchStatus(
     };
   } else if (normalizedStatus === "cancelled") {
     patch.lifecycle = {
-      ...(patch.lifecycle ?? {}),
-      terminalReason: "cancelled",
-      retryable: false,
-      failureClass: "cancelled",
-      errorCode: patch.lifecycle?.errorCode ?? "RUN_CANCELLED",
+      ...(patch.lifecycle ?? {}), terminalReason: "cancelled", retryable: false,
+      failureClass: "cancelled", errorCode: patch.lifecycle?.errorCode ?? "RUN_CANCELLED",
     };
   } else if (normalizedStatus === "timed_out") {
     patch.lifecycle = {
-      ...(patch.lifecycle ?? {}),
-      terminalReason: "timed_out",
-      retryable: true,
-      failureClass: "timed_out",
-      errorCode: patch.lifecycle?.errorCode ?? "PROVIDER_TIMEOUT",
+      ...(patch.lifecycle ?? {}), terminalReason: "timed_out", retryable: true,
+      failureClass: "timed_out", errorCode: patch.lifecycle?.errorCode ?? "PROVIDER_TIMEOUT",
       timeoutAt: patch.lifecycle?.timeoutAt ?? now,
     };
   } else if (normalizedStatus === "retry_exhausted") {
     patch.lifecycle = {
-      ...(patch.lifecycle ?? {}),
-      terminalReason: "retry_exhausted",
-      retryable: false,
-      failureClass: patch.lifecycle?.failureClass ?? "non_retryable",
-      errorCode: "RETRY_EXHAUSTED",
+      ...(patch.lifecycle ?? {}), terminalReason: "retry_exhausted", retryable: false,
+      failureClass: patch.lifecycle?.failureClass ?? "non_retryable", errorCode: "RETRY_EXHAUSTED",
     };
   }
 
-  /*
-  FNXC:ResearchFailureDiagnostics 2026-09-28-19:27:
-  PostgreSQL persists the sanitized terminal row before its lifecycle event. Event failure may reduce history, but it must never erase the authoritative diagnosis or leak caller/provider prose into JSONB.
-  */
-  const sanitizedPatch = TERMINAL_STATUSES.has(normalizedStatus) ? sanitizeTerminalPatch(patch) : patch;
-  const updated = await updateResearchRun(layer.db, runId, sanitizedPatch);
-  if (!updated) return;
+  return TERMINAL_STATUSES.has(normalizedStatus) ? sanitizeTerminalPatch(patch) : patch;
+}
 
+async function persistResearchStatusIfCurrent(
+  layer: AsyncDataLayer,
+  runId: string,
+  expectedStatuses: readonly ResearchRunStatus[] | undefined,
+  status: ResearchRunStatus,
+  extra?: Partial<ResearchRun>,
+): Promise<ResearchRun | undefined> {
+  return layer.transactionImmediate(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:research-run-status:${runId}`}, 0))`);
+    const run = await getResearchRun(tx, runId);
+    if (!run) throw new Error(`Research run not found: ${runId}`);
+    if (expectedStatuses && !expectedStatuses.includes(run.status)) return undefined;
+    return updateResearchRun(tx, runId, createResearchStatusPatch(run, status, extra));
+  });
+}
+
+async function appendResearchStatusEvent(
+  layer: AsyncDataLayer,
+  runId: string,
+  updated: ResearchRun,
+): Promise<void> {
   await appendResearchLifecycleEvent(layer, runId, {
     type: "status_changed",
-    message: `Status changed to ${normalizedStatus}`,
-    status: normalizedStatus,
+    message: `Status changed to ${updated.status}`,
+    status: updated.status,
     classification: updated.lifecycle?.failureClass,
-    metadata: TERMINAL_STATUSES.has(normalizedStatus) ? {
+    metadata: TERMINAL_STATUSES.has(updated.status) ? {
       errorCode: updated.lifecycle?.errorCode,
       retryable: updated.lifecycle?.retryable,
       providerType: updated.lifecycle?.providerType,
     } : undefined,
   });
+}
+
+export async function updateResearchStatus(
+  layer: AsyncDataLayer,
+  runId: string,
+  status: ResearchRunStatus,
+  extra?: Partial<ResearchRun>,
+): Promise<void> {
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-10-01-04:45:
+  PostgreSQL serializes every run-status decision under one transaction-scoped lock. Conditional terminal writers compare and persist inside that transaction, so an earlier cancellation request cannot be overwritten by failure, timeout, or completion after a stale read.
+
+  FNXC:ResearchFailureDiagnostics 2026-09-28-19:27:
+  PostgreSQL persists the sanitized terminal row before its lifecycle event. Event failure may reduce history, but it must never erase the authoritative diagnosis or leak caller/provider prose into JSONB.
+  */
+  const updated = await persistResearchStatusIfCurrent(layer, runId, undefined, status, extra);
+  if (updated) await appendResearchStatusEvent(layer, runId, updated);
+}
+
+export async function updateResearchStatusIfCurrent(
+  layer: AsyncDataLayer,
+  runId: string,
+  expectedStatuses: readonly ResearchRunStatus[],
+  status: ResearchRunStatus,
+  extra?: Partial<ResearchRun>,
+): Promise<boolean> {
+  const updated = await persistResearchStatusIfCurrent(layer, runId, expectedStatuses, status, extra);
+  if (!updated) return false;
+  await appendResearchStatusEvent(layer, runId, updated);
+  return true;
 }
 
 /**
@@ -693,26 +723,28 @@ export async function requestResearchCancellation(
   runId: string,
   reason = "Cancelled by user",
 ): Promise<ResearchRun> {
-  const run = await getResearchRun(layer.db, runId);
-  if (!run) throw new Error(`Research run not found: ${runId}`);
-  if (TERMINAL_STATUSES.has(run.status)) {
-    return run;
-  }
+  const result = await layer.transactionImmediate(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:research-run-status:${runId}`}, 0))`);
+    const run = await getResearchRun(tx, runId);
+    if (!run) throw new Error(`Research run not found: ${runId}`);
+    if (TERMINAL_STATUSES.has(run.status)) return { updated: run, requested: false };
 
-  const now = new Date().toISOString();
-  const alreadyCancelling = run.status === "cancelling";
-  const updated = await updateResearchRun(layer.db, runId, {
-    status: "cancelling",
-    lifecycle: {
-      ...(run.lifecycle ?? {}),
-      cancellationRequestedAt: run.lifecycle?.cancellationRequestedAt ?? now,
-      terminalCause: reason,
-      errorCode: "RUN_CANCELLED",
-      retryable: false,
-    },
+    const now = new Date().toISOString();
+    const alreadyCancelling = run.status === "cancelling";
+    const updated = await updateResearchRun(tx, runId, {
+      status: "cancelling",
+      lifecycle: {
+        ...(run.lifecycle ?? {}),
+        cancellationRequestedAt: run.lifecycle?.cancellationRequestedAt ?? now,
+        terminalCause: reason,
+        errorCode: "RUN_CANCELLED",
+        retryable: false,
+      },
+    });
+    if (!updated) throw new Error(`Research run not found: ${runId}`);
+    return { updated, requested: !alreadyCancelling };
   });
-  if (!updated) throw new Error(`Research run not found: ${runId}`);
-  if (!alreadyCancelling) {
+  if (result.requested) {
     await appendResearchLifecycleEvent(layer, runId, {
       type: "cancel_requested",
       message: reason,
@@ -720,7 +752,7 @@ export async function requestResearchCancellation(
       classification: "cancelled",
     });
   }
-  return updated;
+  return result.updated;
 }
 
 /**
@@ -940,8 +972,22 @@ export class AsyncResearchStore extends EventEmitter<ResearchStoreEvents> {
 
   async updateStatus(runId: string, status: ResearchRunStatus, extra?: Partial<ResearchRun>): Promise<void> {
     await updateResearchStatus(this.layer, runId, status, extra);
-    // Mirror sync ResearchStore.updateStatus emit set: run:status_changed always,
-    // plus the terminal-specific event keyed off the persisted (normalized) status.
+    await this.emitPersistedStatus(runId);
+  }
+
+  async updateStatusIfCurrent(
+    runId: string,
+    expectedStatuses: readonly ResearchRunStatus[],
+    status: ResearchRunStatus,
+    extra?: Partial<ResearchRun>,
+  ): Promise<boolean> {
+    const updated = await updateResearchStatusIfCurrent(this.layer, runId, expectedStatuses, status, extra);
+    if (updated) await this.emitPersistedStatus(runId);
+    return updated;
+  }
+
+  private async emitPersistedStatus(runId: string): Promise<void> {
+    // Mirror sync ResearchStore.updateStatus emit set after persistence succeeds.
     const updated = await getResearchRun(this.layer.db, runId);
     if (!updated) return;
     this.emit("run:status_changed", updated);

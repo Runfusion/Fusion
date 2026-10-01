@@ -46,7 +46,10 @@ async function execute(tools: ReturnType<typeof createResearchTools>, name: stri
   return tool.execute("call", params as never);
 }
 
-function productionShapedTools(synthesisConfigured: boolean) {
+function productionShapedTools(
+  synthesisConfigured: boolean,
+  search?: () => Promise<ResearchRun["sources"]>,
+) {
   let sequence = 0;
   const runs = new Map<string, ResearchRun>();
   const researchStore = {
@@ -69,6 +72,12 @@ function productionShapedTools(synthesisConfigured: boolean) {
       const current = runs.get(id)!;
       runs.set(id, { ...current, ...extra, status, lifecycle: { ...current.lifecycle, ...extra?.lifecycle }, updatedAt: new Date().toISOString() });
     },
+    updateStatusIfCurrent: async (id: string, expected: readonly ResearchRunStatus[], status: ResearchRunStatus, extra?: Partial<ResearchRun>) => {
+      const current = runs.get(id)!;
+      if (!expected.includes(current.status)) return false;
+      runs.set(id, { ...current, ...extra, status, lifecycle: { ...current.lifecycle, ...extra?.lifecycle }, updatedAt: new Date().toISOString() });
+      return true;
+    },
     appendEvent: async () => ({ id: "EVT", timestamp: new Date().toISOString(), type: "info" as const, message: "event" }),
     addSource: async (id: string, source: ResearchRun["sources"][number]) => {
       const saved = { ...source, id: `SRC-${sequence}` };
@@ -84,7 +93,13 @@ function productionShapedTools(synthesisConfigured: boolean) {
       const run = runs.get(id)!;
       runs.set(id, { ...run, results });
     },
-    requestCancellation: async (id: string) => runs.get(id)!,
+    requestCancellation: async (id: string) => {
+      const current = runs.get(id)!;
+      if (["completed", "failed", "cancelled", "timed_out", "retry_exhausted"].includes(current.status)) return current;
+      const updated = { ...current, status: "cancelling" as const, lifecycle: { ...current.lifecycle, cancellationRequestedAt: new Date().toISOString() } };
+      runs.set(id, updated);
+      return updated;
+    },
     createRetryRun: async () => { throw new Error("not needed"); },
   };
   const taskStore = { getResearchStore: () => researchStore, getAsyncLayer: () => undefined } as unknown as TaskStore;
@@ -95,7 +110,7 @@ function productionShapedTools(synthesisConfigured: boolean) {
     providers: [{
       type: "web-search",
       isConfigured: () => true,
-      search: async () => [{ id: "provider-source", type: "web", reference: "https://example.test", status: "completed" }],
+      search: search ?? (async () => [{ id: "provider-source", type: "web", reference: "https://example.test", status: "completed" }]),
       fetchContent: async () => ({ content: "source content", metadata: {} }),
     }],
     ...(synthesisConfigured ? { synthesisRunner: async () => ({ output: "synthesized result", citations: ["https://example.test"] }) } : {}),
@@ -145,6 +160,34 @@ describe("research agent tools", () => {
     expect(result.details).toMatchObject({ status: "failed", diagnosis: { code: "MISSING_CREDENTIALS", classification: "configuration", retryable: false } });
     expect((result.content[0] as { text: string }).text).toContain("Settings → Authentication");
     expect((result.content[0] as { text: string }).text).not.toContain("All synthesis rounds failed");
+  });
+
+  it("preserves cancellation when a provider resolves after the cancellation request", async () => {
+    let releaseSearch!: (sources: ResearchRun["sources"]) => void;
+    const search = () => new Promise<ResearchRun["sources"]>((resolve) => { releaseSearch = resolve; });
+    const tools = productionShapedTools(true, search);
+
+    const started = await execute(tools, "fn_research_run", { query: "q", wait_for_completion: false });
+    const runId = (started.details as { runId: string }).runId;
+    await vi.waitFor(() => expect(releaseSearch).toBeTypeOf("function"));
+    const cancelled = await execute(tools, "fn_research_cancel", { id: runId });
+    releaseSearch([{ id: "late", type: "web", reference: "https://example.test", status: "completed" }]);
+
+    expect(cancelled.details).toMatchObject({ status: "cancelling" });
+    await vi.waitFor(async () => {
+      const detail = await execute(tools, "fn_research_get", { id: runId });
+      expect(detail.details).toMatchObject({ status: "cancelled", diagnosis: { code: "RUN_CANCELLED" } });
+    });
+  });
+
+  it("keeps a provider failure terminal when cancellation arrives afterward", async () => {
+    const tools = productionShapedTools(false);
+    const failed = await execute(tools, "fn_research_run", { query: "q", wait_for_completion: true, max_wait_ms: 5_000 });
+    const runId = (failed.details as { runId: string }).runId;
+    await execute(tools, "fn_research_cancel", { id: runId });
+    const detail = await execute(tools, "fn_research_get", { id: runId });
+
+    expect(detail.details).toMatchObject({ status: "failed", diagnosis: { code: "MISSING_CREDENTIALS" } });
   });
 
   it("uses the shared registry composition to provide synthesis and refresh model settings", async () => {

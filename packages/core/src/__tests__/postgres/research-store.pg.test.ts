@@ -86,6 +86,27 @@ pgTest("ResearchStore (PostgreSQL backend mode)", () => {
     });
   });
 
+  it("arbitrates cancellation and terminal writes against the authoritative status", async () => {
+    const s = research();
+    const cancelledFirst = await s.createRun({ query: "cancel wins" });
+    await s.updateStatus(cancelledFirst.id, "running");
+    await s.requestCancellation(cancelledFirst.id);
+
+    expect(await s.updateStatusIfCurrent(cancelledFirst.id, ["running"], "failed", {
+      lifecycle: { failureClass: "retryable_transient", errorCode: "PROVIDER_UNAVAILABLE" },
+    })).toBe(false);
+    expect(await s.updateStatusIfCurrent(cancelledFirst.id, ["cancelling"], "cancelled")).toBe(true);
+    expect((await s.getRun(cancelledFirst.id))?.status).toBe("cancelled");
+
+    const providerFirst = await s.createRun({ query: "provider wins" });
+    await s.updateStatus(providerFirst.id, "running");
+    expect(await s.updateStatusIfCurrent(providerFirst.id, ["running"], "timed_out", {
+      lifecycle: { failureClass: "timed_out", errorCode: "PROVIDER_TIMEOUT" },
+    })).toBe(true);
+    expect((await s.requestCancellation(providerFirst.id)).status).toBe("timed_out");
+    expect((await s.getRun(providerFirst.id))?.status).toBe("timed_out");
+  });
+
   it("appendEvent dual-writes: the event appears in getRun().events", async () => {
     const s = research();
     const run = await s.createRun({ query: "dual write events" });
