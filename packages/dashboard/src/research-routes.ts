@@ -15,6 +15,7 @@ import {
   createRecallCaptureWriter,
   createLogger,
   NOOP_RECALL_CAPTURE_WRITER,
+  type ResearchErrorCode,
   type ResearchRunListOptions,
   type ResearchRunStatus,
 } from "@fusion/core";
@@ -54,6 +55,21 @@ type ResearchApiDiagnosis = {
 
 const RESEARCH_TERMINAL_STATUSES = new Set(["failed", "cancelled", "timed_out", "retry_exhausted"]);
 const MAX_DIAGNOSTIC_TEXT_LENGTH = 500;
+
+const CANONICAL_RESEARCH_DIAGNOSES: Record<ResearchErrorCode, ResearchApiDiagnosis> = {
+  FEATURE_DISABLED: { classification: "configuration", code: "FEATURE_DISABLED", retryable: false, detail: "Research is disabled in settings.", remediation: "Enable Research in Settings before starting a new run." },
+  MISSING_CREDENTIALS: { classification: "configuration", code: "MISSING_CREDENTIALS", retryable: false, detail: "The required research provider or model is not configured.", remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run." },
+  PROVIDER_UNAVAILABLE: { classification: "retryable_transient", code: "PROVIDER_UNAVAILABLE", retryable: true, detail: "The research provider is temporarily unavailable.", remediation: "Retry later or review provider availability." },
+  PROVIDER_DENIED: { classification: "provider_denied", code: "PROVIDER_DENIED", retryable: false, detail: "The research provider rejected authentication or access.", remediation: "Verify provider credentials, account access, and model permissions in Settings → Authentication." },
+  RATE_LIMITED: { classification: "retryable_transient", code: "RATE_LIMITED", retryable: true, detail: "The research provider is rate limited or temporarily unavailable.", remediation: "Retry later or review provider rate limits." },
+  PROVIDER_TIMEOUT: { classification: "timed_out", code: "PROVIDER_TIMEOUT", retryable: true, detail: "Research providers did not finish before the run deadline.", remediation: "Retry the run. If timeouts continue, review Research Settings and provider availability." },
+  MALFORMED_RESPONSE: { classification: "malformed_response", code: "MALFORMED_RESPONSE", retryable: false, detail: "The research provider returned an invalid response.", remediation: "Review the selected provider and model, then start a new run." },
+  RUN_CANCELLED: { classification: "cancelled", code: "RUN_CANCELLED", retryable: false, detail: "Research run was cancelled." },
+  RETRY_EXHAUSTED: { classification: "non_retryable", code: "RETRY_EXHAUSTED", retryable: false, detail: "Research run exhausted its retry attempts.", remediation: "Review provider configuration before starting a new run." },
+  INVALID_TRANSITION: { classification: "non_retryable", code: "INVALID_TRANSITION", retryable: false, detail: "The requested research lifecycle action is not allowed." },
+  NON_RETRYABLE_PROVIDER_ERROR: { classification: "non_retryable", code: "NON_RETRYABLE_PROVIDER_ERROR", retryable: false, detail: "The research provider returned a non-retryable error.", remediation: "Review provider configuration before starting a new run." },
+  INTERNAL_ERROR: { classification: "internal", code: "INTERNAL_ERROR", retryable: false, detail: "Research run failed without additional diagnostic detail.", remediation: "Review Research Settings and provider authentication, then start a new run." },
+};
 
 function safeDiagnosticText(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -105,15 +121,15 @@ function fallbackDiagnosis(run: ResearchRun): ResearchApiDiagnosis {
 function toRunDiagnosis(run: ResearchRun): ResearchApiDiagnosis | undefined {
   if (!RESEARCH_TERMINAL_STATUSES.has(run.status)) return undefined;
 
-  const lifecycle = run.lifecycle as (ResearchRun["lifecycle"] & { remediation?: string; safeDetail?: string; detail?: string }) | undefined;
-  const fallback = fallbackDiagnosis(run);
-  return {
-    classification: lifecycle?.failureClass ?? fallback.classification,
-    code: lifecycle?.errorCode ?? fallback.code,
-    retryable: lifecycle?.retryable ?? fallback.retryable,
-    detail: safeDiagnosticText(lifecycle?.safeDetail ?? lifecycle?.detail ?? lifecycle?.terminalCause) ?? fallback.detail,
-    remediation: safeDiagnosticText(lifecycle?.remediation) ?? fallback.remediation,
-  };
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-10-01-04:45:
+  Persisted terminal prose is untrusted legacy data, even when a field was named safeDetail. API readers render only code-owned text for a recognized error code; unknown or missing codes use the status fallback so bearer tokens, opaque credentials, and provider payloads can never cross this boundary.
+  */
+  const code = run.lifecycle?.errorCode;
+  if (code && Object.hasOwn(CANONICAL_RESEARCH_DIAGNOSES, code)) {
+    return CANONICAL_RESEARCH_DIAGNOSES[code];
+  }
+  return fallbackDiagnosis(run);
 }
 
 function toRunListItem(run: ResearchRun) {

@@ -121,9 +121,9 @@ describe("research-routes", () => {
       runLifecycle: {
         failureClass: "non_retryable",
         errorCode: "MISSING_CREDENTIALS",
-        retryable: false,
-        terminalCause: "Provider rejected api_key=sk-test-secret-value at https://provider.example/private",
-        remediation: "Add provider credentials in Authentication settings.",
+        retryable: true,
+        terminalCause: "Provider rejected Bearer eyJhbGciOiJIUzI1NiJ9.opaque.signature at https://provider.example/private",
+        remediation: "Use opaque-unlabeled-credential-987654321 before retrying.",
       },
     });
     const app = express();
@@ -138,12 +138,14 @@ describe("research-routes", () => {
 
     expect(list.body.runs[0].diagnosis).toEqual(detail.body.run.diagnosis);
     expect(detail.body.run.diagnosis).toMatchObject({
-      classification: "non_retryable",
+      classification: "configuration",
       code: "MISSING_CREDENTIALS",
       retryable: false,
-      remediation: "Add provider credentials in Authentication settings.",
+      detail: "The required research provider or model is not configured.",
+      remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run.",
     });
-    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("sk-test-secret-value");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("opaque-unlabeled-credential-987654321");
     expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("provider.example/private");
     expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("server-only-value");
   });
