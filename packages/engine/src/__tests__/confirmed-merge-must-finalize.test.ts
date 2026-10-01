@@ -237,6 +237,16 @@ describe("missing post-merge continuation recovery", () => {
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
   });
 
+  it.each(["merge-confirmed-fast-path", "self-healing"] as const)("refuses %s recovery while a fresh checkout lease owns the task", async (source) => {
+    const { task, store } = recoveryFixture();
+    Object.assign(task, { checkoutRunId: "checkout-run", checkoutLeaseRenewedAt: new Date().toISOString() });
+
+    await finalizeProvenAutoMergeTask({ store, taskId: task.id, source });
+
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("leaves active execution to traverse its own post-merge edge", async () => {
     const { task, store } = recoveryFixture();
     executingTaskLock.tryClaim(task.id);

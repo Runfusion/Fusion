@@ -5191,7 +5191,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         source: "manual",
         requireAutoMergeEligible: false,
       });
-      if (result.outcome === "reconciled" || result.outcome === "already-complete") {
+      if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "already-complete") {
         return res.json(result);
       }
       return res.status(409).json(result);

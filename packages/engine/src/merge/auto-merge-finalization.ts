@@ -1,6 +1,7 @@
 import {
   getPostMergeFinalizeBlocker,
   getRequiredPostMergeEvidenceBlocker,
+  getRequiredPostMergeEvidenceDecision,
   planConfirmedMergeChecklistReconciliation,
   resolveWorkflowIrForTask,
   resolveCompleteColumn,
@@ -271,14 +272,16 @@ export async function finalizeProvenAutoMergeTask({
     if (persisted) latest = persisted;
   }
 
-  const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest);
-  if (evidenceBlocker) {
+  const evidenceDecision = await getRequiredPostMergeEvidenceDecision(store, latest);
+  if (evidenceDecision.outcome !== "finalizable") {
+    const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest)
+      ?? `required post-merge evidence gate '${evidenceDecision.gateId}' is not approved`;
     /*
-    FNXC:PostMergeRecovery 2026-10-01-04:43:
-    A recovery finalizer has no active graph left to traverse the post-merge edge. Give an absent
-    gate back to the graph through its idle continuation fence instead of silently parking forever.
+    FNXC:PostMergeRecovery 2026-10-01-06:36:
+    A recovery finalizer has no active graph left to traverse an absent post-merge edge. Only the
+    structured resumable decision may seed that authored node; display text never authorizes work.
     */
-    if (evidenceBlocker.includes("has not reported")) {
+    if (evidenceDecision.outcome === "resumable") {
       const resume = () => resumeMissingPostMergeGate(store, taskId);
       if (fence) await fence.write("finalization", resume);
       else await resume();
@@ -303,7 +306,7 @@ export async function finalizeProvenAutoMergeTask({
       Only an absent result can be claimed by the active graph traversal. A pending or terminal
       non-approval is durable evidence that must remain a blocker, not a retry signal.
       */
-      deferredPostMergeEvidence: evidenceBlocker.includes("has not reported") || undefined,
+      deferredPostMergeEvidence: evidenceDecision.outcome === "resumable" || undefined,
     };
   }
 

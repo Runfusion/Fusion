@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, hasUserAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, hasUserAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -878,6 +878,7 @@ liveness/eligibility fence blocked reconciliation so an operator retry has a con
 */
 export type LandedReviewReconcileResult =
   | { outcome: "reconciled"; sha: string; strategy: string; baseBranch: string }
+  | { outcome: "resumed"; gateId: string }
   | { outcome: "already-complete" }
   | { outcome: "not-landed"; baseBranch: string }
   | { outcome: "raced"; reason: string }
@@ -3459,7 +3460,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
-            if (evidenceBlocker.includes("has not reported")) await resumeMissingPostMergeGate(this.store, task.id);
+            if ((await getRequiredPostMergeEvidenceDecision(this.store, task)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3582,7 +3583,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
-            if (evidenceBlocker.includes("has not reported")) await resumeMissingPostMergeGate(this.store, task.id);
+            if ((await getRequiredPostMergeEvidenceDecision(this.store, task)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3825,7 +3826,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (live.mergeDetails?.mergeConfirmed === true) {
               const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, live);
               if (evidenceBlocker) {
-                if (evidenceBlocker.includes("has not reported")) await resumeMissingPostMergeGate(this.store, live.id);
+                if ((await getRequiredPostMergeEvidenceDecision(this.store, live)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, live.id);
                 log.debug(`${live.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
                 continue;
               }
@@ -14192,13 +14193,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         && !await getRequiredPostMergeEvidenceBlocker(this.store, task)
         ? { outcome: "already-complete" } : { outcome: "ineligible", reason: "not-in-review" };
     }
-    if (task.mergeDetails?.mergeConfirmed) {
-      /* FNXC:PostMergeRecovery 2026-10-01-04:43: Landed is not complete while required evidence is absent. */
-      if (this.options.isTaskActive?.(task.id)) return { outcome: "ineligible", reason: "executing" };
-      const blocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
-      if (blocker?.includes("has not reported")) await resumeMissingPostMergeGate(this.store, task.id);
-      return { outcome: "ineligible", reason: blocker ? "post-merge-evidence-pending" : "awaiting-finalization" };
-    }
     /*
     FNXC:LandedReviewReconciliation 2026-09-20-03:09:
     External landing proves content reachability, not workflow approval. Reconciliation must retain
@@ -14206,11 +14200,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     failed, or missing review verdict.
     */
     const requiredPreMergeStepIds = await resolveNoOpFinalizeGateIds(this.store, task);
-    const approvalBlocker = getTaskHardMergeBlocker(task, {
-      reviewColumns,
-      requiredPreMergeStepIds,
-    });
-    if (approvalBlocker) return { outcome: "ineligible", reason: "workflow-approval-blocked" };
+    if (!task.mergeDetails?.mergeConfirmed) {
+      const approvalBlocker = getTaskHardMergeBlocker(task, {
+        reviewColumns,
+        requiredPreMergeStepIds,
+      });
+      if (approvalBlocker) return { outcome: "ineligible", reason: "workflow-approval-blocked" };
+    }
     if (task.paused) return { outcome: "ineligible", reason: "paused" };
     if (task.userPaused) return { outcome: "ineligible", reason: "user-paused" };
     const livePaths = activeSessionRegistry.pathsForTask(task.id).filter((path) => activeSessionRegistry.isPathActive(path));
@@ -14222,7 +14218,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const graceMs = (settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS) * PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER;
     const leaseAge = task.checkoutLeaseRenewedAt ? Date.now() - Date.parse(task.checkoutLeaseRenewedAt) : Number.POSITIVE_INFINITY;
     if (task.checkoutRunId && Number.isFinite(leaseAge) && leaseAge >= 0 && leaseAge < graceMs) return { outcome: "ineligible", reason: "checkout-leased" };
-    if (options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) return { outcome: "ineligible", reason: "auto-merge-off" };
+    if ((options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) || task.autoMerge === false) return { outcome: "ineligible", reason: "auto-merge-off" };
+    if (task.mergeDetails?.mergeConfirmed) {
+      /*
+      FNXC:PostMergeRecovery 2026-10-01-06:36:
+      Manual reconciliation reports the graph-owned recovery truth: it may resume only absent required
+      evidence after the same pause, hold, liveness, lease, and auto-merge fences as every other owner.
+      */
+      const decision = await getRequiredPostMergeEvidenceDecision(this.store, task);
+      if (decision.outcome === "resumable") {
+        const resumed = await resumeMissingPostMergeGate(this.store, task.id);
+        if (resumed.outcome === "resumed") return resumed;
+        return { outcome: "raced", reason: "post-merge-continuation-not-idle" };
+      }
+      return { outcome: "ineligible", reason: decision.outcome === "blocked" ? "post-merge-evidence-pending" : "awaiting-finalization" };
+    }
     const branch = task.branch;
     if (!branch) return { outcome: "ineligible", reason: "no-branch-recorded" };
     const mergeTarget = await this.resolveSelfHealingMergeTarget(task, settings, "reconcile-absent-branch");
@@ -14361,7 +14371,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             an audit row (or the historical rev-parse warning) every maintenance cycle.
             */
             const result = await this.reconcileLandedReviewTask(task.id, { source: "self-healing", requireAutoMergeEligible: true });
-            if (result.outcome === "reconciled") recovered++;
+            if (result.outcome === "reconciled" || result.outcome === "resumed") recovered++;
             else if (result.outcome !== "already-complete") {
               const reason = result.outcome === "not-landed" ? "not-landed" : result.outcome === "raced" ? result.reason : result.reason;
               const key = `${task.id}:${reason}`;

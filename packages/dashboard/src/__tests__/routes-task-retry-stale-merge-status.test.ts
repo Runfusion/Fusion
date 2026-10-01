@@ -238,6 +238,17 @@ describe("POST /api/tasks/:id/reconcile-landed-review", () => {
     });
   });
 
+  it("returns a successful, explicit graph-resumed reconciliation outcome", async () => {
+    const reconcileLandedReviewTask = vi.fn().mockResolvedValue({ outcome: "resumed", gateId: "post-merge-verification" });
+    const { app } = buildApp({ task: mkMergeTask({ id: "FN-9368", status: null }), reconcileLandedReviewTask });
+
+    const res = await performRequest(app, "POST", "/api/tasks/FN-9368/reconcile-landed-review", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ outcome: "resumed", gateId: "post-merge-verification" });
+    expect(reconcileLandedReviewTask).toHaveBeenCalledTimes(1);
+  });
+
   it("returns structured conflicts for reconciliation refusals", async () => {
     const reconcileLandedReviewTask = vi.fn().mockResolvedValue({ outcome: "ineligible", reason: "foreign-ownership" });
     const { app } = buildApp({ task: mkMergeTask({ id: "FN-9318", status: null }), reconcileLandedReviewTask });
