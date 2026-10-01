@@ -40,6 +40,7 @@ import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js";
 import {
+  isUnprovableReviewInputResult,
   rerouteFailedNoVerdictPreMergeGateToReview,
   rerouteUnrunPreMergeGateToReview,
 } from "../merge/pre-merge-gate-reseed.js";
@@ -1221,6 +1222,12 @@ export async function handleGraphFailure(
       if (wipColumn !== undefined && live.column !== wipColumn) {
         const failedPreMergeStep = latestFailedPreMergeWorkflowStep(live);
         if (failedPreMergeStep) {
+          if (isUnprovableReviewInputResult(failedPreMergeStep)) {
+            const message = `${failedPreMergeStep.workflowStepName || failedPreMergeStep.workflowStepId} review input is unprovable — repair the review base or checkout, then retry; automatic review recovery stopped.`;
+            await deps.store.updateTask(task.id, { status: "failed", error: message }, deps.getRunContextFor(task.id));
+            await deps.store.logEntry(task.id, message, failedPreMergeStep.output, deps.getRunContextFor(task.id));
+            return;
+          }
           /*
           FNXC:NoVerdictReviewRecovery 2026-09-23-20:52:
           Graph-failure recovery can race a just-queued merger after its last durable probe.
