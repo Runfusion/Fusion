@@ -4307,7 +4307,37 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (isFusionDeletableBranch(task, task.branch)) {
             await execAsync(`git branch -D ${JSON.stringify(task.branch)}`, { cwd: this.options.rootDir, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
           }
-          await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, paused: false, pausedReason: undefined, status: null, error: null });
+          /*
+          FNXC:BranchConflictRecoveryFence 2026-10-01-07:20:
+          A PR-conflict reclaim removes a checkout before its durable clear. Revalidate the
+          inspected generation under the project-scoped atomic writer so a scheduler checkout,
+          retry, or explicit user pause that arrives during cleanup cannot be overwritten.
+          */
+          let recoveryClearApplied = false;
+          await this.store.updateTaskAtomic(task.id, (live) => {
+            const stillOwnsRecovery = live.branch === task.branch
+              && live.worktree === task.worktree
+              && live.paused === task.paused
+              && live.pausedReason === task.pausedReason
+              && live.status === task.status
+              && live.error === task.error
+              && live.userPaused !== true;
+            if (!stillOwnsRecovery) return null;
+            recoveryClearApplied = true;
+            return {
+              worktree: null,
+              branch: null,
+              branchWriteOrigin: "engine" as const,
+              paused: false,
+              pausedReason: undefined,
+              status: null,
+              error: null,
+            };
+          });
+          if (!recoveryClearApplied) {
+            await this.store.logEntry(task.id, "Auto-recovery retained a newer task lifecycle update after reclaiming a stale checkout");
+            return withPerPr({ outcome: "skipped", reason: "superseded" });
+          }
           await auditor.database({ type: "task:pr-conflict-reclaim", target: task.id, metadata: { outcome: "reclaimed", mode: "fully-subsumed", recoveredFromPaused: wasPausedBranchConflict } });
           return withPerPr({ outcome: "reclaimed" });
         }
@@ -4408,14 +4438,34 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
       });
       if (decision.action === "pause") {
-        await this.store.updateTask(task.id, {
-          status: "failed",
-          error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
-          paused: true,
-          pausedReason: "branch-conflict-unrecoverable",
+        /*
+        FNXC:BranchConflictRecoveryFence 2026-10-01-08:15:
+        The dispatcher can finish after an operator Retry has reset this failure. Persist its
+        pause only while the inspected recovery generation remains live; otherwise the old sweep
+        would restore branch-conflict-unrecoverable after the successful retry.
+        */
+        let pauseApplied = false;
+        await this.store.updateTaskAtomic(task.id, (live) => {
+          const stillOwnsFailure = live.branch === task.branch
+            && live.worktree === task.worktree
+            && live.status === task.status
+            && live.error === task.error
+            && live.paused === task.paused
+            && live.pausedReason === task.pausedReason
+            && live.userPaused !== true;
+          if (!stillOwnsFailure) return null;
+          pauseApplied = true;
+          return {
+            status: "failed",
+            error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
+            paused: true,
+            pausedReason: "branch-conflict-unrecoverable",
+          };
         });
-        await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-        await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+        if (pauseApplied) {
+          await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
+          await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+        }
       }
       return withPerPr({ outcome: "paused-unrecoverable", reason: message });
     }
@@ -4940,14 +4990,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   });
                 }
 
-                await this.store.updateTask(task.id, {
-                  worktree: null,
-                  branch: null, branchWriteOrigin: "engine" as const,
-                  paused: false,
-                  pausedReason: undefined,
-                  status: null,
-                  error: null,
+                /*
+                FNXC:BranchConflictRecoveryFence 2026-10-01-05:33:
+                FN-9434 requires the destructive checkout cleanup to clear its stale pause
+                only if this sweep still owns the row it inspected. A retry, unpause, or
+                scheduler checkout replacement that wins first must remain authoritative.
+                */
+                let recoveryClearApplied = false;
+                await this.store.updateTaskAtomic(task.id, (live) => {
+                  const stillOwnsRecovery =
+                    live.branch === task.branch
+                    && live.worktree === task.worktree
+                    && live.paused === task.paused
+                    && live.pausedReason === task.pausedReason
+                    && live.status === task.status
+                    && live.error === task.error
+                    && live.userPaused !== true;
+                  if (!stillOwnsRecovery) return null;
+                  recoveryClearApplied = true;
+                  return {
+                    worktree: null,
+                    branch: null,
+                    branchWriteOrigin: "engine" as const,
+                    paused: false,
+                    pausedReason: undefined,
+                    status: null,
+                    error: null,
+                  };
                 });
+                if (!recoveryClearApplied) {
+                  await this.store.logEntry(task.id, "Auto-recovery retained a newer task lifecycle update after reclaiming a stale checkout");
+                  continue;
+                }
                 await this.store.logEntry(
                   task.id,
                   `[recovery] reclaim-live-zero-commits ${task.id} branch=${task.branch} worktree=${inspection.livePath} tip=${inspection.tipSha.slice(0, 12)} reason=zero-unique-commits-vs-main`,
@@ -5222,14 +5296,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
           });
           if (decision.action === "pause") {
-            await this.store.updateTask(task.id, {
-              status: "failed",
-              error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
-              paused: true,
-              pausedReason: "branch-conflict-unrecoverable",
+            let pauseApplied = false;
+            await this.store.updateTaskAtomic(task.id, (live) => {
+              const stillOwnsFailure = live.branch === task.branch
+                && live.worktree === task.worktree
+                && live.status === task.status
+                && live.error === task.error
+                && live.paused === task.paused
+                && live.pausedReason === task.pausedReason
+                && live.userPaused !== true;
+              if (!stillOwnsFailure) return null;
+              pauseApplied = true;
+              return {
+                status: "failed",
+                error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
+                paused: true,
+                pausedReason: "branch-conflict-unrecoverable",
+              };
             });
-            await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-            await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+            if (pauseApplied) {
+              await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
+              await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+            }
           }
         }
       }

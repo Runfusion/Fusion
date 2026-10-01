@@ -2413,7 +2413,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async updateTaskUnlocked( id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext, shouldPersist?: () => boolean, persistFence?: TaskAtomicPersistFence, ): Promise<Task> {
     return updateTaskUnlockedImpl(this, id, updates, runContext, shouldPersist, persistFence);
   }
-  async pauseTask( id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string; userPaused?: boolean }, ): Promise<Task> {
+  async pauseTask( id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string; userPaused?: boolean; expectedUpdatedAt?: string }, ): Promise<Task> {
     return pauseTaskImpl(this, id, paused, runContext, agentOptions);
   }
 

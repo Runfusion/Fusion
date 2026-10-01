@@ -91,6 +91,7 @@ describe("classifyWorktreeRemovalContent", () => {
     { name: "classifies empty output as clean", porcelain: "", expected: "clean" },
     { name: "classifies whitespace-only output as clean", porcelain: "  \n\t\n", expected: "clean" },
     { name: "classifies a regenerable dependency directory", porcelain: "!! node_modules/\n", expected: "regenerable-ignored" },
+    { name: "classifies ignored Python virtual environments and caches as regenerable", porcelain: "!! .venv/\n!! venv/\n!! .pytest_cache/\n", expected: "regenerable-ignored" },
     { name: "classifies nested and root regenerable directories", porcelain: "!! packages/core/dist/\n!! node_modules/\n", expected: "regenerable-ignored" },
     { name: "preserves ignored entries when one is non-regenerable", porcelain: "!! dist/\n!! .env\n", expected: "ignored-only" },
     { name: "preserves a non-regenerable ignored file", porcelain: "!! .env\n", expected: "ignored-only" },

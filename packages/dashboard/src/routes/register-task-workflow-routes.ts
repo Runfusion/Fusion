@@ -64,6 +64,7 @@ import {
   runDeterministicDuplicateGuard,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
+  buildManualRetryResetPatchIfCurrent,
   reconcileDeterministicDuplicate,
   extractIntentSignature,
   findNearDuplicates,
@@ -3656,6 +3657,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      const applyRetryReset = async (patch: Parameters<typeof scopedStore.updateTask>[1]) => {
+        let applied = false;
+        const updated = await scopedStore.updateTaskAtomic(req.params.id, (live) => {
+          const guardedPatch = buildManualRetryResetPatchIfCurrent(live, task, patch);
+          if (guardedPatch) applied = true;
+          return guardedPatch;
+        });
+        if (!applied) throw new Error("Retry was superseded by a newer task lifecycle update");
+        return updated;
+      };
       // FNXC:TaskWedgeNotifications 2026-08-10-20:15: dashboard Retry is explicit operator intervention, so it clears the spent generic-terminal budget.
       await scopedStore.resetTerminalFailureAutoRecoveryBudget(req.params.id);
 
@@ -3667,7 +3678,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         */
         const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
         await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
-        await scopedStore.updateTask(req.params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           worktree: null,
@@ -3698,7 +3709,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           */
           const reboundColumn = await resolveReboundColumnForTask(scopedStore, req.params.id);
           await clearRebuiltSpecWorkflowPins(scopedStore, req.params.id);
-          await scopedStore.updateTask(req.params.id, {
+          await applyRetryReset({
             status: null,
             error: null,
             ...autoPauseClearPatch,
@@ -3715,7 +3726,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           return;
         }
 
-        await scopedStore.updateTask(req.params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           ...autoPauseClearPatch,
@@ -3753,7 +3764,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         return;
       }
 
-      await scopedStore.updateTask(req.params.id, {
+      await applyRetryReset({
         status: retrySpecification ? "needs-replan" : null,
         error: null,
         worktree: null,
@@ -5057,8 +5068,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/unpause", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      await scopedStore.getTask(req.params.id);
-      const updated = await scopedStore.pauseTask(req.params.id, false);
+      const snapshot = await scopedStore.getTask(req.params.id);
+      const updated = await scopedStore.pauseTask(req.params.id, false, undefined, {
+        expectedUpdatedAt: snapshot.updatedAt,
+      });
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

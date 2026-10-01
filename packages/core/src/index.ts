@@ -1287,6 +1287,7 @@ export {
   MANUAL_RETRY_RESET_COUNTER_KEYS,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
+  buildManualRetryResetPatchIfCurrent,
 } from "./tasks/manual-retry-reset.js";
 export {
   RESTART_STAGE_FENCE_REASON,
