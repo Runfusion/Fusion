@@ -88,6 +88,8 @@ function createStore(task: Task, settings: Record<string, unknown> = {}): TaskSt
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn(async () => store.task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     moveTask: vi.fn((id: string, column: string) => {
       moveTaskCalls.push({ id, column });
       store.task.column = column as Task["column"];
