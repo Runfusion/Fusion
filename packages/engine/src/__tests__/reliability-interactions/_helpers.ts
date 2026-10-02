@@ -344,6 +344,7 @@ export async function makeReliabilityFixture(input: {
   return {
     rootDir,
     store,
+    layer,
     task,
     settings,
     manager,
