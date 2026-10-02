@@ -4409,9 +4409,11 @@ export class ProjectEngine {
                 );
                 await store.logEntry(
                   taskId,
-                  finalization.deferredPostMergeEvidence
-                    ? `Merge confirmed; awaiting graph-owned post-merge verification — ${finalization.reason}.`
-                    : `Merge confirmed finalization blocked — ${finalization.reason ?? "unknown"}.`,
+                  finalization.resumedPostMergeEvidence
+                    ? `Merge confirmed; resumed graph-owned post-merge verification — ${finalization.reason}.`
+                    : finalization.deferredPostMergeEvidence
+                      ? `Merge confirmed; awaiting graph-owned post-merge verification — ${finalization.reason}.`
+                      : `Merge confirmed finalization blocked — ${finalization.reason ?? "unknown"}.`,
                 );
                 continue;
               }

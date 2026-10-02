@@ -195,10 +195,19 @@ describe("missing post-merge continuation recovery", () => {
 
   it("resumes the missing gate exactly once across repeated finalization polls, without merging or completing", async () => {
     const { task, store, items } = recoveryFixture();
+    const results = [];
     for (const source of ["merge-confirmed-fast-path", "self-healing", "direct-ai-merge"] as const) {
-      await expect(finalizeProvenAutoMergeTask({ store, taskId: task.id, source }))
-        .resolves.toMatchObject({ outcome: "blocked", deferredPostMergeEvidence: true });
+      results.push(await finalizeProvenAutoMergeTask({ store, taskId: task.id, source }));
     }
+    expect(results).toEqual([
+      expect.objectContaining({ outcome: "blocked", deferredPostMergeEvidence: true, resumedPostMergeEvidence: true }),
+      expect.objectContaining({ outcome: "blocked", deferredPostMergeEvidence: true }),
+      expect.objectContaining({ outcome: "blocked", deferredPostMergeEvidence: true }),
+    ]);
+    expect(results.slice(1)).toEqual([
+      expect.not.objectContaining({ resumedPostMergeEvidence: true }),
+      expect.not.objectContaining({ resumedPostMergeEvidence: true }),
+    ]);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       nodeId: "post-merge-verification", state: "runnable", kind: "task",

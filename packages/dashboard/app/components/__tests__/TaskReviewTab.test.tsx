@@ -1387,6 +1387,29 @@ describe("TaskReviewTab", () => {
     expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update"), "error");
   });
 
+  it("preserves a newer parent auto-merge override when an overlapping save fails", async () => {
+    const addToast = vi.fn();
+    const task = makeTask({ autoMerge: false, reviewState: { source: "pull-request", items: [], addressing: [] } });
+    apiMocks.fetchTaskReview.mockResolvedValue({ reviewState: task.reviewState, automationStatus: null, emptyMessage: null });
+    let rejectSave!: (error: Error) => void;
+    apiMocks.updateTask.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectSave = reject;
+    }));
+
+    const { rerender } = await renderWithAct(<TaskReviewTab task={task} addToast={addToast} />);
+    const select = await screen.findByTestId("task-review-auto-merge-select");
+    fireEvent.change(select, { target: { value: "on" } });
+    expect(select).toBeDisabled();
+
+    rerender(<TaskReviewTab task={makeTask({ autoMerge: true, reviewState: task.reviewState })} addToast={addToast} />);
+    await waitFor(() => expect(select).toHaveValue("on"));
+
+    await act(async () => rejectSave(new Error("stale request failed")));
+    await waitFor(() => expect(select).toHaveValue("on"));
+    expect(select).toBeEnabled();
+    expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to update"), "error");
+  });
+
   it("keeps the labeled auto-merge selector operable on mobile after a successful save", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,

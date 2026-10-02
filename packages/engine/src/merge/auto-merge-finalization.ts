@@ -77,6 +77,8 @@ export interface AutoMergeFinalizationResult {
   reason?: string;
   /** True only for the graph-owned post-merge gate that must run before retrying finalization. */
   deferredPostMergeEvidence?: boolean;
+  /** True when this invocation installed the missing graph-owned post-merge continuation. */
+  resumedPostMergeEvidence?: boolean;
 }
 
 export interface FinalizeProvenAutoMergeTaskOptions {
@@ -281,11 +283,11 @@ export async function finalizeProvenAutoMergeTask({
     A recovery finalizer has no active graph left to traverse an absent post-merge edge. Only the
     structured resumable decision may seed that authored node; display text never authorizes work.
     */
-    if (evidenceDecision.outcome === "resumable") {
-      const resume = () => resumeMissingPostMergeGate(store, taskId);
-      if (fence) await fence.write("finalization", resume);
-      else await resume();
-    }
+    const resumeResult = evidenceDecision.outcome === "resumable"
+      ? fence
+        ? await fence.write("finalization", () => resumeMissingPostMergeGate(store, taskId))
+        : await resumeMissingPostMergeGate(store, taskId)
+      : undefined;
     await recordFinalizationAudit({
       store,
       audit,
@@ -307,6 +309,7 @@ export async function finalizeProvenAutoMergeTask({
       non-approval is durable evidence that must remain a blocker, not a retry signal.
       */
       deferredPostMergeEvidence: evidenceDecision.outcome === "resumable" || undefined,
+      resumedPostMergeEvidence: resumeResult?.outcome === "resumed" || undefined,
     };
   }
 
