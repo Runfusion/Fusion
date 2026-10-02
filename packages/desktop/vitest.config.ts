@@ -48,7 +48,6 @@ export default defineConfig({
         test: {
           name: "desktop",
           include: ["src/__tests__/**/*.test.ts"],
-          exclude: ["src/__tests__/native.test.ts"],
           pool: "threads",
           isolate: true,
         },
