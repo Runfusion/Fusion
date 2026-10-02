@@ -147,6 +147,13 @@ function makeStore(
   const group = branchGroup ? { ...branchGroup } : undefined;
   const store: any = {
     getTask: vi.fn(async () => task),
+    /*
+    FNXC:StaleReviewCallbackWaiver 2026-10-02-17:05:
+    FN-9429 made the merge gate read waiver receipts unconditionally. This mechanics fixture
+    models the pre-waiver state so merge behavior tests reach their intended outcome.
+    */
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 1 }, ...settingsOverrides })),
     updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, patch: Record<string, unknown>) => { Object.assign(task, patch); return task; })),
     updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {

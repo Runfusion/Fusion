@@ -174,14 +174,25 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     log: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    enabledWorkflowSteps: ["post-merge-verification"],
+    workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    mergeDetails: { mergeConfirmed: true, commitSha: "mergedcommit123" },
     ...taskOverrides,
   };
 
+  const moveTask = vi.fn().mockResolvedValue(baseTask);
+
   return {
     getTask: vi.fn().mockResolvedValue({ ...baseTask, prompt: "# test" }),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     listTasks: vi.fn().mockResolvedValue(allTasks),
     updateTask: vi.fn().mockResolvedValue(baseTask),
-    moveTask: vi.fn().mockResolvedValue(baseTask),
+    updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: Task) => Partial<Task> | Promise<Partial<Task>>) =>
+      Object.assign(baseTask, await reducer(baseTask))),
+    moveTask,
+    moveTaskIf: vi.fn(async (_id: string, column: Task["column"]) =>
+      ({ moved: true, task: await moveTask(baseTask.id, column) })),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue({}),
@@ -190,6 +201,7 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
       mergeIntegrationWorktree: "cwd-main" as const,
     }),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
+    getCompletionHandoffAcceptedMarker: vi.fn().mockResolvedValue(null),
     emit: vi.fn(),
     on: vi.fn(),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),

@@ -12885,7 +12885,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (finalization.outcome === "blocked") {
             await this.store.logEntry(
               task.id,
-              `Auto-recovery skipped: merge confirmed but finalization blocked — ${finalization.reason ?? "unknown"}`,
+              finalization.resumedPostMergeEvidence
+                ? `Auto-recovery resumed graph-owned post-merge verification — ${finalization.reason ?? "unknown"}`
+                : `Auto-recovery skipped: merge confirmed but finalization blocked — ${finalization.reason ?? "unknown"}`,
             );
             continue;
           }

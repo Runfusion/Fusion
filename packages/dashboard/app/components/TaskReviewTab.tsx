@@ -2,7 +2,7 @@ import "./TaskReviewTab.css";
 import { getErrorMessage, isReviewArtifact, type PrCheckStatus, type Task, type TaskDetail, type TaskReviewSummary } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { Bot, ExternalLink, GitPullRequest, User } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { addressPrFeedback, fetchTaskReview, refreshTaskReview, reviseTaskReviewItems, updateTask } from "../api";
 import type { SelectedReviewItem } from "../api";
@@ -190,6 +190,8 @@ export function TaskReviewTab({
     task.autoMerge === true ? "on" : task.autoMerge === false ? "off" : "follow-default",
   );
   const [isSavingAutoMergePreference, setIsSavingAutoMergePreference] = useState(false);
+  const canonicalAutoMergePreference: "follow-default" | "on" | "off" = task.autoMerge === true ? "on" : task.autoMerge === false ? "off" : "follow-default";
+  const canonicalAutoMergePreferenceRef = useRef(canonicalAutoMergePreference);
   const [addressingPrFeedback, setAddressingPrFeedback] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(max-width: 768px)").matches === true);
   const { artifacts } = useArtifacts({ projectId, taskId: task.id });
@@ -234,8 +236,9 @@ export function TaskReviewTab({
   }, [visibleItemIds]);
 
   useEffect(() => {
-    setAutoMergePreference(task.autoMerge === true ? "on" : task.autoMerge === false ? "off" : "follow-default");
-  }, [task.autoMerge]);
+    canonicalAutoMergePreferenceRef.current = canonicalAutoMergePreference;
+    setAutoMergePreference(canonicalAutoMergePreference);
+  }, [canonicalAutoMergePreference]);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,7 +331,16 @@ export function TaskReviewTab({
       onTaskUpdated?.(updatedTask);
       addToast(t("taskReview.autoMergePreferenceUpdated", "Per-task auto-merge preference updated"), "success");
     } catch (updateError) {
-      setAutoMergePreference(previousPreference);
+      /*
+      FNXC:TaskReviewAutoMergePreference 2026-10-02-14:18:
+      A review refresh can publish a newer persisted override while this request is still in flight.
+      Failed saves must restore only an unchanged prior value, never overwrite that refreshed task truth.
+      */
+      setAutoMergePreference(
+        canonicalAutoMergePreferenceRef.current === previousPreference
+          ? previousPreference
+          : canonicalAutoMergePreferenceRef.current,
+      );
       addToast(t("taskReview.updateFailed", "Failed to update {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(updateError) }), "error");
     } finally {
       setIsSavingAutoMergePreference(false);
