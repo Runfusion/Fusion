@@ -6856,7 +6856,7 @@ export function TaskDetailContent({
                 </span>
               </div>
               <div className="detail-agent-actions">
-                {assignedAgentLabel ? (
+                {assignedAgentLabel && (
                   <span className="detail-agent-chip">
                     <Bot size={14} />
                     {assignedAgentLabel}
@@ -6868,20 +6868,26 @@ export function TaskDetailContent({
                       <X size={12} />
                     </button>
                   </span>
-                ) : (
-                  <button
-                    className="btn btn-sm"
-                    onClick={() => {
-                      if (showAgentPicker) {
-                        setShowAgentPicker(false);
-                      } else {
-                        void loadAgents();
-                      }
-                    }}
-                  >
-                    {t("taskDetail.agent.assignBtn", "Assign Agent")}
-                  </button>
                 )}
+                <button
+                  className="btn btn-sm"
+                  onClick={() => {
+                    if (showAgentPicker) {
+                      setShowAgentPicker(false);
+                    } else {
+                      void loadAgents();
+                    }
+                  }}
+                >
+                  {/*
+                  FNXC:TaskDetailAssignee 2026-10-02-14:15:
+                  An existing assignment must retain its identity and clear action while also
+                  allowing a direct replacement through the same scoped picker request.
+                  */}
+                  {assignedAgentLabel
+                    ? t("taskDetail.agent.changeBtn", "Change assignee")
+                    : t("taskDetail.agent.assignBtn", "Assign Agent")}
+                </button>
                 {showAgentPicker && (
                   <div className="agent-picker-dropdown">
                     {agentsLoading && <div className="agent-picker-loading"><LoadingSpinner label={t("taskDetail.agent.loadingAgents", "Loading agents...")} /></div>}
