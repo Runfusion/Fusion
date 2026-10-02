@@ -32,6 +32,7 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Task Management](./task-management.md) | Task creation modes, lifecycle, prompt specs, comments, archiving, and GitHub integration |
 | [Todo View](./todo-view.md) | Canonical guide for the experimental Todo View, including enablement, usage, API routes, and storage |
 | [Missions](./missions.md) | Mission hierarchy, planning flow, activation, progress tracking, and autopilot behavior |
+| [DealersSaaS → Carcuro Mission Plan](./dealersaas-mission-plan.md) | Proposed, evidence-grounded plan of record; supporting specs: [capability inventory](./carcuro-capability-inventory.md) and [product specification](./carcuro-product-spec.md) |
 | [Goals Refinement Gate](./goals-refinement-gate.md) | Evidence gate for activating the conditional post-v1 goals refinement slice only after real usage pain is documented |
 | [Goals Refinement Evidence Pack](./goals-refinement-evidence-pack.md) | Structured observation template and two-observation threshold for conditional Slice 4 activation requests |
 | [Research](./research.md) | Research runs, provider setup, dashboard/CLI usage, findings, exports, and task integration |
