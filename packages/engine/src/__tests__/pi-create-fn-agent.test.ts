@@ -2553,6 +2553,55 @@ describe("createFnAgent", () => {
     ]));
   });
 
+  it("selects the requested current direct OpenAI and Codex Astra upstream rows", async () => {
+    const directAstra = {
+      provider: "openai",
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: { max: "max", xhigh: "xhigh" },
+    };
+    const codexAstra = { ...directAstra, provider: "openai-codex", api: "openai-codex-responses" };
+    getAllMock.mockReturnValue([directAstra, codexAstra]);
+    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "openai",
+      defaultModelId: "gpt-6-astra",
+    });
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-6-astra",
+    });
+
+    expect(createAgentSessionMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      model: { provider: "openai", id: "gpt-6-astra" },
+    }));
+    expect(createAgentSessionMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      model: { provider: "openai-codex", id: "gpt-6-astra" },
+    }));
+    const codexRegistration = registerProviderMock.mock.calls.find(([provider]) => provider === "openai-codex")?.[1];
+    expect(codexRegistration).toEqual(expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({
+        id: "gpt-6-astra",
+        name: "GPT-6 Astra",
+        contextWindow: 272_000,
+        thinkingLevelMap: { max: "max", xhigh: "xhigh" },
+      })]),
+    }));
+  });
+
   // Restored v0.51.0 behavior: a subscription-OAuth `anthropic/<model>` selection stays on
   // the built-in `anthropic` provider (pi-ai POSTs the OAuth token to /v1 with Claude Code
   // impersonation). No `/v1`-based `anthropic-subscription` provider is registered, and there

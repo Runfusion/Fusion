@@ -173,6 +173,39 @@ describe("model-pricing", () => {
     }
   });
 
+  it("prices every current direct OpenAI and Codex Astra pair with provider-qualified catalog rates", () => {
+    const usage = {
+      inputTokens: 1_000_000,
+      outputTokens: 200_000,
+      cachedTokens: 500_000,
+      cacheWriteTokens: 400_000,
+    };
+    const cases = [
+      { provider: "openai", model: "gpt-5.6-luna", expectedUsd: 0.55 },
+      { provider: "openai", model: "gpt-5.6-sol", expectedUsd: 10.2 },
+      { provider: "openai", model: "gpt-5.6-terra", expectedUsd: 5.5 },
+      { provider: "openai", model: "gpt-6-astra", expectedUsd: 25.5 },
+      { provider: "openai-codex", model: "gpt-6-astra", expectedUsd: 25.5 },
+    ] as const;
+
+    for (const { provider, model, expectedUsd } of cases) {
+      const result = costFor(usage, { provider, model });
+      expect(result).toMatchObject({ unavailable: false, stale: false });
+      expect(result.usd).toBeCloseTo(expectedUsd, 6);
+      expect(lookupPricing({ provider, model })).toBe(MODEL_PRICING[`${provider}:${model}`]);
+    }
+
+    // The duplicate Luna ID has different direct and Codex rates, proving these
+    // current rows resolve through their provider-qualified keys rather than one bare key.
+    const directLuna = costFor(usage, { provider: "openai", model: "gpt-5.6-luna" });
+    const codexLuna = costFor(usage, { provider: "openai-codex", model: "gpt-5.6-luna" });
+    expect(lookupPricing({ provider: "openai", model: "gpt-5.6-luna" }))
+      .toBe(MODEL_PRICING["openai:gpt-5.6-luna"]);
+    expect(lookupPricing({ provider: "openai-codex", model: "gpt-5.6-luna" }))
+      .toBe(MODEL_PRICING["openai-codex:gpt-5.6-luna"]);
+    expect(directLuna.usd).not.toBe(codexLuna.usd);
+  });
+
   it("prices Codex mini latest instead of reporting unavailable", () => {
     // codex-mini-latest: input $1.50/1M, output $6/1M, cached input $0.375/1M.
     const result = costFor(

@@ -101,8 +101,19 @@ describe("mergeSupplementalOpenAiCodexModels", () => {
       contextWindow: 128_000,
       maxTokens: 64_000,
     };
+    const existingAstraRow = {
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra (pinned catalog)",
+      provider: OPENAI_CODEX_PROVIDER_ID,
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: { max: "max", xhigh: "xhigh" },
+    };
     const registeredProviders = new Map<string, { models: unknown[] }>([
-      [OPENAI_CODEX_PROVIDER_ID, { models: [existingLunaRow] }],
+      [OPENAI_CODEX_PROVIDER_ID, { models: [existingLunaRow, existingAstraRow] }],
     ]);
     const registry = {
       registeredProviders,
@@ -118,7 +129,13 @@ describe("mergeSupplementalOpenAiCodexModels", () => {
     const lunaRows = registered.models.filter((model) => model.id === GPT_5_6_LUNA_MODEL_ID);
     expect(lunaRows).toHaveLength(1);
     expect(lunaRows[0].name).toBe("GPT-5.6 Luna (pinned catalog)");
-    // sol and terra were still missing, so they must have been added.
+    const astraRows = registered.models.filter((model) => model.id === "gpt-6-astra");
+    expect(astraRows).toEqual([expect.objectContaining({
+      name: "GPT-6 Astra (pinned catalog)",
+      contextWindow: 272_000,
+      thinkingLevelMap: { max: "max", xhigh: "xhigh" },
+    })]);
+    // Sol and Terra were still missing, so they must be added without replacing either upstream row.
     const allIds = registered.models.map((model) => model.id);
     expect(allIds).toEqual(expect.arrayContaining([GPT_5_6_SOL_MODEL_ID, GPT_5_6_TERRA_MODEL_ID]));
   });
