@@ -45,6 +45,16 @@ export const globalModelsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-models",
+    key: "requestyModelSync",
+    labelKey: "settings.globalModels.syncRequestyModelListAtStartup",
+    labelFallback: " Sync Requesty model list at startup ",
+    helpKey: "settings.globalModels.whenEnabledStartupFetchesTheLatestRequestyModels",
+    helpFallback:
+      " When enabled, startup fetches the Requesty managed policies and model catalog so model pickers include Requesty models. Default: enabled. ",
+    keywords: ["refresh", "boot"],
+  },
+  {
+    sectionId: "global-models",
     key: "openrouterAppAttribution.referer",
     labelKey: "settings.globalModels.openRouterHTTPReferer",
     labelFallback: "OpenRouter HTTP-Referer",

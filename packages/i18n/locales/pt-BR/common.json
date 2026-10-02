@@ -167,6 +167,7 @@
       "openai": "Chave de API da OpenAI",
       "openrouter": "Chave de API do OpenRouter",
       "orcarouter": "",
+      "requesty": "",
       "zai": "Chave de API da Zhipu AI"
     },
     "apiKeyPlaceholder": {
@@ -184,6 +185,7 @@
       "openai": "Crie uma chave de API no painel da OpenAI, em API keys.",
       "openrouter": "Crie uma chave de API na página de gerenciamento de chaves da sua conta OpenRouter.",
       "orcarouter": "",
+      "requesty": "",
       "zai": "Crie uma chave de API nas configurações de conta da plataforma aberta da Zhipu AI."
     },
     "apiKeyUsage": {
@@ -194,6 +196,7 @@
       "openai": "Usada para modelos GPT na execução e no planejamento de tarefas",
       "openrouter": "Roteia para múltiplos provedores de modelos de IA através de uma única chave",
       "orcarouter": "",
+      "requesty": "",
       "zai": "Usada para modelos GLM na execução de tarefas"
     },
     "providerDesc": {
@@ -210,6 +213,7 @@
       "openaiCodex": "Modelos Codex da OpenAI — otimizados para tarefas de programação",
       "openrouter": "OpenRouter — roteia solicitações entre múltiplos provedores de IA",
       "orcarouter": "",
+      "requesty": "",
       "zai": "Modelos GLM da Zhipu AI — forte suporte multilíngue"
     }
   },

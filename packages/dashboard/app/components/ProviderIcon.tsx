@@ -600,6 +600,27 @@ function OrcaRouterIcon({ size, color, label = "OrcaRouter" }: { size: number; c
   );
 }
 
+// Requesty mark: a speech bubble with a prompt chevron and cursor cut out.
+function RequestyIcon({ size, color, label = "Requesty" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="requesty-icon"
+      aria-label={label}
+    >
+      <path
+        fillRule="evenodd"
+        d="M6 3h12.375A2.625 2.625 0 0 1 21 5.625v10.5a2.625 2.625 0 0 1-2.625 2.625H10.125L6.75 22.5v-3.75H6a2.625 2.625 0 0 1-2.625-2.625v-10.5A2.625 2.625 0 0 1 6 3zM7 8.2 8 6.9l4.6 3.6L8 14.1l-1-1.3 2.9-2.3zM12.4 13.8h3.7v1.7h-3.7z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
 // GitHub logo (Octocat mark) from SimpleIcons.
 function GitHubIcon({ size, color, label = "GitHub" }: { size: number; color: string; label?: string }) {
   return (
@@ -889,6 +910,7 @@ const providerConfig: Record<
   openrouter: { component: OpenRouterIcon, color: "var(--provider-openrouter)" },
   // OrcaRouter is a named gateway provider in the auth catalog and onboarding.
   orcarouter: { component: OrcaRouterIcon, color: "var(--provider-orcarouter)" },
+  requesty: { component: RequestyIcon, color: "var(--provider-requesty)" },
   /*
   FNXC:ProviderIcon 2026-07-22-12:00:
   FN-8488 makes every static Authentication catalog ID resolve through a branded ProviderIcon entry. Brave Search and Tavily are API-key catalog providers, not custom provider names, so they must never reach the unknown Cpu fallback.
