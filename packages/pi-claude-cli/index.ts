@@ -15,7 +15,7 @@
  * version and the ExtensionAPI stream types stay compatible.
  */
 import * as piAiEntry from "@earendil-works/pi-ai";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { streamViaCli } from "./src/provider.js";
@@ -194,8 +194,8 @@ function ensureMcpConfig(
  * `getModels` IS `getBuiltinModels`), under Node and Vitest it is the root
  * entry. Read the catalog through whichever accessor the entry provides.
  */
-type CatalogRead = (provider: string) => Model[];
-function readBuiltinModels(provider: string): Model[] {
+type CatalogRead = (provider: string) => Model<Api>[];
+function readBuiltinModels(provider: string): Model<Api>[] {
   const entry = piAiEntry as { getBuiltinModels?: CatalogRead; getModels?: CatalogRead };
   const read = entry.getBuiltinModels ?? entry.getModels;
   return read ? read(provider) : [];

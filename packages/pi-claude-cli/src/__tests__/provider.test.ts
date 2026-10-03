@@ -58,21 +58,22 @@ const { MockAssistantMessageEventStream } = vi.hoisted(() => {
   return { MockAssistantMessageEventStream };
 });
 
-vi.mock("@earendil-works/pi-ai", () => ({
-  AssistantMessageEventStream: MockAssistantMessageEventStream,
-  calculateCost: vi.fn(),
-}));
 
 // pi-ai 0.80 moved the static catalog read to `getBuiltinModels` in the
 // `/providers/all` subpath (see index.ts). Mock it there.
 vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  AssistantMessageEventStream: MockAssistantMessageEventStream,
+  calculateCost: vi.fn(),
   getBuiltinModels: vi.fn(() => mockModels),
 }));
 
 import { spawn } from "node:child_process";
-import { getBuiltinModels } from "@earendil-works/pi-ai";
+import * as piAiMocked from "@earendil-works/pi-ai";
 import { streamViaCli } from "../provider";
+
+// The root mock above adds getBuiltinModels; the real root types do not declare it.
+const getBuiltinModels = (piAiMocked as unknown as { getBuiltinModels: ReturnType<typeof vi.fn> }).getBuiltinModels;
 
 describe("provider registration (default export)", () => {
   it("registers provider with ID pi-claude-cli", async () => {
