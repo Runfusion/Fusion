@@ -1,4 +1,10 @@
 {
+  "aiDisclosure": {
+    "interaction": "AI interaction",
+    "generatedOutput": "AI-generated",
+    "assistedAnalysis": "AI-assisted analysis",
+    "translation": "AI translation"
+  },
   "actions": {
     "add": "Add",
     "apply": "Apply",

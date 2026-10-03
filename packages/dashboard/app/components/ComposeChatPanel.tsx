@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useComposerDictation } from "../hooks/useComposerDictation";
+import { AiDisclosure } from "./AiDisclosure";
 import { MicButton } from "./MicButton";
 import type { NativeStructureEmbed } from "@fusion/core";
 import { FN_AGENT_ID, useChat } from "../hooks/useChat";
@@ -127,6 +128,7 @@ export function ComposeChatPanel({ projectId, embeds, draftBody, onUseDraft, onC
   return (
     <section id="compose-chat-panel" className="compose-chat-panel" aria-label={t("composeChat.ariaLabel", "Compose chat narrative helper")} data-testid="compose-chat-panel">
       <label className="message-composer-label" htmlFor="compose-chat-request">{t("composeChat.draftNarrative", "Draft narrative")}</label>
+      <AiDisclosure kind="ai-interaction" compact />
       <textarea ref={handleRequestRef} id="compose-chat-request" className="input compose-chat-panel__input" value={request} onChange={(event) => setRequest(event.target.value)} />
       <div className="compose-chat-panel__output" aria-live="polite">{latestDraft || t("composeChat.emptyDraft", "Ask the assistant to draft the narrative around your attached structures.")}</div>
       <div className="compose-chat-panel__actions"><MicButton {...dictation.micProps} />

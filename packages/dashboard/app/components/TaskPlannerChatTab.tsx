@@ -283,6 +283,11 @@ function isQuestionAnswerFor(message: ChatMessage, parsed: ParsedQuestionToolCal
 }
 
 function toStandardChatMessage(message: ChatMessage): ChatMessageInfo {
+  /*
+  FNXC:AITransparency 2026-09-04-04:44:
+  Planner Chat reuses the shared persisted-message renderer, so per-turn provider/model metadata
+  must survive this mapping. Dropping it would make historic planner output inherit displayedModel.
+  */
   return {
     id: message.id,
     sessionId: message.sessionId,
@@ -290,6 +295,7 @@ function toStandardChatMessage(message: ChatMessage): ChatMessageInfo {
     content: message.content,
     thinkingOutput: message.thinkingOutput,
     toolCalls: extractToolCalls(message),
+    ...(message.metadata ? { metadata: message.metadata } : {}),
     createdAt: message.createdAt,
   };
 }
@@ -1543,6 +1549,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                     showAssistantModelTag={Boolean(activeModelTag)}
                     activeModelTag={activeModelTag}
                     activeModelProvider={displayedModelProvider ?? null}
+                    activeModelId={displayedModelId ?? null}
                     toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
                   />
                 );
@@ -1565,6 +1572,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                   showAssistantModelTag={Boolean(activeModelTag)}
                   activeModelTag={activeModelTag}
                   activeModelProvider={displayedModelProvider ?? null}
+                  activeModelId={displayedModelId ?? null}
                   activeSessionId={sessionId}
                   projectId={projectId}
                   isAwaitingQuestionAnswer={message.role === "assistant"}
@@ -1591,6 +1599,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
                 showAssistantModelTag={Boolean(activeModelTag)}
                 activeModelTag={activeModelTag}
                 activeModelProvider={displayedModelProvider ?? null}
+                activeModelId={displayedModelId ?? null}
               />
             )}
           </>
