@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 
-from collector import bind, connect, drain_turns, scan
+from collector import RejectedError, bind, connect, drain_turns, scan
 from turn_parser import consume_claude, consume_codex
 
 
@@ -85,6 +85,40 @@ class CodexTurnTests(unittest.TestCase):
             self.assertEqual(len(sent[0][1]['sessionId']), 64)
             db.close()
 
+    def test_rejected_turn_is_skipped_and_later_turns_still_deliver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db = connect(root / 'spool.sqlite'); bind(db, 'project', 'host')
+            db.execute('INSERT INTO acknowledged_sessions VALUES (?,?)', ('claude', 'native'))
+            for turn_id in ('bad', 'good'):
+                db.execute('INSERT INTO turns(provider,native,turn_id,revision,body) VALUES (?,?,?,?,?)',
+                           ('claude', 'native', turn_id, 1, json.dumps(dict(nativeTurnId=turn_id, revision=1, ordinal=0, state='completed',
+                                                                            prompts=[dict(at='2026-09-22T12:00:00Z', text='Go')], response='Done',
+                                                                            startedAt='2026-09-22T12:00:00Z', endedAt='2026-09-22T12:00:01Z',
+                                                                            durationMs=1000, durationSource='derived', toolCallCount=0, fileChanges=[]))))
+            db.commit()
+            def send(operation, body):
+                if body['turn']['nativeTurnId'] == 'bad':
+                    raise RejectedError('Collector returned HTTP 400')
+                return dict(eventId=body['eventId'], sessionId=body['sessionId'], nativeTurnId=body['turn']['nativeTurnId'], revision=body['turn']['revision'])
+            self.assertEqual(drain_turns(db, 'project', 'host', send), 1)
+            self.assertEqual(db.execute("SELECT turn_id,acked FROM turns ORDER BY turn_id").fetchall(), [('bad', 0), ('good', 1)])
+            db.close()
+
+    def test_reopen_repairs_spooled_turns_that_end_before_they_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); path = root / 'spool.sqlite'
+            db = connect(path); bind(db, 'project', 'host')
+            body = dict(nativeTurnId='t', revision=2, ordinal=0, state='completed', prompts=[dict(at='2026-09-07T17:43:48Z', text='Go')], response='Done',
+                        startedAt='2026-09-07T17:43:48Z', endedAt='2026-09-07T17:37:49Z', durationMs=0, durationSource='derived', toolCallCount=0, fileChanges=[])
+            db.execute('INSERT INTO turns(provider,native,turn_id,revision,body) VALUES (?,?,?,?,?)', ('claude', 'native', 't', 2, json.dumps(body)))
+            db.execute("DELETE FROM config WHERE key='turn_order_repair_v1'")
+            db.commit(); db.close()
+            db = connect(path)
+            repaired = json.loads(db.execute("SELECT body FROM turns WHERE turn_id='t'").fetchone()[0])
+            self.assertEqual((repaired['startedAt'], repaired['endedAt'], repaired['revision']), ('2026-09-07T17:43:48Z', '2026-09-07T17:43:48Z', 2))
+            db.close()
+
     def test_reopen_recovers_acknowledged_sessions_when_spool_is_empty(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); path = root / 'spool.sqlite'
@@ -120,6 +154,15 @@ class ClaudeTurnTests(unittest.TestCase):
         self.assertEqual((done['durationMs'], done['durationSource'], done['ordinal']), (3750, 'native', 0))
         next_prompt = consume_claude(state, event(6, 'user', uuid='prompt-b', message=dict(content='Next')))
         self.assertEqual((next_prompt['nativeTurnId'], next_prompt['ordinal']), ('prompt-b', 1))
+
+    def test_completion_older_than_compaction_prompt_cannot_end_before_start(self):
+        state = {}
+        consume_claude(state, dict(timestamp='2026-09-07T17:43:48Z', type='user', uuid='summary', message=dict(content='Continued from compaction')))
+        replayed = consume_claude(state, dict(timestamp='2026-09-07T17:37:49Z', type='assistant',
+                                              message=dict(content=[dict(type='text', text='Earlier answer')], stop_reason='end_turn')))
+        self.assertEqual((replayed['state'], replayed['startedAt'], replayed['endedAt']), ('completed', '2026-09-07T17:43:48Z', '2026-09-07T17:43:48Z'))
+        self.assertEqual((replayed['durationMs'], replayed['durationSource']), (0, 'derived'))
+        self.assertLessEqual(replayed['startedAt'], replayed['endedAt'])
 
     def test_unreported_patch_and_duplicate_tool_call(self):
         state = {}

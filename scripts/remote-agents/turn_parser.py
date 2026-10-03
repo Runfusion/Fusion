@@ -16,6 +16,15 @@ def _elapsed(start, end):
         return None
 
 
+def _ended(turn, at):
+    # FNXC:RemoteAgents 2026-10-04-00:45: After a context compaction Claude writes the summary prompt with the
+    # current time and then re-emits earlier messages with their original, older timestamps, so the event that
+    # completes the new turn can predate its start. Fusion rejects a turn that ends before it starts, and one
+    # rejected turn blocked every later turn of the host, so clamp the end to the start instead.
+    started = turn.get('startedAt')
+    return started if isinstance(started, str) and isinstance(at, str) and at < started else at
+
+
 def _change(path, value):
     if not isinstance(path, str) or not path or not isinstance(value, dict):
         return None
@@ -104,9 +113,9 @@ def consume_codex(state, event):
         if isinstance(payload.get('last_agent_message'), str):
             turn['response'] = bounded(payload['last_agent_message'], 131072)
         turn['state'] = 'interrupted' if sub == 'turn_aborted' else 'completed'
-        turn['endedAt'] = at
+        turn['endedAt'] = _ended(turn, at)
         duration = payload.get('duration_ms')
-        turn['durationMs'] = duration if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else _elapsed(turn['startedAt'], at)
+        turn['durationMs'] = duration if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else _elapsed(turn['startedAt'], turn['endedAt'])
         turn['durationSource'] = ('native' if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else 'derived') if turn['durationMs'] is not None else None
         changed = True
     if changed and turn['prompts']:
@@ -157,8 +166,8 @@ def consume_claude(state, event):
             state['calls'][call_id] = dict(name=block.get('name'), input=block.get('input') or {})
             turn['toolCallCount'] += 1; changed = True
         if message.get('stop_reason') in ('end_turn', 'stop_sequence', 'max_tokens') and turn['state'] == 'ongoing':
-            turn['state'] = 'completed'; turn['endedAt'] = at
-            turn['durationMs'] = _elapsed(turn['startedAt'], at)
+            turn['state'] = 'completed'; turn['endedAt'] = _ended(turn, at)
+            turn['durationMs'] = _elapsed(turn['startedAt'], turn['endedAt'])
             turn['durationSource'] = 'derived' if turn['durationMs'] is not None else None
             changed = True
     elif kind == 'user':
@@ -189,8 +198,8 @@ def consume_claude(state, event):
                 turn['fileChanges'].append(change); changed = True
     elif kind == 'system' and event.get('subtype') == 'turn_duration':
         duration = event.get('durationMs')
-        turn['state'] = 'completed'; turn['endedAt'] = at
-        turn['durationMs'] = duration if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else _elapsed(turn['startedAt'], at)
+        turn['state'] = 'completed'; turn['endedAt'] = _ended(turn, at)
+        turn['durationMs'] = duration if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else _elapsed(turn['startedAt'], turn['endedAt'])
         turn['durationSource'] = ('native' if isinstance(duration, int) and not isinstance(duration, bool) and duration >= 0 else 'derived') if turn['durationMs'] is not None else None
         changed = True
     if changed and turn['prompts']:

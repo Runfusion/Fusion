@@ -19,6 +19,11 @@ from opaque_records import ignored_header, scan_opaque_tail
 
 VERSION = 'fusion-remote-1'
 MAX_LINE = 4 * 1024 * 1024
+REJECTED_STATUSES = (400, 413, 422)
+
+
+class RejectedError(ValueError):
+    """Fusion refused this one payload; retrying it unchanged cannot succeed."""
 
 
 def validate_url(value):
@@ -84,6 +89,18 @@ def connect(path):
             if changed:
                 db.execute('UPDATE pending SET body=? WHERE sequence=?', (json.dumps(envelope), sequence))
         db.execute("INSERT INTO config VALUES ('display_repair_v1','1')")
+    if not db.execute("SELECT 1 FROM config WHERE key='turn_order_repair_v1'").fetchone():
+        # FNXC:RemoteAgents 2026-10-04-00:45: Turns spooled before _ended() existed may end before they start
+        # and are rejected by Fusion forever; align them once the way the parser now does.
+        for provider, native, turn_id, body in db.execute(
+                "SELECT provider,native,turn_id,body FROM turns WHERE revision>acked "
+                "AND json_extract(body,'$.endedAt') < json_extract(body,'$.startedAt')").fetchall():
+            turn = json.loads(body)
+            turn['endedAt'] = turn['startedAt']
+            if turn.get('durationSource') == 'derived':
+                turn['durationMs'] = 0
+            db.execute('UPDATE turns SET body=? WHERE provider=? AND native=? AND turn_id=?', (json.dumps(turn), provider, native, turn_id))
+        db.execute("INSERT INTO config VALUES ('turn_order_repair_v1','1')")
     if not db.execute('SELECT 1 FROM pending LIMIT 1').fetchone():
         db.execute('INSERT OR IGNORE INTO acknowledged_sessions SELECT provider,native FROM observations')
     db.commit(); return db
@@ -117,6 +134,8 @@ def post(url, project, token, operation, body, timeout=5):
         raw = response.read(262145)
         if len(raw) > 262144:
             raise ValueError('Collector response limit exceeded')
+        if response.status in REJECTED_STATUSES:
+            raise RejectedError(f'Collector returned HTTP {response.status}')
         if response.status < 200 or response.status >= 300:
             raise ValueError(f'Collector returned HTTP {response.status}')
         return json.loads(raw)
@@ -135,6 +154,9 @@ def enqueue(db, session):
     db.execute("UPDATE config SET value=? WHERE key='sequence'", (str(seq),))
 
 
+_rejected = set()
+
+
 def drain_turns(db, project, host, send, limit=25):
     """Send turns for sessions whose observation has already been acknowledged."""
     if not db.execute('SELECT 1 FROM pending LIMIT 1').fetchone():
@@ -148,7 +170,16 @@ def drain_turns(db, project, host, send, limit=25):
         session_id = hashlib.sha256(json.dumps([project, host, provider, native], separators=(',', ':')).encode()).hexdigest()
         event_id = hashlib.sha256(json.dumps([session_id, turn_id, revision], separators=(',', ':')).encode()).hexdigest()
         request = dict(schemaVersion=1, eventId=event_id, sessionId=session_id, turn=json.loads(body))
-        ack = send('turn-ingest', request)
+        try:
+            ack = send('turn-ingest', request)
+        except RejectedError as error:
+            # FNXC:RemoteAgents 2026-10-04-00:45: Rounds send turns in spool order and used to stop at the
+            # first failure, so one payload Fusion rejects blocked every later turn of the host indefinitely.
+            # A rejection is final for that payload: report it once and carry on with the rest of the round.
+            if (provider, native, turn_id, revision) not in _rejected:
+                _rejected.add((provider, native, turn_id, revision))
+                print('Fusion rejected turn:', provider, turn_id, 'revision', revision, type(error).__name__, str(error), flush=True)
+            continue
         if (ack.get('eventId'), ack.get('sessionId'), ack.get('nativeTurnId')) != (event_id, session_id, turn_id) or ack.get('revision', 0) < revision:
             raise ValueError('Invalid turn ingestion acknowledgement')
         with db:
@@ -283,6 +314,7 @@ def scan(db, path, provider):
 
 DELIVERY_BACKOFF_BASE_SECONDS = 5
 DELIVERY_BACKOFF_MAX_SECONDS = 300
+UNCHANGED_RESCAN_SECONDS = 60
 
 
 def delivery_delay(failures):
@@ -308,13 +340,13 @@ def deliver(db, args, token):
                            (b['session']['provider'], b['session']['nativeSessionId']))
     except Exception as error:
         delivered = False
-        print('Fusion delivery unavailable:', type(error).__name__, flush=True)
+        print('Fusion delivery unavailable:', type(error).__name__, str(error)[:200], flush=True)
     try:
         drain_turns(db, args.project, args.host,
                     lambda operation, body: post(args.url, args.project, token, operation, body, timeout=20))
     except Exception as error:
         delivered = False
-        print('Fusion turn delivery unavailable:', type(error).__name__, flush=True)
+        print('Fusion turn delivery unavailable:', type(error).__name__, str(error)[:200], flush=True)
     return delivered
 
 
@@ -342,6 +374,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         db = connect(args.state); bind(db, args.project, args.host)
         failures, next_delivery = 0, 0.0
+        paused, settled = {}, {}
         while True:
             if time.monotonic() >= next_delivery:
                 delivered = deliver(db, args, token)
@@ -350,11 +383,39 @@ def main():
                 if failures:
                     print('Fusion delivery backing off:', delivery_delay(failures), 'seconds', flush=True)
             files = sorted(discover(args.home, args.days), key=lambda item: item[1].stat().st_mtime, reverse=True)
+            # FNXC:RemoteAgents 2026-10-04-00:30: Scanning re-read and re-parsed every discovered transcript
+            # every five seconds, and a failed scan (rolled back, cursor preserved) repeated the same megabyte
+            # of work each loop for as long as the fault lasted, which pinned a CPU core for days. Unchanged
+            # files are now rescanned only every UNCHANGED_RESCAN_SECONDS (runtime expiry still surfaces within
+            # that window) and a failing file backs off like delivery does. Cursor and spool semantics are unchanged.
+            now = time.monotonic()
+            current = set()
             for provider, path in files[:2000]:
+                key = str(path)
+                current.add(key)
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:
+                    continue
+                signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                known = settled.get(key)
+                if known and known[0] == signature and now - known[1] < UNCHANGED_RESCAN_SECONDS:
+                    continue
+                pause = paused.get(key)
+                if pause and now < pause[1]:
+                    continue
                 try:
                     scan(db, path, provider)
                 except Exception as error:
-                    print('Native collection paused:', provider, type(error).__name__, flush=True)
+                    attempts = (pause[0] if pause else 0) + 1
+                    paused[key] = (attempts, now + delivery_delay(attempts))
+                    settled.pop(key, None)
+                    print('Native collection paused:', provider, type(error).__name__, 'retry in', delivery_delay(attempts), 'seconds', flush=True)
+                else:
+                    paused.pop(key, None)
+                    settled[key] = (signature, now)
+            for stale in [key for key in paused if key not in current] + [key for key in settled if key not in current]:
+                paused.pop(stale, None); settled.pop(stale, None)
             if args.state.stat().st_size > 512 * 1024 * 1024:
                 raise ValueError('Collector storage capacity reached')
             if args.once:
