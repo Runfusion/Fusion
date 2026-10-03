@@ -5,7 +5,7 @@ import { externalSessions, externalSessionTurns } from "../postgres/schema/proje
 import { redactSecrets } from "../secrets/redact-secrets.js";
 import { externalSessionDigest, type ExternalSessionPrincipal } from "./contract.js";
 import { externalSessionReadId } from "./read-contract.js";
-import { externalSessionTurnIngestionSchema, type ExternalSessionTurn } from "./turn-contract.js";
+import { externalSessionTurnIngestionSchema, externalSessionTurnSchema, type ExternalSessionTurn } from "./turn-contract.js";
 
 const listQuerySchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
@@ -78,6 +78,61 @@ export class ExternalSessionTurnStore {
         nativeTurnId: turn.nativeTurnId, revision: turn.revision, ordinal: turn.ordinal, turn, turnDigest: digest, receivedAt });
       return { schemaVersion: 1 as const, eventId: input.eventId, sessionId: input.sessionId,
         nativeTurnId: turn.nativeTurnId, revision: turn.revision, applied: true };
+    });
+  }
+}
+
+/*
+FNXC:ExternalSessionRates 2026-09-24-04:51 (operator decision F2 = C):
+Audited operator restamp. This rewrites ONLY the pricing stamp: token counts, prompts, responses, patches and
+the revision are never touched, because a catalog correction changes what the work cost, not what happened.
+
+It is opt-in per call and never runs on ingest, so the default stays "frozen stamp wins". Every restamped turn
+keeps who did it, why, and the basis it replaced, and a turn that was never stamped is skipped rather than
+being stamped for the first time under an operator's name.
+*/
+export interface RestampInput {
+  actor: string;
+  reason: string;
+  /** New rates, keyed as `<pricingProvider>:<model>` exactly as the original stamp was. */
+  rates: Record<string, { inputPer1M: number; outputPer1M: number; cacheReadPer1M: number; cacheWritePer1M: number; source: string }>;
+  asOf: string;
+  source: string;
+}
+
+export interface RestampResult {
+  restamped: number;
+  /** Turns left alone because they carry no stamp to correct. */
+  skippedUnstamped: number;
+}
+
+export class ExternalSessionTurnRestamp {
+  constructor(private readonly layer: AsyncDataLayer, private readonly projectId: string) {
+    if (layer.projectId !== projectId) throw new Error("External turn restamp requires matching project storage");
+  }
+
+  async apply(sessionId: string, input: RestampInput, now = new Date().toISOString()): Promise<RestampResult> {
+    externalSessionReadId.parse(sessionId);
+    const audit = z.object({ actor: z.string().min(1).max(256), reason: z.string().min(1).max(1024),
+      asOf: z.string().min(1).max(64), source: z.string().min(1).max(512) }).parse(input);
+    if (!input.rates || !Object.keys(input.rates).length) throw new Error("Restamp requires replacement rates");
+    return this.layer.transactionImmediate(async tx => {
+      const rows = await tx.select().from(externalSessionTurns).where(and(
+        eq(externalSessionTurns.projectId, this.projectId), eq(externalSessionTurns.sessionId, sessionId)));
+      let restamped = 0;
+      let skippedUnstamped = 0;
+      for (const row of rows) {
+        const previous = (row.turn as { pricing?: { asOf: string; source: string } }).pricing;
+        if (!previous) { skippedUnstamped += 1; continue; }
+        const turn = { ...(row.turn as Record<string, unknown>), pricing: { asOf: audit.asOf, source: audit.source,
+          rates: input.rates, restamp: { actor: audit.actor, reason: audit.reason, at: now,
+            previousAsOf: previous.asOf, previousSource: previous.source } } };
+        await tx.update(externalSessionTurns).set({ turn: externalSessionTurnSchema.parse(turn) }).where(and(
+          eq(externalSessionTurns.projectId, this.projectId), eq(externalSessionTurns.sessionId, sessionId),
+          eq(externalSessionTurns.nativeTurnId, row.nativeTurnId)));
+        restamped += 1;
+      }
+      return { restamped, skippedUnstamped };
     });
   }
 }

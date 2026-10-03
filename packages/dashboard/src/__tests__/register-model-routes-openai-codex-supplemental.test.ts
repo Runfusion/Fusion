@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import { registerModelRoutes } from "../routes/register-model-routes.js";
 
 const GPT_5_6_IDS = ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"];
+const GPT_6_ASTRA_ID = "gpt-6-astra";
 const BUILT_IN_CODEX_IDS = ["gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"];
 const OPENAI_CODEX_OAUTH_CREDENTIAL = {
   refresh: "test-refresh-token",
@@ -28,7 +29,7 @@ const OPENAI_CODEX_OAUTH_PROVIDER = {
   getApiKey: () => OPENAI_CODEX_OAUTH_CREDENTIAL.access,
 };
 
-function createOpenAiCodexAuthStorage(openAiCodexConfigured: boolean) {
+function createOpenAiCodexAuthStorage(openAiCodexConfigured: boolean, openAiConfigured = false) {
   const credential = {
     type: "oauth",
     access: "test-access-token",
@@ -39,10 +40,16 @@ function createOpenAiCodexAuthStorage(openAiCodexConfigured: boolean) {
   return {
     reload: vi.fn(),
     getOAuthProviders: vi.fn(() => [OPENAI_CODEX_OAUTH_PROVIDER]),
-    getApiKeyProviders: vi.fn(() => []),
-    get: vi.fn((providerId: string) => openAiCodexConfigured && providerId === "openai-codex" ? credential : undefined),
+    getApiKeyProviders: vi.fn(() => [{ id: "openai" }]),
+    get: vi.fn((providerId: string) => (
+      openAiCodexConfigured && providerId === "openai-codex"
+        ? credential
+        : openAiConfigured && providerId === "openai"
+          ? { type: "api_key", key: "test-openai-key" }
+          : undefined
+    )),
     hasAuth: vi.fn((providerId: string) => openAiCodexConfigured && providerId === "openai-codex"),
-    hasApiKey: vi.fn(() => false),
+    hasApiKey: vi.fn((providerId: string) => openAiConfigured && providerId === "openai"),
     getProviderEnv: vi.fn(() => ({})),
     getApiKey: vi.fn(async (providerId: string) => openAiCodexConfigured && providerId === "openai-codex" ? credential.access : undefined),
   };
@@ -100,6 +107,8 @@ function createFakeModelRegistry(initialOpenAiCodexModels: FakeOpenAiCodexModel[
     getAvailable: vi.fn(() => {
       const rows: Array<{ provider: string; id: string; name: string; reasoning: boolean; contextWindow: number }> = [
         { provider: "openai", id: "gpt-5", name: "GPT-5", reasoning: true, contextWindow: 128000 },
+        ...GPT_5_6_IDS.map((id) => ({ provider: "openai", id, name: id, reasoning: true, contextWindow: 272_000, thinkingLevelMap: { max: "max" } })),
+        { provider: "openai", id: GPT_6_ASTRA_ID, name: "GPT-6 Astra", reasoning: true, contextWindow: 272_000, thinkingLevelMap: { max: "max", xhigh: "xhigh" } },
       ];
       for (const [providerName, config] of registeredProviders) {
         for (const model of config.models) {
@@ -111,7 +120,7 @@ function createFakeModelRegistry(initialOpenAiCodexModels: FakeOpenAiCodexModel[
   };
 }
 
-function createRouterHarness(modelRegistry: ReturnType<typeof createFakeModelRegistry> | ModelRegistry, options: { openAiCodexConfigured: boolean }, authStorage = createOpenAiCodexAuthStorage(options.openAiCodexConfigured)) {
+function createRouterHarness(modelRegistry: ReturnType<typeof createFakeModelRegistry> | ModelRegistry, options: { openAiCodexConfigured: boolean; openAiConfigured?: boolean }, authStorage = createOpenAiCodexAuthStorage(options.openAiCodexConfigured, options.openAiConfigured)) {
   const getHandlers = new Map<string, (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>>();
   const router = {
     post: vi.fn(),
@@ -180,12 +189,40 @@ describe("FN-7745: GPT-5.6 codenamed OpenAI Codex variants — /api/models", () 
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("does not surface the rows when openai-codex is not among the configured providers", async () => {
+  it("returns current upstream direct and Codex Astra rows once for configured providers only", async () => {
+    const modelRegistry = createFakeModelRegistry([{
+      id: GPT_6_ASTRA_ID,
+      name: "GPT-6 Astra",
+      reasoning: true,
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: { max: "max", xhigh: "xhigh" },
+    }]);
+    const response = await callModels(createRouterHarness(modelRegistry, {
+      openAiConfigured: true,
+      openAiCodexConfigured: true,
+    }));
+
+    for (const provider of ["openai", "openai-codex"] as const) {
+      const rows = response.models.filter((model) => model.provider === provider && model.id === GPT_6_ASTRA_ID);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ provider, id: GPT_6_ASTRA_ID });
+      expect(rows[0]?.supportedThinkingLevels).toContain("max");
+    }
+    for (const id of GPT_5_6_IDS) {
+      const rows = response.models.filter((model) => model.provider === "openai" && model.id === id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.supportedThinkingLevels).toContain("max");
+    }
+  });
+
+  it("does not surface current direct or Codex rows when their providers are unconfigured", async () => {
     const modelRegistry = createFakeModelRegistry([]);
-    const handler = createRouterHarness(modelRegistry, { openAiCodexConfigured: false });
+    const handler = createRouterHarness(modelRegistry, { openAiCodexConfigured: false, openAiConfigured: false });
 
     const response = await callModels(handler);
     expect(response.models.some((m) => m.provider === "openai-codex")).toBe(false);
+    expect(response.models.some((m) => m.provider === "openai")).toBe(false);
   });
 
   it("drives the real ModelRegistry path from supplemental merge through /api/models filtering", async () => {

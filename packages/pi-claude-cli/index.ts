@@ -14,8 +14,9 @@
  * `^0.80.3` (matching cli/engine) so the whole extension resolves one pi-ai
  * version and the ExtensionAPI stream types stay compatible.
  */
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
+import * as piAiEntry from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { streamViaCli } from "./src/provider.js";
 import { streamViaAcp } from "./src/acp-driver.js";
@@ -182,6 +183,24 @@ function ensureMcpConfig(
   }
 }
 
+/*
+ * FNXC:ModelCatalog 2026-10-04 (X-4385):
+ * The bundled Fusion runtime loads this extension through pi-coding-agent's
+ * jiti loader in alias mode, which maps the whole `@earendil-works/pi-ai`
+ * specifier onto `dist/compat.js`. Every subpath import (`/providers/all`,
+ * `/utils/transcript`) therefore resolved to `dist/compat.js/<subpath>` and the
+ * extension failed to load on each heartbeat. The bare entry is the only
+ * loader-safe specifier: under the loader it is the compat shim (whose
+ * `getModels` IS `getBuiltinModels`), under Node and Vitest it is the root
+ * entry. Read the catalog through whichever accessor the entry provides.
+ */
+type CatalogRead = (provider: string) => Model<Api>[];
+function readBuiltinModels(provider: string): Model<Api>[] {
+  const entry = piAiEntry as { getBuiltinModels?: CatalogRead; getModels?: CatalogRead };
+  const read = entry.getBuiltinModels ?? entry.getModels;
+  return read ? read(provider) : [];
+}
+
 export default function (pi: ExtensionAPI) {
   try {
     // Startup validation: kick off async, memoized presence + auth probes
@@ -189,7 +208,7 @@ export default function (pi: ExtensionAPI) {
     // `claude` subprocess in streamViaCli still reports hard errors on send.
     void runCliValidationOnce();
 
-    const catalogModels = getBuiltinModels("anthropic").map((model) => ({
+    const catalogModels = readBuiltinModels("anthropic").map((model) => ({
       id: model.id,
       name: model.name,
       reasoning: model.reasoning,
@@ -200,11 +219,32 @@ export default function (pi: ExtensionAPI) {
     }));
 
     /*
-    FNXC:ModelCatalog 2026-09-29-05:56:
-    Pi owns Anthropic catalog discovery for the Claude subscription provider. Project its rows
-    directly so newly bundled metadata reaches this surface without Fusion fallback entries.
+    FNXC:ModelCatalog 2026-10-01-02:51:
+    Pi 0.86.1 predates the two Claude 5.5 aliases. Add only those local-CLI compatibility rows,
+    then dedupe by ID so an upstream catalog row remains authoritative and singular after Pi updates.
     */
-    const models = catalogModels;
+    const extraModels: typeof catalogModels = [
+      {
+        id: "claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: "claude-sonnet-5-5",
+        name: "Claude Sonnet 5.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+    ];
+    const seen = new Set(catalogModels.map((model) => model.id));
+    const models = [...catalogModels, ...extraModels.filter((model) => !seen.has(model.id))];
 
     // Ensure all registered tools are active so pi can execute them.
     // Some tools (find, grep, ls) are registered but not activated by default.

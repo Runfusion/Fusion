@@ -59,6 +59,12 @@ export const externalSessionHosts = projectSchema.table("external_session_hosts"
   hostId: text("host_id").notNull(),
   collectorVersion: text("collector_version").notNull(),
   lastHeartbeatAt: text("last_heartbeat_at"),
+  // FNXC:ExternalSessionHealth 2026-09-23-23:24: NULL means the collector did not report, never a reported zero.
+  spoolDepth: bigint("spool_depth", { mode: "number" }),
+  spoolBytes: bigint("spool_bytes", { mode: "number" }),
+  parseFailures: bigint("parse_failures", { mode: "number" }),
+  deliveryFailures: bigint("delivery_failures", { mode: "number" }),
+  healthReportedAt: text("health_reported_at"),
 }, t => [primaryKey({ columns: [t.projectId, t.hostId] })]);
 
 export const externalSessionStreams = projectSchema.table("external_session_streams", {
@@ -106,6 +112,38 @@ export const externalSessionFeedback = projectSchema.table("external_session_fee
 ]);
 
 /** Historical transcript data is immutable by identity and advances only by native revision. */
+// FNXC:ExternalSessionIncrements 2026-09-24-04:51: One immutable row per revision that added usage.
+export const externalSessionUsageIncrements = projectSchema.table("external_session_usage_increments", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  sessionId: text("session_id").notNull(),
+  revision: bigint("revision", { mode: "number" }).notNull(),
+  usage: jsonb("usage").notNull().$type<Record<string, unknown>[]>(),
+  pricing: jsonb("pricing").$type<Record<string, unknown> | null>(),
+  recordedAt: text("recorded_at").notNull(),
+}, t => [primaryKey({ columns: [t.projectId, t.sessionId, t.revision] })]);
+
+/*
+FNXC:ExternalSessionSummary 2026-09-24-07:05 (F3 = A): one current AI summary per session, stored with the turn
+range it covered so staleness can be DERIVED at read rather than stored. A failure never nulls `summary`: the
+previous summary plus an explicit failure beats an empty pane during an inference outage.
+*/
+export const externalSessionSummaries = projectSchema.table("external_session_summaries", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  sessionId: text("session_id").notNull(),
+  summary: text("summary"),
+  provider: text("provider"),
+  model: text("model"),
+  throughOrdinal: bigint("through_ordinal", { mode: "number" }),
+  turnCount: bigint("turn_count", { mode: "number" }),
+  generatedAt: text("generated_at"),
+  status: text("status").notNull().$type<"ready" | "failed">(),
+  failure: text("failure"),
+  attemptedAt: text("attempted_at").notNull(),
+}, t => [
+  primaryKey({ columns: [t.projectId, t.sessionId] }),
+  foreignKey({ columns: [t.projectId, t.sessionId], foreignColumns: [externalSessions.projectId, externalSessions.id] }).onDelete("cascade"),
+]);
+
 export const externalSessionTurns = projectSchema.table("external_session_turns", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   sessionId: text("session_id").notNull(),
@@ -2738,8 +2776,32 @@ export const chatRoomMessages = projectSchema.table("chat_room_messages", {
  * adding a table requires updating both the definition and the registry
  * entry (drift signal).
  */
+/*
+FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+A receipt is a separate project-scoped authority record, not task JSON. The composite identity binds
+one issued waiver to the precise task, step, and immutable prior attempt.
+*/
+export const staleReviewCallbackWaiverReceipts = projectSchema.table("stale_review_callback_waiver_receipts", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
+  taskId: text("task_id").notNull(),
+  workflowStepId: text("workflow_step_id").notNull(),
+  attemptId: text("attempt_id").notNull(),
+  policyVersion: text("policy_version").notNull(),
+  actor: text("actor").notNull(),
+  reason: text("reason").notNull(),
+  issuedAt: text("issued_at").notNull(),
+  state: text("state").notNull().default("issued"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] }).onDelete("cascade"),
+  unique("stale_review_callback_waiver_receipts_attempt_unique").on(t.projectId, t.taskId, t.workflowStepId, t.attemptId),
+  index("idxStaleReviewCallbackWaiverReceiptsTask").on(t.projectId, t.taskId),
+]);
+
 export const projectTableNames = [
   "external_session_hosts", "external_session_streams", "external_sessions", "external_session_feedback", "external_session_turns",
+  "external_session_usage_increments", "external_session_summaries",
   "tasks", "config", "boards", "project_auth_users", "project_auth_memberships",
   "project_auth_providers", "project_auth_sessions", "task_reviewer_runs",
   "distributed_task_id_state", "distributed_task_id_reservations",
@@ -2788,4 +2850,5 @@ export const projectTableNames = [
   "task_lifecycle_consumer_receipts", "task_lifecycle_consumer_registrations",
   "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
   "unplanned_execution_blocks", "workflow_agent_capacity_leases", "task_overlap_waits",
+  "stale_review_callback_waiver_receipts",
 ] as const;

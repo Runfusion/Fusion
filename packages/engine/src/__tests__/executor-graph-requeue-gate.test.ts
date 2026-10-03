@@ -77,6 +77,45 @@ describe("executor graph execute self-requeue gate", () => {
     );
   });
 
+  it("parks invalid persisted step dependencies for planner repair before generic graph failure handling", async () => {
+    resetExecutorMocks();
+    const store = createMockStore();
+    const live = task({
+      id: "FN-INVALID-PERSISTED-DAG",
+      steps: [{ name: "First", status: "pending", dependsOn: [1] }],
+    });
+    store.getTask.mockResolvedValue(live);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await (executor as any).handleGraphFailure(live, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["steps"],
+      context: {
+        "node:steps:value": "invalid-plan-dependency:step 1 depends on invalid step 2 (self-or-forward)",
+      },
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith(live.id, {
+      status: "needs-replan",
+      error: null,
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+    }, undefined);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      live.id,
+      "AI spec revision requested",
+      "Step dependency validation rejected the plan: step 1 depends on invalid step 2 (self-or-forward)",
+      undefined,
+    );
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      live.id,
+      expect.objectContaining({ status: "failed" }),
+      expect.anything(),
+    );
+  });
+
   it("keeps in-review graph failures in review without a REVISE handoff", async () => {
     resetExecutorMocks();
     const store = createMockStore();

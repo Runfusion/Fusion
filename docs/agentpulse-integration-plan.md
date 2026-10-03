@@ -1,8 +1,28 @@
 # AgentPulse integration into Fusion
 
-Status: active implementation. Session collection is deployed; the Phase 1 acceptance gate and Phases 2-6 remain open.
+Status: active implementation. No phase acceptance gate has passed. See **Branch state** below for what is built but not merged, deployed or accepted.
 Prepared: 2026-09-15.
-Last reconciled with fork `main`: 2026-09-23, `f2a1a5552`.
+Last reconciled with fork `main`: 2026-09-26, `e4fd6ec42` against branch `claude/remote-agents-visibility-20260923` at `7870e8f02`.
+
+## Branch state (2026-09-26)
+
+<!--
+FNXC:RemoteAgents 2026-09-26-20:48:
+Keep built, merged, deployed and accepted as four separate claims. The header previously read as if Phases 2-6 had no
+work at all, while the branch carries most of Phases 2, 3 and 5. The deployment notes in the ledger below are a
+historical record of earlier rollouts; they are not evidence of what runs on any host today.
+-->
+
+Built on the branch, not merged to fork `main`, not deployed, not accepted:
+
+- Phase 2: turn history rendering in the Remote agents panel, with prompts, responses, tool counts and expandable file patches.
+- Phase 3: per-turn cost and context use, effective-dated rates priced per revision, frozen cost stamps with an audited operator restamp, expensive session and turn rankings, and a date-range overview.
+- Phase 5: full-text search over collected output, per-server collector health, and operator-triggered AI session summaries.
+- Reconciliation of collected sessions against Fusion's own task runs by native session ID.
+
+Deep links into sessions and turns, turn history in linked Fusion task detail, and the accessible cost popup were absent on fork `main` `e4fd6ec42` and on `7870e8f02`. The operator assigned them to the review-prep lane on 2026-09-26; they are now built on this branch, likewise not merged, deployed or accepted. They have unit, route and component tests but no browser acceptance check yet.
+
+Not built by decision: session controls, launch requests, managed sessions and Ask threads (see the used-feature inventory). The AgentPulse history importer is dropped (see Phase 6). Cutover and AgentPulse retirement are held for separate approval.
 Baseline: Fusion fork `a58b374c7`, including upstream `6e6adf393`; AgentPulse fork `04f0dcf`.
 
 ## Outcome
@@ -22,7 +42,7 @@ Use Fusion as the single dashboard for Fusion-managed work and Codex/Claude sess
 | Tokens and costs | Fusion token analytics, TaskCostTab, pricing overrides and refresh support | Provider-normalized accounting, turn breakdowns, cost popup and rankings |
 | Feedback to external sessions | AgentPulse feedback queue | Delivery acknowledgements, host routing and supported runtime injection |
 | AI summaries | Fusion AI configuration; selected Qwen3.5-2B-4bit on m3 | Bounded summary jobs, provenance and last-summarized position |
-| Historical data | AgentPulse session/event store and native transcripts | Resumable import, reconciliation and retention controls |
+| Historical data | Native Codex/Claude transcripts on each host | Fusion collectors read native transcripts directly; no AgentPulse import |
 
 Scope includes the AgentPulse features used in this deployment. Before implementation, inventory additional AgentPulse surfaces—search, alerts, session notes, launch templates and workspace actions—and map each to a Fusion equivalent or a named follow-up. Do not declare complete parity while a used feature has no replacement.
 
@@ -73,7 +93,7 @@ PostgreSQL migrations should follow Fusion's existing migration ownership and nu
 
 ## Delivery phases and acceptance gates
 
-Implementation ledger:
+Implementation ledger (historical record of earlier rollouts; not current deployment evidence):
 
 - Phase 0: the architecture and recovery path are recorded. The used-feature inventory, sanitized native fixtures and baseline reconciliation are still incomplete.
 - Phase 1: authenticated Codex/Claude collectors on J, m3 and m5, durable observation replay, host-aware live cards and feedback are deployed. All three host heartbeats advanced after the 2026-09-22 rollout. Identity/reconnect acceptance and the latency targets have not been measured across all hosts.
@@ -81,16 +101,16 @@ Implementation ledger:
 - Phase 3: session-level usage and estimated cost with category rates exist in the Remote agents panel. Current context/capacity, effective-dated rates, an accessible compact cost popup, turn costs and expensive-task rankings are not complete.
 - Phase 4: queued external feedback and delivery receipts exist. Capability-gated stop/resume and full cross-host control acceptance are not complete.
 - Phase 5: an AI-overview foundation exists on a separate branch, but Qwen3.5-2B summaries are not deployed or accepted. Search and collector operations UI remain open.
-- Phase 6: historical AgentPulse import, parity reconciliation, primary-entry cutover and the 24-hour observation gate have not been completed. Standalone AgentPulse remains available for recovery.
+- Phase 6: the AgentPulse history importer is dropped by operator decision (2026-09-26). Primary-entry cutover and the 24-hour observation gate have not been completed. Standalone AgentPulse remains available for recovery.
 
 ### Next work, in order
 
-1. Let m3's repaired observation spool drain, then verify turn acknowledgements and project-scoped PostgreSQL reads from real Codex and Claude sessions. Diagnose the isolated CLI smoke's `External session project storage unavailable` response; the live J API and focused route/store tests are healthy.
+1. Let m3's repaired observation spool drain, then verify turn acknowledgements and project-scoped PostgreSQL reads from real Codex and Claude sessions. The isolated CLI smoke's `External session project storage unavailable` response is diagnosed and fixed on the branch (`3224af054`): a project registered under a symlinked path (every macOS temp path) bound a path-derived partition instead of its registry id.
 2. Render the persisted turns in Remote agents and linked Fusion task detail: prompt above result, elapsed work time, tool activity, expandable historical file patches, pagination, deep links and explicit unavailable/truncated states. Compare real turns with native output, including the 20-file example if its transcript is available.
 3. Complete context size/capacity, normalized request and turn usage, effective-dated model prices, accessible detailed cost popup, and expensive-session/turn explanations with unknown-price coverage.
 4. Add only supported host-routed stop/resume controls, prove feedback delivery and command idempotency on disposable sessions across J, m3 and m5, and show queued/unsupported states clearly.
 5. Land and configure bounded Qwen3.5-2B summaries; add searchable output and operations health for lag, spool depth, acknowledgements, parser failures and summary failures.
-6. Import AgentPulse history with resumable native identities and provenance; reconcile counts, text, patches, usage and prices. Run the 24-hour acceptance window and rehearse rollback before switching the primary entry point. Retiring standalone AgentPulse requires separate explicit approval.
+6. No AgentPulse history import (dropped 2026-09-26). Run the 24-hour acceptance window and rehearse rollback before switching the primary entry point. Retiring standalone AgentPulse requires separate explicit approval.
 
 ### Phase 0 — Confirm contracts and preserve recovery data
 
@@ -150,15 +170,20 @@ Implementation ledger:
 
 **Gate:** summaries preserve failures and unfinished work; endpoint outages do not block session display. Burst load and an extended disconnect drain successfully without duplicate output or costs.
 
-### Phase 6 — Historical import and cutover
+### Phase 6 — Cutover
 
-- Run a resumable importer from a consistent AgentPulse snapshot through the same normalization rules as live data.
-- Preserve native identities, hosts, timestamps, turns and patches; retain original usage provenance. Do not fabricate missing historical telemetry.
-- Compare counts, representative text/diffs, usage totals and price coverage while both dashboards receive data.
+<!--
+FNXC:RemoteAgents 2026-09-26-23:39:
+The operator dropped the AgentPulse history importer. Fusion's collectors read native Codex/Claude transcripts
+directly, and AgentPulse is not used, so there is no AgentPulse store whose history must be carried over. Do not
+build an importer or a parity reconciliation against AgentPulse rows. Cutover and retirement stay separately gated.
+-->
+
+- No AgentPulse history import. Session history comes from Fusion collectors reading native transcripts directly.
 - Run at least a 24-hour observation window including host/service restarts and a network outage.
 - Switch the primary entry point to Fusion after parity gates pass. Stop AgentPulse ingestion/services only after explicit retirement approval, retaining the recovery snapshot and configuration.
 
-**Gate:** all used features have verified replacements, the reconciliation report explains every discrepancy, and rollback has been rehearsed.
+**Gate:** all used features have verified replacements and rollback has been rehearsed.
 
 ## Validation and rollout discipline
 

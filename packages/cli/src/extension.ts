@@ -17,6 +17,7 @@ import {
   COLUMN_LABELS,
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
+  buildManualRetryResetPatchIfCurrent,
   validateNodeOverrideChange,
   type Task,
   type ColumnId,
@@ -2521,10 +2522,14 @@ export default function kbExtension(pi: ExtensionAPI) {
       const gated = await applyAgentPolicyGateForExtensionTool("fn_task_unpause", params as Record<string, unknown>, ctx as ExtensionCallerContext);
       if (gated) return gated;
       const store = await getStore(ctx.cwd);
-      const task = await store.pauseTask(params.id, false);
+      const snapshot = await store.getTask(params.id);
+      if (!snapshot) throw new Error(`Task ${params.id} not found`);
+      const task = await store.pauseTask(params.id, false, undefined, {
+        expectedUpdatedAt: snapshot.updatedAt,
+      });
 
       return {
-        content: [{ type: "text", text: `Unpaused ${task.id}` }],
+        content: [{ type: "text", text: task.paused ? `Unpause for ${task.id} was superseded by a newer lifecycle update` : `Unpaused ${task.id}` }],
         details: { taskId: task.id },
       };
     },
@@ -2656,11 +2661,24 @@ export default function kbExtension(pi: ExtensionAPI) {
       const autoPauseClearPatch = buildAutoPauseClearPatch(task);
       const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
       const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+      const applyRetryReset = async (patch: Parameters<typeof store.updateTask>[1]) => {
+        if (typeof store.updateTaskAtomic !== "function") {
+          return store.updateTask(params.id, patch);
+        }
+        let applied = false;
+        const updated = await store.updateTaskAtomic(params.id, (live) => {
+          const guardedPatch = buildManualRetryResetPatchIfCurrent(live, task, patch);
+          if (guardedPatch) applied = true;
+          return guardedPatch;
+        });
+        if (!applied) throw new Error("Retry was superseded by a newer task lifecycle update");
+        return updated;
+      };
       // FNXC:TaskWedgeNotifications 2026-08-10-20:15: an operator retry ends the prior terminal-failure episode and mints a fresh budget.
       await store.resetTerminalFailureAutoRecoveryBudget(params.id);
 
       if (isMissingWorktreeSessionRetry) {
-        await store.updateTask(params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           worktree: null,
@@ -2683,7 +2701,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       // In-review retry: distinguish between execution failures and merge failures.
       if (isInReviewRetry) {
         if (isExecutionFailureInReview) {
-          await store.updateTask(params.id, {
+          await applyRetryReset({
             status: null,
             error: null,
             ...autoPauseClearPatch,
@@ -2705,7 +2723,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           };
         }
 
-        await store.updateTask(params.id, {
+        await applyRetryReset({
           status: null,
           error: null,
           ...autoPauseClearPatch,
@@ -2719,7 +2737,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       // Clear failure state and move to todo for other columns
-      await store.updateTask(params.id, {
+      await applyRetryReset({
         status: null,
         error: null,
         ...autoPauseClearPatch,

@@ -57,6 +57,9 @@ import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { invalidateSupersededRepositoryScopeReviews } from "../tasks/repository-scope.js";
+import { TaskAtomicPersistGuardRefusedError, type TaskAtomicPersistFence } from "./project-store-ops.js";
+import { STALE_REVIEW_CALLBACK_WAIVER_ACTOR, STALE_REVIEW_CALLBACK_WAIVER_POLICY_VERSION, STALE_REVIEW_CALLBACK_WAIVER_REASON, type StaleReviewCallbackWaiverReceipt } from "../merge/pre-merge-approval.js";
+import { deriveStaleReviewCallbackAttemptId } from "../workflows/workflow-step-results.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -377,14 +380,19 @@ export async function renewCheckoutLeaseImpl(store: TaskStore, taskId: string, u
     return current;
 }
 
-export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater: ( current: Task, ) => Parameters<TaskStore["updateTask"]>[1] | null | undefined | Promise<Parameters<TaskStore["updateTask"]>[1] | null | undefined>, runContext?: RunMutationContext,): Promise<Task> {
+export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater: ( current: Task, ) => Parameters<TaskStore["updateTask"]>[1] | null | undefined | Promise<Parameters<TaskStore["updateTask"]>[1] | null | undefined>, runContext?: RunMutationContext, shouldPersist?: () => boolean, persistFence?: TaskAtomicPersistFence,): Promise<Task> {
     return store.withTaskLock(id, async () => {
       const current = await store.readTaskJson(store.taskDir(id));
       const updates = await updater(current);
       if (!updates || Object.values(updates).every((value) => value === undefined)) {
         return current;
       }
-      return store.updateTaskUnlocked(id, updates, runContext);
+      try {
+        return await store.updateTaskUnlocked(id, updates, runContext, shouldPersist, persistFence);
+      } catch (error) {
+        if (error instanceof TaskAtomicPersistGuardRefusedError) return current;
+        throw error;
+      }
     });
   }
 
@@ -492,6 +500,91 @@ export async function updateWorkflowStepResultsFencedImpl(
  * step-result path, and widening it would put a high-blast-radius seam inside this change. Both
  * take the same advisory transaction lock, so they serialize against each other across processes.
  */
+export type StaleReviewCallbackWaiverIssue = {
+  workflowStepId: string;
+  attemptId: string;
+  expectedStatus: "pending" | "failed";
+  expectedStartedAt?: string;
+  expectedCompletedAt?: string;
+  /** Project-scoped selected workflow fenced inside the receipt transaction. */
+  expectedWorkflowSelection?: { workflowId: string; stepIds: string[] };
+  /** Synchronous lock-held eligibility predicate; it must never await or re-enter the store. */
+  canIssue?: (task: Task) => boolean;
+};
+
+export type StaleReviewCallbackWaiverIssueResult =
+  | { applied: true; task: Task; receipt: StaleReviewCallbackWaiverReceipt }
+  | { applied: false; reason: "unavailable" | "task-missing" | "task-deleted" | "refused" | "attempt-changed" | "receipt-exists" };
+
+/*
+FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+The receipt insert and current-result replacement share the task advisory transaction. The synchronous
+predicate is intentionally invoked only after the locked reread: stale observations, copied metadata,
+and a concurrent renewed lease cannot issue an authorization record.
+*/
+export async function issueStaleReviewCallbackWaiverImpl(
+  store: TaskStore,
+  id: string,
+  issue: StaleReviewCallbackWaiverIssue,
+): Promise<StaleReviewCallbackWaiverIssueResult> {
+  const layer = store.asyncLayer;
+  const projectId = layer?.projectId;
+  if (!layer || !projectId) return { applied: false, reason: "unavailable" };
+  return store.withTaskLock(id, async () => {
+    const outcome = await layer.transactionImmediate(async (tx): Promise<StaleReviewCallbackWaiverIssueResult> => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+      const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!row) return { applied: false, reason: "task-missing" };
+      if (row.deletedAt) return { applied: false, reason: "task-deleted" };
+      const current = store.rowToTask(store.pgRowToTaskRow(row));
+      if (issue.expectedWorkflowSelection) {
+        const [selection] = await tx.select({ workflowId: schema.project.taskWorkflowSelection.workflowId, stepIds: schema.project.taskWorkflowSelection.stepIds })
+          .from(schema.project.taskWorkflowSelection)
+          .where(and(projectScopeFor(schema.project.taskWorkflowSelection.projectId, projectId), eq(schema.project.taskWorkflowSelection.taskId, id)));
+        if (!selection || selection.workflowId !== issue.expectedWorkflowSelection.workflowId
+          || JSON.stringify(selection.stepIds ?? []) !== JSON.stringify(issue.expectedWorkflowSelection.stepIds)) {
+          return { applied: false, reason: "refused" };
+        }
+      }
+      if (issue.canIssue && !issue.canIssue(current)) return { applied: false, reason: "refused" };
+      /*
+      FNXC:StaleReviewCallbackWaiver 2026-10-01-04:24:
+      Merge evaluation reads the latest step result, so receipt issuance must replace that same
+      carrier rather than accidentally waiving an older duplicate attempt.
+      */
+      const index = current.workflowStepResults
+        ? [...current.workflowStepResults].map((result, index) => ({ result, index })).reverse()
+          .find(({ result }) => result.workflowStepId === issue.workflowStepId)?.index ?? -1
+        : -1;
+      const prior = index >= 0 ? current.workflowStepResults?.[index] : undefined;
+      if (!prior || prior.status !== issue.expectedStatus || prior.startedAt !== issue.expectedStartedAt
+        || prior.completedAt !== issue.expectedCompletedAt || prior.automatedStaleCallbackWaiver
+        || deriveStaleReviewCallbackAttemptId(prior) !== issue.attemptId) {
+        return { applied: false, reason: "attempt-changed" };
+      }
+      const existing = await tx.select({ id: schema.project.staleReviewCallbackWaiverReceipts.id })
+        .from(schema.project.staleReviewCallbackWaiverReceipts)
+        .where(and(projectScopeFor(schema.project.staleReviewCallbackWaiverReceipts.projectId, projectId), eq(schema.project.staleReviewCallbackWaiverReceipts.taskId, id), eq(schema.project.staleReviewCallbackWaiverReceipts.workflowStepId, issue.workflowStepId), eq(schema.project.staleReviewCallbackWaiverReceipts.attemptId, issue.attemptId)));
+      if (existing.length > 0) return { applied: false, reason: "receipt-exists" };
+      const issuedAt = new Date().toISOString();
+      const receipt: StaleReviewCallbackWaiverReceipt = { id: randomUUID(), projectId, taskId: id, workflowStepId: issue.workflowStepId, attemptId: issue.attemptId, policyVersion: STALE_REVIEW_CALLBACK_WAIVER_POLICY_VERSION, actor: STALE_REVIEW_CALLBACK_WAIVER_ACTOR, reason: STALE_REVIEW_CALLBACK_WAIVER_REASON, issuedAt, state: "issued" };
+      await tx.insert(schema.project.staleReviewCallbackWaiverReceipts).values({ projectId: receipt.projectId, id: receipt.id, taskId: receipt.taskId, workflowStepId: receipt.workflowStepId, attemptId: receipt.attemptId, policyVersion: receipt.policyVersion, actor: receipt.actor, reason: receipt.reason, issuedAt: receipt.issuedAt, state: receipt.state });
+      const nextResults = [...(current.workflowStepResults ?? [])];
+      nextResults[index] = { ...prior, status: "skipped", completedAt: issuedAt, priorAttempts: [prior, ...(prior.priorAttempts ?? [])].slice(0, 5), automatedStaleCallbackWaiver: { receiptId: receipt.id, policyVersion: receipt.policyVersion, actor: receipt.actor, reason: receipt.reason, issuedAt, priorStatus: issue.expectedStatus, attemptId: issue.attemptId } };
+      const log = [...(current.log ?? []), { timestamp: issuedAt, action: "System waived a proven stale code-review callback after the safety wait." }];
+      const [updatedRow] = await tx.update(schema.project.tasks).set({ workflowStepResults: nextResults, log, updatedAt: issuedAt }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer), isNull(schema.project.tasks.deletedAt))).returning();
+      if (!updatedRow) return { applied: false, reason: "task-missing" };
+      return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), receipt };
+    });
+    if (outcome.applied) {
+      await store.writeTaskJsonFile(store.taskDir(id), outcome.task);
+      if (store.isWatching) store.taskCache.set(id, { ...outcome.task });
+      store.emitTaskLifecycleEventSafely("task:updated", [outcome.task]);
+    }
+    return outcome;
+  });
+}
+
 export async function updateWorkflowStepResultsWithLogFencedImpl(
   store: TaskStore,
   id: string,

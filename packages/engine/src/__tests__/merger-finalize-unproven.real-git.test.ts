@@ -59,6 +59,8 @@ function createStore(
 
   return {
     getTask: vi.fn(async () => currentTask),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     getSettings: vi.fn(async () => mergedSettings),
     listTasks: vi.fn(async () => [currentTask]),
     updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, updates: Partial<Task>) => {

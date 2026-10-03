@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 
-from collector import bind, connect, drain_turns, scan
+from collector import Rejected, bind, connect, drain_turns, scan
 from turn_parser import consume_claude, consume_codex
 
 
@@ -156,3 +156,182 @@ class ClaudeTurnTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TurnUsageTests(unittest.TestCase):
+    def claude(self, usage, message_id='msg-1'):
+        state = {}
+        consume_claude(state, {'type': 'user', 'uuid': 'u1', 'timestamp': '2026-09-23T10:00:00Z',
+                               'message': {'role': 'user', 'content': 'go'}})
+        return consume_claude(state, {'type': 'assistant', 'timestamp': '2026-09-23T10:00:05Z',
+                                      'message': {'id': message_id, 'role': 'assistant', 'model': 'claude-sonnet-5',
+                                                  'content': 'done', 'usage': usage}}), state
+
+    def test_records_measured_usage_and_context_against_the_turn(self):
+        turn, _ = self.claude({'input_tokens': 100, 'cache_read_input_tokens': 900,
+                               'cache_creation_input_tokens': 50, 'output_tokens': 20})
+        self.assertEqual(len(turn['usage']), 1)
+        entry = turn['usage'][0]
+        self.assertEqual(entry['requestId'], 'msg-1')
+        self.assertEqual(entry['model'], 'claude-sonnet-5')
+        # inputTokens is the whole context presented to the model, which is also the context size.
+        self.assertEqual(entry['inputTokens'], 1050)
+        self.assertEqual(entry['cachedInputTokens'], 900)
+        self.assertEqual(entry['outputTokens'], 20)
+        self.assertEqual(turn['contextTokens'], 1050)
+        self.assertEqual(turn['contextCapacity'], 200000)
+
+    def test_does_not_double_count_a_repeated_message_id(self):
+        state = {}
+        consume_claude(state, {'type': 'user', 'uuid': 'u1', 'timestamp': '2026-09-23T10:00:00Z',
+                               'message': {'role': 'user', 'content': 'go'}})
+        event = {'type': 'assistant', 'timestamp': '2026-09-23T10:00:05Z',
+                 'message': {'id': 'msg-1', 'role': 'assistant', 'content': 'a',
+                             'usage': {'input_tokens': 10, 'cache_read_input_tokens': 0,
+                                       'cache_creation_input_tokens': 0, 'output_tokens': 5}}}
+        consume_claude(state, event)
+        consume_claude(state, event)
+        self.assertEqual(len(state['turn']['usage']), 1)
+
+    def test_unreadable_usage_marks_the_turn_incomplete_instead_of_dropping_it(self):
+        turn, state = self.claude({'input_tokens': 'lots', 'output_tokens': 5})
+        recorded = state['turn']
+        self.assertEqual(recorded.get('usage'), [])
+        # Silently reporting no usage would let the turn read as free.
+        self.assertIs(recorded.get('usageComplete'), False)
+
+    def test_usage_without_output_tokens_is_not_recorded(self):
+        _, state = self.claude({'input_tokens': 10, 'cache_read_input_tokens': 0,
+                                'cache_creation_input_tokens': 0})
+        self.assertEqual(state['turn']['usage'], [])
+
+
+class CodexTurnUsageTests(unittest.TestCase):
+    def drive(self, events):
+        state = {}
+        last = None
+        for event in events:
+            snap = consume_codex(state, event)
+            if snap:
+                last = snap
+        return last, state
+
+    def events(self, turn_id='t-1', usage_turn_id=None, usage=None, model='gpt-5.6-sol'):
+        usage = usage if usage is not None else {'input_tokens': 1000, 'cached_input_tokens': 200,
+                                                 'cache_write_input_tokens': 0, 'output_tokens': 50,
+                                                 'reasoning_output_tokens': 10}
+        return [
+            {'type': 'event_msg', 'timestamp': '2026-09-23T10:00:00Z', 'payload': {'type': 'user_message', 'message': 'go'}},
+            {'type': 'event_msg', 'timestamp': '2026-09-23T10:00:01Z', 'payload': {'type': 'task_started', 'turn_id': turn_id}},
+            {'type': 'turn_context', 'timestamp': '2026-09-23T10:00:02Z', 'payload': {'turn_id': turn_id, 'model': model}},
+            {'type': 'token_usage_record', 'timestamp': '2026-09-23T10:00:03Z',
+             'payload': {'turn_id': usage_turn_id or turn_id, 'response_id': 'resp-1', 'usage': usage}},
+        ]
+
+    def test_attaches_usage_by_the_turn_id_the_transcript_states(self):
+        turn, _ = self.drive(self.events())
+        self.assertEqual(len(turn['usage']), 1)
+        entry = turn['usage'][0]
+        self.assertEqual(entry['requestId'], 'resp-1')
+        self.assertEqual(entry['model'], 'gpt-5.6-sol')
+        self.assertEqual(entry['inputTokens'], 1000)
+        self.assertEqual(entry['cachedInputTokens'], 200)
+        self.assertEqual(entry['outputTokens'], 50)
+        self.assertEqual(entry['reasoningTokens'], 10)
+        self.assertEqual(turn['contextTokens'], 1000)
+        self.assertEqual(turn['contextCapacity'], 272000)
+
+    def test_does_not_attach_usage_belonging_to_a_different_turn(self):
+        # Guessing by position would attach this; the stated turn_id says it belongs elsewhere.
+        _, state = self.drive(self.events(turn_id='t-1', usage_turn_id='t-other'))
+        self.assertEqual(state['turn']['usage'], [])
+        self.assertIsNone(state['turn']['contextTokens'])
+
+    def test_unreadable_usage_marks_the_turn_incomplete_rather_than_zero(self):
+        _, state = self.drive(self.events(usage={'input_tokens': 'lots'}))
+        self.assertEqual(state['turn']['usage'], [])
+        self.assertIs(state['turn'].get('usageComplete'), False)
+
+    def test_does_not_double_count_a_repeated_response_id(self):
+        events = self.events()
+        _, state = self.drive(events + [events[-1]])
+        self.assertEqual(len(state['turn']['usage']), 1)
+
+    def test_records_usage_without_a_model_rather_than_inventing_one(self):
+        events = [e for e in self.events() if e['type'] != 'turn_context']
+        _, state = self.drive(events)
+        self.assertEqual(len(state['turn']['usage']), 1)
+        self.assertIsNone(state['turn']['usage'][0]['model'])
+
+
+class TurnTimingIntegrityTests(unittest.TestCase):
+    """FNXC:RemoteAgents 2026-09-30-10:59: a completion stamped before the prompt must not produce a turn that
+    ends before it starts (Fusion rejects it forever) nor a fabricated 0 ms duration."""
+
+    def test_claude_completion_before_the_prompt_leaves_the_end_unknown(self):
+        state = {}
+        consume_claude(state, dict(timestamp='2026-09-16T12:02:38.850Z', type='user', uuid='p', message=dict(content='Go')))
+        done = consume_claude(state, dict(timestamp='2026-09-16T11:55:47.216Z', type='assistant',
+                                          message=dict(content=[dict(type='text', text='Done')], stop_reason='end_turn')))
+        self.assertEqual((done['state'], done['endedAt'], done['durationMs'], done['durationSource']), ('completed', None, None, None))
+        # The provider's own duration is still a measurement worth keeping, even when its timestamp is out of order.
+        native = consume_claude(state, dict(timestamp='2026-09-16T11:55:48Z', type='system', subtype='turn_duration', durationMs=3750))
+        self.assertEqual((native['endedAt'], native['durationMs'], native['durationSource']), (None, 3750, 'native'))
+
+    def test_codex_completion_before_the_start_leaves_the_end_unknown(self):
+        state = {}
+        consume_codex(state, dict(type='event_msg', timestamp='2026-09-22T12:00:05Z', payload=dict(type='task_started', turn_id='t')))
+        consume_codex(state, dict(type='event_msg', timestamp='2026-09-22T12:00:06Z', payload=dict(type='user_message', message='Go')))
+        done = consume_codex(state, dict(type='event_msg', timestamp='2026-09-22T12:00:01Z', payload=dict(type='task_complete', last_agent_message='ok')))
+        self.assertEqual((done['endedAt'], done['durationMs'], done['durationSource']), (None, None, None))
+
+    def test_a_consistent_end_is_unchanged(self):
+        state = {}
+        consume_claude(state, dict(timestamp='2026-09-16T12:00:00Z', type='user', uuid='p', message=dict(content='Go')))
+        done = consume_claude(state, dict(timestamp='2026-09-16T12:00:02Z', type='assistant',
+                                          message=dict(content=[dict(type='text', text='Done')], stop_reason='end_turn')))
+        self.assertEqual((done['endedAt'], done['durationMs'], done['durationSource']), ('2026-09-16T12:00:02Z', 2000, 'derived'))
+
+
+class RejectedTurnDeliveryTests(unittest.TestCase):
+    """FNXC:RemoteAgents 2026-09-30-10:59: one record Fusion permanently refuses must not block the turns behind it,
+    while a server-side failure still stops delivery so nothing is lost."""
+
+    def _spool_two_sessions(self, root):
+        db = connect(root / 'spool.sqlite'); bind(db, 'project', 'host')
+        for name, native in (('a.jsonl', 'native-a'), ('b.jsonl', 'native-b')):
+            (root / name).write_text(''.join(json.dumps(e) + '\n' for e in [
+                dict(type='session_meta', timestamp='2026-09-22T12:00:00Z', payload=dict(id=native, cwd='/work')),
+                dict(type='event_msg', timestamp='2026-09-22T12:00:01Z', payload=dict(type='task_started', turn_id='t-' + native)),
+                dict(type='event_msg', timestamp='2026-09-22T12:00:02Z', payload=dict(type='user_message', message='Go')),
+                dict(type='event_msg', timestamp='2026-09-22T12:00:03Z', payload=dict(type='task_complete', last_agent_message='ok')),
+            ]))
+            scan(db, root / name, 'codex')
+        db.execute('DELETE FROM pending'); db.commit()
+        return db
+
+    def test_a_permanently_rejected_turn_is_set_aside_and_later_turns_deliver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = self._spool_two_sessions(Path(directory))
+            sent = []
+            def send(operation, body):
+                sent.append(body['turn']['nativeTurnId'])
+                if len(sent) == 1:
+                    raise Rejected(400)
+                return dict(eventId=body['eventId'], sessionId=body['sessionId'],
+                            nativeTurnId=body['turn']['nativeTurnId'], revision=body['turn']['revision'])
+            self.assertEqual(drain_turns(db, 'project', 'host', send), 1)
+            self.assertEqual(len(sent), 2)
+            self.assertEqual(db.execute('SELECT count(*) FROM turns WHERE revision>acked').fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT value FROM counters WHERE key='rejected_turns'").fetchone()[0], 1)
+            db.close()
+
+    def test_a_server_failure_still_blocks_and_keeps_every_turn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = self._spool_two_sessions(Path(directory))
+            def send(operation, body):
+                raise ValueError('Collector returned HTTP 503')
+            with self.assertRaises(ValueError):
+                drain_turns(db, 'project', 'host', send)
+            self.assertEqual(db.execute('SELECT count(*) FROM turns WHERE revision>acked').fetchone()[0], 2)
+            db.close()

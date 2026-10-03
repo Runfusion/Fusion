@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { externalSessionIdentifier } from "./contract.js";
+import { externalSessionIdentifier, externalSessionUsageSchema } from "./contract.js";
 
 const safeCounter = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const timestamp = z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString());
@@ -31,6 +31,54 @@ const promptSchema = z.object({
   text: transcriptText(262_144),
 }).strict();
 
+
+/*
+FNXC:ExternalSessionRates 2026-09-24-00:04:
+Rates applicable when this turn was ingested. Fusion's catalog is a single current baseline with no effective
+dates, so nothing can reconstruct a past rate after the fact: the only way a turn is ever priced at what it
+actually cost is to record the rate at the moment it arrives.
+
+This is server-stamped. The field is part of the turn schema because the store revalidates the whole turn, but
+the ingest route always OVERWRITES it, so a collector cannot choose the rates its own work is priced at.
+A turn without this stamp stays explicitly unpriced-at-recorded-rates; it is never back-filled from today's
+catalog and called a billed cost.
+*/
+const rateSchema = z.object({
+  inputPer1M: z.number().min(0).max(1_000_000),
+  outputPer1M: z.number().min(0).max(1_000_000),
+  cacheReadPer1M: z.number().min(0).max(1_000_000),
+  cacheWritePer1M: z.number().min(0).max(1_000_000),
+  source: z.string().min(1).max(512),
+}).strict();
+
+/*
+FNXC:ExternalSessionRates 2026-09-24-04:51 (operator decision F2 = C):
+A frozen stamp is preserved by DEFAULT, so a provider price change never rewrites what past work cost. An
+operator may still restamp after a CATALOG CORRECTION — a rate that was wrong when it was recorded — and that
+is an audited act, not a silent recomputation: the audit keeps who did it, why, and the basis it replaced, so
+a restamped figure can always be traced back to the one it superseded.
+*/
+const restampSchema = z.object({
+  actor: z.string().min(1).max(256),
+  reason: z.string().min(1).max(1024),
+  at: z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString()),
+  previousAsOf: z.string().min(1).max(64),
+  previousSource: z.string().min(1).max(512),
+}).strict();
+
+export const externalSessionTurnPricingSchema = z.object({
+  /** Date the recorded rates were current as of. */
+  asOf: z.string().min(1).max(64),
+  /** Where the basis came from: the built-in baseline or an operator refresh. */
+  source: z.string().min(1).max(512),
+  /** Applicable rate per `<pricingProvider>:<model>`, exactly as used to price this turn. */
+  rates: z.record(z.string().min(1).max(512), rateSchema),
+  /** Present only when an operator deliberately replaced an earlier stamp. */
+  restamp: restampSchema.optional(),
+}).strict();
+
+export type ExternalSessionTurnPricing = z.infer<typeof externalSessionTurnPricingSchema>;
+
 /**
  * Durable provider-neutral turn payload. Missing native telemetry stays null/absent rather
  * than being converted to zero. Historical patches belong to their turn and are bounded;
@@ -49,6 +97,18 @@ export const externalSessionTurnSchema = z.object({
   durationSource: z.enum(["native", "derived"]).nullable(),
   toolCallCount: safeCounter.nullable(),
   fileChanges: z.array(externalSessionFileChangeSchema).max(128),
+  /*
+  FNXC:ExternalSessionUsage 2026-09-23-23:24: Measured per-request usage for this turn, so a turn's cost is
+  priced from what the provider reported rather than apportioned from the session total. Optional because a
+  provider or an older collector may report none, and absent must stay distinguishable from zero.
+  requestId keys the record so a rewritten transcript cannot double count.
+  */
+  usage: z.array(externalSessionUsageSchema.extend({ requestId: externalSessionIdentifier })).max(64).optional(),
+  usageComplete: z.boolean().optional(),
+  /** Whole input of the newest request: what the model actually saw, against the provider window. */
+  contextTokens: safeCounter.nullable().optional(),
+  contextCapacity: safeCounter.nullable().optional(),
+  pricing: externalSessionTurnPricingSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.durationMs === null) !== (value.durationSource === null)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["durationSource"], message: "Duration value and source must be reported together" });

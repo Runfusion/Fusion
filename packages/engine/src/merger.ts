@@ -91,6 +91,9 @@ import {
   buildTaskLineageTrailer,
   evaluateNoCommitsNoOpFinalize,
   getTaskMergeBlocker,
+  isOpenWorkflowReviewFinding,
+  allowsAutoMergeProcessing,
+  resolveEffectiveAutoMerge,
   isPreMergeStepsNotRunBlocker,
   PreMergeStepsNotRunError,
   normalizeMergeConflictStrategy,
@@ -161,6 +164,7 @@ import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent
 import { mergerLog } from "./logger.js";
 import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
+import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 
 /*
 FNXC:EngineDiagnostics 2026-07-26-10:10:
@@ -6885,11 +6889,26 @@ export async function aiMergeTask(
   if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
     throw new Error(`Cannot merge ${taskId}: merge gate could not resolve the task workflow`);
   }
+  const settings = await mergeEffectiveSettings(store, task, await store.getSettings());
+  const mergeContent = await captureMergeContentDescriptor(task, { workspaceRootDir: rootDir, settings });
+  const receipts = await store.getStaleReviewCallbackWaiverReceipts(taskId);
+  /*
+  FNXC:StaleReviewCallbackWaiver 2026-10-01-04:24:
+  The direct merger door reads TaskStore-issued receipts and the same live content/policy facts as
+  the shared evaluator. A skipped carrier alone is never merge authority, including manual doors.
+  */
   const mergeBlocker = getTaskMergeBlocker(task, {
     manual: options.manual === true,
     reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
     /* FNXC:LegacyPreMergeGate 2026-08-23-08:32: Legacy tasks without a persisted optional-group selection predate graph gates. New planned tasks always persist an explicit list, including Review Level 0's []. */
     requiredPreMergeStepIds: Array.isArray(task.enabledWorkflowSteps) ? mergeGate.requiredPreMergeStepIds : undefined,
+    mergeContent,
+    staleReviewCallbackWaiver: {
+      projectId: store.getProjectId() ?? "",
+      effectiveAutoMerge: options.manual !== true && allowsAutoMergeProcessing(task, settings) && resolveEffectiveAutoMerge(task, settings),
+      hasOpenFindings: task.workflowStepResults?.some((result) => result.findings?.some(isOpenWorkflowReviewFinding)) === true,
+      receipts,
+    },
   });
   if (mergeBlocker) {
     /* FNXC:RequiredPreMergeSteps 2026-08-22-22:40: an unrun enabled gate is a deferral (typed), not a failure — see PreMergeStepsNotRunError. */
@@ -6902,7 +6921,6 @@ export async function aiMergeTask(
   // merger's flat reads (strictScopeEnforcement, verificationFixRetries,
   // buildRetryCount, titleSummarizer lanes — all threaded from here via
   // executeMergeAttempt) pick up workflow values. Behavior-inert by default.
-  const settings = await mergeEffectiveSettings(store, task, await store.getSettings());
   // U7 (R10): resolve the merge trait's policy (strategy / fileScope / rules)
   // from the task's workflow when the workflowColumns flag is ON, falling back
   // to the existing settings knobs otherwise. Read-through only — merge

@@ -10,6 +10,19 @@ export function isWorkflowStepNotRun(result: WorkflowStepResult): boolean {
     && (WORKFLOW_STEP_NOT_RUN_REASONS as readonly string[]).includes(result.notRunReason);
 }
 
+/**
+ * FNXC:StaleReviewCallbackWaiver 2026-10-01-04:40:
+ * A waiver receipt identifies the exact pending or no-verdict failed attempt it replaced. Derive the
+ * identity from the preserved attempt rather than the skipped waiver carrier so later attempts cannot
+ * borrow an earlier receipt.
+ */
+export function deriveStaleReviewCallbackAttemptId(
+  attempt: Pick<WorkflowStepResult, "status" | "startedAt" | "completedAt">,
+): string | undefined {
+  if (attempt.status !== "pending" && attempt.status !== "failed") return undefined;
+  return `${attempt.status}:${attempt.startedAt ?? ""}:${attempt.completedAt ?? ""}`;
+}
+
 export const WORKFLOW_REVIEW_FINDING_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 export const WORKFLOW_REVIEW_FINDING_RESOLUTIONS = ["open", "resolved-in-review", "superseded", "dispute-upheld"] as const;
 /** Values an untrusted reviewer response may assign; automatic dispute closure is Fusion-owned. */

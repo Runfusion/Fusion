@@ -7,6 +7,48 @@ def count(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9007199254740991 else None
 
 
+
+# FNXC:ExternalSessionUsage 2026-09-23-23:24: Context capacity per provider. The long-context threshold and the
+# window an operator sees must be the same number, so both read this table instead of repeating a literal.
+CONTEXT_CAPACITY = {'claude': 200000, 'codex': 272000}
+
+
+def codex_usage_record(payload):
+    """Normalized usage for one Codex token_usage_record, or None when the record cannot be trusted.
+
+    Shared with the turn parser. The record names its own ``turn_id``, so a turn's usage is stated by the
+    transcript rather than inferred from ordering.
+    """
+    u = payload.get('usage') if isinstance(payload, dict) else None
+    if not isinstance(u, dict):
+        return None
+    usage = dict(inputTokens=count(u.get('input_tokens')), cachedInputTokens=count(u.get('cached_input_tokens', 0)),
+                 outputTokens=count(u.get('output_tokens')), reasoningTokens=count(u.get('reasoning_output_tokens')),
+                 cacheWriteTokens=count(u.get('cache_write_input_tokens', 0)), cacheWriteHourTokens=0)
+    if usage['inputTokens'] is None or usage['outputTokens'] is None or usage['cachedInputTokens'] is None or usage['cacheWriteTokens'] is None:
+        return None
+    return usage
+
+
+def claude_message_usage(message):
+    """Normalized usage for one Claude assistant message, or None when the record cannot be trusted.
+
+    Shared with the turn parser so per-turn and per-session accounting can never drift apart. inputTokens is
+    the whole context presented to the model (fresh + cache read + cache write), which is also the context
+    size for that request.
+    """
+    u = message.get('usage') if isinstance(message, dict) else None
+    if not isinstance(u, dict):
+        return None
+    fresh = count(u.get('input_tokens'))
+    read, write = (count(u.get(k, 0)) for k in ('cache_read_input_tokens', 'cache_creation_input_tokens'))
+    hour = count((u.get('cache_creation') or {}).get('ephemeral_1h_input_tokens', 0))
+    if None in (fresh, read, write):
+        return None
+    return dict(inputTokens=fresh + read + write, cachedInputTokens=read, cacheWriteTokens=write,
+                cacheWriteHourTokens=hour, outputTokens=count(u.get('output_tokens')), reasoningTokens=None)
+
+
 def content(value):
     if isinstance(value, str):
         return value
@@ -88,8 +130,11 @@ def consume(db, state, event, provider, accounting=True):
         u = p.get('usage') or {}
         if isinstance(u, dict):
             request = 'response:' + str(p.get('response_id') or event.get('ordinal') or hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest())
-            usage = {k: count(u.get(v, 0 if k == 'cachedInputTokens' else None)) for k, v in fields.items()}
-            usage.update(cacheWriteTokens=count(u.get('cache_write_input_tokens', 0)), cacheWriteHourTokens=0)
+            usage = codex_usage_record(p)
+            if usage is None:
+                # Unreadable usage is UNKNOWN, not absent, exactly as on the Claude path.
+                state['unreportedUsage'] = True
+                return
             authoritative = True
     elif provider == 'codex' and sub == 'token_count':
         info = p.get('info') or {}; u = info.get('total_token_usage') or {}
@@ -104,9 +149,12 @@ def consume(db, state, event, provider, accounting=True):
         u = message.get('usage') or {}
         if isinstance(u, dict):
             request = 'message:' + str(message['id'])
-            fresh = count(u.get('input_tokens')); read, write = (count(u.get(k, 0)) for k in ('cache_read_input_tokens', 'cache_creation_input_tokens'))
-            hour = count((u.get('cache_creation') or {}).get('ephemeral_1h_input_tokens', 0))
-            usage = dict(inputTokens=fresh + read + write if None not in (fresh, read, write) else None, cachedInputTokens=read, cacheWriteTokens=write, cacheWriteHourTokens=hour, outputTokens=count(u.get('output_tokens')), reasoningTokens=None)
+            usage = claude_message_usage(message)
+            # An unparseable usage record is UNKNOWN, not absent: without this the session would report a
+            # complete total while silently dropping the request it could not read.
+            if usage is None:
+                state['unreportedUsage'] = True
+                return
     if request and usage:
         if any(v is None for k, v in usage.items() if k != 'reasoningTokens') or usage['cachedInputTokens'] + usage['cacheWriteTokens'] > usage['inputTokens'] or (usage['reasoningTokens'] is not None and usage['reasoningTokens'] > usage['outputTokens']):
             state['unreportedUsage'] = True; return
@@ -119,7 +167,7 @@ def consume(db, state, event, provider, accounting=True):
         previous = db.execute('SELECT usage FROM requests WHERE provider=? AND native=? AND request=?', (provider, native, request)).fetchone()
         if previous:
             old = json.loads(previous[0]); usage = {k: max(v, old[k]) if v is not None and old.get(k) is not None else v if v is not None else old.get(k) for k, v in usage.items()}
-        usage.update(model=model, fast=state.get('fast', False) or u.get('speed') == 'fast', longContext=usage['inputTokens'] > (200000 if provider == 'claude' else 272000))
+        usage.update(model=model, fast=state.get('fast', False) or u.get('speed') == 'fast', longContext=usage['inputTokens'] > CONTEXT_CAPACITY.get(provider, CONTEXT_CAPACITY['codex']))
         db.execute('INSERT INTO requests VALUES (?,?,?,?) ON CONFLICT(provider,native,request) DO UPDATE SET usage=excluded.usage', (provider, native, request, json.dumps(usage)))
 
 

@@ -55,6 +55,7 @@ def connect(path):
     os.chmod(path, 0o600)
     db.executescript('''PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS config(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS counters(key TEXT PRIMARY KEY,value INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY,inode TEXT,offset INTEGER,state TEXT,digest TEXT,revision INTEGER);
       CREATE TABLE IF NOT EXISTS requests(provider TEXT,native TEXT,request TEXT,usage TEXT,PRIMARY KEY(provider,native,request));
       CREATE TABLE IF NOT EXISTS pending(sequence INTEGER PRIMARY KEY,body TEXT NOT NULL);
@@ -103,6 +104,20 @@ def bind(db, project, host):
         db.execute("INSERT OR IGNORE INTO config VALUES ('scope',?)", (scope,))
 
 
+class Rejected(ValueError):
+    """Fusion refused this one record for its content. Retrying the identical record can never succeed."""
+
+    def __init__(self, status):
+        super().__init__(f'Collector record rejected with HTTP {status}')
+        self.status = status
+
+
+# FNXC:RemoteAgents 2026-09-30-10:59: statuses that condemn the record itself. Auth (401/403), a missing route
+# (404, e.g. a Fusion build without remote agents), rate limits (429) and 5xx describe the server, not the record,
+# so they keep blocking and retrying rather than discarding data the server would accept later.
+PERMANENT_REJECTIONS = frozenset({400, 409, 413, 422})
+
+
 def post(url, project, token, operation, body, timeout=5):
     # FNXC:RemoteAgents 2026-09-21-04:51: Host collectors may use WireGuard HTTP, but arbitrary cleartext or credential-bearing destinations must fail before any token-bearing request.
     parsed = urllib.parse.urlsplit(validate_url(url))
@@ -117,6 +132,8 @@ def post(url, project, token, operation, body, timeout=5):
         raw = response.read(262145)
         if len(raw) > 262144:
             raise ValueError('Collector response limit exceeded')
+        if response.status in PERMANENT_REJECTIONS:
+            raise Rejected(response.status)
         if response.status < 200 or response.status >= 300:
             raise ValueError(f'Collector returned HTTP {response.status}')
         return json.loads(raw)
@@ -148,7 +165,18 @@ def drain_turns(db, project, host, send, limit=25):
         session_id = hashlib.sha256(json.dumps([project, host, provider, native], separators=(',', ':')).encode()).hexdigest()
         event_id = hashlib.sha256(json.dumps([session_id, turn_id, revision], separators=(',', ':')).encode()).hexdigest()
         request = dict(schemaVersion=1, eventId=event_id, sessionId=session_id, turn=json.loads(body))
-        ack = send('turn-ingest', request)
+        try:
+            ack = send('turn-ingest', request)
+        except Rejected as rejection:
+            # FNXC:RemoteAgents 2026-09-30-10:59: turns deliver in order, so one record Fusion will never accept
+            # used to block every later turn on the host until the spool filled. Set exactly that revision aside,
+            # count it, and keep going; a later, corrected revision of the same turn is still delivered.
+            with db:
+                db.execute('UPDATE turns SET acked=max(acked,?) WHERE provider=? AND native=? AND turn_id=?',
+                           (revision, provider, native, turn_id))
+            bump(db, 'rejected_turns')
+            print('Turn rejected by Fusion and set aside:', provider, rejection.status, flush=True)
+            continue
         if (ack.get('eventId'), ack.get('sessionId'), ack.get('nativeTurnId')) != (event_id, session_id, turn_id) or ack.get('revision', 0) < revision:
             raise ValueError('Invalid turn ingestion acknowledgement')
         with db:
@@ -244,6 +272,7 @@ def scan(db, path, provider):
         if malformed and not parsed:
             raise ValueError('Native transcript has no parseable records; cursor preserved')
         if malformed:
+            bump(db, 'parse_failures', malformed)
             print('Skipped malformed native records:', path.name, malformed, flush=True)
         state['usageComplete'] = offset == stat.st_size and not state.get('unreportedUsage', False)
         native = state.get('nativeSessionId')
@@ -285,6 +314,14 @@ DELIVERY_BACKOFF_BASE_SECONDS = 5
 DELIVERY_BACKOFF_MAX_SECONDS = 300
 
 
+def describe(error):
+    """FNXC:RemoteAgents 2026-09-30-11:10: log the reason, not just the class. A bare "ValueError" hid which of a
+    dozen distinct refusals was stalling delivery on m3. Messages are the collector's own text (status codes,
+    limits); the token is never part of one. Bounded so a pathological message cannot flood the log."""
+    message = str(error).replace('\n', ' ')
+    return f'{type(error).__name__}: {message[:200]}' if message else type(error).__name__
+
+
 def delivery_delay(failures):
     # FNXC:RemoteAgents 2026-09-23-09:40: Consecutive failed delivery rounds back off 5s doubling to 5min, so
     # collectors stop hammering a slow or unreachable Fusion; local scanning continues every loop regardless.
@@ -293,11 +330,41 @@ def delivery_delay(failures):
     return min(DELIVERY_BACKOFF_MAX_SECONDS, DELIVERY_BACKOFF_BASE_SECONDS * 2 ** (failures - 1))
 
 
+def bump(db, key, amount=1):
+    """Cumulative operational counter. Best effort: telemetry must never break collection."""
+    try:
+        with db:
+            db.execute('INSERT INTO counters(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=value+?',
+                       (key, amount, amount))
+    except Exception:
+        pass
+
+
+def counter(db, key):
+    row = db.execute('SELECT value FROM counters WHERE key=?', (key,)).fetchone()
+    return int(row[0]) if row else 0
+
+
+def health(db):
+    """Spool depth and cumulative failures. Only the collector can see these; Fusion measures staleness itself."""
+    depth = bytes_ = 0
+    try:
+        observations = db.execute('SELECT count(*),coalesce(sum(length(body)),0) FROM pending').fetchone()
+        turns = db.execute('SELECT count(*),coalesce(sum(length(body)),0) FROM turns').fetchone()
+        depth = int(observations[0]) + int(turns[0])
+        bytes_ = int(observations[1]) + int(turns[1])
+    except Exception:
+        # A counter query failure must not suppress the heartbeat itself; report what is known.
+        return {}
+    return dict(spoolDepth=depth, spoolBytes=bytes_,
+                parseFailures=counter(db, 'parse_failures'), deliveryFailures=counter(db, 'delivery_failures'))
+
+
 def deliver(db, args, token):
     """One delivery round: heartbeat and spooled observations, then turns. Returns True when both succeed."""
     delivered = True
     try:
-        post(args.url, args.project, token, 'heartbeat', dict(schemaVersion=1, collectorVersion=VERSION))
+        post(args.url, args.project, token, 'heartbeat', dict(schemaVersion=1, collectorVersion=VERSION, **health(db)))
         for seq, body in db.execute('SELECT sequence,body FROM pending ORDER BY sequence LIMIT 100').fetchall():
             b = json.loads(body); ack = post(args.url, args.project, token, 'ingest', b, timeout=20)
             if ack.get('streamId') != b['streamId'] or ack.get('acknowledgedSequence', 0) < seq:
@@ -308,13 +375,14 @@ def deliver(db, args, token):
                            (b['session']['provider'], b['session']['nativeSessionId']))
     except Exception as error:
         delivered = False
-        print('Fusion delivery unavailable:', type(error).__name__, flush=True)
+        bump(db, 'delivery_failures')
+        print('Fusion delivery unavailable:', describe(error), flush=True)
     try:
         drain_turns(db, args.project, args.host,
                     lambda operation, body: post(args.url, args.project, token, operation, body, timeout=20))
     except Exception as error:
         delivered = False
-        print('Fusion turn delivery unavailable:', type(error).__name__, flush=True)
+        print('Fusion turn delivery unavailable:', describe(error), flush=True)
     return delivered
 
 
@@ -354,7 +422,7 @@ def main():
                 try:
                     scan(db, path, provider)
                 except Exception as error:
-                    print('Native collection paused:', provider, type(error).__name__, flush=True)
+                    print('Native collection paused:', provider, describe(error), flush=True)
             if args.state.stat().st_size > 512 * 1024 * 1024:
                 raise ValueError('Collector storage capacity reached')
             if args.once:

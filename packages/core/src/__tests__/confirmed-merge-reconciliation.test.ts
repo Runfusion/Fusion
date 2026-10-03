@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation } from "../merge/confirmed-merge-reconciliation.js";
+import { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation } from "../merge/confirmed-merge-reconciliation.js";
 
 describe("confirmed merge reconciliation", () => {
   it("does not re-run stale review or checklist gates after a confirmed merge", () => {
@@ -55,6 +55,33 @@ describe("required post-merge evidence", () => {
       enabledWorkflowSteps: ["post-merge-verification"],
       workflowStepResults: result ? [{ workflowStepId: "post-merge-verification", ...result }] : [],
     } as never)).resolves.toContain(expected);
+  });
+
+  it.each([
+    [[], { outcome: "resumable", gateId: "post-merge-verification" }],
+    [[{ workflowStepId: "post-merge-verification", status: "pending" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "pending" }],
+    [[{ workflowStepId: "post-merge-verification", status: "failed", verdict: "REVISE" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "failed" }],
+    [[{ workflowStepId: "post-merge-verification", status: "skipped" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "skipped" }],
+    [[{ workflowStepId: "post-merge-verification", status: "passed" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "not-approved" }],
+    [[{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }], { outcome: "finalizable" }],
+    [[{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE_WITH_NOTES" }], { outcome: "finalizable" }],
+  ])("classifies durable gate state structurally", async (workflowStepResults, expected) => {
+    await expect(getRequiredPostMergeEvidenceDecision(store as never, {
+      id: "FN-PM-decision",
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults,
+    } as never)).resolves.toEqual(expected);
+  });
+
+  it("treats duplicate gate evidence as an ambiguity rather than resuming or approving", async () => {
+    await expect(getRequiredPostMergeEvidenceDecision(store as never, {
+      id: "FN-PM-duplicate",
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [
+        { workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" },
+        { workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" },
+      ],
+    } as never)).resolves.toEqual({ outcome: "blocked", gateId: "post-merge-verification", reason: "duplicate" });
   });
 
   it("accepts durable approval and preserves explicit disablement", async () => {

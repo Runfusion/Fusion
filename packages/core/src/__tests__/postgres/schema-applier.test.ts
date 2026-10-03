@@ -119,6 +119,11 @@ import {
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
   OVERLAP_WAIT_SYNC_VERSION,
   DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+  EXTERNAL_SESSION_TURNS_VERSION,
+  EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+  EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+  EXTERNAL_SESSION_INCREMENTS_VERSION,
+  EXTERNAL_SESSION_SUMMARIES_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -175,7 +180,14 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0088");
+    /* FNXC:ExternalSessions 2026-09-27-01:18: the external-session migrations own 0086-0092; assert each identity so the ceiling cannot drift past an unasserted one again. */
+    expect(EXTERNAL_SESSIONS_VERSION).toBe("0086");
+    expect(EXTERNAL_SESSION_TURNS_VERSION).toBe("0088");
+    expect(EXTERNAL_SESSION_TURN_SEARCH_VERSION).toBe("0089");
+    expect(EXTERNAL_SESSION_HOST_HEALTH_VERSION).toBe("0090");
+    expect(EXTERNAL_SESSION_INCREMENTS_VERSION).toBe("0091");
+    expect(EXTERNAL_SESSION_SUMMARIES_VERSION).toBe("0092");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0092");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -730,7 +742,8 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     by the schema-init hook and are excluded here.
     */
     // FNXC:ExternalSessions 2026-09-22-19:42: Migrations 0086-0088 add five project-isolated external-session tables after the current 117-table baseline.
-    expect(bySchema.project).toBe(122);
+    // FNXC:ExternalSessions 2026-09-27-01:18: 0091 adds usage increments and 0092 session summaries (122 -> 124); 0089 (search index) and 0090 (host health columns) add no tables.
+    expect(bySchema.project).toBe(124);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1928,7 +1941,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       EXTERNAL_SESSIONS_VERSION,
       "0087",
-      "0088",
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2032,7 +2049,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       EXTERNAL_SESSIONS_VERSION,
       "0087",
-      "0088",
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 
@@ -2269,7 +2290,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       EXTERNAL_SESSIONS_VERSION,
       "0087",
-      "0088",
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 
@@ -2387,7 +2412,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       EXTERNAL_SESSIONS_VERSION,
       "0087",
-      "0088",
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 
@@ -2505,7 +2534,11 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       EXTERNAL_SESSIONS_VERSION,
       "0087",
-      "0088",
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 });

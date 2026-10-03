@@ -1,7 +1,8 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
-import { externalSessionHosts, externalSessionStreams, externalSessions } from "../postgres/schema/project.js";
+import { externalSessionHosts, externalSessionStreams, externalSessions, externalSessionUsageIncrements } from "../postgres/schema/project.js";
 import { redactSecrets } from "../secrets/redact-secrets.js";
+import { usageDelta, type UsageBand } from "./usage-increments.js";
 import {
   externalSessionIdentifier, externalSessionIngestionSchema, externalSessionHeartbeatSchema,
   externalSessionId, externalSessionDigest, ExternalSessionConflict,
@@ -23,14 +24,26 @@ export class ExternalSessionStore {
   }
 
   async heartbeat(value: unknown, now = new Date().toISOString()): Promise<void> {
-    const { collectorVersion } = externalSessionHeartbeatSchema.parse(value);
-    await this.layer.db.insert(externalSessionHosts).values({ ...this.principal, collectorVersion, lastHeartbeatAt: now })
+    const beat = externalSessionHeartbeatSchema.parse(value);
+    /* FNXC:ExternalSessionHealth 2026-09-23-23:24: Counters are written only when reported, and healthReportedAt
+       is stamped only alongside them, so an older collector cannot blank a newer collector's last known health. */
+    const reported = { spoolDepth: beat.spoolDepth, spoolBytes: beat.spoolBytes,
+      parseFailures: beat.parseFailures, deliveryFailures: beat.deliveryFailures };
+    const health = Object.fromEntries(Object.entries(reported).filter(([, v]) => v !== undefined));
+    const healthStamp = Object.keys(health).length ? { healthReportedAt: now } : {};
+    await this.layer.db.insert(externalSessionHosts)
+      .values({ ...this.principal, collectorVersion: beat.collectorVersion, lastHeartbeatAt: now, ...health, ...healthStamp })
       .onConflictDoUpdate({ target: [externalSessionHosts.projectId, externalSessionHosts.hostId],
-        set: { collectorVersion, lastHeartbeatAt: now },
+        set: { collectorVersion: beat.collectorVersion, lastHeartbeatAt: now, ...health, ...healthStamp },
         setWhere: sql`${externalSessionHosts.lastHeartbeatAt} IS NULL OR ${externalSessionHosts.lastHeartbeatAt} < ${now}` });
   }
 
-  async ingest(value: unknown): Promise<ExternalSessionAcknowledgement> {
+  /**
+   * `pricing` is the rate stamp applicable right now, supplied by the caller that can see settings. It is
+   * attached to the increment this revision adds; absent means the increment is recorded unpriced rather than
+   * priced later at rates that were not in effect.
+   */
+  async ingest(value: unknown, pricing?: unknown): Promise<ExternalSessionAcknowledgement> {
     const input = externalSessionIngestionSchema.parse(value);
     const sessionId = externalSessionId(this.principal, input.session);
     // FNXC:ExternalSessions 2026-09-17-22:56: Persist only fingerprints of redacted metadata; raw hashes would permit offline secret guessing.
@@ -74,6 +87,22 @@ export class ExternalSessionStore {
         .onConflictDoUpdate({ target: [externalSessions.projectId, externalSessions.id],
           set: { revision: observation.revision, observation, observationDigest, receivedAt },
           setWhere: lt(externalSessions.revision, observation.revision) }).returning({ id: externalSessions.id });
+      /*
+      FNXC:ExternalSessionIncrements 2026-09-24-04:51 (F1 = 3): record what THIS revision added, with the rates
+      applicable now, so a model or rate change mid-session prices each increment at its own effective rate.
+      Written only when the revision actually advanced and actually added usage; ON CONFLICT DO NOTHING keeps an
+      increment immutable, because a delta is a fact about what was added then, not a view later revisions restate.
+      */
+      if (applied.length > 0) {
+        const delta = usageDelta((previous?.observation as { usage?: UsageBand[] } | undefined)?.usage,
+          (observation as { usage?: UsageBand[] }).usage);
+        if (delta.length) {
+          await tx.insert(externalSessionUsageIncrements).values({ projectId, sessionId,
+            revision: observation.revision, usage: delta as unknown as Record<string, unknown>[],
+            pricing: (pricing ?? null) as Record<string, unknown> | null, recordedAt: receivedAt })
+            .onConflictDoNothing();
+        }
+      }
       await tx.update(externalSessionStreams).set({ acknowledgedSequence: input.sequence,
         lastEventId: input.eventId, lastEventDigest: digest, acknowledgedAt: receivedAt }).where(streamScope);
       return { schemaVersion: 1, streamId: input.streamId, acknowledgedSequence: input.sequence, sessionId, applied: applied.length > 0 };

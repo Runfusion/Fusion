@@ -46,9 +46,9 @@ export interface TaskStep {
     declaredFiles?: string[];
   };
   /**
-   * Step-inversion (KTD-11): 0-indexed indices of steps this step depends on.
-   * Heading annotations name literal `### Step N` values and rebase only a
-   * fully-1-based legacy prompt; structured parser output uses 0-based document indices.
+   * Step-inversion (KTD-11): 0-indexed persisted indices of steps this step depends on.
+   * Markdown `(depends:)` tokens are 1-based parsed-heading positions and translate
+   * here only after validation; JSON and plugin parser output already use these indices.
    *
    * FNXC:WorkflowSteps 2026-06-29-17:52:
    * Absence and emptiness are different planner contracts. Absent means unannotated and therefore implicitly depends on the previous step; an explicit empty array means this step has no dependencies and may run as a parallel root.

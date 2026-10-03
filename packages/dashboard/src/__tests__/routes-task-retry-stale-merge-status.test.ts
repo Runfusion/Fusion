@@ -238,6 +238,17 @@ describe("POST /api/tasks/:id/reconcile-landed-review", () => {
     });
   });
 
+  it("returns a successful, explicit graph-resumed reconciliation outcome", async () => {
+    const reconcileLandedReviewTask = vi.fn().mockResolvedValue({ outcome: "resumed", gateId: "post-merge-verification" });
+    const { app } = buildApp({ task: mkMergeTask({ id: "FN-9368", status: null }), reconcileLandedReviewTask });
+
+    const res = await performRequest(app, "POST", "/api/tasks/FN-9368/reconcile-landed-review", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ outcome: "resumed", gateId: "post-merge-verification" });
+    expect(reconcileLandedReviewTask).toHaveBeenCalledTimes(1);
+  });
+
   it("returns structured conflicts for reconciliation refusals", async () => {
     const reconcileLandedReviewTask = vi.fn().mockResolvedValue({ outcome: "ineligible", reason: "foreign-ownership" });
     const { app } = buildApp({ task: mkMergeTask({ id: "FN-9318", status: null }), reconcileLandedReviewTask });
@@ -368,13 +379,12 @@ describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)",
     const task = mkFailedWorkspaceTask();
     const workspaceWorktrees = task.workspaceWorktrees;
     const engine = { isMergePending: vi.fn().mockResolvedValue(false), enqueueMerge: vi.fn().mockReturnValue(true) };
-    const { app, updateTask, moveTask } = buildApp({ task, engine, workflowIr: LEGACY_V1_IR });
+    const { app, moveTask } = buildApp({ task, engine, workflowIr: LEGACY_V1_IR });
 
     const res = await performRequest(app, "POST", "/api/tasks/MRG-040/retry", "{}", { "content-type": "application/json" });
 
     expect(res.status).toBe(200);
-    expect(updateTask).toHaveBeenCalledWith("MRG-040", expect.objectContaining({ status: null, error: null, mergeRetries: 0 }));
-    expect(task.column).toBe("in-review");
+    expect(task).toMatchObject({ status: null, error: null, mergeRetries: 0, column: "in-review" });
     expect(task.steps.every((step) => step.status === "done")).toBe(true);
     expect(task.workspaceWorktrees).toBe(workspaceWorktrees);
     expect(moveTask).not.toHaveBeenCalled();

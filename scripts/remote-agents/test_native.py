@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from datetime import datetime, timezone, timedelta
-from collector import connect, bind, scan, validated_base_url, delivery_delay
+from collector import connect, bind, scan, validated_base_url, delivery_delay, health, bump, counter
 from native_parser import consume, totals
 from feedback_hook import run
 from install_hooks import identity, install
@@ -229,3 +229,44 @@ class NativeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CollectorHealthTests(unittest.TestCase):
+    def collector(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        db = connect(Path(directory.name) / 'spool.db')
+        bind(db, 'project-a', 'host-a')
+        return db
+
+    def test_health_reports_spool_depth_and_bytes_across_both_queues(self):
+        db = self.collector()
+        empty = health(db)
+        self.assertEqual(empty['spoolDepth'], 0)
+        self.assertEqual(empty['spoolBytes'], 0)
+        with db:
+            db.execute('INSERT INTO pending VALUES (?,?)', (1, '{"a":1}'))
+            db.execute('INSERT INTO pending VALUES (?,?)', (2, '{"b":22}'))
+        after = health(db)
+        # Depth must count what is queued, so an operator can tell a backlog from an idle collector.
+        self.assertEqual(after['spoolDepth'], 2)
+        self.assertEqual(after['spoolBytes'], len('{"a":1}') + len('{"b":22}'))
+
+    def test_counters_accumulate_and_survive_reads(self):
+        db = self.collector()
+        self.assertEqual(counter(db, 'parse_failures'), 0)
+        bump(db, 'parse_failures', 3)
+        bump(db, 'parse_failures')
+        self.assertEqual(counter(db, 'parse_failures'), 4)
+        self.assertEqual(health(db)['parseFailures'], 4)
+
+    def test_health_is_best_effort_and_never_breaks_the_heartbeat(self):
+        db = self.collector()
+        db.execute('DROP TABLE pending')
+        # A broken counter query must yield no counters rather than raising: telemetry never blocks delivery.
+        self.assertEqual(health(db), {})
+
+    def test_bump_swallows_a_failing_database(self):
+        db = self.collector()
+        db.close()
+        bump(db, 'parse_failures')

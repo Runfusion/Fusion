@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   parseStepFileScopes,
   normalizeAuthoredStepScopes,
-  resolveAuthoredStepHeadingOffset,
   buildConflictMatrix,
   determineParallelWaves,
   buildStepPrompt,
@@ -228,15 +227,11 @@ describe("parseStepFileScopes", () => {
     expect([...result.keys()]).toEqual([0, 1, 2]);
   });
 
-  it("normalizes only a contiguous 1-based authored sequence", () => {
-    expect(resolveAuthoredStepHeadingOffset([1, 2, 3])).toBe(1);
-    expect(resolveAuthoredStepHeadingOffset([1, 1, 2])).toBe(0);
-    expect(resolveAuthoredStepHeadingOffset([1, 3])).toBe(0);
-
+  it("keeps authored scopes keyed by parsed ordinal positions", () => {
     const normalized = normalizeAuthoredStepScopes(new Map([
-      [1, ["first.ts"]],
-      [2, ["second.ts"]],
-      [3, ["third.ts"]],
+      [0, ["first.ts"]],
+      [1, ["second.ts"]],
+      [2, ["third.ts"]],
     ]), 3);
     expect([...normalized.entries()]).toEqual([
       [0, ["first.ts"]],

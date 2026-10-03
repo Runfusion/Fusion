@@ -16,7 +16,7 @@
 | Merge gate wall-time (`pnpm test:gate`) | 11.9s | +442ms |
 | Boot smoke wall-time (`pnpm smoke:boot`) | 25.5s | -610ms |
 | Changed-only test wall-time (`pnpm test`) | unavailable | n/a |
-| Quarantine / flake count | 1 | +1 |
+| Quarantine / flake count | 3 | +3 |
 | Deletion-due quarantines | 0 | n/a |
 
 ## Measurement failures
@@ -35,33 +35,33 @@
 
 | Rank | File | Package | Duration |
 |---:|---|---|---:|
-| 1 | `packages/engine/src/__tests__/step-session-executor.test.ts` | @fusion/engine | 5m 00s |
-| 2 | `packages/core/src/__tests__/postgres/schema-applier.test.ts` | @fusion/core | 1m 13s |
-| 3 | `packages/dashboard/src/__tests__/task-modal-touch-resize-browser.test.ts` | @fusion/dashboard | 1m 03s |
-| 4 | `packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts` | @fusion/engine | 38.1s |
-| 5 | `packages/engine/src/__tests__/merger-ai.test.ts` | @fusion/engine | 36.7s |
-| 6 | `packages/engine/src/__tests__/workspace-merger.test.ts` | @fusion/engine | 35.6s |
-| 7 | `packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx` | @fusion/dashboard | 30.2s |
-| 8 | `packages/engine/src/__tests__/reliability-interactions/post-done-continuation-no-wedge.test.ts` | @fusion/engine | 30.2s |
-| 9 | `packages/engine/src/__tests__/reliability-interactions/branch-recovery-live-zero-commits.test.ts` | @fusion/engine | 30.0s |
-| 10 | `packages/cli/src/__tests__/bin.test.ts` | @runfusion/fusion | 29.3s |
-| 11 | `packages/engine/src/__tests__/lifecycle-column-census.test.ts` | @fusion/engine | 27.3s |
-| 12 | `packages/core/src/__tests__/postgres/startup-factory-integration.test.ts` | @fusion/core | 21.8s |
-| 13 | `packages/core/src/__tests__/postgres/sqlite-migrator.test.ts` | @fusion/core | 20.4s |
-| 14 | `packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx` | @fusion/dashboard | 20.3s |
-| 15 | `packages/engine/src/__tests__/self-healing-workspace.test.ts` | @fusion/engine | 19.6s |
-| 16 | `packages/engine/src/__tests__/workspace-merger-lease.test.ts` | @fusion/engine | 19.4s |
-| 17 | `packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx` | @fusion/dashboard | 19.0s |
-| 18 | `packages/engine/src/__tests__/workspace-push-after-merge.test.ts` | @fusion/engine | 18.4s |
-| 19 | `packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx` | @fusion/dashboard | 18.0s |
-| 20 | `packages/engine/src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts` | @fusion/engine | 18.0s |
+| 1 | `packages/core/src/__tests__/postgres/schema-applier.test.ts` | @fusion/core | 1m 13s |
+| 2 | `packages/dashboard/src/__tests__/task-modal-touch-resize-browser.test.ts` | @fusion/dashboard | 1m 03s |
+| 3 | `packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts` | @fusion/engine | 38.1s |
+| 4 | `packages/engine/src/__tests__/merger-ai.test.ts` | @fusion/engine | 36.7s |
+| 5 | `packages/engine/src/__tests__/workspace-merger.test.ts` | @fusion/engine | 35.6s |
+| 6 | `packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx` | @fusion/dashboard | 30.2s |
+| 7 | `packages/engine/src/__tests__/reliability-interactions/post-done-continuation-no-wedge.test.ts` | @fusion/engine | 30.2s |
+| 8 | `packages/engine/src/__tests__/reliability-interactions/branch-recovery-live-zero-commits.test.ts` | @fusion/engine | 30.0s |
+| 9 | `packages/cli/src/__tests__/bin.test.ts` | @runfusion/fusion | 29.3s |
+| 10 | `packages/engine/src/__tests__/lifecycle-column-census.test.ts` | @fusion/engine | 27.3s |
+| 11 | `packages/core/src/__tests__/postgres/startup-factory-integration.test.ts` | @fusion/core | 21.8s |
+| 12 | `packages/core/src/__tests__/postgres/sqlite-migrator.test.ts` | @fusion/core | 20.4s |
+| 13 | `packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx` | @fusion/dashboard | 20.3s |
+| 14 | `packages/engine/src/__tests__/self-healing-workspace.test.ts` | @fusion/engine | 19.6s |
+| 15 | `packages/engine/src/__tests__/workspace-merger-lease.test.ts` | @fusion/engine | 19.4s |
+| 16 | `packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx` | @fusion/dashboard | 19.0s |
+| 17 | `packages/engine/src/__tests__/workspace-push-after-merge.test.ts` | @fusion/engine | 18.4s |
+| 18 | `packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx` | @fusion/dashboard | 18.0s |
+| 19 | `packages/engine/src/__tests__/reliability-interactions/owning-node-unavailable-interactions.test.ts` | @fusion/engine | 18.0s |
+| 20 | `packages/dashboard/app/components/__tests__/SettingsModal.generalProject.test.tsx` | @fusion/dashboard | 17.6s |
 
 ## Quarantine age buckets
 
 | Age bucket | Count |
 |---|---:|
-| 0-6 days | 1 |
-| 7-13 days | 0 |
+| 0-6 days | 2 |
+| 7-13 days | 1 |
 | deletion due (>=14 days) | 0 |
 | unknown/future | 0 |
 
@@ -76,15 +76,15 @@
 | Row | Captured at | Gate | Boot smoke | `pnpm test` | Quarantine count |
 |---|---|---:|---:|---:|---:|
 | Previous | 2026-09-17T22:38:00.094Z | 11.4s | 26.1s | 18.4s | 0 |
-| Latest | 2026-09-25T23:47:49.366Z | 11.9s | 25.5s | unavailable | 1 |
-| Delta | — | +442ms | -610ms | n/a | +1 |
+| Latest | 2026-09-25T23:47:49.366Z | 11.9s | 25.5s | unavailable | 3 |
+| Delta | — | +442ms | -610ms | n/a | +3 |
 
 _Future weekly rows append to `scripts/test-velocity-history.json`; compare the latest row against the previous row before posting to #leads._
 
 ## Post to #leads
 
 ```text
-FN-6612 weekly test velocity: gate 11.9s (+442ms), boot smoke 25.5s (-610ms), pnpm test unavailable (n/a), quarantine ledger 1 (+1). Slowest file: packages/engine/src/__tests__/step-session-executor.test.ts at 5m 00s. Deletion-due quarantines: 0.
+FN-6612 weekly test velocity: gate 11.9s (+442ms), boot smoke 25.5s (-610ms), pnpm test unavailable (n/a), quarantine ledger 3 (+3). Slowest file: packages/core/src/__tests__/postgres/schema-applier.test.ts at 1m 13s. Deletion-due quarantines: 0.
 ```
 
 ## How to refresh

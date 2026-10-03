@@ -45,9 +45,23 @@ export const externalSessionIngestionSchema = z.object({
   session: externalSessionObservationSchema,
 }).strict();
 
+/*
+FNXC:ExternalSessionHealth 2026-09-23-23:24:
+Spool depth and parse failures exist only on the collector: the server can measure how stale a heartbeat is,
+but not how much is queued behind one. The heartbeat carries them because it is the one message every
+collector already sends on every round.
+
+Every counter is OPTIONAL. A collector that predates this reports nothing, and "not reported" must stay
+distinguishable from a reported zero — a silent 0 would read as "spool empty, nothing wrong", which is the
+opposite of the truth when the collector is too old to say.
+*/
 export const externalSessionHeartbeatSchema = z.object({
   schemaVersion: z.literal(1),
   collectorVersion: externalSessionIdentifier,
+  spoolDepth: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  spoolBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  parseFailures: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  deliveryFailures: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
 }).strict();
 
 export type ExternalSessionObservation = z.infer<typeof externalSessionObservationSchema>;

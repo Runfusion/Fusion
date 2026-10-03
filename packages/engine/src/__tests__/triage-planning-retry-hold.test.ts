@@ -14,6 +14,7 @@ const { mockCreateFnAgent, mockPromptWithFallback } = vi.hoisted(() => ({
 vi.mock("../pi.js", () => ({
   createFnAgent: mockCreateFnAgent,
   promptWithFallback: mockPromptWithFallback,
+  ModelFallbackExhaustedError: class ModelFallbackExhaustedError extends Error {},
   describeModel: vi.fn(() => "test-model"),
   formatModelMarkerDetails: vi.fn(() => "test-model"),
   wrapToolsWithRtkRewrite: vi.fn((tools: unknown) => tools),
@@ -22,8 +23,13 @@ vi.mock("../pi.js", () => ({
   wrapToolsWithOutputBudget: vi.fn((tools: unknown) => tools),
 }));
 
-const INVALID_PLAN = "# Invalid plan\n\n### Step 1: Starts at one\n";
-const VALID_PLAN = "# Valid plan\n\n## Steps\n\n### Step 0: Implement\n- Deliver the requested behavior.\n";
+/*
+ * FNXC:StepDependencyValidation 2026-10-01-22:44:
+ * FN-9435 treats heading labels as display-only. Keep an intentionally non-zero valid label, while
+ * making retry coverage fail on an impossible parsed-step position rather than its visible number.
+ */
+const INVALID_PLAN = "# Invalid plan\n\n### Step 24 (depends: 2): Uses an absent prerequisite\n";
+const VALID_PLAN = "# Valid plan\n\n## Steps\n\n### Step 42: Implement\n- Deliver the requested behavior.\n";
 const EMPTY_IR = { columns: [], nodes: [], edges: [] } as unknown as WorkflowIr;
 
 function taskFixture(overrides: Partial<Task> = {}): Task {
@@ -139,18 +145,35 @@ describe("planning retry hold safety gate (FN-9260)", () => {
   });
 
   it("keeps missing drafts claimable, preserves existing review holds, and terminalizes an exhausted retry", async () => {
-    const task = taskFixture();
-    const processor = new TriageProcessor(createStore(task), rootDir);
-    const retryStatus = await (processor as unknown as {
-      resolvePlanningRetryHoldStatus(task: Task): Promise<Task["status"]>;
-    }).resolvePlanningRetryHoldStatus(task);
-    expect(retryStatus).toBeNull();
+    /*
+     * FNXC:TriagePlanningRetry 2026-10-01-05:53:
+     * FN-9446 requires missing-draft and review-hold coverage to run through specifyTask. The
+     * persisted row intentionally differs from the attempt snapshot, matching TaskStore reads so
+     * the production retry writer—not a private status helper—proves its durable transition.
+     */
+    const missingDraft = taskFixture({ id: "FN-9260-MISSING-DRAFT" });
+    const missingPersisted = { ...missingDraft };
+    const missingStore = createStore(missingDraft);
+    vi.mocked(missingStore.getTask).mockImplementation(async () => ({ ...missingPersisted, attachments: [], comments: [] }));
+    vi.mocked(missingStore.updateTask).mockImplementation(async (_id, patch) => Object.assign(missingPersisted, patch));
+    await new TriageProcessor(missingStore, rootDir).specifyTask(missingDraft);
+    expect(missingPersisted).toMatchObject({
+      status: null,
+      recoveryRetryCount: 1,
+      nextRecoveryAt: expect.any(String),
+    });
 
-    const reviewHeld = taskFixture({ status: "plan-review-unavailable" });
-    const reviewProcessor = new TriageProcessor(createStore(reviewHeld), rootDir);
-    await expect((reviewProcessor as unknown as {
-      resolvePlanningRetryHoldStatus(task: Task): Promise<Task["status"]>;
-    }).resolvePlanningRetryHoldStatus(reviewHeld)).resolves.toBe("plan-review-unavailable");
+    const reviewHeld = taskFixture({ id: "FN-9260-REVIEW-HOLD", status: "plan-review-unavailable" });
+    const reviewPersisted = { ...reviewHeld };
+    const reviewStore = createStore(reviewHeld);
+    vi.mocked(reviewStore.getTask).mockImplementation(async () => ({ ...reviewPersisted, attachments: [], comments: [] }));
+    vi.mocked(reviewStore.updateTask).mockImplementation(async (_id, patch) => Object.assign(reviewPersisted, patch));
+    await new TriageProcessor(reviewStore, rootDir).specifyTask(reviewHeld);
+    expect(reviewPersisted).toMatchObject({
+      status: "plan-review-unavailable",
+      recoveryRetryCount: 1,
+      nextRecoveryAt: expect.any(String),
+    });
 
     const exhausted = taskFixture({ id: "FN-9260-EXHAUSTED", recoveryRetryCount: 3 });
     const exhaustedStore = createStore(exhausted);

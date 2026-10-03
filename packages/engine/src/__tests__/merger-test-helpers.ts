@@ -247,6 +247,8 @@ export function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Tas
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
     getVerificationCacheHit: vi.fn().mockReturnValue(null),
     recordVerificationCachePass: vi.fn(),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
   } as unknown as TaskStore;
 }
 

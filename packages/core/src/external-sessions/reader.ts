@@ -19,10 +19,20 @@ export class ExternalSessionReader {
     if (layer.projectId !== projectId) throw new Error("External session reads require a matching project-bound data layer");
   }
 
+  /*
+  FNXC:ExternalSessionHealth 2026-09-23-23:24: Host rows now carry operational health. heartbeatAgeMs is derived
+  here so every caller measures lag the same way; the collector-reported counters stay null when unreported,
+  because a null and a zero mean different things to an operator reading spool depth.
+  */
   async hosts(now = Date.now()) {
     const rows = await this.layer.db.select().from(externalSessionHosts).where(eq(externalSessionHosts.projectId, this.projectId)).limit(128);
     return rows.map(h => ({ hostId: h.hostId, lastHeartbeatAt: h.lastHeartbeatAt,
-      collectorConnected: externalSessionHostConnected(h.lastHeartbeatAt, now) }));
+      collectorConnected: externalSessionHostConnected(h.lastHeartbeatAt, now),
+      collectorVersion: h.collectorVersion,
+      heartbeatAgeMs: h.lastHeartbeatAt === null ? null : Math.max(0, now - Date.parse(h.lastHeartbeatAt)),
+      spoolDepth: h.spoolDepth ?? null, spoolBytes: h.spoolBytes ?? null,
+      parseFailures: h.parseFailures ?? null, deliveryFailures: h.deliveryFailures ?? null,
+      healthReportedAt: h.healthReportedAt ?? null }));
   }
 
   async list(value: ExternalSessionListQuery = {}, now = Date.now()): Promise<ExternalSessionPage> {

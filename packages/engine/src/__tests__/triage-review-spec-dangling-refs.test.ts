@@ -96,24 +96,22 @@ describe("triage deterministic plan validation for dangling references", () => {
     }
   });
 
-  it("rejects one-based, gapped, and duplicate step-heading sequences", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-step-numbering-"));
+  it("accepts arbitrary display labels and rejects invalid positional dependencies", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-step-dependencies-"));
     try {
       const store = createMockStore();
       const processor = new TriageProcessor(store, rootDir);
-
-      for (const prompt of [
-        "## Steps\n### Step 1: First\n### Step 2: Second\n",
-        "## Steps\n### Step 0: First\n### Step 2: Third\n",
-        "## Steps\n### Step 0: First\n### Step 0: Duplicate\n",
-      ]) {
-        await expect((processor as any).validateGeneratedPrompt("FN-5112", prompt)).resolves.toContain(
-          "contiguous 0-based execution indices",
-        );
-      }
+      await expect((processor as any).validateGeneratedPrompt(
+        "FN-5112",
+        "## Steps\n### Step 12: First\n### Step 0: Second\n",
+      )).resolves.toBeNull();
+      await expect((processor as any).validateGeneratedPrompt(
+        "FN-5112",
+        "## Steps\n### Step 12: First\n### Step 0 (depends: 0): Second\n",
+      )).resolves.toBe("step 2 depends on invalid step 0 (zero)");
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-5112",
-        "Generated plan validation failed: invalid step heading numbering",
+        "Generated plan validation failed: step 2 depends on invalid step 0 (zero)",
       );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
@@ -134,12 +132,12 @@ describe("triage deterministic plan validation for dangling references", () => {
       )).resolves.toBeNull();
       await expect((processor as any).validateGeneratedPrompt(
         "FN-5112",
-        "## Steps\n### Step 0: Preflight\n### Step 1: Plan\n### Step 2: Build\n### Step 3 (depends: 0): Parallel A\n### Step 4: Continue\n### Step 5 (depends: 4): Parallel B\n### Step 6 (depends: 0): Parallel C\n### Step 7: Verify\n### Step 8: Deliver\n",
+        "## Steps\n### Step 0: Preflight\n### Step 1: Plan\n### Step 2: Build\n### Step 3 (depends: 1): Parallel A\n### Step 4: Continue\n### Step 5 (depends: 4): Parallel B\n### Step 6 (depends: 1): Parallel C\n### Step 7: Verify\n### Step 8: Deliver\n",
       )).resolves.toBeNull();
       await expect((processor as any).validateGeneratedPrompt(
         "FN-5112",
         "## Steps\n### Step 0: First\n### Step 1 (depends: 0): Second\n### Step 3 (depends: 1): Gap\n",
-      )).resolves.toContain("contiguous 0-based execution indices");
+      )).resolves.toContain("step 2 depends on invalid step 0 (zero)");
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

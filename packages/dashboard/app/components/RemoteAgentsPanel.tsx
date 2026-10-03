@@ -4,13 +4,115 @@ import type { RemoteUsage } from "../../src/remote-agents/types";
 import { api } from "../api/client/client";
 import { withProjectId } from "../api/client/health";
 import { useVisibilityAwarePoll } from "../hooks/visibilitySuspension";
+import { RemoteAgentTurns } from "./RemoteAgentTurns";
+import { RemoteAgentSummary } from "./RemoteAgentSummary";
+import { RemoteAgentOverview } from "./RemoteAgentOverview";
+import { RemoteAgentSearch } from "./RemoteAgentSearch";
+import { RemoteAgentRankings } from "./RemoteAgentRankings";
+import { RemoteAgentCostPopover } from "./RemoteAgentCostPopover";
+import { RemoteAgentCopyLink } from "./RemoteAgentCopyLink";
+import { clearRemoteAgentLink, readRemoteAgentLink } from "../utils/remote-agent-links";
 import "./RemoteAgentsPanel.css";
 
 type Feedback = { commandId: string; status: string; createdAt: string; expiresAt: string; deliveredAt: string | null };
-type Cost = { usage: RemoteUsage[]; estimatedUsd: number | null; partialUsd: number | null; usageComplete: boolean; pricingDate: string; pricingSource: string };
+type HostHealth = {
+  hostId: string; collectorConnected: boolean; collectorVersion?: string | null; heartbeatAgeMs?: number | null;
+  spoolDepth?: number | null; spoolBytes?: number | null; parseFailures?: number | null; deliveryFailures?: number | null;
+};
+type PricingBasis = { asOf: string; source: string; recalculated: boolean };
+type CostBadge = { estimatedUsd: number | null; partialUsd: number | null; usageComplete: boolean; unpricedRecords: number; basis?: PricingBasis };
+/** The list route attaches a priced badge to every session; older servers may not, so it stays optional. */
+/*
+FNXC:ExternalSessionAttribution 2026-09-24-07:05 (operator decision F4 = 1): a session that IS a Fusion task run
+is already counted in that task's telemetry. Saying so on the card is what stops its cost being added twice by
+a reader totalling both surfaces; `ambiguous` is shown rather than hidden, because a contested native id means
+the owning task is unknown, not that there is no overlap.
+*/
+type FusionAttribution = { taskId: string | null; cliSessionId: string | null; ambiguous: boolean };
+type ListedSession = ExternalSessionView & { cost?: CostBadge; fusion?: FusionAttribution | null };
+
+function attributionLabel(fusion?: FusionAttribution | null): string | null {
+  if (!fusion) return null;
+  if (fusion.ambiguous) return "Matches more than one Fusion run · owning task unknown, may already be counted";
+  if (!fusion.taskId) return "Fusion-run session · already counted in task telemetry";
+  return `Fusion task ${fusion.taskId} · already counted in task telemetry`;
+}
+type Cost = { usage: RemoteUsage[]; estimatedUsd: number | null; partialUsd: number | null; usageComplete: boolean; pricingDate: string; pricingSource: string; pricingRecalculated?: boolean };
 const number = (n: number) => n.toLocaleString();
 const usd = (n: number | null) => n === null ? "Unavailable" : new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(n);
 const tokenPrice = (perMillion: number) => `$${(perMillion / 1_000_000).toFixed(9)}`;
+
+/*
+FNXC:RemoteAgents 2026-09-23-21:32:
+An estimate that quietly drops an unpriced model reads as the session's real cost, so a card never shows a
+bare number it cannot stand behind. Three distinct states, never collapsed into one: a complete total, a
+partial total that says how many records are unpriced, and no reported usage at all.
+*/
+/*
+FNXC:ExternalSessionHealth 2026-09-23-23:24: Operational health per server. Every value distinguishes "not
+reported" from a reported zero: an unreported spool is unknown, not empty, and saying "0 queued" about a
+collector too old to answer is exactly the false reassurance this panel exists to prevent.
+*/
+function ageLabel(ms?: number | null): string {
+  if (ms === null || ms === undefined) return "never reported";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  return `${Math.round(seconds / 3600)}h ago`;
+}
+
+function spoolLabel(host: HostHealth): string {
+  if (host.spoolDepth === null || host.spoolDepth === undefined) return "Spool not reported";
+  const bytes = host.spoolBytes === null || host.spoolBytes === undefined ? "" : ` (${Math.round(host.spoolBytes / 1024)} KiB)`;
+  return host.spoolDepth === 0 ? "Spool empty" : `${host.spoolDepth} queued${bytes}`;
+}
+
+function failureLabel(host: HostHealth): string {
+  const parts: string[] = [];
+  if (host.parseFailures === null || host.parseFailures === undefined) parts.push("parse failures not reported");
+  else if (host.parseFailures > 0) parts.push(`${host.parseFailures} parse ${host.parseFailures === 1 ? "failure" : "failures"}`);
+  if (host.deliveryFailures !== null && host.deliveryFailures !== undefined && host.deliveryFailures > 0) {
+    parts.push(`${host.deliveryFailures} delivery ${host.deliveryFailures === 1 ? "failure" : "failures"}`);
+  }
+  return parts.length ? parts.join(" · ") : "No failures reported";
+}
+
+/*
+FNXC:ExternalSessionRates 2026-09-24-00:04: Fusion keeps no rate history, so a figure for work older than the
+rate basis is a recalculation at today's rates, not what it was billed. Saying "estimated" there would present
+a recomputation as a measurement, so those rows say so outright.
+*/
+function costLabel(cost?: CostBadge): string {
+  if (!cost) return "Cost unavailable";
+  const qualifier = cost.basis?.recalculated ? "at today's rates" : "estimated";
+  if (cost.estimatedUsd !== null) return `${usd(cost.estimatedUsd)} ${qualifier}`;
+  if (cost.partialUsd !== null) return `${usd(cost.partialUsd)} priced so far · ${cost.unpricedRecords} ${cost.unpricedRecords === 1 ? "record" : "records"} unpriced`;
+  return cost.unpricedRecords ? `Cost unknown · ${cost.unpricedRecords} ${cost.unpricedRecords === 1 ? "record" : "records"} unpriced` : "No usage reported";
+}
+
+interface HostSummary { count: number; usd: number; priced: boolean; unpriced: number }
+
+/** Aggregate only the sessions actually loaded; the caller states that bound next to the numbers. */
+export function summarizeHosts(sessions: ListedSession[]): Map<string, HostSummary> {
+  const byHost = new Map<string, HostSummary>();
+  for (const session of sessions) {
+    const current = byHost.get(session.hostId) ?? { count: 0, usd: 0, priced: true, unpriced: 0 };
+    current.count += 1;
+    const amount = session.cost?.estimatedUsd ?? session.cost?.partialUsd ?? null;
+    if (amount !== null) current.usd += amount;
+    // A session whose total is incomplete makes the HOST total incomplete too; say so rather than under-report.
+    if (!session.cost || session.cost.estimatedUsd === null) current.priced = false;
+    current.unpriced += session.cost?.unpricedRecords ?? 0;
+    byHost.set(session.hostId, current);
+  }
+  return byHost;
+}
+
+function hostCostLabel(summary?: HostSummary): string {
+  if (!summary || !summary.count) return "No cost reported";
+  if (summary.priced) return `${usd(summary.usd)} estimated`;
+  return summary.usd > 0 ? `${usd(summary.usd)} priced so far, incomplete` : "Cost unknown";
+}
 
 function feedbackCommandId(): string {
   const cryptoApi = globalThis.crypto;
@@ -24,7 +126,7 @@ function feedbackCommandId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionView; projectId: string }) {
+function RemoteAgentDetail({ session, projectId, focusTurnId }: { session: ExternalSessionView; projectId: string; focusTurnId: string | null }) {
   const [detail, setDetail] = useState(session);
   const [cost, setCost] = useState<Cost | null>(null);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
@@ -76,12 +178,15 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
   };
   return <section className="remote-agent-detail card" aria-label="Remote agent details">
     <h3>{detail.observation.title || detail.nativeSessionId}</h3>
+    <RemoteAgentCopyLink projectId={projectId} sessionId={detail.id} label="Copy link to session" />
     <p className="remote-agent-meta">{detail.hostId} · {detail.provider} · {detail.observation.model ?? "Model unknown"}</p>
     <p className="remote-agent-path">{detail.observation.projectPath}</p>
     <p>{detail.observation.activity} · {detail.collectorConnected ? "Collector connected" : "Collector offline"}{detail.activityStale ? " · Activity stale" : ""}</p>
     <p>Last activity: {new Date(detail.observation.observedAt).toLocaleString()}</p>
     <h4>Recent activity</h4>
     {detail.observation.recentActivity?.length ? detail.observation.recentActivity.map((a, i) => <article key={`${a.at}:${a.kind}:${i}`} className="remote-agent-activity"><strong>{a.kind}</strong> <time>{new Date(a.at).toLocaleTimeString()}</time><pre>{a.text}</pre></article>) : <p className="remote-agent-meta">No recent native activity reported.</p>}
+    <RemoteAgentSummary sessionId={detail.id} projectId={projectId} />
+    <RemoteAgentTurns sessionId={detail.id} projectId={projectId} focusTurnId={focusTurnId} />
     <h4>Session token costs</h4>
     {!cost ? <p>Loading costs…</p> : <>
       <p>Estimated total: <strong>{usd(cost.estimatedUsd)}</strong>{cost.estimatedUsd === null && cost.partialUsd !== null ? ` · Priced subtotal: ${usd(cost.partialUsd)}` : ""}</p>
@@ -95,6 +200,7 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
         {u.reason && <p>{u.reason}</p>}
       </section>)}
       <p className="remote-agent-meta">Fusion pricing baseline: {cost.pricingDate} · {cost.pricingSource}. Estimates are based on reported tokens and rates, rather than a provider bill.</p>
+      {cost.pricingRecalculated && <p className="remote-agent-meta">This session ran before that pricing baseline. Fusion keeps no historical rate table, so these figures are a recalculation at the current rates, not the rates in effect at the time.</p>}
     </>}
     <h4>Feedback to this agent</h4>
     <p className="remote-agent-meta">Queued feedback expires after five minutes and enters the agent’s next native hook. Delivered means context was emitted by that hook.</p>
@@ -104,19 +210,31 @@ function RemoteAgentDetail({ session, projectId }: { session: ExternalSessionVie
       <textarea id={`remote-feedback-${session.id}`} value={text} onChange={e => setText(e.target.value)} maxLength={8000} disabled={!supported || busy || !!pendingSame} rows={4} />
       <button className="btn btn-sm" type="submit" disabled={!supported || busy || !text.trim() || !!pendingSame}>{busy ? "Sending…" : "Send feedback"}</button>
     </form>
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert" aria-label="Session detail error">{error}</p>}
     <ul className="remote-agent-receipts">{feedback.map(f => <li key={f.commandId}>{f.status} · {new Date(f.deliveredAt ?? f.createdAt).toLocaleString()} <small>{f.commandId}</small></li>)}</ul>
   </section>;
 }
 
 // FNXC:RemoteAgents 2026-09-18-05:22: Extend the existing Agents destination. Polling updates preserve the mounted composer and the idempotent command ID.
 export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
-  const [sessions, setSessions] = useState<ExternalSessionView[]>([]);
+  const [sessions, setSessions] = useState<ListedSession[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [host, setHost] = useState(""); const [provider, setProvider] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false);
-  const [hosts, setHosts] = useState<{ hostId: string; collectorConnected: boolean }[]>([]);
+  const [hosts, setHosts] = useState<HostHealth[]>([]);
+  /*
+  FNXC:RemoteAgents 2026-09-26-23:39: a deep link (`remoteSession`, optional `turn`) is consumed once, and only
+  for the project it names, because the panel mounts before useDeepLink has switched project. A linked session
+  outside the loaded page is fetched by id (as is one opened from search or rankings), so older sessions are
+  reachable; a session this project cannot read is reported, never silently swapped for another. Choosing another
+  session drops the linked turn.
+  */
+  const pendingLink = useRef(readRemoteAgentLink());
+  const [focusTurnId, setFocusTurnId] = useState<string | null>(null);
+  const [linked, setLinked] = useState<ListedSession | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const select = useCallback((id: string) => { setSelected(id); setFocusTurnId(null); setLinkError(null); }, []);
   /*
   FNXC:RemoteAgents 2026-09-23-08:40: Every list request carries a generation, and only the newest one may write.
   Manual Refresh and Load More pass no AbortSignal, so an abort check alone let a response that was already in flight
@@ -132,7 +250,7 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
     if (host) query.set("hostId", host); if (provider) query.set("provider", provider); if (after) query.set("cursor", after);
     const superseded = () => signal?.aborted === true || generation !== loadGeneration.current;
     try {
-      const page = await api<ExternalSessionPage>(`/external-sessions?${query}`, { signal });
+      const page = await api<ExternalSessionPage & { sessions: ListedSession[] }>(`/external-sessions?${query}`, { signal });
       if (!superseded()) {
         setSessions(current => after || merge ? [...current.filter(s => !page.sessions.some(n => n.id === s.id)), ...page.sessions] : page.sessions);
         if (!merge) setCursor(page.nextCursor); setError(null);
@@ -142,12 +260,17 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
   }, [host, provider, projectId]);
   const refreshHosts = useCallback(async (signal: AbortSignal) => {
     if (!projectId) return;
-    try { const data = await api<{ hosts: { hostId: string; collectorConnected: boolean }[] }>(withProjectId("/external-sessions/hosts", projectId), { signal }); if (!signal.aborted) setHosts(data.hosts); }
+    try { const data = await api<{ hosts: HostHealth[] }>(withProjectId("/external-sessions/hosts", projectId), { signal }); if (!signal.aborted) setHosts(data.hosts); }
     catch { /* Session errors use the main monitoring error state. */ }
   }, [projectId]);
   const listPoll = useRef<AbortController | null>(null);
   useEffect(() => {
-    setSessions([]); setSelected(null); setCursor(null);
+    setSessions([]); setSelected(null); setCursor(null); setLinked(null); setFocusTurnId(null); setLinkError(null);
+    const link = pendingLink.current;
+    if (link && projectId && (!link.projectId || link.projectId === projectId)) {
+      pendingLink.current = null; clearRemoteAgentLink();
+      setSelected(link.sessionId); setFocusTurnId(link.turnId);
+    }
     const controller = new AbortController(); listPoll.current = controller; void load(undefined, controller.signal);
     return () => controller.abort();
   }, [load]);
@@ -167,22 +290,61 @@ export function RemoteAgentsPanel({ projectId }: { projectId?: string }) {
     const list = listPoll.current?.signal; if (list && !list.aborted) void load(undefined, list, true);
     const hostSignal = hostsPoll.current?.signal; if (hostSignal && !hostSignal.aborted) void refreshHosts(hostSignal);
   }, 10000, { enabled: !!projectId });
-  const detail = sessions.find(s => s.id === selected);
+  const inList = sessions.some(s => s.id === selected);
+  useEffect(() => {
+    if (!selected || !projectId || inList || linked?.id === selected || linkError) return;
+    const controller = new AbortController();
+    api<{ session: ExternalSessionView }>(withProjectId(`/external-sessions/${selected}`, projectId), { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) setLinked(data.session); })
+      .catch(() => { if (!controller.signal.aborted) setLinkError("That session was not found in this project."); });
+    return () => controller.abort();
+  }, [selected, projectId, inList, linked?.id, linkError]);
+  const detail = sessions.find(s => s.id === selected) ?? (linked?.id === selected ? linked : undefined);
+  const hostSummaries = summarizeHosts(sessions);
   return <div className="remote-agents-panel">
     <div className="remote-agent-filters">
       <label>Server<input value={host} onChange={e => setHost(e.target.value.trim())} placeholder="All servers" /></label>
       <label>Provider<select value={provider} onChange={e => setProvider(e.target.value)}><option value="">All providers</option><option value="codex">Codex</option><option value="claude">Claude</option></select></label>
       <button className="btn btn-sm" onClick={() => void load()} disabled={loading}>Refresh</button>
     </div>
-    <p className="remote-agent-meta">{hosts.map(h => `${h.hostId}: ${h.collectorConnected ? "collector connected" : "collector offline"}`).join(" · ")}</p>
+    {projectId && <RemoteAgentOverview projectId={projectId} {...(host ? { hostId: host } : {})} />}
+    {projectId && <RemoteAgentSearch projectId={projectId} {...(host ? { hostId: host } : {})} onOpenSession={select} />}
+    {projectId && <RemoteAgentRankings projectId={projectId} {...(host ? { hostId: host } : {})} onOpenSession={select} />}
+    <section className="remote-agent-hosts" aria-labelledby="remote-agent-hosts-heading">
+      <h3 id="remote-agent-hosts-heading">Servers</h3>
+      {!hosts.length ? <p className="remote-agent-meta">No collector has reported for this project.</p> : <ul className="remote-agent-host-list">
+        {hosts.map(h => {
+          const summary = hostSummaries.get(h.hostId);
+          return <li key={h.hostId} className="remote-agent-host">
+            <strong>{h.hostId}</strong>
+            <span>{h.collectorConnected ? "Collector connected" : "Collector offline"}</span>
+            <span>Last heartbeat {ageLabel(h.heartbeatAgeMs)}</span>
+            <span>{spoolLabel(h)}</span>
+            <span>{failureLabel(h)}</span>
+            <span>{summary ? `${summary.count} ${summary.count === 1 ? "session" : "sessions"} loaded` : "0 sessions loaded"}</span>
+            <span>{hostCostLabel(summary)}</span>
+          </li>;
+        })}
+      </ul>}
+      {!!hosts.length && <p className="remote-agent-meta">Counts and totals cover the {sessions.length} {sessions.length === 1 ? "session" : "sessions"} loaded here{cursor ? ", not the full history" : ""}.</p>}
+    </section>
     {!projectId && <p>Select a Fusion project to view its remote agents.</p>}
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert" aria-label="Remote agents error">{error}</p>}
+    {linkError && <p role="alert" aria-label="Session not found">{linkError}</p>}
     {projectId && !sessions.length && !error && <p>{loading ? "Loading remote agents…" : "No remote sessions reported for this project."}</p>}
+    <p className="remote-agent-meta" role="status" aria-label="Session list status">{projectId && sessions.length ? `${sessions.length} ${sessions.length === 1 ? "session" : "sessions"} shown${loading ? ", refreshing" : ""}.` : ""}</p>
     <div className="remote-agent-layout"><div className="remote-agent-list">
-      {[...sessions].sort((a, b) => b.observation.observedAt.localeCompare(a.observation.observedAt)).map(s => <button key={s.id} className="card remote-agent-row" onClick={() => setSelected(s.id)} aria-pressed={selected === s.id}>
-        <strong>{s.observation.title || s.nativeSessionId}</strong><span>{s.hostId} · {s.provider} · {s.observation.model ?? "Model unknown"}</span><span>{s.observation.activity} · {s.collectorConnected ? "Connected" : "Collector offline"}{s.activityStale ? " · Activity stale" : ""}</span>
-      </button>)}
+      {!!sessions.length && <ul className="remote-agent-rows" aria-label="Remote agent sessions">
+        {[...sessions].sort((a, b) => b.observation.observedAt.localeCompare(a.observation.observedAt)).map(s => <li key={s.id}>
+          <button className="card remote-agent-row" onClick={() => select(s.id)} aria-pressed={selected === s.id}>
+            <strong>{s.observation.title || s.nativeSessionId}</strong><span>{s.hostId} · {s.provider} · {s.observation.model ?? "Model unknown"}</span><span>{s.observation.activity} · {s.collectorConnected ? "Connected" : "Collector offline"}{s.activityStale ? " · Activity stale" : ""}</span>
+            {attributionLabel(s.fusion) && <span className="remote-agent-attribution">{attributionLabel(s.fusion)}</span>}
+          </button>
+          {/* A sibling of the card button, never inside it: a button cannot contain another button. */}
+          {projectId && <RemoteAgentCostPopover sessionId={s.id} projectId={projectId} label={costLabel(s.cost)} />}
+        </li>)}
+      </ul>}
       {cursor && <button className="btn btn-sm" onClick={() => void load(cursor)} disabled={loading}>Load more sessions</button>}
-    </div>{detail && projectId && <RemoteAgentDetail key={`${projectId}:${detail.id}`} session={detail} projectId={projectId} />}</div>
+    </div>{detail && projectId && <RemoteAgentDetail key={`${projectId}:${detail.id}`} session={detail} projectId={projectId} focusTurnId={focusTurnId} />}</div>
   </div>;
 }

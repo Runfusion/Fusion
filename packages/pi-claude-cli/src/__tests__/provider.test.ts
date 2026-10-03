@@ -58,20 +58,22 @@ const { MockAssistantMessageEventStream } = vi.hoisted(() => {
   return { MockAssistantMessageEventStream };
 });
 
-vi.mock("@earendil-works/pi-ai", () => ({
-  AssistantMessageEventStream: MockAssistantMessageEventStream,
-  calculateCost: vi.fn(),
-}));
 
 // pi-ai 0.80 moved the static catalog read to `getBuiltinModels` in the
 // `/providers/all` subpath (see index.ts). Mock it there.
-vi.mock("@earendil-works/pi-ai/providers/all", () => ({
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  AssistantMessageEventStream: MockAssistantMessageEventStream,
+  calculateCost: vi.fn(),
   getBuiltinModels: vi.fn(() => mockModels),
 }));
 
 import { spawn } from "node:child_process";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import * as piAiMocked from "@earendil-works/pi-ai";
 import { streamViaCli } from "../provider";
+
+// The root mock above adds getBuiltinModels; the real root types do not declare it.
+const getBuiltinModels = (piAiMocked as unknown as { getBuiltinModels: ReturnType<typeof vi.fn> }).getBuiltinModels;
 
 describe("provider registration (default export)", () => {
   it("registers provider with ID pi-claude-cli", async () => {
@@ -121,18 +123,20 @@ describe("provider registration (default export)", () => {
     expect(firstModel.cost).toBeDefined();
   });
 
-  it("projects every Pi Anthropic catalog row without adding fallback models", async () => {
+  it("adds the two 5.5 fallback rows with verified CLI metadata when Pi lacks them", async () => {
     const registerProvider = vi.fn();
     const mockPi = { registerProvider, on: vi.fn() } as any;
 
     const mod = await import("../../index");
     mod.default(mockPi);
 
-    const config = registerProvider.mock.calls[0][1];
-    expect(config.models).toEqual(mockModels.map(({ id, name, reasoning, input, cost, contextWindow, maxTokens }) => ({
-      id, name, reasoning, input, cost, contextWindow, maxTokens,
-    })));
-    expect(config.models).not.toContainEqual(expect.objectContaining({ id: "claude-sonnet-5" }));
+    const models = registerProvider.mock.calls[0][1].models;
+    expect(models.filter((model: { id: string }) => model.id === "claude-opus-5-5")).toEqual([expect.objectContaining({
+      name: "Claude Opus 5.5", input: ["text", "image"], cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }, contextWindow: 1_000_000, maxTokens: 128_000,
+    })]);
+    expect(models.filter((model: { id: string }) => model.id === "claude-sonnet-5-5")).toEqual([expect.objectContaining({
+      name: "Claude Sonnet 5.5", input: ["text", "image"], cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }, contextWindow: 1_000_000, maxTokens: 128_000,
+    })]);
   });
 
   it("projects a controlled Pi catalog exactly once and retains all projected fields", async () => {
@@ -140,8 +144,8 @@ describe("provider registration (default export)", () => {
     const mockPi = { registerProvider, on: vi.fn() } as any;
     const getModelsMock = vi.mocked(getBuiltinModels);
     const upstream = {
-      id: "claude-future-catalog-row",
-      name: "Claude Future Catalog Row",
+      id: "claude-opus-5-5",
+      name: "Claude Opus 5.5 (upstream)",
       api: "anthropic",
       provider: "anthropic",
       reasoning: true,
@@ -156,7 +160,8 @@ describe("provider registration (default export)", () => {
     mod.default(mockPi);
 
     const config = registerProvider.mock.calls[0][1];
-    expect(config.models).toEqual([{
+    const upstreamRows = config.models.filter((model: { id: string }) => model.id === upstream.id);
+    expect(upstreamRows).toEqual([{
       id: upstream.id,
       name: upstream.name,
       reasoning: upstream.reasoning,
@@ -165,6 +170,8 @@ describe("provider registration (default export)", () => {
       contextWindow: upstream.contextWindow,
       maxTokens: upstream.maxTokens,
     }]);
+    expect(config.models.filter((model: { id: string }) => model.id === "claude-opus-5-5")).toHaveLength(1);
+    expect(config.models.filter((model: { id: string }) => model.id === "claude-sonnet-5-5")).toHaveLength(1);
     expect(config.streamSimple).toEqual(expect.any(Function));
   });
 });

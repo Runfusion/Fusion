@@ -108,6 +108,8 @@ function makeStore(settingsOverrides: Record<string, unknown> = {}) {
   const logs: Array<{ message: string; action?: string }> = [];
   const store = {
     getTask: vi.fn(async () => task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     getSettings: vi.fn(async () => ({
       merger: { mode: "ai", maxReviewPasses: 1 },
       pushAfterMerge: true,

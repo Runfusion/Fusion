@@ -2687,6 +2687,7 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
   position: relative;
   display: inline-flex;
   align-items: center;
+  gap: var(--space-xs);
 }
 
 .detail-agent-chip {

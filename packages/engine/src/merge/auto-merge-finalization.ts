@@ -1,6 +1,7 @@
 import {
   getPostMergeFinalizeBlocker,
   getRequiredPostMergeEvidenceBlocker,
+  getRequiredPostMergeEvidenceDecision,
   planConfirmedMergeChecklistReconciliation,
   resolveWorkflowIrForTask,
   resolveCompleteColumn,
@@ -14,6 +15,7 @@ import {
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
 import { cleanupLandedTaskWorktree } from "./post-landing-worktree-cleanup.js";
 import type { MergeWriteFence } from "./merge-write-fence.js";
+import { resumeMissingPostMergeGate } from "./post-merge-gate-reseed.js";
 
 /*
 FNXC:WorkflowMergeFinalization 2026-07-19-07:20 (U7 / R2/R3/KTD-1):
@@ -75,6 +77,8 @@ export interface AutoMergeFinalizationResult {
   reason?: string;
   /** True only for the graph-owned post-merge gate that must run before retrying finalization. */
   deferredPostMergeEvidence?: boolean;
+  /** True when this invocation installed the missing graph-owned post-merge continuation. */
+  resumedPostMergeEvidence?: boolean;
 }
 
 export interface FinalizeProvenAutoMergeTaskOptions {
@@ -270,8 +274,20 @@ export async function finalizeProvenAutoMergeTask({
     if (persisted) latest = persisted;
   }
 
-  const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest);
-  if (evidenceBlocker) {
+  const evidenceDecision = await getRequiredPostMergeEvidenceDecision(store, latest);
+  if (evidenceDecision.outcome !== "finalizable") {
+    const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest)
+      ?? `required post-merge evidence gate '${evidenceDecision.gateId}' is not approved`;
+    /*
+    FNXC:PostMergeRecovery 2026-10-01-06:36:
+    A recovery finalizer has no active graph left to traverse an absent post-merge edge. Only the
+    structured resumable decision may seed that authored node; display text never authorizes work.
+    */
+    const resumeResult = evidenceDecision.outcome === "resumable"
+      ? fence
+        ? await fence.write("finalization", () => resumeMissingPostMergeGate(store, taskId))
+        : await resumeMissingPostMergeGate(store, taskId)
+      : undefined;
     await recordFinalizationAudit({
       store,
       audit,
@@ -292,7 +308,8 @@ export async function finalizeProvenAutoMergeTask({
       Only an absent result can be claimed by the active graph traversal. A pending or terminal
       non-approval is durable evidence that must remain a blocker, not a retry signal.
       */
-      deferredPostMergeEvidence: evidenceBlocker.includes("has not reported") || undefined,
+      deferredPostMergeEvidence: evidenceDecision.outcome === "resumable" || undefined,
+      resumedPostMergeEvidence: resumeResult?.outcome === "resumed" || undefined,
     };
   }
 

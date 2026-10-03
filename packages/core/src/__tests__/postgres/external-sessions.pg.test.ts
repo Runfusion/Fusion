@@ -10,7 +10,12 @@ import { applySchemaBaseline } from "../../postgres/schema-applier.js";
 import type { AsyncDataLayer } from "../../postgres/data-layer.js";
 import { ExternalSessionFeedback } from "../../external-sessions/feedback.js";
 import { externalSessionTurnSchema } from "../../external-sessions/turn-contract.js";
-import { ExternalSessionTurnConflict, ExternalSessionTurnReader, ExternalSessionTurnStore } from "../../external-sessions/turn-store.js";
+import { ExternalSessionTurnConflict, ExternalSessionTurnReader, ExternalSessionTurnStore, ExternalSessionTurnRestamp } from "../../external-sessions/turn-store.js";
+import { ExternalSessionTurnSearch } from "../../external-sessions/turn-search.js";
+import { externalSessionUsageIncrements } from "../../postgres/schema/project.js";
+import { ExternalSessionUsageIncrementReader } from "../../external-sessions/usage-increments.js";
+import { ExternalSessionRankings } from "../../external-sessions/rankings.js";
+import { ExternalSessionSummaryStore } from "../../external-sessions/summary.js";
 
 const principal = { projectId: "external-test", hostId: "host-1" };
 const envelope = (sequence = 1, revision = sequence) => ({ schemaVersion: 1, streamId: "spool", sequence,
@@ -379,8 +384,481 @@ pgDescribe("external sessions: durable observation ingestion", () => {
     const b = { commandId: randomUUID(), generation: "runtime-1", text: "Repaired schema" };
     expect((await s.feedback.submit(s.sessionId, b, s.now)).status).toBe("queued");
   });
+  async function searchCorpus() {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const a = turnEnvelope(first.sessionId, "turn-a", 0);
+    await turns.ingest({ ...a, turn: { ...a.turn, prompts: [{ at: null, text: "Please migrate the postgres schema applier" }], response: "Applied the migration and verified constraints" } });
+    const b = turnEnvelope(first.sessionId, "turn-b", 1);
+    await turns.ingest({ ...b, turn: { ...b.turn, prompts: [{ at: null, text: "Now render the dashboard panel" }], response: "Rendered the panel with tokens" } });
+    return first.sessionId;
+  }
+
+  it("finds collected output by word and returns a highlighted excerpt", async () => {
+    const sessionId = await searchCorpus();
+    const page = await new ExternalSessionTurnSearch(h.layer(), principal.projectId).search({ q: "migration" });
+    expect(page.hits).toHaveLength(1);
+    expect(page.hits[0]).toMatchObject({ sessionId, nativeTurnId: "turn-a", hostId: principal.hostId, provider: "runtime", title: "Session" });
+    expect(page.hits[0]!.snippet).toContain("<mark>");
+    // The English configuration stems, so the typed word need not match the stored form exactly.
+    expect((await new ExternalSessionTurnSearch(h.layer(), principal.projectId).search({ q: "migrating" })).hits).toHaveLength(1);
+  });
+
+  it("searches prompts as well as responses and supports quoted phrases and exclusion", async () => {
+    await searchCorpus();
+    const search = new ExternalSessionTurnSearch(h.layer(), principal.projectId);
+    expect((await search.search({ q: "dashboard" })).hits.map(hit => hit.nativeTurnId)).toEqual(["turn-b"]);
+    expect((await search.search({ q: '"postgres schema"' })).hits.map(hit => hit.nativeTurnId)).toEqual(["turn-a"]);
+    expect((await search.search({ q: "panel -dashboard" })).hits.map(hit => hit.nativeTurnId)).toEqual([]);
+  });
+
+  it("returns no searchable term instead of matching everything for stopword-only input", async () => {
+    await searchCorpus();
+    expect(await new ExternalSessionTurnSearch(h.layer(), principal.projectId).search({ q: "the and of" }))
+      .toMatchObject({ hits: [], more: false, query: null });
+  });
+
+  it("never raises on punctuation an operator can type into a search box", async () => {
+    await searchCorpus();
+    const search = new ExternalSessionTurnSearch(h.layer(), principal.projectId);
+    for (const q of ['"unbalanced', "a & b | c", "!!!", "' OR 1=1 --", "<script>"]) {
+      await expect(search.search({ q })).resolves.toMatchObject({ schemaVersion: 1 });
+    }
+  });
+
+  it("keeps search inside its project and honours host and session filters", async () => {
+    const sessionId = await searchCorpus();
+    const search = new ExternalSessionTurnSearch(h.layer(), principal.projectId);
+    expect((await search.search({ q: "migration", hostId: principal.hostId })).hits).toHaveLength(1);
+    expect((await search.search({ q: "migration", hostId: "other-host" })).hits).toEqual([]);
+    expect((await search.search({ q: "migration", sessionId })).hits).toHaveLength(1);
+    expect((await search.search({ q: "migration", sessionId: "b".repeat(64) })).hits).toEqual([]);
+    expect(() => new ExternalSessionTurnSearch(h.layer(), "other-project")).toThrow();
+  });
+
+  it("caps the page and reports that more matched", async () => {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    for (let i = 0; i < 4; i += 1) {
+      const base = turnEnvelope(first.sessionId, `bulk-${i}`, i);
+      await turns.ingest({ ...base, turn: { ...base.turn, prompts: [{ at: null, text: "repeated needle text" }], response: "needle" } });
+    }
+    const page = await new ExternalSessionTurnSearch(h.layer(), principal.projectId).search({ q: "needle", limit: 2 });
+    expect(page.hits).toHaveLength(2);
+    expect(page.more).toBe(true);
+  });
+
+  it("installs the 0089 search index and keeps it valid", async () => {
+    await searchCorpus();
+    const [index] = (await h.adminDb().execute(sql`SELECT indisvalid AS valid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname = 'external_session_turn_search'`)) as unknown as Array<{ valid: boolean }>;
+    expect(index?.valid).toBe(true);
+    const ledger = await h.adminDb().execute(sql`SELECT version FROM public.fusion_schema_migrations WHERE version = '0089'`);
+    expect(ledger).toHaveLength(1);
+  });
+
+  it("reinstalls the search index when it is dropped but the ledger row remains", async () => {
+    await h.adminDb().execute(sql.raw("DROP INDEX project.external_session_turn_search"));
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+    const [index] = (await h.adminDb().execute(sql`SELECT indisvalid AS valid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname = 'external_session_turn_search'`)) as unknown as Array<{ valid: boolean }>;
+    expect(index?.valid).toBe(true);
+  });
+
+  it("records collector-reported health and keeps unreported counters null", async () => {
+    await store().heartbeat({ schemaVersion: 1, collectorVersion: "1.0" });
+    const [bare] = await new ExternalSessionReader(h.layer(), principal.projectId).hosts();
+    // An older collector reports nothing; null must not be flattened to a reassuring zero.
+    expect(bare).toMatchObject({ spoolDepth: null, spoolBytes: null, parseFailures: null, deliveryFailures: null, healthReportedAt: null });
+    expect(bare!.heartbeatAgeMs).toBeGreaterThanOrEqual(0);
+    await store().heartbeat({ schemaVersion: 1, collectorVersion: "1.1", spoolDepth: 12, spoolBytes: 3456, parseFailures: 2, deliveryFailures: 1 });
+    const [reported] = await new ExternalSessionReader(h.layer(), principal.projectId).hosts();
+    expect(reported).toMatchObject({ spoolDepth: 12, spoolBytes: 3456, parseFailures: 2, deliveryFailures: 1, collectorVersion: "1.1" });
+    expect(reported!.healthReportedAt).not.toBeNull();
+  });
+
+  it("does not let a collector without counters blank the last known health", async () => {
+    await store().heartbeat({ schemaVersion: 1, collectorVersion: "1.1", spoolDepth: 9, parseFailures: 4 });
+    await store().heartbeat({ schemaVersion: 1, collectorVersion: "1.0" });
+    const [host] = await new ExternalSessionReader(h.layer(), principal.projectId).hosts();
+    expect(host).toMatchObject({ spoolDepth: 9, parseFailures: 4 });
+  });
+
+  it("reports a reported zero spool distinctly from an unreported one", async () => {
+    await store().heartbeat({ schemaVersion: 1, collectorVersion: "1.1", spoolDepth: 0, spoolBytes: 0 });
+    const [host] = await new ExternalSessionReader(h.layer(), principal.projectId).hosts();
+    expect(host!.spoolDepth).toBe(0);
+    expect(host!.spoolDepth).not.toBeNull();
+  });
+
+  it("rejects a malformed health counter rather than storing it", async () => {
+    for (const bad of [{ spoolDepth: -1 }, { parseFailures: 1.5 }, { spoolBytes: "many" }, { unknownCounter: 1 }]) {
+      await expect(store().heartbeat({ schemaVersion: 1, collectorVersion: "1.1", ...bad })).rejects.toThrow();
+    }
+  });
+
+  it("installs 0090 health columns and restores them when dropped", async () => {
+    await h.adminDb().execute(sql.raw("ALTER TABLE project.external_session_hosts DROP COLUMN spool_depth"));
+    expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
+    await store().heartbeat({ schemaVersion: 1, collectorVersion: "1.1", spoolDepth: 5 });
+    const [host] = await new ExternalSessionReader(h.layer(), principal.projectId).hosts();
+    expect(host).toMatchObject({ spoolDepth: 5 });
+  });
+
+  it("stores measured per-turn usage and context without inventing either", async () => {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const base = turnEnvelope(first.sessionId, "turn-usage", 0);
+    await turns.ingest({ ...base, turn: { ...base.turn,
+      usage: [{ requestId: "msg-1", model: "claude-sonnet-5", inputTokens: 1050, cachedInputTokens: 900,
+        cacheWriteTokens: 50, cacheWriteHourTokens: 0, outputTokens: 20, reasoningTokens: null, fast: false, longContext: false }],
+      usageComplete: true, contextTokens: 1050, contextCapacity: 200000 } });
+    const [stored] = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(first.sessionId)).turns;
+    expect(stored).toMatchObject({ contextTokens: 1050, contextCapacity: 200000, usageComplete: true });
+    expect(stored!.usage).toHaveLength(1);
+    expect(stored!.usage![0]).toMatchObject({ requestId: "msg-1", inputTokens: 1050, outputTokens: 20 });
+  });
+
+  it("keeps a turn without usage absent rather than zeroed", async () => {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    await turns.ingest(turnEnvelope(first.sessionId, "turn-bare", 0));
+    const [stored] = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(first.sessionId)).turns;
+    expect(stored!.usage).toBeUndefined();
+    expect(stored!.contextTokens ?? null).toBeNull();
+  });
+
+  it("rejects turn usage that contradicts itself", async () => {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const base = turnEnvelope(first.sessionId, "turn-bad", 0);
+    const usage = { requestId: "msg-1", model: "m", inputTokens: 10, cachedInputTokens: 0, cacheWriteTokens: 0,
+      cacheWriteHourTokens: 0, outputTokens: 1, reasoningTokens: null, fast: false, longContext: false };
+    for (const bad of [{ inputTokens: -1 }, { contextTokens: -5 }, { usage: [{ ...usage, requestId: "" }] }]) {
+      const broken = "usage" in bad ? { ...base.turn, ...bad } : { ...base.turn, usage: [{ ...usage, ...bad }] };
+      await expect(turns.ingest({ ...base, turn: broken as never })).rejects.toThrow();
+    }
+  });
+
+  it("stores a recorded pricing stamp with its turn and leaves unstamped turns unstamped", async () => {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const base = turnEnvelope(first.sessionId, "turn-priced", 0);
+    const pricing = { asOf: "2026-07-16", source: "Fusion model pricing",
+      rates: { "claude_code:claude-sonnet-5": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75, source: "docs" } } };
+    await turns.ingest({ ...base, turn: { ...base.turn, pricing } });
+    await turns.ingest(turnEnvelope(first.sessionId, "turn-unstamped", 1));
+    const stored = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(first.sessionId)).turns;
+    expect(stored.find(t => t.nativeTurnId === "turn-priced")!.pricing).toMatchObject(pricing);
+    // An old turn stays without a stamp; it must never be back-filled from today's catalog.
+    expect(stored.find(t => t.nativeTurnId === "turn-unstamped")!.pricing).toBeUndefined();
+  });
+
+  it("rejects a malformed pricing stamp rather than storing an unusable rate", async () => {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const base = turnEnvelope(first.sessionId, "turn-bad-rate", 0);
+    const good = { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75, source: "docs" };
+    for (const bad of [
+      { asOf: "", source: "s", rates: { "a:b": good } },
+      { asOf: "2026-07-16", source: "s", rates: { "a:b": { ...good, inputPer1M: -1 } } },
+      { asOf: "2026-07-16", source: "s", rates: { "a:b": { ...good, source: "" } } },
+      { asOf: "2026-07-16", source: "s", rates: { "a:b": { inputPer1M: 3 } } },
+    ]) {
+      await expect(turns.ingest({ ...base, turn: { ...base.turn, pricing: bad } as never })).rejects.toThrow();
+    }
+  });
+
+  async function rankingCorpus() {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const usage = (model: string) => [{ requestId: `r-${model}`, model, inputTokens: 1000, cachedInputTokens: 0,
+      cacheWriteTokens: 0, cacheWriteHourTokens: 0, outputTokens: 100, reasoningTokens: null, fast: false, longContext: false }];
+    const a = turnEnvelope(first.sessionId, "rank-a", 0);
+    await turns.ingest({ ...a, turn: { ...a.turn, endedAt: "2026-09-01T00:00:00.000Z", usage: usage("model-a"), usageComplete: true } });
+    const b = turnEnvelope(first.sessionId, "rank-b", 1);
+    await turns.ingest({ ...b, turn: { ...b.turn, endedAt: "2026-09-10T00:00:00.000Z", usage: usage("model-b"), usageComplete: true } });
+    const bare = turnEnvelope(first.sessionId, "rank-bare", 2);
+    await turns.ingest({ ...bare, turn: { ...bare.turn, endedAt: "2026-09-11T00:00:00.000Z" } });
+    return first.sessionId;
+  }
+
+  it("returns ranking candidates with their usage and counts rows that can never be ranked", async () => {
+    await rankingCorpus();
+    const scan = await new ExternalSessionRankings(h.layer(), principal.projectId).turns();
+    expect(scan.candidates).toHaveLength(3);
+    // A turn with no usage is reported, not dropped: coverage has to be able to say it exists.
+    expect(scan.withoutUsage).toBe(1);
+    expect(scan.truncated).toBe(false);
+  });
+
+  it("filters ranking candidates by date, host and model", async () => {
+    await rankingCorpus();
+    const rankings = new ExternalSessionRankings(h.layer(), principal.projectId);
+    expect((await rankings.turns({ from: "2026-09-05T00:00:00.000Z" })).candidates.map(c => c.nativeTurnId).sort())
+      .toEqual(["rank-b", "rank-bare"]);
+    expect((await rankings.turns({ to: "2026-09-05T00:00:00.000Z" })).candidates.map(c => c.nativeTurnId)).toEqual(["rank-a"]);
+    expect((await rankings.turns({ model: "model-a" })).candidates.map(c => c.nativeTurnId)).toEqual(["rank-a"]);
+    expect((await rankings.turns({ hostId: "other" })).candidates).toEqual([]);
+    expect((await rankings.turns({ hostId: principal.hostId })).candidates).toHaveLength(3);
+  });
+
+  it("reports truncation instead of silently ranking part of the range", async () => {
+    await rankingCorpus();
+    const scan = await new ExternalSessionRankings(h.layer(), principal.projectId).turns({ scanLimit: 2 });
+    expect(scan.candidates).toHaveLength(2);
+    expect(scan.truncated).toBe(true);
+  });
+
+  it("ranks sessions by their own usage and keeps them project-scoped", async () => {
+    await rankingCorpus();
+    const rankings = new ExternalSessionRankings(h.layer(), principal.projectId);
+    const scan = await rankings.sessions();
+    expect(scan.candidates).toHaveLength(1);
+    expect(scan.candidates[0]).toMatchObject({ hostId: principal.hostId, provider: "runtime" });
+    expect(() => new ExternalSessionRankings(h.layer(), "other-project")).toThrow();
+  });
+
+  it("rejects a malformed ranking query rather than scanning everything", async () => {
+    const rankings = new ExternalSessionRankings(h.layer(), principal.projectId);
+    for (const bad of [{ scanLimit: 0 }, { scanLimit: 99999 }, { from: "yesterday" }, { hostId: "" }]) {
+      await expect(rankings.turns(bad as never)).rejects.toThrow();
+    }
+  });
+
+  const stampRate = { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75, source: "docs" };
+  const correctedRate = { ...stampRate, inputPer1M: 9, source: "catalog correction" };
+
+  async function stampedSession() {
+    const first = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const a = turnEnvelope(first.sessionId, "stamped", 0);
+    await turns.ingest({ ...a, turn: { ...a.turn,
+      pricing: { asOf: "2026-07-16", source: "Fusion model pricing", rates: { "claude_code:m": stampRate } } } });
+    const b = turnEnvelope(first.sessionId, "unstamped", 1);
+    await turns.ingest(b);
+    return first.sessionId;
+  }
+
+  it("preserves a frozen stamp by default: ingest never restamps", async () => {
+    const sessionId = await stampedSession();
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    const again = turnEnvelope(sessionId, "stamped", 0, 2);
+    await turns.ingest({ ...again, turn: { ...again.turn, revision: 2,
+      pricing: { asOf: "2026-09-24", source: "newer", rates: { "claude_code:m": correctedRate } } } });
+    const [stamped] = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(sessionId)).turns
+      .filter(t => t.nativeTurnId === "stamped");
+    // A later ingest may carry its own stamp, but nothing in this path rewrites history behind the operator.
+    expect(stamped!.pricing?.restamp).toBeUndefined();
+  });
+
+  it("records actor, reason and the replaced basis when an operator restamps", async () => {
+    const sessionId = await stampedSession();
+    const result = await new ExternalSessionTurnRestamp(h.layer(), principal.projectId).apply(sessionId, {
+      actor: "operator@example.test", reason: "catalog had the wrong input rate",
+      rates: { "claude_code:m": correctedRate }, asOf: "2026-09-24", source: "Corrected catalog" });
+    expect(result).toMatchObject({ restamped: 1, skippedUnstamped: 1 });
+    const turns = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(sessionId)).turns;
+    const stamped = turns.find(t => t.nativeTurnId === "stamped")!;
+    expect(stamped.pricing).toMatchObject({ asOf: "2026-09-24", source: "Corrected catalog" });
+    expect(stamped.pricing!.rates["claude_code:m"]).toMatchObject({ inputPer1M: 9 });
+    expect(stamped.pricing!.restamp).toMatchObject({ actor: "operator@example.test",
+      reason: "catalog had the wrong input rate", previousAsOf: "2026-07-16", previousSource: "Fusion model pricing" });
+    expect(Date.parse(stamped.pricing!.restamp!.at)).toBeGreaterThan(0);
+  });
+
+  it("never stamps a turn that was never stamped, so an operator cannot invent a basis", async () => {
+    const sessionId = await stampedSession();
+    await new ExternalSessionTurnRestamp(h.layer(), principal.projectId).apply(sessionId, {
+      actor: "op", reason: "fix", rates: { "claude_code:m": correctedRate }, asOf: "2026-09-24", source: "Corrected" });
+    const turns = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(sessionId)).turns;
+    expect(turns.find(t => t.nativeTurnId === "unstamped")!.pricing).toBeUndefined();
+  });
+
+  it("rewrites only the stamp and leaves the measured work untouched", async () => {
+    const sessionId = await stampedSession();
+    const before = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(sessionId)).turns
+      .find(t => t.nativeTurnId === "stamped")!;
+    await new ExternalSessionTurnRestamp(h.layer(), principal.projectId).apply(sessionId, {
+      actor: "op", reason: "fix", rates: { "claude_code:m": correctedRate }, asOf: "2026-09-24", source: "Corrected" });
+    const after = (await new ExternalSessionTurnReader(h.layer(), principal.projectId).list(sessionId)).turns
+      .find(t => t.nativeTurnId === "stamped")!;
+    // A catalog correction changes what work cost, never what happened.
+    expect({ ...after, pricing: undefined }).toEqual({ ...before, pricing: undefined });
+  });
+
+  it("refuses a restamp with no replacement rates or a missing actor or reason", async () => {
+    const sessionId = await stampedSession();
+    const restamp = new ExternalSessionTurnRestamp(h.layer(), principal.projectId);
+    for (const bad of [{ rates: {} }, { actor: "" }, { reason: "" }, { asOf: "" }]) {
+      await expect(restamp.apply(sessionId, { actor: "op", reason: "fix", rates: { "claude_code:m": correctedRate },
+        asOf: "2026-09-24", source: "Corrected", ...bad } as never)).rejects.toThrow();
+    }
+    expect(() => new ExternalSessionTurnRestamp(h.layer(), "other-project")).toThrow();
+  });
+
+  const band = (model: string, input: number, output: number, extra: Record<string, unknown> = {}) => ({
+    model, inputTokens: input, cachedInputTokens: 0, cacheWriteTokens: 0, cacheWriteHourTokens: 0,
+    outputTokens: output, reasoningTokens: null, fast: false, longContext: false, ...extra });
+  const withUsage = (sequence: number, revision: number, usage: unknown[], pricing?: unknown) => [{
+    ...envelope(sequence, revision),
+    session: { ...envelope(sequence, revision).session, usage, usageComplete: true },
+  }, pricing] as const;
+  const increments = async (sessionId: string) => (await h.adminDb().execute(sql`
+    SELECT revision, usage, pricing FROM project.external_session_usage_increments
+    WHERE project_id=${principal.projectId} AND session_id=${sessionId} ORDER BY revision`)) as unknown as Array<{ revision: number; usage: unknown[]; pricing: unknown }>;
+
+  it("records only what each revision added, so a mid-session model change prices at its own rate", async () => {
+    const rateA = { asOf: "2026-07-16", source: "baseline", rates: { "claude_code:model-a": { inputPer1M: 3, outputPer1M: 15, cacheReadPer1M: 0.3, cacheWritePer1M: 3.75, source: "docs" } } };
+    const rateB = { asOf: "2026-09-24", source: "later", rates: { "claude_code:model-b": { inputPer1M: 9, outputPer1M: 45, cacheReadPer1M: 0.9, cacheWritePer1M: 11.25, source: "docs" } } };
+    const [first, p1] = withUsage(1, 1, [band("model-a", 1000, 100)], rateA);
+    const created = await store().ingest(first, p1);
+    // Revision 2 keeps model-a's cumulative total and adds model-b: only the new work is an increment.
+    const [second, p2] = withUsage(2, 2, [band("model-a", 1000, 100), band("model-b", 500, 50)], rateB);
+    await store().ingest(second, p2);
+    const rows = await increments(created.sessionId);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.usage).toEqual([expect.objectContaining({ model: "model-a", inputTokens: 1000, outputTokens: 100 })]);
+    expect(rows[0]!.pricing).toMatchObject({ asOf: "2026-07-16" });
+    // The second increment must NOT restate model-a, or its earlier work would be repriced at the later rate.
+    expect(rows[1]!.usage).toEqual([expect.objectContaining({ model: "model-b", inputTokens: 500, outputTokens: 50 })]);
+    expect(rows[1]!.pricing).toMatchObject({ asOf: "2026-09-24" });
+  });
+
+  it("records the growth of a single model rather than its running total", async () => {
+    const [first] = withUsage(1, 1, [band("model-a", 1000, 100)]);
+    const created = await store().ingest(first);
+    const [second] = withUsage(2, 2, [band("model-a", 2500, 260)]);
+    await store().ingest(second);
+    const rows = await increments(created.sessionId);
+    expect(rows[1]!.usage).toEqual([expect.objectContaining({ inputTokens: 1500, outputTokens: 160 })]);
+  });
+
+  it("writes no increment for a revision that added nothing", async () => {
+    const [first] = withUsage(1, 1, [band("model-a", 1000, 100)]);
+    const created = await store().ingest(first);
+    const [second] = withUsage(2, 2, [band("model-a", 1000, 100)]);
+    await store().ingest(second);
+    expect(await increments(created.sessionId)).toHaveLength(1);
+  });
+
+  it("treats a counter that goes backwards as unknown rather than negative work", async () => {
+    const [first] = withUsage(1, 1, [band("model-a", 5000, 500)]);
+    const created = await store().ingest(first);
+    // A collector that re-derived its accounting can report a LOWER cumulative total.
+    const [second] = withUsage(2, 2, [band("model-a", 100, 10)]);
+    await store().ingest(second);
+    const rows = await increments(created.sessionId);
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]!.revision)).toBe(1);
+  });
+
+  it("prices the same model at different tiers separately", async () => {
+    const [first] = withUsage(1, 1, [band("model-a", 1000, 100)]);
+    const created = await store().ingest(first);
+    const [second] = withUsage(2, 2, [band("model-a", 1000, 100), band("model-a", 700, 70, { longContext: true })]);
+    await store().ingest(second);
+    const rows = await increments(created.sessionId);
+    expect(rows[1]!.usage).toEqual([expect.objectContaining({ model: "model-a", longContext: true, inputTokens: 700 })]);
+  });
+
+  it("keeps an increment immutable when the same revision is replayed", async () => {
+    const rate = { asOf: "2026-07-16", source: "baseline", rates: {} };
+    const [first, p1] = withUsage(1, 1, [band("model-a", 1000, 100)], rate);
+    const created = await store().ingest(first, p1);
+    await expect(store().ingest(first, { asOf: "2099-01-01", source: "later", rates: {} })).resolves.toMatchObject({ applied: false });
+    const rows = await increments(created.sessionId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pricing).toMatchObject({ asOf: "2026-07-16" });
+  });
+
+  it("reads increments in revision order and groups a page in one query", async () => {
+    const [first, p1] = withUsage(1, 1, [band("model-a", 1000, 100)], { asOf: "2026-07-16", source: "early", rates: {} });
+    const created = await store().ingest(first, p1);
+    const [second, p2] = withUsage(2, 2, [band("model-a", 2000, 200)], { asOf: "2026-09-24", source: "later", rates: {} });
+    await store().ingest(second, p2);
+    const reader = new ExternalSessionUsageIncrementReader(h.layer(), principal.projectId);
+    const list = await reader.list(created.sessionId);
+    expect(list.map(i => i.revision)).toEqual([1, 2]);
+    expect(list[0]!.pricing).toMatchObject({ asOf: "2026-07-16" });
+    expect(list[1]!.pricing).toMatchObject({ asOf: "2026-09-24" });
+    const grouped = await reader.listForSessions([created.sessionId]);
+    expect(grouped.get(created.sessionId)!.map(i => i.revision)).toEqual([1, 2]);
+    // An unknown session must be absent rather than an empty-but-present entry that reads as "no cost".
+    expect(grouped.has("b".repeat(64))).toBe(false);
+    expect(() => new ExternalSessionUsageIncrementReader(h.layer(), "other-project")).toThrow();
+  });
+
+  it("records an increment unpriced when no rates were available at ingest", async () => {
+    const [first] = withUsage(1, 1, [band("model-a", 1000, 100)]);
+    const created = await store().ingest(first);
+    const [only] = await new ExternalSessionUsageIncrementReader(h.layer(), principal.projectId).list(created.sessionId);
+    expect(only!.pricing).toBeNull();
+    expect(only!.usage).toHaveLength(1);
+  });
+
+  /*
+  FNXC:ExternalSessionSummary 2026-09-24-07:05 (operator decision F3 = A): the durable summary record. The
+  invariant worth a PG test is that a FAILED attempt never destroys the previous summary — during an inference
+  outage the older summary plus an explicit failure is strictly more useful than an empty pane.
+  */
+  const summaries = () => new ExternalSessionSummaryStore(h.layer(), principal.projectId);
+
+  it("preserves the previous summary when a later attempt fails, and recovers on the next success", async () => {
+    const created = await store().ingest(envelope());
+    await summaries().recordSuccess(created.sessionId, { summary: "Fixed the parser.", provider: "anthropic",
+      model: "model-a", coverage: { throughOrdinal: 2, turnCount: 3 } }, "2026-09-24T01:00:00.000Z");
+
+    const failed = await summaries().recordFailure(created.sessionId, "AI engine not available", "2026-09-24T02:00:00.000Z");
+    expect(failed.status).toBe("failed");
+    expect(failed.failure).toBe("AI engine not available");
+    // Everything describing the last GOOD summary survives untouched.
+    expect(failed.summary).toBe("Fixed the parser.");
+    expect(failed.generatedAt).toBe("2026-09-24T01:00:00.000Z");
+    expect(failed.throughOrdinal).toBe(2);
+    expect(failed.turnCount).toBe(3);
+    expect(failed.model).toBe("model-a");
+    expect(failed.attemptedAt).toBe("2026-09-24T02:00:00.000Z");
+
+    const recovered = await summaries().recordSuccess(created.sessionId, { summary: "Fixed the parser and its tests.",
+      provider: "anthropic", model: "model-b", coverage: { throughOrdinal: 5, turnCount: 6 } }, "2026-09-24T03:00:00.000Z");
+    expect(recovered.status).toBe("ready");
+    expect(recovered.failure).toBeNull();
+    expect((await summaries().read(created.sessionId))!.summary).toBe("Fixed the parser and its tests.");
+  });
+
+  it("records a first-attempt failure with no summary rather than inventing one", async () => {
+    const created = await store().ingest(envelope());
+    const failed = await summaries().recordFailure(created.sessionId, "  ");
+    expect(failed.status).toBe("failed");
+    expect(failed.summary).toBeNull();
+    expect(failed.throughOrdinal).toBeNull();
+    // An empty reason still has to say something an operator can act on.
+    expect(failed.failure).toBe("Summary generation failed");
+  });
+
+  it("reads the tail of the transcript and derives staleness from the session's real turns", async () => {
+    const created = await store().ingest(envelope());
+    const turns = new ExternalSessionTurnStore(h.layer(), principal);
+    for (let ordinal = 0; ordinal < 3; ordinal++) await turns.ingest(turnEnvelope(created.sessionId, `turn-${ordinal}`, ordinal));
+    expect((await summaries().latestOrdinal(created.sessionId))).toBe(2);
+    const tail = await summaries().tail(created.sessionId, 2);
+    expect(tail.map(t => t.ordinal)).toEqual([1, 2]);
+    expect((await summaries().latestOrdinal("c".repeat(64)))).toBeNull();
+    expect(() => new ExternalSessionSummaryStore(h.layer(), "other-project")).toThrow();
+  });
+
+  it("bounds a stored summary and refuses a summary for a session that does not exist", async () => {
+    const created = await store().ingest(envelope());
+    const stored = await summaries().recordSuccess(created.sessionId, { summary: "x".repeat(5000),
+      provider: null, model: null, coverage: { throughOrdinal: 0, turnCount: 1 } });
+    expect(stored.summary).toHaveLength(2000);
+    // The foreign key is the guard: a summary can only exist for a real session.
+    await expect(summaries().recordSuccess("d".repeat(64), { summary: "orphan", provider: null, model: null,
+      coverage: { throughOrdinal: 0, turnCount: 1 } })).rejects.toThrow();
+  });
+
   it("installs external-session migrations on an upgrade and reopening is idempotent", async () => {
-    await h.adminDb().execute(sql.raw("DROP TABLE project.external_session_turns, project.external_session_feedback, project.external_sessions, project.external_session_streams, project.external_session_hosts; DELETE FROM public.fusion_schema_migrations WHERE version IN ('0086', '0087', '0088');"));
+    // 0091's increments reference external_sessions, so a pre-0086 upgrade must drop them too.
+    await h.adminDb().execute(sql.raw("DROP TABLE project.external_session_summaries, project.external_session_usage_increments, project.external_session_turns, project.external_session_feedback, project.external_sessions, project.external_session_streams, project.external_session_hosts; DELETE FROM public.fusion_schema_migrations WHERE version IN ('0086', '0087', '0088', '0091', '0092');"));
     expect((await applySchemaBaseline(h.adminDb())).applied).toBe(true);
     expect((await store().ingest(envelope())).applied).toBe(true);
     expect((await applySchemaBaseline(h.adminDb())).applied).toBe(false);

@@ -962,8 +962,6 @@ async function isZeroUniqueCommitBranchViaPatchIdFallback(
 export async function inspectBareBranchCollision(
   input: InspectBranchConflictInput,
 ): Promise<BareBranchCollisionInspectionResult> {
-  const startPoint = input.startPoint ?? "HEAD";
-
   try {
     await runGit(input.repoDir, "git worktree prune");
   } catch {
@@ -989,9 +987,13 @@ export async function inspectBareBranchCollision(
   }
 
   const tipSha = await revParse(input.repoDir, input.branchName);
-  const uniqueCommitResult = await listUniqueBranchCommits(input.repoDir, startPoint, input.branchName);
   const requestedIntegrationRef = input.integrationRef ?? await resolveIntegrationBranch(input.repoDir, undefined);
   const integrationRef = await resolveBranchComparisonRef(input.repoDir, requestedIntegrationRef, input.branchName);
+  // FNXC:BranchConflictReachability 2026-10-01-05:33:
+  // FN-9434 requires destructive recovery to compare against the live integration
+  // branch. A task's recorded start point can predate commits already incorporated
+  // upstream and must never make those inherited commits appear stranded.
+  const uniqueCommitResult = await listUniqueBranchCommits(input.repoDir, integrationRef, input.branchName);
 
   if (livePath && existsSync(livePath)) {
     return {
@@ -1015,7 +1017,7 @@ export async function inspectBareBranchCollision(
   const zeroUnique = uniqueCommitResult.commits.length === 0 && (
     !uniqueCommitResult.degraded || await isZeroUniqueCommitBranchViaPatchIdFallback(
       input.repoDir,
-      startPoint,
+      integrationRef,
       input.branchName,
       uniqueCommitResult.mainRef,
     )
@@ -1063,7 +1065,6 @@ export async function inspectBareBranchCollision(
 export async function inspectBranchConflict(
   input: InspectBranchConflictInput,
 ): Promise<BranchConflictInspectionResult> {
-  const startPoint = input.startPoint ?? "HEAD";
   if (!existsSync(input.conflictingWorktreePath)) {
     return { kind: "stale" };
   }
@@ -1110,10 +1111,14 @@ export async function inspectBranchConflict(
     };
   }
 
-  const uniqueCommitResult = await listUniqueBranchCommits(input.repoDir, startPoint, input.branchName);
+  // FNXC:BranchConflictReachability 2026-10-01-05:33:
+  // Branch ownership and stranded diagnostics must use the same current-base range.
+  // Mixing a persisted task base with live reachability could label inherited work as
+  // task-owned and permit the wrong destructive recovery decision.
+  const uniqueCommitResult = await listUniqueBranchCommits(input.repoDir, integrationRef, input.branchName);
   const attribution = await summarizeTaskAttributedCommits(
     input.repoDir,
-    `${startPoint}..${input.branchName}`,
+    `${integrationRef}..${input.branchName}`,
     input.requestingTaskId,
   );
   const taskAttributedCommitCount = attribution.ownCount;
@@ -1129,7 +1134,7 @@ export async function inspectBranchConflict(
   if (uniqueCommitResult.degraded && uniqueCommitResult.commits.length === 0) {
     const isZeroUnique = await isZeroUniqueCommitBranchViaPatchIdFallback(
       input.repoDir,
-      startPoint,
+      integrationRef,
       input.branchName,
       uniqueCommitResult.mainRef,
     );

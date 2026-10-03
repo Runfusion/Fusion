@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { customProviderRegistryKey, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
+import { customProviderRegistryKey, mergeSupplementalAnthropicModels, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
 import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
@@ -385,11 +385,13 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         runtimeLogger.child("models").warn(`Model registry refresh outcome: ${refreshOutcome}; serving retained catalog`);
       }
       /*
-      FNXC:ModelCatalog 2026-09-29-05:56:
-      Pi owns Anthropic catalog rows. Keep the OpenAI Codex merge because it is a separate
-      additive compatibility surface, but never mutate the Anthropic provider after refresh.
+      FNXC:ModelCatalog 2026-10-01-02:51:
+      Refresh can replace provider rows, including on retained-catalog paths. Reapply the
+      upstream-first Anthropic compatibility merge on every request so Pi 0.86.1 exposes the
+      two 5.5 records without replacing newer upstream metadata or credential configuration.
       */
       if (options.modelRegistry.registerProvider) {
+        mergeSupplementalAnthropicModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalAnthropicModels>[0], (message) => runtimeLogger.child("models").warn(message));
         mergeSupplementalOpenAiCodexModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalOpenAiCodexModels>[0], (message) => runtimeLogger.child("models").warn(message));
       }
       let models: Array<{

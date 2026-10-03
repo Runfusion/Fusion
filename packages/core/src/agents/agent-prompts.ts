@@ -426,11 +426,12 @@ Follow this structure exactly:
 
 ## Steps
 
-> Optional: a step heading may carry a \`(depends: N,M)\` annotation listing literal \`### Step N\`
-> heading numbers (0-based; Step 0 is Preflight) — e.g. \`### Step 3 (depends: 1): Title\`. Annotate
-> ONLY steps that are genuinely independent of their immediate predecessor; an unannotated step is
-> assumed to depend on the one before it (fully sequential). Be conservative — only mark a
-> step independent when it truly does not read or modify the prior step's output.
+> Optional: a step heading may carry a \`(depends: N,M)\` annotation listing 1-based positions in the
+> parsed step list — visible \`### Step N\` labels are display text, not identifiers. For example,
+> \`### Step 12 (depends: 1): Title\` depends on the first parsed step. \`(depends:)\` is an explicit
+> independent root; an unannotated step depends on the preceding parsed step. JSON \`depends\` remains
+> a separate 0-based API. Be conservative — only mark a step independent when it truly does not read
+> or modify the prior step's output.
 
 ### Step 0: Preflight
 

@@ -1,4 +1,5 @@
 import { RemoteAgentsPanel } from "./RemoteAgentsPanel";
+import { readRemoteAgentLink } from "../utils/remote-agent-links";
 import "./AgentsView.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -396,6 +397,11 @@ function OrgChartConnectors({
   );
 }
 
+/** True when a pending remote-session link applies to `projectId` (an unscoped link applies to any project). */
+function linksHere(link: ReturnType<typeof readRemoteAgentLink>, projectId: string | undefined): boolean {
+  return !!link && !!projectId && (!link.projectId || link.projectId === projectId);
+}
+
 export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardingEnabled = false, focusAgent }: AgentsViewProps) {
   const { t } = useTranslation("app");
   const { skills: discoveredSkills, loading: discoveredSkillsLoading, error: discoveredSkillsError } = useDiscoveredSkillsCache(projectId);
@@ -504,8 +510,18 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const viewportMode = useViewportMode();
   const isMobileViewport = viewportMode === "mobile";
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readAgentsSidebarWidth(projectId));
+  /*
+  FNXC:RemoteAgents 2026-09-27-00:20:
+  A remote-session deep link must land on the Remote tab. Browser acceptance showed it landing on List instead:
+  the effect below restores the saved per-project tab on mount and on every project switch, so it overrode the
+  link, while the panel (mounted for one render) had already consumed the link from the URL. The link is
+  therefore captured here and applied by that same effect, once, for the project it names — which also covers a
+  link to another project, where AgentsView first renders for the current project and useDeepLink switches after.
+  */
+  const remoteLinkRef = useRef(readRemoteAgentLink());
   const [agentView, setAgentView] = useState<"list" | "board" | "org" | "remote">(() => {
     if (typeof window === "undefined") return "list";
+    if (linksHere(remoteLinkRef.current, projectId)) return "remote";
     const saved = getScopedItem("fn-agent-view", projectId);
     return (saved === "list" || saved === "board" || saved === "org" || saved === "remote") ? saved : "list";
   });
@@ -560,6 +576,11 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   }, [projectId]);
 
   useEffect(() => {
+    if (linksHere(remoteLinkRef.current, projectId)) {
+      remoteLinkRef.current = null;
+      setAgentView("remote");
+      return;
+    }
     const saved = getScopedItem("fn-agent-view", projectId);
     if (saved === "list" || saved === "board" || saved === "org" || saved === "remote") {
       setAgentView(saved);

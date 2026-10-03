@@ -131,6 +131,8 @@ function makeStore(dir: string, taskId: string, settingsOverrides: Record<string
 
   return {
     getTask: vi.fn().mockResolvedValue(task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     listTasks: vi.fn().mockResolvedValue([task]),
     updateTask: vi.fn().mockResolvedValue(task),
     moveTask: vi.fn().mockResolvedValue(task),

@@ -33,8 +33,9 @@ export async function seedWorkspaceCodeReviewContinuationIfIdleImpl(
   input: WorkflowWorkItemUpsertInput & {
     kind: "task";
     expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
+    expectedTaskUpdatedAt?: string;
   },
-): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed"; workItemId?: string }> {
+): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed" | "task-state-changed"; workItemId?: string }> {
   return seedWorkspaceCodeReviewContinuationIfIdleAsync(store.asyncLayer!, input);
 }
 

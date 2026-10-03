@@ -48,6 +48,8 @@ function makeStore(settingsOverrides: Record<string, unknown> = {}) {
   };
   const store: any = {
     getTask: vi.fn(async () => task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 1 }, ...settingsOverrides })),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => { Object.assign(task, patch); return task; }),
     updateTaskAtomic: vi.fn(async (_id: string, reducer: (live: typeof task) => Record<string, unknown> | null) => {

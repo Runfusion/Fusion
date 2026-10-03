@@ -73,6 +73,13 @@ describe("runTaskReconcile", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("abc123"));
   });
 
+  it("reports a resumed post-merge gate as successful recovery", async () => {
+    reconcile.mockResolvedValue({ outcome: "resumed", gateId: "post-merge-verification" });
+    await expect(runTaskReconcile("FN-9442", "project")).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("post-merge-verification"));
+    expect(exit).not.toHaveBeenCalled();
+  });
+
   it("reports an already-complete card as a successful no-op", async () => {
     reconcile.mockResolvedValue({ outcome: "already-complete" });
     await expect(runTaskReconcile("FN-9304", "project")).resolves.toBeUndefined();

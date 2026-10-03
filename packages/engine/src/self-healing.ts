@@ -1,3 +1,4 @@
+import { resumeMissingPostMergeGate } from "./merge/post-merge-gate-reseed.js";
 /**
  * SelfHealingManager — enables unattended multi-day/week operation by
  * providing automatic recovery from common failure modes.
@@ -28,7 +29,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, hasUserAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, hasUserAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -50,7 +51,7 @@ import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLane
   resolveWorktreePathReservationDirectory,
   resolveLegacyWorktreesDirLayout,
 } from "@fusion/core";
-import { finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
+import { deriveStaleReviewCallbackAttemptId, finalizePlanningSegment, isLegacyWorkspaceWorktreeLayout, resolveWorkspaceTaskWorktreeDir } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
 import { classifyStaleContentPark } from "./merge/stale-content-park.js";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
@@ -877,10 +878,11 @@ liveness/eligibility fence blocked reconciliation so an operator retry has a con
 */
 export type LandedReviewReconcileResult =
   | { outcome: "reconciled"; sha: string; strategy: string; baseBranch: string }
+  | { outcome: "resumed"; gateId: string }
   | { outcome: "already-complete" }
   | { outcome: "not-landed"; baseBranch: string }
   | { outcome: "raced"; reason: string }
-  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" };
+  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" | "post-merge-evidence-pending" | "awaiting-finalization" };
 
 export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Auto-unpause state ──────────────────────────────────────────────
@@ -3458,6 +3460,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
+            if ((await getRequiredPostMergeEvidenceDecision(this.store, task)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3580,6 +3583,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
+            if ((await getRequiredPostMergeEvidenceDecision(this.store, task)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3822,6 +3826,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (live.mergeDetails?.mergeConfirmed === true) {
               const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, live);
               if (evidenceBlocker) {
+                if ((await getRequiredPostMergeEvidenceDecision(this.store, live)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, live.id);
                 log.debug(`${live.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
                 continue;
               }
@@ -4303,7 +4308,37 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (isFusionDeletableBranch(task, task.branch)) {
             await execAsync(`git branch -D ${JSON.stringify(task.branch)}`, { cwd: this.options.rootDir, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
           }
-          await this.store.updateTask(task.id, { worktree: null, branch: null, branchWriteOrigin: "engine" as const, paused: false, pausedReason: undefined, status: null, error: null });
+          /*
+          FNXC:BranchConflictRecoveryFence 2026-10-01-07:20:
+          A PR-conflict reclaim removes a checkout before its durable clear. Revalidate the
+          inspected generation under the project-scoped atomic writer so a scheduler checkout,
+          retry, or explicit user pause that arrives during cleanup cannot be overwritten.
+          */
+          let recoveryClearApplied = false;
+          await this.store.updateTaskAtomic(task.id, (live) => {
+            const stillOwnsRecovery = live.branch === task.branch
+              && live.worktree === task.worktree
+              && live.paused === task.paused
+              && live.pausedReason === task.pausedReason
+              && live.status === task.status
+              && live.error === task.error
+              && live.userPaused !== true;
+            if (!stillOwnsRecovery) return null;
+            recoveryClearApplied = true;
+            return {
+              worktree: null,
+              branch: null,
+              branchWriteOrigin: "engine" as const,
+              paused: false,
+              pausedReason: undefined,
+              status: null,
+              error: null,
+            };
+          });
+          if (!recoveryClearApplied) {
+            await this.store.logEntry(task.id, "Auto-recovery retained a newer task lifecycle update after reclaiming a stale checkout");
+            return withPerPr({ outcome: "skipped", reason: "superseded" });
+          }
           await auditor.database({ type: "task:pr-conflict-reclaim", target: task.id, metadata: { outcome: "reclaimed", mode: "fully-subsumed", recoveredFromPaused: wasPausedBranchConflict } });
           return withPerPr({ outcome: "reclaimed" });
         }
@@ -4404,14 +4439,34 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
       });
       if (decision.action === "pause") {
-        await this.store.updateTask(task.id, {
-          status: "failed",
-          error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
-          paused: true,
-          pausedReason: "branch-conflict-unrecoverable",
+        /*
+        FNXC:BranchConflictRecoveryFence 2026-10-01-08:15:
+        The dispatcher can finish after an operator Retry has reset this failure. Persist its
+        pause only while the inspected recovery generation remains live; otherwise the old sweep
+        would restore branch-conflict-unrecoverable after the successful retry.
+        */
+        let pauseApplied = false;
+        await this.store.updateTaskAtomic(task.id, (live) => {
+          const stillOwnsFailure = live.branch === task.branch
+            && live.worktree === task.worktree
+            && live.status === task.status
+            && live.error === task.error
+            && live.paused === task.paused
+            && live.pausedReason === task.pausedReason
+            && live.userPaused !== true;
+          if (!stillOwnsFailure) return null;
+          pauseApplied = true;
+          return {
+            status: "failed",
+            error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
+            paused: true,
+            pausedReason: "branch-conflict-unrecoverable",
+          };
         });
-        await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-        await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+        if (pauseApplied) {
+          await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
+          await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+        }
       }
       return withPerPr({ outcome: "paused-unrecoverable", reason: message });
     }
@@ -4936,14 +4991,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   });
                 }
 
-                await this.store.updateTask(task.id, {
-                  worktree: null,
-                  branch: null, branchWriteOrigin: "engine" as const,
-                  paused: false,
-                  pausedReason: undefined,
-                  status: null,
-                  error: null,
+                /*
+                FNXC:BranchConflictRecoveryFence 2026-10-01-05:33:
+                FN-9434 requires the destructive checkout cleanup to clear its stale pause
+                only if this sweep still owns the row it inspected. A retry, unpause, or
+                scheduler checkout replacement that wins first must remain authoritative.
+                */
+                let recoveryClearApplied = false;
+                await this.store.updateTaskAtomic(task.id, (live) => {
+                  const stillOwnsRecovery =
+                    live.branch === task.branch
+                    && live.worktree === task.worktree
+                    && live.paused === task.paused
+                    && live.pausedReason === task.pausedReason
+                    && live.status === task.status
+                    && live.error === task.error
+                    && live.userPaused !== true;
+                  if (!stillOwnsRecovery) return null;
+                  recoveryClearApplied = true;
+                  return {
+                    worktree: null,
+                    branch: null,
+                    branchWriteOrigin: "engine" as const,
+                    paused: false,
+                    pausedReason: undefined,
+                    status: null,
+                    error: null,
+                  };
                 });
+                if (!recoveryClearApplied) {
+                  await this.store.logEntry(task.id, "Auto-recovery retained a newer task lifecycle update after reclaiming a stale checkout");
+                  continue;
+                }
                 await this.store.logEntry(
                   task.id,
                   `[recovery] reclaim-live-zero-commits ${task.id} branch=${task.branch} worktree=${inspection.livePath} tip=${inspection.tipSha.slice(0, 12)} reason=zero-unique-commits-vs-main`,
@@ -5218,14 +5297,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
           });
           if (decision.action === "pause") {
-            await this.store.updateTask(task.id, {
-              status: "failed",
-              error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
-              paused: true,
-              pausedReason: "branch-conflict-unrecoverable",
+            let pauseApplied = false;
+            await this.store.updateTaskAtomic(task.id, (live) => {
+              const stillOwnsFailure = live.branch === task.branch
+                && live.worktree === task.worktree
+                && live.status === task.status
+                && live.error === task.error
+                && live.paused === task.paused
+                && live.pausedReason === task.pausedReason
+                && live.userPaused !== true;
+              if (!stillOwnsFailure) return null;
+              pauseApplied = true;
+              return {
+                status: "failed",
+                error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
+                paused: true,
+                pausedReason: "branch-conflict-unrecoverable",
+              };
             });
-            await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-            await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+            if (pauseApplied) {
+              await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
+              await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
+            }
           }
         }
       }
@@ -8876,7 +8969,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           the one thing its own header says it must never do.
           */
           if (orphanedPendingWipColumns.has(task.column)) continue;
-          if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
+          if (!task.workflowStepResults?.some((result) => result.status === "pending" || (result.status === "failed" && result.verdict === undefined && result.reviewKind === "code"))) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
@@ -8924,6 +9017,85 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               localNodeLeaseIdentity,
             ).kind === "adopt";
           };
+          /*
+          FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+          A singular, required declared code-review callback can be waived only after the same
+          liveness and lease checks used by orphan repair. Receipt issuance re-runs this synchronous
+          predicate under the task advisory transaction; excluded rows retain the historic failed
+          rewrite and are never silently approved.
+          */
+          const issueWaiver = (this.store as TaskStore & { issueStaleReviewCallbackWaiver?: TaskStore["issueStaleReviewCallbackWaiver"] }).issueStaleReviewCallbackWaiver;
+          if (issueWaiver && settings && !fresh.paused && !fresh.userPaused && !orphanedPendingWipColumns.has(fresh.column)) {
+            const pendingCodeReview = fresh.workflowStepResults?.find((result) => (result.status === "pending" || (result.status === "failed" && result.verdict === undefined))
+              && result.reviewKind === "code" && (result.phase ?? "pre-merge") === "pre-merge"
+              && !result.findings?.some((finding) => finding.resolution === undefined || finding.resolution === "open"));
+            const pendingStartedAt = Date.parse(pendingCodeReview?.startedAt ?? "");
+            const staleForWaiver = Number.isFinite(pendingStartedAt)
+              && Date.now() - pendingStartedAt >= PLAN_REVIEW_LEASE_STALENESS_MS;
+            if (pendingCodeReview && staleForWaiver && !isSessionLive(fresh.id) && !hasLiveReviewLease(pendingCodeReview)
+              && allowsAutoMergeProcessing(fresh, settings) && resolveEffectiveAutoMerge(fresh, settings) === true
+              && fresh.workspaceWorktrees === undefined) {
+              const gate = await resolvePreMergeGateForTask(this.store, fresh.id, fresh.enabledWorkflowSteps, fresh).catch(() => undefined);
+              const selection = await this.store.getTaskWorkflowSelectionAsync(fresh.id).catch(() => undefined);
+              const content = await captureMergeContentDescriptor(fresh, { workspaceRootDir: this.options.rootDir, settings }).catch(() => undefined);
+              if (gate?.reviewColumns.has(fresh.column)
+                && gate.requiredPreMergeStepIds.has(pendingCodeReview.workflowStepId)
+                && selection && content?.kind === "singular") {
+                const attemptId = deriveStaleReviewCallbackAttemptId(pendingCodeReview);
+                if (!attemptId) continue;
+                const outcome = await issueWaiver.call(this.store, fresh.id, {
+                  workflowStepId: pendingCodeReview.workflowStepId,
+                  attemptId,
+                  expectedStatus: pendingCodeReview.status as "pending" | "failed",
+                  expectedStartedAt: pendingCodeReview.startedAt,
+                  expectedCompletedAt: pendingCodeReview.completedAt,
+                  expectedWorkflowSelection: selection,
+                  /*
+                  FNXC:StaleReviewCallbackWaiver 2026-10-01-04:24:
+                  This closure runs after the advisory-locked reread. Revalidate every mutable
+                  candidate fact, especially the review lease, so a callback renewed between the
+                  sweep read and receipt transaction remains owned and untouched.
+                  */
+                  canIssue: (current) => {
+                    const currentCandidate = [...(current.workflowStepResults ?? [])].reverse().find(
+                      (result) => result.workflowStepId === pendingCodeReview.workflowStepId,
+                    );
+                    const currentStartedAt = Date.parse(currentCandidate?.startedAt ?? "");
+                    return current.column === fresh.column
+                      && gate.reviewColumns.has(current.column)
+                      && JSON.stringify(current.enabledWorkflowSteps ?? []) === JSON.stringify(fresh.enabledWorkflowSteps ?? [])
+                      && JSON.stringify(current.repositoryScope ?? null) === JSON.stringify(fresh.repositoryScope ?? null)
+                      && currentCandidate?.status === pendingCodeReview.status
+                      && currentCandidate.startedAt === pendingCodeReview.startedAt
+                      && currentCandidate.completedAt === pendingCodeReview.completedAt
+                      && currentCandidate.reviewKind === "code"
+                      && (currentCandidate.phase ?? "pre-merge") === "pre-merge"
+                      && !current.workflowStepResults?.some((result) => result.findings?.some(
+                        (finding) => finding.resolution === undefined || finding.resolution === "open",
+                      ))
+                      && Number.isFinite(currentStartedAt)
+                      && Date.now() - currentStartedAt >= PLAN_REVIEW_LEASE_STALENESS_MS
+                      && !hasLiveReviewLease(currentCandidate)
+                      && !current.paused
+                      && !current.userPaused
+                      && current.workspaceWorktrees === undefined
+                      && allowsAutoMergeProcessing(current, settings)
+                      && resolveEffectiveAutoMerge(current, settings) === true
+                      && !isSessionLive(current.id);
+                  },
+                });
+                if (outcome.applied) {
+                  recovered += 1;
+                  void emitBoundedRunAudit(this.store, {
+                    mutationType: "task:stale-review-callback-waived" as const,
+                    target: fresh.id,
+                    metadata: { taskId: fresh.id, workflowStepId: pendingCodeReview.workflowStepId, receiptIssued: true, actor: "system:stale-review-callback-waiver", reason: "proven-stale-code-review-callback", priorStatus: pendingCodeReview.status, threshold: "15-minutes" },
+                  });
+                  continue;
+                }
+              }
+            }
+          }
           /*
           FNXC:OrphanedPendingSteps 2026-09-07-05:09:
           FN-9270 proved a persistence failure can leave a pending row without any restart. This
@@ -12703,7 +12875,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (finalization.outcome === "blocked") {
             await this.store.logEntry(
               task.id,
-              `Auto-recovery skipped: merge confirmed but finalization blocked — ${finalization.reason ?? "unknown"}`,
+              finalization.resumedPostMergeEvidence
+                ? `Auto-recovery resumed graph-owned post-merge verification — ${finalization.reason ?? "unknown"}`
+                : `Auto-recovery skipped: merge confirmed but finalization blocked — ${finalization.reason ?? "unknown"}`,
             );
             continue;
           }
@@ -14016,9 +14190,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (isWorkspaceTask(task)) return { outcome: "ineligible", reason: "workspace" };
     const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     if (!reviewColumns.has(task.column)) {
-      return task.mergeDetails?.mergeConfirmed ? { outcome: "already-complete" } : { outcome: "ineligible", reason: "not-in-review" };
+      const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
+      return task.column === completeLane && task.mergeDetails?.mergeConfirmed
+        && !await getRequiredPostMergeEvidenceBlocker(this.store, task)
+        ? { outcome: "already-complete" } : { outcome: "ineligible", reason: "not-in-review" };
     }
-    if (task.mergeDetails?.mergeConfirmed) return { outcome: "already-complete" };
     /*
     FNXC:LandedReviewReconciliation 2026-09-20-03:09:
     External landing proves content reachability, not workflow approval. Reconciliation must retain
@@ -14026,11 +14202,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     failed, or missing review verdict.
     */
     const requiredPreMergeStepIds = await resolveNoOpFinalizeGateIds(this.store, task);
-    const approvalBlocker = getTaskHardMergeBlocker(task, {
-      reviewColumns,
-      requiredPreMergeStepIds,
-    });
-    if (approvalBlocker) return { outcome: "ineligible", reason: "workflow-approval-blocked" };
+    if (!task.mergeDetails?.mergeConfirmed) {
+      const approvalBlocker = getTaskHardMergeBlocker(task, {
+        reviewColumns,
+        requiredPreMergeStepIds,
+      });
+      if (approvalBlocker) return { outcome: "ineligible", reason: "workflow-approval-blocked" };
+    }
     if (task.paused) return { outcome: "ineligible", reason: "paused" };
     if (task.userPaused) return { outcome: "ineligible", reason: "user-paused" };
     const livePaths = activeSessionRegistry.pathsForTask(task.id).filter((path) => activeSessionRegistry.isPathActive(path));
@@ -14042,7 +14220,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const graceMs = (settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS) * PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER;
     const leaseAge = task.checkoutLeaseRenewedAt ? Date.now() - Date.parse(task.checkoutLeaseRenewedAt) : Number.POSITIVE_INFINITY;
     if (task.checkoutRunId && Number.isFinite(leaseAge) && leaseAge >= 0 && leaseAge < graceMs) return { outcome: "ineligible", reason: "checkout-leased" };
-    if (options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) return { outcome: "ineligible", reason: "auto-merge-off" };
+    if ((options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) || task.autoMerge === false) return { outcome: "ineligible", reason: "auto-merge-off" };
+    if (task.mergeDetails?.mergeConfirmed) {
+      /*
+      FNXC:PostMergeRecovery 2026-10-01-06:36:
+      Manual reconciliation reports the graph-owned recovery truth: it may resume only absent required
+      evidence after the same pause, hold, liveness, lease, and auto-merge fences as every other owner.
+      */
+      const decision = await getRequiredPostMergeEvidenceDecision(this.store, task);
+      if (decision.outcome === "resumable") {
+        const resumed = await resumeMissingPostMergeGate(this.store, task.id);
+        if (resumed.outcome === "resumed") return resumed;
+        return { outcome: "raced", reason: "post-merge-continuation-not-idle" };
+      }
+      return { outcome: "ineligible", reason: decision.outcome === "blocked" ? "post-merge-evidence-pending" : "awaiting-finalization" };
+    }
     const branch = task.branch;
     if (!branch) return { outcome: "ineligible", reason: "no-branch-recorded" };
     const mergeTarget = await this.resolveSelfHealingMergeTarget(task, settings, "reconcile-absent-branch");
@@ -14181,7 +14373,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             an audit row (or the historical rev-parse warning) every maintenance cycle.
             */
             const result = await this.reconcileLandedReviewTask(task.id, { source: "self-healing", requireAutoMergeEligible: true });
-            if (result.outcome === "reconciled") recovered++;
+            if (result.outcome === "reconciled" || result.outcome === "resumed") recovered++;
             else if (result.outcome !== "already-complete") {
               const reason = result.outcome === "not-landed" ? "not-landed" : result.outcome === "raced" ? result.reason : result.reason;
               const key = `${task.id}:${reason}`;

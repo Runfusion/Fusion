@@ -43,7 +43,11 @@ describe("external-session ingestion registrar", () => {
     const ingest = vi.spyOn(ExternalSessionStore.prototype, "ingest").mockResolvedValue(ack as Awaited<ReturnType<ExternalSessionStore["ingest"]>>);
     const s = setup();
     await s.handlers.get("/external-sessions/ingest")!(s.req, s.res);
-    expect(ingest).toHaveBeenCalledWith(expect.objectContaining({ sequence: 1, session: expect.objectContaining({ provider: "other-provider" }) }));
+    // Ingest now also receives the rate stamp for this revision's usage increment (F1 = 3).
+    expect(ingest).toHaveBeenCalledWith(
+      expect.objectContaining({ sequence: 1, session: expect.objectContaining({ provider: "other-provider" }) }),
+      undefined,
+    );
     expect(s.json).toHaveBeenCalledWith(ack);
     expect(s.getProjectContext).toHaveBeenCalledTimes(1);
   });
@@ -68,6 +72,20 @@ describe("external-session ingestion registrar", () => {
     await s.handlers.get("/external-sessions/turn-ingest")!(s.req, s.res);
     expect(ingest).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "a".repeat(64), turn: expect.objectContaining({ nativeTurnId: "turn-1" }) }));
     expect(s.json).toHaveBeenCalledWith(result);
+  });
+
+  it("discards a collector-supplied pricing stamp so a host cannot price its own work", async () => {
+    const result = { schemaVersion: 1 as const, eventId: "turn-event", sessionId: "a".repeat(64), nativeTurnId: "turn-1", revision: 1, applied: true };
+    const ingest = vi.spyOn(ExternalSessionTurnStore.prototype, "ingest").mockResolvedValue(result);
+    const forged = { asOf: "1999-01-01", source: "forged", rates: { "claude_code:x": { inputPer1M: 0, outputPer1M: 0, cacheReadPer1M: 0, cacheWritePer1M: 0, source: "forged" } } };
+    const s = setup(); s.req.body = { schemaVersion: 1, eventId: "turn-event", sessionId: "a".repeat(64),
+      turn: { nativeTurnId: "turn-1", revision: 1, ordinal: 0, state: "completed",
+        prompts: [{ at: null, text: "Fix it" }], response: "Done", startedAt: null, endedAt: null,
+        durationMs: null, durationSource: null, toolCallCount: 1, fileChanges: [], pricing: forged } };
+    await s.handlers.get("/external-sessions/turn-ingest")!(s.req, s.res);
+    const sent = ingest.mock.calls[0]![0] as { turn: { pricing?: unknown } };
+    // The stamp is server-computed; a zero-rate stamp from a host would otherwise make its work look free.
+    expect(sent.turn.pricing).not.toEqual(forged);
   });
 
   it.each(["wrong", "", undefined])("rejects invalid/missing header credential %s before database access", async tokenValue => {
