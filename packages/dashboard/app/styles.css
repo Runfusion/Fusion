@@ -189,6 +189,20 @@ html {
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-pill: 10px;
+  /*
+  FNXC:DashboardDropdownStyles 2026-09-04-04:43:
+  RUFU-170 mobile menus must cap against the VISIBLE viewport. 100vh is the larger layout
+  viewport and overflows when mobile chrome is expanded, so it is never the fallback.
+  Tokenize the desktop selector's 480px cap (15× --space-2xl) and 120px header offset
+  (10× --space-md), plus the existing 6px/3px thin-scrollbar size, so component CSS never
+  hardcodes px. The first max-height is the tokenized cap alone (smaller than a typical
+  phone's visible area with chrome), then 100svh (smallest, chrome expanded), then 100dvh
+  (current visible).
+  */
+  --dropdown-max-height: calc(var(--space-2xl) * 15);
+  --dropdown-viewport-gutter: calc(var(--space-md) * 10);
+  --space-scrollbar: calc(var(--space-sm) - var(--space-3xs));
+  --radius-scrollbar: calc(var(--radius-sm) * 0.75);
 
   /* Component-specific tokens */
   --btn-padding: var(--space-sm) var(--space-lg);
