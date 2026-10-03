@@ -65,12 +65,13 @@ vi.mock("@earendil-works/pi-ai", () => ({
 
 // pi-ai 0.80 moved the static catalog read to `getBuiltinModels` in the
 // `/providers/all` subpath (see index.ts). Mock it there.
-vi.mock("@earendil-works/pi-ai/providers/all", () => ({
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getBuiltinModels: vi.fn(() => mockModels),
 }));
 
 import { spawn } from "node:child_process";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { getBuiltinModels } from "@earendil-works/pi-ai";
 import { streamViaCli } from "../provider";
 
 describe("provider registration (default export)", () => {
