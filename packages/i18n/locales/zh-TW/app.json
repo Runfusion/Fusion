@@ -1432,7 +1432,10 @@
     "noDefaultModelConfigured": "請先在設定中設定預設聊天模型，再建立對話。",
     "newChatOpenInNewWindowHint": "",
     "questionOptionalLabel": "",
-    "questionSelectHintWithOptional": ""
+    "questionSelectHintWithOptional": "",
+    "contextTruncationUnproven": "",
+    "contextTruncationNotice_one": "",
+    "contextTruncationNotice_other": ""
   },
   "chatRooms": {
     "error": {
@@ -6364,6 +6367,8 @@
       "stashUrlLabel": "",
       "stashUrlPlaceholder": "",
       "uploadTaskAgentLogTranscriptToStash": "",
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
@@ -6412,7 +6417,9 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": ""
     },
     "merge": {
       "abort": "",
