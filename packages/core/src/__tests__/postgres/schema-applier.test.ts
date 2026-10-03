@@ -117,6 +117,7 @@ import {
   CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
   OVERLAP_WAIT_SYNC_VERSION,
   DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+  STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -172,8 +173,9 @@ describe("schema-applier: immutable migration identities", () => {
     expect(PATCHNODE_ENTRIES_VERSION).toBe("0071");
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0085");
+    expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0086");
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION));
+    expect(SCHEMA_BASELINE_VERSION).toBe("0086");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -724,10 +726,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
-    0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Plugin tables are added separately
-    by the schema-init hook and are excluded here.
+    0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Migration 0086 adds stale review callback waiver receipts (→ 118).
+    Plugin tables are added separately by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(117);
+    expect(bySchema.project).toBe(118);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1314,6 +1316,12 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
       VALUES ('local-fallback', 'FN-1', 'fallback task', 'todo', '2026-01-01', '2026-01-01');
       INSERT INTO project.task_documents(project_id, id, task_id, key, created_at, updated_at)
       VALUES ('local-fallback', 'doc-1', 'FN-1', 'PROMPT.md', '2026-01-01', '2026-01-01');
+      INSERT INTO project.stale_review_callback_waiver_receipts(
+        project_id, id, task_id, workflow_step_id, attempt_id, policy_version, actor, reason, issued_at
+      ) VALUES (
+        'local-fallback', 'receipt-1', 'FN-1', 'code-review', 'attempt-1', 'fn-9429-v1',
+        'system:stale-review-callback-waiver', 'proven-stale-code-review-callback', '2026-01-01'
+      );
       INSERT INTO public.fusion_sqlite_migrations(migration_key, project_id, status, updated_at)
       VALUES ('project:local-fallback', 'local-fallback', 'complete', now());
     `);
@@ -1328,9 +1336,12 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
       SELECT project_id, id FROM project.tasks
       UNION ALL
       SELECT project_id, task_id FROM project.task_documents
+      UNION ALL
+      SELECT project_id, task_id FROM project.stale_review_callback_waiver_receipts
       ORDER BY 1, 2
     `)) as unknown as Array<{ project_id: string; id: string }>;
     expect(rows).toEqual([
+      { project_id: "registered-project", id: "FN-1" },
       { project_id: "registered-project", id: "FN-1" },
       { project_id: "registered-project", id: "FN-1" },
     ]);
@@ -1340,6 +1351,29 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
         AND project_id = 'registered-project'
         AND status = 'complete'
     `)).resolves.toHaveLength(1);
+  });
+
+  it("repairs the legacy receipt foreign key for populated partition promotion", async () => {
+    ctx = await setupBaselinedDb();
+    await applySchemaBaseline(ctx.db);
+    await ctx.db.execute(sql`
+      ALTER TABLE project.stale_review_callback_waiver_receipts
+        DROP CONSTRAINT stale_review_callback_waiver_receipts_task_fk;
+      ALTER TABLE project.stale_review_callback_waiver_receipts
+        ADD CONSTRAINT stale_review_callback_waiver_receipts_task_fk
+          FOREIGN KEY (project_id, task_id) REFERENCES project.tasks(project_id, id)
+            ON DELETE CASCADE;
+    `);
+
+    expect((await applySchemaBaseline(ctx.db)).applied).toBe(true);
+    const action = (await ctx.db.execute(sql`
+      SELECT con.confupdtype AS update_action, con.confdeltype AS delete_action
+      FROM pg_constraint con
+      WHERE con.conrelid = 'project.stale_review_callback_waiver_receipts'::regclass
+        AND con.conname = 'stale_review_callback_waiver_receipts_task_fk'
+    `)) as unknown as Array<{ update_action: string; delete_action: string }>;
+    expect(action).toEqual([{ update_action: "c", delete_action: "c" }]);
+    expect((await applySchemaBaseline(ctx.db)).applied).toBe(false);
   });
 
   it("merges dual partitions fallback-wins with NULL-correct catalog unique rules", async () => {
@@ -1923,6 +1957,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PLANNING_FAILURE_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -2024,6 +2059,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
     ]);
   });
 
@@ -2258,6 +2294,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
     ]);
   });
 
@@ -2373,6 +2410,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
     ]);
   });
 
@@ -2488,6 +2526,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION,
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
+      STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
     ]);
   });
 });

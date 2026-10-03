@@ -2682,7 +2682,9 @@ export const staleReviewCallbackWaiverReceipts = projectSchema.table("stale_revi
   state: text("state").notNull().default("issued"),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.id] }),
-  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] })
+    .onDelete("cascade")
+    .onUpdate("cascade"),
   unique("stale_review_callback_waiver_receipts_attempt_unique").on(t.projectId, t.taskId, t.workflowStepId, t.attemptId),
   index("idxStaleReviewCallbackWaiverReceiptsTask").on(t.projectId, t.taskId),
 ]);

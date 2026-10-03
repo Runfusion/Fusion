@@ -1637,9 +1637,22 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    /*
+    FNXC:StaleReviewCallbackWaiver 2026-10-03-23:08:
+    Migration 0086 originally created a delete-only task FK. Re-run the idempotent migration when
+    that legacy shape remains so populated fallback partitions can rekey task receipts atomically.
+    */
     const staleReviewCallbackWaiverReceiptsMissing = ((await tx.execute(sql`
       SELECT COALESCE((
         SELECT NOT (c.relrowsecurity AND c.relforcerowsecurity)
+          OR NOT EXISTS (
+            SELECT 1 FROM pg_constraint con
+            WHERE con.conrelid = c.oid
+              AND con.conname = 'stale_review_callback_waiver_receipts_task_fk'
+              AND con.contype = 'f'
+              AND con.confupdtype = 'c'
+              AND con.confdeltype = 'c'
+          )
         FROM pg_class c
         WHERE c.oid = to_regclass('project.stale_review_callback_waiver_receipts')
       ), true) AS missing

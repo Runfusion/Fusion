@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS project.stale_review_callback_waiver_receipts (
   state text NOT NULL DEFAULT 'issued',
   PRIMARY KEY (project_id, id),
   CONSTRAINT stale_review_callback_waiver_receipts_task_fk
-    FOREIGN KEY (project_id, task_id) REFERENCES project.tasks(project_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id, task_id) REFERENCES project.tasks(project_id, id)
+      ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT stale_review_callback_waiver_receipts_attempt_unique
     UNIQUE (project_id, task_id, workflow_step_id, attempt_id),
   CONSTRAINT stale_review_callback_waiver_receipts_state_check CHECK (state IN ('issued', 'revoked')),
@@ -20,6 +21,18 @@ CREATE TABLE IF NOT EXISTS project.stale_review_callback_waiver_receipts (
   CONSTRAINT stale_review_callback_waiver_receipts_actor_check CHECK (actor = 'system:stale-review-callback-waiver'),
   CONSTRAINT stale_review_callback_waiver_receipts_reason_check CHECK (reason = 'proven-stale-code-review-callback')
 );
+/*
+FNXC:StaleReviewCallbackWaiver 2026-10-03-23:08:
+Fallback partition promotion updates a task's composite identity. The receipt is a task satellite, so
+its composite FK must cascade that update rather than rejecting a populated project rekey.
+*/
+ALTER TABLE project.stale_review_callback_waiver_receipts
+  DROP CONSTRAINT IF EXISTS stale_review_callback_waiver_receipts_task_fk;
+ALTER TABLE project.stale_review_callback_waiver_receipts
+  ADD CONSTRAINT stale_review_callback_waiver_receipts_task_fk
+    FOREIGN KEY (project_id, task_id) REFERENCES project.tasks(project_id, id)
+      ON DELETE CASCADE ON UPDATE CASCADE;
+
 CREATE INDEX IF NOT EXISTS idx_stale_review_callback_waiver_receipts_task
   ON project.stale_review_callback_waiver_receipts (project_id, task_id);
 
