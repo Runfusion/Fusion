@@ -1430,7 +1430,32 @@ User messages in direct (model-loop) chat carry a compact edit affordance inline
   font-size: var(--font-size-sm);
 }
 
+/*
+FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+Inline notice for an assistant turn whose context history was deterministically
+truncated (overflow-guard tier 3). Muted info accent (left rule + 8% tint via
+color-mix) — it explains a recovery, not an error; the reply and failure UI render
+independently of it. Wrapping text only, so mobile and desktop share one markup.
+*/
+.chat-context-truncation-notice {
+  color: var(--color-info);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  padding: var(--space-xs) var(--space-sm);
+  /* Theme-aware border width token (styles.css: border shorthands must use --btn-border-width). */
+  border-left: var(--btn-border-width) solid var(--color-info);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+}
+
+.chat-context-truncation-notice__unproven {
+  display: block;
+  opacity: 0.85;
+}
+
 /* Input area */
+
+/* Input area */5999f6c0 (feat(chat): pre-overflow compaction gate with tier ladder in the dashboard chat lane)
 .chat-input-area {
   position: relative;
   padding: var(--space-md) var(--space-lg);
