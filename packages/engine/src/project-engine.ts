@@ -59,6 +59,8 @@ import {
   sortTasksByPriorityThenAgeAndId,
   resolveWipTargetForTask,
   clearMergeConfirmedTransientStatus,
+  getRequiredPostMergeEvidenceDecision,
+  getRequiredPostMergeEvidenceBlocker,
   classifyGhError,
   createRecallCaptureWriter,
   resolveEngineIncarnationId,
@@ -2950,11 +2952,13 @@ export class ProjectEngine {
     updatedAt?: string | null;
     mergeDetails?: { mergeConfirmed?: boolean } | null;
   }, maxAutoMergeRetries: number, reviewColumns?: ReadonlySet<string>, enforcePrRetryBackoff = false, resolvedMergeBlocker?: string | null): boolean {
-    // Merge-confirmed tasks use the fast-path finalizer, which applies blocker
-    // checks after clearing transient status/error state. Once that path parks
-    // a blocked task as failed, skip future auto-merge retries.
+    /*
+    FNXC:PostMergeEvidenceHold 2026-10-03-23:32:
+    Landing proof bypasses pre-merge checks, not the resolved post-merge evidence hold. Re-admitting
+    a rejected or pending gate every sweep only repeats finalization; it cannot produce new evidence.
+    */
     if (task.mergeDetails?.mergeConfirmed) {
-      return true;
+      return !resolvedMergeBlocker;
     }
     /*
     FNXC:MergeExecutionExclusion 2026-08-23-06:52:
@@ -3001,9 +3005,34 @@ export class ProjectEngine {
   probes each repository; a failure becomes an unprovable descriptor and defers.
   */
   private async resolveMergeGateBlocker(store: TaskStore, task: Task, settings: Settings): Promise<string | undefined> {
-    // Confirmed work takes the reconciliation fast path and must not be stranded
-    // behind a review capture while its executor session winds down.
-    if (task.mergeDetails?.mergeConfirmed) return undefined;
+    /*
+    FNXC:PostMergeEvidenceHold 2026-10-03-23:32:
+    Confirmed work still bypasses pre-merge capture. An absent post-merge gate may be resumed by
+    finalization, but an existing pending/rejected result must wait for its evidence owner instead
+    of monopolizing the merge pump. Once approved, this read automatically admits finalization again.
+    */
+    if (task.mergeDetails?.mergeConfirmed) {
+      const decision = await getRequiredPostMergeEvidenceDecision(store, task);
+      if (decision.outcome !== "blocked") return undefined;
+      if (!task.paused && !task.userPaused && !task.deletedAt && task.autoMerge !== false
+        && !settings.globalPause && !settings.enginePaused && isMergeActiveStatus(task.status)
+        && !isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })
+        && !await this.isMergePending(task.id)) {
+        const cleared = await store.updateTaskAtomic(task.id, (current) => {
+          if (current.updatedAt !== task.updatedAt || current.status !== task.status
+            || this.mergeActive.has(task.id) || this.mergeQueue.includes(task.id)
+            || this.capacityDeferredMergeTaskIds.has(task.id)
+            || current.paused || current.userPaused || current.deletedAt
+            || !current.mergeDetails?.mergeConfirmed
+            || isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })) return null;
+          return { status: null };
+        });
+        if (cleared) await store.logEntry(task.id,
+          `[post-merge] Landing is complete; cleared stale merge activity while '${decision.gateId}' remains ${decision.reason}. Verification evidence is unchanged.`);
+      }
+      return await getRequiredPostMergeEvidenceBlocker(store, task)
+        ?? `required post-merge evidence gate '${decision.gateId}' is not approved`;
+    }
     const injected = this.options.getTaskMergeBlocker?.(task);
     if (injected || !Array.isArray(task.steps)) return injected ?? undefined;
     let mergeGate;
