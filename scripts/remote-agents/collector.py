@@ -312,6 +312,7 @@ def scan(db, path, provider):
 
 DELIVERY_BACKOFF_BASE_SECONDS = 5
 DELIVERY_BACKOFF_MAX_SECONDS = 300
+UNCHANGED_RESCAN_SECONDS = 60
 
 
 def describe(error):
@@ -410,6 +411,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         db = connect(args.state); bind(db, args.project, args.host)
         failures, next_delivery = 0, 0.0
+        paused, settled = {}, {}
         while True:
             if time.monotonic() >= next_delivery:
                 delivered = deliver(db, args, token)
@@ -418,11 +420,39 @@ def main():
                 if failures:
                     print('Fusion delivery backing off:', delivery_delay(failures), 'seconds', flush=True)
             files = sorted(discover(args.home, args.days), key=lambda item: item[1].stat().st_mtime, reverse=True)
+            # FNXC:RemoteAgents 2026-10-04-00:30: Scanning re-read and re-parsed every discovered transcript
+            # every five seconds, and a failed scan (rolled back, cursor preserved) repeated the same megabyte
+            # of work each loop for as long as the fault lasted, which pinned a CPU core for days. Unchanged
+            # files are now rescanned only every UNCHANGED_RESCAN_SECONDS (runtime expiry still surfaces within
+            # that window) and a failing file backs off like delivery does. Cursor and spool semantics are unchanged.
+            now = time.monotonic()
+            current = set()
             for provider, path in files[:2000]:
+                key = str(path)
+                current.add(key)
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:
+                    continue
+                signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                known = settled.get(key)
+                if known and known[0] == signature and now - known[1] < UNCHANGED_RESCAN_SECONDS:
+                    continue
+                pause = paused.get(key)
+                if pause and now < pause[1]:
+                    continue
                 try:
                     scan(db, path, provider)
                 except Exception as error:
-                    print('Native collection paused:', provider, describe(error), flush=True)
+                    attempts = (pause[0] if pause else 0) + 1
+                    paused[key] = (attempts, now + delivery_delay(attempts))
+                    settled.pop(key, None)
+                    print('Native collection paused:', provider, describe(error), 'retry in', delivery_delay(attempts), 'seconds', flush=True)
+                else:
+                    paused.pop(key, None)
+                    settled[key] = (signature, now)
+            for stale in [key for key in paused if key not in current] + [key for key in settled if key not in current]:
+                paused.pop(stale, None); settled.pop(stale, None)
             if args.state.stat().st_size > 512 * 1024 * 1024:
                 raise ValueError('Collector storage capacity reached')
             if args.once:
