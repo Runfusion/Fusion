@@ -14,8 +14,8 @@
  * `^0.80.3` (matching cli/engine) so the whole extension resolves one pi-ai
  * version and the ExtensionAPI stream types stay compatible.
  */
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
+import { getBuiltinModels } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { streamViaCli } from "./src/provider.js";
 import { streamViaAcp } from "./src/acp-driver.js";
