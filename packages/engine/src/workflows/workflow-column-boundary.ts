@@ -121,6 +121,11 @@ export interface WorkflowColumnBoundaryDeps {
 export interface WorkflowColumnBoundary {
   /** The card's current lifecycle column (updated after each successful move). */
   currentColumn(): string;
+  /**
+   * Run the pause, event, and IR-pin portion of node entry without crossing columns.
+   * A deferred column transition consumes this preflight through `onNodeEntry`.
+   */
+  preflightNodeEntry?(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult | void>;
   /** Cross into `node.column` when it differs from the current column. */
   onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult | void>;
   /** KTD-3 drift guard — run once at graph start. Returns true when the pinned
@@ -255,6 +260,65 @@ export function createWorkflowColumnBoundary(
     const col = findWorkflowColumn(deps.ir, columnId);
     return col ? resolveColumnFlags(col) : {};
   };
+  /*
+  FNXC:WorkflowColumnBoundary 2026-10-01-05:32:
+  A deferred post-merge gate preflights its parent before traversing template children.
+  Children also enter this shared boundary, so deferred state is keyed by node identity rather
+  than a single slot; a child must never consume the approved parent's deferred completion hop.
+  */
+  const preflightedNodeIds = new Set<string>();
+
+  const validateNodeEntry = async (node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> => {
+    const toColumn = node.column;
+
+    /*
+    FNXC:EnginePause 2026-08-01-00:20:
+    Pause gates EVERY node entry — columnless and same-column nodes included, because each node
+    can start a real AI session regardless of whether the card moves. Suspend with the same
+    durable-continuation mechanism capacity uses, so unpause resumes at exactly this node; the
+    drain refuses to dispatch continuations while paused, which closes the resume loop.
+    */
+    if (await deps.isPaused?.()) {
+      const pauseSuspension = {
+        kind: "suspended",
+        reason: "pause",
+        nodeId: node.id,
+        fromColumn: column,
+        toColumn: toColumn ?? column,
+        irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+      } as const;
+      await deps.onSuspend?.(pauseSuspension);
+      emitWorkflowLifecycleEvent({
+        type: "RunSuspended",
+        taskId: deps.taskId,
+        at: new Date().toISOString(),
+        workflowId: deps.workflowId,
+        nodeId: node.id,
+        reason: "pause",
+        fromColumn: column,
+        toColumn: toColumn ?? column,
+      });
+      return pauseSuspension;
+    }
+
+    emitWorkflowLifecycleEvent({
+      type: "NodeEntered",
+      taskId: deps.taskId,
+      at: new Date().toISOString(),
+      workflowId: deps.workflowId,
+      nodeId: node.id,
+      ...(toColumn ? { column: toColumn } : {}),
+    });
+
+    if (toColumn) {
+      try {
+        await deps.pinNodeEntry?.(computeWorkflowIrPin(deps.ir, node.id));
+      } catch (err) {
+        warn("ir pin write failed", { nodeId: node.id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return { kind: "entered" };
+  };
 
   return {
     currentColumn: () => column,
@@ -288,70 +352,22 @@ export function createWorkflowColumnBoundary(
       return true;
     },
 
+    async preflightNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
+      const entry = await validateNodeEntry(node);
+      if (entry.kind === "entered") preflightedNodeIds.add(node.id);
+      return entry;
+    },
+
     async onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
       const toColumn = node.column;
-
-      /*
-      FNXC:EnginePause 2026-08-01-00:20:
-      Pause gates EVERY node entry — columnless and same-column nodes included, because each node
-      can start a real AI session regardless of whether the card moves. Suspend with the same
-      durable-continuation mechanism capacity uses, so unpause resumes at exactly this node; the
-      drain refuses to dispatch continuations while paused, which closes the resume loop.
-      */
-      if (await deps.isPaused?.()) {
-        const pauseSuspension = {
-          kind: "suspended",
-          reason: "pause",
-          nodeId: node.id,
-          fromColumn: column,
-          toColumn: toColumn ?? column,
-          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
-        } as const;
-        await deps.onSuspend?.(pauseSuspension);
-        emitWorkflowLifecycleEvent({
-          type: "RunSuspended",
-          taskId: deps.taskId,
-          at: new Date().toISOString(),
-          workflowId: deps.workflowId,
-          nodeId: node.id,
-          reason: "pause",
-          fromColumn: column,
-          toColumn: toColumn ?? column,
-        });
-        return pauseSuspension;
+      const wasPreflighted = preflightedNodeIds.delete(node.id);
+      if (!wasPreflighted) {
+        const entry = await validateNodeEntry(node);
+        if (entry.kind === "suspended") return entry;
       }
-
-      /*
-      FNXC:WorkflowEvents 2026-07-27-15:20 (U3 / R5, PR #2467 review):
-      Announce the NODE ENTRY, not the column crossing — so this fires BEFORE the
-      columnless short-circuit and before the same-column no-op below. Traversal
-      genuinely entered the node in all three cases, and a subscriber tracking
-      graph progress must see rework loops and terminal `end` arrivals, which a
-      crossing-only signal hides. `column` is omitted for a columnless node,
-      which is exactly why `NodeEnteredEvent.column` is optional.
-
-      The paired `TaskTransitioned` comes from the store's own post-commit point,
-      so a real crossing produces both and every other entry produces only this
-      one. Neither is authoritative for any lifecycle decision.
-      */
-      emitWorkflowLifecycleEvent({
-        type: "NodeEntered",
-        taskId: deps.taskId,
-        at: new Date().toISOString(),
-        workflowId: deps.workflowId,
-        nodeId: node.id,
-        ...(toColumn ? { column: toColumn } : {}),
-      });
 
       // KTD-1: a columnless node (e.g. `end`) never moves the card.
       if (!toColumn) return { kind: "entered" };
-
-      // KTD-3: pin the resolved IR for this node-entry (durable seam).
-      try {
-        await deps.pinNodeEntry?.(computeWorkflowIrPin(deps.ir, node.id));
-      } catch (err) {
-        warn("ir pin write failed", { nodeId: node.id, error: err instanceof Error ? err.message : String(err) });
-      }
 
       // Idempotent: a re-entered/rework node or a same-column node chain no-ops.
       if (toColumn === column) return { kind: "entered" };

@@ -475,6 +475,22 @@ export interface WorkflowStepResult {
    */
   /** Bounded, single-level history of prior terminal-failure attempts this entry replaced. Read-only; never affects merge-blocking or recovery selection. */
   priorAttempts?: WorkflowStepResult[];
+  /*
+  FNXC:StaleReviewCallbackWaiver 2026-10-01-04:05:
+  A lost callback may be waived only by a store-attested receipt. This carrier deliberately records
+  no reviewer approval and is distinct from operator bypass fields, so copied task JSON cannot
+  manufacture authority at the merge gate.
+  */
+  automatedStaleCallbackWaiver?: {
+    receiptId: string;
+    policyVersion: "fn-9429-v1";
+    actor: "system:stale-review-callback-waiver";
+    reason: "proven-stale-code-review-callback";
+    issuedAt: string;
+    priorStatus: "pending" | "failed";
+    /** Immutable identity of the exact attempt replaced by this carrier. */
+    attemptId: string;
+  };
 }
 
 /**

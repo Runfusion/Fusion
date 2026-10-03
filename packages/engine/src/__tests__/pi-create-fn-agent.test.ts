@@ -2460,19 +2460,34 @@ describe("createFnAgent", () => {
     });
   });
 
-  it("creates an Anthropic session from a Pi-owned catalog row without provider mutation", async () => {
+  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("synthesizes direct Anthropic %s when the live registry lacks it", async (modelId) => {
+    getAllMock.mockReturnValue([]);
+    findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
+
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
+
+    expect(registerProviderMock).toHaveBeenCalledWith("anthropic", expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({ id: modelId })]),
+    }));
+    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: "anthropic", id: modelId } }));
+  });
+
+  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("preserves upstream %s while adding missing supplemental models", async (modelId) => {
     const upstream = {
-      provider: "anthropic", id: "claude-future-catalog-row", name: "Claude Future Catalog Row", reasoning: true, input: ["text", "image"],
+      provider: "anthropic", id: modelId, name: `${modelId} Upstream`, reasoning: true, input: ["text", "image"],
       cost: { input: 99, output: 199, cacheRead: 9.9, cacheWrite: 24.75 }, contextWindow: 42, maxTokens: 7,
     };
     getAllMock.mockReturnValue([upstream]);
     findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: upstream.id });
+    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
 
-    expect(registerProviderMock).not.toHaveBeenCalledWith("anthropic", expect.anything());
-    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: "anthropic", id: upstream.id } }));
+    const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
+    expect(anthropicRegistrations).toHaveLength(1);
+    const rows = anthropicRegistrations[0]?.[1].models.filter((model: { id: string }) => model.id === modelId);
+    expect(rows).toEqual([expect.objectContaining({ name: upstream.name, contextWindow: upstream.contextWindow, cost: upstream.cost })]);
   });
 
   it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {
@@ -2536,6 +2551,55 @@ describe("createFnAgent", () => {
       expect.objectContaining({ id: "gpt-5.6-sol" }),
       expect.objectContaining({ id: "gpt-5.6-terra" }),
     ]));
+  });
+
+  it("selects the requested current direct OpenAI and Codex Astra upstream rows", async () => {
+    const directAstra = {
+      provider: "openai",
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+      contextWindow: 272_000,
+      maxTokens: 128_000,
+      thinkingLevelMap: { max: "max", xhigh: "xhigh" },
+    };
+    const codexAstra = { ...directAstra, provider: "openai-codex", api: "openai-codex-responses" };
+    getAllMock.mockReturnValue([directAstra, codexAstra]);
+    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "openai",
+      defaultModelId: "gpt-6-astra",
+    });
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-6-astra",
+    });
+
+    expect(createAgentSessionMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      model: { provider: "openai", id: "gpt-6-astra" },
+    }));
+    expect(createAgentSessionMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      model: { provider: "openai-codex", id: "gpt-6-astra" },
+    }));
+    const codexRegistration = registerProviderMock.mock.calls.find(([provider]) => provider === "openai-codex")?.[1];
+    expect(codexRegistration).toEqual(expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({
+        id: "gpt-6-astra",
+        name: "GPT-6 Astra",
+        contextWindow: 272_000,
+        thinkingLevelMap: { max: "max", xhigh: "xhigh" },
+      })]),
+    }));
   });
 
   // Restored v0.51.0 behavior: a subscription-OAuth `anthropic/<model>` selection stays on

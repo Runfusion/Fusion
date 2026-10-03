@@ -147,6 +147,13 @@ function makeStore(
   const group = branchGroup ? { ...branchGroup } : undefined;
   const store: any = {
     getTask: vi.fn(async () => task),
+    /*
+    FNXC:StaleReviewCallbackWaiver 2026-10-02-17:05:
+    FN-9429 made the merge gate read waiver receipts unconditionally. This mechanics fixture
+    models the pre-waiver state so merge behavior tests reach their intended outcome.
+    */
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 1 }, ...settingsOverrides })),
     updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, patch: Record<string, unknown>) => { Object.assign(task, patch); return task; })),
     updateTaskAtomic: vi.fn(async (_id: string, updater: (current: typeof task) => Record<string, unknown> | undefined) => {
@@ -847,38 +854,52 @@ describe("runAiMerge", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
+  /*
+  FNXC:PostMergeEvidenceOrderingTest 2026-10-01-03:31:
+  A direct merge request retains its transient merging status after required evidence blocks
+  completion. The graph-owned requester is a separate production dispatch, so this regression
+  must use a fresh lifecycle rather than treating that retained status as a retryable request.
+  */
   it("defers no-op completion only to a graph requester that will traverse post-merge evidence", async () => {
-    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
-    git(dir, "merge -q fusion/fn-1");
-    const { store, task } = makeStore(dir, {
-      enabledWorkflowSteps: ["post-merge-verification"],
-      workflowStepResults: [],
-    });
-    store.getTaskWorkflowSelection = vi.fn(() => ({
-      workflowId: "builtin:coding",
-      stepIds: ["post-merge-verification"],
-    }));
-    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({
-      workflowId: "builtin:coding",
-      stepIds: ["post-merge-verification"],
-    }));
+    const selection = { workflowId: "builtin:coding", stepIds: ["post-merge-verification"] };
     const deps = {
       mergeAgent: vi.fn(async () => undefined),
       reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
     };
 
-    await expect(runAiMerge(store, dir, "FN-1", { manual: true }, deps))
-      .rejects.toThrow("has not reported");
-    expect(task.column).toBe("in-review");
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
-    expect(store.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
+    const directRepository = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(directRepository.dir, "merge -q fusion/fn-1");
+    const { store: directStore, task: directTask } = makeStore(directRepository.dir, {
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [],
+    });
+    directStore.getTaskWorkflowSelection = vi.fn(() => selection);
+    directStore.getTaskWorkflowSelectionAsync = vi.fn(async () => selection);
 
-    const result = await runAiMerge(store, dir, "FN-1", {
+    await expect(runAiMerge(directStore, directRepository.dir, "FN-1", { manual: true }, deps))
+      .rejects.toThrow("has not reported");
+    expect(directTask.column).toBe("in-review");
+    expect(directStore.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
+    expect(directStore.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
+
+    const graphRepository = initRepoWithBranch({ branch: "fusion/fn-1" });
+    git(graphRepository.dir, "merge -q fusion/fn-1");
+    const { store: graphStore, task: graphTask } = makeStore(graphRepository.dir, {
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [],
+    });
+    graphStore.getTaskWorkflowSelection = vi.fn(() => selection);
+    graphStore.getTaskWorkflowSelectionAsync = vi.fn(async () => selection);
+
+    const result = await runAiMerge(graphStore, graphRepository.dir, "FN-1", {
       manual: true,
       graphOwnedPostMergeTraversal: true,
     }, deps);
     expect(result).toMatchObject({ noOp: true, mergeConfirmed: true });
-    expect(task.column).toBe("in-review");
+    expect(graphTask.mergeDetails).toMatchObject({ mergeConfirmed: true, noOpMerge: true });
+    expect(graphTask.column).toBe("in-review");
+    expect(graphStore.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
+    expect(graphStore.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
   });
 
   /*

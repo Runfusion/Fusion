@@ -8,6 +8,11 @@ export type ConfirmedMergeChecklistReconciliation = {
   reconciledWorkflowStepIds: string[];
 };
 
+export type RequiredPostMergeEvidenceDecision =
+  | { outcome: "finalizable" }
+  | { outcome: "resumable"; gateId: string }
+  | { outcome: "blocked"; gateId: string; reason: "duplicate" | "pending" | "failed" | "skipped" | "not-approved" };
+
 /*
 FNXC:ConfirmedMergeFinalization 2026-08-23-07:42:
 FN-180 requires a confirmed integration merge to finalize even when a concurrent
@@ -31,18 +36,17 @@ export function getPostMergeFinalizeBlocker(task: Pick<Task, "status" | "error">
 }
 
 /*
-FNXC:WorkflowPostMerge 2026-09-23-07:48:
-A confirmed merge does not erase an enabled gate-mode post-merge requirement. Finalizers and
-self-healing share this resolver-backed decision so absent, pending, skipped, or revised evidence
-keeps the task outside completion until the durable gate result approves it. Explicitly disabled
-and advisory groups retain their intentional non-blocking behavior.
+FNXC:PostMergeRecovery 2026-10-01-06:36:
+A confirmed landing is not completion when an enabled post-merge gate has no durable result. The
+shared decision exposes that one resumable state structurally, so recovery owners never infer it
+from display text; pending, duplicate, skipped, failed, and non-approved evidence remain blockers.
 */
-export async function getRequiredPostMergeEvidenceBlocker(
+export async function getRequiredPostMergeEvidenceDecision(
   store: WorkflowIrResolverStore,
   task: Pick<Task, "id" | "enabledWorkflowSteps" | "workflowStepResults">,
-): Promise<string | undefined> {
+): Promise<RequiredPostMergeEvidenceDecision> {
   const reader = store as Partial<WorkflowIrResolverStore>;
-  if (typeof reader.getTaskWorkflowSelection !== "function") return undefined;
+  if (typeof reader.getTaskWorkflowSelection !== "function") return { outcome: "finalizable" };
 
   const ir = await resolveWorkflowIrForTask(store, task.id);
   const requiredGateIds = ir.version === "v2"
@@ -57,13 +61,28 @@ export async function getRequiredPostMergeEvidenceBlocker(
     : [];
 
   for (const gateId of requiredGateIds) {
-    const result = (task.workflowStepResults ?? []).find((entry) => entry.workflowStepId === gateId);
-    if (!result) return `required post-merge evidence gate '${gateId}' has not reported`;
+    const results = (task.workflowStepResults ?? []).filter((entry) => entry.workflowStepId === gateId);
+    if (results.length === 0) return { outcome: "resumable", gateId };
+    if (results.length > 1) return { outcome: "blocked", gateId, reason: "duplicate" };
+    const [result] = results;
+    if (result.status === "pending") return { outcome: "blocked", gateId, reason: "pending" };
+    if (result.status === "failed") return { outcome: "blocked", gateId, reason: "failed" };
+    if (result.status === "skipped") return { outcome: "blocked", gateId, reason: "skipped" };
     if (result.status !== "passed" || (result.verdict !== "APPROVE" && result.verdict !== "APPROVE_WITH_NOTES")) {
-      return `required post-merge evidence gate '${gateId}' is not approved`;
+      return { outcome: "blocked", gateId, reason: "not-approved" };
     }
   }
-  return undefined;
+  return { outcome: "finalizable" };
+}
+
+export async function getRequiredPostMergeEvidenceBlocker(
+  store: WorkflowIrResolverStore,
+  task: Pick<Task, "id" | "enabledWorkflowSteps" | "workflowStepResults">,
+): Promise<string | undefined> {
+  const decision = await getRequiredPostMergeEvidenceDecision(store, task);
+  if (decision.outcome === "finalizable") return undefined;
+  if (decision.outcome === "resumable") return `required post-merge evidence gate '${decision.gateId}' has not reported`;
+  return `required post-merge evidence gate '${decision.gateId}' is not approved`;
 }
 
 export function planConfirmedMergeChecklistReconciliation(

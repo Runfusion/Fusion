@@ -214,7 +214,7 @@ export function useMobileBarKeyboardState({
   overlayOpen: boolean;
 }) {
   const { keyboardOpen } = useMobileKeyboard({ enabled: isMobile, allowNonMobileViewport: isMobile });
-  const keyboardFocusPending = useKeyboardFocusPending(isMobile) || false;
+  const keyboardFocusPending = useKeyboardFocusPending(isMobile, keyboardOpen) || false;
   return {
     keyboardOpen,
     keyboardFocusPending,

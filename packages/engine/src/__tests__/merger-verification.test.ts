@@ -223,6 +223,8 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
 
   return {
     getTask: vi.fn(async () => ({ ...task, prompt: "# test" })),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     listTasks: vi.fn().mockResolvedValue(allTasks),
     updateTask,
     updateTaskAtomic,

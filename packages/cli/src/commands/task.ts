@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolvePreMergeGateForTask, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolvePreMergeGateForTask, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, buildManualRetryResetPatchIfCurrent, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isFailedNoVerdictPreMergeReviewResult, isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -1276,11 +1276,19 @@ export async function runTaskReconcile(id: string, projectName?: string) {
     empty and cannot themselves prove idleness. Leave every liveness and compare-and-set decision to
     `SelfHealingManager.reconcileLandedReviewTask`, the single durable fence shared with the
     self-healing sweep, so the CLI and the engine can never disagree about what "landed" means.
+
+    FNXC:PostMergeRecovery 2026-10-01-07:12 (FN-9442):
+    A successful manual reconciliation can resume a missing required post-merge gate instead of
+    completing the card. Report that recovery as success so the CLI does not misclassify it as an error.
     */
     const manager = new SelfHealingManager(context.store, { rootDir: context.projectPath });
     const result = await manager.reconcileLandedReviewTask(id, { source: "manual", requireAutoMergeEligible: false });
     if (result.outcome === "reconciled") {
       console.log(`Reconciled ${id}: landed ${result.sha} via ${result.strategy} on ${result.baseBranch}; card moved to complete.`);
+      return;
+    }
+    if (result.outcome === "resumed") {
+      console.log(`Resumed ${id}: required post-merge evidence gate ${result.gateId} was re-seeded.`);
       return;
     }
     if (result.outcome === "already-complete") {
@@ -1515,7 +1523,10 @@ export async function runTaskPause(id: string, projectName?: string) {
 export async function runTaskUnpause(id: string, projectName?: string) {
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
   await withBoardWrite(projectName, { id, action: "unpause task" }, async (context) => {
-    const task = await context.store.pauseTask(id, false);
+    const snapshot = await context.store.getTask?.(id);
+    const task = snapshot
+      ? await context.store.pauseTask(id, false, undefined, { expectedUpdatedAt: snapshot.updatedAt })
+      : await context.store.pauseTask(id, false);
 
     console.log();
     console.log(`  ✓ Unpaused ${task.id}`);
@@ -1697,6 +1708,19 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const autoPauseClearPatch = buildAutoPauseClearPatch(task);
     const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
     const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+    const applyRetryReset = async (patch: Parameters<typeof context.store.updateTask>[1]) => {
+      if (typeof context.store.updateTaskAtomic !== "function") {
+        return context.store.updateTask(id, patch);
+      }
+      let applied = false;
+      const updated = await context.store.updateTaskAtomic(id, (live) => {
+        const guardedPatch = buildManualRetryResetPatchIfCurrent(live, task, patch);
+        if (guardedPatch) applied = true;
+        return guardedPatch;
+      });
+      if (!applied) throw new Error("Retry was superseded by a newer task lifecycle update");
+      return updated;
+    };
     const isInReviewStatusNone =
       retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
     /*
@@ -1787,7 +1811,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
 
     if (isMissingWorktreeSessionRetry) {
       await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));
-      await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
+      await retryBoardCall(context, id, "update task", () => applyRetryReset({
         status: null,
         error: null,
         worktree: null,
@@ -1809,7 +1833,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     if (isInReviewRetry) {
       if (isExecutionFailureInReview || isDeadlockAutoPauseRecovery) {
         await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));
-        await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
+        await retryBoardCall(context, id, "update task", () => applyRetryReset({
           status: null,
           error: null,
           ...autoPauseClearPatch,
@@ -1828,7 +1852,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
         return;
       }
 
-      await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
+      await retryBoardCall(context, id, "update task", () => applyRetryReset({
         status: null,
         error: null,
         ...autoPauseClearPatch,
@@ -1858,7 +1882,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never));
 
     // Clear failure state and stale branch refs so retry can choose a fresh base.
-    await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
+    await retryBoardCall(context, id, "update task", () => applyRetryReset({
       status: null,
       error: null,
       worktree: null,

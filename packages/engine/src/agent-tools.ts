@@ -2378,6 +2378,9 @@ export function createTaskPromptWriteTool(
       confirmation could run, so the validated prompt-then-scope compensation remains sequential.
       */
       try {
+        // FNXC:StepDependencyValidation 2026-10-01-01:59: Prompt publication must refuse
+        // invalid Markdown dependencies before it mutates the authoritative plan.
+        fusionCore.parseStepHeadings(params.content);
         /*
         FNXC:TaskReset 2026-08-22-04:49:
         A triage attempt captured before Reset can outlive the route's non-reentrant planning lock.

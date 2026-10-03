@@ -96,7 +96,9 @@ touches no data; it must advance in the same change that ships a new migration f
  * claim those slots on this rebase target, so external-session ingestion and its feedback queue
  * move to 0086/0087 rather than colliding with them.
  */
-export const SCHEMA_BASELINE_VERSION = "0092";
+// FNXC:UpstreamMerge 2026-10-04 (X-4385): upstream's 0086 (FN-9429 waiver receipts) collides with this
+// fork's released 0086 (external sessions, applied on J), so it is renumbered to 0093 below.
+export const SCHEMA_BASELINE_VERSION = "0093";
 export const EXTERNAL_SESSIONS_VERSION = "0086";
 export const EXTERNAL_SESSION_TURNS_VERSION = "0088";
 export const EXTERNAL_SESSION_TURN_SEARCH_VERSION = "0089";
@@ -290,6 +292,8 @@ export const CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION = "0073";
 export const OVERLAP_WAIT_SYNC_VERSION = "0084";
 /** FNXC:ForkedProductLine 2026-09-18-19:40: relocates (never deletes) tables/columns owned by upstream features this binary permanently excludes, out of the active `project` schema and into `deprecated_excluded_features`. */
 export const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION = "0085";
+/** FN-9429: project-scoped authority receipts for automated stale callback waivers. */
+export const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION = "0093";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -566,6 +570,7 @@ const TASK_PLANNING_FAILURE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0072_fn_9273_
 const CHAT_MESSAGES_SESSION_RECENCY_INDEX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0073_fn_9275_chat_messages_session_recency_index.sql");
 const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0084_fn_332_overlap_sync.sql");
 const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0085_drop_excluded_upstream_feature_schema.sql");
+const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0093_fn_9429_stale_review_callback_waiver_receipts.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -711,6 +716,7 @@ export async function applySchemaBaseline(
     const chatMessagesSessionRecencyIndexAlreadyApplied = applied.includes(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION);
     const overlapWaitSyncAlreadyApplied = applied.includes(OVERLAP_WAIT_SYNC_VERSION);
     const dropExcludedUpstreamFeatureSchemaAlreadyApplied = applied.includes(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION);
+    const staleReviewCallbackWaiverReceiptsAlreadyApplied = applied.includes(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1797,6 +1803,19 @@ export async function applySchemaBaseline(
     if (!applied.includes(EXTERNAL_SESSION_SUMMARIES_VERSION) || summariesMissing) {
       await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_SUMMARIES_MIGRATION_PATH, "utf8")));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSION_SUMMARIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const staleReviewCallbackWaiverReceiptsMissing = ((await tx.execute(sql`
+      SELECT COALESCE((
+        SELECT NOT (c.relrowsecurity AND c.relforcerowsecurity)
+        FROM pg_class c
+        WHERE c.oid = to_regclass('project.stale_review_callback_waiver_receipts')
+      ), true) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!staleReviewCallbackWaiverReceiptsAlreadyApplied || staleReviewCallbackWaiverReceiptsMissing) {
+      const migrationSql = await readFile(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

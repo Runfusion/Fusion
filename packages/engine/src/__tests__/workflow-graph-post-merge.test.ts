@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import "@fusion/core";
 import type { TaskDetail, WorkflowIr, WorkflowStepResult } from "@fusion/core";
 import { postMergeOptionalGroupNode } from "@fusion/core";
 
 import { WorkflowGraphExecutor, type WorkflowNodeHandler } from "../workflows/workflow-graph-executor.js";
+import { createWorkflowColumnBoundary } from "../workflows/workflow-column-boundary.js";
 
 /*
 FNXC:WorkflowPostMerge 2026-06-26-15:30:
@@ -27,9 +29,9 @@ function postMergeIr(options: { gateMode?: "advisory" | "gate" } = {}): Workflow
     version: "v2",
     name: "post-merge-test",
     columns: [
-      { id: "work", name: "Work", traits: [] },
-      { id: "review", name: "Review", traits: [] },
-      { id: "done", name: "Done", traits: [] },
+      { id: "work", name: "Work", traits: [{ trait: "wip" }] },
+      { id: "review", name: "Review", traits: [{ trait: "human-review" }, { trait: "merge-blocker" }] },
+      { id: "done", name: "Done", traits: [{ trait: "complete" }] },
     ],
     nodes: [
       { id: "start", kind: "start", column: "work" },
@@ -146,32 +148,114 @@ describe("WorkflowGraphExecutor graph-native post-merge steps", () => {
     expect(recorder.results[0].status).toBe("advisory_failure");
   });
 
-  it("flag ON: a gate-mode post-merge failure records failure and blocks final graph success", async () => {
+  it("keeps a gate-mode post-merge REVISE out of Done until a durable approval crosses its column boundary", async () => {
+    const ir = postMergeIr({ gateMode: "gate" });
+    const moves: string[] = [];
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-post-merge-gate",
+      workflowId: "post-merge-test",
+      ir,
+      initialColumn: "review",
+      moveTask: async (toColumn) => { moves.push(toColumn); },
+    });
     const recorder = makeRecorder();
     const executor = new WorkflowGraphExecutor({
       handlers: { prompt: failureHandler("REVISE") },
       recordWorkflowStepResult: recorder.record,
+      columnBoundary: boundary,
     });
 
     const result = await executor.run(
       taskWith([POST_MERGE_ID]),
       { experimentalFeatures: { graphNativePostMerge: true } },
-      postMergeIr({ gateMode: "gate" }),
+      ir,
     );
 
-    /*
-     * FNXC:WorkflowPostMerge 2026-06-29-11:47:
-     * Explicit gate-mode post-merge verification must block final workflow success;
-     * advisory post-merge checks remain non-blocking for legacy parity.
-    */
     expect(result.outcome).toBe("failure");
-    expect(recorder.results).toHaveLength(1);
-    expect(recorder.results[0]).toMatchObject({
+    expect(moves).not.toContain("done");
+    expect(boundary.currentColumn()).toBe("review");
+    expect(recorder.results).toEqual([expect.objectContaining({
       workflowStepId: POST_MERGE_ID,
       phase: "post-merge",
       status: "failed",
       verdict: "REVISE",
+    })]);
+  });
+
+  it("suspends a paused gate-mode post-merge group before its handler can run", async () => {
+    const ir = postMergeIr({ gateMode: "gate" });
+    const moves: string[] = [];
+    const suspensions: Array<{ nodeId: string; reason: string }> = [];
+    let paused = false;
+    let postMergeHandlerCalls = 0;
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-post-merge-gate-paused",
+      workflowId: "post-merge-test",
+      ir,
+      initialColumn: "review",
+      moveTask: async (toColumn) => { moves.push(toColumn); },
+      isPaused: () => paused,
+      onSuspend: async (suspension) => { suspensions.push(suspension); },
     });
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => {
+          if (node.id === "merge") paused = true;
+          if (node.id === POST_MERGE_STEP_ID) postMergeHandlerCalls += 1;
+          return { outcome: "success", value: "APPROVE" };
+        },
+      },
+      recordWorkflowStepResult: makeRecorder().record,
+      columnBoundary: boundary,
+    });
+
+    const result = await executor.run(
+      taskWith([POST_MERGE_ID]),
+      { experimentalFeatures: { graphNativePostMerge: true } },
+      ir,
+    );
+
+    expect(result.suspended).toMatchObject({ reason: "pause", nodeId: POST_MERGE_ID });
+    expect(postMergeHandlerCalls).toBe(0);
+    expect(suspensions).toEqual([expect.objectContaining({ reason: "pause", nodeId: POST_MERGE_ID })]);
+    expect(moves).not.toContain("done");
+    expect(boundary.currentColumn()).toBe("review");
+  });
+
+  it("moves a gate-mode post-merge approval to Done only after its durable result", async () => {
+    const ir = postMergeIr({ gateMode: "gate" });
+    const moves: string[] = [];
+    const pinnedNodeIds: string[] = [];
+    const auditNodeIds: string[] = [];
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-post-merge-gate-approved",
+      workflowId: "post-merge-test",
+      ir,
+      initialColumn: "review",
+      moveTask: async (toColumn) => { moves.push(toColumn); },
+      pinNodeEntry: async (pin) => { pinnedNodeIds.push(pin.nodeId); },
+      emitAudit: async (event) => {
+        if (event.type === "task:column-transition") auditNodeIds.push(event.nodeId);
+      },
+    });
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: handler("APPROVE") },
+      recordWorkflowStepResult: makeRecorder().record,
+      columnBoundary: boundary,
+    });
+
+    const result = await executor.run(
+      taskWith([POST_MERGE_ID]),
+      { experimentalFeatures: { graphNativePostMerge: true } },
+      ir,
+    );
+
+    expect(result.outcome).toBe("success");
+    expect(moves.filter((column) => column === "done")).toEqual(["done"]);
+    expect(boundary.currentColumn()).toBe("done");
+    // The inner template entry must not consume the parent gate's deferred preflight.
+    expect(pinnedNodeIds.filter((nodeId) => nodeId === POST_MERGE_ID)).toEqual([POST_MERGE_ID]);
+    expect(auditNodeIds.filter((nodeId) => nodeId === POST_MERGE_ID)).toEqual([POST_MERGE_ID]);
   });
 
   it("keeps an enabled gate-mode follow-up blocking when its terminal persistence fence is refused", async () => {

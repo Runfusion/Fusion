@@ -91,9 +91,9 @@ describe("parse-steps node handler (U12, KTD-12)", () => {
     ]);
   });
 
-  it("maps canonical heading dependencies through the production parse node", async () => {
+  it("maps Markdown positional dependencies through the production parse node", async () => {
     const { deps, written } = makeDeps({
-      readArtifact: async () => "### Step 0: Preflight\n### Step 1: Implement\n### Step 2 (depends: 1): Test",
+      readArtifact: async () => "### Step 12: Preflight\n### Step 99: Implement\n### Step 2 (depends: 2): Test",
     });
     const result = await runParse(parseIr("step-headings"), deps);
     expect(result.outcome).toBe("success");

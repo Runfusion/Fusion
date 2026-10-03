@@ -277,10 +277,20 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     return null;
   }
 
-export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string; userPaused?: boolean },): Promise<Task> {
+export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string; userPaused?: boolean; expectedUpdatedAt?: string },): Promise<Task> {
     return store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
+
+      /*
+      FNXC:BranchConflictRecoveryFence 2026-10-01-08:15:
+      Unpause is an operator recovery write, not permission to erase a scheduler transition that
+      committed after the operator opened the task. The canonical writer owns this task lock, so
+      its live updatedAt comparison fences dashboard, CLI, and extension unpause equally.
+      */
+      if (!paused && agentOptions?.expectedUpdatedAt !== undefined && task.updatedAt !== agentOptions.expectedUpdatedAt) {
+        return task;
+      }
 
       // Initialize log array if missing (for legacy tasks)
       if (!task.log) {

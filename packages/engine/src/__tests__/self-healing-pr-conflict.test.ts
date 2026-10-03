@@ -5,6 +5,7 @@ import { SelfHealingManager } from "../self-healing.js";
 import { AutoRecoveryDispatcher } from "../healing/auto-recovery.js";
 import * as branchConflicts from "../execution/branch-conflicts.js";
 import * as worktreePool from "../worktree/worktree-pool.js";
+import * as gitEvidence from "../self-healing-git-evidence.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { withBranchWriteProvenance } from "./branch-write-provenance-store-stub.js";
 
@@ -52,6 +53,12 @@ function makeStore(
       return [];
     }),
     updateTask: vi.fn(withBranchWriteProvenance(async (_id: string, updates: Partial<Task>) => (task ? Object.assign(task, updates) : null))),
+    updateTaskAtomic: vi.fn(async (_id: string, updater: (live: Task) => Partial<Task> | null) => {
+      if (!task) throw new Error("missing task");
+      const patch = await updater(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    }),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
       if (!task) return null;
       task.column = column;
@@ -76,6 +83,8 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
     vi.restoreAllMocks();
     activeSessionRegistry.clear();
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
+    vi.spyOn(worktreePool, "removeWorktree").mockResolvedValue(undefined as never);
+    vi.spyOn(gitEvidence, "execAsync").mockResolvedValue({ stdout: "", stderr: "" } as never);
   });
 
   it("returns stale-resolved when inspection reports stale-resolved", async () => {
@@ -119,7 +128,8 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
       branchWriteOrigin: "engine",
       worktree: "/tmp/test/.worktrees/fn-4763",
     }));
-    expect((store.moveTask as any).mock.calls.some((c: any[]) => c[1] === "in-progress")).toBe(true);
+    expect(task.paused).toBe(false);
+    expect(task.pausedReason).toBeUndefined();
   });
 
   it("preserves operator branch ownership during reclaim", async () => {
@@ -146,12 +156,29 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
   });
 
   it("returns reclaimed for fully-subsumed conflicts", async () => {
-    const task = makeTask({ branch: "feature/non-fusion-branch" });
+    const task = makeTask({ branch: "fusion/fn-4763" });
     const store = makeStore(task);
     vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({ kind: "fully-subsumed", livePath: task.worktree, tipSha: "abc123", taskAttributedCommitCount: 0, strandedCommits: [] } as any);
     const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
     const result = await manager.reclaimPrConflictForTask(task.id);
     expect(result.outcome).toBe("reclaimed");
+    expect((store as any).updateTaskAtomic).toHaveBeenCalledWith(task.id, expect.any(Function));
+  });
+
+  it("does not clear a newer scheduler checkout after fully-subsumed cleanup", async () => {
+    const task = makeTask({ branch: "fusion/fn-4763", paused: true, pausedReason: "branch-conflict-unrecoverable" as any, status: "failed" as any });
+    const store = makeStore(task);
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({ kind: "fully-subsumed", livePath: task.worktree, tipSha: "abc123", taskAttributedCommitCount: 0, strandedCommits: [] } as any);
+    (store as any).updateTaskAtomic.mockImplementationOnce(async (_id: string, updater: (live: Task) => Partial<Task> | null) => {
+      const patch = await updater({ ...task, worktree: "/tmp/newer-checkout", paused: false, pausedReason: undefined, status: undefined });
+      expect(patch).toBeNull();
+      return task;
+    });
+    const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+
+    expect(await manager.reclaimPrConflictForTask(task.id)).toEqual({ outcome: "skipped", reason: "superseded" });
+    expect(task.worktree).toBe("/tmp/test/.worktrees/fn-4763");
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("retained a newer task lifecycle update"));
   });
 
   /*
@@ -240,7 +267,7 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
     const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
     const result = await manager.reclaimPrConflictForTask(task.id);
     expect(result.outcome).toBe("paused-unrecoverable");
-    expect((store.updateTask as any).mock.calls.some((c: any[]) => c[1]?.pausedReason === "branch-conflict-unrecoverable")).toBe(true);
+    expect(task).toMatchObject({ paused: true, pausedReason: "branch-conflict-unrecoverable", status: "failed" });
   });
 
   it("skips worktrunk operation failed paused tasks", async () => {

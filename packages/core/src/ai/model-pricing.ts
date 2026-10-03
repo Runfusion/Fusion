@@ -301,6 +301,41 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     cacheWritePer1M: 1.1,
     source: "openai.com/api/pricing",
   },
+  /*
+   * FNXC:ModelCatalog 2026-10-01-07:22:
+   * Pi 0.86.1 owns current OpenAI and OpenAI Codex catalog metadata. Maintain
+   * provider-qualified accounting rows without registering replacement models:
+   * identical IDs may carry distinct provider rates, and unknown pairs stay
+   * unavailable rather than falling through to a guessed bare-model price.
+   */
+  "openai:gpt-5.6-luna": {
+    inputPer1M: 0.2,
+    outputPer1M: 1.2,
+    cacheReadPer1M: 0.02,
+    cacheWritePer1M: 0.25,
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
+  },
+  "openai:gpt-5.6-sol": {
+    inputPer1M: 4,
+    outputPer1M: 20,
+    cacheReadPer1M: 0.4,
+    cacheWritePer1M: 5,
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
+  },
+  "openai:gpt-5.6-terra": {
+    inputPer1M: 2,
+    outputPer1M: 12,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 2.5,
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
+  },
+  "openai:gpt-6-astra": {
+    inputPer1M: 10,
+    outputPer1M: 50,
+    cacheReadPer1M: 1,
+    cacheWritePer1M: 12.5,
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
+  },
 
   // ── OpenAI Codex ────────────────────────────────────────────────────
   // OpenAI has no separate cache-write charge → cacheWrite = input rate.
@@ -388,6 +423,13 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     cacheReadPer1M: 0.25,
     cacheWritePer1M: 0,
     source: "openai.com/api/pricing",
+  },
+  "openai-codex:gpt-6-astra": {
+    inputPer1M: 10,
+    outputPer1M: 50,
+    cacheReadPer1M: 1,
+    cacheWritePer1M: 12.5,
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai-codex.json",
   },
   "openai-codex:codex-mini-latest": {
     inputPer1M: 1.5,

@@ -200,11 +200,32 @@ export default function (pi: ExtensionAPI) {
     }));
 
     /*
-    FNXC:ModelCatalog 2026-09-29-05:56:
-    Pi owns Anthropic catalog discovery for the Claude subscription provider. Project its rows
-    directly so newly bundled metadata reaches this surface without Fusion fallback entries.
+    FNXC:ModelCatalog 2026-10-01-02:51:
+    Pi 0.86.1 predates the two Claude 5.5 aliases. Add only those local-CLI compatibility rows,
+    then dedupe by ID so an upstream catalog row remains authoritative and singular after Pi updates.
     */
-    const models = catalogModels;
+    const extraModels: typeof catalogModels = [
+      {
+        id: "claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+      {
+        id: "claude-sonnet-5-5",
+        name: "Claude Sonnet 5.5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+    ];
+    const seen = new Set(catalogModels.map((model) => model.id));
+    const models = [...catalogModels, ...extraModels.filter((model) => !seen.has(model.id))];
 
     // Ensure all registered tools are active so pi can execute them.
     // Some tools (find, grep, ls) are registered but not activated by default.
