@@ -109,6 +109,12 @@ function harness(tasks: Task[], ir: unknown, subject: Task, scopes: Record<strin
 }
 
 describe("holdsRepairFileScopeLease resolves the candidate's own lanes", () => {
+  it.each(["in-review", "in-progress", "todo", "signoff", "building"])("releases confirmed landing in %s before classifying retained checkouts", (column) => {
+    const holder = card("FN-2", column, { worktree: "/wt/retained", mergeDetails: { mergeConfirmed: true } });
+    expect(classifyRepairFileScopeLease(holder, undefined)).toBe("none");
+    expect(classifyRepairFileScopeLease(holder, { wip: "building", review: "signoff" })).toBe("none");
+  });
+
   it("recognises a RENAMED wip lane", () => {
     expect(holdsRepairFileScopeLease(card("FN-1", "building"), { wip: "building", review: "signoff" })).toBe(true);
   });
@@ -146,6 +152,20 @@ describe("classifyRepairFileScopeLease", () => {
 });
 
 describe("repairOverlapBlocker resolves the board's own lanes", () => {
+  it.each(["singular", "workspace"])("repairs a landed blocker retaining a %s checkout without completing its review", async (kind) => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
+    const blocker = card("FN-2", "signoff", {
+      mergeDetails: { mergeConfirmed: true }, status: "failed",
+      ...(kind === "singular" ? { worktree: "/wt/retained" } : {
+        workspaceWorktrees: { repo: { worktreePath: "/wt/repo" } },
+      }),
+    });
+    const { run, updates } = harness([subject, blocker], RENAMED_IR, subject);
+    await expect(run()).resolves.toMatchObject({ repaired: true, reason: "repaired" });
+    expect(updates.at(-1)).toMatchObject({ overlapBlockedBy: null });
+    expect(blocker).toMatchObject({ column: "signoff", status: "failed" });
+  });
+
   it("accepts a card sitting in a RENAMED hold lane", async () => {
     // Pre-fix: `backlog` !== "todo" → "not a repairable todo state", and the repair stopped here.
     const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });

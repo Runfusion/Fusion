@@ -74,6 +74,7 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
   deps: FileScopeLeaseDispatchGateDeps,
   task: Task,
 ): Promise<boolean> {
+  if (task.mergeDetails?.mergeConfirmed === true) return false;
   const settings = await deps.store.getSettings();
   if (settings.groupOverlappingFiles !== true || taskHoldsUnmergedCheckout(task)) return false;
 

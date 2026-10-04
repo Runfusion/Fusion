@@ -184,6 +184,8 @@ export interface AgentRuntimeOptions {
   /** Read-only MCP opt-in and server narrowing; MCP-incapable runtimes ignore both without logging definitions. */
   allowMcpToolsInReadonly?: boolean;
   readonlyMcpServerAllowlist?: string[];
+  /** Names of caller-supplied custom tools explicitly trusted for this readonly session only. */
+  readonlyCustomToolAllowlist?: string[];
   /** Optional task-scoped environment variables for session-local subprocesses. */
   taskEnv?: NodeJS.ProcessEnv;
   /**

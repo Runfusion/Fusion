@@ -3,6 +3,7 @@ import { resolveWorkflowIrForTask, type Task, type TaskStore } from "@fusion/cor
 import { executingTaskLock } from "../agents/active-session-registry.js";
 
 import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
+import { resumeMissingPostMergeGate } from "../merge/post-merge-gate-reseed.js";
 
 /*
  * FNXC:ConfirmedMergeMustFinalize 2026-08-23-09:15:
@@ -13,7 +14,7 @@ function makeStore(task: Task): TaskStore {
   const store = {
     getTask: vi.fn(async () => task),
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(task, patch)),
-    updateTaskAtomic: vi.fn(async (_id: string, update: (current: Task) => Partial<Task>) => Object.assign(task, update(task))),
+    updateTaskAtomic: vi.fn(async (_id: string, update: (current: Task) => Partial<Task> | Promise<Partial<Task>>) => Object.assign(task, await update(task))),
     moveTask: vi.fn(async (_id: string, column: string) => Object.assign(task, { column })),
     logEntry: vi.fn(), recordRunAuditEvent: vi.fn(), getSettings: vi.fn(async () => ({})),
     getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: task.enabledWorkflowSteps ?? [] })),
@@ -211,6 +212,49 @@ describe("missing post-merge continuation recovery", () => {
     for (let n = 0; n < 3; n++) await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
+    if (condition === "exhausted") {
+      expect(task.status).toBe("failed");
+      expect(task.error).toContain("Post-merge verification needs remediation");
+      expect(task.workflowStepResults?.[0].priorAttempts).toHaveLength(3);
+    }
+  });
+
+  it("allows an explicit landed reconciliation to retry exhausted evidence without erasing history", async () => {
+    const { task, store, items } = recoveryFixture();
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date().toISOString(), notes: "Needs an evidence document" };
+    task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    const before = structuredClone(task.workflowStepResults);
+    const result = await resumeMissingPostMergeGate(store, task.id, { manualRetry: true });
+    expect(result).toEqual({ outcome: "resumed", gateId: "post-merge-verification" });
+    expect(items).toHaveLength(1);
+    expect(task.workflowStepResults).toEqual(before);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a concurrent operator hold when surfacing an exhausted recovery", async () => {
+    const { task, store } = recoveryFixture();
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: "2026-01-01T00:00:00Z" };
+    task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    store.updateTaskAtomic = vi.fn(async (_id, update) => {
+      task.userPaused = true;
+      const patch = await update(task);
+      if (patch) Object.assign(task, patch);
+      return task;
+    });
+    expect(await resumeMissingPostMergeGate(store, task.id)).toEqual({ outcome: "not-resumable" });
+    expect(task.error).toBeUndefined();
+    expect(task.userPaused).toBe(true);
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("does not park an exhausted result while an explicit retry is already queued", async () => {
+    const { task, store, items } = recoveryFixture();
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: "2026-01-01T00:00:00Z" };
+    task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    items.push({ kind: "task", state: "runnable" });
+    expect(await resumeMissingPostMergeGate(store, task.id)).toEqual({ outcome: "not-resumable" });
+    expect(task.status).toBeUndefined();
+    expect(task.error).toBeUndefined();
   });
 
   it("resumes the missing gate exactly once across repeated finalization polls, without merging or completing", async () => {

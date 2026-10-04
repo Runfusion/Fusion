@@ -73,6 +73,14 @@ const POST_MERGE_VERIFICATION_PROMPT = `You are a post-merge verification review
 2. Check the final merged diff and task summary for obvious mismatches, missing verification evidence, or integration-only regressions.
 3. If configured test/build commands are available in the task context, inspect their latest result or explain why no post-merge command was applicable.
 
+## Publish the evidence you verify
+You own collecting and recording the evidence, not only checking whether another agent already recorded it.
+1. Use fn_task_document_read to list the task documents, then read the existing delivery record. Preserve its contents; if none exists, create a document with key="delivery".
+2. Collect the required run, lane, artifact, and failure evidence below. Search existing tasks with fn_task_search or fn_task_list and inspect matches with fn_task_show before creating any follow-up. Link an existing task when it covers the failure; otherwise use fn_task_create for ordinary follow-up work, without creating a mission.
+3. Save the verified evidence and follow-up links using fn_task_document_write. For an existing document, pass its expected_revision from the read. If publication reports a conflict, re-read and explicitly rebase the update; never overwrite newer evidence blindly.
+4. Return your verdict only after publication succeeds. Missing delivery prose is work for this session, not by itself a reason to return REVISE. If task creation is unavailable or requires operator validation, record that exact limitation and any proposed follow-up, and return REVISE when a required follow-up still has no task ID.
+Do not edit product code or the task plan after landing. An actual regression requires follow-up implementation and remains blocking until its resolution is verified.
+
 ## Required post-landing Full Suite evidence
 This enabled gate requires post-landing Full Suite evidence. Do NOT approve until its delivery record names all of the following:
 1. The landed SHA and the first Full Suite push-to-main run at or after that SHA, including the run ID and run SHA.

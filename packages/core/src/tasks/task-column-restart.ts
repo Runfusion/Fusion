@@ -110,7 +110,8 @@ export function planTaskColumnRestart(input: {
     if ((result.phase ?? "pre-merge") === "post-merge" || result.bypassedBy) return false;
     if (columnNodeIdSet.has(result.workflowStepId)) return true;
     return scope === "review"
-      && (result.status === "failed" || result.status === "pending")
+      && (result.status === "failed" || result.status === "pending"
+        || (result.status === "skipped" && requiredPreMergeStepIds.has(result.workflowStepId)))
       && (!declaredNodeIds.has(result.workflowStepId) || requiredPreMergeStepIds.has(result.workflowStepId));
   };
   const workflowStepResults = (task.workflowStepResults ?? []).filter((result) => !shouldDiscard(result));

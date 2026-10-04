@@ -59,6 +59,16 @@ describe("fileScopeLeaseBlocksCandidate", () => {
 });
 
 describe("workspace checkout and overlap-scope helpers", () => {
+  it.each(["singular", "workspace", "both"])("releases landed %s checkouts while retaining unconfirmed claims", (kind) => {
+    const holder = {
+      ...(kind !== "workspace" ? { worktree: "/wt/retained" } : {}),
+      ...(kind !== "singular" ? { workspaceWorktrees: { repo: { worktreePath: "/wt/repo" } } } : {}),
+    } as Task;
+    expect(taskHoldsUnmergedCheckout(holder)).toBe(true);
+    expect(taskHoldsUnmergedCheckout({ ...holder, mergeDetails: { mergeConfirmed: false } })).toBe(true);
+    expect(taskHoldsUnmergedCheckout({ ...holder, mergeDetails: { mergeConfirmed: true } })).toBe(false);
+  });
+
   const workspaceTask = (workspaceWorktrees: unknown, worktree?: string) => ({
     worktree,
     workspaceWorktrees,

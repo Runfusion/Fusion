@@ -608,7 +608,7 @@ export function classifyFileScopeLease(
   // FNXC:WorkflowLifecycle 2026-08-30-07:27: DELIBERATE-LITERAL — callers without resolved workflow roles require the legacy terminal fallback.
   const isTerminalColumn = options?.isTerminalColumn ?? (task.column === "done" || task.column === "archived");
 
-  if (isTerminalColumn || task.deletedAt) {
+  if (isTerminalColumn || task.deletedAt || task.mergeDetails?.mergeConfirmed === true) {
     return { kind: "none", waivedForTaskIds: [] };
   }
 
@@ -2148,7 +2148,7 @@ export class Scheduler {
     // Check explicit dependencies for review-lane tasks with worktrees
     for (const depId of task.dependencies) {
       const dep = allTasks.find((t) => t.id === depId);
-      if (dep && isReviewColumn(dep) && dep.worktree) {
+      if (dep && isReviewColumn(dep) && dep.worktree && taskHoldsUnmergedCheckout(dep)) {
         return resolveTaskWorkingBranch(dep);
       }
     }
@@ -2156,7 +2156,7 @@ export class Scheduler {
     // Check implicit blockedBy for a review-lane task with worktree
     if (task.blockedBy) {
       const blocker = allTasks.find((t) => t.id === task.blockedBy);
-      if (blocker && isReviewColumn(blocker) && blocker.worktree) {
+      if (blocker && isReviewColumn(blocker) && blocker.worktree && taskHoldsUnmergedCheckout(blocker)) {
         return resolveTaskWorkingBranch(blocker);
       }
     }

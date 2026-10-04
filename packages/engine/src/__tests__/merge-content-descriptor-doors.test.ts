@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
+
+const checkout = vi.hoisted(() => ({ probe: vi.fn() }));
+vi.mock("../worktree/review-checkout-clean.js", () => ({ probeReviewCheckout: checkout.probe }));
 
 const childProcess = vi.hoisted(() => {
   const diff = `diff --git a/large.bin b/large.bin\n${"x".repeat(2 * 1024 * 1024)}`;
@@ -46,6 +49,26 @@ import { captureMergeContentDescriptor } from "../merge/merge-content-capture.js
  * gate can defer, never an implicit approval.
  */
 describe("FN-180 merge content descriptor doors", () => {
+  beforeEach(() => checkout.probe.mockReset().mockResolvedValue({ state: "clean" }));
+
+  it.each(["dirty", "unavailable"])("refuses singular merge content when the reviewed checkout is %s", async (state) => {
+    checkout.probe.mockResolvedValue({ state, paths: ["src/fix.ts"] });
+    const descriptor = await captureMergeContentDescriptor({ id: "FN-9442", worktree: "/worktree" } as Task, {
+      workspaceRootDir: process.cwd(), settings: {},
+    });
+    expect(descriptor).toMatchObject({ kind: "singular", diff: { state: "unavailable" } });
+    expect(checkout.probe).toHaveBeenCalledWith("/worktree");
+  });
+
+  it("refuses workspace merge content if any repository has uncommitted review fixes", async () => {
+    checkout.probe.mockResolvedValue({ state: "dirty", paths: ["src/fix.ts"] });
+    const descriptor = await captureMergeContentDescriptor({
+      id: "FN-9442", executionMode: "workspace",
+      workspaceWorktrees: { api: { worktreePath: "/api", branch: "fusion/task" } },
+    } as unknown as Task, { workspaceRootDir: process.cwd(), settings: {} });
+    expect(descriptor).toMatchObject({ kind: "workspace", repositories: { state: "unavailable" } });
+    expect(checkout.probe).toHaveBeenCalledWith("/api");
+  });
   it("returns an unavailable singular descriptor when the door cannot establish a diff base", async () => {
     const descriptor = await captureMergeContentDescriptor({ id: "FN-180", column: "in-review" } as Task, {
       workspaceRootDir: process.cwd(), settings: {},

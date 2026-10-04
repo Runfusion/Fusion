@@ -183,6 +183,85 @@ async function createPrompt(root: string, id = "FN-204") {
 afterEach(() => vi.restoreAllMocks());
 
 describe("POST /tasks/:id/retry", () => {
+  function landedFixture(overrides: Partial<Task> = {}) {
+    const row = taskFixture({
+      column: "signoff", autoMerge: true,
+      mergeDetails: { mergeConfirmed: true, commitSha: "landed-sha", mergedAt: "2026-10-01T00:00:00Z" },
+      steps: [{ name: "Implement", status: "done" }],
+      workflowStepResults: [
+        { workflowStepId: "code-review", status: "passed", verdict: "APPROVE", phase: "pre-merge" },
+        { workflowStepId: "post-review", status: "failed", verdict: "REVISE", phase: "post-merge", completedAt: new Date().toISOString(),
+          priorAttempts: Array.from({ length: 3 }, () => ({ workflowStepId: "post-review", status: "failed" as const, verdict: "REVISE" as const })) },
+      ], ...overrides,
+    });
+    const ir = structuredClone(RESTART_IR) as unknown as { nodes: Array<Record<string, unknown>> };
+    ir.nodes = ir.nodes.map((node) => node.id === "post-review" ? {
+      ...node, kind: "optional-group", config: { phase: "post-merge", defaultOn: true,
+        template: { nodes: [{ id: "verify", kind: "prompt", config: { gateMode: "gate" } }], edges: [] } },
+    } : node);
+    const fixture = createRestartStore("/unused", row, { ir });
+    fixture.items.length = 0;
+    Object.assign(fixture.store, {
+      getTaskWorkflowSelection: vi.fn().mockResolvedValue({ workflowId: "wf-restart" }),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(async (input: Record<string, unknown>) => {
+        fixture.items.push(input);
+        return { seeded: true };
+      }),
+    });
+    return { ...fixture, row };
+  }
+
+  it("retries only post-merge verification after landing without discarding proof or review history", async () => {
+    const { store, row, items } = landedFixture();
+    const before = structuredClone(row);
+    const disposer = vi.fn();
+    const unregister = registerTaskResetDisposer(store, disposer);
+    try {
+      const response = await postRetry(createApp(store));
+      expect(response.status).toBe(200);
+      expect(row).toEqual(before);
+      expect(items).toEqual([expect.objectContaining({ nodeId: "post-review", sourceColumn: "signoff", targetColumn: "signoff", state: "runnable" })]);
+      expect(disposer).not.toHaveBeenCalled();
+      expect(store.pauseTask).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.clearWorkflowRunStepInstancesAsync).not.toHaveBeenCalled();
+      expect(store.cancelActiveWorkflowWorkItemsForTask).not.toHaveBeenCalled();
+      expect(store.replaceActiveTaskWorkflowContinuation).not.toHaveBeenCalled();
+    } finally { unregister(); }
+  });
+
+  it.each(["pending", "held", "live"])("refuses landed %s verification without falling through to destructive restart", async (state) => {
+    const { store, row } = landedFixture(state === "held" ? { paused: true, userPaused: true } : state === "live"
+      ? { checkoutRunId: "owner", checkoutLeaseRenewedAt: new Date().toISOString() } : {});
+    if (state === "pending") row.workflowStepResults![1].status = "pending";
+    const before = structuredClone(row);
+    const response = await postRetry(createApp(store));
+    expect(response.status).toBe(409);
+    expect(row).toEqual(before);
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.pauseTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.cancelActiveWorkflowWorkItemsForTask).not.toHaveBeenCalled();
+  });
+
+  it("preserves landing proof that arrives between Retry validation and its publication fence", async () => {
+    const { store, row, items } = landedFixture();
+    const mergeDetails = row.mergeDetails;
+    delete row.mergeDetails;
+    vi.mocked(store.updateTaskAtomic).mockImplementationOnce(async (_id, updater) => {
+      row.mergeDetails = mergeDetails;
+      expect(await updater(structuredClone(row))).toBeNull();
+      return structuredClone(row);
+    });
+    const response = await postRetry(createApp(store));
+    expect(response.status).toBe(200);
+    expect(row.mergeDetails).toEqual(mergeDetails);
+    expect(store.pauseTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.cancelActiveWorkflowWorkItemsForTask).not.toHaveBeenCalled();
+    expect(items).toEqual([expect.objectContaining({ nodeId: "post-review" })]);
+  });
+
   it("uses the registered core disposer and atomically publishes a planning restart through the HTTP route", async () => {
     const root = await mkdtemp(join(tmpdir(), "fusion-restart-stage-plan-"));
     const prompt = await createPrompt(root);

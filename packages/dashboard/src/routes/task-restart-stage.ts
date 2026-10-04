@@ -9,7 +9,7 @@ import {
   type Task,
   type TaskStore,
 } from "@fusion/core";
-import { isMergeActiveStatus, isStaleMergeActiveStatus, resolveColumnResumeNode } from "@fusion/engine";
+import { isMergeActiveStatus, isStaleMergeActiveStatus, resolveColumnResumeNode, resumeMissingPostMergeGate } from "@fusion/engine";
 import { badRequest, conflict, notFound } from "../api-error.js";
 
 interface RestartTaskStageEngine {
@@ -101,6 +101,15 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
     try {
       const task = await store.getTask(taskId);
       if (!task) throw notFound(`Task ${taskId} not found`);
+      const retryLandedVerification = async (landedTask: Task): Promise<Task> => {
+        if (isLiveMergeRestart(landedTask, deps)) throw conflict("Retry is unavailable while a merge is active");
+        const resumed = await resumeMissingPostMergeGate(store, taskId, { manualRetry: true });
+        if (resumed.outcome !== "resumed") {
+          throw conflict("Post-merge verification cannot be retried while pending, active, held, or already approved; landing proof is preserved");
+        }
+        return store.getTask(taskId);
+      };
+      if (task.mergeDetails?.mergeConfirmed) return retryLandedVerification(task);
       const ir = await resolveWorkflowIrForTask(store, task.id);
       const entryNode = resolveColumnResumeNode(ir, task.column);
       const plan = planTaskColumnRestart({ task, ir, entryNode });
@@ -116,7 +125,13 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
       let mergeActiveAtFence = false;
       let priorPaused: Task["paused"];
       let priorPausedReason: Task["pausedReason"];
+      let landedAtFence: Task | undefined;
       await store.updateTaskAtomic(taskId, (fenceSnapshot) => {
+        // Landing may finish after the initial read; never discard its new proof.
+        if (fenceSnapshot.mergeDetails?.mergeConfirmed) {
+          landedAtFence = fenceSnapshot;
+          return null;
+        }
         priorPaused = fenceSnapshot.paused;
         priorPausedReason = fenceSnapshot.pausedReason;
         mergeActiveAtFence = isLiveMergeRestart(fenceSnapshot, deps);
@@ -125,6 +140,7 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
           pausedReason: RESTART_STAGE_FENCE_REASON,
         };
       });
+      if (landedAtFence) return retryLandedVerification(landedAtFence);
       fenced = true;
 
       if (mergeActiveAtFence) {

@@ -282,6 +282,27 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-030", "in-progress", expect.anything());
   });
 
+  it.each(["singular", "workspace"])("admits overlapping work after landing with a retained %s checkout and rejected post-merge evidence", async (kind) => {
+    const landed = makeTask({
+      id: "FN-039", column: "in-review", mergeDetails: { mergeConfirmed: true },
+      ...(kind === "singular" ? { worktree: "/wt/retained" } : {
+        workspaceWorktrees: { repo: { worktreePath: "/wt/repo" } } as Task["workspaceWorktrees"],
+      }),
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE" }],
+    });
+    const candidate = makeTask({ id: "FN-030", column: "todo", priority: "urgent" });
+    const store = createStore([landed, candidate], {
+      "FN-039": ["packages/engine/src/scheduler.ts"],
+      "FN-030": ["packages/engine/src/scheduler.ts"],
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+    expect(store.moveTask).toHaveBeenCalledWith(candidate.id, "in-progress", expect.objectContaining({ allocateWorktree: expect.any(Function) }));
+    expect(landed.column).toBe("in-review");
+    expect(landed.workflowStepResults?.[0].verdict).toBe("REVISE");
+  });
+
   it("keeps active file-scope leases bounded while non-overlapping ready work proceeds", async () => {
     const tasks = [
       makeTask({ id: "FN-039", column: "in-progress", priority: "normal" }),

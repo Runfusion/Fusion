@@ -34,6 +34,8 @@ import {
   startPlanningSegment,
 } from "@fusion/core";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { probeReviewCheckout } from "../worktree/review-checkout-clean.js";
+import { createPostMergeEvidenceTools } from "./post-merge-evidence-tools.js";
 import { createTaskPromptWriteTool } from "./shared-worker-tools.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { AgentLogger } from "../agents/agent-logger.js";
@@ -278,7 +280,8 @@ export async function executeWorkflowStep(
       || optionalGroupId === "code-review"
       || optionalGroupId === "browser-verification";
     const reviewerInlineFixesEnabled = (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false;
-    const allowReviewerInlineFixes = reviewerInlineFixesEnabled && isReviewTypeWorkflowStep && workflowStep.mode === "prompt";
+    const allowReviewerInlineFixes = workflowStep.phase !== "post-merge" && reviewerInlineFixesEnabled && isReviewTypeWorkflowStep && workflowStep.mode === "prompt";
+    if (workflowStep.phase === "post-merge" && isReviewTypeWorkflowStep) toolMode = "readonly";
     const allowPlanReviewPromptWrite = allowReviewerInlineFixes && isPlanReviewStep;
     if (allowReviewerInlineFixes && !isPlanReviewStep) {
       /*
@@ -591,6 +594,22 @@ CRITICAL SCOPING RULES — read before doing anything else:
     const repositoryScopeRevision = workflowStepMetadata.reviewKind === "code"
       ? latestTaskForUserComments.repositoryScope?.revision
       : undefined;
+    const refuseUncommittedApproval = async (): Promise<WorkflowStepOutcome | undefined> => {
+      if (workflowStep.phase === "post-merge" || !isReviewTypeWorkflowStep || isPlanReviewStep) return undefined;
+      // The caller supplies the repository checkout for both singular and per-repository reviews.
+      const checkout = await probeReviewCheckout(worktreePath);
+      if (checkout.state === "clean") return undefined;
+      const notes = checkout.state === "dirty"
+        ? `Review approval refused: uncommitted source changes in ${worktreePath}: ${checkout.paths.map((path) => JSON.stringify(path)).join(", ")}. Commit the reviewed fixes on the task branch, verify the committed diff, and rerun review.`
+        : `Review approval refused: could not verify the source checkout is clean at ${worktreePath}. Restore access to the task checkout and rerun review; approval must cover committed content.`;
+      return {
+        success: false, revisionRequested: true, verdict: "REVISE", output: notes, notes,
+        findings: [{ id: "review-checkout-not-committed", title: "Review source is not proven committed", body: notes, severity: "critical", resolution: "open" }],
+        ...(reviewInputFingerprint ? { reviewInputFingerprint } : {}),
+        ...(reviewedCommitSha ? { reviewedCommitSha } : {}),
+        ...(repositoryScopeRevision !== undefined ? { repositoryScopeRevision } : {}),
+      };
+    };
     /*
     FNXC:ReviewEmptyContent 2026-08-28-13:14:
     A singular task explicitly confirmed with noCommitsExpected=true has no content for Code Review,
@@ -604,6 +623,8 @@ CRITICAL SCOPING RULES — read before doing anything else:
       && reviewInputFingerprint === EMPTY_REVIEW_DIFF_FINGERPRINT
       && latestTaskForUserComments.workspaceWorktrees === undefined
       && latestTaskForUserComments.noCommitsExpected === true) {
+      const refusal = await refuseUncommittedApproval();
+      if (refusal) return refusal;
       const notes = "Code Review is not applicable because this task explicitly expects no commits and its review diff is empty.";
       await deps.store.logEntry(
         task.id,
@@ -637,6 +658,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
         })
         : undefined;
       const effectiveVerdict = (gated?.verdict ?? reusableReviewResult.verdict) as NonNullable<WorkflowStepOutcome["verdict"]>;
+      if (effectiveVerdict === "APPROVE" || effectiveVerdict === "APPROVE_WITH_NOTES") {
+        const refusal = await refuseUncommittedApproval();
+        if (refusal) return refusal;
+      }
       await deps.store.logEntry(
         task.id,
         `[pre-merge] ${workflowStep.name} reused the recorded result for unchanged review input ${reviewInputFingerprint}`,
@@ -741,7 +766,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
   ## Same-Session Fix Policy
 
   This review-type node may fix issues it finds before returning a final verdict.
-  - If you find an in-scope issue you can fix safely, edit the relevant files in this same session, run the smallest relevant verification, and then return APPROVE or APPROVE_WITH_NOTES.
+  - If you find an in-scope issue you can fix safely, edit the relevant files in this same session, run the smallest relevant verification, commit all reviewed implementation changes on the assigned task branch, and only then return APPROVE or APPROVE_WITH_NOTES. Inspect git status including staged, unstaged, and untracked source files; an uncommitted fix is not delivered. Never commit in the main checkout. Plan Review uses the prompt writer instead of a code commit.
   - Return REVISE only when the issue is still present, cannot be safely fixed in this reviewer session, needs broader executor remediation, or needs user input.
   - Plan Review may use fn_task_prompt_write to replace the task's PROMPT.md with the complete revised plan. Do not implement product code from Plan Review.
   - Code Review and Browser Verification may fix implementation issues inside the assigned task worktree. Report each self-fixed issue as a finding with resolution resolved-in-review; list a fixed prior-lane finding in supersededFindingIds.
@@ -1006,10 +1031,14 @@ CRITICAL SCOPING RULES — read before doing anything else:
       const codingCustomTools: ToolDefinition[] = toolMode === "coding"
         ? [deps.createSpawnAgentTool(task.id, worktreePath, settings, stepEnv)]
         : [];
-      const workflowCustomTools = [...planReviewPromptTools, ...codingCustomTools];
+      const postMergeEvidenceTools = workflowStep.phase === "post-merge"
+        ? createPostMergeEvidenceTools(deps.sharedWorkerTools, task.id, settings, task.assignedAgentId ?? undefined)
+        : [];
+      const workflowCustomTools = [...planReviewPromptTools, ...codingCustomTools, ...postMergeEvidenceTools];
       const readonlyCustomTools = toolMode === "readonly"
         ? filterCustomToolsForReadonly(workflowCustomTools, {
-            allowTool: (tool) => allowPlanReviewPromptWrite && tool.name === "fn_task_prompt_write",
+            allowTool: (tool) => (allowPlanReviewPromptWrite && tool.name === "fn_task_prompt_write")
+              || postMergeEvidenceTools.some((allowed) => allowed.name === tool.name),
           })
         : { allowed: workflowCustomTools, denied: [] as string[] };
       if (toolMode === "readonly" && readonlyCustomTools.denied.length > 0) {
@@ -1053,6 +1082,12 @@ CRITICAL SCOPING RULES — read before doing anything else:
         ...(stepOptions?.sessionBoundary ? { sessionBoundary: stepOptions.sessionBoundary } : {}),
         systemPrompt: stepSystemPrompt,
         tools: toolMode,
+        ...(toolMode === "readonly" ? {
+          readonlyCustomToolAllowlist: [
+            ...planReviewPromptTools.map((tool) => tool.name),
+            ...postMergeEvidenceTools.map((tool) => tool.name),
+          ],
+        } : {}),
         defaultProvider: provider,
         defaultModelId: modelId,
         ...(attemptLabel !== "fallback" && primaryCredentialInstanceId
@@ -1317,6 +1352,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
               const msg = err instanceof Error ? err.message : String(err);
               executorLog.warn(`${task.id}: failed to carry forward advisory review findings: ${msg}`);
             });
+          }
+          if (effectiveVerdict === "APPROVE" || effectiveVerdict === "APPROVE_WITH_NOTES") {
+            const refusal = await refuseUncommittedApproval();
+            if (refusal) return { ...refusal, findings: [...(parsed.findings ?? []), ...(refusal.findings ?? [])] };
           }
           const revisionRequested = effectiveVerdict === "REVISE";
 

@@ -14228,8 +14228,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       evidence after the same pause, hold, liveness, lease, and auto-merge fences as every other owner.
       */
       const decision = await getRequiredPostMergeEvidenceDecision(this.store, task);
-      if (isPostMergeGateRecoveryDue(task, decision)) {
-        const resumed = await resumeMissingPostMergeGate(this.store, task.id);
+      if (isPostMergeGateRecoveryDue(task, decision)
+        || (options.source === "manual" && decision.outcome === "blocked" && decision.reason === "failed")) {
+        const resumed = await resumeMissingPostMergeGate(this.store, task.id, { manualRetry: options.source === "manual" });
         if (resumed.outcome === "resumed") return resumed;
         if (decision.outcome === "resumable") return { outcome: "raced", reason: "post-merge-continuation-not-idle" };
       }

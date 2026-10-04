@@ -459,7 +459,7 @@ function repairLeaseLaneIncludes(
 
 /*
 FNXC:OverlapScheduling 2026-08-29-06:04:
-Operator overlap repair must use the same lease lifetime as scheduler admission: terminal or deleted
+Operator overlap repair must use the same lease lifetime as scheduler admission: landed, terminal or deleted
 cards release immediately; WIP stays active before checkout acquisition; review stays active only
 while a singular or per-repository checkout exists; other retained checkouts are dormant and resolve contention
 by priority, age, then task id. The explicit archive/delete/checkout-clear escape hatch remains the only way to
@@ -476,10 +476,10 @@ Overlap repair therefore receives complete role sets from the blocker's own sele
 second WIP or review lane retains unfinished work, while every complete or archived lane releases it.
 */
 export function classifyRepairFileScopeLease(
-  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt">,
+  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt" | "mergeDetails">,
   lanes: RepairFileScopeLeaseLanes | undefined,
 ): FileScopeLeaseKind {
-  if (candidate.deletedAt) return "none";
+  if (candidate.deletedAt || candidate.mergeDetails?.mergeConfirmed === true) return "none";
   if (!lanes) {
     if (isWipColumnRole(undefined, candidate.column)) return "active";
     return isReviewColumnRole(undefined, candidate.column) && taskHoldsUnmergedCheckout(candidate) ? "active" : "none";
@@ -494,7 +494,7 @@ export function classifyRepairFileScopeLease(
 
 /** Compatibility wrapper retained for callers that only need a boolean lease answer. */
 export function holdsRepairFileScopeLease(
-  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt">,
+  candidate: Pick<Task, "column" | "worktree" | "workspaceWorktrees" | "deletedAt" | "mergeDetails">,
   lanes: RepairFileScopeLeaseLanes | undefined,
 ): boolean {
   return classifyRepairFileScopeLease(candidate, lanes) !== "none";

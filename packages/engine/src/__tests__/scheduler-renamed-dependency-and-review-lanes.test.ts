@@ -379,6 +379,18 @@ describe("scheduler base-branch stacking on a RENAMED board", () => {
 
     expect(resolved.resolveBaseBranch(tasks[1], tasks, () => false)).toBeNull();
   });
+
+  it.each([DEFAULT_NAMES, RENAMED_NAMES])("uses the default base after a predecessor lands on $review", async (names) => {
+    const { resolved, tasks } = await baseBranchScenario(names);
+    const predecessor = { ...tasks[0], mergeDetails: { mergeConfirmed: true } };
+    for (const link of [
+      { dependencies: [predecessor.id], blockedBy: null },
+      { dependencies: [], blockedBy: predecessor.id },
+    ]) {
+      const candidate = { ...tasks[1], ...link };
+      expect(resolved.resolveBaseBranch(candidate, [predecessor, candidate], (task) => task.column === names.review)).toBeNull();
+    }
+  });
 });
 
 describe("scheduler PR-monitor hydration on a RENAMED board", () => {

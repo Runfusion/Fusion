@@ -1,5 +1,6 @@
 import {
   allowsAutoMergeProcessing,
+  ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computeWorkflowIrPin,
   getPostMergeFinalizeBlocker,
   getRequiredPostMergeEvidenceDecision,
@@ -37,7 +38,14 @@ function hasFreshCheckoutLease(
 
 export type PostMergeGateResumeResult =
   | { outcome: "resumed"; gateId: string }
+  | { outcome: "exhausted"; gateId: string }
   | { outcome: "not-resumable" };
+
+const EXHAUSTED_PREFIX = "Post-merge verification needs remediation";
+
+function hasExhaustedRechecks(result: WorkflowStepResult): boolean {
+  return (result.priorAttempts ?? []).filter((entry) => entry.status === "failed").length >= 3;
+}
 
 /*
 FNXC:ReviewRecovery 2026-10-04-02:24:
@@ -53,16 +61,21 @@ function isRejectedGateRecheckDue(result: WorkflowStepResult): boolean {
 }
 
 export function isPostMergeGateRecoveryDue(
-  task: Pick<Task, "workflowStepResults">,
+  task: Pick<Task, "workflowStepResults" | "status" | "error">,
   decision: RequiredPostMergeEvidenceDecision,
 ): boolean {
   if (decision.outcome === "resumable") return true;
   if (decision.outcome !== "blocked" || decision.reason !== "failed") return false;
   const result = task.workflowStepResults?.find((entry) => entry.workflowStepId === decision.gateId);
-  return !!result && isRejectedGateRecheckDue(result);
+  return !!result && (isRejectedGateRecheckDue(result)
+    || (hasExhaustedRechecks(result) && !task.error?.startsWith(EXHAUSTED_PREFIX)));
 }
 
-export async function resumeMissingPostMergeGate(store: TaskStore, taskId: string): Promise<PostMergeGateResumeResult> {
+export async function resumeMissingPostMergeGate(
+  store: TaskStore,
+  taskId: string,
+  options: { manualRetry?: boolean } = {},
+): Promise<PostMergeGateResumeResult> {
   if (typeof store.seedWorkspaceCodeReviewContinuationIfIdle !== "function") return { outcome: "not-resumable" };
   const task = await store.getTask(taskId);
   const settings = await store.getSettings();
@@ -75,7 +88,22 @@ export async function resumeMissingPostMergeGate(store: TaskStore, taskId: strin
     || isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })) return { outcome: "not-resumable" };
 
   const decision = await getRequiredPostMergeEvidenceDecision(store, task);
-  if (decision.outcome === "finalizable" || !isPostMergeGateRecoveryDue(task, decision)) return { outcome: "not-resumable" };
+  const manualRetry = options.manualRetry === true && decision.outcome === "blocked" && decision.reason === "failed";
+  if (decision.outcome === "finalizable" || (!manualRetry && !isPostMergeGateRecoveryDue(task, decision))) return { outcome: "not-resumable" };
+  const failedResult = task.workflowStepResults?.find((entry) => entry.workflowStepId === decision.gateId);
+  if (!manualRetry && failedResult?.status === "failed" && hasExhaustedRechecks(failedResult)) {
+    let recorded = false;
+    await store.updateTaskAtomic(task.id, async (live) => {
+      if (live.updatedAt !== task.updatedAt || live.paused || live.userPaused || live.deletedAt
+        || !live.mergeDetails?.mergeConfirmed || live.autoMerge === false) return null;
+      const items = await store.listWorkflowWorkItemsForTask(task.id);
+      if (items.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) return null;
+      recorded = true;
+      return { status: "failed", error: `${EXHAUSTED_PREFIX}: '${decision.gateId}' exhausted automatic rechecks. ${failedResult.notes || failedResult.output || "Inspect the failed verification result."} Resolve the findings, then reconcile the landed task to retry verification in place.` };
+    });
+    if (recorded) await store.logEntry(task.id, `[post-merge] Automatic verification rechecks exhausted for '${decision.gateId}'; remediation is required. Merge proof and failed evidence are preserved.`);
+    return recorded ? { outcome: "exhausted", gateId: decision.gateId } : { outcome: "not-resumable" };
+  }
   const selection = await store.getTaskWorkflowSelectionAsync(task.id);
   const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
   if (resolved.source === "default" && !resolved.selectionAbsent) return { outcome: "not-resumable" };

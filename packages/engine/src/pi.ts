@@ -1138,6 +1138,8 @@ export interface AgentOptions {
    * `allowMcpToolsInReadonly` opt-in; omit it to preserve the reviewed planning-lane behavior.
    */
   readonlyMcpServerAllowlist?: string[];
+  /** Names of caller-supplied custom tools explicitly trusted for this readonly session only. */
+  readonlyCustomToolAllowlist?: string[];
   /** Test seam for MCP session tools; production uses the SDK client/transport factories. */
   mcpClientFactory?: McpClientFactory;
   /** Test seam for MCP retry timing. */
@@ -2933,17 +2935,16 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       ...(options.customTools ?? []),
       ...(mcpToolset?.tools ?? []),
     ];
+    const trustedReadonlyCustomNames = new Set(options.readonlyCustomToolAllowlist ?? []);
+    const callerCustomTools = new Set(options.customTools ?? []);
     const readonlyFilteredCustomTools = isReadonly
-      ? filterCustomToolsForReadonly(
-          candidateCustomTools,
-          allowReadonlyMcpTools
-            ? {
-                allowTool: (tool) => readonlyMcpServerAllowlist === undefined
-                  ? mcpReadonlyTools.has(tool)
-                  : readonlyMcpServerAllowlist.has(mcpToolset?.serverByToolName?.get(tool.name) ?? ""),
-              }
-            : {},
-        )
+      ? filterCustomToolsForReadonly(candidateCustomTools, {
+          allowTool: (tool) => (callerCustomTools.has(tool) && trustedReadonlyCustomNames.has(tool.name)
+            && !["bash", "write", "edit"].includes(tool.name))
+            || (allowReadonlyMcpTools && mcpReadonlyTools.has(tool)
+              && (readonlyMcpServerAllowlist === undefined
+                || readonlyMcpServerAllowlist.has(mcpToolset?.serverByToolName?.get(tool.name) ?? ""))),
+        })
       : { allowed: candidateCustomTools, denied: [] };
     const allowlistFilteredCustomTools = {
       ...readonlyFilteredCustomTools,

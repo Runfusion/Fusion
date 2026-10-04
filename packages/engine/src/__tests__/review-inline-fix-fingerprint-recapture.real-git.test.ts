@@ -61,7 +61,7 @@ function codeReviewStep(id = "code-review") {
     prompt: "Review the implementation.",
     toolMode: "readonly",
     enabled: true,
-    optionalGroupId: "code-review",
+    optionalGroupId: id,
     reviewKind: "code",
   } as any;
 }
@@ -141,7 +141,78 @@ beforeEach(() => {
   });
 });
 
+async function reviewFixture(workspace = false) {
+  const repo = await repository();
+  const subject = {
+    id: "FN-9234", title: "Review fixes", description: "Review fixtures", column: "in-review",
+    worktree: workspace ? undefined : repo.directory, baseCommitSha: repo.base,
+    ...(workspace ? { workspaceWorktrees: { app: { worktreePath: repo.directory } } } : {}),
+    dependencies: [], steps: [], currentStep: 0, log: [], workflowStepResults: [],
+  } as any;
+  const store = {
+    getTask: vi.fn(async () => subject), logEntry: vi.fn(async () => undefined), appendAgentLog: vi.fn(async () => undefined),
+    isBackendMode: vi.fn(() => false),
+  } as any;
+  const deps = {
+    store, rootDir: repo.directory, options: {}, activePlanningWorkflowSessions: new Set(),
+    activeWorkflowStepSessions: new Map(), getRunContextFor: () => undefined,
+    captureModifiedFiles: async () => [], createSpawnAgentTool: () => undefined, sharedWorkerTools: {},
+    deleteActiveWorkflowStepSession: () => undefined, getAssignedAgentRuntimeConfig: () => undefined,
+    getAuthoritativeAssignedAgent: async () => undefined, readTaskArtifact: async () => "# Approved task\n",
+    resolveInstructionsForRole: async () => "", resolveMcpServers: async () => [],
+    setActiveWorkflowStepSession: () => undefined,
+  } as any;
+  return { repo, subject, deps };
+}
+
 describe("inline review fingerprint recapture", () => {
+  it.each([false, true].flatMap((workspace) => ["unstaged", "staged", "untracked", "unavailable"].map((state) => ({ workspace, state }))))(
+    "refuses approval for $state source checkout (workspace=$workspace)", async ({ workspace, state }) => {
+      const { repo, subject, deps } = await reviewFixture(workspace);
+      installReviewer(async () => {
+        if (state === "unavailable") await rm(join(repo.directory, ".git"), { recursive: true });
+        else {
+          await writeFile(join(repo.directory, state === "untracked" ? "new-fix.txt" : "app.txt"), "reviewer correction\n");
+          if (state === "staged") await git(repo.directory, ["add", "app.txt"]);
+        }
+        return JSON.stringify({ verdict: "APPROVE", notes: "Fixed and verified locally." });
+      });
+      const outcome = await executeWorkflowStep(deps, subject, codeReviewStep(), repo.directory, {});
+      expect(outcome).toMatchObject({ success: false, revisionRequested: true, verdict: "REVISE", findings: [expect.objectContaining({ id: "review-checkout-not-committed", resolution: "open" })] });
+      expect(outcome.notes).toContain(state === "unavailable" ? "could not verify" : state === "untracked" ? "new-fix.txt" : "app.txt");
+    },
+  );
+
+  it("refuses the no-commit shortcut when source changes are uncommitted", async () => {
+    const { repo, subject, deps } = await reviewFixture();
+    await git(repo.directory, ["reset", "--hard", repo.base]);
+    subject.noCommitsExpected = true;
+    await writeFile(join(repo.directory, "forgotten.txt"), "review correction");
+    const outcome = await executeWorkflowStep(deps, subject, codeReviewStep(), repo.directory, {});
+    expect(outcome).toMatchObject({ success: false, verdict: "REVISE" });
+    expect(outcome.notes).toContain("forgotten.txt");
+    expect(agentSession.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps ignored artifacts out of the approval fence", async () => {
+    const { repo, subject, deps } = await reviewFixture();
+    await writeFile(join(repo.directory, ".gitignore"), "artifact.log\n");
+    await git(repo.directory, ["add", ".gitignore"]);
+    await git(repo.directory, ["commit", "-m", "ignore artifacts"]);
+    installReviewer(async () => {
+      await writeFile(join(repo.directory, "artifact.log"), "verification output");
+      return JSON.stringify({ verdict: "APPROVE", notes: "Verified." });
+    });
+    expect(await executeWorkflowStep(deps, subject, codeReviewStep(), repo.directory, {})).toMatchObject({ success: true, verdict: "APPROVE" });
+  });
+
+  it("keeps post-merge verification read-only", async () => {
+    const { repo, subject, deps } = await reviewFixture();
+    installApproveReviewer();
+    await executeWorkflowStep(deps, subject, { ...codeReviewStep(), phase: "post-merge", name: "Post-merge Verification" }, repo.directory, {});
+    expect(agentSession.create.mock.calls[0][0]).toMatchObject({ tools: "readonly" });
+  });
+
   it("executes, persists, gates, reroutes, and converges a reviewer inline fix without mutating its sibling lane", async () => {
     const repo = await repository();
     const preFixFingerprint = await computeCodeReviewInputFingerprint(repo.directory, repo.base);
@@ -246,6 +317,11 @@ describe("inline review fingerprint recapture", () => {
 
     const reusable = await executeWorkflowStep(deps, converged, codeReviewStep(), repo.directory, {});
     expect(reusable).toMatchObject({ reviewInputFingerprint: descriptor.diff.fingerprint, reviewedCommitSha: postFixHead });
+    expect(agentSession.create).toHaveBeenCalledTimes(2);
+    await writeFile(join(repo.directory, "app.txt"), "uncommitted correction after approval");
+    const dirtyReuse = await executeWorkflowStep(deps, converged, codeReviewStep(), repo.directory, {});
+    expect(dirtyReuse).toMatchObject({ success: false, verdict: "REVISE" });
+    expect(dirtyReuse.notes).toContain("app.txt");
     expect(agentSession.create).toHaveBeenCalledTimes(2);
   });
 });

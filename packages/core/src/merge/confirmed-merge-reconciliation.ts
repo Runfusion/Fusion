@@ -67,7 +67,11 @@ export async function getRequiredPostMergeEvidenceDecision(
     const [result] = results;
     if (result.status === "pending") return { outcome: "blocked", gateId, reason: "pending" };
     if (result.status === "failed") return { outcome: "blocked", gateId, reason: "failed" };
-    if (result.status === "skipped") return { outcome: "blocked", gateId, reason: "skipped" };
+    if (result.status === "skipped") {
+      // Remediation invalidated this earlier attempt; it is retained history, not a waiver.
+      if (result.remediationArchivedAt && !result.bypassedBy) return { outcome: "resumable", gateId };
+      return { outcome: "blocked", gateId, reason: "skipped" };
+    }
     if (result.status !== "passed" || (result.verdict !== "APPROVE" && result.verdict !== "APPROVE_WITH_NOTES")) {
       return { outcome: "blocked", gateId, reason: "not-approved" };
     }

@@ -3,6 +3,7 @@ import { describeMergeContentShape } from "@fusion/core";
 import { resolveDiffBaseRef } from "../executor/worktree-git-refs.js";
 import { probeReviewDiffFingerprint } from "../worktree/review-diff-fingerprint.js";
 import { captureWorkspaceReviewEvidence } from "../worktree/workspace-review-evidence.js";
+import { probeReviewCheckout } from "../worktree/review-checkout-clean.js";
 
 export type MergeContentCaptureDeps = {
   workspaceRootDir: string;
@@ -21,6 +22,14 @@ export async function captureMergeContentDescriptor(
 ): Promise<MergeContentDescriptor> {
   if (describeMergeContentShape(task) === "workspace") {
     try {
+      for (const [repository, entry] of Object.entries(task.workspaceWorktrees ?? {})) {
+        const checkout = await probeReviewCheckout(entry.worktreePath);
+        if (checkout.state !== "clean") {
+          return { kind: "workspace", repositories: { state: "unavailable", reason: checkout.state === "dirty"
+            ? `uncommitted-review-changes:${repository}:${checkout.paths.join(", ")}`
+            : `review-checkout-unavailable:${repository}` } };
+        }
+      }
       const evidence = await captureWorkspaceReviewEvidence({
         task,
         workspaceRootDir: deps.workspaceRootDir,
@@ -41,6 +50,14 @@ export async function captureMergeContentDescriptor(
     }
   }
 
+  if (task.worktree) {
+    const checkout = await probeReviewCheckout(task.worktree);
+    if (checkout.state !== "clean") {
+      return { kind: "singular", diff: { state: "unavailable", reason: checkout.state === "dirty"
+        ? `uncommitted-review-changes:${checkout.paths.join(", ")}`
+        : "review-checkout-unavailable" } };
+    }
+  }
   const baseRef = task.worktree
     ? await resolveDiffBaseRef(task.worktree, task.baseCommitSha)
     : undefined;

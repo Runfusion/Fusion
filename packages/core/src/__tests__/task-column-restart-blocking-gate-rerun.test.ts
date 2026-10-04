@@ -25,7 +25,7 @@ function restart(subject: Task) {
 }
 
 describe("review Retry blocking required gate recovery", () => {
-  it.each(["failed", "pending"] as const)("discards earlier required %s evidence but preserves the review column", (status) => {
+  it.each(["failed", "pending", "skipped"] as const)("discards earlier required %s evidence but preserves the review column", (status) => {
     const result = restart(task([{ workflowStepId: "plan-review", status }, { workflowStepId: "implementation", status: "passed" }]));
     expect(result.scope).toBe("review");
     expect(result.columnId).toBe("review");

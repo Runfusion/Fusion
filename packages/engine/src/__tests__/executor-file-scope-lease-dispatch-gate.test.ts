@@ -40,6 +40,31 @@ function createStore(tasks: Task[], scopes: Record<string, string[]>, settings: 
 }
 
 describe("blockOuterDispatchWhenFileScopeLeaseHeld", () => {
+  it.each(["singular", "workspace"])("does not block fresh work behind a landed %s checkout", async (kind) => {
+    const holder = makeTask({
+      id: "FN-HOLDER", column: "in-review", mergeDetails: { mergeConfirmed: true },
+      ...(kind === "singular" ? { worktree: "/wt/retained" } : {
+        workspaceWorktrees: { repo: { worktreePath: "/wt/repo" } } as Task["workspaceWorktrees"],
+      }),
+    });
+    const candidate = makeTask();
+    const store = createStore([holder, candidate], {
+      [holder.id]: ["src/shared.ts"], [candidate.id]: ["src/shared.ts"],
+    });
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(false);
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+  });
+
+  it("does not reacquire implementation scope for landed verification behind new work", async () => {
+    const candidate = makeTask({ column: "in-review", worktree: "/wt/retained", mergeDetails: { mergeConfirmed: true } });
+    const holder = makeTask({ id: "FN-HOLDER", column: "in-progress" });
+    const store = createStore([holder, candidate], {
+      [holder.id]: ["src/shared.ts"], [candidate.id]: ["src/shared.ts"],
+    });
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(false);
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+  });
+
   it("holds a fresh dispatch behind an overlapping active lease without moving its column", async () => {
     const holder = makeTask({ id: "FN-HOLDER", column: "in-progress", createdAt: "2026-01-01T00:00:00.000Z" });
     const candidate = makeTask({ blockedBy: "FN-DEP" });

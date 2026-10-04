@@ -2778,6 +2778,27 @@ describe("createFnAgent", () => {
     expect(createSessionArgs.customTools.map((tool) => tool.name)).toContain("fn_list_agents");
   });
 
+  it("preserves only explicitly trusted custom tools through readonly runtime filtering", async () => {
+    createReadOnlyToolsMock.mockReturnValueOnce([{ name: "read" }, { name: "bash" }] as any);
+    const inspect = { name: "fn_post_merge_inspect", label: "Inspect", description: "Inspect evidence", parameters: {}, execute: vi.fn(async () => ({ content: [{ type: "text", text: "proof" }] })) };
+    const writer = { ...inspect, name: "fn_task_document_write" };
+    const forbidden = { ...inspect, name: "fn_task_delete" };
+    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp", systemPrompt: "test", tools: "readonly", customTools: [inspect, writer, forbidden] as any,
+      readonlyCustomToolAllowlist: [inspect.name, writer.name, "bash"],
+    } as any);
+    const { customTools, noTools } = createAgentSessionMock.mock.calls[0][0];
+    expect(customTools.map((tool: any) => tool.name)).toContain(inspect.name);
+    expect(customTools.map((tool: any) => tool.name)).toContain(writer.name);
+    expect(customTools.map((tool: any) => tool.name)).not.toContain(forbidden.name);
+    expect(customTools.map((tool: any) => tool.name)).not.toContain("bash");
+    expect(noTools).toBe("builtin");
+    const exposed = customTools.find((tool: any) => tool.name === inspect.name);
+    await expect(exposed.execute("call", {})).resolves.toMatchObject({ content: [{ text: "proof" }] });
+    expect(inspect.execute).toHaveBeenCalledOnce();
+  });
+
   it("keeps fn_task_prompt_write in coding session tools", async () => {
     const promptWriter = {
       name: "fn_task_prompt_write",

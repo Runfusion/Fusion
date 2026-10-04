@@ -187,9 +187,17 @@ describe("workspace implementation base-refresh enablement", () => {
       { id: "review", kind: "prompt" } as WorkflowIrNode,
       live,
       settings,
+      { requiresWorktree: true },
+    );
+    await prepareGraphNodeExecution(
+      deps,
+      { id: "summary", kind: "prompt" } as WorkflowIrNode,
+      live,
+      settings,
       { requiresWorktree: false },
     );
 
+    expect(ensureGraphCustomNodeWorktree).toHaveBeenCalledTimes(2);
     expect(ensureGraphCustomNodeWorktree).toHaveBeenNthCalledWith(1, live, settings, "implementation", true);
     expect(ensureGraphCustomNodeWorktree).toHaveBeenNthCalledWith(2, live, settings, "review", false);
   });

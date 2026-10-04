@@ -19,6 +19,20 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe("classifyFileScopeLease", () => {
+  it.each(["in-review", "in-progress", "todo", "signoff"])("releases landed implementation scope in %s despite retained checkouts and failed verification", (column) => {
+    for (const checkout of [
+      { worktree: "/wt/retained" },
+      { workspaceWorktrees: { repo: { worktreePath: "/wt/repo" } } as Task["workspaceWorktrees"] },
+    ]) {
+      const holder = makeTask({
+        column, ...checkout, mergeDetails: { mergeConfirmed: true }, status: "failed",
+        workflowStepResults: [{ workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE" }],
+      });
+      expect(classifyFileScopeLease(holder, [], column === "signoff" ? { isReviewColumn: true } : undefined))
+        .toEqual({ kind: "none", waivedForTaskIds: [] });
+    }
+  });
+
   it("keeps failed, paused, and user-paused review cards active while they own a worktree", () => {
     expect(classifyFileScopeLease(makeTask({ column: "in-review", worktree: "/wt/a", status: "failed" }), [])).toMatchObject({ kind: "active" });
     expect(classifyFileScopeLease(makeTask({ column: "in-review", worktree: "/wt/a", paused: true }), [])).toMatchObject({ kind: "active" });
