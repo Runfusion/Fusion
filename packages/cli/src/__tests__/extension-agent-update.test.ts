@@ -348,6 +348,51 @@ pgDescribe("fn_agent_update", () => {
       const candidateAgentIds = [first.id, second.id].sort();
       const updateSpy = vi.spyOn(AgentStore.prototype, "updateAgent");
 
+      const updateFirst = await tool.execute(
+        "call-exact-update-first",
+        { agent_id: first.id, soul: "first exact-ID soul" },
+        undefined,
+        undefined,
+        { cwd },
+      );
+      expect(updateFirst.details).toMatchObject({ outcome: "updated", agentId: first.id });
+      expect(await agentStore.getAgent(first.id)).toMatchObject({ soul: "first exact-ID soul" });
+      expect((await agentStore.getAgent(second.id))?.soul).toBeUndefined();
+
+      const updateSecond = await tool.execute(
+        "call-exact-update-second",
+        { agent_id: second.id, soul: "second exact-ID soul" },
+        undefined,
+        undefined,
+        { cwd },
+      );
+      expect(updateSecond.details).toMatchObject({ outcome: "updated", agentId: second.id });
+      expect(await agentStore.getAgent(first.id)).toMatchObject({ soul: "first exact-ID soul" });
+      expect(await agentStore.getAgent(second.id)).toMatchObject({ soul: "second exact-ID soul" });
+
+      const instructionsFirst = await setInstructionsTool.execute(
+        "call-exact-instructions-first",
+        { agent_id: first.id, instructions_text: "first exact-ID instructions" },
+        undefined,
+        undefined,
+        { cwd },
+      );
+      expect(instructionsFirst.details).toMatchObject({ outcome: "updated", agentId: first.id });
+      expect(await agentStore.getAgent(first.id)).toMatchObject({ instructionsText: "first exact-ID instructions" });
+      expect((await agentStore.getAgent(second.id))?.instructionsText).toBeUndefined();
+
+      const instructionsSecond = await setInstructionsTool.execute(
+        "call-exact-instructions-second",
+        { agent_id: second.id, instructions_text: "second exact-ID instructions" },
+        undefined,
+        undefined,
+        { cwd },
+      );
+      expect(instructionsSecond.details).toMatchObject({ outcome: "updated", agentId: second.id });
+      expect(await agentStore.getAgent(first.id)).toMatchObject({ instructionsText: "first exact-ID instructions" });
+      expect(await agentStore.getAgent(second.id)).toMatchObject({ instructionsText: "second exact-ID instructions" });
+
+      updateSpy.mockClear();
       const ambiguousTarget = await tool.execute(
         "call-ambiguous-target",
         { agent_id: "duplicate_update", soul: "must not write" },
@@ -375,6 +420,7 @@ pgDescribe("fn_agent_update", () => {
       );
       expect(ambiguousInstructions.details).toMatchObject({ outcome: "ambiguous", candidateAgentIds });
       expect(updateSpy).not.toHaveBeenCalled();
+      await expect(agentStore.resolveAgent("Duplicate Update")).rejects.toMatchObject({ candidateAgentIds });
       updateSpy.mockRestore();
     });
   });

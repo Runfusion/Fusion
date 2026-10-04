@@ -1,36 +1,14 @@
 // @vitest-environment node
 
 import express from "express";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { AgentStore, drizzleSql } from "@fusion/core";
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+} from "../../../../core/src/__test-utils__/pg-test-harness.js";
 import { createApiRoutes } from "../../routes.js";
 import { request } from "../../test-request.js";
-
-vi.mock("@fusion/core", async () => {
-  const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
-  const agents = [
-    { id: "agent-duplicate-b", name: "Workflow Merger", role: "merger", roles: ["merger"], state: "idle", metadata: {}, createdAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
-    { id: "agent-duplicate-a", name: "Workflow Merger", role: "merger", roles: ["merger"], state: "idle", metadata: {}, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
-    { id: "agent-unique", name: "Unique Reviewer", role: "reviewer", roles: ["reviewer"], state: "idle", metadata: {}, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" },
-  ];
-  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  class MockAgentStore {
-    async init() {}
-    async listAgents() { return agents; }
-    async getAgent(id: string) { return agents.find((agent) => agent.id === id) ?? null; }
-    async getAgentDetail(id: string) { return agents.find((agent) => agent.id === id) ?? null; }
-    async resolveAgent(query: string) {
-      const exact = await this.getAgent(query);
-      if (exact) return exact;
-      const normalizedName = normalize(query);
-      const matches = agents.filter((agent) => normalize(agent.name) === normalizedName);
-      if (matches.length > 1) {
-        throw new actual.AmbiguousAgentNameError(query, normalizedName, matches.map((agent) => agent.id).sort());
-      }
-      return matches[0] ?? null;
-    }
-  }
-  return { ...actual, AgentStore: MockAgentStore };
-});
 
 vi.mock("@fusion/engine", async () => {
   const { createEngineMock } = await import("../../test/mockCoreEngine.js");
@@ -44,58 +22,68 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-function createStore() {
-  return {
-    getRootDir: vi.fn().mockReturnValue("/fake/project"),
-    getFusionDir: vi.fn().mockReturnValue("/fake/project/.fusion"),
-    getAsyncLayer: vi.fn().mockReturnValue(undefined),
-    getSettings: vi.fn().mockResolvedValue({}),
-    getSettingsFast: vi.fn().mockResolvedValue({}),
-    getSettingsByScope: vi.fn().mockResolvedValue({ global: {}, project: {} }),
-    getSettingsByScopeFast: vi.fn().mockResolvedValue({ global: {}, project: {} }),
-    getGlobalSettingsStore: vi.fn(),
-    getPluginStore: vi.fn().mockReturnValue({ init: vi.fn().mockResolvedValue(undefined), listPlugins: vi.fn().mockResolvedValue([]) }),
-    getProjectScopedPluginMcpServers: vi.fn().mockResolvedValue([]),
-    listTasks: vi.fn().mockResolvedValue([]),
-    searchTasks: vi.fn().mockResolvedValue([]),
-    getAgentLogs: vi.fn().mockResolvedValue([]),
-    getAgentLogCount: vi.fn().mockResolvedValue(0),
-    getAgentLogsByTimeRange: vi.fn().mockResolvedValue([]),
-    getTaskDocuments: vi.fn().mockResolvedValue([]),
-    getTaskDocument: vi.fn().mockResolvedValue(null),
-    getTaskDocumentRevisions: vi.fn().mockResolvedValue([]),
-    getAllDocuments: vi.fn().mockResolvedValue([]),
-    listWorkflowSteps: vi.fn().mockResolvedValue([]),
-    getMissionStore: vi.fn(),
-  } as any;
-}
+const h = createSharedPgTaskStoreTestHarness({
+  prefix: "agent_identity_routes",
+  projectId: "dashboard_agent_identity_routes",
+});
 
-describe("agent identity resolution routes", () => {
-  let app: express.Express;
+pgDescribe("agent identity resolution routes", () => {
+  beforeAll(h.beforeAll);
+  beforeEach(h.beforeEach);
+  afterEach(h.afterEach);
+  afterAll(h.afterAll);
 
-  beforeEach(() => {
-    app = express();
+  it("composes real startup reconciliation with list, exact-ID detail, and deterministic name resolution", async () => {
+    const store = h.store();
+    const agentStore = new AgentStore({
+      rootDir: store.getFusionDir(),
+      asyncLayer: store.getAsyncLayer()!,
+    });
+    await agentStore.init();
+
+    const original = (await agentStore.listAgents({ includeEphemeral: true })).find(
+      (agent) => agent.metadata?.builtInWorkflowRole === true && agent.metadata?.workflowRole === "merger",
+    )!;
+    const duplicate = await agentStore.createAgent({
+      name: "temporary dashboard merger duplicate",
+      role: "merger",
+      instructionsText: "duplicate dashboard instructions",
+      metadata: { builtInWorkflowRole: true, workflowRole: "merger", retained: "dashboard" },
+      runtimeConfig: { identity: "duplicate" },
+    });
+    const unique = await agentStore.createAgent({ name: "Unique Reviewer", role: "reviewer" });
+
+    // Reproduce the legacy duplicate after create-time uniqueness validation, with timestamps
+    // that make the existing built-in the deterministic provenance owner during route init.
+    await h.layer().db.execute(drizzleSql`
+      UPDATE project.agents
+      SET created_at = CASE
+        WHEN id = ${original.id} THEN ${"2026-01-01T00:00:00.000Z"}
+        ELSE ${"2026-01-02T00:00:00.000Z"}
+      END,
+      name = ${"Workflow Merger"}
+      WHERE project_id = ${"dashboard_agent_identity_routes"}
+        AND id IN (${original.id}, ${duplicate.id})
+    `);
+
+    const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(createStore()));
-  });
+    app.use("/api", createApiRoutes(store));
 
-  it("lists duplicate rows and keeps each exact-ID detail route authoritative", async () => {
     const list = await request(app, "GET", "/api/agents");
-    expect(list.status).toBe(200);
+    expect(list.status, JSON.stringify(list.body)).toBe(200);
     expect((list.body as Array<{ id: string; name: string }>).filter((agent) => agent.name === "Workflow Merger")
-      .map((agent) => agent.id).sort()).toEqual(["agent-duplicate-a", "agent-duplicate-b"]);
+      .map((agent) => agent.id).sort()).toEqual([original.id, duplicate.id].sort());
 
-    for (const id of ["agent-duplicate-a", "agent-duplicate-b"]) {
+    for (const id of [original.id, duplicate.id]) {
       const detail = await request(app, "GET", `/api/agents/${id}`);
-      expect(detail.status).toBe(200);
+      expect(detail.status, JSON.stringify(detail.body)).toBe(200);
       expect((detail.body as { id: string }).id).toBe(id);
     }
-  });
 
-  it("returns unique and missing names normally and maps ambiguity to a deterministic 409", async () => {
-    const unique = await request(app, "GET", "/api/agents/resolve/unique_reviewer");
-    expect(unique.status).toBe(200);
-    expect((unique.body as { agent: { id: string } }).agent.id).toBe("agent-unique");
+    const uniqueResponse = await request(app, "GET", "/api/agents/resolve/unique_reviewer");
+    expect(uniqueResponse.status).toBe(200);
+    expect((uniqueResponse.body as { agent: { id: string } }).agent.id).toBe(unique.id);
 
     const missing = await request(app, "GET", "/api/agents/resolve/missing-agent");
     expect(missing.status).toBe(404);
@@ -108,7 +96,20 @@ describe("agent identity resolution routes", () => {
       outcome: "ambiguous",
       query: "workflow_merger",
       normalizedName: "workflow-merger",
-      candidateAgentIds: ["agent-duplicate-a", "agent-duplicate-b"],
+      candidateAgentIds: [original.id, duplicate.id].sort(),
     });
+
+    const reconciledOriginal = await agentStore.getAgent(original.id);
+    const reconciledDuplicate = await agentStore.getAgent(duplicate.id);
+    expect(reconciledOriginal?.metadata).toMatchObject({ builtInWorkflowRole: true, workflowRole: "merger" });
+    expect(reconciledDuplicate).toMatchObject({
+      id: duplicate.id,
+      name: "Workflow Merger",
+      instructionsText: "duplicate dashboard instructions",
+      metadata: { retained: "dashboard" },
+      runtimeConfig: { identity: "duplicate" },
+    });
+    expect(reconciledDuplicate?.metadata).not.toHaveProperty("builtInWorkflowRole");
+    expect(reconciledDuplicate?.metadata).not.toHaveProperty("workflowRole");
   });
 });
