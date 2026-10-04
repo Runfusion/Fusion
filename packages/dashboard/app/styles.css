@@ -2690,6 +2690,23 @@ Task cards reuse the compact badge chip dimensions for GitLab links, but stale G
   gap: var(--space-xs);
 }
 
+/*
+FNXC:TaskDetailAssignee 2026-10-02-14:35:
+A direct replacement control joins the assigned-agent chip and clear action. At phone widths,
+keep that action group on its own row so each assignment action remains reachable.
+*/
+@media (max-width: 768px) {
+  .detail-meta-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .detail-agent-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
 .detail-agent-chip {
   display: inline-flex;
   align-items: center;

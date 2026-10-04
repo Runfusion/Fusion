@@ -2360,6 +2360,10 @@ describe("TaskDetailModal", () => {
         expect(screen.getByText(replacementAgent.name)).toBeInTheDocument();
         expect(document.querySelector(".agent-picker-dropdown")).toBeNull();
       });
+
+      await user.click(screen.getByRole("button", { name: "Change assignee" }));
+      expect(await screen.findByRole("button", { name: new RegExp(replacementAgent.name) })).toHaveClass("selected");
+      expect(screen.getByRole("button", { name: new RegExp(currentAgent.name) })).not.toHaveClass("selected");
     });
 
     it("keeps the current assignment and picker available when replacement is rejected", async () => {
