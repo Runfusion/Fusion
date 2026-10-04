@@ -207,7 +207,7 @@ describe("missing post-merge continuation recovery", () => {
 
   it.each(["recent", "invalid-time", "exhausted"])("does not spin on %s rejected post-merge evidence", async (condition) => {
     const { task, store } = recoveryFixture();
-    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: condition === "recent" ? new Date().toISOString() : condition === "invalid-time" ? "invalid" : "2026-01-01T00:00:00Z" };
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: condition === "invalid-time" ? "invalid" : new Date().toISOString() };
     task.workflowStepResults = [{ ...rejection, priorAttempts: condition === "exhausted" ? [rejection, rejection, rejection] : [] }] as Task["workflowStepResults"];
     for (let n = 0; n < 3; n++) await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
@@ -217,6 +217,21 @@ describe("missing post-merge continuation recovery", () => {
       expect(task.error).toContain("Post-merge verification needs remediation");
       expect(task.workflowStepResults?.[0].priorAttempts).toHaveLength(3);
     }
+  });
+
+  it("rechecks external evidence after the capped cooldown even after three rejected attempts", async () => {
+    const { task, store, items } = recoveryFixture();
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date(Date.now() - 61 * 60_000).toISOString(), notes: "Waiting for post-landing CI" };
+    task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    task.status = "failed";
+    task.error = "Post-merge verification needs remediation: waiting for CI";
+    const before = structuredClone(task.workflowStepResults);
+    for (let n = 0; n < 3; n++) await resumeMissingPostMergeGate(store, task.id);
+    expect(items).toHaveLength(1);
+    expect(task.status).toBeNull();
+    expect(task.error).toBeNull();
+    expect(task.workflowStepResults).toEqual(before);
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("allows an explicit landed reconciliation to retry exhausted evidence without erasing history", async () => {

@@ -50,14 +50,16 @@ function hasExhaustedRechecks(result: WorkflowStepResult): boolean {
 /*
 FNXC:ReviewRecovery 2026-10-04-02:24:
 Post-merge reviewers can run before hosted CI finishes. Revisit rejected evidence after 15 minutes,
-then 30 and 60 minutes, at most three times. Durable result history survives restart and task-log
-updates cannot shorten the wait. Missing timestamps, duplicate evidence and live owners fail closed.
+then 30 and 60 minutes, with further checks capped at one per hour. CI and follow-up fixes can
+arrive after the early retries; a total attempt cap would strand their evidence permanently.
+Durable result history survives restart and task-log updates cannot shorten the wait. Missing
+timestamps, duplicate evidence and live owners fail closed.
 */
 function isRejectedGateRecheckDue(result: WorkflowStepResult): boolean {
   const failures = (result.priorAttempts ?? []).filter((entry) => entry.status === "failed").length;
   const completedAt = Date.parse(result.completedAt ?? "");
-  return result.status === "failed" && failures < 3 && Number.isFinite(completedAt)
-    && Date.now() - completedAt >= 15 * 60_000 * 2 ** failures;
+  return result.status === "failed" && Number.isFinite(completedAt)
+    && Date.now() - completedAt >= 15 * 60_000 * 2 ** Math.min(failures, 2);
 }
 
 export function isPostMergeGateRecoveryDue(
@@ -91,7 +93,8 @@ export async function resumeMissingPostMergeGate(
   const manualRetry = options.manualRetry === true && decision.outcome === "blocked" && decision.reason === "failed";
   if (decision.outcome === "finalizable" || (!manualRetry && !isPostMergeGateRecoveryDue(task, decision))) return { outcome: "not-resumable" };
   const failedResult = task.workflowStepResults?.find((entry) => entry.workflowStepId === decision.gateId);
-  if (!manualRetry && failedResult?.status === "failed" && hasExhaustedRechecks(failedResult)) {
+  if (!manualRetry && failedResult?.status === "failed" && hasExhaustedRechecks(failedResult)
+    && !task.error?.startsWith(EXHAUSTED_PREFIX)) {
     let recorded = false;
     await store.updateTaskAtomic(task.id, async (live) => {
       if (live.updatedAt !== task.updatedAt || live.paused || live.userPaused || live.deletedAt
@@ -99,9 +102,9 @@ export async function resumeMissingPostMergeGate(
       const items = await store.listWorkflowWorkItemsForTask(task.id);
       if (items.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) return null;
       recorded = true;
-      return { status: "failed", error: `${EXHAUSTED_PREFIX}: '${decision.gateId}' exhausted automatic rechecks. ${failedResult.notes || failedResult.output || "Inspect the failed verification result."} Resolve the findings, then reconcile the landed task to retry verification in place.` };
+      return { status: "failed", error: `${EXHAUSTED_PREFIX}: '${decision.gateId}' has repeated rejected evidence. ${failedResult.notes || failedResult.output || "Inspect the failed verification result."} Automatic evidence checks continue hourly; Retry can check again after remediation.` };
     });
-    if (recorded) await store.logEntry(task.id, `[post-merge] Automatic verification rechecks exhausted for '${decision.gateId}'; remediation is required. Merge proof and failed evidence are preserved.`);
+    if (recorded) await store.logEntry(task.id, `[post-merge] Repeated rejected evidence for '${decision.gateId}'; remediation is required and automatic checks continue hourly. Merge proof and failed evidence are preserved.`);
     return recorded ? { outcome: "exhausted", gateId: decision.gateId } : { outcome: "not-resumable" };
   }
   const selection = await store.getTaskWorkflowSelectionAsync(task.id);
@@ -127,6 +130,14 @@ export async function resumeMissingPostMergeGate(
     expectedTaskUpdatedAt: task.updatedAt,
   });
   if (!seeded.seeded) return { outcome: "not-resumable" };
+  if (task.error?.startsWith(EXHAUSTED_PREFIX)) {
+    const previousError = task.error;
+    await store.updateTaskAtomic(task.id, (live) => {
+      if (live.status !== "failed" || live.error !== previousError || live.paused || live.userPaused
+        || !live.mergeDetails?.mergeConfirmed) return null;
+      return { status: null as unknown as Task["status"], error: null as unknown as Task["error"] };
+    });
+  }
   await store.logEntry(task.id, `[post-merge] ${decision.outcome === "resumable" ? "Resuming missing verification" : "Rechecking rejected evidence"} at '${node.id}'; already-landed implementation and merge will not run again.`);
   return { outcome: "resumed", gateId: node.id };
 }
