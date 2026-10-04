@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, afterEach, afterAll, expect, it, vi } from "vitest";
 import { join } from "node:path";
-import { AgentStore } from "@fusion/core";
+import { AgentStore, drizzleSql } from "@fusion/core";
 import {
   createMockApi,
   createPgExtensionHarness,
@@ -334,6 +334,47 @@ pgDescribe("fn_agent_update", () => {
         reportsTo: original?.reportsTo,
         runtimeConfig: original?.runtimeConfig,
       });
+      updateSpy.mockRestore();
+    });
+  });
+
+  it("rejects ambiguous targets and managers without mutating any agent", async () => {
+    await withOrg(async ({ cwd, tool, setInstructionsTool, agentStore, ids }) => {
+      const first = await agentStore.createAgent({ name: "duplicate update first", role: "engineer" });
+      const second = await agentStore.createAgent({ name: "duplicate update second", role: "engineer" });
+      await h.store().getAsyncLayer()!.db.execute(
+        drizzleSql`UPDATE project.agents SET name = ${"Duplicate Update"} WHERE id IN (${first.id}, ${second.id})`,
+      );
+      const candidateAgentIds = [first.id, second.id].sort();
+      const updateSpy = vi.spyOn(AgentStore.prototype, "updateAgent");
+
+      const ambiguousTarget = await tool.execute(
+        "call-ambiguous-target",
+        { agent_id: "duplicate_update", soul: "must not write" },
+        undefined,
+        undefined,
+        { cwd },
+      );
+      expect(ambiguousTarget.details).toMatchObject({ outcome: "ambiguous", candidateAgentIds });
+
+      const ambiguousManager = await tool.execute(
+        "call-ambiguous-manager",
+        { agent_id: ids.leaf, reportsTo: "Duplicate Update" },
+        undefined,
+        undefined,
+        { cwd },
+      );
+      expect(ambiguousManager.details).toMatchObject({ outcome: "ambiguous", candidateAgentIds });
+
+      const ambiguousInstructions = await setInstructionsTool.execute(
+        "call-ambiguous-instructions",
+        { agent_id: "Duplicate Update", instructions_text: "must not write" },
+        undefined,
+        undefined,
+        { cwd },
+      );
+      expect(ambiguousInstructions.details).toMatchObject({ outcome: "ambiguous", candidateAgentIds });
+      expect(updateSpy).not.toHaveBeenCalled();
       updateSpy.mockRestore();
     });
   });
