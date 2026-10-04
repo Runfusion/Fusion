@@ -94,7 +94,7 @@ pgTest("AgentStore instructions fields (PostgreSQL)", () => {
       runtimeConfig: { enabled: false, identity: "first" },
     });
     const ephemeral = await agentStore.createAgent({
-      name: "Workflow Merger",
+      name: "Duplicate Durable Name",
       roles: ["merger"],
       metadata: { type: "spawned" },
     });
@@ -102,13 +102,13 @@ pgTest("AgentStore instructions fields (PostgreSQL)", () => {
     // Legacy rows can predate the durable-name creation guard. Seed the indexed identity exactly
     // as production reads it while deliberately retaining reverse creation/query order.
     await h.layer().db.update(postgresSchema.project.agents)
-      .set({ name: "Workflow Merger" })
+      .set({ name: "Duplicate Durable Name" })
       .where(and(
         eq(postgresSchema.project.agents.projectId, "proj_agent_instr"),
         eq(postgresSchema.project.agents.id, second.id),
       ));
     await h.layer().db.update(postgresSchema.project.agents)
-      .set({ name: "Workflow Merger" })
+      .set({ name: "Duplicate Durable Name" })
       .where(and(
         eq(postgresSchema.project.agents.projectId, "proj_agent_instr"),
         eq(postgresSchema.project.agents.id, first.id),
@@ -125,14 +125,14 @@ pgTest("AgentStore instructions fields (PostgreSQL)", () => {
       runtimeConfig: { identity: "second" },
     });
     await expect(agentStore.resolveAgent(ephemeral.id)).resolves.toMatchObject({ id: ephemeral.id });
-    await expect(agentStore.resolveAgent("Workflow Merger")).rejects.toEqual(expect.objectContaining({
+    await expect(agentStore.resolveAgent("Duplicate Durable Name")).rejects.toEqual(expect.objectContaining({
       name: "AmbiguousAgentNameError",
       code: "AMBIGUOUS_AGENT_NAME",
-      query: "Workflow Merger",
-      normalizedName: "workflow-merger",
+      query: "Duplicate Durable Name",
+      normalizedName: "duplicate-durable-name",
       candidateAgentIds: [first.id, second.id].sort(),
     } satisfies Partial<AmbiguousAgentNameError>));
-    await expect(agentStore.resolveAgent("workflow---merger")).rejects.toMatchObject({
+    await expect(agentStore.resolveAgent("duplicate---durable_name")).rejects.toMatchObject({
       candidateAgentIds: [first.id, second.id].sort(),
     });
     await expect(agentStore.resolveAgent(" ")).resolves.toBeNull();
@@ -140,7 +140,7 @@ pgTest("AgentStore instructions fields (PostgreSQL)", () => {
 
     const unique = await agentStore.createAgent({ name: "Unique Lookup", roles: ["reviewer"] });
     await expect(agentStore.resolveAgent("unique_lookup")).resolves.toMatchObject({ id: unique.id });
-    expect((await agentStore.listAgents()).filter((agent) => agent.name === "Workflow Merger").map((agent) => agent.id).sort())
+    expect((await agentStore.listAgents()).filter((agent) => agent.name === "Duplicate Durable Name").map((agent) => agent.id).sort())
       .toEqual([first.id, second.id].sort());
   });
 
@@ -188,7 +188,7 @@ pgTest("AgentStore instructions fields (PostgreSQL)", () => {
     expect(await agentStore.getAgent(duplicate.id)).toMatchObject({
       id: duplicate.id,
       name: "Workflow Merger",
-      roles: ["merger", "reviewer"],
+      roles: ["reviewer", "merger"],
       title: "Operator merger title",
       reportsTo: manager.id,
       taskId: "FX-013-owned-task",
