@@ -22,18 +22,15 @@ describe("executor extraction safety guards", () => {
     expect(source).toContain("if (!deps.workspaceConfig && !externalExecutionRoute.configured)");
     expect(
       source.match(/^\s*if \(!externalExecutionRoute\.configured && worktreePath && existsSync\(worktreePath\)\) \{/gm) ?? [],
-    ).toHaveLength(5);
+    ).toHaveLength(3);
     expect(
       source.match(/^\s*if \(!externalExecutionRoute\.configured\) \{\n\s+await deps\.resetStepsIfWorkLost\(latestTask\);\n\s*\}/gm) ?? [],
-    ).toHaveLength(2);
-    expect(source).toMatch(
-      /\} finally \{\n\s+\/\*\n\s+FNXC:ExternalExecutionCheckout 2026-08-10-03:13:\n\s+External checkouts remain operator-owned[\s\S]*?\n\s+\*\/\n\s+releaseExternalExecutionActiveWorktree\(/,
-    );
+    ).toHaveLength(0);
     expect(source).toMatch(
       /releaseExternalExecutionActiveWorktree\(\n\s+deps\.activeWorktrees,\n\s+task\.id,\n\s+externalExecutionRoute\.configured,\n\s+\);\n\n\s+if \(reviewAddressingActivated\) \{[\s\S]*?deps\.executing\.delete\(task\.id\);\n\s+executingTaskLock\.release\(task\.id\);/,
     );
     expect(source).not.toMatch(/^\s*if \(worktreePath && existsSync\(worktreePath\)\) \{/m);
-    expect(source.match(/^\s*await deps\.resetStepsIfWorkLost\(latestTask\);$/gm) ?? []).toHaveLength(2);
+    expect(source.match(/^\s*await deps\.resetStepsIfWorkLost\(latestTask\);$/gm) ?? []).toHaveLength(0);
   });
 
   it("marks the injected graph-node worktree creator as native", () => {

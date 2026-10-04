@@ -84,7 +84,7 @@ describe("every workflow node runs in the task worktree, never the shared checko
     await (executor as any).runGraphCustomNode(node, live, { reviewerInlineFixes: false }, undefined);
 
     expect(captured.worktreePath).not.toBe(ROOT);
-    expect(captured.worktreePath).toContain(`${ROOT}/.worktrees/`);
+    expect(captured.worktreePath).toContain(`${ROOT}/.fusion/worktrees/`);
   });
 
   it("reuses an existing usable worktree instead of acquiring another", async () => {

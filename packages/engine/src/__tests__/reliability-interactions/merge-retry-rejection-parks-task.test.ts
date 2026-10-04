@@ -830,6 +830,12 @@ describe("routeGraphMergeFailureToRetry — rejected merge requester", () => {
       return current;
     });
     (store as any).updateTaskAtomic = updateTaskAtomic;
+    /*
+    FNXC:MergeRetryReliability 2026-10-04-15:20:
+    The retry router re-reads after boundary preparation; expose the replacement
+    row so its atomic reducer can prove the stale lane identity is fenced.
+    */
+    store.getTask.mockImplementation(async () => current);
     const route = routeGraphMergeFailureToRetry({
       store,
       getRunContextFor: () => undefined,

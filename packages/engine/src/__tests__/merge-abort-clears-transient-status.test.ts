@@ -141,6 +141,8 @@ describe("runAiMerge transient status write authority", () => {
       const store = {
         getTask: vi.fn(async () => task),
         getSettings: vi.fn(async () => ({ autoMerge: true })),
+        getStaleReviewCallbackWaiverReceipts: vi.fn(async () => []),
+        getProjectId: vi.fn(() => "merge-abort-test"),
         updateTask: vi.fn(async (_id: string, patch: { status: string | null }) => {
           if (patch.status === "merging") controller.abort();
         }),
@@ -435,6 +437,8 @@ describe("ProjectEngine aborted merge stamp cleanup", () => {
     const store = {
       getTask: vi.fn(async () => task),
       getSettings: vi.fn(async () => ({ autoMerge: true, globalPause: false, enginePaused: false })),
+      getStaleReviewCallbackWaiverReceipts: vi.fn(async () => []),
+      getProjectId: vi.fn(() => "merge-abort-test"),
       updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
       logEntry: vi.fn(async () => undefined),
       getRootDir: vi.fn(() => "/tmp/fn-8912"),

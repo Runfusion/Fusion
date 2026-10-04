@@ -53,7 +53,13 @@ describe("reliability interactions: secrets env materialization", () => {
     execFileSync("git", ["add", ".gitignore", "README.md"], { cwd: root });
     execFileSync("git", ["commit", "-qm", "base"], { cwd: root });
     const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-    const worktree = join(root, "linked");
+    /*
+    FNXC:TaskPinnedWorktrees 2026-10-04-15:28:
+    Native task worktrees are deterministically pinned by lowercase task ID; exercise the
+    production resume path instead of an external, re-derived linked checkout.
+    */
+    const worktree = join(root, ".worktrees", "fn-1");
+    mkdirSync(join(root, ".worktrees"), { recursive: true });
     execFileSync("git", ["worktree", "add", "-b", "fusion/fn-1", worktree, base], { cwd: root });
     const secretsStore = { listEnvExportable: vi.fn().mockResolvedValue([{ id: "1", key: "A", exportKey: "ALPHA", scope: "project", plaintextValue: "v" }]) } as any;
     await writeSecretsEnvFile({ rootDir: root, worktreePath: worktree, taskId: "FN-1", settings: { secretsEnv: { enabled: true, filename: ".secrets.env" } }, worktreeSource: "fresh", secretsStore });

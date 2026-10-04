@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 2, 13, and 18), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **4 active observation records** (entries 2, 13, 18, and 20), all **active first sightings**. Entries 1 and 15 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -285,6 +285,16 @@ No production retry race was established. `withRateLimitRetry` calls the non-awa
 | current four-case diagnostics describe | passed; rate-limit fake-timer and three real-timer warning diagnostics retained |
 
 A **second sighting** of this exact test requires same-change file-level quarantine in `scripts/lib/test-quarantine.json` and a matching `engine-default` Vitest exclusion. Do not add retries, widen the timeout, remove the fake-timer drain, or weaken the warning assertion.
+
+### 20. ProjectEngine research recall composition ordering
+
+- **Status:** Active first sighting — recorded 2026-10-04, unattributed.
+- **File:** `packages/engine/src/__tests__/project-engine.test.ts`
+- **Exact test:** `ProjectEngine research recall composition > persists finalized research through ProjectEngine's live recall composition`
+- **Observed tree/SHA:** `56a86a3437` during FN-9471 focused three-file engine verification.
+- **Observed frequency:** 1 sighting in the combined three-file command; exact test passed alone.
+
+The combined ProjectEngine/workspace-merger verification observed an empty recall list after the real detached writer was flushed. The exact test passed immediately in a file-scoped rerun, retaining its production `ProjectEngine` composition, real PostgreSQL layer, writer drain, and persisted-recall assertion. No timeout, retry, quarantine, or assertion weakening was applied. A second sighting requires same-change file-level quarantine under the repository deletion-ratchet policy.
 
 ### Common shape and investigated result
 

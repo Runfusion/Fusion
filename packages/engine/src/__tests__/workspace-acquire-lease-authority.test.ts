@@ -78,7 +78,8 @@ describeIfGit("workspace acquire durable lease authority", () => {
 
     const acquired = await acquireWorkspaceRepoWorktree({ repoRelPath: "repo-a", workspaceRootDir: fixture.rootDir, task: task("MRG-051"), store: durable.store, settings, registry, holderLiveProbe: () => true });
 
-    expect(acquired.worktreePath).toContain(".worktrees");
+    // FNXC:WorkspaceWorktree 2026-10-04-14:59: Per-repository acquisition now uses the repository-local Fusion worktree root, not the retired dot-worktrees location.
+    expect(acquired.worktreePath).toContain(".fusion/worktrees");
     expect((durable.store as any).acquireWorkspaceLease).toHaveBeenCalledTimes(2);
     expect(registry.lookupByPath(path)).toBeNull();
   }, 30_000);

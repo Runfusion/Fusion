@@ -372,7 +372,12 @@ pgDescribe("live rebound E2E: where a recovered card goes back to", () => {
     });
   });
 
-  describe("autoRecoverWorktreeSessionStartFailure — the session-start requeue", () => {
+  /*
+  FNXC:MissingWorktreeRecovery 2026-10-04-15:18:
+  Session-start recovery only clears unusable-session metadata in place. Automatic backward moves
+  would violate lifecycle containment; a later dispatch owns any transition out of the live lane.
+  */
+  describe("autoRecoverWorktreeSessionStartFailure — the in-place session-start recovery", () => {
     async function recover(taskId: string, v: Vocabulary, key: string) {
       const workflowId = await seedWorkflow(v, key);
       const task = await seedTask(taskId, v.wip, workflowId);
@@ -383,17 +388,17 @@ pgDescribe("live rebound E2E: where a recovered card goes back to", () => {
       } as never);
     }
 
-    it("requeues a recovered card to the RENAMED workflow's rebound column", async () => {
+    it("clears session metadata without moving a RENAMED workflow card backward", async () => {
       const result = await recover("FN-RB-6", RENAMED_VOCAB, "session-renamed");
 
-      expect(result.outcome).toBe("requeue-todo"); // the outcome NAME is legacy; the column is not
-      expect(await persistedColumn("FN-RB-6")).toBe(RENAMED_VOCAB.hold);
+      expect(result.outcome).toBe("requeue-todo"); // legacy outcome name; recovery is in-place
+      expect(await persistedColumn("FN-RB-6")).toBe(RENAMED_VOCAB.wip);
     });
 
-    it("still requeues a default-vocabulary card to `todo` (regression floor)", async () => {
+    it("keeps a default-vocabulary card in `in-progress` (regression floor)", async () => {
       await recover("FN-RB-7", DEFAULT_VOCAB, "session-default");
 
-      expect(await persistedColumn("FN-RB-7")).toBe(DEFAULT_VOCAB.hold);
+      expect(await persistedColumn("FN-RB-7")).toBe(DEFAULT_VOCAB.wip);
     });
   });
 });

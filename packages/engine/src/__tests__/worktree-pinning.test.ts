@@ -25,9 +25,9 @@ describe("worktree-pinning", () => {
   });
 
   describe("pinnedWorktreePathForTask", () => {
-    it("derives <rootDir>/.worktrees/<task-id> by default", () => {
+    it("derives <rootDir>/.fusion/worktrees/<task-id> by default", () => {
       expect(pinnedWorktreePathForTask("FN-7996", undefined, "/repo")).toBe(
-        join("/repo", ".worktrees", "fn-7996"),
+        join("/repo", ".fusion", "worktrees", "fn-7996"),
       );
     });
 
@@ -73,7 +73,7 @@ describe("worktree-pinning", () => {
         "/legacy/recover-fn-8400",
         {},
         "/repo",
-      )).toBe("/repo/.worktrees/fn-8400");
+      )).toBe("/repo/.fusion/worktrees/fn-8400");
     });
 
     it("does not preserve a legacy basename", () => {
@@ -82,7 +82,7 @@ describe("worktree-pinning", () => {
         "/legacy/recover-fn-8400",
         {},
         "/repo",
-      )).toBe("/repo/.worktrees/fn-8400");
+      )).toBe("/repo/.fusion/worktrees/fn-8400");
     });
   });
 });

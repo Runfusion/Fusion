@@ -61,6 +61,10 @@ function createStore(): TaskStore & { logs: string[] } {
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     // mergeAndReview reads store.getTask().comments for prompt context — return a real task shape.
     getTask: vi.fn(async () => liveTask),
+    /* FNXC:StaleReviewCallbackWaiver 2026-10-04-14:59: The merge door reads durable waiver receipts; an empty fixture response models no operator waiver without weakening that production check. */
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    // FNXC:WorkspaceMergeFixture 2026-10-04-14:59: The post-review merge state is project-scoped even in this dependency-sync fixture.
+    getProjectId: vi.fn().mockReturnValue("workspace-merger-deps-resilient"),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => { liveTask.column = column; return liveTask; }),
     // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: The dependency fixture must honor FN-9370's conditional terminal-move predicate.
     moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {

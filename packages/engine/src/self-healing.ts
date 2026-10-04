@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { readFile } from "node:fs/promises";
 import { tmpdir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, hasUserAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasSharedBranchMemberAutoMergeHold, hasUserAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getMergeConfirmedFinalizationBlocker, getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation, getTaskMergeBlocker, isStaleContentApprovalBlocker, resolvePreMergeGateForTask, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isLiveSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, resolveExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveRequiredPreMergeStepIds, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, isWipColumnRole, isReviewColumnRole, isTerminalColumnRole, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, resolveUnprovenReviewApproval, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type MoveTaskOptions, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr, type WorkflowIrV2,
 
   resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
@@ -13612,14 +13612,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             mergeTargetSource: mergeTarget.source,
           };
 
-          /* A proven land never re-runs stale review/checklist state during recovery. */
-          const postMergeBlocker = getPostMergeFinalizeBlocker({ status: task.status, error: task.error });
+          /*
+          FNXC:LandedContentRecovery 2026-10-04-15:49:
+          Content-scan recovery has proof that an owned commit reached the target, but it lacks
+          the durable merge record that may supersede unfinished implementation steps. Keep hard
+          blockers in review without stamping mergeConfirmed: a later confirmed-merge sweep must
+          not treat inferred content as authority to bypass the unfinished checklist.
+          */
+          const postMergeBlocker = getPostMergeFinalizeBlocker({ status: task.status, error: task.error })
+            ?? getMergeConfirmedFinalizationBlocker(task, {
+              reviewColumns: await ownReviewLanesForAlreadyMerged(task),
+            });
           if (postMergeBlocker) {
-
             await this.store.updateTask(task.id, {
               status: "failed",
               error: `Confirmed merge finalization deferred: ${postMergeBlocker}`,
-              mergeDetails,
             });
             await this.store.logEntry(
               task.id,
@@ -17435,9 +17442,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         continue;
       }
       try {
-        // FNXC:WorktreeCleanup: rmdir is deliberately non-recursive. Any content
-        // makes it fail closed and preserves the unregistered checkout.
-        rmdirSync(path);
+        /*
+        FNXC:WorktreeOrphanReap 2026-10-04-15:28:
+        A proven dangling linked worktree includes a `.git` pointer and can retain ignored secret
+        sidecars. This sweep has already established containment, project ownership, no Git
+        registration, and no live-session reservation, so recursively reclaim the complete orphan.
+        */
+        rmSync(path, { recursive: true, force: true });
         log.log(`Cleaned unregistered worktree dir: ${path}`);
         cleaned++;
       } catch (err: unknown) {
@@ -17460,8 +17471,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * Safety is bounded by age gates plus active-session checks.
    */
   private async cleanupStaleTempMergeWorktrees(): Promise<number> {
-    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): a temp merge worktree whose owning task has finished. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
-    const mergeTempTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+    /*
+    FNXC:TempWorktreeArchiveProof 2026-10-04-15:21:
+    A column with an archived role is not physical archival proof: custom workflows may expose an
+    archived-role live lane. Complete lanes may use the shorter post-completion grace immediately,
+    while archived lanes may do so only after the row carries `archivedAt`.
+    */
+    const mergeTempCompleteColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
+    const mergeTempArchivedColumns = await resolveProjectColumnsForRoles(this.store, ["archived"]);
     try {
       const settings = await this.store.getSettings();
       if (settings.worktrunk?.enabled === true) {
@@ -17522,7 +17539,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (taskId) {
               try {
                 const task = await this.store.getTask(taskId);
-                if (mergeTempTerminalColumns.has(task.column)) {
+                const physicallyArchived = mergeTempArchivedColumns.has(task.column)
+                  && typeof task.archivedAt === "string";
+                if (mergeTempCompleteColumns.has(task.column) || physicallyArchived) {
                   ageGateMs = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
                   cleanupReason = "done-task-stale";
                 }

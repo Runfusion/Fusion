@@ -23,8 +23,9 @@ FN-7996 regression coverage. A session-start unusable-worktree refusal thrown in
 workflow-graph NODE (Plan Review ran with stale task.worktree metadata pointing at a recycled
 worktree) fell through every graph-failure router into the terminal park, erasing the error
 signature and looping dispatch→park all day. The invariant: any graph-node failure carrying the
-assertValidWorktreeSession refusal routes into the bounded worktree-session recovery (clear
-stale metadata, requeue todo) and only an exhausted budget may terminal-park; additionally
+assertValidWorktreeSession refusal routes into the bounded worktree-session recovery and clears
+stale metadata in place; only an exhausted budget may terminal-park. This preserves the task's
+current lifecycle role under FN-207 containment; additionally
 graphFailureValue must resolve optional-group materialized ids (`group::template`) so group
 routing values (e.g. FN-7977's provider-failure hold) are never invisible.
 */
@@ -73,6 +74,11 @@ function trackingStore(initial: TaskDetail) {
   });
   store.moveTask.mockImplementation(async (_id: string, column: string) => {
     live = { ...live, column } as TaskDetail;
+  });
+  store.updateTaskAtomic.mockImplementation(async (_id: string, reducer: (current: TaskDetail) => unknown) => {
+    const patch = await reducer(live);
+    if (patch && typeof patch === "object") live = { ...live, ...patch } as TaskDetail;
+    return live as any;
   });
   return { store, getLive: () => live };
 }
@@ -144,7 +150,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     mockedExecSync.mockReturnValue("" as any);
   });
 
-  it("requeues to todo with cleared worktree metadata instead of terminal-parking", async () => {
+  it("clears worktree metadata in its current lifecycle role instead of terminal-parking", async () => {
     const initial = makeTask();
     const { store, getLive } = trackingStore(initial);
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -155,7 +161,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     }));
 
     const live = getLive();
-    expect(live.column).toBe("todo");
+    expect(live.column).toBe("in-progress");
     expect(live.status).toBeNull();
     expect(live.worktree).toBeNull();
     expect(live.branch).toBeNull();
@@ -165,11 +171,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
       expect.objectContaining({ status: "failed" }),
       expect.anything(),
     );
-    expect(store.moveTask).toHaveBeenCalledWith(
-      initial.id,
-      "todo",
-      expect.objectContaining({ moveSource: "engine", recoveryRehome: true }),
-    );
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("recovers when the refusal is only present under the materialized instance error key", async () => {
@@ -181,7 +183,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
       "node:plan-review::plan-review-step:error": MISSING_WT_ERROR,
     }));
 
-    expect(getLive().column).toBe("todo");
+    expect(getLive().column).toBe("in-progress");
     expect(getLive().worktree).toBeNull();
   });
 
@@ -257,7 +259,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     );
 
     expect(handled).toBe(true);
-    expect(getLive().column).toBe("todo");
+    expect(getLive().column).toBe("in-progress");
   });
 
   it("leaves auto-merge-off in-review tasks terminal for human merge (FN-5147)", async () => {
@@ -294,7 +296,7 @@ describe("graph-node unusable-worktree failure recovery (FN-7996)", () => {
     );
 
     expect(handled).toBe(true);
-    expect(getLive().column).toBe("todo");
+    expect(getLive().column).toBe("in-review");
   });
 
   it.each([
@@ -334,7 +336,8 @@ describe("Plan Review missing-worktree repo-root fallback (FN-7996)", () => {
   it("re-acquires a task worktree for Plan Review when the recorded worktree is gone (never the repo root)", async () => {
     const store = createMockStore();
     const executor = new TaskExecutor(store, "/tmp/test");
-    mockedExistsSync.mockImplementation((path: unknown) => path !== "/tmp/stale-wt");
+    mockedExistsSync.mockReturnValue(false);
+    vi.spyOn(executor as any, "createWorktree").mockImplementation(async (branch: string, path: string) => ({ path, branch }));
 
     const captured: { worktreePath?: string } = {};
     vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
@@ -355,10 +358,10 @@ describe("Plan Review missing-worktree repo-root fallback (FN-7996)", () => {
     // Not the stale path, and — the point of the change — not the shared repo root either.
     expect(captured.worktreePath).not.toBe("/tmp/stale-wt");
     expect(captured.worktreePath).not.toBe("/tmp/test");
-    expect(captured.worktreePath).toContain("/tmp/test/.worktrees/");
+    expect(captured.worktreePath).toContain("/tmp/test/.fusion/worktrees/");
     expect(store.logEntry).toHaveBeenCalledWith(
       live.id,
-      expect.stringContaining("re-acquiring a task worktree instead of running in the shared checkout"),
+      expect.stringContaining("requires a task worktree — acquiring worktree before node execution"),
       undefined,
       undefined,
     );

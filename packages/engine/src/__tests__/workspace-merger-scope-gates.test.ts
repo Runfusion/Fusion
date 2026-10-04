@@ -33,6 +33,7 @@ function storeFor(task: Task, scope: string[]): TaskStore & { updates: Array<Rec
   return Object.assign(emitter, {
     updates, audit,
     getTask: vi.fn(async () => task),
+    getProjectId: vi.fn(() => "test-project"),
     getSettings: vi.fn(async () => ({ autoMerge: false, merger: { mode: "ai", maxReviewPasses: 0 } })),
     parseFileScopeFromPrompt: vi.fn(async () => scope),
     updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => { updates.push(patch); Object.assign(task, patch); return task; }),
@@ -43,6 +44,7 @@ function storeFor(task: Task, scope: string[]): TaskStore & { updates: Array<Rec
     }),
     appendAgentLog: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
+    getStaleReviewCallbackWaiverReceipts: vi.fn(async () => []),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => { task.column = column; return task; }),
     // FNXC:PostMergeFinalizationFixture 2026-09-23-11:20: Scope-gate finalization retains FN-9370's live conditional-move fence.
     moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, options?: unknown) => {

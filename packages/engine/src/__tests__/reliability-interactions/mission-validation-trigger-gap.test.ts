@@ -239,7 +239,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
         return linkedAssertions;
       }),
       startValidatorRun: vi.fn(() => ({ id: "VR-001", featureId: "F-001" })),
-      completeValidatorRun: vi.fn(),
+      completeValidatorRun: vi.fn().mockResolvedValue({ completionApplied: true }),
       getSlice: vi.fn(() => ({ id: "SL-001", milestoneId: "MS-001", status: "active" })),
       getMilestone: vi.fn(() => ({ id: "MS-001", missionId: "M-001" })),
       // resolveFeatureMission (reached via processTaskOutcome during recovery)
@@ -268,7 +268,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     });
     // FNXC:EngineTests 2026-07-17-11:50: runFeatureValidation destructures { result, inspection }.
     vi.spyOn(loop as any, "runValidation").mockResolvedValue({
-      result: { status: "pass", summary: "ok" },
+      result: { status: "pass", summary: "ok", assertions: [] },
       inspection: { rootDir: process.cwd() },
     });
     loop.start();
@@ -314,7 +314,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
         return linkedAssertions;
       }),
       startValidatorRun: vi.fn(() => ({ id: "VR-001", featureId: "F-001" })),
-      completeValidatorRun: vi.fn(),
+      completeValidatorRun: vi.fn().mockResolvedValue({ completionApplied: true }),
       getSlice: vi.fn(() => ({ id: "SL-001", milestoneId: "MS-001", status: "active" })),
       getMilestone: vi.fn(() => ({ id: "MS-001", missionId: "M-001" })),
       // resolveFeatureMission (reached via processTaskOutcome during recovery)
@@ -339,7 +339,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
     const loop = new MissionExecutionLoop({ missionStore: missionStore as any, taskStore: taskStore as any, rootDir: process.cwd() });
     // FNXC:EngineTests 2026-07-17-11:50: runFeatureValidation destructures { result, inspection }.
     vi.spyOn(loop as any, "runValidation").mockResolvedValue({
-      result: { status: "pass", summary: "ok" },
+      result: { status: "pass", summary: "ok", assertions: [] },
       inspection: { rootDir: process.cwd() },
     });
     loop.start();
@@ -353,7 +353,7 @@ describe("FN-5715 reliability: mission validation trigger gap", () => {
       ([, type, , payload]) => type === "warning" && payload?.code === "validation_auto_passed_no_assertions",
     );
     expect(noAssertionEvents).toHaveLength(0);
-    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok");
+    expect(missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok", undefined, expect.objectContaining({ featureId: "F-001" }));
 
     loop.stop();
   });

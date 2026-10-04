@@ -26,6 +26,7 @@ describe("reliability interactions: auto-revive + watchdog", () => {
     ];
     const store: any = {
       listTasks: vi.fn(async () => tasks),
+      getTask: vi.fn(async (id: string) => tasks.find((candidate) => candidate.id === id) ?? null),
       updateTask: vi.fn(async () => undefined),
       logEntry: vi.fn(async () => undefined),
       moveTask: vi.fn(async () => undefined),
@@ -54,7 +55,7 @@ describe("reliability interactions: auto-revive + watchdog", () => {
   });
 
   it("Case 8: recovery coordinator skips resume when no in-progress candidates", async () => {
-    const store: any = { listTasks: vi.fn(async () => []), updateTask: vi.fn(), logEntry: vi.fn(), moveTask: vi.fn() };
+    const store: any = { listTasks: vi.fn(async () => []), getTask: vi.fn(async () => null), updateTask: vi.fn(), logEntry: vi.fn(), moveTask: vi.fn() };
     const executor: any = { resumeOrphaned: vi.fn(async () => undefined) };
     const rc = new RestartRecoveryCoordinator(store, executor);
     await rc.recoverInterruptedRuns();
@@ -62,7 +63,8 @@ describe("reliability interactions: auto-revive + watchdog", () => {
   });
 
   it("Case 12: new commits are orthogonal to restart classification", async () => {
-    const store: any = { listTasks: vi.fn(async () => [task({ id: "FN-3", status: "failed", error: "Agent finished without calling fn_task_done", steps: [] as any[] })]), updateTask: vi.fn(async () => undefined), logEntry: vi.fn(async () => undefined), moveTask: vi.fn(async () => undefined) };
+    const tasks = [task({ id: "FN-3", status: "failed", error: "Agent finished without calling fn_task_done", steps: [] as any[] })];
+    const store: any = { listTasks: vi.fn(async () => tasks), getTask: vi.fn(async (id: string) => tasks.find((candidate) => candidate.id === id) ?? null), updateTask: vi.fn(async () => undefined), logEntry: vi.fn(async () => undefined), moveTask: vi.fn(async () => undefined) };
     const executor: any = { resumeOrphaned: vi.fn(async () => undefined) };
     const rc = new RestartRecoveryCoordinator(store, executor);
     await rc.recoverInterruptedRuns();

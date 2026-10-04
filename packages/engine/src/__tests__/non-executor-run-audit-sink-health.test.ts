@@ -280,7 +280,7 @@ describe("FN-9175 non-executor audit sink health", () => {
          list makes the door refuse on the workflow's default-on Plan/Code Review groups before any
          fence is constructed, leaving `fences` empty and `recordAudit` undefined. */
       const task = { id: "FN-9175", title: "merge", description: "", column: "in-review", branch: "missing-fn-9175", enabledWorkflowSteps: [], steps: [{ name: "Ship", status: "done" }], currentStep: 1, workflowStepResults: [], dependencies: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      const store = { ...sink.host, getTask: vi.fn().mockResolvedValue(task), getSettings: vi.fn().mockResolvedValue({ integrationBranch: "main" }), getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined), updateTask: vi.fn().mockResolvedValue(undefined), logEntry: vi.fn().mockResolvedValue(undefined), appendAgentLog: vi.fn().mockResolvedValue(undefined) };
+      const store = { ...sink.host, getTask: vi.fn().mockResolvedValue(task), getSettings: vi.fn().mockResolvedValue({ integrationBranch: "main" }), getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined), getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]), getProjectId: vi.fn(() => "audit-sink-health"), updateTask: vi.fn().mockResolvedValue(undefined), logEntry: vi.fn().mockResolvedValue(undefined), appendAgentLog: vi.fn().mockResolvedValue(undefined) };
       // The missing branch is intentional: runAiMerge constructs its real generation fence before
       // git rejects the branch, allowing this test to exercise the closure the production path gave it.
       const mergeError = await runAiMerge(store as any, process.cwd(), task.id).then(() => "resolved", (error) => String(error));

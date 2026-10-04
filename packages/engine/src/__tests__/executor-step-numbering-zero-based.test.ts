@@ -28,7 +28,12 @@ function createRoutingExecutor(store: any) {
 describe("executor tool step numbering is 0-based", () => {
   beforeEach(() => {
     resetExecutorMocks();
-    mockedExistsSync.mockReturnValue(true);
+    /*
+    FNXC:ExecutorStepNumbering 2026-10-04-15:03:
+    This numbering regression needs a fresh implementation worktree. Pretending every path exists
+    selects pinned-worktree recovery instead, where the fake has no git registration to prove.
+    */
+    mockedExistsSync.mockImplementation((path) => !/[\\/]worktrees[\\/]/.test(String(path)));
   });
 
   async function captureTools(stepStates = [

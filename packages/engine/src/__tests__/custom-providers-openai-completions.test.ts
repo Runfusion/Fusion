@@ -63,7 +63,7 @@ describe("custom providers openai-completions regression", () => {
   it("uses system role when reasoning model explicitly disables developer role compat", () => {
     const params = convertMessages(
       { provider: "openai", reasoning: true, input: ["text"] } as never,
-      { systemPrompt: "system instruction", messages: [] } as never,
+      { messages: [{ role: "system", content: "system instruction", timestamp: 0 }] } as never,
       { supportsDeveloperRole: false } as never,
     );
     expect(params[0]?.role).toBe("system");
@@ -72,7 +72,7 @@ describe("custom providers openai-completions regression", () => {
   it("emits developer role when compat allows it on reasoning models", () => {
     const params = convertMessages(
       { provider: "openai", reasoning: true, input: ["text"] } as never,
-      { systemPrompt: "system instruction", messages: [] } as never,
+      { messages: [{ role: "system", content: "system instruction", timestamp: 0 }] } as never,
       { supportsDeveloperRole: true } as never,
     );
     expect(params[0]?.role).toBe("developer");

@@ -181,6 +181,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "18. Triage rate-limit retry log warning timer ordering",
       status: "Active first sighting — recorded 2026-09-24, unattributed.",
     },
+    {
+      heading: "20. ProjectEngine research recall composition ordering",
+      status: "Active first sighting — recorded 2026-10-04, unattributed.",
+    },
   ]);
 });
 

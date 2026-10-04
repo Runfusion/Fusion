@@ -61,7 +61,7 @@ describe("executor explicit duplicate redirect parse recovery", () => {
       }, undefined);
       expect(store.logEntry).toHaveBeenCalledWith(
         liveTask.id,
-        "Parse node failed on duplicate redirect — rebounded to todo for re-specification",
+        "Parse node failed on duplicate redirect — retained in the current execution lane for repair",
         expect.stringContaining("task title"),
         undefined,
       );

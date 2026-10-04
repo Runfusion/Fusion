@@ -29,6 +29,13 @@ function makeStore(tasks: Map<string, Task>): TaskStore & EventEmitter {
     getTask: vi.fn(async (id: string) => tasks.get(id)),
     updateTask: vi.fn(async (id: string, updates: Partial<Task>) => { tasks.set(id, { ...tasks.get(id)!, ...updates } as Task); return tasks.get(id); }),
     moveTask: vi.fn(async (id: string, column: Task["column"]) => { tasks.set(id, { ...tasks.get(id)!, column } as Task); }),
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (task: Task) => boolean | Promise<boolean>) => {
+      const current = tasks.get(id);
+      if (!current || !await predicate(current)) return { moved: false, task: current };
+      const moved = { ...current, column } as Task;
+      tasks.set(id, moved);
+      return { moved: true, task: moved };
+    }),
     logEntry: vi.fn(async () => undefined),
     /*
     FNXC:OverlapSelfHealing 2026-06-26-12:00:
@@ -102,7 +109,8 @@ describe("reliability interactions: self-healing", () => {
     const recovered = await mgr.recoverMissingWorktreeReviewFailures();
 
     expect(recovered).toBe(1);
-    expect(tasks.get(taskId)?.column).toBe("todo");
+    /* FNXC:LifecycleContainment 2026-10-04-15:28: Recovery clears stale acquisition metadata in place; it may not move a review card backward. */
+    expect(tasks.get(taskId)?.column).toBe("in-review");
     expect(tasks.get(taskId)?.worktree ?? null).toBeNull();
     expect(tasks.get(taskId)?.branch ?? null).toBeNull();
     expect(store.logEntry).toHaveBeenCalledWith(

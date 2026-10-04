@@ -732,22 +732,13 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
     });
   });
   /*
-  FNXC:ReviewRework 2026-07-30-01:30 (U9 E2E evidence — the review half):
-  The plan's target lifecycle includes `InReview --> InProgress: review requests
-  changes`, and until now NO board proved it against a live engine: the fixture's
-  review seam always succeeded, so every E2E drove review as a pass-through.
-
-  This drives a real REVISE. The graph takes the `review --failure--> exec` rework
-  edge, which is a BACKWARD column move (review -> wip) through the real boundary
-  controller and the real `store.moveTask` — the move class most likely to be refused
-  by an adjacency or trait guard, and the one a rework loop cannot work without.
-
-  Run on the merged board as well as the renamed one: rework re-enters the wip column,
-  whose trait set differs on a merged board, so a guard that resolves the rework target
-  by elimination ("the column that is not intake and not review") behaves differently
-  there.
+  FNXC:ReviewRemediation 2026-10-04-15:18:
+  A pre-merge REVISE without a remediation owner is a blocking failure. It must not traverse the
+  review failure edge into execution: that would run or merge work after an unresolved review.
+  Exercise renamed and merged boards because their role layouts differ, while both must preserve
+  the review-column hold under the same no-remediation condition.
   */
-  describe("scenario 6 — a REVISE verdict routes the card back to wip", () => {
+  describe("scenario 6 — a REVISE without remediation remains blocked in review", () => {
     async function driveRevise(taskId: string, v: Vocabulary, key: string, merged: boolean) {
       const { workflowId } = await seedWorkflow(v, key, merged, true);
       await seedTask(taskId, v, workflowId);
@@ -767,38 +758,22 @@ pgDescribe("live lifecycle E2E: real graph + real PostgreSQL store", () => {
       return { afterRelease, afterRevise: await persistedColumn(taskId), calls: log.calls, leg3 };
     }
 
-    /*
-    MEASURED, and it corrected the assertion I first wrote. A REVISE does not leave the
-    card resting in wip: the rework edge re-enters `exec` WITHIN THE SAME run, review is
-    called again, approves, and the card finishes at complete. So the observable proof
-    that rework happened is the SEAM SEQUENCE — execute appears twice, the second time
-    after a review — not an intermediate column, which the run has already moved past by
-    the time the leg returns.
-
-    Asserting the final column alone would have been satisfied by a graph that ignored
-    the REVISE entirely and went straight to merge, which is exactly the failure this
-    scenario is for.
-    */
-    it("re-enters exec on a REVISE and only completes after the second review (renamed board)", async () => {
+    it("keeps a REVISE in review instead of executing or merging (renamed board)", async () => {
       const r = await driveRevise("FN-E2E-REV", RENAMED_VOCAB, "revise-renamed", false);
 
       expect(r.afterRelease).toBe(RENAMED_VOCAB.wip);
-      // The rework edge was traversed: execute ran a SECOND time, after a review.
-      expect(r.calls).toEqual(["planning", "execute", "review", "execute", "review", "merge"]);
-      // And the loop resolved rather than spinning — the card reached complete.
-      expect(r.afterRevise).toBe(RENAMED_VOCAB.complete);
+      expect(r.calls).toEqual(["planning", "execute", "review"]);
+      expect(r.leg3.outcome).toBe("failure");
+      expect(r.afterRevise).toBe(RENAMED_VOCAB.review);
     });
 
-    it("does the same on a MERGED board, without bouncing to the dual-role column", async () => {
+    it("keeps the same blocking review hold on a MERGED board", async () => {
       const r = await driveRevise("FN-E2E-REV-M", MERGED_VOCAB, "revise-merged", true);
 
       expect(r.afterRelease).toBe(MERGED_VOCAB.wip);
-      expect(r.calls).toEqual(["planning", "execute", "review", "execute", "review", "merge"]);
-      expect(r.afterRevise).toBe(MERGED_VOCAB.complete);
-      // Rework must re-enter wip, not the dual-role Planning column: on a merged board
-      // intake and hold share an id, so an elimination-based target resolution lands
-      // there. A second "planning" call in the sequence above would reveal that.
-      expect(r.calls.filter((c) => c === "planning")).toHaveLength(1);
+      expect(r.calls).toEqual(["planning", "execute", "review"]);
+      expect(r.leg3.outcome).toBe("failure");
+      expect(r.afterRevise).toBe(MERGED_VOCAB.review);
     });
   });
 

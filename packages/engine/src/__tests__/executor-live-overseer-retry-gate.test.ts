@@ -204,10 +204,16 @@ describe("handleGraphFailure execute-family live session preserve", () => {
       (executor as any).activeSessions.delete(live.id);
     }
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      live.id,
-      expect.objectContaining({ status: "failed", error: expect.stringContaining("merge-attempt") }),
-      undefined,
-    );
+    /*
+    FNXC:WorkflowFailurePersistence 2026-10-04-15:03:
+    Merge failures still terminalize despite a peer execution session, but the terminal write is
+    an atomic live-row reducer so a concurrent operator action cannot be clobbered.
+    */
+    const terminalWrite = store.updateTaskAtomic.mock.calls.find(([id]: [string]) => id === live.id);
+    expect(terminalWrite).toHaveLength(3);
+    expect(terminalWrite?.[1](live)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("merge-attempt"),
+    });
   });
 });

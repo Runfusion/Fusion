@@ -1,21 +1,8 @@
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
-THE REBOUND TARGET, not the guard that selects the card.
-
-`self-healing.ts` held 18 `moveTask(task.id, "todo", …)` calls — every one a RECOVERY. A move target
-is an ARGUMENT, not a comparison, so the lifecycle-column census never counted them and no gate ever
-pointed here. The failure mode is also harder than a guard's: `moveTaskInternal` REJECTS a target the
-workflow does not declare (`TransitionRejectionError: unknown-column`, documented in
-`task-store/moves.ts`). So on a renamed board these sweeps did not degrade to "no rescue" — they threw,
-and the strand each sweep exists to clear survived while the sweep reported failure.
-
-`reconcileInReviewUnmetDependencies` is driven here as the representative: it is a public entry point
-with a documented contract (FN-6793), and its rebound is one of the 18.
-
-WHY THE DEFAULT-BOARD CASE IS THE CONTROL AND NOT AN AFTERTHOUGHT. `resolveReboundTargetForTask`
-degrades to `"todo"` whenever the workflow declares no hold/intake lane, so the conversion is a no-op
-on every board we ship. The control pins that; without it a regression that made the resolver always
-answer `"todo"` would leave the renamed case failing and look like a fixture problem.
+FNXC:LifecycleContainment 2026-10-04-15:21:
+`reconcileInReviewUnmetDependencies` still detects unmet dependencies on both renamed and built-in
+review lanes, but FN-207 removed its automatic backward-move authority. The recovery records the
+queued dependency state in place; only named review revision reasons may select a prior lifecycle lane.
 */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
@@ -103,37 +90,33 @@ function manager(store: TaskStore) {
   return new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
 }
 
-describe("the self-healing rebound TARGET follows the board's own hold lane", () => {
+describe("in-review dependency recovery respects lifecycle containment", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
   /*
-  The defect: the target was the literal `"todo"`, which this board does not declare, so the move was
-  rejected outright rather than rebounding the card. `drafting` collides with no legacy id, so a
-  surviving literal cannot pass by luck.
+  FNXC:LifecycleContainment 2026-10-04-15:21:
+  Dependency recovery is an automatic self-healing path, not a named review revision. It must retain
+  an in-review card in place on both renamed and built-in boards; only explicit revision reasons may
+  move a card backward. The former target assertion encoded the retired automatic rebound contract.
   */
-  it("rebounds an in-review card with unmet dependencies to the RENAMED hold lane", async () => {
+  it("retains an in-review card on a renamed board", async () => {
     const tasks = [inReviewTask("checking"), blockerTask("building")];
     const { store, moveTask } = createStore(tasks, renamedIr());
 
     await manager(store).reconcileInReviewUnmetDependencies();
 
-    expect(moveTask).toHaveBeenCalled();
-    expect(moveTask.mock.calls[0]?.[1]).toBe("drafting");
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-DEP", { status: "queued", blockedBy: "FN-BLOCKER" });
   });
 
-  /*
-  CONTROL. `resolveReboundTargetForTask` falls back to `"todo"` when no workflow resolves, so the
-  default board must be byte-identical to the pre-conversion behaviour. This is what makes the
-  conversion safe to land across 18 recovery paths at once.
-  */
-  it("default vocabulary: still rebounds to `todo` when no workflow resolves", async () => {
+  it("retains an in-review card with built-in vocabulary", async () => {
     const tasks = [inReviewTask("in-review"), blockerTask("in-progress")];
     const { store, moveTask } = createStore(tasks, undefined);
 
     await manager(store).reconcileInReviewUnmetDependencies();
 
-    expect(moveTask).toHaveBeenCalled();
-    expect(moveTask.mock.calls[0]?.[1]).toBe("todo");
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-DEP", { status: "queued", blockedBy: "FN-BLOCKER" });
   });
 });

@@ -882,6 +882,12 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
     /* FNXC:WorkflowScheduling 2026-09-05-23:12: Search hydration has the same per-row selection N+1 as board lists; prefetch retains the default workflow for cached absent selections. */
     const searchPassSelectionCache = new Map<string, import("../workflows/workflow-ir-resolver.js").WorkflowSelection | undefined>();
     await prefetchWorkflowSelections(store, pgRows.map((row) => String(row.id)), searchPassSelectionCache);
+    /*
+    FNXC:WorkflowSearchHydration 2026-10-04-12:07:
+    Search shares the list read-path contract: prefetch workflow definitions before
+    concurrent row hydration so repeated workflow selections cannot recreate an N+1.
+    */
+    await prefetchWorkflowIrs(store, pgRows.map((row) => String(row.id)), searchPassIrCache, searchPassSelectionCache);
     const tasks = await Promise.all(pgRows.map(async (pgRow) => {
       const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
       const isMergeQueued = mergeQueuedTaskIds.has(task.id);

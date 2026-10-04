@@ -1655,9 +1655,8 @@ describe("PluginRunner", () => {
       if (movedHandler) {
         movedHandler({ task: mockTask, from: RENAMED_VOCAB.review, to: RENAMED_VOCAB.complete });
       }
-      await flushMicrotasks();
-
-      expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith("onTaskCompleted", mockTask);
+      // Completion-column resolution is asynchronous so selected custom workflows are respected.
+      await vi.waitFor(() => expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith("onTaskCompleted", mockTask));
     });
 
     it("should NOT invoke onTaskCompleted when a RENAMED board moves the card to a non-complete lane", async () => {

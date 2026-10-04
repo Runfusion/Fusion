@@ -313,25 +313,27 @@ describe("ProjectEngine merge error recovery", () => {
     vi.useFakeTimers();
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const store = makeStore();
-    store.getSettings
-      // baseBranch: see makeStore — an unnamed integration branch shells out to git under fake timers.
-      .mockResolvedValueOnce({ autoMerge: true, globalPause: false, enginePaused: false, baseBranch: "main" })
-      .mockRejectedValueOnce(new Error("interval unavailable"));
-
     const engine = createEngine(store);
     const privateEngine = engine as unknown as {
       scheduleMergeRetry: (taskStore: MockTaskStore) => void;
       mergeRetryTimer: ReturnType<typeof setTimeout> | null;
     };
 
+    /*
+    FNXC:MergeRetryTimer 2026-10-04-15:20:
+    Constructing the engine may read settings before this isolated scheduler probe.
+    Reset the mock so the success-then-interval-read-failure sequence belongs only
+    to the scheduled sweep under test.
+    */
+    store.getSettings.mockReset()
+      .mockResolvedValueOnce({ autoMerge: true, globalPause: false, enginePaused: false, baseBranch: "main" })
+      .mockRejectedValueOnce(new Error("interval unavailable"));
+    store.listTasks.mockResolvedValue([]);
+
     privateEngine.scheduleMergeRetry(store);
     await vi.advanceTimersByTimeAsync(15_000);
     await vi.runAllTicks();
 
-    // eslint-disable-next-line no-console
-    await vi.advanceTimersByTimeAsync(60_000);
-    for (let i = 0; i < 50; i++) await Promise.resolve();
-    console.warn("PROBE counts:", JSON.stringify(Object.fromEntries(Object.entries(store).filter(([, v]) => typeof v === "function" && (v as any).mock).map(([k, v]) => [k, (v as any).mock.calls.length]).filter(([, n]) => (n as number) > 0))), "timers:", vi.getTimerCount(), "warns:", JSON.stringify(warnSpy.mock.calls), "errors:", JSON.stringify(errorSpy.mock.calls));
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Auto-merge retry: failed to read pollIntervalMs, using default 15s: interval unavailable"),
     );

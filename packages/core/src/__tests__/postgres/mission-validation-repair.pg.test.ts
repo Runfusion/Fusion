@@ -126,9 +126,11 @@ pgTest("mission validation repair", () => {
     const { store, mission, feature } = await blockedFeature();
     const task = await h.store().createTask({ description: "matching live repair target", column: "in-progress" });
     const linked = await store.updateFeature(feature.id, { taskId: task.id });
+    // FNXC:MissionValidationRepair 2026-10-04-12:07: The fence is producer-read evidence, not a stale create return value.
+    const liveTask = await h.store().getTask(task.id);
     const repaired = await store.repairFeatureValidationState(linked.id, {
       action: "clear", actor: { type: "agent", id: "agent", source: "test" }, resolvedStatus: "in-progress", resolvedLoopState: "implementing",
-      groundTruth: { featureId: linked.id, taskId: task.id, taskLiveness: "live", taskColumn: task.column, taskUpdatedAt: task.updatedAt, laneRole: "wip", resolvedAt: new Date().toISOString() },
+      groundTruth: { featureId: linked.id, taskId: task.id, taskLiveness: "live", taskColumn: liveTask!.column, taskUpdatedAt: liveTask!.updatedAt, laneRole: "wip", resolvedAt: new Date().toISOString() },
     });
     expect(repaired.feature).toMatchObject({ status: "in-progress", loopState: "implementing" });
     expect((await store.getMissionEvents(mission.id, { limit: 20 })).events.find((event) => event.eventType === "feature_validation_repaired")?.metadata)

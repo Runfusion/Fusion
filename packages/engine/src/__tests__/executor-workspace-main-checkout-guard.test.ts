@@ -321,7 +321,7 @@ describeIfGit("workspace main-checkout guard", () => {
     writeFileSync(file, "operator dirt\n");
     const old = new Date(Date.now() - 120_000);
     await import("node:fs/promises").then(({ utimes }) => utimes(file, old, old));
-    const nested = path.join(fixture.repoPath("repo-a"), ".worktrees", "task", "nested.ts");
+    const nested = path.join(fixture.repoPath("repo-a"), ".fusion", "worktrees", "task", "nested.ts");
     mkdirSync(path.dirname(nested), { recursive: true });
     writeFileSync(nested, "ignored\n");
     const activeTask = task({ firstExecutionAt: new Date(Date.now() + 600_000).toISOString(), executionStartedAt: new Date(Date.now() + 600_000).toISOString() });

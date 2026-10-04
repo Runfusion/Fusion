@@ -27,6 +27,18 @@ function makeStore(tasks: Task[], events: unknown[] = [], settings?: Partial<Set
       const task = tasks.find((candidate) => candidate.id === id);
       if (task) task.column = column;
     },
+    moveTaskIf: async (id: string, column: Task["column"], predicate: (task: Task) => boolean | Promise<boolean>) => {
+      const task = tasks.find((candidate) => candidate.id === id);
+      if (!task || !await predicate(task)) return { moved: false, task };
+      task.column = column;
+      return { moved: true, task };
+    },
+    updateTaskAtomic: async (id: string, reducer: (task: Task) => Partial<Task> | null) => {
+      const task = tasks.find((candidate) => candidate.id === id);
+      const patch = task && await reducer(task);
+      if (task && patch) Object.assign(task, patch);
+      return task;
+    },
     logEntry: async () => undefined,
     getTask: async (id: string) => tasks.find((candidate) => candidate.id === id) ?? null,
     /*
@@ -124,7 +136,7 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
     }
   });
 
-  it("preserves hard blockers, then finalizes via recoverMergedReviewTasks when blocker clears", async () => {
+  it("keeps inferred landed content with incomplete steps blocked across later recovery sweeps", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fn-4653-ri-hard-handoff-"));
     try {
       git(dir, "git init -b main");
@@ -150,24 +162,22 @@ describe("soft-blocker auto-finalize reliability interactions (real git)", () =>
       expect(task.paused).toBe(true);
       expect(task.status).toBe("failed");
       expect(task.error).toContain("task has incomplete steps");
-      expect(task.mergeDetails?.mergeConfirmed).toBe(true);
+      expect(task.mergeDetails?.mergeConfirmed).not.toBe(true);
       expect(
         auditEvents.some((event: any) => event?.mutationType === "task:auto-recover-finalize-already-on-main"),
       ).toBe(false);
 
-      task.steps = [];
-      task.error = "stale failure";
-
       const secondSweep = await manager.recoverMergedReviewTasks();
 
-      expect(secondSweep).toBe(1);
-      expect(task.column).toBe("done");
-      expect(task.paused).toBe(false);
-      expect(task.status).toBeNull();
-      expect(task.error).toBeNull();
+      expect(secondSweep).toBe(0);
+      expect(task.column).toBe("in-review");
+      expect(task.paused).toBe(true);
+      expect(task.status).toBe("failed");
+      expect(task.error).toContain("task has incomplete steps");
+      expect(task.mergeDetails?.mergeConfirmed).not.toBe(true);
       expect(
         auditEvents.some((event: any) => event?.mutationType === "task:auto-recover-finalize-already-on-main"),
-      ).toBe(true);
+      ).toBe(false);
 
       manager.stop();
     } finally {

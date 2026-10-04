@@ -27,7 +27,7 @@ import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Task, TaskStore, WorkspaceLeaseHandle } from "@fusion/core";
+import { saveWorkspaceConfig, type Task, type TaskStore, type WorkspaceLeaseHandle } from "@fusion/core";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { landSquash, landWorkspaceTask, WorkspaceMergeDispatchSupersededError, WorkspaceMergeTechnicalError, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
 import { WorkspaceEnvironmentError } from "../merge/workspace-integration-target.js";
@@ -63,6 +63,7 @@ function createStore(task: Task): TaskStore & RecordingStore {
     so its shared fixture must state that policy rather than silently taking the new local-only path.
     */
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false, pushAfterMerge: true }),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
       Object.assign(store.task, patch);
       return undefined;
@@ -90,6 +91,7 @@ function createStore(task: Task): TaskStore & RecordingStore {
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn(async () => store.task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
     moveTask: vi.fn((id: string, column: string) => {
       moveTaskCalls.push({ id, column });
       store.task.column = column as Task["column"];
@@ -224,6 +226,7 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
   beforeEach(async () => {
     await h.beforeEach();
     fx = await createWorkspaceFixture(["repo-a"]);
+    await saveWorkspaceConfig(h.rootDir(), { repos: fx.repos });
   });
   afterEach(async () => {
     /*
@@ -243,6 +246,7 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
   it("rejects a predecessor's real repo-b push after a successor republished its dispatch fence", async () => {
     fx.cleanup();
     fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    await saveWorkspaceConfig(h.rootDir(), { repos: fx.repos });
     const store = h.store();
     await store.updateSettings({ pushAfterMerge: true });
     const taskId = "FN-9059-PG-REPO-B";
@@ -253,14 +257,17 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
       fx.git(repoRel, "git push -u origin main");
       addRepoBranchWithEdit(fx, repoRel, taskId, `${repoRel} stale dispatch push\n`);
     }
+    const workspaceWorktrees = Object.fromEntries(fx.repos.map((repoRel) => [repoRel, {
+      worktreePath: fx.repoPath(repoRel), branch: BRANCH,
+    }]));
     await store.createTaskWithReservedId(
-      { description: "cross-node repo-b dispatch fence", column: "in-review" },
+      { description: "cross-node repo-b dispatch fence", column: "in-review", repositoryScope: workspaceRepositoryScope(workspaceWorktrees) },
       { taskId, applyDefaultWorkflowSteps: false },
     );
-    await store.updateTask(taskId, mergeReadyWorkspacePatch(Object.fromEntries(fx.repos.map((repoRel) => [repoRel, {
-      worktreePath: fx.repoPath(repoRel), branch: BRANCH,
-    }]))));
+    await store.updateTask(taskId, mergeReadyWorkspacePatch(workspaceWorktrees));
+    await store.updateTaskRepositoryScope(taskId, workspaceRepositoryScope(workspaceWorktrees));
     const task = (await store.getTask(taskId))!;
+    expect(task.repositoryScope).toMatchObject({ state: "confirmed", repositories: fx.repos });
     const predecessor = await store.acquireWorkspaceLease({
       leaseKey: `merge-dispatch:${taskId}`,
       kind: "merge-dispatch",
@@ -339,11 +346,13 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
     fx.git(repoRel, "git push -u origin main");
     addRepoBranchWithEdit(fx, repoRel, taskId, "predecessor must be fenced\n");
 
+    const workspaceWorktrees = { [repoRel]: { worktreePath: repo, branch: BRANCH } };
     await store.createTaskWithReservedId(
-      { description: "repository lease successor takeover", column: "in-review" },
+      { description: "repository lease successor takeover", column: "in-review", repositoryScope: workspaceRepositoryScope(workspaceWorktrees) },
       { taskId, applyDefaultWorkflowSteps: false },
     );
-    await store.updateTask(taskId, mergeReadyWorkspacePatch({ [repoRel]: { worktreePath: repo, branch: BRANCH } }));
+    await store.updateTask(taskId, mergeReadyWorkspacePatch(workspaceWorktrees));
+    await store.updateTaskRepositoryScope(taskId, workspaceRepositoryScope(workspaceWorktrees));
     const task = (await store.getTask(taskId))!;
     const tipBefore = fx.git(repoRel, "git rev-parse main");
     const realRenew = store.renewWorkspaceLease.bind(store);
@@ -430,11 +439,13 @@ pgDescribeIfGit("workspace land dispatch finalization (PostgreSQL)", () => {
     fx.git("repo-a", "git push -u origin main");
     addRepoBranchWithEdit(fx, "repo-a", taskId, "production finalization fence\n");
 
+    const workspaceWorktrees = { "repo-a": { worktreePath: repo, branch: BRANCH } };
     await store.createTaskWithReservedId(
-      { description: "production workspace dispatch finalization", column: "in-review" },
+      { description: "production workspace dispatch finalization", column: "in-review", repositoryScope: workspaceRepositoryScope(workspaceWorktrees) },
       { taskId, applyDefaultWorkflowSteps: false },
     );
-    await store.updateTask(taskId, mergeReadyWorkspacePatch({ "repo-a": { worktreePath: repo, branch: BRANCH } }));
+    await store.updateTask(taskId, mergeReadyWorkspacePatch(workspaceWorktrees));
+    await store.updateTaskRepositoryScope(taskId, workspaceRepositoryScope(workspaceWorktrees));
     const task = (await store.getTask(taskId))!;
     const tipBefore = fx.git("repo-a", "git rev-parse refs/heads/main");
     const predecessor = await store.acquireWorkspaceLease({

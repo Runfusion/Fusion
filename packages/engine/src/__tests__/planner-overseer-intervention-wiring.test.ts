@@ -153,7 +153,7 @@ pgDescribe("FN-7551 — overseer decision points populate the intervention timel
     expect(await getPlannerInterventionTimeline(store, task.id)).toHaveLength(0);
   });
 
-  it("failed executor with no error source dispatches retry_step and emits a retry entry with attemptCount/attemptLimit", async () => {
+  it("failed snapshot without durable recovery admission returns retry_step but emits no retry entry", async () => {
     const task = await seedTask("in-progress");
     const { controllerWithSnapshot } = wireRealEngineOverseer(store);
     const controller = controllerWithSnapshot(observation({ taskId: task.id, stage: "executor", signal: "failed", sources: [] }));
@@ -161,12 +161,13 @@ pgDescribe("FN-7551 — overseer decision points populate the intervention timel
     const decision = await controller.tick(task);
     expect(decision?.action).toBe("retry_step");
 
-    const timeline = await getPlannerInterventionTimeline(store, task.id);
-    const retryEntry = timeline.find((e) => e.action === "retry");
-    expect(retryEntry).toBeTruthy();
-    expect(retryEntry?.stage).toBe("executor");
-    expect(retryEntry?.attemptCount).toBe(1);
-    expect(retryEntry?.attemptLimit).toBe(3);
+    /*
+    FNXC:PlannerOversight 2026-10-04-15:00:
+    A synthetic failed observation is advisory, not authority to reset live WIP. Retry telemetry
+    records only an admitted durable recovery, so operators never see a retry that did not occur.
+    */
+    expect((await getPlannerInterventionTimeline(store, task.id)).find((entry) => entry.action === "retry")).toBeUndefined();
+    expect(controller.getAttemptCount(task.id, "executor")).toBe(0);
   });
 
   /*

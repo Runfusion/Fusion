@@ -187,11 +187,13 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       expect.objectContaining({ graphResumeRetryCount: 1 }),
       expect.anything(),
     );
-    expect(store.updateTask).toHaveBeenCalledWith(
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(
       task.id,
-      expect.objectContaining({ status: "failed" }),
+      expect.any(Function),
       undefined,
     );
+    const terminalReducer = store.updateTaskAtomic.mock.calls.at(-1)?.[1] as (current: TaskDetail) => Promise<Record<string, unknown> | null>;
+    expect(await terminalReducer(task)).toMatchObject({ status: "failed" });
     expect(executeSpy).not.toHaveBeenCalled();
   });
 

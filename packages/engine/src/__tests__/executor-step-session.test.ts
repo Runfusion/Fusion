@@ -432,7 +432,12 @@ describe("Workflow Steps Execution", () => {
       log: [],
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
       sessionFile: "/tmp/stale-session.jsonl",
-      worktree: "/tmp/test/.worktrees/fn-assistant-stale",
+      /*
+      FNXC:ExecutorStepSession 2026-10-04-15:03:
+      This test owns stale session recovery, not warm-worktree validation. Leaving a synthetic
+      pinned path forces a real registration probe the fixture cannot prove and prevents the
+      implementation session from opening.
+      */
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -469,8 +474,6 @@ describe("Workflow Steps Execution", () => {
     const onError = vi.fn();
     const executor = createRoutingExecutor(store, "/tmp/test", { onError });
     const markGraphExecuteSelfRequeued = vi.spyOn(executor as any, "markGraphExecuteSelfRequeued");
-    (executor as any).activeWorktrees.set("FN-ASSISTANT-STALE", new Set([task.worktree]));
-
     await executor.execute(task as any);
 
     const retryRecoveryWrite = store.updateTask.mock.calls.find(
@@ -508,7 +511,6 @@ describe("Workflow Steps Execution", () => {
       log: [],
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
       sessionFile: "/tmp/stale-session.jsonl",
-      worktree: "/tmp/test/.worktrees/fn-assistant-stale-exhausted",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

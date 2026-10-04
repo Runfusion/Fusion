@@ -57,7 +57,7 @@ pgDescribe("activity log parity (PostgreSQL)", () => {
           taskId: task.id,
           // FNXC:MergedPlanningColumn 2026-07-29-15:25 (U11): the default lineage's first column
           // is now `todo`, so the first recorded transition leaves it rather than `triage`.
-          metadata: { from: "todo", to: "in-progress" },
+          metadata: expect.objectContaining({ from: "todo", to: "in-progress" }),
         }),
       ]));
     });

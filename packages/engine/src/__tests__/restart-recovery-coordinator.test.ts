@@ -163,11 +163,13 @@ describe("RestartRecoveryCoordinator", () => {
   });
 
   it("requeues interrupted failed tasks with no progress, then resumes remaining orphans", async () => {
+    const tasks = [
+      createTask({ id: "FN-1", status: "failed", error: "Agent finished without calling fn_task_done", steps: [] }),
+      createTask({ id: "FN-2", steps: [{ id: "s1", title: "x", status: "done" }] as any }),
+    ];
     const store = {
-      listTasks: vi.fn().mockResolvedValue([
-        createTask({ id: "FN-1", status: "failed", error: "Agent finished without calling fn_task_done", steps: [] }),
-        createTask({ id: "FN-2", steps: [{ id: "s1", title: "x", status: "done" }] as any }),
-      ]),
+      listTasks: vi.fn().mockResolvedValue(tasks),
+      getTask: vi.fn(async (id: string) => tasks.find((task) => task.id === id)),
       updateTask: vi.fn().mockResolvedValue({}),
       logEntry: vi.fn().mockResolvedValue(undefined),
       moveTask: vi.fn().mockResolvedValue(undefined),
@@ -181,10 +183,8 @@ describe("RestartRecoveryCoordinator", () => {
     await coordinator.recoverInterruptedRuns();
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "todo", expect.objectContaining({
-      moveSource: "engine",
-      lifecycleReason: "self-healing-session-recovery",
-    }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("has no backward-move authority"));
     expect(executor.resumeOrphaned).toHaveBeenCalledTimes(1);
   });
 
@@ -267,6 +267,7 @@ describe("restart recovery resolves the board's own wip lane", () => {
       getTaskWorkflowSelectionAsync: async () => selection,
       getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
       listTasks: vi.fn(async ({ column }: { column: string }) => tasksByColumn[column] ?? []),
+      getTask: vi.fn(async (id: string) => Object.values(tasksByColumn).flat().find((task: any) => task.id === id)),
       updateTask: vi.fn().mockResolvedValue({}),
       logEntry: vi.fn().mockResolvedValue(undefined),
       moveTask: vi.fn().mockResolvedValue(undefined),

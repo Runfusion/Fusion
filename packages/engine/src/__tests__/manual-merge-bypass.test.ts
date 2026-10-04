@@ -23,12 +23,12 @@ function createTask(status: Task["status"]): Task {
   } as unknown as Task;
 }
 
-function createStore(task: Task): TaskStore {
+function createStore(task: Task, getSettings: () => Promise<Record<string, unknown>> = async () => ({})): TaskStore {
   return {
     getTask: async () => task,
-    getSettings: async () => {
-      throw sentinel;
-    },
+    getSettings,
+    getProjectId: () => "test-project",
+    getStaleReviewCallbackWaiverReceipts: async () => [],
   } as unknown as TaskStore;
 }
 
@@ -41,7 +41,9 @@ describe("aiMergeTask manual queued bypass", () => {
   });
 
   it("bypasses queued status for manual merge", async () => {
-    const store = createStore(createTask("queued"));
+    const store = createStore(createTask("queued"), async () => {
+      throw sentinel;
+    });
     await expect(aiMergeTask(store, process.cwd(), "FN-5438", { manual: true })).rejects.toBe(sentinel);
   });
 });

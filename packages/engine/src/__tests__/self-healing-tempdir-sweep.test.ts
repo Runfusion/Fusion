@@ -206,7 +206,7 @@ function sweepAudits(audits: any[]) {
 }
 
 describe("SelfHealingManager worktrees-dir sweeps", () => {
-  it("excludes internal containers and preserves unverifiable unregistered orphans", async () => {
+  it("excludes internal containers and reclaims proven dangling worktrees", async () => {
     const worktreesDir = join(projectRoot, ".worktrees");
     const aiMergeContainer = join(worktreesDir, ".ai-merge");
     const recoveryContainer = join(worktreesDir, ".fusion-recovery");
@@ -216,12 +216,12 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
     makeReclaimableWorktree(orphan, "half-built");
     const { manager } = makeManager({ recycleWorktrees: true });
 
-    await expect((manager as any).reapUnregisteredOrphans()).resolves.toBe(0);
+    await expect((manager as any).reapUnregisteredOrphans()).resolves.toBe(1);
 
     expect(existsSync(aiMergeContainer)).toBe(true);
     expect(existsSync(recoveryContainer)).toBe(true);
-    expect(existsSync(orphan)).toBe(true);
-    expect(fsState.rmCalls).not.toContain(orphan);
+    expect(existsSync(orphan)).toBe(false);
+    expect(fsState.rmCalls).toContain(orphan);
     expect(fsState.rmCalls).not.toContain(aiMergeContainer);
     expect(fsState.rmCalls).not.toContain(recoveryContainer);
   });

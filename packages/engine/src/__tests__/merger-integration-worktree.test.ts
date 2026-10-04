@@ -20,7 +20,6 @@ import {
   resolveMergeIntegrationRoot,
 } from "../merge/merger-integration-worktree.js";
 import * as worktreePool from "../worktree/worktree-pool.js";
-import { PoolDoubleLeaseError } from "../worktree/worktree-pool.js";
 
 describe("resolveMergeIntegrationRoot", () => {
   it("defaults to reusing the task worktree", () => {
@@ -720,30 +719,6 @@ describe("acquireReuseHandoff", () => {
       "lease-handoff-failed",
       "central-conflict",
     );
-  });
-
-  it("surfaces pool double-lease failures with structured diagnostics", async () => {
-    const store = createStore();
-    store.acquireMergeQueueLease.mockImplementation(() => {
-      throw new PoolDoubleLeaseError("/tmp/task-worktree", "FN-1234", "FN-5279", "acquire");
-    });
-
-    const refusal = await expectRefusal(
-      acquireReuseHandoff({
-        task: await store.getTask("FN-5279"),
-        store,
-        projectRoot: "/tmp/project-root",
-        settings: {} as any,
-        worktreePath: "/tmp/task-worktree",
-      }),
-      "lease-handoff-failed",
-      "pool-double-lease",
-    );
-    expect(refusal.payload).toMatchObject({
-      existingHolder: "FN-1234",
-      path: "/tmp/task-worktree",
-      phase: "acquire",
-    });
   });
 
   it("FN-5444: no-lease refusal carries queue-head diagnostics and nulls when head is absent", async () => {

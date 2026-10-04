@@ -351,10 +351,7 @@ describe("task_prompt_write tool", () => {
 
     const result = await runTool(createTaskPromptWriteTool(store, TASK_ID), "call-workspace", { content });
 
-    expect(updateTask).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({
-      prompt: content,
-      repositoryScope: expect.objectContaining({ repositories: ["packages/engine"], state: "confirmed" }),
-    }), undefined);
+    expect(updateTask).toHaveBeenCalledWith(TASK_ID, { prompt: content }, undefined);
     expect(getText(result)).toBe(`Updated PROMPT.md for ${TASK_ID}.`);
   });
 

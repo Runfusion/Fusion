@@ -75,8 +75,8 @@ describe("workspace Code Review diff base", () => {
     const { readFile } = await import("node:fs/promises");
 
     const callSite = await readFile(new URL("../executor/run-graph-custom-node.ts", import.meta.url), "utf8");
-    expect(callSite, "the workspace reviewer must resolve its repository's own base")
-      .toContain("live.workspaceWorktrees?.[repoRelPath]?.baseCommitSha");
+    expect(callSite, "the workspace reviewer must resolve its repository's own base from the refreshed execution target")
+      .toContain("workspaceReviewTarget.workspaceWorktrees?.[repoRelPath]?.baseCommitSha");
     expect(callSite).toContain("diffBaseCommitSha");
 
     const step = await readFile(new URL("../executor/execute-workflow-step.ts", import.meta.url), "utf8");

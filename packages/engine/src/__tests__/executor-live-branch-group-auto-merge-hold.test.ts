@@ -180,7 +180,17 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
       nodeId: "plan-review",
     })).resolves.toBe(true);
 
-    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveWorktree: true, workflowMoveSource: "workflow-remediation" });
+    /*
+    FNXC:WorkflowPlanReviewReplan 2026-10-04-15:03:
+    Plan Review remediation now records its engine source and named lifecycle reason. Preserve the
+    behavioral assertion (same todo replan with worktree retained) without treating additive audit
+    provenance as a different lifecycle action.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", expect.objectContaining({
+      preserveWorktree: true,
+      workflowMoveSource: "workflow-remediation",
+      lifecycleReason: "plan-review-revise-replan",
+    }));
     expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "needs-replan" }), undefined);
   });
 

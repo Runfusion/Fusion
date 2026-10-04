@@ -4021,8 +4021,13 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   public async getTaskWorkflowSelectionsAsync(taskIds: string[]): Promise<Map<string, { workflowId: string; stepIds: string[] }>> {
     return getTaskWorkflowSelectionsAsyncImpl(this, taskIds);
   }
-  public async writeTaskWorkflowSelection(taskId: string, workflowId: string, stepIds: string[]): Promise<void> {
-    return writeTaskWorkflowSelectionImpl(this, taskId, workflowId, stepIds);
+  public async writeTaskWorkflowSelection(
+    taskId: string,
+    workflowId: string,
+    stepIds: string[],
+    options?: { taskUpdatedAt?: string },
+  ): Promise<void> {
+    return writeTaskWorkflowSelectionImpl(this, taskId, workflowId, stepIds, options);
   }
 
   /** Delete the WorkflowStep rows previously materialized for a task's selection

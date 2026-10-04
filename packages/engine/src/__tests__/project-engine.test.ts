@@ -301,6 +301,7 @@ function createMockStore(initialSettings: Record<string, unknown>) {
 
   const store = {
     getSettings: vi.fn(async () => structuredClone(settings)),
+    getProjectId: vi.fn().mockReturnValue("proj_test"),
     listTasks: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
     /*
     FNXC:EngineTests 2026-09-01-05:50:
@@ -320,8 +321,20 @@ function createMockStore(initialSettings: Record<string, unknown>) {
       steps: [],
       enabledWorkflowSteps: [],
     })),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
     updateTask: vi.fn(async () => undefined),
+    updateTaskAtomic: vi.fn(async (taskId: string, mutate: (task: Record<string, unknown>) => Record<string, unknown> | null | undefined | Promise<Record<string, unknown> | null | undefined>) => {
+      const current = await store.getTask(taskId);
+      const patch = await mutate(current);
+      return patch ? { ...current, ...patch } : current;
+    }),
     moveTask: vi.fn(async () => undefined),
+    moveTaskIf: vi.fn(async (taskId: string, column: string, predicate: (task: Record<string, unknown>) => boolean | Promise<boolean>) => {
+      const current = await store.getTask(taskId);
+      if (!await predicate(current)) return { moved: false, task: current };
+      const task = await store.moveTask(taskId, column);
+      return { moved: true, task: task ?? { ...current, column } };
+    }),
     updateSettings: vi.fn(async (patch: Record<string, unknown>) => {
       settings = {
         ...settings,
@@ -2289,7 +2302,8 @@ describe("ProjectEngine workspace merge dispatch hardening (Phase C review)", ()
         // A real row carries these. Without them the merge-confirmed fast path threw on `steps.map`
         // and never reached the workspace gate-skip this test exists to prove.
         steps: [],
-        enabledWorkflowSteps: [],
+        enabledWorkflowSteps: ["post-merge-verification"],
+        workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
         mergeDetails: {
           mergeConfirmed: true,
           // A sub-repo squash sha — unreachable from the workspace ROOT cwd; the gate would
@@ -2712,21 +2726,28 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
   it("emits task:merged when mergeConfirmed fast-path finalizes to done", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
-    mockStore.store.getTask.mockResolvedValueOnce({
+    const currentTask = {
       id: "FN-merged",
       column: "in-review",
       paused: false,
       mergeRetries: 0,
       status: null,
       branch: "fusion/fn-merged",
+      steps: [],
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
       mergeDetails: { mergeConfirmed: true, mergedAt: "2026-05-18T00:00:00.000Z", mergeTargetBranch: "main" },
+    };
+    mockStore.store.getTask.mockImplementation(async () => currentTask);
+    mockStore.store.updateTaskAtomic.mockImplementation(async (_id: string, mutate: (task: typeof currentTask) => Partial<typeof currentTask> | null | undefined | Promise<Partial<typeof currentTask> | null | undefined>) => {
+      const patch = await mutate(currentTask);
+      if (patch) Object.assign(currentTask, patch);
+      return currentTask;
     });
-    mockStore.store.moveTask.mockResolvedValueOnce({
-      id: "FN-merged",
-      column: "done",
-      branch: "fusion/fn-merged",
-      mergeDetails: { mergeConfirmed: true, mergedAt: "2026-05-18T00:00:00.000Z", mergeTargetBranch: "main" },
-    } as any);
+    mockStore.store.moveTask.mockImplementation(async (_id: string, column: string) => {
+      currentTask.column = column;
+      return currentTask;
+    });
     mocks.currentStore = mockStore.store;
 
     const engine = createEngine();
@@ -2926,13 +2947,16 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     // (verified-short-circuit / proven-no-op / already-on-main paths). The
     // reachability gate must not break those.
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
-    mockStore.store.getTask.mockResolvedValueOnce({
+    const currentTask = {
       id: "FN-noop",
       column: "in-review",
       paused: false,
       mergeRetries: 0,
       status: null,
       branch: "fusion/fn-noop",
+      steps: [],
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
       mergeDetails: {
         mergeConfirmed: true,
         noOpMerge: true,
@@ -2940,18 +2964,17 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
         mergeTargetBranch: "main",
         // No commitSha — verified no-op.
       },
+    };
+    mockStore.store.getTask.mockImplementation(async () => currentTask);
+    mockStore.store.updateTaskAtomic.mockImplementation(async (_id: string, mutate: (task: typeof currentTask) => Partial<typeof currentTask> | null | undefined | Promise<Partial<typeof currentTask> | null | undefined>) => {
+      const patch = await mutate(currentTask);
+      if (patch) Object.assign(currentTask, patch);
+      return currentTask;
     });
-    mockStore.store.moveTask.mockResolvedValueOnce({
-      id: "FN-noop",
-      column: "done",
-      branch: "fusion/fn-noop",
-      mergeDetails: {
-        mergeConfirmed: true,
-        noOpMerge: true,
-        mergedAt: "2026-05-28T19:34:17.022Z",
-        mergeTargetBranch: "main",
-      },
-    } as any);
+    mockStore.store.moveTask.mockImplementation(async (_id: string, column: string) => {
+      currentTask.column = column;
+      return currentTask;
+    });
     mocks.currentStore = mockStore.store;
 
     const engine = createEngine();

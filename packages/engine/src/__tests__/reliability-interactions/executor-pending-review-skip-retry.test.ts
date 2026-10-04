@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "../executor-test-helpers.js";
 import { TaskExecutor } from "../../executor.js";
+import * as worktreeAcquisition from "../../worktree/worktree-acquisition.js";
 import { createFnAgent } from "../../pi.js";
 import { createMockStore, resetExecutorMocks } from "../executor-test-helpers.js";
 
@@ -53,6 +54,19 @@ function sessionThatCompletesStepsWithoutCallingTaskDone(store: ReturnType<typeo
 describe("reliability interactions: FN-5436 executor pending-review skip", () => {
   beforeEach(() => {
     resetExecutorMocks();
+    /*
+    FNXC:EngineTests 2026-10-04-15:29:
+    Pending-review retry behavior is evaluated after an implementation session. Stub acquisition
+    at that boundary because these rows intentionally omit a real checkout; native acquisition
+    belongs to dedicated worktree tests and must not hide the review-policy assertions here.
+    */
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockResolvedValue({
+      worktreePath: "/repo/.worktrees/fn-5436-ri",
+      branch: "fusion/fn-5436-ri",
+      source: "existing",
+      hydrated: false,
+      isResume: true,
+    });
     mockedCreateFnAgent.mockResolvedValue({
       session: {
         prompt: vi.fn().mockResolvedValue(undefined),

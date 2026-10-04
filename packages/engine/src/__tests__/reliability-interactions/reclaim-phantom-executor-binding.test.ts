@@ -67,6 +67,10 @@ function makeStore(task: Task, options: { recentAuditRows?: AuditRow[] } = {}): 
       (task as any).__lastMoveOpts = opts;
       return task;
     }),
+    moveTaskIf: vi.fn(async (id: string, column: Task["column"], predicate: (live: Task) => boolean | Promise<boolean>, opts?: Record<string, unknown>) => {
+      if (!await predicate(task)) return { moved: false, task };
+      return { moved: true, task: await (emitter as any).moveTask(id, column, opts) };
+    }),
     logEntry: vi.fn(async () => undefined),
     appendAgentLog: vi.fn(async () => undefined),
     updateSettings: vi.fn(async () => settings),
@@ -152,7 +156,7 @@ describe("FN-6736: phantom executor binding reclaim", () => {
     vi.useRealTimers();
   });
 
-  it("requeues an old in-progress task when executor-active is only a phantom binding", async () => {
+  it("clears an old phantom binding without an unauthorized backward move", async () => {
     const h = makeHarness();
     expect(existsSync(h.worktree)).toBe(true);
 
@@ -160,13 +164,9 @@ describe("FN-6736: phantom executor binding reclaim", () => {
 
     expect(recovered).toBe(1);
     expect(h.clearPhantomExecutorBinding).toHaveBeenCalledWith(h.task.id, { preserveWorktrees: true });
-    expect(h.store.moveTask).toHaveBeenCalledWith(h.task.id, "todo", expect.objectContaining({
-      moveSource: "engine",
-      recoveryRehome: true,
-      preserveProgress: true,
-      preserveWorktree: true,
-    }));
-    expect(h.task.column).toBe("todo");
+    // FNXC:LifecycleContainment 2026-10-04-14:44: a phantom binding is cleaned in place; it is not a named revision and cannot requeue WIP.
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.task.column).toBe("in-progress");
     expect(h.task.userPaused).toBe(false);
     expect(h.task.paused).toBe(false);
     expect((h.task as any).status).not.toBe("failed");
@@ -319,7 +319,7 @@ describe("FN-6736: phantom executor binding reclaim", () => {
     await h.manager.reclaimSelfOwnedBranchConflicts();
     await h.manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(h.store.moveTask).toHaveBeenCalledTimes(1);
+    expect(h.store.moveTask).not.toHaveBeenCalled();
     expect(h.task.resumeLimboCount).toBe(1);
     expect(findAudit(h.store, "task:resume-limbo-escalated")).toBeUndefined();
     h.cleanup();

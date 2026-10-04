@@ -56,7 +56,7 @@ pgDescribe("mergeTask resolves the review lane from the task's own workflow", ()
   let store: TaskStore;
 
   beforeEach(async () => {
-    harness = await createTaskStoreForTest({ prefix: "fusion_merge_blocker_lane" });
+    harness = await createTaskStoreForTest({ prefix: "fusion_merge_blocker_lane", projectId: "merge-blocker-renamed-lane" });
     store = harness.store;
   });
 
@@ -212,7 +212,7 @@ pgDescribe("the merge result reports the column the finaliser actually wrote", (
   let store: TaskStore;
 
   beforeEach(async () => {
-    harness = await createTaskStoreForTest({ prefix: "fusion_merge_result_lane" });
+    harness = await createTaskStoreForTest({ prefix: "fusion_merge_result_lane", projectId: "merge-result-renamed-lane" });
     store = harness.store;
   });
 

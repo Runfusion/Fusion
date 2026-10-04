@@ -83,7 +83,8 @@ describe("reliability interaction: pr conflict reclaim", () => {
     const manager = new SelfHealingManager(s as any, { rootDir: "/tmp/test" } as any);
     const result = await manager.reclaimPrConflictForTask(t.id);
     expect(result.outcome).toBe("reclaimed");
-    expect(t.column).toBe("in-progress");
+    // FNXC:LifecycleContainment 2026-10-04-15:20: PR-conflict recovery repairs its checkout in the review role; it does not auto-move a review card backward.
+    expect(t.column).toBe("in-review");
     expect(s.updateTask).toHaveBeenCalledWith(t.id, expect.objectContaining({
       branch: "fusion/fn-4763",
       branchWriteOrigin: "engine",

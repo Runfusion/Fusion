@@ -147,7 +147,7 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
     );
   });
 
-  it("missing-worktree session-start error during retry clears metadata and requeues", async () => {
+  it("missing-worktree session-start error during retry clears metadata in place", async () => {
     const store = createMockStore();
     const state = makeTask();
     store.getTask.mockImplementation(async () => ({ ...state }));
@@ -165,7 +165,13 @@ describe("reliability interactions: executor no-fn_task_done vs worktree reclaim
       branch: null,
       worktreeSessionRetryCount: 1,
     }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4601", "todo", { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+    /*
+    FNXC:LifecycleContainment 2026-10-04-15:29:
+    Session-start recovery now clears stale metadata while retaining the live lifecycle role.
+    A missing checkout is engine self-healing rather than an agent failure, so it neither burns
+    the task-done budget nor performs the old backward in-progress-to-todo move.
+    */
+    expect(store.moveTask).not.toHaveBeenCalled();
     // FN-4806: session-start missing-worktree is engine self-heal, must not burn retry budget
     // and must not mark the task failed.
     expect(store.updateTask).not.toHaveBeenCalledWith(

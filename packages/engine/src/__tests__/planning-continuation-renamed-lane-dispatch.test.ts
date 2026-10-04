@@ -17,14 +17,12 @@ admits (terminal check falls back to `done`), and the pair goes red.
 The store deliberately resolves the selection (no throw path): an unresolvable workflow degrades to
 the built-in IR and would make both cases exercise only the legacy fallback.
 */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowWorkItem } from "@fusion/core";
 
-import { projectAdmissionCoordinator } from "../concurrency/concurrency.js";
-import { admitPlanningContinuation } from "../runtimes/in-process-runtime.js";
+import { dispatchPlanningContinuationIfCurrent } from "../runtimes/in-process-runtime.js";
 import { lifecycleIr, RENAMED_VOCAB } from "./_workflow-vocabulary-fixture.js";
 
-const PROJECT_ID = "/test/planning-continuation-renamed-lane";
 const WORKFLOW_ID = "custom:renamed-dispatch-probe";
 
 /** The continuation row under admission. `dispatchPlanningContinuationIfCurrent` compares the
@@ -76,28 +74,20 @@ function renamedBoardStore(card: Task, item: WorkflowWorkItem): TaskStore {
   } as unknown as TaskStore;
 }
 
-afterEach(() => {
-  projectAdmissionCoordinator.releaseReservation("FN-RENAMED-COMPLETE");
-  projectAdmissionCoordinator.releaseReservation("FN-RENAMED-MIDBOARD");
-});
-
 describe("planning-continuation admission resolves terminal columns from the task's board", () => {
   it("does NOT admit a continuation for a card sitting in the renamed COMPLETE lane", async () => {
     const dispatch = vi.fn(async () => {});
     const card = task("FN-RENAMED-COMPLETE", RENAMED_VOCAB.complete);
     const item = planningItem(card.id);
 
-    const admitted = await admitPlanningContinuation({
+    const dispatched = await dispatchPlanningContinuationIfCurrent({
       store: renamedBoardStore(card, item),
-      projectId: PROJECT_ID,
       task: card,
       item,
       dispatch,
     });
 
-    // `admitPlanningContinuation` answers "item ownership taken", not "dispatcher ran";
-    // the shipped behavior under test is the dispatcher call itself.
-    void admitted;
+    expect(dispatched).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
   });
 
@@ -106,15 +96,14 @@ describe("planning-continuation admission resolves terminal columns from the tas
     const card = task("FN-RENAMED-MIDBOARD", RENAMED_VOCAB.wip);
     const item = planningItem(card.id);
 
-    const admitted = await admitPlanningContinuation({
+    const dispatched = await dispatchPlanningContinuationIfCurrent({
       store: renamedBoardStore(card, item),
-      projectId: PROJECT_ID,
       task: card,
       item,
       dispatch,
     });
 
-    expect(admitted).toBe(true);
+    expect(dispatched).toBe(true);
     expect(dispatch).toHaveBeenCalledOnce();
   });
 });

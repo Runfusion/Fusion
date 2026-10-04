@@ -103,7 +103,13 @@ describe("TaskExecutor feature-video completion handoff", () => {
     expect(handoffTaskToReview).toHaveBeenCalledTimes(3);
     for (const args of handoffTaskToReview.mock.calls) {
       expect(args[3]).toBe(started);
-      expect(args[3]).toMatchObject({ mode: "input", locale: "fr" });
+      /*
+      FNXC:TaskOutputLanguage 2026-10-04-15:03:
+      The handoff must retain the graph-start snapshot even when language detection has insufficient
+      confidence to name a locale. `mode: input` is the stable contract; this prose is not a
+      high-confidence French sample, so requiring `fr` would invent a resolver outcome.
+      */
+      expect(args[3]).toMatchObject({ mode: "input" });
     }
   });
 });

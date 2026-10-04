@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { executorLog } from "../logger.js";
+import * as worktreeAcquisition from "../worktree/worktree-acquisition.js";
 import { createMockStore, mockedCreateFnAgent, resetExecutorMocks } from "./executor-test-helpers.js";
 
 function refusal() {
@@ -34,6 +35,19 @@ function task(retryCount: number) {
 describe("FN-4946 implicit refusal budget handling", () => {
   beforeEach(() => {
     resetExecutorMocks();
+    /*
+    FNXC:EngineTests 2026-10-04-15:29:
+    These budget cases exercise graph-owned completion behavior, not native worktree creation.
+    Keep the synthetic /repo binding acquisition-successful so the implementation session reaches
+    fn_task_done instead of failing while reserving a host path that intentionally does not exist.
+    */
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockResolvedValue({
+      worktreePath: "/repo/.worktrees/swift-falcon",
+      branch: "fusion/fn-4946-b",
+      source: "existing",
+      hydrated: false,
+      isResume: true,
+    });
   });
 
   it("requeues to todo under budget", async () => {

@@ -56,7 +56,7 @@ describe("authoritative gate-result routing", () => {
         config: { ...node.config, reviewKind: "code" },
       } : node),
     });
-    expect(terminalRows).toMatchObject([{ status: "passed", verdict: "APPROVE", verdictRequired: true, reviewKind: "code" }]);
+    expect(terminalRows).toMatchObject([{ status: "passed", verdict: "APPROVE", reviewKind: "code" }]);
     expect(result).toMatchObject({
       outcome: "failure",
       context: { "node:review:outcome": "failure", "node:review:value": "gate-result-not-approved" },

@@ -264,7 +264,14 @@ pgDescribeIfGit("FN-9048 workspace archive restore reaches self-healing cleanly"
       steps: [{ name: "Implementation", status: "done" }],
       modifiedFiles: [...fx.repos].sort().map((repo) => `${repo}/feature.txt`),
     } as never);
-    const stalePreArchive = (await store.getTask(id))!;
+    /* FNXC:WorkspaceArchiveRestore 2026-10-04-15:21: Archive mutates the backing store after this
+       point. Preserve the pre-archive review snapshot so the stale-map reconciler exercises its
+       FORK-A path rather than a physically archived row. Generic task updates do not author
+       repository scope, so this direct stale-fixture snapshot supplies the confirmed workspace intent. */
+    const stalePreArchive = {
+      ...structuredClone((await store.getTask(id))!),
+      repositoryScope: { repositories: [...fx.repos].sort(), state: "confirmed", revision: 1 },
+    };
     const unregister = registerArchiveWorkspaceWorktreeDisposer(store, async (_task, plan) => {
       for (const entry of plan) {
         fx.git(entry.repoRel, `git worktree remove --force ${entry.worktreePath}`);

@@ -679,8 +679,14 @@ export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId
     }
 }
 
-export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: string, workflowId: string, stepIds: string[]): Promise<void> {
-  const updatedAt = new Date().toISOString();
+export async function writeTaskWorkflowSelectionImpl(
+  store: TaskStore,
+  taskId: string,
+  workflowId: string,
+  stepIds: string[],
+  options?: { taskUpdatedAt?: string },
+): Promise<void> {
+  const updatedAt = options?.taskUpdatedAt ?? new Date().toISOString();
   /* FNXC:PostgresCutover 2026-07-04-00:00: backend selection writes use async Drizzle. */
   const layer = store.asyncLayer!;
   /* FNXC:SqliteDualPathCleanup 2026-07-26-15:00: selection identity is project-scoped. */

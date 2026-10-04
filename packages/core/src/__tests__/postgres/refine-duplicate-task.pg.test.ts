@@ -224,11 +224,12 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
 
       const refined = await h.store.refineTask(source.id, "Please add stronger review coverage");
 
-      expect((await h.store.getTask(control.id)).enabledWorkflowSteps).toEqual(["plan-review", "code-review"]);
-      expect((await h.store.getTask(refined.id)).enabledWorkflowSteps).toEqual(["plan-review", "code-review"]);
+      const builtinCodingDefaultSteps = ["plan-review", "code-review", "post-merge-verification"];
+      expect((await h.store.getTask(control.id)).enabledWorkflowSteps).toEqual(builtinCodingDefaultSteps);
+      expect((await h.store.getTask(refined.id)).enabledWorkflowSteps).toEqual(builtinCodingDefaultSteps);
       expect(await h.store.getTaskWorkflowSelectionAsync(refined.id)).toEqual({
         workflowId: "builtin:coding",
-        stepIds: ["plan-review", "code-review"],
+        stepIds: builtinCodingDefaultSteps,
       });
     } finally {
       await teardown();
@@ -255,10 +256,10 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
       });
       const marketingRefinement = await h.store.refineTask(marketingSource.id, "Update the campaign copy");
 
-      expect((await h.store.getTask(marketingRefinement.id)).enabledWorkflowSteps).toEqual([]);
+      expect((await h.store.getTask(marketingRefinement.id)).enabledWorkflowSteps).toEqual(["post-merge-verification"]);
       expect(await h.store.getTaskWorkflowSelectionAsync(marketingRefinement.id)).toEqual({
         workflowId: "builtin:marketing",
-        stepIds: [],
+        stepIds: ["post-merge-verification"],
       });
 
       await h.store.setDefaultWorkflowId(null);

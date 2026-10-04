@@ -87,10 +87,11 @@ pgDescribe("operator hard cancel on a workflow with an intake lane and no hold l
     expect(await store.getCompletionHandoffAcceptedMarker(task.id)).toBeNull();
   });
 
-  it("does NOT hard-cancel an ENGINE move into the same lane", async () => {
+  it("rejects an ENGINE move into intake without clearing the handoff marker", async () => {
     /*
-    The paired negative, so the fix cannot pass by cancelling on every move into intake. Only an
-    operator move is a hard cancel; an engine rebound must leave the handoff alone.
+    FNXC:WorkflowTaskCancellation 2026-10-04-12:07:
+    The paired negative must respect lifecycle containment: automatic moves may not target
+    intake. The rejected engine rebound must also leave the operator-only cancel witness intact.
     */
     const store = harness.store();
     const definition = await intakeOnlyWorkflow(store);
@@ -99,7 +100,9 @@ pgDescribe("operator hard cancel on a workflow with an intake lane and no hold l
     await store.moveTask(task.id, "signoff" as never, { bypassGuards: true } as never);
     await store.setCompletionHandoffAcceptedMarker(task.id, { source: "test" });
 
-    await store.moveTask(task.id, "inbox" as never, { moveSource: "engine", recoveryRehome: true, bypassGuards: true } as never);
+    await expect(
+      store.moveTask(task.id, "inbox" as never, { moveSource: "engine", recoveryRehome: true, bypassGuards: true } as never),
+    ).rejects.toThrow("Automatic moves may not target the intake lifecycle role");
 
     expect(await store.getCompletionHandoffAcceptedMarker(task.id)).not.toBeNull();
   });

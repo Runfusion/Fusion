@@ -61,8 +61,16 @@ describe("graph node workspace session boundary", () => {
     expect(resolveGraphNodeSessionBoundary({ ...base, legacyWorkspaceLayout: true })).toBeUndefined();
   });
 
-  it("keeps Plan Review on its deliberate shared-root boundary", () => {
-    expect(resolveGraphNodeSessionBoundary({ ...base, writeCapable: false, isPlanReview: true })).toBeUndefined();
+  it("binds Plan Review to the delivered workspace task directory", () => {
+    expect(resolveGraphNodeSessionBoundary({ ...base, writeCapable: false, isPlanReview: true })).toEqual({
+      kind: "workspace-task-dir",
+      writableRoot: "/ws/.fusion/worktrees/mult-012",
+      projectRoot: "/ws",
+      repoRoots: [
+        { repoRelPath: "repo1", repoRootDir: "/ws/repo1" },
+        { repoRelPath: "repo2", repoRootDir: "/ws/repo2" },
+      ],
+    });
   });
 
   /*

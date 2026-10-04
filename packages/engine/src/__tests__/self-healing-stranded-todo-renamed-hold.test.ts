@@ -65,7 +65,10 @@ function ir(holdId: string): WorkflowIr {
 
 function harness(tasks: Task[], workflowIr: WorkflowIr | undefined) {
   const recovered: string[] = [];
-  const selection = { workflowId: WF, stepIds: [] };
+  /* FNXC:WorkflowLifecycleColumns 2026-10-04-15:21: An absent definition is an absent selection
+     in production; a dangling custom selection resolves through the default workflow and is not the
+     legacy-fallback fixture this harness models. */
+  const selection = workflowIr ? { workflowId: WF, stepIds: [] } : null;
   const listTasks = vi.fn(async (opts?: { column?: string }) =>
     /* HONORS the column filter — see the file header. */
     opts?.column ? tasks.filter((t) => t.column === opts.column) : tasks,

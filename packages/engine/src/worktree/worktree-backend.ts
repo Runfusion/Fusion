@@ -243,10 +243,17 @@ export interface WorktreeBackend {
 
 const WORKTREE_BACKEND_MARKER = "fusion-worktree-backend-kind";
 
+/*
+FNXC:WorktreeBackend 2026-10-04-14:56:
+Backend-marker discovery is a managed Git subprocess and must remain bounded like every other
+worktree operation so a locked or unavailable checkout cannot retain lifecycle cleanup forever.
+*/
 async function resolveWorktreeBackendMarkerPath(worktreePath: string): Promise<string> {
   const { stdout } = await execAsync(`git rev-parse --git-path ${JSON.stringify(WORKTREE_BACKEND_MARKER)}`, {
     cwd: worktreePath,
     encoding: "utf-8",
+    timeout: 10_000,
+    maxBuffer: 1024 * 1024,
   });
   const markerPath = stdout.trim();
   return isAbsolute(markerPath) ? markerPath : resolve(worktreePath, markerPath);

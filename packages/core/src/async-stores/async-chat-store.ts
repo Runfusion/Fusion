@@ -433,6 +433,9 @@ export async function getChatMessages(
     .orderBy(
       filter?.order === "desc" ? desc(createdAtCol) : asc(createdAtCol),
       filter?.order === "desc" ? desc(idCol) : asc(idCol),
+      // FNXC:ChatProjectOrder 2026-10-04-12:07: Unbound forensic reads can contain the same
+      // composite message id from multiple projects, so project id closes the final tie.
+      filter?.order === "desc" ? desc(schema.project.chatMessages.projectId) : asc(schema.project.chatMessages.projectId),
     )
     .limit(limit)
     .offset(offset);

@@ -61,6 +61,7 @@ function createStore(settings: Record<string, unknown> = {}): TaskStore & Record
     moveTaskCalls,
     emitted,
     getSettings: vi.fn().mockResolvedValue({ autoMerge: false, ...settings }),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     updateTask: vi.fn().mockResolvedValue(undefined),
     /* FNXC:WorkspaceMergeTests 2026-08-20-23:23: the durable merge-review reconciliation path atomically records its episode before a workspace repository can land. Keep this narrow store double compatible with that production contract. */
     updateTaskAtomic: vi.fn(async (_id: string, mutate: (task: Task) => Partial<Task> | undefined) => {
@@ -69,13 +70,26 @@ function createStore(settings: Record<string, unknown> = {}): TaskStore & Record
       if (patch) Object.assign(current, patch);
       return current;
     }),
-    mergeWorkspaceWorktreeEntry: vi.fn().mockResolvedValue(undefined),
+    mergeWorkspaceWorktreeEntry: vi.fn(async (
+      _id: string,
+      repoRelPath: string,
+      patch: Partial<NonNullable<Task["workspaceWorktrees"]>[string]>,
+      options?: { requireExistingEntry?: boolean },
+    ) => {
+      const task = await store.getTask(TASK_ID) as Task;
+      const entries = task.workspaceWorktrees ?? {};
+      const existing = entries[repoRelPath];
+      if (options?.requireExistingEntry && !existing) return task;
+      task.workspaceWorktrees = { ...entries, [repoRelPath]: { ...existing, ...patch } };
+      return task;
+    }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     // FNXC:Test 2026-06-24-23:50: mergeAndReview reads store.getTask().comments for merge/review
     // prompt context (selectUserCommentsForAgentContext); an undefined return throws mid-land. Return
     // a real task shape so the per-repo land reaches landSquash.
     getTask: vi.fn(async () => currentWorkspaceTask ?? { id: TASK_ID, column: "in-review", branch: BRANCH, comments: [], steeringComments: [], steps: [], log: [] }),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
     moveTask: vi.fn((id: string, column: string) => {
       moveTaskCalls.push({ id, column });
       const task = currentWorkspaceTask ?? ({ id, column } as Task);

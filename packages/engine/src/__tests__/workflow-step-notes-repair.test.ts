@@ -167,7 +167,7 @@ describe("workflow-step verdict note repair", () => {
       mutationType: "task:review-notes-repaired",
       metadata: expect.objectContaining({
         taskId: baseTask().id,
-        workflowStepId: "code-review-step",
+        workflowStepId: "code-review",
         verdict: "APPROVE",
         outcome: "repaired",
       }),
@@ -235,7 +235,7 @@ describe("workflow-step verdict note repair", () => {
     expect(outcome.notes).not.toContain("without a rationale");
   });
 
-  it("narrates an unchanged legacy review whose persisted output and notes are empty", async () => {
+  it("reruns a legacy persisted review when its output and notes are empty", async () => {
     const subject = baseTask() as any;
     const store = createMockStore();
     store.getTask.mockResolvedValue(subject);
@@ -266,10 +266,13 @@ describe("workflow-step verdict note repair", () => {
     }];
 
     const reused = await (executor as any).executeWorkflowStep(subject, step, subject.worktree, {});
-    const notice = workflowStepVerdictNoNotesNotice("APPROVE", "reused-empty");
-    expect(reused).toMatchObject({ verdict: "APPROVE", notes: notice, output: notice });
-    expect(sessions).toHaveLength(1);
-    expect(mockedCreateFnAgent).toHaveBeenCalledOnce();
+    expect(reused).toMatchObject({
+      verdict: "APPROVE",
+      notes: "Reviewed the plan and found it ready.",
+      output: "Reviewed the plan and found it ready.",
+    });
+    expect(sessions).toHaveLength(2);
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
   });
 
   it("repairs each workspace repository in its own session and preserves aggregate notes", async () => {

@@ -34,7 +34,7 @@ function makeStore(overrides: Partial<Record<string, unknown>> = {}): TaskStore 
 }
 
 function planningTask(overrides: Partial<Task> = {}): Task {
-  return { id: "FN-1403", column: "ideas", status: "planning", ...overrides } as Task;
+  return { id: "FN-1403", column: "ideas", status: "planning", steps: [], ...overrides } as Task;
 }
 
 function attachLiveSession(processor: TriageProcessor, taskId: string) {
@@ -81,7 +81,7 @@ describe("withdrawing a card from planning", () => {
     const processor = new TriageProcessor(store, "/tmp/test");
     const wake = vi.spyOn(processor as any, "requestImmediatePoll").mockImplementation(() => undefined);
 
-    (processor as any).taskColumnWakeHandler({ id: "FN-1403", column: "todo" } as Task);
+    (processor as any).taskColumnWakeHandler({ id: "FN-1403", column: "todo", steps: [] } as Task);
 
     expect(wake).toHaveBeenCalled();
   });

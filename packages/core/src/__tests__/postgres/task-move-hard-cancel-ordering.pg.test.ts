@@ -75,8 +75,14 @@ pgDescribe("user move to Todo hard-cancel ordering", () => {
     }
 
     expect((await readTaskRow(store.asyncLayer!, created.id))?.column).toBe("in-progress");
+    /*
+    FNXC:LifecycleContainment 2026-10-04-11:58:
+    A timed-out cancellation releases its lock but does not authorize an engine-owned backward
+    move. Retrying the explicit user action proves the lock is released without bypassing that
+    lifecycle boundary.
+    */
     await expect(
-      store.moveTask(created.id, "todo", { moveSource: "engine" }),
-    ).resolves.toMatchObject({ column: "todo" });
+      store.moveTask(created.id, "todo", { moveSource: "user" }),
+    ).resolves.toMatchObject({ column: "todo", userPaused: true });
   });
 });

@@ -151,7 +151,11 @@ function makeHarness({
     ensureFeatureAssertionLinked: vi.fn(async () => (withAssertions ? [{ id: "CA-1", milestoneId: milestone.id, title: "generated assert", assertion: "works", status: "pending", orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] : [])),
     listGoalIdsForMission: vi.fn(async () => []),
     startValidatorRun: vi.fn(async () => ({ id: "VR-001", featureId: feature.id, milestoneId: milestone.id, sliceId: "SL-001", status: "running", triggerType: "task_completion", implementationAttempt: 1, validatorAttempt: 1, startedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })),
-    completeValidatorRun: vi.fn(),
+    // The live completion fence advances feature state only when persistence applied this run.
+    completeValidatorRun: vi.fn(async () => {
+      missionStore.updateFeatureStatus(feature.id, "done");
+      return { completionApplied: true };
+    }),
     recordValidatorFailures: vi.fn(),
     createGeneratedFixFeature: vi.fn(),
     triageFeature: vi.fn(),
@@ -210,7 +214,7 @@ describe("mission autopilot end-to-end wiring", () => {
     expect(h.missionStore.getFeatureByTaskId("FN-001")?.status).toBe("done");
     expect(processSpy).toHaveBeenCalledWith("FN-001");
     expect(h.missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
-    expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok");
+    expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok", undefined, expect.objectContaining({ featureId: "F-001" }));
     expect(h.slices.get("SL-001").status).toBe("complete");
     expect(h.activateSpy).toHaveBeenCalledWith("M-001");
     expect(h.slices.get("SL-002").status).toBe("active");
@@ -275,7 +279,7 @@ describe("mission autopilot end-to-end wiring", () => {
     await h.emitTaskMoved("done");
     await vi.waitFor(() => expect(h.slices.get("SL-001").status).toBe("complete"));
 
-    expect(h.missionStore.startValidatorRun).not.toHaveBeenCalled();
+    expect(h.missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
     expect(h.slices.get("SL-001").status).toBe("complete");
     expect(h.activateSpy).toHaveBeenCalledWith("M-001");
     expect(h.slices.get("SL-002").status).toBe("active");
@@ -288,7 +292,7 @@ describe("mission autopilot end-to-end wiring", () => {
     await h.loop.processTaskOutcome("FN-001");
 
     expect(h.missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
-    expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok");
+    expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "passed", "ok", undefined, expect.objectContaining({ featureId: "F-001" }));
     expect(h.missionStore.getFeature("F-001")?.status).toBe("done");
     expect(h.slices.get("SL-001").status).toBe("complete");
     expect(h.activateSpy).toHaveBeenCalledWith("M-001");
@@ -324,9 +328,9 @@ describe("mission autopilot end-to-end wiring", () => {
     });
 
     await h.emitTaskMoved("done");
-    await vi.waitFor(() => expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "error", "runtime unavailable"));
+    await vi.waitFor(() => expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "error", "runtime unavailable", undefined, expect.objectContaining({ featureId: "F-001" })));
 
-    expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "error", "runtime unavailable");
+    expect(h.missionStore.completeValidatorRun).toHaveBeenCalledWith("VR-001", "error", "runtime unavailable", undefined, expect.objectContaining({ featureId: "F-001" }));
     expect(h.missionStore.logMissionEvent).toHaveBeenCalledWith(
       "M-001",
       "error",

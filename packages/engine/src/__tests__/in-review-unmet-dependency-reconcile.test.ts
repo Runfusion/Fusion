@@ -67,11 +67,12 @@ describe("executor dependency dispatch gate", () => {
     await executor.execute(dependent);
 
     expect(graphDispatch).not.toHaveBeenCalled();
-    expect(store.moveTask).toHaveBeenCalledWith("FN-DISPATCH", "todo", expect.objectContaining({
-      preserveProgress: true,
-      preserveWorktree: true,
-      preserveResumeState: true,
-    }));
+    /*
+    FNXC:DependencyGating 2026-10-04-15:00:
+    Dependency admission is an in-place hold: dispatch is blocked without a backward move that
+    could hard-cancel or discard active lifecycle progress.
+    */
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith("FN-DISPATCH", { status: "queued", blockedBy: "FN-DEP" }, undefined);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-DISPATCH",
@@ -122,7 +123,7 @@ describe("in-review unmet dependency reconciliation", () => {
     manager.stop();
   });
 
-  it("reproduces FN-6778/FN-6779 review advancement and rebounds to queued todo", async () => {
+  it("holds FN-6778/FN-6779 in review as queued work when dependencies remain unmet", async () => {
     const { store, tasks } = createStore([
       task({ id: "FN-6778", column: "in-review", dependencies: ["FN-6777"] }),
       task({ id: "FN-6777", column: "in-progress" }),
@@ -136,8 +137,12 @@ describe("in-review unmet dependency reconciliation", () => {
 
     await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(2);
 
-    expect(tasks.get("FN-6778")).toMatchObject({ column: "todo", status: "queued", blockedBy: "FN-6777" });
-    expect(tasks.get("FN-6779")).toMatchObject({ column: "todo", status: "queued", blockedBy: "FN-6770" });
+    /*
+    FNXC:DependencyGating 2026-10-04-15:00:
+    Lifecycle containment preserves the review role; only a named revision may move it backward.
+    */
+    expect(tasks.get("FN-6778")).toMatchObject({ column: "in-review", status: "queued", blockedBy: "FN-6777" });
+    expect(tasks.get("FN-6779")).toMatchObject({ column: "in-review", status: "queued", blockedBy: "FN-6770" });
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:reconcile-in-review-unmet-dependencies",
       target: "FN-6778",

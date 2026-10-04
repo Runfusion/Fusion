@@ -80,6 +80,8 @@ function createRecordingStore(controller: AbortController, options: { sharedGrou
     return {
       getTask: vi.fn(async () => task),
       getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 0 } })),
+      getStaleReviewCallbackWaiverReceipts: vi.fn(async () => []),
+      getProjectId: vi.fn(() => "orphan-write-test"),
       updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => {
         records.push({ generation, writer: "updateTask", args: [_id, patch] });
         Object.assign(task, patch);

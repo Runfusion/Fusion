@@ -93,6 +93,8 @@ function createStore(task: Task, taskSequence?: Task[]) {
     mergeTask: async () => undefined,
     getRootDir: () => "",
     recordRunAuditEvent: async () => undefined,
+    getStaleReviewCallbackWaiverReceipts: vi.fn(async () => []),
+    getProjectId: vi.fn(() => "proj_test"),
   }) as unknown as TaskStore & EventEmitter;
 
   return { store, comments, logs };
@@ -173,10 +175,12 @@ describe("post-finalize verification failure reliability interactions (real git)
       const preFinalizeTask = {
         ...task,
         column: "in-review",
-        status: "merging",
+        /* FNXC:PostFinalizeVerification 2026-10-04-15:28: Queue admission owns the transient merge claim; a durable `merging` value blocks dispatch. */
+        status: null,
         mergeDetails: undefined,
       } as unknown as Task;
-      const { store, comments, logs } = createStore(task, [preFinalizeTask, task]);
+      /* FNXC:PostFinalizeVerification 2026-10-04-15:28: Queue admission and finalization re-read the durable row before the verification catch observes its terminal state. */
+      const { store, comments, logs } = createStore(task, [preFinalizeTask, preFinalizeTask, preFinalizeTask, preFinalizeTask, task]);
       testState.currentStore = store;
 
       const verificationError = new Error("Deterministic test verification failed");

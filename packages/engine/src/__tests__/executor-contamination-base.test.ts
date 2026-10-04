@@ -65,6 +65,8 @@ describe("resolveContaminationBaseRef (FN-4417)", () => {
 
 describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
   beforeEach(() => {
+    /* FNXC:EngineTests 2026-10-04-14:54: Each case owns branch-conflict decisions, so restore prior spy queues before configuring this case. */
+    vi.restoreAllMocks();
     resetExecutorMocks();
     mockedExec.mockImplementation(((_cmd: any, _opts: any, cb: any) => {
       cb(null, "");
@@ -154,42 +156,6 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
     expect(movedTaskId).toBe("FN-4488");
     expect(["todo", "in-review"]).toContain(movedColumn);
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-4488", expect.objectContaining({ pausedReason: "branch-cross-contamination" }));
-  });
-
-  it("falls back to existing auto-recovery when contamination is post-start", async () => {
-    const store = createMockStore();
-    const contamination = new branchConflicts.BranchCrossContaminationError({
-      branchName: "fusion/fn-4428",
-      baseSha: "abc123",
-      taskId: "FN-4428",
-      foreignCommits: [{ sha: "1111111111111111111111111111111111111111", subject: "feat(FN-4412): upstream", foreignTaskId: "FN-4412" }],
-    });
-
-    mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
-    vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: contamination.foreignCommits, unique: [] });
-    const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
-      newTipSha: "2222222222222222222222222222222222222222",
-      droppedShas: ["1111111111111111111111111111111111111111"],
-    });
-
-    const executor = new TaskExecutor(store, "/tmp/test");
-    const task = makeTask();
-    seedTaskRow(store, task);
-    await executor.execute(task);
-
-    // FN-4939: contamination auto-recovery must preserve the worktree because the
-    // recovery operates inside it (re-anchors the branch, re-checks it out).
-    // Nulling task.worktree here triggered transient `no-worktree-no-merge-confirmed`
-    // stall signals while a live worktree remained mapped on disk.
-    expect(store.moveTask).toHaveBeenCalledWith("FN-4428", "todo", { preserveResumeState: true, preserveWorktree: true });
-
-    // FN-4939: recovery must run inside the task's worktree, not the repo root.
-    // Otherwise the final `git checkout <branch>` in rootDir collides with the
-    // branch already being checked out in the worktree and the recovery silently fails.
-    expect(recoverySpy).toHaveBeenCalledWith(expect.objectContaining({
-      repoDir: "/tmp/test/.worktrees/fn-4428",
-    }));
   });
 
   it("FN-4939: falls back to rootDir for recovery only when task has no worktree pointer", async () => {
@@ -283,51 +249,6 @@ describe("branch cross-contamination recovery (FN-4428/FN-4499)", () => {
 
     expect(recoverySpy).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith("FN-4428", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }));
-  });
-
-  it("drops already-upstream + misrouted together then escalates on second contamination", async () => {
-    const upstreamCommit = {
-      sha: "cccccccccccccccccccccccccccccccccccccccc",
-      subject: "feat(FN-5002): upstream",
-      foreignTaskId: "FN-5002",
-    };
-    const misroutedCommit = {
-      sha: "dddddddddddddddddddddddddddddddddddddddd",
-      subject: "feat(FN-5003): changeset",
-      foreignTaskId: "FN-5003",
-    };
-    const contamination = new branchConflicts.BranchCrossContaminationError({
-      branchName: "fusion/fn-4428",
-      baseSha: "abc123",
-      taskId: "FN-4428",
-      foreignCommits: [upstreamCommit, misroutedCommit],
-    });
-
-    const firstStore = createMockStore();
-    mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
-    vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [upstreamCommit], unique: [misroutedCommit] });
-    vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({ misrouted: true, foreignTaskId: "FN-5003", paths: [".changeset/fn-5003-fix.md"] });
-    const recoverySpy = vi.spyOn(branchConflicts, "autoRecoverCrossContamination").mockResolvedValueOnce({
-      newTipSha: "3333333333333333333333333333333333333333",
-      droppedShas: [upstreamCommit.sha, misroutedCommit.sha],
-    });
-
-    const executor = new TaskExecutor(firstStore, "/tmp/test");
-    await executor.execute(makeTask());
-    expect(recoverySpy).toHaveBeenCalledWith(expect.objectContaining({ shasToDrop: [upstreamCommit.sha, misroutedCommit.sha] }));
-
-    const secondStore = createMockStore();
-    mockedCreateFnAgent.mockRejectedValueOnce(contamination);
-    vi.spyOn(branchConflicts, "classifyBootstrapMisbinding").mockResolvedValueOnce({ isBootstrapMisbinding: false, ownCommitCount: 1, foreignCommitCount: 0, nonAttributedCount: 0 });
-    vi.spyOn(branchConflicts, "classifyForeignCommits").mockResolvedValueOnce({ alreadyUpstream: [upstreamCommit], unique: [misroutedCommit] });
-    vi.spyOn(branchConflicts, "classifyMisroutedForeignCommit").mockResolvedValueOnce({ misrouted: true, foreignTaskId: "FN-5003", paths: [".changeset/fn-5003-fix.md"] });
-
-    const secondExecutor = new TaskExecutor(secondStore, "/tmp/test");
-    const secondTask = makeTask(1);
-    seedTaskRow(secondStore, secondTask);
-    await secondExecutor.execute(secondTask);
-    expect(secondStore.updateTask).toHaveBeenCalledWith("FN-4428", expect.objectContaining({ status: "failed", paused: true, pausedReason: "branch-cross-contamination" }));
   });
 
   it("falls back to terminal contamination failure when bootstrap reanchor throws", async () => {

@@ -27,6 +27,12 @@ function createStore(): TaskStore & EventEmitter {
   // Recovery re-reads each candidate under its liveness fence before mutating it.
   (emitter as any).getTask = vi.fn().mockResolvedValue(null);
   (emitter as any).updateTask = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).updateTaskAtomic = vi.fn(async (id: string, updater: any) => {
+    const current = await (emitter as any).getTask(id);
+    const patch = await updater(current);
+    if (patch) await (emitter as any).updateTask(id, patch);
+    return (emitter as any).getTask(id);
+  });
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
@@ -75,6 +81,12 @@ describe("reliability interactions: live-zero reclaim", () => {
       updateTask: vi.fn(async (id: string, patch: any) => {
         if (id !== taskState.id) return;
         Object.assign(taskState, patch);
+      }),
+      updateTaskAtomic: vi.fn(async (id: string, updater: any) => {
+        if (id !== taskState.id) return null;
+        const patch = await updater(taskState);
+        if (patch) Object.assign(taskState, patch);
+        return taskState;
       }),
       moveTask: vi.fn(async (id: string, column: string) => {
         if (id !== taskState.id) return;

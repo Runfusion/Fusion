@@ -701,6 +701,7 @@ describe("builtin:coding parity alongside the benchmark (R8)", () => {
       "code-review::code-review-step",
       "merge",
       "post-merge-verification",
+      "post-merge-verification::post-merge-verification-step",
     ]);
     expect(calls).toEqual([
       "plan",
@@ -710,13 +711,12 @@ describe("builtin:coding parity alongside the benchmark (R8)", () => {
       "custom:completion-summary",
       "custom:code-review-step",
       "merge",
+      "custom:post-merge-verification-step",
     ]);
 
     /*
-    The merge-column fix in action on the builtin: `builtin:coding` places its merge-region nodes
-    in `in-review`, so the derived synthetic merge column resolves to `in-review` — the same
-    destination the old hardcoded literal produced. The card therefore never leaves `in-review`
-    for the merge, and the only later move is the post-merge hop into `done`.
+    The builtin keeps merge-region and post-merge verification nodes in `in-review`; the graph
+    therefore does not cross into `done` during this parity trace.
     */
     expect(transitions).toEqual([
       // Specification (plan + plan review) happens in the planning lane; the card crosses into
@@ -724,11 +724,10 @@ describe("builtin:coding parity alongside the benchmark (R8)", () => {
       ["triage", "todo"],
       ["todo", "in-progress"],
       ["in-progress", "in-review"],
-      ["in-review", "done"],
     ]);
     // The merge introduced NO column of its own: it resolved to the column the card was already
     // in. That is the byte-compat property the hardcoded literal used to provide by accident.
     expect(transitions.map(([, to]) => to)).not.toContain("merging");
-    expect(task.column).toBe("done");
+    expect(task.column).toBe("in-review");
   });
 });

@@ -139,6 +139,7 @@ describe("built-in coding + stepwise workflows wire code-review as a default-ON 
       description: "",
       phase: "pre-merge",
       defaultOn: true,
+      reportingOnly: false,
     });
     // …and in the default-on set, so default-on actually takes effect (new tasks seed it).
     expect(resolveDefaultOnOptionalGroupIds(ir)).toContain("code-review");

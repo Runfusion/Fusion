@@ -97,13 +97,20 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
     expect((await store.moveTask(task.id, "todo", { moveSource: "user" })).column).toBe("todo");
   });
 
-  it("allows the todo → ideas move from an engine source too", async () => {
+  it("refuses an engine move from todo back into the ideas intake lane", async () => {
     const store = harness.store();
     const task = await store.createTask({ description: "idea", workflowId: "builtin:coding-ideas" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
 
-    const demoted = await store.moveTask(task.id, "ideas", { moveSource: "engine" });
-    expect(demoted.column).toBe("ideas");
+    /*
+    FNXC:LifecycleContainment 2026-10-04-11:58:
+    A user may deliberately return a card to intake, but automatic recovery may never route work
+    backward into intake. The store-level refusal protects every engine-owned move surface.
+    */
+    await expect(store.moveTask(task.id, "ideas", { moveSource: "engine" })).rejects.toThrow(
+      /Automatic moves may not target the intake lifecycle role/,
+    );
+    expect((await store.getTask(task.id)).column).toBe("todo");
   });
 
   it("keeps the default workflow's legacy adjacency unchanged", async () => {

@@ -190,13 +190,6 @@ describe("compat park for graphs that do not route review-pending", () => {
   });
 
   it("does NOT park when a LATER node reported its own failure (stale value must not mask it)", async () => {
-    /*
-    FNXC PR #2590 review (greptile, 2nd): the run context is shared for the whole walk, so a graph
-    that continues past a pending-review node and then dies downstream still carries the earlier
-    value. Parking on that would hide a real failure behind a wait — the opposite over-reach from
-    the first finding, and worse, because the operator sees a card waiting for a reviewer who has
-    nothing to review.
-    */
     const { store, live, executor } = parkHarness();
 
     await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
@@ -207,39 +200,31 @@ describe("compat park for graphs that do not route review-pending", () => {
 
     expect(store.handoffToReview).not.toHaveBeenCalled();
     /*
-    FNXC:WorkflowExecutionOwnership 2026-07-30-10:40 (PR #2599 review — coderabbit):
-    Assert the DISPOSITION, not only the absence of a park. "No review handoff" passes just as
-    well for a run that silently did nothing, which is the failure mode this whole file exists to
-    catch. Verified against the real path rather than assumed: both cases reach the terminal sink
-    and park with the failure of the node that actually ended the walk.
+    FNXC:WorkflowFailurePersistence 2026-10-04-15:03:
+    Terminal graph failure now uses the live-row atomic reducer so a concurrent operator move wins.
+    Exercise the reducer's observable patch rather than the retired blind updateTask call.
     */
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-COMPAT",
-      expect.objectContaining({ status: "failed", error: expect.stringContaining("terminated with failure at node 'cleanup'") }),
-      undefined,
-    );
+    const terminalWrite = store.updateTaskAtomic.mock.calls.find(([id]: [string]) => id === "FN-COMPAT");
+    expect(terminalWrite).toHaveLength(3);
+    expect(terminalWrite?.[1](live)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("terminated with failure at node 'cleanup'"),
+    });
   });
 
   it("does NOT park for an ordinary failure with no pending-review value anywhere", async () => {
-    /* The guard must stay narrow — a genuine execute failure still belongs to the terminal sink. */
     const { store, live, executor } = parkHarness();
 
     await (executor as never as { handleGraphFailure: (t: unknown, r: unknown) => Promise<void> })
       .handleGraphFailure(live, failureRun({ "node:execute:value": "implementation-incomplete" }));
 
     expect(store.handoffToReview).not.toHaveBeenCalled();
-    /*
-    FNXC:WorkflowExecutionOwnership 2026-07-30-10:40 (PR #2599 review — coderabbit):
-    Assert the DISPOSITION, not only the absence of a park. "No review handoff" passes just as
-    well for a run that silently did nothing, which is the failure mode this whole file exists to
-    catch. Verified against the real path rather than assumed: both cases reach the terminal sink
-    and park with the failure of the node that actually ended the walk.
-    */
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-COMPAT",
-      expect.objectContaining({ status: "failed", error: expect.stringContaining("terminated with failure at node 'cleanup'") }),
-      undefined,
-    );
+    const terminalWrite = store.updateTaskAtomic.mock.calls.find(([id]: [string]) => id === "FN-COMPAT");
+    expect(terminalWrite).toHaveLength(3);
+    expect(terminalWrite?.[1](live)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("terminated with failure at node 'cleanup'"),
+    });
   });
 });
 

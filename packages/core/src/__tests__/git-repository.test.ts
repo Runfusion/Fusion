@@ -210,7 +210,9 @@ describe("ensureGitRepositoryForProjectPath", () => {
     This Git build creates origin/HEAD for a local single-branch clone. Remove it explicitly
     so the fixture exercises the remote-tracking tier rather than the higher origin-head tier.
     */
-    await git(clonePath, ["symbolic-ref", "-d", "refs/remotes/origin/HEAD"]);
+    // FNXC:IntegrationBranchReadiness 2026-10-04-12:07: Git may store origin/HEAD as a direct
+    // ref in local clones; update-ref removes either representation for this tiered fixture.
+    await git(clonePath, ["update-ref", "-d", "refs/remotes/origin/HEAD"]);
     await git(clonePath, ["checkout", "--detach", "HEAD"]);
     await git(clonePath, ["branch", "-D", "develop"]);
 
@@ -256,17 +258,17 @@ describe("ensureGitRepositoryForProjectPath", () => {
     const readiness = await ensureProjectGitReadiness(projectPath);
 
     /*
-    FNXC:IntegrationBranchReadiness 2026-08-24-00:41:
-    R4 intentionally proves the baseline-first boundary: an unborn repository keeps its
-    symbolic main branch instead of adopting fetched upstream history into a new commit.
+    FNXC:IntegrationBranchReadiness 2026-10-04-12:07:
+    The resolver deliberately prioritizes origin HEAD over a baseline-only local branch.
+    Registration materializes that selected upstream integration ref without moving HEAD.
     */
     expect(readiness.integrationBranches).toEqual([{
       repoRelPath: ".",
-      branch: "main",
-      source: "well-known-local",
-      action: "existing",
+      branch: "mainline",
+      source: "origin-head",
+      action: "created-from-remote",
     }]);
-    await expect(git(projectPath, ["rev-parse", "--verify", "refs/heads/main"])).resolves.toMatch(/^[0-9a-f]+$/);
+    await expect(git(projectPath, ["rev-parse", "--verify", "refs/heads/mainline"])).resolves.toMatch(/^[0-9a-f]+$/);
   });
 
   it("reconciles each workspace member against its own local branch", async () => {

@@ -103,6 +103,8 @@ function createMockStore(column: Task["column"]): TaskStore {
     getVerificationCacheHit: vi.fn().mockReturnValue(null),
     recordVerificationCachePass: vi.fn(),
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
   } as unknown as TaskStore;
 }
 

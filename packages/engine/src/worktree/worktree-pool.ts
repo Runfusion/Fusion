@@ -1,6 +1,6 @@
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, realpathSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { Settings, TaskStore, WorktrunkSettings, WorkspaceWorktreeContext } from "@fusion/core";
@@ -454,18 +454,27 @@ export async function relocateReclaimableWorktreeIntoRoot(
     );
   }
 
-  if (existsSync(targetPath)) {
-    throw new Error(`Refusing to relocate ${taskId} worktree into its occupied task-ID path: ${targetPath}`);
+  /*
+  FNXC:WorktreeReclaimPlacement 2026-10-04-14:47:
+  Preserved task worktrees must not overwrite an unrelated legacy basename. Give the reclaimed
+  checkout a deterministic task-scoped sibling instead, so recovery retains uncommitted task work
+  while leaving the occupant untouched.
+  */
+  const destinationPath = existsSync(targetPath)
+    ? `${targetPath}-${taskId.toLowerCase()}`
+    : targetPath;
+  if (existsSync(destinationPath)) {
+    throw new Error(`Refusing to relocate ${taskId} worktree into its occupied task-ID path: ${destinationPath}`);
   }
 
-  await mkdir(dirname(targetPath), { recursive: true });
-  await execFileAsync("git", ["worktree", "move", sourcePath, targetPath], {
+  await mkdir(dirname(destinationPath), { recursive: true });
+  await execFileAsync("git", ["worktree", "move", sourcePath, destinationPath], {
     cwd: rootDir,
     timeout: 120_000,
     maxBuffer: 10 * 1024 * 1024,
   });
 
-  return { kind: "ready", path: targetPath, relocated: true };
+  return { kind: "ready", path: destinationPath, relocated: true };
 }
 
 function retireEmptyLegacyWorktreesRoot(
@@ -789,13 +798,19 @@ export async function reapOrphanWorktrees(
         continue;
       }
       worktreePoolLog.debug(`reapOrphanWorktrees: ${name} has a dangling .git pointer (admin entry missing) — treating as orphan`);
-      // fall through to the non-recursive removal below; `.git` makes it fail closed.
+      // fall through to the ownership-proven orphan removal below.
     }
 
+    /*
+    FNXC:WorktreeOrphanReap 2026-10-04-15:28:
+    A proven dangling linked worktree necessarily contains its `.git` pointer and may retain
+    ignored secret sidecars. After ownership, containment, and registration checks pass, remove
+    that complete orphan recursively; `rmdirSync` could never reclaim this production shape.
+    */
     // This directory is on disk but has no valid .git entry and is not a registered
-    // worktree — it is a half-initialized / leaked orphan.  Remove it.
+    // worktree — it is a half-initialized / leaked orphan. Remove its proven contents.
     try {
-      rmdirSync(resolvedFull);
+      rmSync(resolvedFull, { recursive: true, force: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       worktreePoolLog.warn(`reapOrphanWorktrees: failed to remove ${name} — ${msg}`);

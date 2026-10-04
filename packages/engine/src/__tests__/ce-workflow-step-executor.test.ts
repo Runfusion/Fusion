@@ -48,7 +48,6 @@ import {
   WORKFLOW_REVIEW_KIND_CONTEXT_KEY,
   WorkflowGraphExecutor,
 } from "../workflows/workflow-graph-executor.js";
-import { MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import {
   createMockStore,
@@ -406,6 +405,9 @@ describe("CE workflow-step executor integration", () => {
     });
 
     it("lets the graph prepare a task worktree before the first CE coding-mode node runs", async () => {
+      // FNXC:TaskPinnedWorktrees 2026-10-04-11:58: The default task path moved to
+      // .fusion/worktrees; keep this synthetic acquisition absent so the real pinning path reaches the callback.
+      mockedExistsSync.mockReturnValue(false);
       const store = createMockStore();
       let live = baseStepTask({
         worktree: undefined,
@@ -475,7 +477,7 @@ describe("CE workflow-step executor integration", () => {
 
     it("reacquires a task worktree when a CE graph node finds a stale missing checkout", async () => {
       const store = createMockStore();
-      mockedExistsSync.mockImplementation((path) => path !== "/tmp/test/.worktrees/missing-ce-checkout");
+      mockedExistsSync.mockReturnValue(false);
       let live = baseStepTask({
         worktree: "/tmp/test/.worktrees/missing-ce-checkout",
         branch: "fusion/fn-ce-1",
@@ -550,7 +552,8 @@ describe("CE workflow-step executor integration", () => {
       ["reuses a live worktree", "/tmp/test/.worktrees/live-code-review", "/tmp/test/.worktrees/live-code-review", 0],
       ["reacquires a stale worktree", "/tmp/test/.worktrees/stale-code-review", "/tmp/test/.worktrees/acquired-code-review", 1],
     ])("prepares an inline-fix Code Review node when it %s", async (_scenario, existingWorktree, expectedWorktree, acquisitionCount) => {
-      mockedExistsSync.mockImplementation((path) => path !== "/tmp/test/.worktrees/stale-code-review");
+      mockedExistsSync.mockImplementation((path) => !String(path).includes(".fusion/worktrees/fn-ce-1")
+        && path !== "/tmp/test/.worktrees/stale-code-review");
       const store = createMockStore();
       let live = baseStepTask({
         worktree: existingWorktree,
@@ -651,6 +654,8 @@ describe("CE workflow-step executor integration", () => {
         steps: [{ name: "Preflight", status: "done" }],
       });
       store.getTask.mockImplementation(async () => live as any);
+      // FNXC:WorkflowMerge 2026-10-04-11:58: This graph fixture owns pre-merge execution only; omit selection so unrelated post-merge gates cannot block its finalization assertion.
+      (store as any).getTaskWorkflowSelection = undefined;
       store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
         live = { ...live, ...patch };
         return live as any;
@@ -664,7 +669,7 @@ describe("CE workflow-step executor integration", () => {
       const handled = await (executor as any).finalizeMergeConfirmedWorkflowGraphTask("FN-CE-1", "test");
 
       expect(handled).toBe(true);
-      expect(store.moveTask).toHaveBeenCalledWith("FN-CE-1", "done", expect.objectContaining({
+      expect(store.moveTaskIf).toHaveBeenCalledWith("FN-CE-1", "done", expect.any(Function), expect.objectContaining({
         recoveryRehome: true,
         preserveProgress: true,
       }));
@@ -742,16 +747,14 @@ describe("CE workflow-step executor integration", () => {
       );
 
       /*
-      FNXC:WorkflowMerge 2026-08-23-23:50:
-      FN-9157 made an unprovable merge boundary its own TERMINAL failure value
-      (`MERGE_BOUNDARY_UNPROVEN_VALUE`) instead of the retryable `implementation-incomplete`
-      classification, precisely so a card that cannot prove implementation is parked rather than
-      re-entering the bounded merge retry. The property this case owns — the requester is never
-      called and the card never reaches review — is unchanged.
+      FNXC:WorkflowMerge 2026-10-04-11:58:
+      Missing durable node evidence now enters the graph-owned evidence-recovery handoff before
+      terminal parking. The merge requester remains blocked until that handoff proves completion,
+      so this fixture must assert the recovery value rather than the retired immediate terminal value.
       */
       expect(result).toEqual(expect.objectContaining({
         outcome: "failure",
-        value: MERGE_BOUNDARY_UNPROVEN_VALUE,
+        value: "merge-boundary-evidence-recovery",
       }));
       expect(mergeRequester).not.toHaveBeenCalled();
       /*

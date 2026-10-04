@@ -89,6 +89,10 @@ function createStore(task: Task): TaskStore & RecordingStore {
     logEntry: vi.fn().mockResolvedValue(undefined),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn(async () => task),
+    /* FNXC:StaleReviewCallbackWaiver 2026-10-04-14:59: Workspace merge fixtures must provide the durable receipt reader so the merge gate can evaluate its fail-closed waiver policy. */
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    // FNXC:WorkspaceMergeFixture 2026-10-04-14:59: Finalization emits project-scoped merge state after a successful review.
+    getProjectId: vi.fn().mockReturnValue("workspace-finalize-cleanup"),
     moveTask: vi.fn((id: string, column: string) => {
       moveTaskCalls.push({ id, column });
       task.column = column as Task["column"];

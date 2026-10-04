@@ -8,7 +8,14 @@ The 30-second planning reset hold is cleared by the reset publication event. Gra
 */
 export function isPlanningResetHoldClearingUpdate(task: Task): boolean {
   if (task.status === "needs-replan") return true;
+  /*
+  FNXC:TaskReset 2026-10-04-14:54:
+  Store-event consumers can receive a minimal update payload before the complete
+  Task shape is available. A partial update is never reset evidence, so reject it
+  rather than throwing while processing unrelated pause or wake notifications.
+  */
   return task.status == null
+    && Array.isArray(task.steps)
     && task.steps.length === 0
     && task.worktree == null
     && task.branch == null

@@ -26,7 +26,7 @@ const transactionalSourceBoundaries = [
   "task-store/lifecycle-ops.ts", "task-store/task-creation.ts", "task-store/project-store-ops.ts",
   "task-store/task-artifacts-ops.ts", "task-store/task-lifecycle-consumer-registry.ts",
   "task-store/async/async-workflow-workitems.ts",
-  "task-store/archive-lifecycle-2.ts",
+  "task-store/archive-lifecycle-2.ts", "task-store/async/async-comments-attachments.ts",
 ] as const;
 
 const files = [

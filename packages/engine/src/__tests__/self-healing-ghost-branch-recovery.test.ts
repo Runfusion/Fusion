@@ -28,7 +28,15 @@ function createStore(): TaskStore & EventEmitter {
   (emitter as any).listTasks = vi.fn();
   (emitter as any).getTask = vi.fn().mockResolvedValue({ column: "in-review" });
   (emitter as any).updateTask = vi.fn(withBranchWriteProvenance(async () => undefined));
+  (emitter as any).updateTaskAtomic = vi.fn(async (_taskId: string, mutate: (task: Record<string, unknown>) => Promise<Record<string, unknown> | null | undefined> | Record<string, unknown> | null | undefined) => {
+    const task = await (emitter as any).getTask();
+    const patch = await mutate(task);
+    if (patch) await (emitter as any).updateTask(_taskId, patch);
+    return patch ? { ...task, ...patch } : task;
+  });
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
+  (emitter as any).handoffToReview = vi.fn(async (taskId: string) => ({ id: taskId, column: "in-review", updatedAt: new Date().toISOString() }));
+  (emitter as any).recordAgentActivity = vi.fn().mockResolvedValue(undefined);
   (emitter as any).logEntry = vi.fn().mockResolvedValue(undefined);
   (emitter as any).recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
   return emitter;
@@ -48,6 +56,7 @@ describe("self-healing ghost branch reclaim", () => {
   });
 
   function mockSweepTask(task: any) {
+    (store.getTask as any).mockResolvedValue(task);
     (store.listTasks as any)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
@@ -67,7 +76,11 @@ describe("self-healing ghost branch reclaim", () => {
 
     expect(recovered).toBe(1);
     expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ worktree: null, branch: null, baseCommitSha: null }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "in-progress", expect.objectContaining({ preserveProgress: true, preserveResumeState: true }));
+    /*
+    FNXC:BranchConflictRecovery 2026-10-04-12:10:
+    Review-lane recovery is contained in review: clearing a stranded branch must not automatically move an in-review card back into execution.
+    */
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.logEntry).toHaveBeenCalledWith("FN-9001", expect.stringContaining("[recovery] tip-already-merged FN-9001"));
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "branch:auto-reclaim", metadata: expect.objectContaining({ phase: "tip-already-merged" }) }));
   });

@@ -99,7 +99,7 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     },
     {
       file: "packages/engine/src/self-healing.ts",
-      expr: "if (dirs.length <= cap) return;",
+      expr: "if (dirs.length <= cap) {",
       reason:
         "enforceWorktreeCap's early exit. `cap` is the alias of `(settings.maxWorktrees ?? 4) * 2` — "
         + "on-disk hygiene, not admission (see the entry below). Invisible to a line-based scan.",

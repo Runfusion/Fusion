@@ -34,12 +34,16 @@ it. That is the alarm working in the direction it was written for: the source-le
 so it fails when someone CLOSES the gap as well as when someone widens it, and whoever closes it is
 sent here to update the number deliberately.
 
-Both sites now derive their answers from `resolveProjectColumnsForRoles(...)` sets the sweep had
-already resolved a few lines above — trait membership, not a literal — so the conversion is real
-rather than a call-shape that merely looks converted. The last case now asserts that FORM, not just
-the presence of the two keys: a site that satisfied it by hardcoding `isWipColumn: true` would be the
-same defect wearing the converted shape, and would restore exactly the pre-#2975 behaviour on any
-board where the blocker is not actually in a wip column.
+Both sites now derive their answers through `resolveFileScopeLeaseTaskRoles(...)`, cached by the
+self-healing pass — trait membership, not a literal — so the conversion is real rather than a
+call-shape that merely looks converted. The last case now asserts that FORM, not just the presence
+of the two keys: a site that satisfied it by hardcoding `isWipColumn: true` would be the same defect
+wearing the converted shape, and would restore exactly the pre-#2975 behaviour on any board where
+the blocker is not actually in a wip column.
+
+FNXC:OverlapScheduling 2026-10-04-15:19: The role resolver was centralized behind a cached
+per-task helper. Keep this contract pinned to the resolved role booleans so a renamed workflow
+cannot regress to literal default lanes during either self-healing pass.
 
 The three behavioural cases below are UNCHANGED and still meaningful: the optional parameters and
 their literal defaults still exist, so the differential they drive is still the live behaviour of the
@@ -148,7 +152,8 @@ pgDescribe("file-scope lease: the converted call site against the unconverted on
     check is the part that matters now: presence of the two keys alone would be satisfied by
     `isWipColumn: true`, which is the ORIGINAL defect wearing the converted call shape (it answers
     "yes" for a blocker resting anywhere, not just in a wip column). Requiring the answer to come from
-    a resolved set keeps the assertion attached to the property that made the fix a fix.
+    the cached resolved-role result keeps the assertion attached to the property that made the fix a
+    fix.
 
     The scheduler's own sites DO pass literal `true`, correctly — they have already filtered to a
     role-resolved bucket, so the answer is a fact about the loop rather than about the card. The check
@@ -163,11 +168,12 @@ pgDescribe("file-scope lease: the converted call site against the unconverted on
     });
     expect(mirrorCalls).toHaveLength(2);
 
+    expect(source.match(/const roles = await resolveLeaseRolesFor\(blocker\);/g)).toHaveLength(2);
     for (const site of mirrorCalls) {
       const optionsWindow = site.slice(0, site.indexOf("});"));
-      expect(optionsWindow).toMatch(/isWipColumn:\s*\w+\.has\(\w+\.column\)/);
-      expect(optionsWindow).toMatch(/isReviewColumn:\s*\w+\.has\(\w+\.column\)/);
-      expect(optionsWindow).toMatch(/isTerminalColumn:\s*\w+\.has\(\w+\.column\)/);
+      expect(optionsWindow).toContain("isWipColumn: roles.isWipColumn");
+      expect(optionsWindow).toContain("isReviewColumn: roles.isReviewColumn");
+      expect(optionsWindow).toContain("isTerminalColumn: roles.isTerminalColumn");
     }
   });
 });

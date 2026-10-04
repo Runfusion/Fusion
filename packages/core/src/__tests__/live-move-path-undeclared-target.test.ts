@@ -179,10 +179,9 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     the literals on the conversion backlog, so that is bug-compatibility, not an
     invariant, and pinning it would cement the bug.
 
-    What recovery genuinely needs, and what is pinned instead: a recovery re-home
-    reaches the workflow's declared rebound target even from a column ADJACENCY
-    would refuse to leave. `done -> todo` is rejected by the legacy table and must
-    still succeed under `recoveryRehome`.
+    Lifecycle containment now supersedes the former recovery escape hatch: a recovery re-home
+    may not revive archived work into a hold lane even when the workflow declares that target.
+    The assertion below pins the refusal rather than preserving a forbidden backward move.
     */
     const store = h.store();
     /*
@@ -209,11 +208,18 @@ pgDescribe("live move path — which targets it accepts after the Planning merge
     ).rejects.toThrow();
     expect(await column(task.id)).toBe("archived");
 
-    await store.moveTask(task.id, "todo" as never, {
-      moveSource: "engine",
-      recoveryRehome: true,
-    } as never);
+    /*
+    FNXC:LifecycleContainment 2026-10-04-11:58:
+    Recovery re-home remains constrained by lifecycle containment. Archived work cannot be
+    automatically revived into a hold lane; only an explicit user revision may restore it.
+    */
+    await expect(
+      store.moveTask(task.id, "todo" as never, {
+        moveSource: "engine",
+        recoveryRehome: true,
+      } as never),
+    ).rejects.toThrow(/Automatic moves may not step backward/);
 
-    expect(await column(task.id)).toBe("todo");
+    expect(await column(task.id)).toBe("archived");
   });
 });

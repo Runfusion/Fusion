@@ -201,7 +201,7 @@ describe("FN-6336: reattach orphaned assigned in-progress executions", () => {
   it("is registered after agent and stale-run recovery in startup and periodic self-healing loops", () => {
     const source = readFileSync("src/self-healing.ts", "utf8");
     const startup = source.slice(source.indexOf("async runStartupRecovery"), source.indexOf("  stop(): void"));
-    const periodicStart = source.lastIndexOf("recover-ghost-review");
+    const periodicStart = source.lastIndexOf("recover-mergeable-review");
     const periodicEnd = source.indexOf("reconcile-task-worktree-metadata", periodicStart);
     const periodic = source.slice(periodicStart, periodicEnd);
 

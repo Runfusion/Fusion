@@ -302,21 +302,24 @@ function isMarkerDependencySatisfied(
  * Build the per-dependency column vocabulary for {@link getUnmetSchedulingDependencies}.
  *
  * `cache` is caller-owned for the reason documented on `resolveTaskLifecycleColumns`: a sweep over
- * many dependents spanning three workflows must read three IRs, not one per dependency. A
- * dependency whose workflow cannot be resolved is simply OMITTED from the map, which lands that
- * dependency on the literal fallback rather than on an empty set (an empty set would read as
+ * many dependents spanning three workflows must read three IRs, not one per dependency. The optional
+ * `selectionCache` is likewise event-owned, coalescing a task selection read with other lane work in
+ * that same event without retaining it beyond the event. A dependency whose workflow cannot be
+ * resolved is simply OMITTED from the map, which lands that dependency on the literal fallback rather
+ * than on an empty set (an empty set would read as
  * "never satisfied" and block the dependent forever — the expensive direction to be wrong in).
  */
 export async function resolveDependencySatisfactionColumns(
   store: Parameters<typeof resolveWorkflowIrForTask>[0],
   dependencies: readonly Task[],
   cache?: Map<string, WorkflowIr>,
+  selectionCache?: WorkflowSelectionCache,
 ): Promise<Map<string, DependencySatisfactionColumns>> {
   const resolved = new Map<string, DependencySatisfactionColumns>();
   const irCache = cache ?? new Map<string, WorkflowIr>();
   for (const dep of dependencies) {
     try {
-      const ir = await resolveWorkflowIrForTask(store, dep.id, irCache);
+      const ir = await resolveWorkflowIrForTask(store, dep.id, irCache, selectionCache);
       if (!ir) continue;
       const terminal = new Set([...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")]);
       const review = new Set([...columnsWithFlag(ir, "mergeBlocker"), ...columnsWithFlag(ir, "humanReview")]);
@@ -1260,10 +1263,17 @@ export class Scheduler {
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
       // blocker reconciliation when a potential blocker reaches a dependency-satisfying column.
       // Invariant: blockedBy must reference a *current* unresolved blocker, else be null.
+      /*
+      FNXC:WorkflowScheduling 2026-10-04-15:00:
+      A moved task is both resolved for its parked lanes and checked as a dependency wake source.
+      Share the event-owned selection cache across those two reads so one move cannot issue duplicate
+      workflow-selection queries for the same task; later events retain a fresh cache and see changes.
+      */
       const movedDependencySatisfactionColumns = await resolveDependencySatisfactionColumns(
         this.store,
         [task],
         new Map<string, WorkflowIr>(),
+        movedSelectionCache,
       );
       /*
       FNXC:DependencyWakeup 2026-10-04-08:59:

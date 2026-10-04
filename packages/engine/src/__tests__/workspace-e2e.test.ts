@@ -82,6 +82,10 @@ function createStore(rows: Task[], settings: Partial<Settings> = {}): TaskStore 
       return opts?.column ? all.filter((t) => t.column === opts.column) : all;
     }),
     getTask: vi.fn(async (id: string) => tasks.get(id) ?? null),
+    /* FNXC:StaleReviewCallbackWaiver 2026-10-04-14:59: E2E workspace landing must model the merge gate's durable waiver lookup explicitly; this suite has no waived review carrier. */
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    // FNXC:WorkspaceMergeFixture 2026-10-04-14:59: Workspace landing writes its reviewed merge state with an explicit project identity.
+    getProjectId: vi.fn().mockReturnValue("workspace-e2e"),
     updateTask: vi.fn(async (id: string, patch: Partial<Task>) => {
       const cur = tasks.get(id);
       if (cur) tasks.set(id, { ...cur, ...patch } as Task);

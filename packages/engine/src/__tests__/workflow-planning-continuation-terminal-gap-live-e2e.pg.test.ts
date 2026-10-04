@@ -182,7 +182,7 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
     expect(resolved.kind === "orphan" ? resolved.reason : null).toBe("task-terminal");
   });
 
-  it("AUDIT — the inner predicate is threaded; one of the two classifier call sites still is not", async () => {
+  it("AUDIT — both direct predicate call sites receive resolved terminal columns; one classifier call still does not", async () => {
     /*
     NOT driven: reaching the drain needs the runtime's full dependency set. Asserted against the
     module's SYNTAX and labelled as such.
@@ -232,22 +232,14 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
     expect(classifierCalls.filter(passesTerminalColumns)).toHaveLength(1);
 
     /*
-    FNXC:WorkflowScheduling 2026-08-02-00:20 (THE ALARM FIRED — a partial conversion landed):
-    THE INNER PREDICATE IS NOW THREADED. `resolvePlanningContinuationCandidate` passes its resolved
-    set down as `isPlanningContinuationTaskDispatchable(task, terminal)`, so this case flipped from
-    arity 1 to arity 2 and turned this suite red — which is exactly what it was written to do.
-
-    THE OUTER GAP REMAINS. `selectActionablePlanningContinuations` still calls the classifier with no
-    options, so a card in a renamed COMPLETE lane is still classified `actionable` and still re-enters
-    plan-review. The CHARACTERIZATION case above is unchanged and still passes, which is the proof
-    that this was a partial fix rather than a complete one — half the conversion landed and the
-    operator-visible defect did not move.
-
-    Updated deliberately rather than loosened: arity is still the property asserted, so the next
-    change to either site lands here again.
+    FNXC:WorkflowScheduling 2026-10-04-15:18:
+    Both direct predicate call sites receive terminal columns resolved from the live workflow.
+    The separate classifier census above deliberately retains the remaining unthreaded drain call.
+    A legacy-only predicate call would make a renamed completed lane dispatchable again, so retain
+    this structural census alongside the live behavioral cases.
     */
     const innerCalls = callArguments("isPlanningContinuationTaskDispatchable");
-    expect(innerCalls).toHaveLength(1);
-    expect(innerCalls[0]?.length).toBe(2);
+    expect(innerCalls).toHaveLength(2);
+    expect(innerCalls.every((args) => args.length === 2)).toBe(true);
   });
 });

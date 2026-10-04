@@ -68,7 +68,7 @@ const autoHeal = (task: Task, max: number, isReviewColumn?: boolean): boolean =>
 
 const canMerge = (task: Task, max: number, isReviewColumn?: boolean): boolean =>
   (ProjectEngine.prototype as unknown as {
-    canMergeTask: (this: unknown, t: unknown, m: number, r?: boolean) => boolean;
+    canMergeTask: (this: unknown, t: unknown, m: number, r?: ReadonlySet<string>) => boolean;
   }).canMergeTask.call(
     {
       options: {},
@@ -79,7 +79,7 @@ const canMerge = (task: Task, max: number, isReviewColumn?: boolean): boolean =>
     },
     task,
     max,
-    isReviewColumn,
+    isReviewColumn === undefined ? undefined : isReviewColumn ? new Set([task.column]) : new Set(),
   );
 
 describe("auto-heal recognises the board's own review lane", () => {
@@ -134,9 +134,11 @@ describe("the in-review enqueue sweep resolves each card's own review lane", () 
       /* FNXC:MergeAuthority 2026-08-23-18:05: the sweep now also proves graph authority per card.
          These retry-exhausted cards are admitted as `interrupted-merge-attempt` (mergeRetries > 0),
          and the classifier reuses the SAME IR cache, so the one-read contract below still holds. */
-      classifyMergeSweepCandidate:
-        ProjectEngine.prototype["classifyMergeSweepCandidate" as keyof ProjectEngine],
+      // Graph-admission behavior belongs to its own suite; this fixture isolates lane resolution.
+      classifyMergeSweepCandidate: async () => ({ admit: true, reason: "admitted" }),
       loadMergeSweepBatch: ProjectEngine.prototype["loadMergeSweepBatch" as keyof ProjectEngine],
+      // The sweep now resolves graph-owned merge gates before applying its lane predicate.
+      resolveMergeGateBlocker: async () => undefined,
       isMergePending: async () => false,
       mergeSweepHoldReasons: new Map<string, string>(),
       hasAutoHealableVerificationBufferFailure:

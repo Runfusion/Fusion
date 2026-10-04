@@ -18,9 +18,9 @@ describe("workflowNodeRequiresWorktree", () => {
   });
 
   it.each([
-    ["review name", node({ id: "review", config: { name: "Code Review" } }), undefined],
-    ["verification name", node({ id: "verify", config: { name: "Browser Verification" } }), undefined],
     ["explicit inline fix config", node({ config: { reviewCanFixInline: true } }), undefined],
+    ["structured code review", node({ id: "review", config: { reviewKind: "code" } }), undefined],
+    ["structured browser verification", node({ id: "verify", config: { reviewKind: "code" } }), "browser-verification"],
     ["code review optional group", node(), "code-review"],
     ["browser verification optional group", node(), "browser-verification"],
   ])("requires a worktree for inline fixes from %s", (_name, workflowNode, optionalGroupId) => {
@@ -28,7 +28,7 @@ describe("workflowNodeRequiresWorktree", () => {
   });
 
   it("keeps inline-fix reviews read-only when disabled", () => {
-    expect(workflowNodeRequiresWorktree(node({ config: { name: "Code Review" } }), { reviewerInlineFixes: false })).toBe(false);
+    expect(workflowNodeRequiresWorktree(node({ config: { reviewKind: "code" } }), { reviewerInlineFixes: false })).toBe(false);
     expect(workflowNodeRequiresWorktree(node(), {
       optionalGroupId: "code-review",
       reviewerInlineFixes: false,

@@ -132,7 +132,7 @@ describe("Plan Review environment capability injection", () => {
     expect(captured.last?.systemPrompt).toContain("Confirmed-unavailable commands: python3");
     expect(captured.last?.systemPrompt).toContain("dotnet via nix develop --command");
     expect(captured.last?.systemPrompt).toContain("UNKNOWN, not absent");
-    expect(mockProbeEnvironmentCapabilities).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/tmp/test", projectId: "/tmp/test" }));
+    expect(mockProbeEnvironmentCapabilities).toHaveBeenCalledWith(expect.objectContaining({ rootDir: "/tmp/test", projectId: "test-project" }));
     expect(captured.last?.systemPrompt?.indexOf("## Environment Capabilities"))
       .toBeGreaterThan(captured.last?.systemPrompt?.indexOf("--- END PROMPT.md ---") ?? -1);
   });

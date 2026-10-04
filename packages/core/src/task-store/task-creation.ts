@@ -1217,7 +1217,17 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
     // Record the inherited workflow selection now that the task row exists.
     if (pendingWorkflowSelection) {
       try {
-        await store.writeTaskWorkflowSelection(createdTask.id, pendingWorkflowSelection.workflowId, pendingWorkflowSelection.stepIds);
+        /*
+        FNXC:ReservedTaskTimestamps 2026-10-04-12:07:
+        Reserved-ID creation imports durable history. Persisting its generated workflow
+        selection must not turn that bookkeeping write into a newer task revision.
+        */
+        await store.writeTaskWorkflowSelection(
+          createdTask.id,
+          pendingWorkflowSelection.workflowId,
+          pendingWorkflowSelection.stepIds,
+          { taskUpdatedAt: options.updatedAt },
+        );
       } catch (err) {
         storeLog.warn("Failed to record inherited workflow selection", {
           taskId: createdTask.id,

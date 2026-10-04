@@ -21,7 +21,7 @@ TypeError that read as a product fault. Five copies meant five places to forget;
 the next method the path adopts is added once.
 */
 function makeTaskStore() {
-  return { moveTask: vi.fn(), updateTask: vi.fn(), logEntry: vi.fn(async () => undefined) } as any;
+  return { getTask: vi.fn(async () => baseTask), moveTask: vi.fn(), updateTask: vi.fn(), logEntry: vi.fn(async () => undefined) } as any;
 }
 
 describe("ContaminationAutoRecoveryHandler", () => {

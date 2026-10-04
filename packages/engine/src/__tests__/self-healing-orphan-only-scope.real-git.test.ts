@@ -133,7 +133,8 @@ describeIfGit("recoverOrphanOnlyScopeViolations (real git)", () => {
     expect(updated.mergeDetails?.commitSha).toBe(landedSha);
     expect(updated.mergeDetails?.mergeConfirmed).toBe(true);
     expect(updated.mergeDetails?.resolutionStrategy).toBe("orphan-discard-no-op");
-    expect(existsSync(worktreePath)).toBe(false);
+    /* FNXC:WorktreeCleanup 2026-10-04-15:28: Unknown uncommitted/ignored content is preserved for a later safe cleanup attempt, even after terminal no-op finalization. */
+    expect(existsSync(worktreePath)).toBe(true);
     expect(git(repo, "git log --oneline -- packages/dashboard/app/components/__tests__/QuickChatFAB.test.tsx")).toBe("");
   }, 20000);
 });
