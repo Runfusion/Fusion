@@ -2399,16 +2399,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         ? await scopedStore.getTask(parent.id, { includeDeleted: true }).catch(() => null)
         : null;
       /*
-      FNXC:MailboxRecommendationCreation 2026-10-04-07:59:
-      Archive detail normalizes every cold snapshot to the legacy `archived` display lane, even when
-      its source workflow used a renamed archived trait. Require the retained soft-delete record as
-      physical proof so Mailbox can create the guarded follow-up from that snapshot without granting
-      a live custom lane the same privilege from an incidental timestamp.
+      FNXC:MailboxRecommendationCreation 2026-10-04-08:53:
+      Cold archive detail normalizes its display column, so the snapshot's captured pre-archive
+      column is the physical-snapshot signal when the display value cannot resolve to an archived
+      trait. The forensic row proves it is retained and soft-deleted; it does not carry the archive
+      entry's pre-archive field. An active custom lane has no such retained proof and remains ineligible.
       */
       const isPhysicalArchivedSource = Boolean(
         typeof parent.archivedAt === "string"
         && archivedSourceRecord?.deletedAt
-        && (archivedColumns.has(parent.column) || parent.column === "archived"),
+        && (archivedColumns.has(parent.column) || parent.preArchiveColumn),
       );
       if (!completeColumns.has(parent.column) && !isPhysicalArchivedSource) {
         throw conflict("recommendations are available only on completed or archived tasks");
