@@ -2,7 +2,7 @@ import "./TaskReviewTab.css";
 import { getErrorMessage, isReviewArtifact, type PrCheckStatus, type Task, type TaskDetail, type TaskReviewSummary } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { Bot, ExternalLink, GitPullRequest, User } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { addressPrFeedback, fetchTaskReview, refreshTaskReview, reviseTaskReviewItems, updateTask } from "../api";
 import type { SelectedReviewItem } from "../api";
@@ -235,7 +235,13 @@ export function TaskReviewTab({
     setSelected((current) => current.filter((id) => visibleItemIds.has(id)));
   }, [visibleItemIds]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    /*
+    FNXC:TaskReviewAutoMergePreference 2026-10-02-14:18:
+    A failed save can settle in a microtask immediately after a refreshed parent task commits.
+    Publish that authoritative override during the commit, before the rejected request can roll back
+    local state, so stale failure handling cannot overwrite a newer persisted preference.
+    */
     canonicalAutoMergePreferenceRef.current = canonicalAutoMergePreference;
     setAutoMergePreference(canonicalAutoMergePreference);
   }, [canonicalAutoMergePreference]);
