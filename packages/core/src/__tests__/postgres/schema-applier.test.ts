@@ -1373,6 +1373,42 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
         AND con.conname = 'stale_review_callback_waiver_receipts_task_fk'
     `)) as unknown as Array<{ update_action: string; delete_action: string }>;
     expect(action).toEqual([{ update_action: "c", delete_action: "c" }]);
+
+    await ctx.db.execute(sql`
+      CREATE TABLE public.fusion_sqlite_migrations (
+        migration_key text PRIMARY KEY,
+        project_id text,
+        status text NOT NULL,
+        last_error text,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO project.tasks(project_id, id, description, "column", created_at, updated_at)
+      VALUES ('local-fallback', 'FN-legacy', 'legacy fallback task', 'todo', '2026-01-01', '2026-01-01');
+      INSERT INTO project.task_documents(project_id, id, task_id, key, created_at, updated_at)
+      VALUES ('local-fallback', 'doc-legacy', 'FN-legacy', 'PROMPT.md', '2026-01-01', '2026-01-01');
+      INSERT INTO project.stale_review_callback_waiver_receipts(
+        project_id, id, task_id, workflow_step_id, attempt_id, policy_version, actor, reason, issued_at
+      ) VALUES (
+        'local-fallback', 'receipt-legacy', 'FN-legacy', 'code-review', 'attempt-legacy', 'fn-9429-v1',
+        'system:stale-review-callback-waiver', 'proven-stale-code-review-callback', '2026-01-01'
+      );
+      INSERT INTO public.fusion_sqlite_migrations(migration_key, project_id, status, updated_at)
+      VALUES ('project:local-fallback', 'local-fallback', 'complete', now());
+    `);
+    await expect(rekeyFallbackProjectPartition(ctx.db, "local-fallback", "registered-project"))
+      .resolves.toBe(true);
+    await expect(ctx.db.execute(sql`
+      SELECT project_id FROM project.tasks WHERE id = 'FN-legacy'
+      UNION ALL
+      SELECT project_id FROM project.task_documents WHERE task_id = 'FN-legacy'
+      UNION ALL
+      SELECT project_id FROM project.stale_review_callback_waiver_receipts WHERE task_id = 'FN-legacy'
+      ORDER BY 1
+    `)).resolves.toEqual([
+      { project_id: "registered-project" },
+      { project_id: "registered-project" },
+      { project_id: "registered-project" },
+    ]);
     expect((await applySchemaBaseline(ctx.db)).applied).toBe(false);
   });
 
