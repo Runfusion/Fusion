@@ -17,6 +17,7 @@ import {
 } from "./worktree-backend.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
 import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+import { FINGERPRINT_FILE } from "./secrets-env-writer.js";
 
 export {
   NativeWorktreeBackend,
@@ -703,6 +704,18 @@ export async function cleanupOrphanedWorktrees(
  * so a transient read error (EACCES/EBUSY) on a genuinely-live worktree's `.git`
  * must never be misread as dangling and force-removed.
  */
+/*
+FNXC:WorktreeOrphanReap 2026-10-04-19:31:
+A dangling Git pointer proves the checkout registration is stale, not that retained environment files
+are safe to delete. Preserve generic and Fusion-managed secret material for explicit task cleanup rather
+than turning an orphan scan into a credential-deletion authority.
+*/
+function hasSensitiveWorktreeArtifacts(worktreePath: string, secretsEnvFilename?: string): boolean {
+  // FNXC:WorktreeOrphanReap 2026-10-04-19:47: secret materialization permits a configured basename, so orphan reaping must preserve that configured file rather than treating only the default .env as sensitive.
+  const envFilename = secretsEnvFilename ?? ".env";
+  return existsSync(join(worktreePath, envFilename)) || existsSync(join(worktreePath, FINGERPRINT_FILE));
+}
+
 function dotGitPointerIsDangling(dotGitPath: string): boolean {
   try {
     if (lstatSync(dotGitPath).isDirectory()) return false;
@@ -719,7 +732,7 @@ function dotGitPointerIsDangling(dotGitPath: string): boolean {
 
 export async function reapOrphanWorktrees(
   projectRoot: string,
-  settings?: Pick<Settings, "worktreesDir" | "workspaceMode">,
+  settings?: Pick<Settings, "worktreesDir" | "workspaceMode" | "secretsEnv">,
 ): Promise<number> {
   if (settings?.workspaceMode) {
     worktreePoolLog.debug?.("Skipping workspace orphan reaping; recorded paths are reclaimed addressably.");
@@ -801,14 +814,13 @@ export async function reapOrphanWorktrees(
       // fall through to the ownership-proven orphan removal below.
     }
 
-    /*
-    FNXC:WorktreeOrphanReap 2026-10-04-15:28:
-    A proven dangling linked worktree necessarily contains its `.git` pointer and may retain
-    ignored secret sidecars. After ownership, containment, and registration checks pass, remove
-    that complete orphan recursively; `rmdirSync` could never reclaim this production shape.
-    */
-    // This directory is on disk but has no valid .git entry and is not a registered
-    // worktree — it is a half-initialized / leaked orphan. Remove its proven contents.
+    if (hasSensitiveWorktreeArtifacts(resolvedFull, settings?.secretsEnv?.filename)) {
+      worktreePoolLog.debug(`reapOrphanWorktrees: preserving ${name} (contains sensitive environment artifacts)`);
+      continue;
+    }
+
+    // This directory is on disk but has no valid .git entry, no sensitive artifacts, and is not a
+    // registered worktree — it is a half-initialized / leaked orphan. Remove its proven contents.
     try {
       rmSync(resolvedFull, { recursive: true, force: true });
     } catch (err: unknown) {

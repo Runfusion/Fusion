@@ -102,17 +102,12 @@ describe("reliability interactions: secrets env materialization", () => {
   });
 
   /*
-  FNXC:SecretsEnvMaterialization 2026-08-23-18:52:
-  FN-9162 (3b0a6b795f) narrowed orphan reaping: a configured worktree root may be SHARED with other
-  projects, so `isReclaimableWorktreeCandidate` now deletes only what Git proves belongs to this
-  project's common directory. A bare directory with no `.git` at all is therefore protected, and the
-  companion negative is pinned by worktree-pool.test.ts ("excludes containers and unproven
-  half-initialized directories"). The secrets invariant this test owns is unchanged and still
-  load-bearing: when a leaked worktree IS reaped, its env artifacts go with it. Ground it on the
-  FN-6782 dangling-`.git`-pointer orphan — the leak form that remains reapable — rather than on the
-  now-protected bare directory.
+  FNXC:SecretsEnvMaterialization 2026-10-04-19:31:
+  A dangling Git pointer establishes stale checkout metadata but never authorizes deleting an
+  environment artifact. Ground this production interaction on that exact shape and require the
+  reaper to preserve the directory, leaving secret cleanup to its explicit owner.
   */
-  it("orphan reap reclaims orphaned env artifacts", async () => {
+  it("orphan reap preserves secret-bearing dangling worktrees", async () => {
     const root = tmpRepo();
     const worktreesDir = join(root, ".worktrees");
     const orphan = join(worktreesDir, "ghost");
@@ -123,7 +118,7 @@ describe("reliability interactions: secrets env materialization", () => {
     writeFileSync(join(orphan, ".fusion-secrets-env.fingerprint"), "abc\n.env\n");
 
     const removed = await reapOrphanWorktrees(root);
-    expect(removed).toBe(1);
-    expect(existsSync(orphan)).toBe(false);
+    expect(removed).toBe(0);
+    expect(existsSync(orphan)).toBe(true);
   });
 });

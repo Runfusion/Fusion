@@ -296,10 +296,10 @@ async function maybeWarnForeignTaskStartPoint(
 /*
 FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
 Warm-reuse of a task-pinned worktree requires the on-disk directory to be checked out on the task's own
-branch. A same-name directory carrying a foreign branch (or detached HEAD) is stale/foreign and must be
-reclaimed in place rather than reused, so pinned mode never hands a task another task's checkout.
+branch. Read the registered branch before choosing between ownership-proven renamed-branch adoption and
+foreign-checkout reclamation, so pinned mode never hands a task another task's checkout.
 */
-async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string, expectedBranch: string): Promise<boolean> {
+async function pinnedWorktreeBranchAtPath(rootDir: string, worktreePath: string): Promise<string | undefined> {
   const canonical = canonicalizePath(worktreePath);
   const entries = await getRegisteredWorktreeBranches(rootDir);
   /*
@@ -314,11 +314,20 @@ async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string
    */
   if (entries.length === 0) {
     throw new Error(
-      `pinned branch probe returned no registered worktrees for ${rootDir}; cannot confirm branch of ${worktreePath} (transient git failure) — refusing to prove mismatch`,
+      `pinned branch probe returned no registered worktrees for ${rootDir}; cannot confirm branch of ${worktreePath} (transient git failure) — refusing to prove ownership`,
     );
   }
-  const match = entries.find((entry) => entry.worktreePath === canonical);
-  return match?.branch === expectedBranch;
+  return entries.find((entry) => entry.worktreePath === canonical)?.branch;
+}
+
+/*
+FNXC:TaskPinnedWorktrees 2026-10-04-19:31:
+A distinct canonical task branch proves another task owns the registered checkout. Do not send it
+through renamed-branch adoption, whose task-store snapshot is only valid for a potentially renamed
+branch; reclaim the proven foreign checkout at the same pinned path instead.
+*/
+function isForeignTaskPinnedBranch(branch: string | undefined, expectedBranch: string): boolean {
+  return Boolean(branch && branch !== expectedBranch && /^fusion\/fn-\d+$/i.test(branch));
 }
 
 /*
@@ -984,9 +993,10 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
     if (existsSync(pinnedPath)) {
       const classification = await classifyTaskWorktree(rootDir, pinnedPath);
-      const branchMatches = classification.ok
-        ? await pinnedWorktreeBranchMatches(rootDir, pinnedPath, resumedBranch)
-        : false;
+      const registeredBranch = classification.ok
+        ? await pinnedWorktreeBranchAtPath(rootDir, pinnedPath)
+        : undefined;
+      const branchMatches = registeredBranch === resumedBranch;
       if (classification.ok && branchMatches) {
         /*
          * FNXC:TaskPinnedWorktrees 2026-07-16-12:30:
@@ -1002,7 +1012,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         }
         return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
       }
-      if (classification.ok) {
+      if (classification.ok && !isForeignTaskPinnedBranch(registeredBranch, resumedBranch)) {
         const snapshot = await store.getTask(task.id);
         if (!snapshot.updatedAt) throw new Error("Task snapshot unavailable for branch rebind");
         const proof = await proveTaskWorktreeRebind({

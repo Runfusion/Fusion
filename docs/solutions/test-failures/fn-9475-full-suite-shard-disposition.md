@@ -42,6 +42,14 @@ The first later Full Suite after source evidence is [37221655573](https://github
 
 This run is evidence of the unmerged `main` baseline, not a qualifying pass for this task's commits. It is recorded as a non-success disposition rather than being misrepresented as confirmation. The first hosted Full Suite that includes the FN-9475 commits remains required after they land.
 
+## FN-9476 post-merge cleanup repair
+
+- Source Full Suite: [37224597752](https://github.com/Runfusion/Fusion/actions/runs/37224597752), `main` at `58244ab3c56abf2003cb6c21d447b7ef30af8401`, completed 2026-10-04T18:52:21Z with failure. Timing artifacts: shard 1 [11312181093](https://api.github.com/repos/Runfusion/Fusion/actions/artifacts/11312181093) and shard 2 [11311713407](https://api.github.com/repos/Runfusion/Fusion/actions/artifacts/11311713407).
+- Causal ledger: pinned acquisition attempted renamed-branch proof before recognizing another canonical task branch, so the foreign-branch reclaim test failed at an incomplete store seam. The inventory manifest had stale derived line hints. FN-9475 made dangling-pointer directories recursively removable, while its secret-bearing test fixtures did not prove the candidate boundary; FN-9476 retains recursive removal for safe non-secret dangling orphans and preserves environment/fingerprint-bearing directories.
+- Repair commits: `aa70c8be36` restores canonical foreign-branch in-place reclamation; `0a6d312e7e` preserves secret-bearing orphans; `915a7e6fc9` deterministically refreshes the durable-write inventory; `8413af473e` updates the production secrets interaction.
+- Focused proof passed: the task-pinned, worktree-pool, secrets cleanup, durable inventory, secrets materialization, and real-git defensive removal tests. `pnpm lint`, `pnpm verify:fast`, and `pnpm build` also passed locally.
+- Hosted rerun: no qualifying GitHub-hosted Full Suite can exist until these commits land on a pushed branch. Do not treat the local checks as hosted confirmation; record the first pushed-run URL, artifact IDs, SHA, and per-shard conclusion here after CI starts.
+
 ## Per-failure source ledger
 
 This appendix reconciles the timing-manifest totals with the exact Vitest failure headings in the four cited GitHub job logs: 119 records in shard 1, 88 in shard 2, 10 in shard 3, and 12 in shard 4. Every record below is from source SHA `32fb16778b9c695829f8155d29f5c40e193c4a5a`; line excerpts are normalized only to remove CI timestamps and terminal colour codes.

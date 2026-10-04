@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -37,30 +38,37 @@ afterEach(async () => {
 });
 
 describe("worktree-pool secrets preservation", () => {
-  it("preserves an unverifiable orphan instead of deleting its environment file", async () => {
+  it("preserves a secret-bearing dangling orphan instead of deleting its environment file", async () => {
     cleanupSecretsEnvFile.mockResolvedValue({ outcome: "cleaned", reason: "fingerprint-match" });
     const root = tmpRoot();
     const worktrees = join(root, ".worktrees");
     const orphan = join(worktrees, "orphan-1");
+    execFileSync("git", ["init", "-q"], { cwd: root });
     seedOrphanWorktree(orphan);
     writeFileSync(join(orphan, ".env"), "A=1\n");
 
     const mod = await import("../worktree/worktree-pool.js");
-    const removed = await mod.reapOrphanWorktrees(root);
+    const removed = await mod.reapOrphanWorktrees(root, { worktreesDir: ".worktrees" } as any);
 
     expect(removed).toBe(0);
     expect(cleanupSecretsEnvFile).not.toHaveBeenCalled();
     expect(existsSync(orphan)).toBe(true);
   });
 
-  it("does not invoke secrets cleanup before preserving dangling metadata", async () => {
+  it("preserves a configured secret env filename before any cleanup hook runs", async () => {
     cleanupSecretsEnvFile.mockRejectedValueOnce(new Error("cleanup failed"));
     const root = tmpRoot();
-    const orphan = join(root, ".worktrees", "orphan-2");
+    const worktrees = join(root, ".worktrees");
+    const orphan = join(worktrees, "orphan-2");
+    execFileSync("git", ["init", "-q"], { cwd: root });
     seedOrphanWorktree(orphan);
+    writeFileSync(join(orphan, ".runtime-secrets"), "A=1\n");
 
     const mod = await import("../worktree/worktree-pool.js");
-    const removed = await mod.reapOrphanWorktrees(root);
+    const removed = await mod.reapOrphanWorktrees(root, {
+      worktreesDir: ".worktrees",
+      secretsEnv: { filename: ".runtime-secrets" },
+    });
 
     expect(removed).toBe(0);
     expect(cleanupSecretsEnvFile).not.toHaveBeenCalled();
