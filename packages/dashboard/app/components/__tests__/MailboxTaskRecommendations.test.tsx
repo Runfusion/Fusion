@@ -6,7 +6,7 @@ import { MailboxTaskRecommendations } from "../MailboxTaskRecommendations";
 
 vi.mock("../../api", () => ({ createTaskFromRecommendation: vi.fn(), fetchTaskDetail: vi.fn() }));
 
-const metadata: MessageMetadata = { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: ["recommendation-1"] };
+const metadata: MessageMetadata = { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationCount: 1, recommendationIds: ["recommendation-1"], categories: ["feature"], recommendationSnapshot: [{ id: "recommendation-1", title: "Saved follow up", description: "Saved optional work.", category: "feature" }] };
 const legacyMetadata: MessageMetadata = { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationCount: 1, categories: ["feature"] };
 const detail = { id: "FN-9100", recommendations: [{ id: "recommendation-1", title: "Follow up", description: "Finish the optional work.", category: "feature" }] };
 
@@ -27,21 +27,20 @@ describe("MailboxTaskRecommendations", () => {
     }
   });
 
-  it("keeps a failed parent lookup inert and explains the missing parent", async () => {
+  it("renders a saved informational fallback after a failed parent lookup", async () => {
     vi.mocked(fetchTaskDetail).mockRejectedValue(new Error("not found"));
     render(<MailboxTaskRecommendations metadata={metadata} />);
-    await waitFor(() => expect(screen.getByTestId("mailbox-task-recommendations-unavailable")).toBeInTheDocument());
-    expect(screen.getByText(/source task can no longer be loaded/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
-    expect(screen.queryByTestId("mailbox-task-recommendations")).not.toBeInTheDocument();
+    expect(await screen.findByText("Saved follow up")).toBeInTheDocument();
+    expect(screen.getByText("Saved optional work.")).toBeInTheDocument();
+    expect(screen.getByText("Saved recommendation")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create task|View task|Retry/i })).not.toBeInTheDocument();
   });
 
-  it("explains when a stale notice points at recommendation ids no longer on the task", async () => {
+  it("renders a saved informational fallback when live recommendation ids are replaced", async () => {
     vi.mocked(fetchTaskDetail).mockResolvedValue({ ...detail, recommendations: [] } as never);
     render(<MailboxTaskRecommendations metadata={metadata} />);
-    await waitFor(() => expect(screen.getByTestId("mailbox-task-recommendations-unavailable")).toBeInTheDocument());
-    expect(screen.getByText(/no longer contains the recommendation IDs/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create task" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Saved follow up")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create task|View task|Retry/i })).not.toBeInTheDocument();
   });
 
   it("creates once and replaces the action with the linked task", async () => {

@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { MessageMetadata, TaskRecommendation } from "@fusion/core";
+import { parseRecommendationSnapshot } from "../../../core/src/tasks/recommendation-validation";
 import { createTaskFromRecommendation, fetchTaskDetail } from "../api";
 import "./MailboxTaskRecommendations.css";
 
 type TaskRecommendationNoticeMetadata = MessageMetadata & {
   taskId?: string;
   recommendationIds?: unknown;
+  recommendationSnapshot?: unknown;
 };
 
 type NoticeTarget = {
@@ -44,6 +46,7 @@ export function MailboxTaskRecommendations({
   const { t } = useTranslation("app");
   const target = getNoticeTarget(metadata);
   const [recommendations, setRecommendations] = useState<TaskRecommendation[] | null>(null);
+  const [isSnapshotFallback, setIsSnapshotFallback] = useState(false);
   const [unavailableReason, setUnavailableReason] = useState<"task-unavailable" | "recommendations-missing" | null>(null);
   const [createdIds, setCreatedIds] = useState<Record<string, string>>({});
   const [creatingActions, setCreatingActions] = useState<Record<string, true>>({});
@@ -53,11 +56,17 @@ export function MailboxTaskRecommendations({
   const taskId = target?.taskId;
   const recommendationIds = target?.recommendationIds;
   const recommendationIdsKey = recommendationIds?.join("\u0000") ?? "legacy";
+  const snapshotValue = metadata?.kind === "task-recommendation-notice"
+    ? (metadata as TaskRecommendationNoticeMetadata).recommendationSnapshot
+    : undefined;
+  const snapshotKey = JSON.stringify(snapshotValue);
+  const snapshot = useMemo(() => parseRecommendationSnapshot(snapshotValue), [snapshotKey]);
 
   useEffect(() => {
     let active = true;
     creatingIdsRef.current.clear();
     setRecommendations(null);
+    setIsSnapshotFallback(false);
     setUnavailableReason(null);
     setCreatedIds({});
     setCreatingActions({});
@@ -74,19 +83,27 @@ export function MailboxTaskRecommendations({
       if (!active) return;
       const allowedIds = recommendationIds ? new Set(recommendationIds) : null;
       const matched = (task.recommendations ?? []).filter((recommendation) => !allowedIds || allowedIds.has(recommendation.id));
-      setRecommendations(matched);
-      /*
-      FNXC:TaskRecommendations 2026-09-04-13:58:
-      Operators need to know whether a stale mailbox notice lost its parent task or only lost the
-      referenced recommendation ids after a completion retry rewrote the task's proposal list.
-      */
-      setUnavailableReason(matched.length === 0 ? "recommendations-missing" : null);
+      if (matched.length > 0) {
+        setRecommendations(matched);
+        return;
+      }
+      if (snapshot) {
+        setRecommendations(snapshot);
+        setIsSnapshotFallback(true);
+        return;
+      }
+      setUnavailableReason("recommendations-missing");
     }).catch(() => {
       if (!active) return;
+      if (snapshot) {
+        setRecommendations(snapshot);
+        setIsSnapshotFallback(true);
+        return;
+      }
       setUnavailableReason("task-unavailable");
     });
     return () => { active = false; };
-  }, [projectId, recommendationIdsKey, taskId]);
+  }, [projectId, recommendationIdsKey, snapshot, taskId]);
 
   if (!target) return null;
 
@@ -144,7 +161,7 @@ export function MailboxTaskRecommendations({
           <div className="mailbox-task-recommendations__heading"><h3>{recommendation.title}</h3><span>{recommendation.category}</span></div>
           <p>{recommendation.description}</p>
         </div>
-        {createdTaskId ? (
+        {isSnapshotFallback ? <p className="mailbox-task-recommendations__informational">{t("mailbox.recommendationSnapshotInformational", "Saved recommendation")}</p> : createdTaskId ? (
           <button type="button" className="btn btn-primary" onClick={() => onOpenTask?.(createdTaskId)}>{t("mailbox.viewTask", "View task {{id}}", { id: createdTaskId })}</button>
         ) : (
           <div className="mailbox-task-recommendations__action">

@@ -53,6 +53,25 @@ pgDescribe("TaskStore recommendation persistence (PostgreSQL)", () => {
     expect(persisted).toEqual([{ recommendations }]);
 
     await expect(store.updateTask(created.id, {
+      recommendations: Array.from({ length: 21 }, (_, index) => ({
+        id: `rec-${index}`,
+        title: `Follow-up ${index}`,
+        description: `Persist this distinct follow-up recommendation number ${index}.`,
+        category: "feature" as const,
+      })),
+    })).rejects.toThrow("at most 20 entries");
+    await expect(store.updateTask(created.id, {
+      recommendations: Array.from({ length: 20 }, (_, index) => ({
+        id: `utf8-${index}`,
+        title: "Emoji snapshot budget",
+        description: "😀".repeat(1_000),
+        category: "feature" as const,
+      })),
+    })).rejects.toThrow("mailbox snapshot budget");
+    await expect(store.updateTask(created.id, {
+      recommendations: [{ ...recommendations[0], id: " rec-export " }],
+    })).rejects.toThrow("mailbox snapshot budget");
+    await expect(store.updateTask(created.id, {
       recommendations: [...recommendations, { ...recommendations[0] }],
     })).rejects.toThrow("unique ids");
     await expect(store.updateTask(created.id, {

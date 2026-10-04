@@ -59,10 +59,29 @@ The content rule and key set now live in tasks/recommendation-validation.ts so t
 projection writer is screened by the SAME definition instead of a copy. This boundary still ASSERTS
 (a caller handing it malformed data has a bug); the projection path normalizes before it gets here.
 */
-import { RECOMMENDATION_KEYS, UNSAFE_RECOMMENDATION_CONTENT } from "../tasks/recommendation-validation.js";
+import {
+  RECOMMENDATION_KEYS,
+  RECOMMENDATION_ID_MAX_LENGTH,
+  RECOMMENDATION_TITLE_MAX_LENGTH,
+  RECOMMENDATION_DESCRIPTION_MAX_LENGTH,
+  RECOMMENDATION_SNAPSHOT_MAX_ENTRIES,
+  UNSAFE_RECOMMENDATION_CONTENT,
+  parseRecommendationSnapshot,
+} from "../tasks/recommendation-validation.js";
 
 function assertValidRecommendations(value: unknown): asserts value is TaskRecommendation[] {
   if (!Array.isArray(value)) throw new Error("recommendations must be an array");
+  /*
+  FNXC:TaskRecommendations 2026-10-04-08:59:
+  Every authoritative recommendation write must remain snapshotable before completion can emit a
+  mailbox notice. Refuse oversized direct writes here instead of allowing a later display-only
+  snapshot to fail while the live task persists an incompatible recommendation set.
+  */
+  if (value.length > RECOMMENDATION_SNAPSHOT_MAX_ENTRIES) {
+    throw new Error(`recommendations may contain at most ${RECOMMENDATION_SNAPSHOT_MAX_ENTRIES} entries`);
+  }
+  // Empty lists clear live recommendations and intentionally do not produce a mailbox snapshot.
+  if (value.length === 0) return;
   const ids = new Set<string>();
   for (const recommendation of value) {
     if (!recommendation || typeof recommendation !== "object") throw new Error("recommendations must contain objects");
@@ -74,6 +93,9 @@ function assertValidRecommendations(value: unknown): asserts value is TaskRecomm
       typeof candidate.id !== "string" || !candidate.id.trim()
       || typeof candidate.title !== "string" || !candidate.title.trim()
       || typeof candidate.description !== "string" || !candidate.description.trim()
+      || candidate.id.trim().length > RECOMMENDATION_ID_MAX_LENGTH
+      || candidate.title.trim().length > RECOMMENDATION_TITLE_MAX_LENGTH
+      || candidate.description.trim().length > RECOMMENDATION_DESCRIPTION_MAX_LENGTH
     ) {
       throw new Error("recommendations require string id, title, and description");
     }
@@ -84,8 +106,26 @@ function assertValidRecommendations(value: unknown): asserts value is TaskRecomm
     if (candidate.createdTaskId !== undefined && (typeof candidate.createdTaskId !== "string" || !/^[A-Z]+-\d+$/.test(candidate.createdTaskId))) {
       throw new Error("recommendations contain an invalid created task link");
     }
-    if (ids.has(candidate.id)) throw new Error("recommendations must have unique ids");
-    ids.add(candidate.id);
+    const normalizedId = candidate.id.trim();
+    if (ids.has(normalizedId)) throw new Error("recommendations must have unique ids");
+    ids.add(normalizedId);
+  }
+
+  /*
+  FNXC:TaskRecommendations 2026-10-04-09:06:
+  Field-character limits do not bound UTF-8 bytes: twenty valid emoji-heavy descriptions can exceed
+  the mailbox metadata budget. Validate the exact persisted display projection here, and reject
+  whitespace-normalized values, so every accepted direct write can produce a verbatim notice.
+  */
+  const displaySnapshot = value.map(({ id, title, description, category }) => ({ id, title, description, category }));
+  const parsedSnapshot = parseRecommendationSnapshot(displaySnapshot);
+  if (!parsedSnapshot || parsedSnapshot.some((entry, index) => (
+    entry.id !== displaySnapshot[index]?.id
+    || entry.title !== displaySnapshot[index]?.title
+    || entry.description !== displaySnapshot[index]?.description
+    || entry.category !== displaySnapshot[index]?.category
+  ))) {
+    throw new Error("recommendations must fit the mailbox snapshot budget without whitespace normalization");
   }
 }
 

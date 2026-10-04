@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { createLogger } from "./process/logger.js";
 import type { TaskStore } from "./store.js";
 import { DASHBOARD_USER_ID, type MessageCreateInput, type TaskRecommendation } from "./types.js";
+import { parseRecommendationSnapshot } from "./tasks/recommendation-validation.js";
 
 const noticeLog = createLogger("task-recommendation-notice");
 
@@ -49,7 +50,7 @@ export function getTaskRecommendationNoticeMailbox(
   return mailboxes.get(store);
 }
 
-/** Builds the operator-facing content; recommendation prose stays out of metadata. */
+/** Builds the operator-facing content from the same immutable values retained in notice metadata. */
 export function buildTaskRecommendationNoticeContent(
   task: { id: string; title?: string },
   recommendations: TaskRecommendation[],
@@ -95,6 +96,8 @@ export async function notifyOperatorOfTaskRecommendations(
     if (settings.recommendationMailboxNoticeEnabled === false || !recommendations?.length) return false;
     const mailbox = mailboxes.get(store);
     if (!mailbox) return false;
+    const recommendationSnapshot = parseRecommendationSnapshot(recommendations.map(({ id, title, description, category }) => ({ id, title, description, category })));
+    if (!recommendationSnapshot) return false;
     await mailbox.sendMessageOnce(
       {
         fromId: "system",
@@ -108,7 +111,8 @@ export async function notifyOperatorOfTaskRecommendations(
           taskId: task.id,
           recommendationCount: recommendations.length,
           recommendationIds: recommendations.map(({ id }) => id),
-          categories: recommendations.map(({ category }) => category),
+          categories: recommendationSnapshot.map(({ category }) => category),
+          recommendationSnapshot,
         },
       },
       buildTaskRecommendationNoticeIdempotencyKey(task.id, recommendations),

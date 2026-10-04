@@ -167,6 +167,16 @@ describe("fn_task_done recommendation validation", () => {
     });
     expect(messages[0].input.content).toContain("Export completed tasks");
     expect(messages[0].input.content).toContain("Document exports");
+    expect(messages[0].input.metadata.recommendationSnapshot).toEqual([
+      recommendation,
+      {
+        id: "rec-docs",
+        title: "Document exports",
+        description: recommendation.description,
+        category: "feature",
+      },
+    ]);
+    expect(JSON.stringify(messages[0].input.metadata.recommendationSnapshot)).not.toContain("createdTaskId");
 
     await tool.execute("call-notice-retry", { recommendations: [recommendation, { ...recommendation, id: "rec-docs", title: "Document exports" }] });
     await __flushPendingRecommendationNotices();

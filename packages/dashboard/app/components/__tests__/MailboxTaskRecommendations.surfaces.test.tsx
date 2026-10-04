@@ -23,7 +23,9 @@ vi.mock("lucide-react", () => ({ Mail: () => null, Send: () => null, Inbox: () =
 import * as api from "../../api";
 
 const agents = [{ id: "agent-1", name: "Agent", role: "executor", state: "idle", createdAt: "2026-08-15T00:00:00.000Z", updatedAt: "2026-08-15T00:00:00.000Z", metadata: {} }];
+const recommendationSnapshot = [{ id: "rec-1", title: "Saved follow-up", description: "Keep this recommended work available.", category: "feature" }] as const;
 const recommendationNotice = (id: string): Message => ({ id, fromId: "agent-1", fromType: "agent", toId: "dashboard", toType: "user", type: "agent-to-user", read: true, content: "Recommendations", createdAt: "2026-08-15T00:00:00.000Z", updatedAt: "2026-08-15T00:00:00.000Z", metadata: { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationCount: 1, categories: ["feature"] } });
+const modernRecommendationNotice = (id: string): Message => ({ ...recommendationNotice(id), metadata: { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: ["rec-1"], recommendationCount: 1, categories: ["feature"], recommendationSnapshot } });
 const explicitlyEmptyRecommendationNotice = (id: string): Message => ({ ...recommendationNotice(id), metadata: { kind: "task-recommendation-notice", taskId: "FN-9100", recommendationIds: [] } });
 const ordinary = (id: string): Message => ({ ...recommendationNotice(id), metadata: undefined, content: "Ordinary" });
 
@@ -73,6 +75,52 @@ describe("mailbox task recommendation production surfaces", () => {
     expect(api.createTaskFromRecommendation).toHaveBeenCalledTimes(1);
     expect(api.createTaskFromRecommendation).toHaveBeenCalledWith("FN-9100", "rec-1", "project-1");
     expect(await screen.findByRole("button", { name: "View task FN-9101" })).toBeInTheDocument();
+  });
+
+  /*
+  FNXC:TaskRecommendations 2026-10-04-08:59:
+  A sent modern notice must retain its display-only snapshot across every mailbox host when live
+  recommendations are replaced or the source cannot load. The fallback deliberately has no action
+  controls because only current source rows can cross the guarded task-creation boundary.
+  */
+  it.each([
+    ["MailboxView", "desktop", "selected", "replaced", (props: any) => <MailboxView {...props} />],
+    ["MailboxView", "desktop", "conversation", "replaced", (props: any) => <MailboxView {...props} />],
+    ["MailboxView", "mobile", "selected", "replaced", (props: any) => <MailboxView {...props} />],
+    ["MailboxView", "mobile", "conversation", "replaced", (props: any) => <MailboxView {...props} />],
+    ["MailboxModal", "desktop", "selected", "replaced", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+    ["MailboxModal", "desktop", "conversation", "replaced", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+    ["MailboxModal", "mobile", "selected", "replaced", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+    ["MailboxModal", "mobile", "conversation", "replaced", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+    ["MailboxView", "desktop", "selected", "missing-source", (props: any) => <MailboxView {...props} />],
+    ["MailboxView", "desktop", "conversation", "missing-source", (props: any) => <MailboxView {...props} />],
+    ["MailboxView", "mobile", "selected", "missing-source", (props: any) => <MailboxView {...props} />],
+    ["MailboxView", "mobile", "conversation", "missing-source", (props: any) => <MailboxView {...props} />],
+    ["MailboxModal", "desktop", "selected", "missing-source", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+    ["MailboxModal", "desktop", "conversation", "missing-source", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+    ["MailboxModal", "mobile", "selected", "missing-source", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+    ["MailboxModal", "mobile", "conversation", "missing-source", (props: any) => <MailboxModal isOpen onClose={vi.fn()} agents={agents as never} {...props} />],
+  ] as const)("renders a safe snapshot fallback for %s %s %s after %s", async (_name, viewport, pane, failure, Host) => {
+    vi.mocked(useViewportMode).mockReturnValue(viewport);
+    vi.mocked(useHeaderViewportMode).mockReturnValue(viewport);
+    const messages = [modernRecommendationNotice("notice"), { ...ordinary("ordinary"), metadata: { replyTo: { messageId: "notice" } } }];
+    vi.mocked(api.fetchInbox).mockResolvedValue({ messages, total: messages.length, unreadCount: 0 });
+    vi.mocked(api.fetchConversation).mockResolvedValue(pane === "conversation" ? messages as never : []);
+    if (failure === "replaced") {
+      vi.mocked(api.fetchTaskDetail).mockResolvedValue({ id: "FN-9100", recommendations: [{ id: "later-rec", title: "Later recommendation", description: "This is not named by the notice.", category: "feature" }] } as never);
+    } else {
+      vi.mocked(api.fetchTaskDetail).mockRejectedValue(new Error("source task is unavailable"));
+    }
+
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+    render(<Host projectId="project-1" addToast={vi.fn()} onOpenNativeStructure={vi.fn()} nativeStructureCandidates={[]} />);
+    await user.click(await screen.findByTestId("mailbox-item-notice"));
+    if (pane === "conversation") await waitFor(() => expect(screen.getByTestId("mailbox-conversation")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText("Saved follow-up")).toHaveLength(1));
+    expect(screen.getAllByText("Keep this recommended work available.")).toHaveLength(1);
+    expect(screen.getAllByText("feature")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /create task|retry creating task|view task/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mailbox-task-recommendations-unavailable")).not.toBeInTheDocument();
   });
 
   it.each([

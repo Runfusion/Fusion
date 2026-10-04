@@ -1456,6 +1456,7 @@ export {
   normalizeMessageParticipant,
   resolveEphemeralTaskCreationPolicy,
 };
+import { parseRecommendationSnapshot } from "./tasks/recommendation-validation.js";
 import type {
   ParticipantType,
   MessageType,
@@ -1505,6 +1506,25 @@ export function validateMessageMetadata(metadata: MessageMetadata | undefined): 
 
   if (metadata.wakeRecipient !== undefined && typeof metadata.wakeRecipient !== "boolean") {
     throw new Error("metadata.wakeRecipient must be a boolean");
+  }
+
+  /*
+  FNXC:TaskRecommendations 2026-10-04-08:33:
+  New completion notices retain a bounded display snapshot so later task edits cannot erase mailbox
+  history. Snapshot entries are informational only; dashboard creation continues to resolve live rows.
+  */
+  if (metadata.recommendationSnapshot !== undefined) {
+    if (metadata.kind !== "task-recommendation-notice") throw new Error("metadata.recommendationSnapshot is only valid for task recommendation notices");
+    const snapshot = parseRecommendationSnapshot(metadata.recommendationSnapshot);
+    if (!snapshot) throw new Error("metadata.recommendationSnapshot is invalid");
+    if (metadata.recommendationCount !== snapshot.length) throw new Error("metadata.recommendationCount must match recommendationSnapshot");
+    if (!Array.isArray(metadata.recommendationIds) || !Array.isArray(metadata.categories)) throw new Error("metadata recommendation snapshot companions are invalid");
+    if (metadata.recommendationIds.length !== snapshot.length || metadata.categories.length !== snapshot.length) throw new Error("metadata recommendation snapshot companions must match recommendationSnapshot");
+    for (let index = 0; index < snapshot.length; index++) {
+      if (metadata.recommendationIds[index] !== snapshot[index].id || metadata.categories[index] !== snapshot[index].category) {
+        throw new Error("metadata recommendation snapshot companions must match recommendationSnapshot order");
+      }
+    }
   }
 
   /*
