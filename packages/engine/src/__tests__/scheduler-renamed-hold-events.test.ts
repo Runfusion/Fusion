@@ -48,6 +48,7 @@ function renamedIr(): WorkflowIr {
       { id: "inbox", name: "inbox", traits: [{ trait: "intake" }] },
       { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "verifying", name: "verifying", traits: [{ trait: "merge" }, { trait: "human-review" }] },
       { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
     ],
   } as unknown as WorkflowIr;
@@ -86,6 +87,7 @@ function createStore(tasks: Record<string, unknown>[] = [], ir: WorkflowIr = ren
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
     getWorkflowDefinition: vi.fn(async () => ({ ir })),
+    listWorkflowDefinitions: vi.fn(async () => [{ ir }]),
   } as unknown as TaskStore;
 
   return {
@@ -221,6 +223,37 @@ describe("scheduler event handlers under a renamed hold column", () => {
     That arity difference is invisible on a single-lane board, which is why the sibling case above
     passes either way and this one is needed to hold the membership shape in place.
     */
+    /*
+    FNXC:DependencyWakeup 2026-10-04-08:59:
+    A dependency's review vocabulary belongs to the moved blocker, not the project default. The
+    production task:moved listener must therefore use its resolved merge/human-review traits to wake
+    blocked hold and WIP dependents when a custom workflow calls its review lane `verifying`.
+    */
+    it("reconciles hold and WIP dependents when a blocker enters the renamed review lane", async () => {
+      const holdDependent = task({ id: "FN-HOLD", column: "drafting", dependencies: ["FN-BLOCK"], blockedBy: "FN-BLOCK", status: "queued" });
+      const wipDependent = task({ id: "FN-WIP", column: "building", dependencies: ["FN-BLOCK"], blockedBy: "FN-BLOCK", status: "queued" });
+      const blocker = task({ id: "FN-BLOCK", column: "verifying" });
+      const { emit, listTasks, store } = createScheduler([holdDependent, wipDependent, blocker]);
+
+      await emit("task:moved", { task: blocker, from: "building", to: "verifying", source: "engine" });
+
+      const queried = listTasks.mock.calls.map((c) => (c[0] as { column?: string } | undefined)?.column);
+      expect(queried).toEqual(expect.arrayContaining(["drafting", "building"]));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-HOLD", expect.objectContaining({ blockedBy: null }));
+      expect(store.updateTask).toHaveBeenCalledWith("FN-WIP", expect.objectContaining({ blockedBy: null }));
+    });
+
+    it("does not reconcile dependents for an unresolved non-review move", async () => {
+      const dependent = task({ id: "FN-DEP", column: "drafting", dependencies: ["FN-BLOCK"], blockedBy: "FN-BLOCK", status: "queued" });
+      const blocker = task({ id: "FN-BLOCK", column: "building" });
+      const { emit, listTasks, store } = createScheduler([dependent, blocker]);
+
+      await emit("task:moved", { task: blocker, from: "inbox", to: "building", source: "engine" });
+
+      expect(listTasks).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-DEP", expect.anything());
+    });
+
     it("treats a SECOND complete-trait column as terminal, not just the first", async () => {
       const twoCompleteLanes = renamedIr();
       (twoCompleteLanes as unknown as { columns: Record<string, unknown>[] }).columns.push({

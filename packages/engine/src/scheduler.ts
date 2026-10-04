@@ -1265,6 +1265,13 @@ export class Scheduler {
         [task],
         new Map<string, WorkflowIr>(),
       );
+      /*
+      FNXC:DependencyWakeup 2026-10-04-08:59:
+      DELIBERATE-LITERAL — workflow-derived review membership is authoritative whenever resolution
+      succeeds. An omitted map entry means the moved task has no readable workflow, so this legacy
+      fallback preserves the prior fail-soft wake-up; deleting it would make unresolved workflows
+      permanently unable to wake their blocked dependents when they reach `in-review`.
+      */
       const reachedDependencySatisfyingReview = movedDependencySatisfactionColumns.get(task.id)?.review.has(to)
         ?? to === "in-review";
       if (resolvedParked.terminal.has(to) || reachedDependencySatisfyingReview) {
