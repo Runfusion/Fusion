@@ -12,6 +12,7 @@ from pathlib import Path
 import select
 import socket
 import sqlite3
+import sys
 import time
 import urllib.parse
 import uuid
@@ -21,6 +22,47 @@ from opaque_records import ignored_header, scan_opaque_tail
 
 VERSION = 'fusion-remote-1'
 MAX_LINE = 4 * 1024 * 1024
+LOG_MAX_BYTES = 10 * 1024 * 1024
+LOG_BACKUPS = 3
+_log_file = None
+
+
+def log(*parts):
+    """One collector status line, timestamped in UTC.
+
+    FNXC:RemoteAgents 2026-10-04-18:00: collector lines had no timestamps and launchd never rotates
+    StandardOutPath, so a host's log grew to hundreds of megabytes that could not be dated against Fusion's
+    logs. Lines now carry UTC time (journald adds its own, so it is omitted there) and --log-file keeps the
+    log to LOG_MAX_BYTES with LOG_BACKUPS rotated copies.
+    """
+    line = ' '.join(str(part) for part in parts)
+    if _log_file is None and os.environ.get('JOURNAL_STREAM'):
+        print(line, flush=True)
+        return
+    line = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') + ' ' + line
+    if _log_file is None:
+        print(line, flush=True)
+        return
+    try:
+        rotate_log(_log_file, len(line) + 1)
+        with _log_file.open('a') as handle:
+            handle.write(line + '\n')
+    except OSError as error:
+        print(line, '(log file unavailable:', describe(error) + ')', file=sys.stderr, flush=True)
+
+
+def rotate_log(path, incoming):
+    """Shift path → path.1 → … → path.LOG_BACKUPS when adding incoming bytes would pass LOG_MAX_BYTES."""
+    try:
+        if path.stat().st_size + incoming <= LOG_MAX_BYTES:
+            return
+    except FileNotFoundError:
+        return
+    for index in range(LOG_BACKUPS - 1, 0, -1):
+        older = path.with_name(f'{path.name}.{index}')
+        if older.exists():
+            older.replace(path.with_name(f'{path.name}.{index + 1}'))
+    path.replace(path.with_name(path.name + '.1'))
 
 
 def validate_url(value):
@@ -215,7 +257,7 @@ def drain_turns(db, project, host, send, limit=25):
                 db.execute('UPDATE turns SET acked=max(acked,?) WHERE provider=? AND native=? AND turn_id=?',
                            (revision, provider, native, turn_id))
             bump(db, 'rejected_turns')
-            print('Turn rejected by Fusion and set aside:', provider, rejection.status, flush=True)
+            log('Turn rejected by Fusion and set aside:', provider, rejection.status)
             continue
         if (ack.get('eventId'), ack.get('sessionId'), ack.get('nativeTurnId')) != (event_id, session_id, turn_id) or ack.get('revision', 0) < revision:
             raise ValueError('Invalid turn ingestion acknowledgement')
@@ -273,7 +315,7 @@ def drain_turn_batches(db, project, host, send_batch, limit=TURN_BATCH_LIMIT, ma
             with db:
                 db.execute('UPDATE turns SET acked=max(acked,?) WHERE provider=? AND native=? AND turn_id=?', (revision, provider, native, turn_id))
             bump(db, 'rejected_turns')
-            print('Turn rejected by Fusion and set aside:', provider, status, result.get('error', ''), flush=True)
+            log('Turn rejected by Fusion and set aside:', provider, status, result.get('error', ''))
         else:
             deferred = deferred or f'Turn batch deferred a turn: HTTP {status} {result.get("error", "")}'.strip()
     if deferred:
@@ -291,7 +333,7 @@ def scan(db, path, provider):
     # revision is kept monotonic, so a rescan cannot double-count or regress anything already delivered.
     rewritten = bool(old and (old[0] != inode or old[1] > stat.st_size))
     if rewritten:
-        print('Transcript rewritten; rescanning from start:', provider, flush=True)
+        log('Transcript rewritten; rescanning from start:', provider)
         offset, state, previous, revision = 0, {}, old[3], old[4]
     else:
         offset, state, previous, revision = (old[1], json.loads(old[2]), old[3], old[4]) if old else (0, {}, '', 0)
@@ -368,7 +410,7 @@ def scan(db, path, provider):
             raise ValueError('Native transcript has no parseable records; cursor preserved')
         if malformed:
             bump(db, 'parse_failures', malformed)
-            print('Skipped malformed native records:', path.name, malformed, flush=True)
+            log('Skipped malformed native records:', path.name, malformed)
         state['usageComplete'] = offset == stat.st_size and not state.get('unreportedUsage', False)
         native = state.get('nativeSessionId')
         if native:
@@ -449,7 +491,7 @@ def open_wake(state):
         sock.setblocking(False)
         return sock
     except OSError as error:
-        print('Collector wake socket unavailable; polling only:', describe(error), flush=True)
+        log('Collector wake socket unavailable; polling only:', describe(error))
         return None
 
 
@@ -576,7 +618,7 @@ def deliver(db, args, token, heartbeat=True):
     except Exception as error:
         delivered = False
         bump(db, 'delivery_failures')
-        print('Fusion delivery unavailable:', describe(error), flush=True)
+        log('Fusion delivery unavailable:', describe(error))
     try:
         if time.monotonic() >= _batch_retry_at:
             try:
@@ -590,12 +632,12 @@ def deliver(db, args, token, heartbeat=True):
                 if error.status not in (404, 405, 413):
                     raise
                 _batch_retry_at = time.monotonic() + BATCH_RETRY_SECONDS
-                print('Fusion has no batched turn ingestion; sending turns singly', flush=True)
+                log('Fusion has no batched turn ingestion; sending turns singly')
         if time.monotonic() < _batch_retry_at:
             drain_turns(db, args.project, args.host, send)
     except Exception as error:
         delivered = False
-        print('Fusion turn delivery unavailable:', describe(error), flush=True)
+        log('Fusion turn delivery unavailable:', describe(error))
     return delivered
 
 
@@ -612,7 +654,9 @@ def main():
     p.add_argument('--url', required=True); p.add_argument('--project', required=True); p.add_argument('--host', required=True)
     p.add_argument('--token-file', type=Path, required=True); p.add_argument('--state', type=Path, required=True)
     p.add_argument('--home', type=Path, default=Path.home()); p.add_argument('--days', type=int, default=7)
-    p.add_argument('--once', action='store_true'); args = p.parse_args()
+    p.add_argument('--once', action='store_true'); p.add_argument('--log-file', type=Path); args = p.parse_args()
+    global _log_file
+    _log_file = args.log_file
     if args.token_file.stat().st_mode & 0o077:
         raise ValueError('Collector token must be private')
     token = args.token_file.read_text().strip()
@@ -661,7 +705,7 @@ def main():
                     attempts = (pause[0] if pause else 0) + 1
                     paused[key] = (attempts, now + delivery_delay(attempts))
                     settled.pop(key, None)
-                    print('Native collection paused:', provider, describe(error), 'retry in', delivery_delay(attempts), 'seconds', flush=True)
+                    log('Native collection paused:', provider, describe(error), 'retry in', delivery_delay(attempts), 'seconds')
                 else:
                     paused.pop(key, None)
                     settled[key] = (signature, now)
@@ -677,7 +721,7 @@ def main():
                 failures = 0 if delivered else failures + 1
                 next_delivery = time.monotonic() + delivery_delay(failures)
                 if failures:
-                    print('Fusion delivery backing off:', delivery_delay(failures), 'seconds', flush=True)
+                    log('Fusion delivery backing off:', delivery_delay(failures), 'seconds')
             if args.state.stat().st_size > 512 * 1024 * 1024:
                 raise ValueError('Collector storage capacity reached')
             if args.once:

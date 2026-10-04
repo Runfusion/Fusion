@@ -50,6 +50,6 @@ A finished turn normally reaches Fusion within about a second:
 
 `emit_turns.py` prints every turn the parser would send for a transcript. Fusion's core test suite runs it over `fixtures/` and validates each turn against the server's strict zod contract, so the parser and the contract cannot drift apart unnoticed. When they did drift in production, Fusion refused the affected turns and collectors set them aside as delivered. `repair_spool.py --state <spool>` reports what it would recover from such an incident; stop the collector, rerun it with `--apply`, then start the collector to redeliver.
 
-`deploy/` holds a launchd agent and a systemd user unit with placeholders for running the collector as a service.
+`deploy/` holds a launchd agent and a systemd user unit with placeholders for running the collector as a service. Collector lines carry UTC timestamps, except under systemd, where journald adds them and rotates the log. `--log-file <path>` makes the collector write and rotate its own log (10 MiB, three older copies), which the launchd agent uses because launchd never rotates `StandardOutPath`.
 
 Run the native protocol tests with `python3 -m unittest discover -s scripts/remote-agents -p 'test_*.py'` and the cross-language contract test with `pnpm --filter @fusion/core exec vitest run src/__tests__/external-session-collector-contract.test.ts`. `pnpm smoke:external-sessions` exercises the real isolated Fusion HTTP ingest/read/pricing/feedback/restart flow without AgentPulse.
