@@ -167,6 +167,28 @@ class WakeTests(unittest.TestCase):
                 sock.close()
 
 
+class HotTranscriptTests(unittest.TestCase):
+    def test_a_write_to_an_active_transcript_ends_the_wait_without_any_hook(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'rollout.jsonl'; path.write_text('{}\n')
+            settled = {str(path): (collector.file_signature(path), time.monotonic())}
+            hot = [(str(path), path)]
+            with patch.object(collector, 'HOT_POLL_SECONDS', 0.05):
+                started = time.monotonic()
+                self.assertFalse(collector.wait_for_activity(None, hot, settled, 0.3))
+                self.assertGreaterEqual(time.monotonic() - started, 0.25)
+                threading.Timer(0.1, lambda: path.write_text('{}\n{}\n')).start()
+                started = time.monotonic()
+                self.assertTrue(collector.wait_for_activity(None, hot, settled, 5))
+                self.assertLess(time.monotonic() - started, 1)
+
+    def test_a_vanished_file_counts_as_activity_but_a_paused_one_does_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'gone.jsonl'
+            self.assertTrue(collector.hot_changed([(str(path), path)], {str(path): ((0, 0, 0, 0), 0.0)}))
+            self.assertFalse(collector.hot_changed([(str(path), path)], {}))
+
+
 class HookWakeTests(unittest.TestCase):
     def test_claude_gets_a_stop_wake_and_codex_gets_no_new_definition(self):
         from install_hooks import PROVIDER_EVENTS, install

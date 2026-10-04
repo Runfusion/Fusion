@@ -412,6 +412,8 @@ LOOP_SECONDS = 5
 HEARTBEAT_SECONDS = 15
 MIN_ROUND_SECONDS = 1
 WAKE_SETTLE_SECONDS = 0.2
+HOT_SECONDS = 600
+HOT_POLL_SECONDS = 1
 BATCH_RETRY_SECONDS = 600
 
 
@@ -449,6 +451,45 @@ def open_wake(state):
     except OSError as error:
         print('Collector wake socket unavailable; polling only:', describe(error), flush=True)
         return None
+
+
+def file_signature(path):
+    stat = path.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def hot_changed(hot, settled):
+    """True when a recently active transcript moved since its last successful scan.
+
+    A file without a successful scan is skipped: it is paused with backoff, and waking for it every second would
+    undo that backoff."""
+    for key, path in hot:
+        known = settled.get(key)
+        if known is None:
+            continue
+        try:
+            if file_signature(path) != known[0]:
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def wait_for_activity(waker, hot, settled, seconds):
+    """FNXC:RemoteAgents 2026-10-04-14:30: wait for a hook wake, for a recently active transcript to move, or
+    for the full poll interval, whichever comes first. Codex gets no Stop hook (a new definition needs the user's
+    native trust), so a Codex turn that ends without a tool call used to wait for the next 5 s poll. Checking only
+    transcripts active in the last HOT_SECONDS costs a few stat calls per second (measured 0.012 ms for 11 files)
+    against 5 ms for a full discovery pass, and needs no hook on any host."""
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        if wait_for_wake(waker, min(HOT_POLL_SECONDS, remaining)):
+            return True
+        if hot_changed(hot, settled):
+            return True
 
 
 def wait_for_wake(sock, seconds):
@@ -582,7 +623,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         db = connect(args.state); bind(db, args.project, args.host)
         failures, next_delivery, last_round, last_heartbeat = 0, 0.0, float('-inf'), float('-inf')
-        paused, settled = {}, {}
+        paused, settled, hot = {}, {}, []
         waker = None if args.once else open_wake(args.state)
         while True:
             # FNXC:RemoteAgents 2026-10-04-12:00: scan before delivering. Delivering first made every new turn
@@ -597,6 +638,7 @@ def main():
             # that window) and a failing file backs off like delivery does. Cursor and spool semantics are unchanged.
             now = time.monotonic()
             current = set()
+            hot = []
             for provider, path in files[:2000]:
                 key = str(path)
                 current.add(key)
@@ -605,6 +647,8 @@ def main():
                 except FileNotFoundError:
                     continue
                 signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                if time.time() - stat.st_mtime < HOT_SECONDS:
+                    hot.append((key, path))
                 known = settled.get(key)
                 if known and known[0] == signature and now - known[1] < UNCHANGED_RESCAN_SECONDS:
                     continue
@@ -638,7 +682,7 @@ def main():
                 raise ValueError('Collector storage capacity reached')
             if args.once:
                 break
-            wait_for_wake(waker, LOOP_SECONDS)
+            wait_for_activity(waker, hot, settled, LOOP_SECONDS)
 
 
 if __name__ == '__main__':
