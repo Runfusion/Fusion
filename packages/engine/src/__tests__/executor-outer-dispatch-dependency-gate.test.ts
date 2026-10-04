@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TaskDetail } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
+import { Scheduler } from "../scheduler.js";
+import { flushAsyncHandlers } from "./_flush-async-handlers.js";
 import {
   AgentSemaphore,
   clearPreHeldExecutorSlotsForTests,
@@ -165,6 +167,122 @@ describe("executor outer dispatch dependency gate", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
+  it("wakes a dependency-blocked WIP task once when its parent completes", async () => {
+    resetExecutorMocks();
+    const child = task({ status: "queued", blockedBy: "FN-PARENT" });
+    const parent = task({ id: "FN-PARENT", column: "in-progress", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    let parentState = parent;
+    store.listTasks.mockImplementation(async ({ column }: { column?: string } = {}) =>
+      column === "in-progress" ? [child] : [child, parentState],
+    );
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = false;
+    store.updateTask.mockImplementation(async (id: string, patch: Record<string, unknown>) => {
+      (store as any)._setRow(id, patch);
+      const row = id === child.id ? { ...child, ...patch } : { ...parent, ...patch };
+      await (store as any)._triggerAsync("task:updated", row);
+      return row;
+    });
+
+    // This is the production parent-terminal event. No child update is emitted by the test.
+    parentState = { ...parent, column: "done" };
+    (store as any)._trigger("task:moved", {
+      task: parentState,
+      from: "in-progress",
+      to: "done",
+      source: "engine",
+    });
+    await flushAsyncHandlers(100);
+
+    expect(store.updateTask).toHaveBeenCalledWith(child.id, { blockedBy: null, status: null });
+    expect(execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: child.id }));
+  });
+
+  it("wakes a dependency-blocked WIP task when its parent enters a custom review lane", async () => {
+    resetExecutorMocks();
+    const child = task({ status: "queued", blockedBy: "FN-PARENT" });
+    const parent = task({ id: "FN-PARENT", column: "in-progress", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    let parentState = parent;
+    store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "custom-dependency", stepIds: [] });
+    store.getWorkflowDefinition = vi.fn().mockResolvedValue({
+      ir: {
+        version: "v2",
+        id: "custom-dependency",
+        name: "Custom dependency workflow",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "todo", name: "Todo", traits: [{ trait: "hold" }] },
+          { id: "in-progress", name: "Working", traits: [{ trait: "wip" }] },
+          { id: "operator-signoff", name: "Operator signoff", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }] },
+          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+        ],
+      },
+    });
+    store.listTasks.mockImplementation(async ({ column }: { column?: string } = {}) =>
+      column === "in-progress" ? [child] : [child, parentState],
+    );
+    const executor = new TaskExecutor(store, "/tmp/test");
+    /*
+    FNXC:DependencyGating 2026-10-04-03:04:
+    This must cross the real executeCore outer gate after the scheduler wakes the dependent.
+    Mock only the graph runner beyond that boundary: mocking execute would hide a disagreement
+    between resume admission and outer dependency admission.
+    */
+    const { graph } = spyOuterDispatch(executor);
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = false;
+    store.updateTask.mockImplementation(async (id: string, patch: Record<string, unknown>) => {
+      (store as any)._setRow(id, patch);
+      const row = id === child.id ? { ...child, ...patch } : { ...parent, ...patch };
+      await (store as any)._triggerAsync("task:updated", row);
+      return row;
+    });
+
+    // The parent alone moves; the dependent is released by scheduler reconciliation.
+    parentState = { ...parent, column: "operator-signoff" };
+    (store as any)._trigger("task:moved", {
+      task: parentState,
+      from: "in-progress",
+      to: "operator-signoff",
+      source: "engine",
+    });
+    await flushAsyncHandlers(100);
+
+    expect(store.updateTask).toHaveBeenCalledWith(child.id, { blockedBy: null, status: null });
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    expect(graph).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: child.id }), { alreadyClaimed: true });
+  });
+
+  it("resumes when the dependency is archived in its custom workflow lane", async () => {
+    resetExecutorMocks();
+    const child = task({ status: "queued", blockedBy: "FN-PARENT" });
+    const parent = task({ id: "FN-PARENT", column: "filed", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "custom-dependency", stepIds: [] });
+    store.getWorkflowDefinition = vi.fn().mockResolvedValue({
+      ir: {
+        version: "v2",
+        id: "custom-dependency",
+        name: "Custom dependency workflow",
+        nodes: [],
+        edges: [],
+        columns: [{ id: "filed", name: "Filed", traits: [{ trait: "archived" }] }],
+      },
+    });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+
+    await store._triggerAsync("task:updated", child);
+
+    expect(execute).toHaveBeenCalledExactlyOnceWith(child);
+    expect(store.updateTask).toHaveBeenCalledWith(child.id, { status: null, blockedBy: null });
+  });
+
   it.each([{ dependencies: [] }, { dependencies: undefined }])("does not query dependencies for an empty resume dependency list ($dependencies)", async ({ dependencies }) => {
     resetExecutorMocks();
     const child = task({ dependencies });
@@ -229,6 +347,29 @@ describe("executor outer dispatch dependency gate", () => {
     store.listTasks.mockResolvedValue([child, { ...parent, column: "done" }]);
     await store._triggerAsync("task:updated", child);
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a deferred approval resume quiet while its dependency is live", async () => {
+    resetExecutorMocks();
+    const child = task({
+      status: "queued",
+      blockedBy: "FN-PARENT",
+      queuedLogEpisodeSignature: "dependency:FN-PARENT",
+    });
+    const parent = task({ id: "FN-PARENT", column: "todo", dependencies: [] });
+    const store = prepareStore(child, [parent]);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor, "execute").mockResolvedValue(undefined);
+    const recover = vi.spyOn(executor as any, "recoverCompletedTask").mockResolvedValue(true);
+    (executor as any).approvalResumeAfterUnwind.add(child.id);
+
+    await (executor as any).resumeApprovalAfterUnwindIfNeeded(child.id);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(recover).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
   });
 
   it("holds a live dependency in place before any execution surface can run", async () => {

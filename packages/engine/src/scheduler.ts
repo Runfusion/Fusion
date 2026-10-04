@@ -1258,16 +1258,40 @@ export class Scheduler {
       const resolvedParked = mergeParkedColumns(await resolveTaskParkedColumns(this.store, task.id, movedSelectionCache), lanes);
 
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
-      // blocker reconciliation when a potential blocker reaches a terminal completion column.
+      // blocker reconciliation when a potential blocker reaches a dependency-satisfying column.
       // Invariant: blockedBy must reference a *current* unresolved blocker, else be null.
-      if (resolvedParked.terminal.has(to)) {
+      const movedDependencySatisfactionColumns = await resolveDependencySatisfactionColumns(
+        this.store,
+        [task],
+        new Map<string, WorkflowIr>(),
+      );
+      const reachedDependencySatisfyingReview = movedDependencySatisfactionColumns.get(task.id)?.review.has(to)
+        ?? to === "in-review";
+      if (resolvedParked.terminal.has(to) || reachedDependencySatisfyingReview) {
         try {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
-            const todoTasks = await this.store.listTasks({ column: resolvedParked.hold, slim: true });
+            /*
+            FNXC:DependencyWakeup 2026-10-04-02:46:
+            Dependency-blocked WIP cards intentionally stay silent on their own task updates to avoid
+            recursive resume dispatch. A blocker move into a terminal or dependency-satisfying review
+            lane is their single event-driven wake-up: reconcile both hold and WIP lanes, then let the
+            durable update enter the executor's single-flight resume fence. Reading project WIP roles
+            preserves this path on custom boards.
+            */
+            const dependencyWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+            const dependentsById = new Map<string, Task>();
+            for (const dependent of await this.store.listTasks({ column: resolvedParked.hold, slim: true })) {
+              dependentsById.set(dependent.id, dependent);
+            }
+            for (const column of dependencyWipColumns) {
+              for (const dependent of await this.store.listTasks({ column, slim: true })) {
+                dependentsById.set(dependent.id, dependent);
+              }
+            }
             /* One IR cache for the whole reconciliation, per the caller-owned-cache contract. */
             const dependencySatisfactionIrCache = new Map<string, WorkflowIr>();
-            for (const dependent of todoTasks) {
+            for (const dependent of dependentsById.values()) {
               const mentionsCompletedTask = dependent.dependencies.includes(task.id);
               const currentlyBlockedByCompletedTask = dependent.blockedBy === task.id;
               if (!mentionsCompletedTask && !currentlyBlockedByCompletedTask) continue;

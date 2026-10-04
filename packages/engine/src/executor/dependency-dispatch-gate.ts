@@ -7,7 +7,7 @@
  * Requeue with blockedBy instead of executing so missing or soft-deleted dependency residue keeps the scheduler helper's non-blocking semantics while live todo/queued/in-progress/triage dependencies block every dispatch surface.
  */
 import type { Task, TaskStore } from "@fusion/core";
-import { getUnmetSchedulingDependencies } from "../scheduler.js";
+import { getUnmetSchedulingDependencies, resolveDependencySatisfactionColumns } from "../scheduler.js";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { clearDispatchBlockedLogState, logDispatchBlockedOnce } from "./dispatch-block-log.js";
@@ -29,17 +29,27 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
   const settings = await deps.store.getSettings();
   const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
   const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
+  const dependencyIds = new Set(liveTask.dependencies);
+  /*
+  FNXC:DependencyGating 2026-10-04-03:04:
+  Resume admission resolves custom review lanes before it dispatches a dependent. The outer
+  execution gate must use that same dependency vocabulary; otherwise it immediately re-queues a
+  just-released dependent because a valid review lane is not literally named `in-review`.
+  */
+  const satisfactionColumnsByTaskId = await resolveDependencySatisfactionColumns(
+    deps.store,
+    tasks.filter((candidate) => dependencyIds.has(candidate.id)),
+  );
   const markerAcceptedByTaskId = new Map<string, boolean>();
   if (settings.mergeRequestContractShadowEnabled === true) {
     for (const depId of liveTask.dependencies) {
       markerAcceptedByTaskId.set(depId, (await deps.store.getCompletionHandoffAcceptedMarker(depId)) !== null);
     }
   }
-  const unmetDeps = getUnmetSchedulingDependencies(
-    liveTask,
-    tasks,
-    settings.mergeRequestContractShadowEnabled === true ? { markerAcceptedByTaskId } : undefined,
-  );
+  const unmetDeps = getUnmetSchedulingDependencies(liveTask, tasks, {
+    satisfactionColumnsByTaskId,
+    ...(settings.mergeRequestContractShadowEnabled === true ? { markerAcceptedByTaskId } : {}),
+  });
   if (unmetDeps.length === 0) {
     clearDispatchBlockedLogState(liveTask.id);
     return false;

@@ -13,7 +13,7 @@
  */
 import type { Task, TaskStore } from "@fusion/core";
 import { executorLog } from "../logger.js";
-import { getUnmetSchedulingDependencies } from "../scheduler.js";
+import { getUnmetSchedulingDependencies, resolveDependencySatisfactionColumns } from "../scheduler.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { isTaskWorkComplete } from "./task-predicates.js";
 
@@ -66,13 +66,22 @@ export async function dispatchUnpauseResume(
       return false;
     }
 
-    // A dependency hold emits task:updated too. Check admission without writing:
-    // clearing the hold then re-queuing in execute would emit another update and
-    // restart this loop after the single-flight claim is released.
+    /*
+    FNXC:DependencyGating 2026-09-25-16:57:
+    A dependency hold emits task:updated too. Check admission without writing: clearing the hold
+    then re-queuing in execute would emit another update and restart this loop after the
+    single-flight claim is released. Resolve each dependency's lifecycle vocabulary so custom
+    review and terminal lanes have the same scheduling meaning as the main scheduler.
+    */
     if (task.dependencies?.length) {
       const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
       const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
-      if (getUnmetSchedulingDependencies(liveTask, tasks).length > 0) {
+      const dependencyIds = new Set(liveTask.dependencies);
+      const satisfactionColumnsByTaskId = await resolveDependencySatisfactionColumns(
+        deps.store,
+        tasks.filter((candidate) => dependencyIds.has(candidate.id)),
+      );
+      if (getUnmetSchedulingDependencies(liveTask, tasks, { satisfactionColumnsByTaskId }).length > 0) {
         return false;
       }
     }
