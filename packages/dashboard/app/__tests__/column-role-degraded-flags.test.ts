@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createElement } from "react";
+import type { Task } from "@fusion/core";
+import { ListView } from "../components/ListView";
+import type { BoardWorkflowsPayload } from "../api";
 import {
   isArchivedColumnRole,
   isCompleteColumnRole,
@@ -37,7 +42,107 @@ This is a deliberate behaviour change and is pinned here so it stays deliberate.
 
 const COMPONENTS = ["Column.tsx", "ListView.tsx"] as const;
 
+const fetchBoardWorkflowsMock = vi.fn();
+const workflowSseHandlers: Record<string, () => void> = {};
+
+vi.mock("../api", () => ({
+  fetchBoardWorkflows: (...args: unknown[]) => fetchBoardWorkflowsMock(...args),
+  fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
+  fetchSettings: vi.fn().mockResolvedValue({}),
+  fetchGlobalSettings: vi.fn().mockResolvedValue({}),
+  fetchTaskDetail: vi.fn(),
+  batchUpdateTaskModels: vi.fn(),
+  fetchNodes: vi.fn(() => new Promise(() => {})),
+  rebuildTaskSpec: vi.fn().mockResolvedValue({}),
+  refreshPrStatus: vi.fn().mockResolvedValue({}),
+  updateTask: vi.fn(),
+  api: vi.fn().mockResolvedValue({ sessions: [] }),
+  setProjectBoardSelectedWorkflow: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock("../sse-bus", () => ({
+  subscribeSse: vi.fn((_url: string, options: { events?: Record<string, () => void> }) => {
+    Object.assign(workflowSseHandlers, options.events);
+    return () => {};
+  }),
+}));
+
+vi.mock("../components/QuickEntryBox", () => ({ QuickEntryBox: () => createElement("div") }));
+vi.mock("../components/TaskDetailModal", () => ({ TaskDetailContent: () => createElement("div") }));
+vi.mock("../components/CustomModelDropdown", () => ({ CustomModelDropdown: () => createElement("div") }));
+
+const PROJECT_ID = "column-role-mapping";
+
+function mappingTask(): Task {
+  return {
+    id: "FN-mapped",
+    title: "Mapping-sensitive task",
+    description: "Task whose workflow mapping changes",
+    column: "shared" as Task["column"],
+    dependencies: [],
+    steps: [{ name: "Implement mapping refresh", status: "pending" }],
+    currentStep: 0,
+    status: null,
+    paused: false,
+    log: [],
+    createdAt: "2026-10-04T00:00:00.000Z",
+    updatedAt: "2026-10-04T00:00:00.000Z",
+    mergeDetails: { commitSha: "abc123" },
+  } as Task;
+}
+
+function mappingPayload(taskWorkflowId: string): BoardWorkflowsPayload {
+  return {
+    flagEnabled: true,
+    defaultWorkflowId: "workflow-complete",
+    workflows: [
+      {
+        id: "workflow-complete",
+        name: "Complete workflow",
+        columns: [{ id: "shared", name: "Shared", flags: { complete: true } }],
+      },
+      {
+        id: "workflow-wip",
+        name: "WIP workflow",
+        columns: [{ id: "shared", name: "Shared", flags: { countsTowardWip: true } }],
+      },
+      {
+        id: "workflow-archived",
+        name: "Archived workflow",
+        columns: [{ id: "shared", name: "Shared", flags: { archived: true } }],
+      },
+    ],
+    taskWorkflowIds: { "FN-mapped": taskWorkflowId },
+  };
+}
+
+function renderMappingList() {
+  const task = mappingTask();
+  return render(createElement(ListView, {
+    tasks: [task],
+    projectId: PROJECT_ID,
+    onMoveTask: vi.fn(async () => task),
+    onRetryTask: vi.fn(async () => task),
+    onDeleteTask: vi.fn(async () => task),
+    onMergeTask: vi.fn(async () => ({ merged: false })),
+    onResetTask: vi.fn(async () => task),
+    onDuplicateTask: vi.fn(async () => task),
+    onArchiveTask: vi.fn(async () => task),
+    onRevertTask: vi.fn(async () => ({ reverted: false })),
+    onOpenDetail: vi.fn(),
+    onNewTask: vi.fn(),
+    addToast: vi.fn(),
+    globalPaused: false,
+  }));
+}
+
 describe("board surfaces resolve column roles per column, not per board", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    fetchBoardWorkflowsMock.mockReset();
+    for (const key of Object.keys(workflowSseHandlers)) delete workflowSseHandlers[key];
+  });
   /*
   The divergence itself, stated as behaviour. `undefined` flags is the state the old form answered
   `false` for; every helper must instead degrade to its documented legacy id.
@@ -203,5 +308,59 @@ describe("board surfaces resolve column roles per column, not per board", () => 
     expect(isCompleteColumnRole(undefined, "wrapped")).toBe(false);
     expect(isArchivedColumnRole(undefined, "wrapped")).toBe(false);
     expect(isCompleteColumnRole(undefined, "done")).toBe(true);
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-10-04-22:40:
+  A live ListView must recompute row actions when the board refresh changes a task's workflow
+  mapping. Reused column ids intentionally have different traits here: the same card changes from
+  complete to archived, so Archive must disappear and Revert must become available without remounting.
+  */
+  it("updates rendered row actions when a task remaps between colliding workflow columns", async () => {
+    let currentPayload = mappingPayload("workflow-complete");
+    fetchBoardWorkflowsMock.mockImplementation(async () => currentPayload);
+    window.localStorage.setItem(
+      `kb:${PROJECT_ID}:kb-dashboard-board-workflow-selection`,
+      "__all_workflows__",
+    );
+    window.localStorage.setItem(
+      `kb:${PROJECT_ID}:kb-dashboard-list-columns`,
+      JSON.stringify(["title", "status", "progress"]),
+    );
+    renderMappingList();
+
+    await screen.findByText("Mapping-sensitive task");
+    const row = document.querySelector("[data-id='FN-mapped']");
+    expect(row).not.toBeNull();
+    fireEvent.contextMenu(row!, { clientX: 24, clientY: 24 });
+    expect(await screen.findByRole("menuitem", { name: "Archive" })).toBeTruthy();
+
+    currentPayload = mappingPayload("workflow-wip");
+    await act(async () => {
+      workflowSseHandlers["workflow:updated"]?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "Archive" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "Revert" })).toBeNull();
+      expect(row!.querySelector(".list-progress-label")).toHaveTextContent("0/1");
+      expect(row!.querySelector(".list-status-badge")).toHaveTextContent("Shared");
+    });
+
+    currentPayload = mappingPayload("workflow-archived");
+    await act(async () => {
+      workflowSseHandlers["workflow:updated"]?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("menuitem", { name: "Revert" })).toBeTruthy();
+      expect(row!.querySelector(".list-progress-label")).toBeNull();
+      expect(row!.querySelector(".list-status-badge")).toHaveTextContent("-");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Bulk Edit" }));
+    expect(screen.getByRole("checkbox", { name: "Select FN-mapped" })).toBeDisabled();
   });
 });

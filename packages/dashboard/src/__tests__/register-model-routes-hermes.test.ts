@@ -145,7 +145,7 @@ describe("register-model-routes: Hermes additive surfacing", () => {
 
     const hermesRows = response.models.filter((m) => m.provider === "hermes" && m.id === "default");
     expect(hermesRows).toHaveLength(1);
-    expect(hermesRows[0]).toEqual(existingHermesRow);
+    expect(hermesRows[0]).toEqual({ ...existingHermesRow, supportedThinkingLevels: [] });
   });
 
   it("degrades to zero Hermes rows and returns HTTP 200 with existing rows intact when the façade throws", async () => {

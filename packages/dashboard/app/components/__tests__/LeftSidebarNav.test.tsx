@@ -212,6 +212,7 @@ describe("LeftSidebarNav", () => {
     for (const testId of [
       "sidebar-nav-board",
       "sidebar-nav-list",
+      "sidebar-nav-patchnode",
       "sidebar-nav-command-center",
       "sidebar-nav-agents",
       "sidebar-nav-chat",
@@ -268,13 +269,14 @@ describe("LeftSidebarNav", () => {
     /*
     FNXC:Navigation 2026-06-22-12:00:
     Assert the intentional single-list order (top to bottom) for the entries present under the default render flags.
-    command-center precedes agents; skills/memory (flag-gated) sit immediately after mailbox and before planning; documents (Artifacts) follows missions; automations -> import-tasks -> workflows are contiguous after compound/goals.
+    command-center precedes agents; Patchnode follows List before Planning; skills/memory (flag-gated) sit immediately after mailbox; documents (Artifacts) follows missions; automations -> import-tasks -> workflows are contiguous after compound/goals.
     */
     const primaryButtons = within(primaryNav).getAllByRole("button");
     const orderedTestIds = [
       "sidebar-nav-command-center",
       "sidebar-nav-board",
       "sidebar-nav-list",
+      "sidebar-nav-patchnode",
       "sidebar-nav-planning",
       "sidebar-nav-missions",
       "sidebar-nav-agents",
@@ -296,8 +298,9 @@ describe("LeftSidebarNav", () => {
     expect(orderedIndices).toEqual([...orderedIndices].sort((a, b) => a - b));
     expect(orderedIndices.every((index) => index >= 0)).toBe(true);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-command-center"))).toBeLessThan(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents")));
-    // FNXC:Navigation 2026-06-23-01:30: Planning + Missions now sit directly after List and before Agents; Documents (Artifacts) follows Memory.
-    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
+    // FNXC:Navigation 2026-10-04-22:12: Patchnode is the canonical post-List destination; Planning and Missions remain consecutive before Agents.
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-list")) + 1);
+    expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-patchnode")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-planning")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-agents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-missions")) + 1);
     expect(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-documents"))).toBe(primaryButtons.indexOf(screen.getByTestId("sidebar-nav-memory")) + 1);

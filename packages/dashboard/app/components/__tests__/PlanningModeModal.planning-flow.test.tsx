@@ -1318,11 +1318,7 @@ describe("PlanningModeModal sequential flow", () => {
 
     const props = { isOpen: true, onClose: vi.fn(), onTaskCreated: vi.fn(), onTasksCreated: vi.fn(), tasks: mockTasks, projectId: "project-1" };
     const { rerender } = render(<PlanningModeModal {...props} resumeSessionId="session-a" />);
-    fireEvent.click(await screen.findByLabelText("Secure defaults"));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Next" }));
-      await Promise.resolve();
-    });
+    await selectResponseAfterHydration("Secure defaults");
     await waitFor(() => expect(sessionAReads).toBe(2));
 
     rerender(<PlanningModeModal {...props} resumeSessionId="session-b" />);

@@ -52,6 +52,8 @@ vi.mock("../planning.js", () => ({
   releasePlanningTaskCreation: vi.fn(async () => undefined),
   advancePlanningTaskCreationEpoch: vi.fn(async (id: string) => sessions.get(id)),
   formatPlanningTaskHandoff: vi.fn((summary: { description: string }) => summary.description.trim()),
+  normalizePlanningSuggestedDependencies: vi.fn((dependencies: unknown) => Array.isArray(dependencies) ? dependencies : []),
+  normalizePlanningSummaryPayload: vi.fn((summary: unknown) => summary),
   // FNXC:PlanningMode 2026-07-23-12:10: create-task terminalizes the session after creation.
   validateSession: vi.fn(async () => undefined),
   // FNXC:PlanningMultiTask 2026-07-24-00:20: create-task derives an epoch-scoped proposalClaimId.

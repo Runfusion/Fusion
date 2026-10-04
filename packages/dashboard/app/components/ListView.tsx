@@ -950,7 +950,8 @@ export function ListView({
     union is an approximation reserved for the case where we have no per-task metadata AT ALL.
     */
     return fromOwnWorkflow ?? (own ? undefined : columnFlagsById.get(task.column));
-  }, [columnFlagsById]);
+  // FNXC:WorkflowResolvedColumns 2026-10-04-22:12: A task's role must refresh with its own workflow mapping, not a stale cross-workflow union snapshot.
+  }, [columnFlagsById, taskContextMenuColumnsByTaskId]);
 
   const getTaskColumnDisplayLabel = useCallback((task: Task): string => {
     return taskContextMenuColumnsByTaskId.get(task.id)?.find((column) => column.id === task.column)?.label

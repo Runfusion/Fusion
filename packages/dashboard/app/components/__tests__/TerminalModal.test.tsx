@@ -1438,7 +1438,7 @@ describe("TerminalModal", () => {
       fireEvent.pointerMove(resizeHandle, { pointerId: 51, pointerType: "touch", clientX: 120, clientY: 180 });
       fireEvent.pointerUp(resizeHandle, { pointerId: 51, pointerType: "touch" });
       await waitFor(() => {
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 656, height: 540 });
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 624, height: 540 });
       });
 
       const header = modal.querySelector(".terminal-header") as HTMLElement & {
@@ -1451,7 +1451,7 @@ describe("TerminalModal", () => {
       fireEvent.pointerMove(header, { pointerId: 52, pointerType: "touch", clientX: 180, clientY: 140 });
       fireEvent.pointerUp(header, { pointerId: 52, pointerType: "touch" });
       await waitFor(() => {
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(96);
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(112);
       });
     } finally {
       styleEl.remove();
@@ -1517,7 +1517,7 @@ describe("TerminalModal", () => {
         expect(panel.setPointerCapture).toHaveBeenCalledWith(63);
         expect(panel.style.left).not.toBe(initialLeft);
         expect(panel.style.top).not.toBe(initialTop);
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position).toEqual({ x: 16, y: 80 });
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position).toEqual({ x: 32, y: 80 });
       });
 
       fireEvent.pointerDown(screen.getAllByRole("tab")[1], { pointerId: 64, pointerType: "touch" });
