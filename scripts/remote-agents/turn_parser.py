@@ -37,6 +37,16 @@ def _finish(turn, at, native_duration=None):
     turn['durationSource'] = 'native' if native is not None else ('derived' if turn['durationMs'] is not None else None)
 
 
+def _remember(mapping, key, value, limit=256):
+    # FNXC:RemoteAgents 2026-10-04-09:50: these per-turn maps used to stop recording once they held 256 turns,
+    # so every later turn of a long Codex session (865 turns measured) had no model. The strict usage contract
+    # requires a model, so Fusion rejected those turns. Keep the newest entries and evict the oldest instead.
+    if key not in mapping:
+        while len(mapping) >= limit:
+            del mapping[next(iter(mapping))]
+    mapping[key] = value
+
+
 def _change(path, value):
     if not isinstance(path, str) or not path or not isinstance(value, dict):
         return None
@@ -103,13 +113,9 @@ def consume_codex(state, event):
         identity = payload.get('turn_id')
         model = payload.get('model')
         if isinstance(identity, str) and identity and isinstance(model, str) and model:
-            models = state.setdefault('turnModels', {})
-            if len(models) < 256:
-                models[identity] = bounded(model, 256)
+            _remember(state.setdefault('turnModels', {}), identity, bounded(model, 256))
         if isinstance(identity, str) and identity:
-            tiers = state.setdefault('turnTiers', {})
-            if len(tiers) < 256:
-                tiers[identity] = payload.get('service_tier') in ('fast', 'priority')
+            _remember(state.setdefault('turnTiers', {}), identity, payload.get('service_tier') in ('fast', 'priority'))
     if kind == 'token_usage_record':
         identity = payload.get('turn_id')
         usage = codex_usage_record(payload)
@@ -120,12 +126,19 @@ def consume_codex(state, event):
                 return dict(turn)
             request = payload.get('response_id')
             entries = turn.setdefault('usage', [])
+            model = state.get('turnModels', {}).get(identity)
+            if model is None:
+                # The contract cannot carry a usage entry without a model and a null would reject the whole
+                # turn. Keep the context size, omit the entry, and say the accounting is incomplete.
+                turn['usageComplete'] = False
+                turn['contextTokens'] = usage['inputTokens']
+                turn['contextCapacity'] = CONTEXT_CAPACITY['codex']
+                return dict(turn)
             if len(entries) < 64 and not any(u.get('requestId') == request for u in entries):
                 # FNXC:RemoteAgents 2026-10-04-09:20: the usage contract is strict and requires the pricing band
                 # flags on every entry; without them Fusion rejected the whole turn (HTTP 400) and a collector
                 # that sets rejected turns aside silently dropped it. Same derivation as session accounting.
-                entries.append(dict(requestId=bounded(str(request), 256) if request else identity,
-                                    model=state.get('turnModels', {}).get(identity),
+                entries.append(dict(requestId=bounded(str(request), 256) if request else identity, model=model,
                                     fast=state.get('turnTiers', {}).get(identity, False),
                                     longContext=usage['inputTokens'] > CONTEXT_CAPACITY['codex'], **usage))
                 turn['contextTokens'] = usage['inputTokens']
@@ -214,11 +227,13 @@ def consume_claude(state, event):
         '''
         identity = message.get('id')
         usage = claude_message_usage(message)
-        if isinstance(identity, str) and identity and usage is not None and usage['outputTokens'] is not None:
+        model = message.get('model')
+        if isinstance(identity, str) and identity and usage is not None and usage['outputTokens'] is not None and not (isinstance(model, str) and model):
+            # Same contract rule as Codex: no model, no entry, accounting marked incomplete.
+            turn['usageComplete'] = False; changed = True
+        elif isinstance(identity, str) and identity and usage is not None and usage['outputTokens'] is not None:
             if len(turn.setdefault('usage', [])) < 64 and not any(u.get('requestId') == identity for u in turn['usage']):
-                model = message.get('model')
-                turn['usage'].append(dict(requestId=bounded(identity, 256),
-                                          model=bounded(model, 256) if isinstance(model, str) else None,
+                turn['usage'].append(dict(requestId=bounded(identity, 256), model=bounded(model, 256),
                                           fast=(message.get('usage') or {}).get('speed') == 'fast',
                                           longContext=usage['inputTokens'] > CONTEXT_CAPACITY['claude'], **usage))
                 turn['contextTokens'] = usage['inputTokens']

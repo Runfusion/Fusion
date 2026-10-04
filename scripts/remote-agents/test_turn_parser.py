@@ -279,11 +279,25 @@ class CodexTurnUsageTests(unittest.TestCase):
         _, state = self.drive(events + [events[-1]])
         self.assertEqual(len(state['turn']['usage']), 1)
 
-    def test_records_usage_without_a_model_rather_than_inventing_one(self):
+    def test_usage_without_a_model_is_omitted_and_marked_incomplete_rather_than_invented(self):
+        # FNXC:RemoteAgents 2026-10-04-09:50: the strict contract requires a model; a null rejects the whole turn.
         events = [e for e in self.events() if e['type'] != 'turn_context']
         _, state = self.drive(events)
-        self.assertEqual(len(state['turn']['usage']), 1)
-        self.assertIsNone(state['turn']['usage'][0]['model'])
+        self.assertEqual(state['turn']['usage'], [])
+        self.assertIs(state['turn']['usageComplete'], False)
+        self.assertEqual(state['turn']['contextTokens'], 1000)
+
+    def test_models_are_still_known_after_more_turns_than_the_map_limit(self):
+        state = {}
+        for n in range(300):
+            consume_codex(state, {'type': 'turn_context', 'timestamp': '2026-09-23T10:00:00Z', 'payload': {'turn_id': f't-{n}', 'model': f'm-{n}'}})
+        self.assertEqual(len(state['turnModels']), 256)
+        self.assertNotIn('t-0', state['turnModels'])
+        events = self.events(turn_id='t-299', model='m-299')
+        turn, _ = self.drive([e for e in events if e['type'] != 'turn_context'] if False else events)
+        self.assertEqual(turn['usage'][0]['model'], 'm-299')
+        last, _ = self.drive(self.events(turn_id='t-299'))
+        self.assertEqual(last['usage'][0]['model'], 'gpt-5.6-sol')
 
 
 class TurnTimingIntegrityTests(unittest.TestCase):
