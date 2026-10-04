@@ -85,7 +85,7 @@ export const BUILT_IN_API_KEY_PROVIDERS: ReadonlyArray<{ id: string; name: strin
   { id: ANTHROPIC_API_KEY_PROVIDER_ID, name: "Anthropic API Key" },
   { id: "brave", name: "Brave Search" },
   { id: "kimi-coding", name: "Kimi" },
-  // FNXC:ProviderAuth 2026-09-20-16:20: Pi 0.86.1 supports META_API_KEY for Muse models alongside its OAuth login.
+  // FNXC:ProviderAuth 2026-10-04-07:28: Pi 1.0.2 supports META_API_KEY for Muse models alongside its OAuth login.
   { id: "meta", name: "Meta (Muse)" },
   { id: "minimax", name: "Minimax" },
   { id: "openrouter", name: "OpenRouter" },

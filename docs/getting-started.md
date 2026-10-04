@@ -41,7 +41,7 @@ npm install -g @runfusion/fusion
 fn dashboard                # or: fusion dashboard
 ```
 
-Fusion pins `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` as a locked version pair. If a global npm install ever reports a `pi-*` export mismatch, build from source with `pnpm install`; it honors this repository's committed lockfile and is the reliable fallback while upstream pi-mono patch exports stabilize.
+Fusion requires Node.js 22.19.0 or later. It pins `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` with their complete runtime closure as one locked set. If a global npm install ever reports a `pi-*` export mismatch, build from source with `pnpm install`; it honors this repository's committed lockfile and is the reliable fallback while upstream pi-mono patch exports stabilize.
 
 ### From source (development)
 

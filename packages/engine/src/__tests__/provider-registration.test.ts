@@ -124,7 +124,7 @@ describe("seedDashboardProviders", () => {
 
   it("keeps native Kimi K3 available through the installed pi model registry", async () => {
     // FNXC:ModelCatalog 2026-08-12-20:46: FN-9007 keeps catalog coverage on Pi
-    // 0.86.1's real built-in registry, not a hand-written Kimi fixture.
+    // 1.0.2's real built-in registry, not a hand-written Kimi fixture.
     const modelRegistry = await createInMemoryModelRegistry();
     await modelRegistry.refresh();
 
@@ -165,7 +165,7 @@ describe("seedDashboardProviders", () => {
       ["vercel-ai-gateway", "meta/muse-spark-1.2-contributor", "anthropic-messages"],
       ["opencode-go", "muse-spark-1.2-contributor", "openai-responses"],
       ["opencode", "muse-spark-1.2", "openai-responses"],
-      ["opencode", "muse-spark-1.2-contributor-free", "openai-responses"],
+      ["opencode", "muse-spark-1.3", "openai-responses"],
     ] as const;
 
     for (const [provider, id, api] of surfaces) {

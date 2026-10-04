@@ -387,7 +387,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       /*
       FNXC:ModelCatalog 2026-10-01-02:51:
       Refresh can replace provider rows, including on retained-catalog paths. Reapply the
-      upstream-first Anthropic compatibility merge on every request so Pi 0.86.1 exposes the
+      upstream-first Anthropic compatibility merge on every request so Pi 1.0.2 exposes the
       two 5.5 records without replacing newer upstream metadata or credential configuration.
       */
       if (options.modelRegistry.registerProvider) {

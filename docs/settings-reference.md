@@ -960,7 +960,7 @@ Manual re-login is still required when no refresh token is stored or the refresh
 
 ### Meta Muse authentication
 
-Pi 0.86.1 bundles Meta Muse models. In **Settings → Authentication**, use **Meta (Muse subscription)** to sign in with Meta, or use the separate **Meta (Muse)** card to save an operator-supplied API key. The two cards describe different credential paths for the same `meta` runtime provider; Fusion keeps the key masked in status responses and never displays the OAuth token. Select a `meta/muse-spark-*` model after completing either path. Do not enter credentials in project settings, task prompts, or source files.
+Pi 1.0.2 bundles Meta Muse models. In **Settings → Authentication**, use **Meta (Muse subscription)** to sign in with Meta, or use the separate **Meta (Muse)** card to save an operator-supplied API key. The two cards describe different credential paths for the same `meta` runtime provider; Fusion keeps the key masked in status responses and never displays the OAuth token. Select a `meta/muse-spark-*` model after completing either path. Do not enter credentials in project settings, task prompts, or source files.
 
 ### Anthropic API-key authentication
 

@@ -67,8 +67,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.24.0",
-    "@earendil-works/pi-ai": "0.86.1",
-    "@earendil-works/pi-coding-agent": "0.86.1",
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-coding-agent": "1.0.2",
     "agent-browser": "0.26.0",
     "claude-code-cli-acp": "0.1.1",
     "dockerode": "^5.0.1",
@@ -127,6 +127,6 @@
     "url": "https://github.com/Runfusion/Fusion"
   },
   "engines": {
-    "node": ">=22.4.0"
+    "node": ">=22.19.0"
   }
 }

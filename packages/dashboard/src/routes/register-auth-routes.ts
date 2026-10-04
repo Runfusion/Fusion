@@ -441,8 +441,8 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   function toAuthStatusProvider(provider: { id: string; name: string }): { id: string; name: string } {
     if (provider.id === META_OAUTH_PROVIDER_ID) {
       /*
-      FNXC:ProviderAuth 2026-09-20-16:20:
-      Pi 0.86.1 exposes Meta's API key and subscription OAuth under one runtime id. The Settings
+      FNXC:ProviderAuth 2026-10-04-07:28:
+      Pi 1.0.2 exposes Meta's API key and subscription OAuth under one runtime id. The Settings
       surface needs separate cards so either credential path remains actionable without duplicate keys.
       Route login back to `meta` so ModelRuntime receives Pi's canonical provider id.
       */

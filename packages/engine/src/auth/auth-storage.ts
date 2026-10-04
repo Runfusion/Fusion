@@ -325,7 +325,7 @@ class FusionFileAuthStorage implements FusionAuthStorage {
       return { result: existing, changed: false };
     });
   }
-  // FNXC:ProviderAuth 2026-09-20-16:20: Pi 0.86.1 registers Meta's Muse OAuth login; preserve the raw runtime id for ModelRuntime.login.
+  // FNXC:ProviderAuth 2026-10-04-07:28: Pi 1.0.2 registers Meta's Muse OAuth login; preserve the raw runtime id for ModelRuntime.login.
   getOAuthProviders(): Array<{ id: string; name: string }> { return [{ id: "anthropic", name: "Anthropic" }, { id: "openai-codex", name: "OpenAI Codex" }, { id: "github-copilot", name: "GitHub Copilot" }, { id: "meta", name: "Meta (Muse)" }]; }
   setModelRuntime(modelRuntime: ModelRuntime): void { this.modelRuntime = modelRuntime; }
   getModelRuntime(): ModelRuntime | undefined { return this.modelRuntime; }
@@ -570,7 +570,7 @@ guarded mutation rereads auth.json and merges `{ ...currentData, [provider]: nex
 Fusion's credential adapter still preserves concurrent credentials for other providers.
 
 FNXC:ProviderAuth 2026-09-20-16:45:
-Pi 0.86.1 retains the locked read-modify-write contract required by Fusion's credential adapter.
+Pi 1.0.2 retains the locked read-modify-write contract required by Fusion's credential adapter.
 */
 
 /*

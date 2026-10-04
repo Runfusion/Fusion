@@ -55,12 +55,12 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
     ).not.toBe(true);
   }
 
-  // FNXC:DesktopPackaging 2026-09-20-16:20: Exact matched Pi runtime pin — keep in sync with
-  // pnpm-workspace.yaml overrides and check-pi-versions-pinned.mjs (currently 0.86.1).
+  // FNXC:DesktopPackaging 2026-10-04-07:28: Keep the published pair aligned with the complete
+  // 1.0.2 desktop closure; standalone npm installs do not consume the workspace lockfile.
   for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
     expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
       dependencyName,
-      "0.86.1",
+      "1.0.2",
     );
     expect(dependencies[dependencyName], `${label}: ${dependencyName} must be a clean exact semver`).toMatch(
       EXACT_SEMVER,
@@ -116,14 +116,13 @@ describe("CLI package.json publishing config", () => {
   const prepackScript = loadCliPrepackScript();
 
   /*
-   * FNXC:CliRuntimeContract 2026-08-11-09:30:
-   * Node 22.4 is the supported floor because the CLI uses import attributes and
-   * `node:fs/promises` glob; declaring it prevents unsupported runtimes from
-   * silently reaching the Node 22.4+ exit-13 liveness path FN-8954 repaired.
+   * FNXC:CliRuntimeContract 2026-10-04-07:28:
+   * Pi 1.0.2 requires Node 22.19.0 or later. Match that runtime floor in the
+   * published CLI and workspace manifest so unsupported hosts fail at install time.
    */
   it("declares the supported Node runtime in both manifests", () => {
     const rootPkg = loadRootPackageJson();
-    expect(pkg.engines?.node).toBe(">=22.4.0");
+    expect(pkg.engines?.node).toBe(">=22.19.0");
     expect(rootPkg.engines?.node).toBe(pkg.engines.node);
   });
 

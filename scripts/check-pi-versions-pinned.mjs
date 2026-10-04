@@ -24,7 +24,7 @@ closure on one exact override so a new agent-core or tui patch cannot be hoisted
 beside older direct ai/coding-agent dependencies.
 
 FNXC:DesktopPackaging 2026-09-20-16:20:
-FN-9340 advances Pi to 0.86.1, where pi-agent-core and pi-coding-agent transitively require chord. Guard chord with the existing siblings so electron-builder's lockfile-free production walk cannot hoist it into a split runtime closure.
+FN-9449 advances Pi to 1.0.2. pi-coding-agent now transitively requires pi-mcp and pi-codemode; guard them with the existing siblings so electron-builder's lockfile-free production walk cannot hoist a split runtime closure.
 */
 export const PI_RUNTIME_PACKAGES = [
   "@earendil-works/chord",
@@ -33,6 +33,8 @@ export const PI_RUNTIME_PACKAGES = [
   "@earendil-works/pi-client",
   "@earendil-works/pi-coding-agent",
   "@earendil-works/pi-protocol",
+  "@earendil-works/pi-mcp",
+  "@earendil-works/pi-codemode",
   "@earendil-works/pi-telemetry",
   "@earendil-works/pi-tui",
 ];

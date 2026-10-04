@@ -136,8 +136,8 @@ export default defineConfig({
     // Anchored regex aliases force CLI tests to use source entrypoints instead.
     alias: [
       /*
-      FNXC:CliTests 2026-09-20-16:20:
-      pnpm resolves pi-coding-agent 0.86.1 into peer-hashed instances because dashboard pins zod
+      FNXC:CliTests 2026-10-04-07:28:
+      pnpm resolves pi-coding-agent 1.0.2 into peer-hashed instances because dashboard pins zod
       ^3.25.76 while CLI/engine use zod 4.x and different ws versions. vi.mock is resolved-path
       scoped, so unify its exact package root here or CLI mocks silently miss dashboard/engine and
       run the real pi runtime plus vendored pi-claude-cli. Keep this anchored root alias after any
