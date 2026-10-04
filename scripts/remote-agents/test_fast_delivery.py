@@ -70,6 +70,19 @@ class BatchDeliveryTests(unittest.TestCase):
         drain_turn_batches(self.db, 'project', 'host', send, max_bytes=1100)
         self.assertEqual(sizes, [2])
 
+    def test_a_whole_batch_413_from_an_older_body_limit_also_falls_back(self):
+        spool_turns(self.db, 2); calls = []
+        def fake_post(url, project, token, operation, body, timeout=5, reuse=False):
+            calls.append(operation)
+            if operation == 'turn-ingest-batch':
+                raise Rejected(413)
+            return accept(body) if operation == 'turn-ingest' else {}
+        args = SimpleNamespace(url='http://localhost:1', project='project', host='host')
+        with patch.object(collector, 'post', fake_post), patch.object(collector, '_batch_retry_at', 0.0):
+            self.assertTrue(collector.deliver(self.db, args, 'token', heartbeat=False))
+        self.assertEqual((calls.count('turn-ingest'), self.queued()), (2, 0))
+        self.assertEqual(self.db.execute("SELECT count(*) FROM counters WHERE key='rejected_turns'").fetchone()[0], 0)
+
     def test_delivery_falls_back_to_single_turns_when_fusion_has_no_batch_route(self):
         spool_turns(self.db, 2); calls = []
         def fake_post(url, project, token, operation, body, timeout=5, reuse=False):

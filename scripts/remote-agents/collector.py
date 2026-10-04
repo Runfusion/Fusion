@@ -541,10 +541,12 @@ def deliver(db, args, token, heartbeat=True):
             try:
                 while drain_turn_batches(db, args.project, args.host, lambda body: send('turn-ingest-batch', body, timeout=60)) == TURN_BATCH_LIMIT:
                     pass
-            except StatusError as error:
-                # A Fusion build without batched ingestion answers 404/405: deliver one turn per request instead
-                # and look again later, so collectors can be upgraded before or after the server.
-                if error.status not in (404, 405):
+            except (StatusError, Rejected) as error:
+                # A Fusion build without batched ingestion answers 404/405, or 413 when its default body limit
+                # meets a large batch before routing. A whole-batch 413 from a current build means the batch
+                # itself was too large. Either way deliver one turn per request and look again later, so
+                # collectors can be upgraded before or after the server.
+                if error.status not in (404, 405, 413):
                     raise
                 _batch_retry_at = time.monotonic() + BATCH_RETRY_SECONDS
                 print('Fusion has no batched turn ingestion; sending turns singly', flush=True)
