@@ -139,18 +139,23 @@ async function acquireFixtureGlobalHome(fixture: PipelineGitFixture): Promise<Fi
   await previous;
 
   const previousHome = process.env.HOME;
+  const previousTmpdir = process.env.TMPDIR;
   const previousVitest = process.env.VITEST;
   /*
-  FNXC:PipelineSmoke 2026-08-23-16:34:
-  Real runtime sessions open global secret/settings stores, whose Vitest guard correctly
-  rejects an implicit operator home. A harness holds an exclusive worker-scoped fixture HOME
-  for its complete lifetime so background engine work cannot observe a restored operator path.
+  FNXC:PipelineSmoke 2026-10-04-09:22:
+  Real runtime sessions open global secret/settings stores and the production startup recovery
+  inspects browser leases below the system temporary directory. Hold fixture-scoped HOME and TMPDIR
+  for the whole harness lifetime so concurrent smoke workers cannot scan or reap unrelated host
+  leases; the real reaper still executes against this disposable fixture's empty lease root.
   */
   process.env.HOME = fixture.rootDir;
+  process.env.TMPDIR = fixture.rootDir;
   delete process.env.VITEST;
   return () => {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
+    if (previousTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTmpdir;
     if (previousVitest === undefined) delete process.env.VITEST;
     else process.env.VITEST = previousVitest;
     releaseQueue?.();

@@ -360,26 +360,42 @@ jobs:
   # Post-merge review needs the four shard payloads and their observed failure set, but Full Suite
   # is intentionally non-blocking. Preserve a normalized evidence manifest even when the shard
   # matrix is red; only absent or malformed reporter evidence fails this collector.
+  #
+  # FNXC:PipelineSmoke 2026-10-04-09:44:
+  # FN-9469 requires task-completion evidence from the post-merge smoke producer itself. Validate
+  # the retained report against this commit's manifest so a successful upload cannot hide a partial,
+  # duplicate, failed, or over-budget scenario census.
   post-merge-evidence-gate:
     name: Post-merge Full Suite evidence gate
-    needs: [test-shards]
+    needs: [test-shards, test-pipeline-smoke]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Checkout manifest source
+        uses: actions/checkout@v7.0.1
+
       - name: Download required shard timing artifacts
         uses: actions/download-artifact@v8
         with:
           pattern: test-timings-shard-*
           path: post-merge-evidence
 
-      - name: Validate and normalize shard evidence
+      - name: Download required pipeline smoke report
+        uses: actions/download-artifact@v8
+        with:
+          name: pipeline-smoke-report
+          path: post-merge-evidence/pipeline-smoke-report
+
+      - name: Validate and normalize shard and Pipeline smoke evidence
         env:
           TEST_SHARDS_RESULT: ${{ needs.test-shards.result }}
+          PIPELINE_SMOKE_RESULT: ${{ needs.test-pipeline-smoke.result }}
         run: |
           node --input-type=module <<'NODE'
           import { readdir, readFile, writeFile } from "node:fs/promises";
           import path from "node:path";
+          import { expectedPipelineInvocations } from "./packages/engine/src/__tests__/pipeline-smoke/_pipeline-scenario-manifest.mjs";
 
           const requiredArtifacts = [
             "test-timings-shard-1",
@@ -428,8 +444,46 @@ jobs:
             shards.push({ artifact, reports });
           }
 
+          const expectedPipelineKeys = expectedPipelineInvocations()
+            .map(({ id, workflowId, variant }) => `${id}\u0000${workflowId}\u0000${variant ?? ""}`)
+            .sort();
+          const pipelineReportRoot = path.join("post-merge-evidence", "pipeline-smoke-report");
+          const pipelineReportFiles = await jsonFiles(pipelineReportRoot);
+          if (pipelineReportFiles.length !== 1) {
+            throw new Error(`pipeline-smoke-report must contain exactly one JSON report, found ${pipelineReportFiles.length}`);
+          }
+          const pipelineSmoke = JSON.parse(await readFile(pipelineReportFiles[0], "utf8"));
+          if (process.env.PIPELINE_SMOKE_RESULT !== "success" || pipelineSmoke?.passed !== true) {
+            throw new Error(`Pipeline smoke did not pass: job=${process.env.PIPELINE_SMOKE_RESULT}, report=${pipelineSmoke?.passed}`);
+          }
+          if (pipelineSmoke.durationBudgetMs !== 175000 || !Number.isInteger(pipelineSmoke.durationMs) || pipelineSmoke.durationMs < 0 || pipelineSmoke.durationMs > 175000) {
+            throw new Error(`Pipeline smoke must remain within the fixed 175000ms budget; received ${pipelineSmoke?.durationMs}/${pipelineSmoke?.durationBudgetMs}`);
+          }
+          const records = pipelineSmoke.records;
+          if (!Array.isArray(records) || records.length !== expectedPipelineKeys.length) {
+            throw new Error(`Pipeline smoke must retain exactly ${expectedPipelineKeys.length} scenario records`);
+          }
+          const recordKeys = records.map((record) => `${record?.scenarioId ?? ""}\u0000${record?.workflowId ?? ""}\u0000${record?.variant ?? ""}`);
+          const sortedRecordKeys = [...recordKeys].sort();
+          if (new Set(recordKeys).size !== recordKeys.length || JSON.stringify(sortedRecordKeys) !== JSON.stringify(expectedPipelineKeys)) {
+            throw new Error("Pipeline smoke invocation census is incomplete, duplicate, or unexpected");
+          }
+          if (records.some((record) => record?.verdict !== "pass" || record?.expectedTerminal !== record?.observedTerminal || record?.wedge)) {
+            throw new Error("Pipeline smoke contains a failed, wedged, or terminally inconsistent scenario");
+          }
+          if (!Array.isArray(pipelineSmoke.invocationKeys) || JSON.stringify([...pipelineSmoke.invocationKeys].sort()) !== JSON.stringify(expectedPipelineKeys)) {
+            throw new Error("Pipeline smoke summary invocation keys do not match the manifest census");
+          }
+          const normalizedPipelineSmoke = {
+            report: path.relative("post-merge-evidence", pipelineReportFiles[0]),
+            conclusion: process.env.PIPELINE_SMOKE_RESULT,
+            durationMs: pipelineSmoke.durationMs,
+            durationBudgetMs: pipelineSmoke.durationBudgetMs,
+            invocationCount: records.length,
+          };
+
           const evidence = {
-            version: 1,
+            version: 2,
             run: {
               repository: process.env.GITHUB_REPOSITORY,
               runId: process.env.GITHUB_RUN_ID,
@@ -441,11 +495,16 @@ jobs:
                 conclusion: process.env.TEST_SHARDS_RESULT,
                 nonBlocking: true,
               },
+              pipelineSmoke: {
+                conclusion: process.env.PIPELINE_SMOKE_RESULT,
+                nonBlocking: true,
+              },
             },
             shards,
+            pipelineSmoke: normalizedPipelineSmoke,
           };
           await writeFile("post-merge-evidence/manifest.json", `${JSON.stringify(evidence, null, 2)}\n`);
-          console.log(`Retained ${shards.length} shard artifacts for post-merge disposition; test-shards=${process.env.TEST_SHARDS_RESULT}.`);
+          console.log(`Retained ${shards.length} shard artifacts and ${records.length} Pipeline smoke records; test-shards=${process.env.TEST_SHARDS_RESULT}, pipeline-smoke=${process.env.PIPELINE_SMOKE_RESULT}.`);
           NODE
 
       - name: Retain normalized post-merge evidence

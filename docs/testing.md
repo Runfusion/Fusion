@@ -33,7 +33,7 @@ Run `35837857934` reported nine direct stale-fixture failures after FN-9370 chan
 
 ### Required post-landing Full Suite evidence
 
-The default-on workflow `post-merge-verification` gate makes Full Suite evidence a blocking task-completion requirement for merge-capable built-ins without changing branch protection. The gate must refuse approval until the delivery record identifies the landed SHA, the first Full Suite push-to-main run at or after that SHA with its run ID and SHA, conclusions for Pipeline smoke and Test shards 1/4 through 4/4, and all four `test-timings-shard-1` through `test-timings-shard-4` artifacts. Full Suite conclusions are non-blocking signals: a failed lane needs an explicit evidence-backed disposition, not a fabricated successful conclusion. The `post-merge-full-suite-evidence` artifact retains the normalized per-shard failed-name set and producer conclusion for that review. A pre-landing run, an unrelated main run, partial artifacts, or local verification are not substitutes; record the verified GitHub-hosted evidence and every non-success disposition in the task delivery record before final approval.
+The default-on workflow `post-merge-verification` gate makes Full Suite evidence a blocking task-completion requirement for merge-capable built-ins without changing branch protection. The gate must refuse approval until the delivery record identifies the landed SHA, the first Full Suite push-to-main run at or after that SHA with its run ID and SHA, conclusions for Pipeline smoke and Test shards 1/4 through 4/4, and all four `test-timings-shard-1` through `test-timings-shard-4` artifacts. The `post-merge-evidence-gate` downloads the Pipeline smoke report and fails closed unless its current-manifest census is exactly 41 unique passing records within the fixed 175000ms budget; its normalized artifact retains that duration and count alongside the shard failure sets. Full Suite conclusions are non-blocking signals: a failed lane needs an explicit evidence-backed disposition, not a fabricated successful conclusion. A pre-landing run, an unrelated main run, partial artifacts, or local verification are not substitutes; record the verified GitHub-hosted evidence and every non-success disposition in the task delivery record before final approval.
 
 <!-- FNXC:MergeGatePerformance 2026-08-16-10:41: FN-9122 corrected the W33 composition ledger: all 15 static validators, all 21 engine-core files, every PG/unit canary, nonzero propagation, and CI-shape-after-success remain blocking; a timing win that weakens any of those contracts is not accepted. -->
 **Static-validator and lane ordering:** `test:gate:static` declares the 15 canonical, directly runnable read-only validators. `scripts/run-static-gate-checks.mjs` starts them concurrently and waits for **every** result, so zero, one, or multiple policy failures remain fail-closed and observable before tests start. It then starts `engine-core`, `test:pg-gate`, and `test:unit-gate` concurrently; the shell waits for all **three** and returns nonzero if any fail. CI-shape runs only after that successful wait.
@@ -570,10 +570,15 @@ missing, unexpected, duplicate, malformed, truncated, failing, or wedged records
 full invocation-key set. On any failed run, the same upload-path report is atomically replaced with
 bounded evidence: watchdog outcome, elapsed duration, Vitest/scenario-report availability, complete
 record count and final complete invocation, missing declared keys, and a truncated final JSONL record
-when present. S17 continues to cover all three built-in workflows at planning, execution, review,
-merge-in-flight, and post-merge, including the `builtin:coding-ideas-v2` post-merge boundary; its
-independent workflow tasks share each restart-stage fixture lifecycle to avoid repaying setup work
-without reducing restart-once coverage.
+when present.
+
+<!-- FNXC:PipelineSmoke 2026-10-04-09:22: FN-9469 keeps the fixed watchdog while distributing independent S17 workflow partitions across the existing three-worker envelope, preventing one serial adapter from consuming the hosted smoke budget. -->
+S17 continues to cover all three built-in workflows at planning, execution, review, merge-in-flight,
+and post-merge, including the `builtin:coding-ideas-v2` post-merge boundary. Each workflow's five
+restart cases share one disposable fixture while the three independent workflow partitions run through
+the unchanged three-worker project envelope. A hosted push-to-main artifact is required proof: it must
+report exactly 41 unique passing manifest keys, `passed: true`, and `durationMs <= 175000`; local
+Vitest evidence is a supported diagnostic substitute on Darwin, not delivery evidence.
 
 Each scenario declares one closed terminal state: `merged-done`, `inert-intake`,
 `parked`, `manual-hold`, or `no-op-merge`. The harness fails on an undeclared terminal
