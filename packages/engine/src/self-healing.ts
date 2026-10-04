@@ -36,6 +36,7 @@ import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLane
   TERMINAL_ROLES,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
+  DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
   pruneTaskLifecycleEvents,
   pruneGitHubCheckStatesAsync,
   resolveAgentActivityAttribution,
@@ -775,6 +776,22 @@ const DEFAULT_UNBACKED_MERGING_FANOUT_GRACE_MS = 60_000;
 const DURABLE_ERROR_RECOVERY_BASE_COOLDOWN_MS = 30_000;
 const DURABLE_ERROR_RECOVERY_MAX_COOLDOWN_MS = 15 * 60_000;
 const RUNNING_ON_INACTIVE_TASK_STALE_RUN_MS = PARKED_AGENT_LINK_FRESH_RUN_MS;
+const UNAVAILABLE_OWNER_HEARTBEAT_STALE_MULTIPLIER = 1.5;
+const MIN_UNAVAILABLE_OWNER_HEARTBEAT_STALE_MS = 10 * 60_000;
+
+function hasRecentDurableOwnerHeartbeat(agent: Agent, now: number): boolean {
+  const heartbeatAt = agent.lastHeartbeatAt ? Date.parse(agent.lastHeartbeatAt) : Number.NaN;
+  if (!Number.isFinite(heartbeatAt)) return false;
+  const configuredInterval = agent.runtimeConfig?.heartbeatIntervalMs;
+  const intervalMs = typeof configuredInterval === "number" && Number.isFinite(configuredInterval) && configuredInterval > 0
+    ? configuredInterval
+    : DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS;
+  const staleAfterMs = Math.max(
+    MIN_UNAVAILABLE_OWNER_HEARTBEAT_STALE_MS,
+    intervalMs * UNAVAILABLE_OWNER_HEARTBEAT_STALE_MULTIPLIER,
+  );
+  return now - heartbeatAt <= staleAfterMs;
+}
 
 function bumpTaskPriority(priority: TaskPriority | undefined): TaskPriority {
   switch (priority ?? "normal") {
@@ -2073,6 +2090,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         },
       },
       { name: "recover-running-on-inactive-tasks", fn: () => this.recoverAgentsRunningOnInactiveTasks().then(() => undefined) },
+      { name: "recover-unavailable-queued-agent-ownership", fn: () => this.recoverUnavailableQueuedAgentOwnership().then(() => undefined) },
       { name: "recover-drifted-agent-task-links", fn: () => this.recoverDriftedAgentTaskLinks().then(() => undefined) },
       { name: "reconcile-soft-delete-column-drift", fn: () => this.reconcileSoftDeletedColumnDrift().then(() => undefined) },
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
@@ -3121,6 +3139,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns() },
           { name: "reattach-orphaned-assigned-executions", fn: () => this.reattachOrphanedAssignedExecutions() },
           { name: "recover-running-on-inactive-tasks", fn: () => this.recoverAgentsRunningOnInactiveTasks() },
+          { name: "recover-unavailable-queued-agent-ownership", fn: () => this.recoverUnavailableQueuedAgentOwnership() },
           { name: "recover-drifted-agent-task-links", fn: () => this.recoverDriftedAgentTaskLinks() },
           { name: "reconcile-soft-delete-column-drift", fn: () => this.reconcileSoftDeletedColumnDrift() },
           { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy() },
@@ -15596,6 +15615,62 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
 
     return recoveredAgentIds.size;
+  }
+
+  /**
+   * FNXC:DurableAgentHandoff 2026-10-04-16:18:
+   * An unavailable durable owner can pin a queued root outside the executor
+   * pool and make downstream work look cyclic. Reuse the explicit heartbeat
+   * CAS handoff so recovery releases only the stale owner; user control and
+   * dependency ordering remain authoritative.
+   */
+  async recoverUnavailableQueuedAgentOwnership(): Promise<number> {
+    const agentStore = this.options.agentStore;
+    if (!agentStore) return 0;
+
+    const agents = await agentStore.listAgents({ includeEphemeral: false });
+    const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+    const tasks = await this.store.listTasks({ slim: true });
+    const now = Date.now();
+    let recovered = 0;
+
+    for (const task of tasks) {
+      const ownerId = task.assignedAgentId;
+      /*
+      FNXC:DurableAgentHandoff 2026-10-04-16:26:
+      Recovery may clear only an automatic pause recorded for this unavailable
+      owner. A user or manual-control pause remains an explicit operator fence,
+      even when its assignee can no longer run.
+      */
+      const hasRecoverableAgentPause = task.paused === true
+        && task.pausedByAgentId === ownerId
+        && !task.userPaused;
+      if (!ownerId || task.userPaused || (task.paused && !hasRecoverableAgentPause) || task.checkedOutBy || task.deletedAt) continue;
+      if (!await this.isPreWipColumn(task)) continue;
+
+      const owner = agentsById.get(ownerId);
+      /*
+      FNXC:DurableAgentHandoff 2026-10-04-16:50:
+      A completed heartbeat leaves no active-run row, so absence of that row is
+      not proof an active durable owner abandoned its queued task. Preserve an
+      owner that has reported within its configured cadence (with a busy-work
+      floor); only a stale, paused, missing, or non-executing owner reaches the
+      CAS handoff. This keeps self-healing from stealing valid assignments
+      between ordinary heartbeat runs while still unstranding genuinely stale
+      roots.
+      */
+      if (owner && await agentStore.getActiveHeartbeatRun(owner.id)) continue;
+      if (owner && this.options.hasActiveAgentExecution?.(owner.id) === true) continue;
+      if (owner?.state === "active" && hasRecentDurableOwnerHeartbeat(owner, now)) continue;
+
+      const result = await agentStore.handoffTaskToWorkflowExecutor(ownerId, task.id, undefined, {
+        allowAgentOwnedPause: hasRecoverableAgentPause,
+      });
+      if (!result.ok) continue;
+      recovered += 1;
+      log.log(`Released unavailable durable owner ${ownerId} from queued task ${task.id} for Workflow Executor admission`);
+    }
+    return recovered;
   }
 
   async recoverDriftedAgentTaskLinks(): Promise<number> {

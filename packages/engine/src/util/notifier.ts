@@ -515,11 +515,12 @@ export class NtfyNotifier {
     const reasonSummary = Object.values(event.reasons).reduce((acc, reason) => {
       acc[reason] = (acc[reason] ?? 0) + 1;
       return acc;
-    }, {} as Record<"dependency" | "overlap", number>);
+    }, {} as Record<"dependency" | "overlap" | "ownership", number>);
 
     const reasons: string[] = [];
     if (reasonSummary.dependency) reasons.push(`${reasonSummary.dependency} dependency`);
     if (reasonSummary.overlap) reasons.push(`${reasonSummary.overlap} overlap`);
+    if (reasonSummary.ownership) reasons.push(`${reasonSummary.ownership} durable-owner`);
 
     const clickUrl = buildNtfyClickUrl({
       dashboardHost: this.config.dashboardHost,

@@ -65,7 +65,9 @@ import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { appendAgentActivityEvent } from "../task-store/async/async-agent-activity.js";
 import { resolveAgentActivityAttribution } from "../task-store/agent-activity-outbox.js";
 import * as postgresSchema from "../postgres/schema/index.js";
-import { and, eq, gt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
+import { acquireTaskAdvisoryXactLock } from "../task-store/task-advisory-lock.js";
+
 /*
  * FNXC:SqliteFinalRemoval 2026-06-25-23:30:
  * Async Drizzle helpers for backend-mode (PostgreSQL) AgentStore operations.
@@ -1623,6 +1625,124 @@ export class AgentStore extends EventEmitter {
    * agent's active execution linkage (agent.taskId). Task linkage is only updated
    * after ownership + checkout checks pass.
    */
+  /**
+   * Release a durable heartbeat owner's queued task to the normal executor pool.
+   *
+   * The task-row atomic update is the ownership fence: losing a concurrent
+   * reassignment, checkout, or lifecycle move is a harmless no-op. Assignment
+   * update semantics then synchronize the former agent's task link.
+   */
+  async handoffTaskToWorkflowExecutor(
+    agentId: string,
+    taskId: string,
+    runContext?: RunMutationContext,
+    options: { allowAgentOwnedPause?: boolean } = {},
+  ): Promise<{ ok: true; task: Task } | { ok: false; reason: string; task?: Task }> {
+    if (!this.taskStore) {
+      throw new Error("TaskStore not configured for task-handoff operations");
+    }
+
+    // Resolve workflow lanes before taking the non-reentrant task-row lock.
+    const lanes = await resolveTaskLifecycleColumns(this.taskStore, taskId).catch(() => undefined);
+    const layer = this.asyncLayer;
+    if (!layer) {
+      throw new Error("TaskStore handoff requires PostgreSQL persistence");
+    }
+
+    const outcome = await this.taskStore.withTaskLock(taskId, async () => await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
+      const rows = await tx.select().from(postgresSchema.project.tasks).where(and(
+        eq(postgresSchema.project.tasks.id, taskId),
+        eq(postgresSchema.project.tasks.projectId, this.backendProjectId),
+        isNull(postgresSchema.project.tasks.deletedAt),
+      ));
+      const row = rows[0];
+      if (!row) return { ok: false as const, reason: "deleted" };
+      const current = this.taskStore!.rowToTask(this.taskStore!.pgRowToTaskRow(row));
+      if (current.assignedAgentId !== agentId) {
+        return { ok: false as const, reason: current.assignedAgentId ? "assigned_to_other" : "already_released", task: current };
+      }
+      const canReleaseAgentPause = options.allowAgentOwnedPause
+        && current.paused === true
+        && current.pausedByAgentId === agentId
+        && !current.userPaused;
+      if (current.userPaused || (current.paused && !canReleaseAgentPause)) {
+        return { ok: false as const, reason: "paused", task: current };
+      }
+      if (current.checkedOutBy) return { ok: false as const, reason: "checkout_held", task: current };
+      if (current.column !== (lanes?.hold ?? "todo")) return { ok: false as const, reason: "not_queued", task: current };
+
+      /*
+      FNXC:DurableAgentHandoff 2026-10-04-16:26:
+      The task advisory transaction is the cross-process ownership fence. It
+      reads the current owner, clears that exact assignment, and removes the
+      former agent link before commit, so an operator reassignment or executor
+      claim cannot be erased by a stale heartbeat from another daemon.
+      */
+      const handoffUpdatedAt = new Date().toISOString();
+      const [updatedRow] = await tx.update(postgresSchema.project.tasks).set({
+        assignedAgentId: null,
+        ...(canReleaseAgentPause ? { paused: 0, pausedByAgentId: null } : {}),
+        updatedAt: handoffUpdatedAt,
+      }).where(and(
+        eq(postgresSchema.project.tasks.id, taskId),
+        eq(postgresSchema.project.tasks.projectId, this.backendProjectId),
+        eq(postgresSchema.project.tasks.assignedAgentId, agentId),
+        isNull(postgresSchema.project.tasks.deletedAt),
+      )).returning();
+      if (!updatedRow) return { ok: false as const, reason: "fence_lost", task: current };
+      await tx.update(postgresSchema.project.agents).set({ taskId: null, updatedAt: new Date().toISOString() }).where(and(
+        eq(postgresSchema.project.agents.id, agentId),
+        eq(postgresSchema.project.agents.projectId, this.backendProjectId),
+        eq(postgresSchema.project.agents.taskId, taskId),
+      ));
+
+      const releasedTask = this.taskStore!.rowToTask(this.taskStore!.pgRowToTaskRow(updatedRow));
+      /*
+      FNXC:DurableAgentHandoff 2026-10-04-17:19:
+      Publish the released task.json while the ownership-row transaction still
+      holds PostgreSQL's row lock. An ordinary assignment cannot commit between
+      this mirror write and the handoff commit, so its later publication always
+      wins rather than a stale heartbeat restoring an unassigned projection.
+      */
+      await this.taskStore!.writeTaskJsonFile(this.taskStore!.taskDir(taskId), releasedTask);
+      return { ok: true as const, task: releasedTask };
+    }));
+
+    if (!outcome.ok) return outcome;
+
+    // Read once before publication so a stale post-commit observation is never
+    // used as a cache/event payload without the fenced revalidation below.
+    await this.taskStore.getTask(taskId);
+    // Test-only seam: lets a second store commit after this refresh read.
+    await (this.taskStore as unknown as {
+      __afterHandoffPublicationReadForTest?: () => void | Promise<void>;
+    }).__afterHandoffPublicationReadForTest?.();
+
+    await this.taskStore.withTaskLock(taskId, async () => await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
+      const rows = await tx.select().from(postgresSchema.project.tasks).where(and(
+        eq(postgresSchema.project.tasks.id, taskId),
+        eq(postgresSchema.project.tasks.projectId, this.backendProjectId),
+        isNull(postgresSchema.project.tasks.deletedAt),
+      )).for("update");
+      const row = rows[0];
+      if (!row) return;
+      const publishedTask = this.taskStore!.rowToTask(this.taskStore!.pgRowToTaskRow(row));
+      /*
+      FNXC:DurableAgentHandoff 2026-10-04-17:41:
+      Refresh cache and lifecycle observers from a row re-read under the same
+      ownership fence as the handoff. The row lock makes ordinary assignment
+      writers either win before this revalidation or wait until this committed
+      publication completes; a stale released snapshot is never re-published.
+      */
+      if (this.taskStore!.isWatching) this.taskStore!.taskCache.set(taskId, { ...publishedTask });
+      this.taskStore!.emitTaskLifecycleEventSafely("task:updated", [publishedTask]);
+    }));
+    await this.taskStore.logEntry(taskId, `Durable agent ${agentId} handed task to Workflow Executor`, undefined, runContext);
+    return outcome;
+  }
+
   async claimTaskForAgent(agentId: string, taskId: string, runContext?: RunMutationContext): Promise<{ ok: true; task: Task } | { ok: false; reason: string; task?: Task }> {
     if (!this.taskStore) {
       throw new Error("TaskStore not configured for task-claim operations");

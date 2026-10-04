@@ -10,8 +10,9 @@
  * Plus project isolation: an agent registered in another project's store can never be bound to this
  * project's tasks through any binding primitive.
  */
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from "vitest";
 import { AgentStore } from "../agents/agent-store.js";
+import { TaskStore } from "../store.js";
 import { AgentTaskRoutingPolicyError } from "../agents/agent-role-policy.js";
 import {
   pgDescribe,
@@ -297,6 +298,166 @@ pgTest("task→agent routing policy (issue #2015)", () => {
       await h.store().moveTask(overrideTask.id, "todo");
       const overrideSelection = await h.store().selectNextTaskForAgent(custom.id, { id: custom.id, role: custom.role });
       expect(overrideSelection?.task.id).toBe(overrideTask.id);
+    });
+  });
+
+  describe("durable executor handoff", () => {
+    it("releases a queued engineer-owned task once so a Workflow Executor can claim it", async () => {
+      const engineer = await agentStore.createAgent({ name: "Engineer", role: "engineer" });
+      const executor = await agentStore.createAgent({ name: "Handoff Executor", role: "executor" });
+      const task = await h.store().createTask({ description: "executor-class implementation" });
+      await agentStore.assignTask(engineer.id, task.id);
+      await h.store().updateTask(task.id, { assignedAgentId: engineer.id });
+      await h.store().moveTask(task.id, "todo");
+
+      const first = await agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id);
+      const second = await agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id);
+
+      expect(first.ok).toBe(true);
+      expect(second).toMatchObject({ ok: false, reason: "already_released" });
+      expect((await h.store().getTask(task.id))?.assignedAgentId).toBeUndefined();
+      expect((await agentStore.getAgent(engineer.id))?.taskId).toBeUndefined();
+      await expect(agentStore.claimTaskForAgent(executor.id, task.id)).resolves.toMatchObject({ ok: true });
+    });
+
+    it("releases an unavailable owner's automatic pause but preserves human pause authority", async () => {
+      const engineer = await agentStore.createAgent({ name: "Paused Engineer", role: "engineer" });
+      const task = await h.store().createTask({ description: "agent-owned pause recovery" });
+      await agentStore.assignTask(engineer.id, task.id);
+      await h.store().updateTask(task.id, {
+        assignedAgentId: engineer.id,
+        paused: true,
+        pausedByAgentId: engineer.id,
+      });
+      await h.store().moveTask(task.id, "todo");
+
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, {
+        allowAgentOwnedPause: true,
+      })).resolves.toMatchObject({ ok: true });
+      expect(await h.store().getTask(task.id)).toMatchObject({
+        assignedAgentId: undefined,
+        paused: undefined,
+        pausedByAgentId: undefined,
+      });
+      expect((await agentStore.getAgent(engineer.id))?.taskId).toBeUndefined();
+    });
+
+    it("does not erase an operator assignment committed while another store waits to hand off", async () => {
+      const engineer = await agentStore.createAgent({ name: "Stale Engineer", role: "engineer" });
+      const executor = await agentStore.createAgent({ name: "Operator Executor", role: "executor" });
+      const task = await h.store().createTask({ description: "cross-process ownership fence" });
+      await agentStore.assignTask(engineer.id, task.id);
+      await h.store().updateTask(task.id, { assignedAgentId: engineer.id });
+      await h.store().moveTask(task.id, "todo");
+
+      let releaseAdvisoryLock!: () => void;
+      const advisoryLockReleased = new Promise<void>((resolve) => { releaseAdvisoryLock = resolve; });
+      let advisoryLockAcquired!: () => void;
+      const advisoryLockAcquiredPromise = new Promise<void>((resolve) => { advisoryLockAcquired = resolve; });
+      const lockHolder = h.adminSql().begin(async (tx) => {
+        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`task:${h.layer().projectId}:${task.id}`}, 0))`;
+        advisoryLockAcquired();
+        await advisoryLockReleased;
+      });
+      await advisoryLockAcquiredPromise;
+
+      const secondProcessStore = new AgentStore({ rootDir: h.rootDir(), asyncLayer: h.layer(), taskStore: h.store() });
+      // Queue the operator write first while the advisory lock is held. Once it
+      // commits, the heartbeat from the other store must re-read that owner.
+      const operatorAssignment = (async () => {
+        await h.store().updateTask(task.id, { assignedAgentId: executor.id });
+        await secondProcessStore.assignTask(executor.id, task.id);
+      })();
+      await Promise.resolve();
+      const staleHandoff = agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id);
+      releaseAdvisoryLock();
+
+      await operatorAssignment;
+      await expect(staleHandoff).resolves.toMatchObject({ ok: false, reason: "assigned_to_other" });
+      await lockHolder;
+      expect((await h.store().getTask(task.id))?.assignedAgentId).toBe(executor.id);
+      expect((await agentStore.getAgent(engineer.id))?.taskId).toBeUndefined();
+      expect((await agentStore.getAgent(executor.id))?.taskId).toBe(task.id);
+      secondProcessStore.close();
+    });
+
+    it("revalidates cache and lifecycle publication after a newer assignment", async () => {
+      const engineer = await agentStore.createAgent({ name: "Publishing Engineer", role: "engineer" });
+      const executor = await agentStore.createAgent({ name: "Publishing Executor", role: "executor" });
+      const task = await h.store().createTask({ description: "post-commit publication ownership fence" });
+      await agentStore.assignTask(engineer.id, task.id);
+      await h.store().updateTask(task.id, { assignedAgentId: engineer.id });
+      await h.store().moveTask(task.id, "todo");
+
+      const store = h.store();
+      // A separate TaskStore models the dashboard/executor process that wins
+      // after the heartbeat has committed but before it can publish a mirror.
+      const otherStore = new TaskStore(h.rootDir(), h.globalDir(), { asyncLayer: h.layer() });
+      const operatorAgentStore = new AgentStore({ rootDir: h.rootDir(), asyncLayer: h.layer(), taskStore: otherStore });
+      await operatorAgentStore.init();
+      let releasePublication!: () => void;
+      const publicationBlocked = new Promise<void>((resolve) => { releasePublication = resolve; });
+      let mirrorPublicationStarted!: () => void;
+      const mirrorPublicationStartedPromise = new Promise<void>((resolve) => { mirrorPublicationStarted = resolve; });
+      const writeTaskJsonFile = store.writeTaskJsonFile.bind(store);
+      vi.spyOn(store, "isWatching", "get").mockReturnValue(true);
+      vi.spyOn(store, "writeTaskJsonFile").mockImplementation(async (dir, candidate) => {
+        if (candidate.id === task.id && candidate.assignedAgentId === undefined) {
+          mirrorPublicationStarted();
+          await publicationBlocked;
+        }
+        await writeTaskJsonFile(dir, candidate);
+      });
+
+      let releaseCacheRefresh!: () => void;
+      const cacheRefreshBlocked = new Promise<void>((resolve) => { releaseCacheRefresh = resolve; });
+      let refreshRead!: () => void;
+      const refreshReadPromise = new Promise<void>((resolve) => { refreshRead = resolve; });
+      const publishedOwners: Array<string | undefined> = [];
+      store.on("task:updated", (candidate) => {
+        if (candidate.id === task.id) publishedOwners.push(candidate.assignedAgentId);
+      });
+      (store as unknown as {
+        __afterHandoffPublicationReadForTest?: () => void | Promise<void>;
+      }).__afterHandoffPublicationReadForTest = async () => {
+        refreshRead();
+        await cacheRefreshBlocked;
+      };
+
+      const handoff = agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id);
+      await mirrorPublicationStartedPromise;
+      releasePublication();
+      // Pause immediately after the releasing store read the unassigned row.
+      // The operator assignment commits before publication resumes, so the
+      // handoff must re-read the row instead of emitting that stale release.
+      await refreshReadPromise;
+      await otherStore.updateTask(task.id, { assignedAgentId: executor.id });
+      await operatorAgentStore.assignTask(executor.id, task.id);
+      releaseCacheRefresh();
+
+      await expect(handoff).resolves.toMatchObject({ ok: true });
+      expect((await store.getTask(task.id))?.assignedAgentId).toBe(executor.id);
+      await expect(store.readTaskJson(store.taskDir(task.id))).resolves.toMatchObject({ assignedAgentId: executor.id });
+      expect(store.taskCache.get(task.id)?.assignedAgentId).toBe(executor.id);
+      expect(publishedOwners).not.toContain(undefined);
+      expect(publishedOwners.at(-1)).toBe(executor.id);
+    });
+
+    it("never releases a user-paused task or a newer operator assignment", async () => {
+      const engineer = await agentStore.createAgent({ name: "Engineer", role: "engineer" });
+      const executor = await agentStore.createAgent({ name: "Handoff Executor", role: "executor" });
+      const task = await h.store().createTask({ description: "manually controlled implementation" });
+      await h.store().updateTask(task.id, { assignedAgentId: engineer.id });
+      await h.store().moveTask(task.id, "todo");
+      await h.store().moveTask(task.id, "in-progress");
+      await h.store().moveTask(task.id, "todo", { moveSource: "user" });
+
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id)).resolves.toMatchObject({ ok: false, reason: "paused" });
+      expect(await h.store().getTask(task.id)).toMatchObject({ assignedAgentId: engineer.id, userPaused: true });
+
+      await h.store().updateTask(task.id, { assignedAgentId: executor.id });
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id)).resolves.toMatchObject({ ok: false, reason: "assigned_to_other" });
+      expect((await h.store().getTask(task.id))?.assignedAgentId).toBe(executor.id);
     });
   });
 

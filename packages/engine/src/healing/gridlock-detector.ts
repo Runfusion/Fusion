@@ -20,23 +20,34 @@ deleting a live detector on that reading would remove real coverage silently. If
 future cleanup revisits this, the question to ask is whether dependency and overlap
 deadlock are still possible — not whether capacity is simpler.
 */
-import type { MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
+import type { AgentStore, MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
 import { compareTasksByPriorityThenAgeAndId, fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import { createLogger } from "../logger.js";
 import { classifyFileScopeLease, filterPathsByIgnoreList, isCoordinationOnlyTask, pathsOverlap } from "../scheduler.js";
 
 const gridlockLog = createLogger("gridlock-detector");
 
+export type GridlockReason = "dependency" | "overlap" | "ownership";
+
+export interface GridlockOwnershipBlocker {
+  rootTaskId: string;
+  agentId?: string;
+  reason: "missing-agent" | "unavailable-agent" | "manual-control";
+}
+
 export interface GridlockEvent {
   blockedTaskCount: number;
-  reasons: Record<string, "dependency" | "overlap">;
+  reasons: Record<string, GridlockReason>;
   blockedTaskIds: string[];
   blockingTaskIds: string[];
+  /** Maps each blocked dependent to the root ownership condition that holds it. */
+  ownershipBlockers: Record<string, GridlockOwnershipBlocker>;
 }
 
 export interface GridlockDetectorOptions {
   pollIntervalMs?: number;
   missionStore?: MissionStore;
+  agentStore?: AgentStore;
   onGridlock?: (event: GridlockEvent) => void;
   onGridlockCleared?: () => void;
 }
@@ -45,6 +56,7 @@ export class GridlockDetector {
   private interval: ReturnType<typeof setInterval> | null = null;
   private readonly pollIntervalMs: number;
   private readonly missionStore?: MissionStore;
+  private readonly agentStore?: AgentStore;
   private readonly onGridlock?: (event: GridlockEvent) => void;
   private readonly onGridlockCleared?: () => void;
   private lastGridlockKey: string | null = null;
@@ -55,6 +67,7 @@ export class GridlockDetector {
   ) {
     this.pollIntervalMs = options.pollIntervalMs ?? 30_000;
     this.missionStore = options.missionStore;
+    this.agentStore = options.agentStore;
     this.onGridlock = options.onGridlock;
     this.onGridlockCleared = options.onGridlockCleared;
   }
@@ -157,10 +170,6 @@ export class GridlockDetector {
       }),
     );
     const leaseHolders = tasks.filter((task) => classifications.get(task.id)?.kind !== "none");
-    if (leaseHolders.length === 0) {
-      this.clearGridlockState();
-      return null;
-    }
 
     const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
     const filterOptions = { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths };
@@ -183,8 +192,9 @@ export class GridlockDetector {
       }
     }
 
-    const reasons: Record<string, "dependency" | "overlap"> = {};
+    const reasons: Record<string, GridlockReason> = {};
     const blockingTaskIds = new Set<string>();
+    const ownershipBlockers: Record<string, GridlockOwnershipBlocker> = {};
 
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-10:55 (batch-engine tail):
@@ -227,8 +237,14 @@ export class GridlockDetector {
       });
 
       if (unmetDeps.length > 0) {
-        reasons[task.id] = "dependency";
-        for (const depId of unmetDeps) blockingTaskIds.add(depId);
+        const ownershipBlocker = await this.findOwnershipBlocker(unmetDeps, tasks);
+        reasons[task.id] = ownershipBlocker ? "ownership" : "dependency";
+        if (ownershipBlocker) {
+          ownershipBlockers[task.id] = ownershipBlocker;
+          blockingTaskIds.add(ownershipBlocker.rootTaskId);
+        } else {
+          for (const depId of unmetDeps) blockingTaskIds.add(depId);
+        }
         continue;
       }
 
@@ -261,12 +277,13 @@ export class GridlockDetector {
       return null;
     }
 
-    const gridlockKey = blockedTaskIds.join(",");
+    const gridlockKey = JSON.stringify({ blockedTaskIds, reasons, ownershipBlockers });
     const event: GridlockEvent = {
       blockedTaskCount: blockedTaskIds.length,
       reasons,
       blockedTaskIds,
       blockingTaskIds: Array.from(blockingTaskIds).sort(),
+      ownershipBlockers,
     };
 
     if (this.lastGridlockKey !== gridlockKey) {
@@ -276,6 +293,46 @@ export class GridlockDetector {
     }
 
     return event;
+  }
+
+  /*
+  FNXC:DurableAgentHandoff 2026-10-04-16:42:
+  A downstream task blocked through one or more dependency edges by a protected
+  or unavailable durable root is not a dependency cycle. Walk the unmet chain
+  with a cycle fence and name that root ownership fence, so operators can repair
+  the owner without reordering work.
+  */
+  private async findOwnershipBlocker(
+    dependencyIds: readonly string[],
+    tasks: readonly Task[],
+  ): Promise<GridlockOwnershipBlocker | undefined> {
+    const tasksById = new Map(tasks.map((task) => [task.id, task]));
+    const pending = [...dependencyIds];
+    const visited = new Set<string>();
+
+    while (pending.length > 0) {
+      const rootTaskId = pending.shift()!;
+      if (visited.has(rootTaskId)) continue;
+      visited.add(rootTaskId);
+
+      const root = tasksById.get(rootTaskId);
+      const agentId = root?.assignedAgentId;
+      if (root && agentId) {
+        if (root.userPaused || (root.paused === true && root.pausedByAgentId !== agentId)) {
+          return { rootTaskId, agentId, reason: "manual-control" };
+        }
+        if (this.agentStore) {
+          const owner = await this.agentStore.getAgent(agentId);
+          if (!owner) return { rootTaskId, agentId, reason: "missing-agent" };
+          if (owner.state === "paused" || owner.state === "error") {
+            return { rootTaskId, agentId, reason: "unavailable-agent" };
+          }
+        }
+      }
+
+      if (root) pending.push(...root.dependencies);
+    }
+    return undefined;
   }
 
   private clearGridlockState(): void {

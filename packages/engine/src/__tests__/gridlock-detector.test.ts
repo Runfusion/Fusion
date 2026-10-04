@@ -145,6 +145,67 @@ describe("GridlockDetector", () => {
     expect(event?.reasons).toEqual({ "FN-1": "dependency" });
   });
 
+  it("reports a durable root ownership blocker for one and multiple dependents without calling it cyclic", async () => {
+    const agentStore = {
+      getAgent: vi.fn(async (agentId: string) => agentId === "paused-engineer"
+        ? { id: agentId, state: "paused" }
+        : undefined),
+    } as any;
+    detector = new GridlockDetector(store, { agentStore, onGridlock, onGridlockCleared });
+    tasks = [
+      createTask("FN-ROOT", { column: "todo", assignedAgentId: "paused-engineer", paused: true, pausedByAgentId: "paused-engineer" }),
+      createTask("FN-CHILD-1", { column: "todo", dependencies: ["FN-ROOT"] }),
+      createTask("FN-CHILD-2", { column: "todo", dependencies: ["FN-ROOT"] }),
+    ];
+
+    const event = await detector.detectGridlock();
+
+    expect(event?.reasons).toEqual({ "FN-CHILD-1": "ownership", "FN-CHILD-2": "ownership" });
+    expect(event?.blockingTaskIds).toEqual(["FN-ROOT"]);
+    expect(event?.ownershipBlockers).toEqual({
+      "FN-CHILD-1": { rootTaskId: "FN-ROOT", agentId: "paused-engineer", reason: "unavailable-agent" },
+      "FN-CHILD-2": { rootTaskId: "FN-ROOT", agentId: "paused-engineer", reason: "unavailable-agent" },
+    });
+  });
+
+  it("traces a durable root ownership blocker through downstream dependency chains", async () => {
+    const agentStore = {
+      getAgent: vi.fn(async (agentId: string) => agentId === "paused-engineer"
+        ? { id: agentId, state: "paused" }
+        : undefined),
+    } as any;
+    detector = new GridlockDetector(store, { agentStore, onGridlock, onGridlockCleared });
+    tasks = [
+      createTask("FN-ROOT", { column: "todo", assignedAgentId: "paused-engineer", paused: true, pausedByAgentId: "paused-engineer" }),
+      createTask("FN-MIDDLE", { column: "todo", dependencies: ["FN-ROOT"] }),
+      createTask("FN-CHILD", { column: "todo", dependencies: ["FN-MIDDLE"] }),
+    ];
+
+    const event = await detector.detectGridlock();
+
+    expect(event?.reasons).toEqual({ "FN-CHILD": "ownership", "FN-MIDDLE": "ownership" });
+    expect(event?.blockingTaskIds).toEqual(["FN-ROOT"]);
+    expect(event?.ownershipBlockers).toEqual({
+      "FN-CHILD": { rootTaskId: "FN-ROOT", agentId: "paused-engineer", reason: "unavailable-agent" },
+      "FN-MIDDLE": { rootTaskId: "FN-ROOT", agentId: "paused-engineer", reason: "unavailable-agent" },
+    });
+  });
+
+  it("reports manual control as the root ownership blocker without releasing the dependency", async () => {
+    detector = new GridlockDetector(store, { onGridlock, onGridlockCleared });
+    tasks = [
+      createTask("FN-ROOT", { column: "todo", assignedAgentId: "operator-owner", paused: true, userPaused: true }),
+      createTask("FN-CHILD", { column: "todo", dependencies: ["FN-ROOT"] }),
+    ];
+
+    const event = await detector.detectGridlock();
+
+    expect(event?.reasons).toEqual({ "FN-CHILD": "ownership" });
+    expect(event?.ownershipBlockers).toEqual({
+      "FN-CHILD": { rootTaskId: "FN-ROOT", agentId: "operator-owner", reason: "manual-control" },
+    });
+  });
+
   it("detects gridlock when all todo tasks are blocked by file overlap", async () => {
     tasks = [
       createTask("FN-1", { column: "todo" }),

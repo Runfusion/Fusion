@@ -201,6 +201,7 @@ describe("executeHeartbeat", () => {
         ok: false,
         reason: "task_not_found",
       })),
+      handoffTaskToWorkflowExecutor: vi.fn().mockResolvedValue({ ok: true, task: { id: "FN-001" } }),
       startHeartbeatRun: vi.fn().mockResolvedValue({
         id: "run-001",
         agentId: "agent-001",
@@ -3390,7 +3391,8 @@ describe("executeHeartbeat", () => {
       // task read discovery (incl. logs_read), workflow discovery/authoring, task promotion, bounded research, clarification, web fetch, memory, and fn_heartbeat_done.
       // FN-8948 added fn_mission_reconcile and the feature-validation repair surface added fn_feature_repair_validation. Count rose 66→68; keep exact so new tools fail loudly.
       // RUFU-110 added fn_feature_repoint_task and fn_feature_unlink_task to the mission surface. Count rose 68→70; keep exact so new tools fail loudly.
-      expect(callArgs.customTools).toHaveLength(70);
+      // FN-9474 adds a task-scoped durable handoff tool. Count rose 70→71; keep exact so new tools fail loudly.
+      expect(callArgs.customTools).toHaveLength(71);
       expect(callArgs.customTools!.map((tool) => tool.name)).toEqual([
         "fn_task_create",
         "fn_task_log",
@@ -3457,6 +3459,7 @@ describe("executeHeartbeat", () => {
         "fn_research_retry",
         "fn_workflow_select",
         "fn_task_promote",
+        "fn_task_handoff_to_workflow_executor",
         "fn_web_fetch",
         "fn_memory_search",
         "fn_memory_get",
@@ -3941,6 +3944,27 @@ describe("executeHeartbeat", () => {
       expectAppendAgentLog(appendAgentLog, "FN-001", "read", "tool_result", undefined, "executor");
       expect(result.contextSnapshot?.taskId).toBe("FN-001");
       expect(result.stdoutExcerpt).toContain("Heartbeat produced visible output");
+    });
+  });
+
+  describe("durable executor handoff tool", () => {
+    it("releases an executor-class heartbeat task once instead of emitting repeated ready logs", async () => {
+      const store = createStoreWithAgentForExec({ role: "engineer" });
+      const mockSession = createMockAgentSession();
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        const handoff = opts.customTools.find((tool: { name: string }) => tool.name === "fn_task_handoff_to_workflow_executor");
+        expect(handoff).toBeDefined();
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          await handoff.execute("handoff-1", {});
+        });
+        return { session: mockSession as any };
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect(store.handoffTaskToWorkflowExecutor).toHaveBeenCalledTimes(1);
+      expect(store.handoffTaskToWorkflowExecutor).toHaveBeenCalledWith("agent-001", "FN-001", expect.anything());
     });
   });
 

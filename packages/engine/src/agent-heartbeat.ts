@@ -605,6 +605,8 @@ const heartbeatDoneParams = Type.Object({
   summary: Type.Optional(Type.String({ description: "Summary of what was accomplished this heartbeat" })),
 });
 
+const heartbeatHandoffParams = Type.Object({});
+
 /**
  * Truncate a string to `maxChars`, appending a marker so callers can see
  * content was clipped.  Returns the original string unchanged when it fits.
@@ -2774,6 +2776,25 @@ export class HeartbeatMonitor {
           // Task-scoped runs: full tool set including fn_task_log and document tools
           // taskId is guaranteed to be defined here because isNoTaskRun = !taskId
           heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId!, runContext, audit, this.messageStore);
+        }
+
+        if (!isNoTaskRun && taskId) {
+          const handoffTaskId = taskId;
+          heartbeatTools.push({
+            name: "fn_task_handoff_to_workflow_executor",
+            label: "Handoff to Workflow Executor",
+            description: "Release this queued executor-class task from this durable heartbeat owner so normal Workflow Executor admission can claim it. It never overrides a pause, checkout, reassignment, or active work.",
+            parameters: heartbeatHandoffParams,
+            execute: async () => {
+              const result = await this.store.handoffTaskToWorkflowExecutor(agentId, handoffTaskId, runContext);
+              if (result.ok) {
+                taskId = undefined;
+                isNoTaskRun = true;
+                return { content: [{ type: "text" as const, text: "Task ownership handed off to the Workflow Executor." }], details: { outcome: "handed_off" } };
+              }
+              return { content: [{ type: "text" as const, text: `Task handoff was not applied: ${result.reason}.` }], details: { outcome: "not_applied", reason: result.reason } };
+            },
+          });
         }
 
         heartbeatTools.push(createWebFetchTool());

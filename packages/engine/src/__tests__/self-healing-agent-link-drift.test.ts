@@ -17,6 +17,7 @@ describe("FN-4296: self-healing agent link drift", () => {
         return result;
       }),
       recordRunAuditEvent: vi.fn(async () => {}),
+      listTasks: vi.fn(async () => Object.values(tasks).filter((task): task is Task => task instanceof Error === false && task !== null)),
     } as any;
 
     const agentStore = {
@@ -35,11 +36,89 @@ describe("FN-4296: self-healing agent link drift", () => {
         const agent = agents.find((candidate) => candidate.id === agentId);
         if (agent) agent.taskId = taskId;
       }),
+      handoffTaskToWorkflowExecutor: vi.fn(async (agentId: string, taskId: string) => {
+        const task = tasks[taskId];
+        if (!task || task instanceof Error || task.assignedAgentId !== agentId) return { ok: false, reason: "fence_lost" };
+        task.assignedAgentId = undefined;
+        return { ok: true, task };
+      }),
     } as unknown as AgentStore;
 
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore, hasActiveAgentExecution });
     return { manager, agentStore, store };
   }
+
+  it("releases an active-state owner without live heartbeat or execution proof", async () => {
+    const agents = [makeAgent("orphaned-active-owner", "FN-1", "active")];
+    const root = { id: "FN-1", column: "todo", assignedAgentId: "orphaned-active-owner", dependencies: [] } as Task;
+    const { manager, agentStore } = buildManager(agents, { "FN-1": root }, () => false);
+
+    await expect(manager.recoverUnavailableQueuedAgentOwnership()).resolves.toBe(1);
+
+    expect(root.assignedAgentId).toBeUndefined();
+    expect(agentStore.handoffTaskToWorkflowExecutor).toHaveBeenCalledWith("orphaned-active-owner", "FN-1", undefined, {
+      allowAgentOwnedPause: false,
+    });
+    manager.stop();
+  });
+
+  it("preserves an active queued owner between recent completed heartbeats", async () => {
+    const agent = makeAgent("healthy-active-owner", "FN-1", "active");
+    agent.lastHeartbeatAt = new Date().toISOString();
+    agent.runtimeConfig = { heartbeatIntervalMs: 60_000 };
+    const root = { id: "FN-1", column: "todo", assignedAgentId: agent.id, dependencies: [] } as Task;
+    const { manager, agentStore } = buildManager([agent], { "FN-1": root }, () => false);
+
+    await expect(manager.recoverUnavailableQueuedAgentOwnership()).resolves.toBe(0);
+
+    expect(root.assignedAgentId).toBe(agent.id);
+    expect(agentStore.handoffTaskToWorkflowExecutor).not.toHaveBeenCalled();
+    manager.stop();
+  });
+
+  it("releases a paused durable owner from a queued root without changing a user-paused root", async () => {
+    const agents = [makeAgent("paused-owner", "FN-1", "paused")];
+    const root = { id: "FN-1", column: "todo", assignedAgentId: "paused-owner", dependencies: [] } as Task;
+    const manual = { id: "FN-2", column: "todo", assignedAgentId: "paused-owner", userPaused: true, dependencies: [] } as Task;
+    const { manager, agentStore } = buildManager(agents, { "FN-1": root, "FN-2": manual });
+
+    await expect(manager.recoverUnavailableQueuedAgentOwnership()).resolves.toBe(1);
+    expect(root.assignedAgentId).toBeUndefined();
+    expect(manual.assignedAgentId).toBe("paused-owner");
+    expect(agentStore.handoffTaskToWorkflowExecutor).toHaveBeenCalledWith("paused-owner", "FN-1", undefined, {
+      allowAgentOwnedPause: false,
+    });
+    manager.stop();
+  });
+
+  it("releases only an unavailable owner's automatic pause", async () => {
+    const agents = [makeAgent("paused-owner", "FN-1", "paused")];
+    const automatic = {
+      id: "FN-1",
+      column: "todo",
+      assignedAgentId: "paused-owner",
+      paused: true,
+      pausedByAgentId: "paused-owner",
+      dependencies: [],
+    } as Task;
+    const manual = {
+      id: "FN-2",
+      column: "todo",
+      assignedAgentId: "paused-owner",
+      paused: true,
+      pausedByAgentId: "different-agent",
+      dependencies: [],
+    } as Task;
+    const { manager, agentStore } = buildManager(agents, { "FN-1": automatic, "FN-2": manual });
+
+    await expect(manager.recoverUnavailableQueuedAgentOwnership()).resolves.toBe(1);
+    expect(automatic.assignedAgentId).toBeUndefined();
+    expect(manual.assignedAgentId).toBe("paused-owner");
+    expect(agentStore.handoffTaskToWorkflowExecutor).toHaveBeenCalledWith("paused-owner", "FN-1", undefined, {
+      allowAgentOwnedPause: true,
+    });
+    manager.stop();
+  });
 
   it("FN-4296: durable agent linked to done task is cleared by sweep", async () => {
     const agents = [makeAgent("agent-1", "FN-1")];
