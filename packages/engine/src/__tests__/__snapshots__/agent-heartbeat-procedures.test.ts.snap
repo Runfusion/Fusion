@@ -182,12 +182,17 @@ exports[`agent-heartbeat procedure templates > keeps strict task procedure stabl
    - **coordination-class** — planning, triage, routing, decision-making, or
      review.
    Then branch:
-   - If the bound task is **executor-class** or **blocked**, skim it once for
-     blocker risk, do not re-read PROMPT.md to advance it, and pivot this
-     heartbeat to broader board signals (in-progress risk scan, stale in-review
-     queue, idle direct reports, and strategic themes in memory). Inbox is
-     already handled in step 2. **Blocked dedup:** if you already logged the
-     same blocker and Wake Delta shows no new context, do not re-chase — no-op.
+   - If the bound task is **executor-class**, call
+     **fn_task_handoff_to_workflow_executor** exactly once before pivoting to
+     broader board signals. This durable handoff releases the task to normal
+     executor admission; do not replace it with a ready-for-executor log, and
+     do not re-read PROMPT.md to advance it.
+   - If the bound task is **blocked**, skim it once for blocker risk, do not
+     re-read PROMPT.md to advance it, and pivot this heartbeat to broader board
+     signals (in-progress risk scan, stale in-review queue, idle direct reports,
+     and strategic themes in memory). Inbox is already handled in step 2.
+     **Blocked dedup:** if you already logged the same blocker and Wake Delta
+     shows no new context, do not re-chase — no-op.
    - If the bound task is **coordination-class**, engage directly with the
      bound task.
    Treat any multi-assign list in Wake Delta as coordination inventory only —
