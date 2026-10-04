@@ -146,7 +146,7 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(moveTask).not.toHaveBeenCalled();
   });
 
-  it.each(["pending", "failed", "skipped"] as const)("leaves confirmed %s post-merge evidence blocked", async (status) => {
+  it.each(["pending", "skipped"] as const)("leaves confirmed %s post-merge evidence blocked", async (status) => {
     const task = baseTask({
       autoMerge: true, mergeDetails: { mergeConfirmed: true }, enabledWorkflowSteps: ["post-merge-verification"],
       workflowStepResults: [{ workflowStepId: "post-merge-verification", status, verdict: "REVISE" }],
@@ -163,6 +163,33 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
       outcome: "ineligible", reason: "post-merge-evidence-pending",
     });
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("does not resume archived skipped post-merge evidence during manual landed reconciliation", async () => {
+    const task = baseTask({
+      autoMerge: true, mergeDetails: { mergeConfirmed: true }, enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{
+        workflowStepId: "post-merge-verification",
+        status: "skipped",
+        remediationArchivedAt: "2026-10-04T03:11:56Z",
+        remediationArchivedFromStatus: "failed",
+      }],
+    });
+    const { store, moveTask, tasks } = storeWithTask(task);
+    Object.assign(store, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(),
+    });
+    const manager = managerWithStubs(store);
+    const evidence = structuredClone(task.workflowStepResults);
+
+    await expect(manager.reconcileLandedReviewTask(task.id, { source: "manual" })).resolves.toEqual({
+      outcome: "ineligible", reason: "post-merge-evidence-pending",
+    });
+    expect(tasks.get(task.id)).toMatchObject({ column: "in-review", workflowStepResults: evidence });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(moveTask).not.toHaveBeenCalled();
   });
 
   it("reconciles a present branch after all task-owned content is proven landed", async () => {

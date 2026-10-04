@@ -36,10 +36,11 @@ export function getPostMergeFinalizeBlocker(task: Pick<Task, "status" | "error">
 }
 
 /*
-FNXC:PostMergeRecovery 2026-10-01-06:36:
+FNXC:PostMergeRecovery 2026-10-04-07:38:
 A confirmed landing is not completion when an enabled post-merge gate has no durable result. The
-shared decision exposes that one resumable state structurally, so recovery owners never infer it
-from display text; pending, duplicate, skipped, failed, and non-approved evidence remain blockers.
+shared decision exposes that one resumable state structurally: resumable means exactly zero results,
+so pending, duplicate, skipped (including archived or bypassed history), failed, and non-approved
+evidence remain visible blockers rather than permission to reseed or finalize.
 */
 export async function getRequiredPostMergeEvidenceDecision(
   store: WorkflowIrResolverStore,

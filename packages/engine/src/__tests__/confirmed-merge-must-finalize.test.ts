@@ -318,6 +318,32 @@ describe("missing post-merge continuation recovery", () => {
     expect(task.workflowStepResults[0].status).toBe(status);
   });
 
+  it("keeps archived skipped evidence blocked across every confirmed-merge finalizer and reseed entry", async () => {
+    const { task, store, items } = recoveryFixture();
+    task.workflowStepResults = [{
+      workflowStepId: "post-merge-verification",
+      phase: "post-merge",
+      status: "skipped",
+      remediationArchivedAt: "2026-10-04T03:11:56Z",
+      remediationArchivedFromStatus: "failed",
+    }] as Task["workflowStepResults"];
+    const before = structuredClone(task.workflowStepResults);
+
+    for (const source of ["direct-ai-merge", "merge-confirmed-fast-path", "self-healing", "workflow-graph-merge-finalize"] as const) {
+      await expect(finalizeProvenAutoMergeTask({ store, taskId: task.id, source })).resolves.toMatchObject({
+        outcome: "blocked",
+        reason: expect.stringContaining("post-merge evidence"),
+      });
+    }
+    await expect(resumeMissingPostMergeGate(store, task.id)).resolves.toEqual({ outcome: "not-resumable" });
+
+    expect(task.column).toBe("in-review");
+    expect(task.workflowStepResults).toEqual(before);
+    expect(items).toEqual([]);
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it.each([{ globalPause: true }, { enginePaused: true }])("preserves engine pause %j", async (settings) => {
     const { task, store } = recoveryFixture();
     store.getSettings = vi.fn(async () => settings) as never;

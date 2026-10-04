@@ -74,6 +74,20 @@ describe("landed task post-merge holds", () => {
     expect(store.logEntry).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps archived skipped evidence visible and outside merge admission", async () => {
+    const { task, store, poll } = fixture("skipped");
+    Object.assign(task.workflowStepResults![0], {
+      remediationArchivedAt: "2026-10-04T03:11:56Z",
+      remediationArchivedFromStatus: "failed",
+    });
+    const evidence = structuredClone(task.workflowStepResults);
+
+    expect(await poll()).toBe(false);
+    expect(task.column).toBe("in-review");
+    expect(task.workflowStepResults).toEqual(evidence);
+    expect((store as unknown as { seedWorkspaceCodeReviewContinuationIfIdle?: unknown }).seedWorkspaceCodeReviewContinuationIfIdle).toBeUndefined();
+  });
+
   it("re-admits finalization only when the real gate produces approval", async () => {
     const { task, poll } = fixture();
     expect(await poll()).toBe(false);
