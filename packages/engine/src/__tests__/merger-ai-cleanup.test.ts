@@ -180,6 +180,8 @@ function makeStore(taskId = "FN-1") {
     appendAgentLog: vi.fn(async (_id: string, message: string) => { logs.push(message); }),
     emitUsageEvent: vi.fn(async () => true),
     recordRunAuditEvent: vi.fn(async (event: any) => { audits.push(event); }),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
   };
   return { store, audits, logs };
 }

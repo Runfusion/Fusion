@@ -73,6 +73,13 @@ function createStore(task: Task, sequence: Task[]) {
       globalPause: false,
       enginePaused: false,
       pollIntervalMs: 15_000,
+      /*
+      FNXC:PostFinalizeVerificationFixture 2026-10-04-07:55:
+      Queue admission resolves the integration branch before the mocked merge rejects. Pinning the
+      normal project default keeps this fixture on the in-memory verification path rather than a
+      host Git probe, so it reaches the post-finalize no-op assertion.
+      */
+      baseBranch: "main",
       // FNXC:MergerUnification 2026-06-21-19:05: U0 unified merges onto runAiMerge;
       // no `merger.mode` pin needed (dispatch ignores it).
     } as Settings)),
@@ -98,6 +105,8 @@ function createStore(task: Task, sequence: Task[]) {
     updateSettings: async () => ({}),
     mergeTask: async () => undefined,
     getRootDir: () => "",
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     recordRunAuditEvent: vi.fn(async (input: { mutationType: string; metadata?: Record<string, unknown> }) => {
       audits.push({ mutationType: input.mutationType, metadata: input.metadata });
     }),
@@ -132,7 +141,13 @@ describe("post-finalize verification noop status-write guard", () => {
     verificationError.name = "VerificationError";
     testState.runAiMerge.mockRejectedValueOnce(verificationError);
 
-    const inReviewTask = makeTask({ verificationFailureCount: failureCount });
+    /*
+    FNXC:PostFinalizeVerificationFixture 2026-10-04-07:55:
+    The merge pump's in-memory claim owns this attempt. Its pre-dispatch gate treats a persisted
+    `merging` status as a blocker, so this fixture must model the queue-admitted row with no stale
+    durable transient status before the mocked merge raises its verification failure.
+    */
+    const inReviewTask = makeTask({ status: null, verificationFailureCount: failureCount });
     const doneTask = makeTask({
       column: "done",
       verificationFailureCount: failureCount,

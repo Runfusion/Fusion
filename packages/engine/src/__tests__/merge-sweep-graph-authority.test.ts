@@ -65,6 +65,8 @@ function makeStore(continuationsByTask: Record<string, string[]> = {}) {
   return {
     getSettings: vi.fn(async () => ({ autoMerge: true, globalPause: false, enginePaused: false })),
     getTask: vi.fn(async () => null),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     listWorkflowWorkItemsForTask: vi.fn(async (taskId: string) =>
       (continuationsByTask[taskId] ?? []).map((nodeId, i) => ({
         id: `${taskId}-wi-${i}`,

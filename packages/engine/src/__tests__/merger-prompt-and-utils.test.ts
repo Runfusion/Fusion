@@ -222,6 +222,8 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
     getVerificationCacheHit: vi.fn().mockReturnValue(null),
     recordVerificationCachePass: vi.fn(),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     recordActivity: vi.fn().mockResolvedValue(undefined),
     recordRunAuditEvent: vi.fn(),
     enqueueMergeQueue: vi.fn(),

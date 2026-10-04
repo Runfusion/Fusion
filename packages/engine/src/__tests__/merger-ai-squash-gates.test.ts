@@ -48,6 +48,8 @@ function makeStore(scope: string[], overrides: Record<string, unknown> = {}) {
   };
   const store: any = {
     getTask: vi.fn(async () => task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 0 } })),
     parseFileScopeFromPrompt: vi.fn(async () => scope),
     updateTask: vi.fn(async (_id: string, patch: object) => Object.assign(task, patch)),

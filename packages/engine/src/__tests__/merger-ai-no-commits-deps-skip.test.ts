@@ -117,6 +117,8 @@ function createStore(): TaskStore & { logs: string[] } {
     logEntry: vi.fn((_id: string, message: string) => { logs.push(message); return Promise.resolve(undefined); }),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getTask: vi.fn(async () => task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     moveTask: vi.fn().mockResolvedValue({ id: TASK_ID, column: "done" } as Task),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),

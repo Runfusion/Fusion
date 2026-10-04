@@ -333,18 +333,25 @@ describe("the execution-resume router's gate reads the same board as its destina
     id, column, worktree: "/wt", steps: [{ name: "s", status: "pending" }], workflowStepResults: [],
   });
 
-  it("admits a review-lane card", async () => {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-10-04-07:55:
+  FN-9345 narrowed generic graph-failure recovery to a WIP implementation-incomplete path or a
+  separately evidenced merge-boundary repair. A generic failure in review or hold must remain
+  contained in place; treating unfinished steps as authority for either backward move bypasses the
+  named remediation lifecycle.
+  */
+  it("refuses a review-lane card without typed merge-boundary evidence", async () => {
     const live = withIncompleteSteps("checking", "FN-18");
     const { executor } = harness(RENAMED_IR, live);
 
-    expect(await routeResume(executor, live, "other")).toBe(true);
+    expect(await routeResume(executor, live, "other")).toBe(false);
   });
 
-  it("admits a HOLD-lane card that still has unfinished steps", async () => {
+  it("refuses a HOLD-lane card that still has unfinished steps", async () => {
     const live = withIncompleteSteps("queued", "FN-19");
     const { executor } = harness(RENAMED_IR, live);
 
-    expect(await routeResume(executor, live, "other")).toBe(true);
+    expect(await routeResume(executor, live, "other")).toBe(false);
   });
 
   it("admits a WIP-lane card after a premature merge attempt", async () => {

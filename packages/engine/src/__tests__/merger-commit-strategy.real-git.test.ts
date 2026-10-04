@@ -93,6 +93,8 @@ function createStore(task: Task, settings: Partial<Settings>): TaskStore {
     getVerificationCacheHit: vi.fn(() => null),
     recordVerificationCachePass: vi.fn(() => undefined),
     upsertTaskCommitAssociation: vi.fn(async () => undefined),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
   } as unknown as TaskStore;
 }
 

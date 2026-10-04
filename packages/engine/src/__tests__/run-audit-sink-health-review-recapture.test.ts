@@ -147,7 +147,8 @@ describe("FN-9234 review-recapture audit sink health", () => {
     core.getTaskMergeBlocker.mockReturnValue("task has a pre-merge approval recorded against different content");
     mergeContent.capture.mockResolvedValue({ kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } });
     reroute.route.mockResolvedValue({ rerouted: true, reason: "seeded", nodeId: "code-review", workflowStepId: "code-review" });
-    const store = { logEntry: vi.fn(async () => undefined), ...(sink.recordRunAuditEvent ? { recordRunAuditEvent: sink.recordRunAuditEvent } : {}) } as any;
+    const store = { logEntry: vi.fn(async () => undefined), getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"), ...(sink.recordRunAuditEvent ? { recordRunAuditEvent: sink.recordRunAuditEvent } : {}) } as any;
     const engine = new ProjectEngine({ projectId: "audit", workingDirectory: process.cwd(), isolationMode: "in-process", maxConcurrent: 1, maxWorktrees: 1 } as any, {} as any, { skipNotifier: true });
     /*
     FNXC:NoVerdictReviewRecovery 2026-09-24-04:54:

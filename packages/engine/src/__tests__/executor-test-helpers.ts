@@ -770,6 +770,8 @@ export function createMockStore() {
       return { task: { ...current, repositoryScope }, updated: true };
     }),
     recordActivity: vi.fn().mockResolvedValue({}),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     moveTask: makeWriteThroughMoveTask(),
     /*
     FNXC:PostMergeFinalizationFixture 2026-09-23-11:20:

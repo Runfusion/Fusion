@@ -83,6 +83,8 @@ function recoveryStore(task: Task) {
     updateTaskAtomic: vi.fn(async (_id: string, reduce: (t: Task) => Partial<Task> | null) => { const patch = reduce(task); if (patch) Object.assign(task, patch); return task; }),
     getTask: vi.fn(async () => task),
     getSettings: vi.fn(async () => ({ autoMerge: true })),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["code-review"] })),
     getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["code-review"] })),
     getWorkflowDefinition: vi.fn(async () => ({ ir: codingIr })),

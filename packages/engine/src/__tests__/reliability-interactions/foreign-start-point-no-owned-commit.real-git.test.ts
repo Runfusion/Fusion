@@ -39,6 +39,8 @@ function makeStore(task: Task, settings: Partial<Settings> = {}, events: unknown
     appendAgentLog: vi.fn(async () => undefined),
     updateSettings: vi.fn(async () => mergedSettings),
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),
+    getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]),
+    getProjectId: vi.fn().mockReturnValue("test-project"),
     recordRunAuditEvent: vi.fn(async (event: unknown) => {
       events.push(event);
     }),
@@ -50,7 +52,7 @@ function makeStore(task: Task, settings: Partial<Settings> = {}, events: unknown
 }
 
 describe("foreign start-point no-owned-commit interactions (real git)", () => {
-  it("merger no-op gate blocks done and auto-requeues to todo", async () => {
+  it("merger no-op gate blocks completion without an unowned backward move", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fn-4656-ri-merge-"));
     try {
       git(dir, "git init -b main");
@@ -91,7 +93,14 @@ describe("foreign start-point no-owned-commit interactions (real git)", () => {
       const result = await aiMergeTask(store, dir, task.id);
 
       expect(result.merged).toBe(false);
-      expect(task.column).toBe("todo");
+      /*
+      FNXC:LifecycleContainment 2026-10-04-07:55:
+      Generic merge-failure rebound has no review-to-WIP authority. An unproven foreign start
+      point remains visibly in review with its durable failure until named remediation exists;
+      requeueing it to todo would bypass the contained lifecycle guard.
+      */
+      expect(task.column).toBe("in-review");
+      expect(task.error).toBe("finalize-unproven: foreign-start-point");
       expect(events.some((event: any) => event?.mutationType === "task:finalize-unproven-blocked")).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
