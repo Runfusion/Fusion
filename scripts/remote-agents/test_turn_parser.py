@@ -199,7 +199,7 @@ class TurnUsageTests(unittest.TestCase):
         consume_claude(state, {'type': 'user', 'uuid': 'u1', 'timestamp': '2026-09-23T10:00:00Z',
                                'message': {'role': 'user', 'content': 'go'}})
         event = {'type': 'assistant', 'timestamp': '2026-09-23T10:00:05Z',
-                 'message': {'id': 'msg-1', 'role': 'assistant', 'content': 'a',
+                 'message': {'id': 'msg-1', 'role': 'assistant', 'model': 'claude-sonnet-5', 'content': 'a',
                              'usage': {'input_tokens': 10, 'cache_read_input_tokens': 0,
                                        'cache_creation_input_tokens': 0, 'output_tokens': 5}}}
         consume_claude(state, event)
