@@ -493,14 +493,20 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
         FNXC:AgentIdentityResolution 2026-10-04-10:41:
         Shortname conflicts are explicit 409 responses so desktop and mobile clients can retry with
         one of the authoritative candidate IDs; exact-ID detail routes remain independent.
+        The dashboard api() client keeps only `error` and `details` on ApiRequestError, so the
+        ambiguity fields are mirrored under `details` while staying top-level for direct clients.
         */
-        res.status(409).json({
-          error: "Ambiguous agent name",
+        const ambiguity = {
           code: err.code,
-          outcome: "ambiguous",
+          outcome: "ambiguous" as const,
           query: err.query,
           normalizedName: err.normalizedName,
           candidateAgentIds: err.candidateAgentIds,
+        };
+        res.status(409).json({
+          error: "Ambiguous agent name",
+          ...ambiguity,
+          details: ambiguity,
         });
         return;
       }

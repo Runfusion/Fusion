@@ -90,14 +90,14 @@ pgDescribe("agent identity resolution routes", () => {
 
     const ambiguous = await request(app, "GET", "/api/agents/resolve/workflow_merger");
     expect(ambiguous.status).toBe(409);
-    expect(ambiguous.body).toEqual({
-      error: "Ambiguous agent name",
+    const ambiguity = {
       code: "AMBIGUOUS_AGENT_NAME",
       outcome: "ambiguous",
       query: "workflow_merger",
       normalizedName: "workflow-merger",
       candidateAgentIds: [original.id, duplicate.id].sort(),
-    });
+    };
+    expect(ambiguous.body).toEqual({ error: "Ambiguous agent name", ...ambiguity, details: ambiguity });
 
     const reconciledOriginal = await agentStore.getAgent(original.id);
     const reconciledDuplicate = await agentStore.getAgent(duplicate.id);
