@@ -11,6 +11,7 @@ import {
   type Task,
 } from "@fusion/core";
 import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
+import { createMergeWriteFence, type MergeWriteFence } from "./merge-write-fence.js";
 import { isTaskExecutionLive } from "./merge-execution-exclusion.js";
 
 /**
@@ -76,8 +77,9 @@ export function isPostMergeGateRecoveryDue(
 export async function resumeMissingPostMergeGate(
   store: TaskStore,
   taskId: string,
-  options: { manualRetry?: boolean } = {},
+  options: { manualRetry?: boolean; fence?: MergeWriteFence } = {},
 ): Promise<PostMergeGateResumeResult> {
+  const fence = options.fence ?? createMergeWriteFence({ taskId });
   if (typeof store.seedWorkspaceCodeReviewContinuationIfIdle !== "function") return { outcome: "not-resumable" };
   const task = await store.getTask(taskId);
   const settings = await store.getSettings();
@@ -96,15 +98,16 @@ export async function resumeMissingPostMergeGate(
   if (!manualRetry && failedResult?.status === "failed" && hasExhaustedRechecks(failedResult)
     && !task.error?.startsWith(EXHAUSTED_PREFIX)) {
     let recorded = false;
-    await store.updateTaskAtomic(task.id, async (live) => {
+    await fence.write("finalization", () => store.updateTaskAtomic(task.id, async (live) => {
       if (live.updatedAt !== task.updatedAt || live.paused || live.userPaused || live.deletedAt
         || !live.mergeDetails?.mergeConfirmed || live.autoMerge === false) return null;
       const items = await store.listWorkflowWorkItemsForTask(task.id);
       if (items.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) return null;
+      fence.assertOwned("finalization");
       recorded = true;
       return { status: "failed", error: `${EXHAUSTED_PREFIX}: '${decision.gateId}' has repeated rejected evidence. ${failedResult.notes || failedResult.output || "Inspect the failed verification result."} Automatic evidence checks continue hourly; Retry can check again after remediation.` };
-    });
-    if (recorded) await store.logEntry(task.id, `[post-merge] Repeated rejected evidence for '${decision.gateId}'; remediation is required and automatic checks continue hourly. Merge proof and failed evidence are preserved.`);
+    }));
+    if (recorded) await fence.write("log", () => store.logEntry(task.id, `[post-merge] Repeated rejected evidence for '${decision.gateId}'; remediation is required and automatic checks continue hourly. Merge proof and failed evidence are preserved.`));
     return recorded ? { outcome: "exhausted", gateId: decision.gateId } : { outcome: "not-resumable" };
   }
   const selection = await store.getTaskWorkflowSelectionAsync(task.id);
@@ -115,7 +118,7 @@ export async function resumeMissingPostMergeGate(
   if (!node) return { outcome: "not-resumable" };
 
   const items = await store.listWorkflowWorkItemsForTask(task.id);
-  const seeded = await store.seedWorkspaceCodeReviewContinuationIfIdle({
+  const seeded = await fence.write("finalization", () => store.seedWorkspaceCodeReviewContinuationIfIdle({
     taskId: task.id,
     nodeId: node.id,
     kind: "task",
@@ -128,16 +131,17 @@ export async function resumeMissingPostMergeGate(
     irHash: computeWorkflowIrPin(ir, node.id).irHash,
     expectedWorkflowSelection: selection ?? null,
     expectedTaskUpdatedAt: task.updatedAt,
-  });
-  if (!seeded.seeded) return { outcome: "not-resumable" };
+  }));
+  if (!seeded?.seeded) return { outcome: "not-resumable" };
   if (task.error?.startsWith(EXHAUSTED_PREFIX)) {
     const previousError = task.error;
-    await store.updateTaskAtomic(task.id, (live) => {
+    await fence.write("finalization", () => store.updateTaskAtomic(task.id, (live) => {
+      fence.assertOwned("finalization");
       if (live.status !== "failed" || live.error !== previousError || live.paused || live.userPaused
         || !live.mergeDetails?.mergeConfirmed) return null;
       return { status: null as unknown as Task["status"], error: null as unknown as Task["error"] };
-    });
+    }));
   }
-  await store.logEntry(task.id, `[post-merge] ${decision.outcome === "resumable" ? "Resuming missing verification" : "Rechecking rejected evidence"} at '${node.id}'; already-landed implementation and merge will not run again.`);
+  await fence.write("log", () => store.logEntry(task.id, `[post-merge] ${decision.outcome === "resumable" ? "Resuming missing verification" : "Rechecking rejected evidence"} at '${node.id}'; already-landed implementation and merge will not run again.`));
   return { outcome: "resumed", gateId: node.id };
 }

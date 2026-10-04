@@ -157,6 +157,7 @@ import { ResearchStepRunner } from "./research/research-step-runner.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
+import { recoverConfirmedMergePush } from "./merge/recover-confirmed-merge-push.js";
 import { isTransientError } from "./errors/transient-error-detector.js";
 import { classifyTransientMergeError, MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "./errors/transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
@@ -3013,6 +3014,7 @@ export class ProjectEngine {
     of monopolizing the merge pump. Once approved, this read automatically admits finalization again.
     */
     if (task.mergeDetails?.mergeConfirmed) {
+      if (!await this.isMergePending(task.id)) await recoverConfirmedMergePush(store, task, settings);
       const decision = await getRequiredPostMergeEvidenceDecision(store, task);
       if (decision.outcome !== "blocked") return undefined;
       if (isPostMergeGateRecoveryDue(task, decision) && !await this.isMergePending(task.id)) {

@@ -196,6 +196,7 @@
     "packages/engine/src/merge/pr-response-run.ts",
     "packages/engine/src/merge/pre-merge-gate-reseed.ts",
     "packages/engine/src/merge/push-after-merge-policy.ts",
+    "packages/engine/src/merge/recover-confirmed-merge-push.ts",
     "packages/engine/src/merge/stale-content-park.ts",
     "packages/engine/src/merge/stale-content-review-reroute.ts",
     "packages/engine/src/merge/workspace-fence-ref.ts",
@@ -307,6 +308,7 @@
     "packages/engine/src/workflows/workflow-step-tool-policy.ts",
     "packages/engine/src/worktree-base-refresh.ts",
     "packages/engine/src/worktree/python-uv-inference.ts",
+    "packages/engine/src/worktree/review-checkout-clean.ts",
     "packages/engine/src/worktree/review-diff-fingerprint.ts",
     "packages/engine/src/worktree/review-inline-fix-recapture.ts",
     "packages/engine/src/worktree/secrets-env-writer.ts",
@@ -5480,7 +5482,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 379,
+      "lineHint": 380,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5500,7 +5502,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 10,
-      "lineHint": 1064,
+      "lineHint": 1066,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5520,7 +5522,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 439,
+      "lineHint": 440,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5540,7 +5542,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 506,
+      "lineHint": 507,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5560,7 +5562,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 4,
-      "lineHint": 519,
+      "lineHint": 520,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5580,7 +5582,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 5,
-      "lineHint": 580,
+      "lineHint": 581,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5600,7 +5602,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 6,
-      "lineHint": 661,
+      "lineHint": 662,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5620,7 +5622,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 7,
-      "lineHint": 701,
+      "lineHint": 702,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5640,7 +5642,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 8,
-      "lineHint": 968,
+      "lineHint": 970,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5660,7 +5662,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.logEntry",
       "ordinal": 9,
-      "lineHint": 1026,
+      "lineHint": 1028,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5680,7 +5682,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 375,
+      "lineHint": 376,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5700,7 +5702,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.updateTask",
       "ordinal": 2,
-      "lineHint": 378,
+      "lineHint": 379,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5720,7 +5722,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.updateTask",
       "ordinal": 3,
-      "lineHint": 746,
+      "lineHint": 747,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5740,7 +5742,7 @@
       "enclosingSymbolPath": "runGraphCustomNode",
       "writer": "store.updateTask",
       "ordinal": 4,
-      "lineHint": 1070,
+      "lineHint": 1072,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -5870,7 +5872,7 @@
       "enclosingSymbolPath": "finalizeProvenAutoMergeTask",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 523,
+      "lineHint": 535,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -5890,7 +5892,7 @@
       "enclosingSymbolPath": "finalizeProvenAutoMergeTask>cleanupLandedWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 323,
+      "lineHint": 335,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "single-repository merge finalization or fenced merge-failure recovery"
@@ -5910,7 +5912,7 @@
       "enclosingSymbolPath": "finalizeProvenAutoMergeTask>cleanupLandedWorktree",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 325,
+      "lineHint": 337,
       "owningEntryPoint": "finalizeProvenAutoMergeTask",
       "reachableDataStates": [
         "proven landing finalization without a merge write fence"
@@ -5930,7 +5932,7 @@
       "enclosingSymbolPath": "finalizeProvenAutoMergeTask>finalized",
       "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 491,
+      "lineHint": 503,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -5950,7 +5952,7 @@
       "enclosingSymbolPath": "finalizeProvenAutoMergeTask>move",
       "writer": "store.moveTaskIf",
       "ordinal": 1,
-      "lineHint": 450,
+      "lineHint": 462,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -5970,7 +5972,7 @@
       "enclosingSymbolPath": "finalizeProvenAutoMergeTask>persistProof",
       "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 265,
+      "lineHint": 271,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -5990,7 +5992,7 @@
       "enclosingSymbolPath": "finalizeMerged",
       "writer": "store.recordBranchGroupMemberLanded",
       "ordinal": 1,
-      "lineHint": 4010,
+      "lineHint": 4040,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "mid-review",
@@ -6012,7 +6014,7 @@
       "enclosingSymbolPath": "finalizeMerged",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 3904,
+      "lineHint": 3934,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6036,7 +6038,7 @@
       "enclosingSymbolPath": "finalizeMerged",
       "writer": "store.updateTask",
       "ordinal": 2,
-      "lineHint": 3924,
+      "lineHint": 3954,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6060,7 +6062,7 @@
       "enclosingSymbolPath": "finalizeMerged",
       "writer": "store.upsertTaskCommitAssociation",
       "ordinal": 1,
-      "lineHint": 3909,
+      "lineHint": 3939,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6084,7 +6086,7 @@
       "enclosingSymbolPath": "finalizeMerged",
       "writer": "syncGroupPrOnLanding",
       "ordinal": 1,
-      "lineHint": 4021,
+      "lineHint": 4051,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -6104,7 +6106,7 @@
       "enclosingSymbolPath": "finalizeTask",
       "writer": "store.emit",
       "ordinal": 1,
-      "lineHint": 4098,
+      "lineHint": 4138,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6128,7 +6130,7 @@
       "enclosingSymbolPath": "finalizeTask>finalization",
       "writer": "finalizeProvenAutoMergeTask",
       "ordinal": 1,
-      "lineHint": 4062,
+      "lineHint": 4093,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -6148,7 +6150,7 @@
       "enclosingSymbolPath": "finalizeWorkspaceTask",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 3381,
+      "lineHint": 3410,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6172,7 +6174,7 @@
       "enclosingSymbolPath": "finalizeWorkspaceTask",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 3383,
+      "lineHint": 3412,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6196,7 +6198,7 @@
       "enclosingSymbolPath": "finalizeWorkspaceTask",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 3406,
+      "lineHint": 3435,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6220,7 +6222,7 @@
       "enclosingSymbolPath": "finalizeWorkspaceTask",
       "writer": "store.logEntry",
       "ordinal": 4,
-      "lineHint": 3408,
+      "lineHint": 3437,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6244,7 +6246,7 @@
       "enclosingSymbolPath": "finalizeWorkspaceTask",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 3356,
+      "lineHint": 3385,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6268,7 +6270,7 @@
       "enclosingSymbolPath": "finalizeWorkspaceTask>cleanup",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 3371,
+      "lineHint": 3400,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6292,7 +6294,7 @@
       "enclosingSymbolPath": "finalizeWorkspaceTask>cleanup",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 3373,
+      "lineHint": 3402,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6316,7 +6318,7 @@
       "enclosingSymbolPath": "landOneRepo",
       "writer": "store.recordWorkspaceLandIntent",
       "ordinal": 1,
-      "lineHint": 1308,
+      "lineHint": 1309,
       "owningEntryPoint": "landOneRepo",
       "reachableDataStates": [
         "pre-land"
@@ -6336,7 +6338,7 @@
       "enclosingSymbolPath": "landOneRepo",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 1345,
+      "lineHint": 1346,
       "owningEntryPoint": "landOneRepo",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -6356,7 +6358,7 @@
       "enclosingSymbolPath": "landWorkspaceTask",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 3181,
+      "lineHint": 3210,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6380,7 +6382,7 @@
       "enclosingSymbolPath": "landWorkspaceTask",
       "writer": "store.releaseWorkspaceLease",
       "ordinal": 1,
-      "lineHint": 2902,
+      "lineHint": 2931,
       "owningEntryPoint": "landWorkspaceTask",
       "reachableDataStates": [
         "workspace-partial-land",
@@ -6401,7 +6403,7 @@
       "enclosingSymbolPath": "landWorkspaceTask",
       "writer": "store.releaseWorkspaceLease",
       "ordinal": 2,
-      "lineHint": 2930,
+      "lineHint": 2959,
       "owningEntryPoint": "landWorkspaceTask",
       "reachableDataStates": [
         "workspace-partial-land",
@@ -6422,7 +6424,7 @@
       "enclosingSymbolPath": "landWorkspaceTask",
       "writer": "store.releaseWorkspaceLease",
       "ordinal": 3,
-      "lineHint": 3131,
+      "lineHint": 3160,
       "owningEntryPoint": "landWorkspaceTask",
       "reachableDataStates": [
         "workspace-partial-land",
@@ -6443,7 +6445,7 @@
       "enclosingSymbolPath": "landWorkspaceTask",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 2661,
+      "lineHint": 2690,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6467,7 +6469,7 @@
       "enclosingSymbolPath": "landWorkspaceTask",
       "writer": "store.updateTask",
       "ordinal": 2,
-      "lineHint": 3178,
+      "lineHint": 3207,
       "owningEntryPoint": "landWorkspaceTask",
       "reachableDataStates": [
         "pre-land",
@@ -6489,7 +6491,7 @@
       "enclosingSymbolPath": "landWorkspaceTask>log",
       "writer": "store.appendAgentLog",
       "ordinal": 1,
-      "lineHint": 2492,
+      "lineHint": 2521,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6513,7 +6515,7 @@
       "enclosingSymbolPath": "landWorkspaceTask>log",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 2491,
+      "lineHint": 2520,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6537,7 +6539,7 @@
       "enclosingSymbolPath": "landWorkspaceTask>resolved",
       "writer": "store.resolveWorkspaceLandIntent",
       "ordinal": 1,
-      "lineHint": 3016,
+      "lineHint": 3045,
       "owningEntryPoint": "landWorkspaceTask",
       "reachableDataStates": [
         "post-ref-advance"
@@ -6557,7 +6559,7 @@
       "enclosingSymbolPath": "mergeAndReview>assertCurrentEpisodeIdentity",
       "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 3453,
+      "lineHint": 3482,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "mid-review"
@@ -6577,7 +6579,7 @@
       "enclosingSymbolPath": "mergeAndReview>persistState",
       "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 3434,
+      "lineHint": 3463,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "mid-review"
@@ -6597,7 +6599,7 @@
       "enclosingSymbolPath": "persistRepoLandedSha",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 3286,
+      "lineHint": 3315,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6621,7 +6623,7 @@
       "enclosingSymbolPath": "pushAfterMergeToRemote>recordRecoveryBranch",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 3709,
+      "lineHint": 3738,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6645,7 +6647,7 @@
       "enclosingSymbolPath": "recoverApprovedPreexistingAiMergeWorktree",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 378,
+      "lineHint": 379,
       "owningEntryPoint": "landOneRepo",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -6665,7 +6667,7 @@
       "enclosingSymbolPath": "recoverApprovedPreexistingAiMergeWorktree",
       "writer": "store.updateTask",
       "ordinal": 2,
-      "lineHint": 384,
+      "lineHint": 385,
       "owningEntryPoint": "landOneRepo",
       "reachableDataStates": [
         "pre-land",
@@ -6686,7 +6688,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 1733,
+      "lineHint": 1760,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6710,7 +6712,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 1920,
+      "lineHint": 1950,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6734,7 +6736,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 1985,
+      "lineHint": 2015,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6758,7 +6760,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.logEntry",
       "ordinal": 4,
-      "lineHint": 2056,
+      "lineHint": 2086,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "single-repository merge finalization or fenced merge-failure recovery"
@@ -6778,7 +6780,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.logEntry",
       "ordinal": 5,
-      "lineHint": 2113,
+      "lineHint": 2142,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "single-repository merge finalization or fenced merge-failure recovery"
@@ -6798,7 +6800,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 1727,
+      "lineHint": 1754,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6822,7 +6824,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.updateTask",
       "ordinal": 2,
-      "lineHint": 1914,
+      "lineHint": 1944,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6846,7 +6848,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.updateTask",
       "ordinal": 3,
-      "lineHint": 1979,
+      "lineHint": 2009,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6870,7 +6872,7 @@
       "enclosingSymbolPath": "runAiMerge",
       "writer": "store.updateTask",
       "ordinal": 4,
-      "lineHint": 2050,
+      "lineHint": 2080,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "single-repository merge finalization or fenced merge-failure recovery"
@@ -6890,7 +6892,7 @@
       "enclosingSymbolPath": "runAiMerge>log",
       "writer": "store.appendAgentLog",
       "ordinal": 1,
-      "lineHint": 1674,
+      "lineHint": 1675,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6914,7 +6916,7 @@
       "enclosingSymbolPath": "runAiMerge>log",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 1673,
+      "lineHint": 1674,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6938,7 +6940,7 @@
       "enclosingSymbolPath": "runPushAfterMergeStep",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 2203,
+      "lineHint": 2232,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6962,7 +6964,7 @@
       "enclosingSymbolPath": "runPushAfterMergeStep",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 2224,
+      "lineHint": 2253,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -6986,7 +6988,7 @@
       "enclosingSymbolPath": "runPushAfterMergeStep",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 2236,
+      "lineHint": 2265,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -7010,7 +7012,7 @@
       "enclosingSymbolPath": "runPushAfterMergeStep",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 2193,
+      "lineHint": 2222,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -7034,7 +7036,7 @@
       "enclosingSymbolPath": "writeTransientMergeStatus",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 221,
+      "lineHint": 222,
       "owningEntryPoint": "runAiMerge",
       "reachableDataStates": [
         "pre-land",
@@ -7073,22 +7075,82 @@
     },
     {
       "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.logEntry::#1",
-      "callSiteFingerprint": "store.logEntry(task.id,`[post-merge] Resuming missing verification at '${node.id}'; already-landed implementation and merge will not run again.)",
+      "callSiteFingerprint": "store.logEntry(task.id,`[post-merge] Repeated rejected evidence for '${decision.gateId}'; remediation is required and automatic checks continue)",
       "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
       "enclosingSymbolPath": "resumeMissingPostMergeGate",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 62,
+      "lineHint": 110,
       "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
       "reachableDataStates": [
-        "confirmed merge with an enabled post-merge gate that has no durable result"
+        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
       ],
       "axis1": "checkpoint-covered",
-      "axis1Evidence": "The merge-finalization caller wraps the reseed in its finalization fence, and the continuation insert compares the captured task updatedAt and workflow selection before writing.",
+      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
       "axis2Provisional": "already-fenced",
       "axis2Final": "already-fenced",
       "observedInSuite": "layerB-observed",
-      "executionProof": "static:per-call-site merge write fence or ownership checkpoint",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.logEntry::#2",
+      "callSiteFingerprint": "store.logEntry(task.id,`[post-merge] ${decision.outcome === \"resumable\" ? \"Resuming missing verification\" : \"Rechecking rejected evidence\"} at )",
+      "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
+      "enclosingSymbolPath": "resumeMissingPostMergeGate",
+      "writer": "store.logEntry",
+      "ordinal": 2,
+      "lineHint": 145,
+      "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
+      "reachableDataStates": [
+        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "layerB-observed",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,async (live) => { if (live.updatedAt !== task.updatedAt || live.paused || live.userPaused || live.deletedAt || !live.mer)",
+      "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
+      "enclosingSymbolPath": "resumeMissingPostMergeGate",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 101,
+      "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
+      "reachableDataStates": [
+        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "layerB-observed",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.updateTaskAtomic::#2",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(live) => { fence.assertOwned(\"finalization\"); if (live.status !== \"failed\" || live.error !== previousError || live.paus)",
+      "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
+      "enclosingSymbolPath": "resumeMissingPostMergeGate",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 2,
+      "lineHint": 138,
+      "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
+      "reachableDataStates": [
+        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "layerB-observed",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
       "followUpTaskId": "none:no-follow-up-required"
     },
     {
@@ -7098,17 +7160,17 @@
       "enclosingSymbolPath": "resumeMissingPostMergeGate>seeded",
       "writer": "store.seedWorkspaceCodeReviewContinuationIfIdle",
       "ordinal": 1,
-      "lineHint": 47,
+      "lineHint": 121,
       "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
       "reachableDataStates": [
-        "confirmed merge with an enabled post-merge gate that has no durable result"
+        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
       ],
       "axis1": "checkpoint-covered",
-      "axis1Evidence": "The merge-finalization caller wraps the reseed in its finalization fence, and the continuation insert compares the captured task updatedAt and workflow selection before writing.",
+      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
       "axis2Provisional": "already-fenced",
       "axis2Final": "already-fenced",
       "observedInSuite": "layerB-observed",
-      "executionProof": "static:per-call-site merge write fence or ownership checkpoint",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
       "followUpTaskId": "none:no-follow-up-required"
     },
     {
@@ -7311,12 +7373,12 @@
     },
     {
       "callSiteId": "packages/engine/src/merge/pre-merge-gate-reseed.ts::seedPreMergeReviewIfIdle>result::store.seedWorkspaceCodeReviewContinuationIfIdle::#1",
-      "callSiteFingerprint": "store.seedWorkspaceCodeReviewContinuationIfIdle({taskId,nodeId,kind,state,runId,stableWorkflowRunId,continuationSequence,sourceColumn,targetColumn,irHash,?})",
+      "callSiteFingerprint": "store.seedWorkspaceCodeReviewContinuationIfIdle({taskId,nodeId,kind,state,runId,stableWorkflowRunId,continuationSequence,sourceColumn,targetColumn,irHash,?,expectedTaskUpdatedAt})",
       "file": "packages/engine/src/merge/pre-merge-gate-reseed.ts",
       "enclosingSymbolPath": "seedPreMergeReviewIfIdle>result",
       "writer": "store.seedWorkspaceCodeReviewContinuationIfIdle",
       "ordinal": 1,
-      "lineHint": 79,
+      "lineHint": 83,
       "owningEntryPoint": "indeterminate",
       "reachableDataStates": [
         "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo"
@@ -7328,6 +7390,106 @@
       "observedInSuite": "out-of-frontier",
       "executionProof": "none:out-of-frontier",
       "followUpTaskId": "none:out-of-frontier"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/recover-confirmed-merge-push.ts::recoverConfirmedMergePush::store.logEntry::#1",
+      "callSiteFingerprint": "store.logEntry(task.id,`[post-merge] Confirmed landed commit ${sha.slice(0, 12)} is available on ${target}; verification may collect hosted CI )",
+      "file": "packages/engine/src/merge/recover-confirmed-merge-push.ts",
+      "enclosingSymbolPath": "recoverConfirmedMergePush",
+      "writer": "store.logEntry",
+      "ordinal": 1,
+      "lineHint": 108,
+      "owningEntryPoint": "indeterminate",
+      "reachableDataStates": [
+        "Confirmed single-repository landing awaiting remote delivery; independent of evidence approval."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "Each recovery write is inside supplied merge-generation fence.write; task updates additionally compare the observed task snapshot or exact retry marker.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "recover-confirmed-merge-push.test.ts: aborted generation and successful/failed delivery",
+      "executionProof": "recover-confirmed-merge-push.test.ts proves aborted generation suppresses all store writes; successor retry marker is preserved.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/recover-confirmed-merge-push.ts::recoverConfirmedMergePush::store.logEntry::#2",
+      "callSiteFingerprint": "store.logEntry(task.id,`[post-merge] Remote delivery recovery failed for ${target}; retry after ${nextAttemptAt}. ${message}`)",
+      "file": "packages/engine/src/merge/recover-confirmed-merge-push.ts",
+      "enclosingSymbolPath": "recoverConfirmedMergePush",
+      "writer": "store.logEntry",
+      "ordinal": 2,
+      "lineHint": 115,
+      "owningEntryPoint": "indeterminate",
+      "reachableDataStates": [
+        "Confirmed single-repository landing awaiting remote delivery; independent of evidence approval."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "Each recovery write is inside supplied merge-generation fence.write; task updates additionally compare the observed task snapshot or exact retry marker.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "recover-confirmed-merge-push.test.ts: aborted generation and successful/failed delivery",
+      "executionProof": "recover-confirmed-merge-push.test.ts proves aborted generation suppresses all store writes; successor retry marker is preserved.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/recover-confirmed-merge-push.ts::recoverConfirmedMergePush::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(live) => { if (live.updatedAt !== task.updatedAt || !eligible(live, settings) || live.mergeDetails?.commitSha !== sha |)",
+      "file": "packages/engine/src/merge/recover-confirmed-merge-push.ts",
+      "enclosingSymbolPath": "recoverConfirmedMergePush",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 77,
+      "owningEntryPoint": "indeterminate",
+      "reachableDataStates": [
+        "Confirmed single-repository landing awaiting remote delivery; independent of evidence approval."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "Each recovery write is inside supplied merge-generation fence.write; task updates additionally compare the observed task snapshot or exact retry marker.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "recover-confirmed-merge-push.test.ts: aborted generation and successful/failed delivery",
+      "executionProof": "recover-confirmed-merge-push.test.ts proves aborted generation suppresses all store writes; successor retry marker is preserved.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/recover-confirmed-merge-push.ts::recoverConfirmedMergePush::store.updateTaskAtomic::#2",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(live) => ownsAttempt(live) ? { mergeDetails: { ...live.mergeDetails, pushRecovery: { target, commitSha: sha, nextAttemp)",
+      "file": "packages/engine/src/merge/recover-confirmed-merge-push.ts",
+      "enclosingSymbolPath": "recoverConfirmedMergePush",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 2,
+      "lineHint": 105,
+      "owningEntryPoint": "indeterminate",
+      "reachableDataStates": [
+        "Confirmed single-repository landing awaiting remote delivery; independent of evidence approval."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "Each recovery write is inside supplied merge-generation fence.write; task updates additionally compare the observed task snapshot or exact retry marker.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "recover-confirmed-merge-push.test.ts: aborted generation and successful/failed delivery",
+      "executionProof": "recover-confirmed-merge-push.test.ts proves aborted generation suppresses all store writes; successor retry marker is preserved.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/recover-confirmed-merge-push.ts::recoverConfirmedMergePush::store.updateTaskAtomic::#3",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(live) => (claimed ? ownsAttempt(live) : live.updatedAt === task.updatedAt && eligible(live, settings)) ? { mergeDetails)",
+      "file": "packages/engine/src/merge/recover-confirmed-merge-push.ts",
+      "enclosingSymbolPath": "recoverConfirmedMergePush",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 3,
+      "lineHint": 112,
+      "owningEntryPoint": "indeterminate",
+      "reachableDataStates": [
+        "Confirmed single-repository landing awaiting remote delivery; independent of evidence approval."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "Each recovery write is inside supplied merge-generation fence.write; task updates additionally compare the observed task snapshot or exact retry marker.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "recover-confirmed-merge-push.test.ts: aborted generation and successful/failed delivery",
+      "executionProof": "recover-confirmed-merge-push.test.ts proves aborted generation suppresses all store writes; successor retry marker is preserved.",
+      "followUpTaskId": "none:no-follow-up-required"
     },
     {
       "callSiteId": "packages/engine/src/merge/stale-content-review-reroute.ts::rerouteSingularStaleContentToReview>result::store.seedWorkspaceCodeReviewContinuationIfIdle::#1",
@@ -10560,7 +10722,7 @@
       "enclosingSymbolPath": "recoverApprovedStrandedAiMergeCommit>finalized",
       "writer": "finalizeProvenAutoMergeTask",
       "ordinal": 1,
-      "lineHint": 13905,
+      "lineHint": 13996,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -10580,7 +10742,7 @@
       "enclosingSymbolPath": "recoverMergedReviewTasks>finalization",
       "writer": "finalizeProvenAutoMergeTask",
       "ordinal": 1,
-      "lineHint": 12776,
+      "lineHint": 12865,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"

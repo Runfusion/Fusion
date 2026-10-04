@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { ProjectEngine } from "../project-engine.js";
 import { executingTaskLock } from "../agents/active-session-registry.js";
+import * as pushRecovery from "../merge/recover-confirmed-merge-push.js";
 
 /*
 FNXC:PostMergeEvidenceHold 2026-10-03-23:32:
@@ -41,6 +42,18 @@ function fixture(status = "failed", verdict: string | undefined = "REVISE") {
 }
 
 describe("landed task post-merge holds", () => {
+  it("checks remote delivery before failed evidence blocks merge admission", async () => {
+    const recovery = vi.spyOn(pushRecovery, "recoverConfirmedMergePush").mockResolvedValue(undefined);
+    try {
+      const { task, store, poll } = fixture();
+      expect(await poll()).toBe(false);
+      expect(recovery).toHaveBeenCalledWith(store, task, {});
+      expect(task.workflowStepResults![0].verdict).toBe("REVISE");
+    } finally {
+      recovery.mockRestore();
+    }
+  });
+
   it("schedules a due evidence recheck once while keeping the merge queue blocked", async () => {
     const { task, store, poll } = fixture();
     task.status = undefined;

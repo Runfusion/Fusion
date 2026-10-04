@@ -151,6 +151,78 @@ function realMergeAgent(branch: string) {
 const approveReviewer = () => vi.fn(async () => "REVIEW_VERDICT: approve");
 
 describe("runAiMerge push-after-merge", () => {
+  it.each(["new-landing", "already-landed", "no-op", "missing-branch"].flatMap((surface) => [false, true].map((graphOwnedPostMergeTraversal) => ({ surface, graphOwnedPostMergeTraversal }))))("publishes $surface while required evidence blocks completion (graph=$graphOwnedPostMergeTraversal)", async ({ surface, graphOwnedPostMergeTraversal }) => {
+    const { dir, originDir } = initRepoWithRemote();
+    const { store, storeMocks, task } = makeStore();
+    const branchTip = git(dir, "rev-parse fusion/fn-1");
+    if (surface !== "new-landing") git(dir, "merge -q fusion/fn-1");
+    if (surface === "already-landed" || surface === "missing-branch") {
+      task.mergeDetails = { mergeConfirmed: true, commitSha: git(dir, "rev-parse main"), landedBranchTipSha: branchTip, mergeTargetBranch: "main" };
+    }
+    if (surface === "missing-branch") git(dir, "branch -D fusion/fn-1");
+    task.enabledWorkflowSteps = ["post-merge-verification"];
+    task.workflowStepResults = [];
+    const selection = { workflowId: "builtin:coding", stepIds: ["post-merge-verification"] };
+    Object.assign(storeMocks, {
+      getTaskWorkflowSelection: vi.fn(() => selection),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
+    });
+    const mergeAgent = realMergeAgent("fusion/fn-1");
+    const merge = runAiMerge(store, dir, "FN-1", { manual: true, graphOwnedPostMergeTraversal }, { mergeAgent, reviewAgent: approveReviewer() });
+    if (graphOwnedPostMergeTraversal) await expect(merge).resolves.toMatchObject({ pushedToRemote: true });
+    else await expect(merge).rejects.toThrow("has not reported");
+    expect(git(originDir, "rev-parse main")).toBe(git(dir, "rev-parse main"));
+    expect(task.column).toBe("in-review");
+    expect(storeMocks.recordRunAuditEvent.mock.calls.filter(([event]) => event.mutationType === "push:origin")).toHaveLength(1);
+    expect(storeMocks.moveTask).not.toHaveBeenCalled();
+    expect(storeMocks.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
+    if (surface !== "new-landing") expect(mergeAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "failed"].flatMap((status) => ["none", "paused", "push-disabled", "push-target", "auto-merge-off", "project-auto-merge-off"].map((hold) => ({ status, hold }))))("handles $status evidence without completing it (hold=$hold)", async ({ status, hold }) => {
+    const { dir, originDir } = initRepoWithRemote();
+    const changedSettings: Record<string, unknown> = {};
+    const { store, storeMocks, task } = makeStore(changedSettings);
+    const remoteBefore = git(originDir, "rev-parse main");
+    const branchTip = git(dir, "rev-parse fusion/fn-1");
+    git(dir, "merge -q fusion/fn-1");
+    if (hold !== "none") storeMocks.logEntry.mockImplementation(async (_id, message) => {
+      if (!message.startsWith("Auto-merge finalization deferred")) return;
+      if (hold === "paused") task.paused = true;
+      if (hold === "push-disabled") changedSettings.pushAfterMerge = false;
+      if (hold === "push-target") changedSettings.pushRemote = "other-target";
+      if (hold === "auto-merge-off") task.autoMerge = false;
+      if (hold === "project-auto-merge-off") changedSettings.autoMerge = false;
+    });
+    task.mergeDetails = { mergeConfirmed: true, commitSha: git(dir, "rev-parse main"), landedBranchTipSha: branchTip, mergeTargetBranch: "main" };
+    task.enabledWorkflowSteps = ["post-merge-verification"];
+    task.workflowStepResults = [{ workflowStepId: "post-merge-verification", phase: "post-merge", status, ...(status === "failed" ? { verdict: "REVISE" } : {}) }];
+    const selection = { workflowId: "builtin:coding", stepIds: ["post-merge-verification"] };
+    Object.assign(storeMocks, { getTaskWorkflowSelection: () => selection, getTaskWorkflowSelectionAsync: async () => selection });
+    await expect(runAiMerge(store, dir, "FN-1", { manual: hold !== "auto-merge-off" && hold !== "project-auto-merge-off" }, { mergeAgent: realMergeAgent("fusion/fn-1"), reviewAgent: approveReviewer() }))
+      .rejects.toThrow("not approved");
+    expect(git(originDir, "rev-parse main")).toBe(hold !== "none" ? remoteBefore : git(dir, "rev-parse main"));
+    expect(task.column).toBe("in-review");
+    expect(storeMocks.moveTask).not.toHaveBeenCalled();
+    expect(storeMocks.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
+  });
+
+  it.each(["unexecuted", "missing-sha", "unreachable-sha"])("does not publish unrelated local commits for a %s missing-branch task", async (proof) => {
+    const { dir, originDir } = initRepoWithRemote();
+    const remoteBefore = git(originDir, "rev-parse main");
+    git(dir, "merge -q fusion/fn-1");
+    git(dir, "branch -D fusion/fn-1");
+    const { store, task } = makeStore();
+    if (proof !== "unexecuted") task.mergeDetails = { mergeConfirmed: true, ...(proof === "unreachable-sha" ? { commitSha: "f".repeat(40) } : {}) };
+    await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"), reviewAgent: approveReviewer(),
+    }).catch((error: unknown) => {
+      if (proof !== "unreachable-sha") throw error;
+    });
+    expect(git(originDir, "rev-parse main")).toBe(remoteBefore);
+    expect(git(dir, "rev-parse main")).not.toBe(remoteBefore);
+  });
+
   it("pushes the landed integration branch to origin (fast path, remote behind)", async () => {
     const { dir, originDir } = initRepoWithRemote();
     const { store, storeMocks } = makeStore();

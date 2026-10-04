@@ -51,6 +51,14 @@ export type TaskPlanningFailureState = {
 };
 
 export interface MergeDetails {
+  /** Restart-safe delivery retry state; does not grant post-merge verification approval. */
+  pushRecovery?: {
+    target: string;
+    commitSha: string;
+    nextAttemptAt: string;
+    pushedAt?: string;
+    error?: string;
+  };
   /**
    * FNXC:WorkflowMergeRecovery 2026-09-21-10:40:
    * Missing merge proof is repairable only while durable execution evidence changes.
@@ -1795,4 +1803,3 @@ export interface TaskCreateInput {
    */
   sessionAdvisorEnabled?: boolean;
 }
-

@@ -3,6 +3,7 @@ import { resolveWorkflowIrForTask, type Task, type TaskStore } from "@fusion/cor
 import { executingTaskLock } from "../agents/active-session-registry.js";
 
 import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
+import { createMergeWriteFence } from "../merge/merge-write-fence.js";
 import { resumeMissingPostMergeGate } from "../merge/post-merge-gate-reseed.js";
 
 /*
@@ -193,6 +194,47 @@ describe("missing post-merge continuation recovery", () => {
     });
     return { task, store, items };
   }
+
+  it("does not seed after the owning merge aborts during the idle-work read", async () => {
+    const { task, store } = recoveryFixture();
+    const controller = new AbortController();
+    store.listWorkflowWorkItemsForTask = vi.fn(async () => { controller.abort(); return []; });
+    await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "direct-ai-merge", fence: createMergeWriteFence({ taskId: task.id, signal: controller.signal }) });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+  });
+
+  it.each(["during-diagnostic-read", "after-diagnostic-write", "after-seed"])("fences post-merge recovery mutations when aborted %s", async (point) => {
+    const { task, store } = recoveryFixture();
+    const controller = new AbortController();
+    const fence = createMergeWriteFence({ taskId: task.id, signal: controller.signal });
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date(Date.now() - 61 * 60_000).toISOString() };
+    task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    const before = structuredClone(task);
+    if (point === "during-diagnostic-read") {
+      store.listWorkflowWorkItemsForTask = vi.fn(async () => { controller.abort(); return []; });
+    } else if (point === "after-diagnostic-write") {
+      const update = store.updateTaskAtomic;
+      store.updateTaskAtomic = vi.fn(async (...args) => { const result = await update(...args); controller.abort(); return result; }) as typeof update;
+    } else {
+      task.status = "failed";
+      task.error = "Post-merge verification needs remediation: waiting for CI";
+      const seed = store.seedWorkspaceCodeReviewContinuationIfIdle;
+      store.seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async (...args) => { const result = await seed(...args); controller.abort(); return result; });
+    }
+    const recovery = resumeMissingPostMergeGate(store, task.id, { fence });
+    if (point === "during-diagnostic-read") {
+      await expect(recovery).rejects.toMatchObject({ name: "MergeAbortedError" });
+      expect(task).toEqual(before);
+    } else {
+      await recovery;
+      expect(task.status).toBe("failed");
+      expect(task.error).toContain("Post-merge verification needs remediation");
+    }
+    expect(store.logEntry).not.toHaveBeenCalled();
+    if (point === "after-seed") expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+  });
 
   it("rechecks an old rejection once without replacing its evidence or rerunning merge", async () => {
     const { task, store, items } = recoveryFixture();

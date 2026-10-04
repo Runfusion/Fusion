@@ -86,6 +86,8 @@ function createStore(task: Task, settings: Partial<Settings> = {}) {
   const store = {
     getSettings: vi.fn(async () => ({ autoMerge: false, ...settings })),
     getTask: vi.fn(async () => task),
+    getStaleReviewCallbackWaiverReceipts: vi.fn(async () => []),
+    getProjectId: vi.fn(() => "workspace-push-test"),
     updateTask: vi.fn(async (_taskId: string, patch: Partial<Task>) => Object.assign(task, patch)),
     updateTaskAtomic: vi.fn(async (_taskId: string, updater: (current: Task) => Partial<Task> | undefined | Promise<Partial<Task> | undefined>) => {
       const patch = await updater(task);
@@ -254,6 +256,27 @@ describeIfGit("landWorkspaceTask push-after-merge", () => {
     }
     expect(logs.some((message) => /fence publication|stale info/i.test(message))).toBe(false);
     expect(mocks.logEntry.mock.calls.filter(([, message]) => message.includes('"Push to remote after merge" is disabled'))).toHaveLength(1);
+  });
+
+  it("publishes workspace branches before a required post-merge gate defers completion", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addBareOrigins(fixture);
+    const task = makeTask(addTaskBranches(fixture));
+    task.enabledWorkflowSteps = ["post-merge-verification"];
+    task.workflowStepResults = [];
+    const { store, mocks } = createStore(task, { pushAfterMerge: true });
+    const selection = { workflowId: "builtin:coding", stepIds: ["post-merge-verification"] };
+    Object.assign(mocks, { getTaskWorkflowSelection: () => selection, getTaskWorkflowSelectionAsync: async () => selection });
+    enableRemotePublication(mocks);
+    await expect(landWorkspaceTask(store, task, fixture.rootDir, {}, {
+      mergeAgent: squashMergeAgent(BRANCH), reviewAgent: async () => "REVIEW_VERDICT: approve",
+    })).rejects.toThrow("has not reported");
+    for (const repository of fixture.repos) {
+      expect(remoteMain(fixture, repository)).toBe(fixture.git(repository, "git rev-parse refs/heads/main"));
+    }
+    expect(task.column).toBe("in-review");
+    expect(mocks.moveTask).not.toHaveBeenCalled();
+    expect(mocks.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
   });
 
   it("publishes every synchronized workspace integration branch with fence refs", async () => {
