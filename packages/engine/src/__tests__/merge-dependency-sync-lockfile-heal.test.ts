@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 
 import {
   buildNonFrozenRetryCommand,
+  DependencyBootstrapConfigurationError,
   computeLockfileHash,
   installWorktreeDependencies,
   isOutdatedLockfileError,
@@ -103,6 +104,73 @@ describe("isOutdatedLockfileError", () => {
 });
 
 describe("installWorktreeDependencies lockfile auto-heal", () => {
+  it("refuses an incompatible inferred uv bootstrap before starting a command", async () => {
+    const dir = tmp("fusion-uv-incompatible-");
+    writeFileSync(join(dir, "uv.lock"), "version = 1\n");
+    writeFileSync(join(dir, "pyproject.toml"), '[project]\nrequires-python = ">=3.99"\n[tool.uv]\npython-downloads = "never"\n');
+    const bin = tmp("fusion-uv-incompatible-bin-");
+    writeFileSync(join(bin, "python3.11"), "");
+    const previousPath = process.env.PATH;
+    process.env.PATH = bin;
+    try {
+      await expect(installWorktreeDependencies({ cwd: dir, taskId: "FN-9438" })).rejects.toSatisfy((error: unknown) => {
+        expect(error).toBeInstanceOf(DependencyBootstrapConfigurationError);
+        expect(String(error)).toContain(">=3.99");
+        expect(String(error)).toContain("3.11");
+        expect(String(error)).toContain("uv sync --frozen");
+        expect(String(error)).toContain("worktreeInitCommand");
+        return true;
+      });
+    } finally {
+      restoreEnv("PATH", previousPath);
+    }
+  });
+
+  it("refuses incompatible uv metadata before a Node lockfile can start an inferred install", async () => {
+    const dir = tmp("fusion-mixed-lockfile-uv-incompatible-");
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfile: {}\n");
+    writeFileSync(join(dir, "uv.lock"), "version = 1\n");
+    writeFileSync(join(dir, "pyproject.toml"), '[project]\nrequires-python = ">=3.99"\n[tool.uv]\npython-downloads = "never"\n');
+    const bin = tmp("fusion-mixed-lockfile-bin-");
+    const logPath = join(tmp("fusion-mixed-lockfile-log-"), "install.log");
+    writeFileSync(join(bin, "python3.11"), "");
+    writeFileSync(join(bin, "pnpm"), `#!/bin/sh\nprintf 'started\\n' >> ${JSON.stringify(logPath)}\n`);
+    chmodSync(join(bin, "pnpm"), 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = bin;
+    try {
+      await expect(installWorktreeDependencies({ cwd: dir, taskId: "FN-9438" })).rejects.toSatisfy((error: unknown) => {
+        expect(error).toBeInstanceOf(DependencyBootstrapConfigurationError);
+        expect(String(error)).toContain(">=3.99");
+        expect(String(error)).toContain("3.11");
+        expect(String(error)).toContain("worktreeInitCommand");
+        return true;
+      });
+      expect(() => readFileSync(logPath, "utf8")).toThrow();
+    } finally {
+      restoreEnv("PATH", previousPath);
+    }
+  });
+
+  it("runs a configured bootstrap instead of refusing incompatible uv metadata", async () => {
+    const dir = tmp("fusion-uv-configured-");
+    writeFileSync(join(dir, "uv.lock"), "version = 1\n");
+    writeFileSync(join(dir, "pyproject.toml"), '[project]\nrequires-python = ">=3.99"\n[tool.uv]\npython-downloads = "never"\n');
+    const logPath = join(tmp("fusion-uv-configured-log-"), "install.log");
+    const previousPath = installFakePnpm(logPath);
+    try {
+      const result = await installWorktreeDependencies({
+        cwd: dir,
+        taskId: "FN-9438",
+        settings: { worktreeInitCommand: "pnpm install" } as any,
+      });
+      expect(result.configured).toBe(true);
+      expect(readLog(logPath)).toEqual([["install"]]);
+    } finally {
+      restoreEnv("PATH", previousPath);
+    }
+  });
+
   it("retries non-frozen and heals when an inferred frozen install hits an outdated lockfile", async () => {
     const dir = tmp("fusion-heal-repo-");
     writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfile: {}\n");

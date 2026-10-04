@@ -17,6 +17,7 @@ import {
   isProviderModelNotFoundError,
   isUnsupportedMessageRoleError,
   isNonContinuableSessionError,
+  isDependencyBootstrapConfigurationBlock,
   isNonPlanDefectPlanReviewFailure,
   TRANSIENT_ERROR_PATTERNS,
 } from "../errors/transient-error-detector.js";
@@ -221,6 +222,11 @@ describe("Transient Error Detector", () => {
       "request was aborted",
     ])("keeps provider failure in place: %s", (errorMessage) => {
       expect(isNonPlanDefectPlanReviewFailure({ errorMessage })).toBe(true);
+    });
+
+    it("keeps deterministic bootstrap configuration evidence in place", () => {
+      expect(isDependencyBootstrapConfigurationBlock({ failureValue: "dependency-bootstrap-configuration-required" })).toBe(true);
+      expect(isNonPlanDefectPlanReviewFailure({ failureValue: "dependency-bootstrap-configuration-required" })).toBe(true);
     });
 
     it("keeps raw abort and exception failure values in place", () => {

@@ -106,6 +106,40 @@ describe("worktree dependency installation", () => {
     expect(runner.mock.calls.map(([command]) => command)).toEqual(["npm install", "pip install -r requirements.txt"]);
   });
 
+  it("preflights a mixed Node and incompatible uv project before any inferred bootstrap runs", async () => {
+    const root = fixture({
+      "pnpm-lock.yaml": "lock",
+      "package.json": "{}",
+      "uv.lock": "lock",
+      "pyproject.toml": '[project]\nrequires-python = ">=3.99"\n[tool.uv]\npython-downloads = "never"',
+    });
+    const runner = vi.fn().mockResolvedValue(success());
+    const readiness = await ensureWorktreeDependencies(options(root, availableEnv("pnpm", "uv", "python3.11"), runner));
+
+    expect(runner).not.toHaveBeenCalled();
+    expect(readiness.readiness).toBe("unresolved");
+    expect(readiness.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ecosystem: "python-uv", outcome: "environment-incompatible", reason: expect.stringContaining(">=3.99") }),
+    ]));
+  });
+
+  it("keeps distinct Node and uv commands for a compatible mixed project", async () => {
+    const root = fixture({
+      "pnpm-lock.yaml": "lock",
+      "package.json": "{}",
+      "uv.lock": "lock",
+      "pyproject.toml": '[project]\nrequires-python = ">=3.11"\n[tool.uv]\npython-downloads = "never"',
+    });
+    const runner = vi.fn().mockResolvedValue(success());
+    const readiness = await ensureWorktreeDependencies(options(root, availableEnv("pnpm", "uv", "python3.11"), runner));
+
+    expect(readiness.readiness).toBe("satisfied");
+    expect(runner.mock.calls.map(([command]) => command)).toEqual([
+      "pnpm install --frozen-lockfile",
+      "uv sync --frozen",
+    ]);
+  });
+
   it("records a missing binary as unresolved without spawning", async () => {
     const root = fixture({ "go.mod": "module example" });
     const runner = vi.fn();

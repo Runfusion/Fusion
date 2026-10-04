@@ -30,6 +30,7 @@ import {
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
   WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
 } from "../workflows/workflow-graph-executor.js";
+import { DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE } from "../errors/transient-error-detector.js";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { isRequiredArtifactReadFailedValue } from "../execution/required-workflow-artifacts.js";
 import { getPromptPath } from "../execution/spec-staleness.js";
@@ -484,6 +485,18 @@ export async function handleGraphFailure(
             deps.getRunContextFor(task.id),
           );
         }
+        await deps.persistTokenUsage(task.id);
+        return;
+      }
+      if (graphFailureValue(result) === DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE) {
+        /*
+         * FNXC:DependencyBootstrap 2026-10-01-03:05:
+         * FN-9438 requires a declared runtime or dependency-group mismatch to remain an operator
+         * configuration hold. Scheduling it like a provider outage only retries an impossible command.
+         */
+        const message = "Dependency bootstrap requires project configuration — task remains held until worktreeInitCommand or project runtime configuration is updated";
+        executorLog.warn(`${task.id}: ${message}`);
+        await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
         await deps.persistTokenUsage(task.id);
         return;
       }

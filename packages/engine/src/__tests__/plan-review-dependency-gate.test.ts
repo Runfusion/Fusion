@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RunCommandResult, Settings, Task, TaskDetail, TaskStore, WorkflowIr, WorkflowStepResult } from "@fusion/core";
-import { runPlanReviewDependencyGate, runGraphCustomNode } from "../executor/run-graph-custom-node.js";
+import { DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE, runPlanReviewDependencyGate, runGraphCustomNode } from "../executor/run-graph-custom-node.js";
 import { requestPreMergeOptionalStepFix } from "../executor/request-pre-merge-optional-step-fix.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 
@@ -144,6 +144,29 @@ describe("Plan Review dependency gate", () => {
 
     expect(result).toBeNull();
     expect(command).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds deterministic uv metadata without executing or returning a replan verdict", async () => {
+    const root = worktree({
+      "uv.lock": "version = 1\n",
+      "pyproject.toml": '[project]\nrequires-python = ">=3.99"\n[tool.uv]\npython-downloads = "never"\n',
+    });
+    const bin = worktree({ "python3.11": "" });
+    const originalPath = process.env.PATH;
+    process.env.PATH = bin;
+    try {
+      const command = runner();
+      const result = await runPlanReviewDependencyGate(input({ worktreePath: root, runConfiguredCommand: command }));
+      expect(result).toMatchObject({ outcome: "failure", value: DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE });
+      expect(result?.contextPatch?.output).toContain(">=3.99");
+      expect(result?.contextPatch?.output).toContain("3.11");
+      expect(result?.contextPatch?.output).toContain("uv sync --frozen");
+      expect(result?.contextPatch?.output).toContain("worktreeInitCommand");
+      expect(command).not.toHaveBeenCalled();
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
   });
 
   it("returns REVISE when a matrix command remains unresolved", async () => {

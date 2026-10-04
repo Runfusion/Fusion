@@ -1218,6 +1218,24 @@ describe("acquireTaskWorktree", () => {
     }));
   });
 
+  it("treats a whitespace-only init command as unset before selecting inferred bootstrap", async () => {
+    const { rootDir, worktreePath, taskEnv } = dependencyFixture();
+    const runConfiguredCommand = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    await acquireTaskWorktree({
+      task,
+      rootDir,
+      store,
+      settings: { worktreeInitCommand: "   " } as any,
+      createWorktree: vi.fn().mockResolvedValue({ path: worktreePath, branch: "fusion/fn-1" }),
+      runInitCommand: true,
+      runConfiguredCommand,
+      taskEnv,
+    });
+
+    expect(runConfiguredCommand).toHaveBeenCalledWith("pnpm install --frozen-lockfile", worktreePath, 300_000, taskEnv);
+  });
+
   it("keeps an inferred readiness failure non-fatal for the first test run", async () => {
     const ensureDependencyReadiness = vi.fn().mockRejectedValue(new Error("pnpm unavailable"));
 

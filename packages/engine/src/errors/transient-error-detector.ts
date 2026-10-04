@@ -36,6 +36,13 @@ export { TRANSIENT_ERROR_PATTERNS, SESSION_CONTENTION_PATTERNS, isSessionContent
  * planning unless a reviewer actually returned REVISE.
  */
 const MODEL_FALLBACK_EXHAUSTED_PATTERN = /unable to select a usable model after\s+\d+\s+attempt/i;
+export const DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE = "dependency-bootstrap-configuration-required";
+
+/** Deterministic bootstrap metadata needs operator configuration, never a Plan Review replan. */
+export function isDependencyBootstrapConfigurationBlock(input: { failureValue?: string; errorMessage?: string }): boolean {
+  return input.failureValue?.trim().toLowerCase() === DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE
+    || /Dependency bootstrap requires project configuration\./i.test(input.errorMessage ?? "");
+}
 
 /**
  * Identifies failed Plan Review calls that must stay in place rather than trigger
@@ -47,6 +54,7 @@ export function isNonPlanDefectPlanReviewFailure(input: {
   errorMessage?: string;
   failureValue?: string;
 }): boolean {
+  if (isDependencyBootstrapConfigurationBlock(input)) return true;
   if (input.verdict === "REVISE") return false;
 
   /*

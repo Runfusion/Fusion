@@ -58,6 +58,7 @@ import {
   type DependencyCommandRunner,
   type DependencyCommandResult,
 } from "./worktree-dependency-install.js";
+import { getConfiguredWorktreeInitCommand } from "./dependency-bootstrap-inference.js";
 
 const execAsync = promisify(exec);
 const PRESERVED_ORPHAN_RETENTION_COUNT = 10;
@@ -816,14 +817,15 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     await copyConfiguredFilesForPreparedWorktree(source);
 
     let configuredInitResult: InitCommandResult | undefined;
-    if (runInitCommand && settings.worktreeInitCommand && runConfiguredCommand) {
+    const configuredWorktreeInitCommand = getConfiguredWorktreeInitCommand(settings);
+    if (runInitCommand && configuredWorktreeInitCommand && runConfiguredCommand) {
       const initStartedAt = Date.now();
       try {
-        configuredInitResult = await runConfiguredCommand(settings.worktreeInitCommand, worktreePath, 300_000, taskEnv);
+        configuredInitResult = await runConfiguredCommand(configuredWorktreeInitCommand, worktreePath, 300_000, taskEnv);
         if (configuredInitResult.spawnError || configuredInitResult.timedOut || configuredInitResult.exitCode !== 0) {
           throw new Error(configuredCommandErrorMessage(configuredInitResult));
         }
-        await store.logEntry(task.id, `[timing] Worktree init command completed in ${Date.now() - initStartedAt}ms`, settings.worktreeInitCommand, runContext);
+        await store.logEntry(task.id, `[timing] Worktree init command completed in ${Date.now() - initStartedAt}ms`, configuredWorktreeInitCommand, runContext);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           throw err;

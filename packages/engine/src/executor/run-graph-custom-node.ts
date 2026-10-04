@@ -178,6 +178,12 @@ interface DependencyGateTarget {
   worktreePath: string;
 }
 
+export const DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE = "dependency-bootstrap-configuration-required";
+
+function hasDeterministicDependencyConfigurationBlock(readiness: WorktreeDependencyReadiness): boolean {
+  return readiness.unresolvedRepos.some((row) => row.refusal === "configuration-required" || row.refusal === "environment-incompatible");
+}
+
 function dependencyGateDetails(target: DependencyGateTarget, readiness: WorktreeDependencyReadiness): string {
   if (readiness.readiness === "unrecognized") {
     return `${target.repository}: unrecognized dependency evidence (${readiness.evidence.join(", ")}); resolve it with fn_install_worktree_dependencies.`;
@@ -253,20 +259,26 @@ export async function runPlanReviewDependencyGate(
   }
   if (blocking.length === 0) return null;
 
-  const lines = ["Dependencies are not installed.", ...blocking.map(({ target, readiness }) => `- ${dependencyGateDetails(target, readiness)}`)];
+  const configurationBlocked = blocking.some(({ readiness }) => hasDeterministicDependencyConfigurationBlock(readiness));
+  const lines = [
+    configurationBlocked ? "Dependency bootstrap requires project configuration." : "Dependencies are not installed.",
+    ...blocking.map(({ target, readiness }) => `- ${dependencyGateDetails(target, readiness)}`),
+  ];
   const output = lines.join("\n");
   const findings = blocking.map(({ target, readiness }) => ({
     severity: "high",
-    title: "Dependencies are not installed",
+    title: configurationBlocked ? "Dependency bootstrap requires project configuration" : "Dependencies are not installed",
     body: dependencyGateDetails(target, readiness),
   }));
   await input.store.logEntry(input.task.id, "Plan Review blocked by worktree dependency readiness", output, input.getRunContextFor(input.task.id));
   return {
     outcome: "failure",
-    value: "REVISE",
+    value: configurationBlocked ? DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE : "REVISE",
     contextPatch: {
       output,
-      notes: "Plan Review cannot approve until dependency-bearing worktrees have durable readiness.",
+      notes: configurationBlocked
+        ? "Plan Review is held for an operator-provided bootstrap configuration; Fusion will not consume the revision budget retrying deterministic metadata evidence."
+        : "Plan Review cannot approve until dependency-bearing worktrees have durable readiness.",
       findings,
     },
   };

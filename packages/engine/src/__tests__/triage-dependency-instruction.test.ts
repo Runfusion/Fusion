@@ -49,6 +49,7 @@ describe("planning dependency installation instruction", () => {
     expect(instruction).toContain("worktreeInitCommand");
     expect(instruction).toContain("explicitly naming extras or groups");
     expect(instruction).toContain("uv sync --frozen");
+    expect(instruction).toContain("will not consume the replan budget");
   });
 
   it("keeps the common satisfied and dependency-free cases out of the planner prompt", () => {

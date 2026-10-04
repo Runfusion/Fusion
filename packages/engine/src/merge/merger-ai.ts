@@ -120,7 +120,7 @@ import {
 } from "../merger.js";
 import { resolveBranchGroupMergeRouting, type BranchGroupMergeRouting, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { DEFAULT_COMMIT_AUTHOR_EMAIL, DEFAULT_COMMIT_AUTHOR_NAME } from "../worktree/worktree-hooks.js";
-import { describeDependencySyncDecision, installWorktreeDependencies, LOCKFILE_CANDIDATES} from "./merge-dependency-sync.js";
+import { DependencyBootstrapConfigurationError, describeDependencySyncDecision, installWorktreeDependencies, LOCKFILE_CANDIDATES} from "./merge-dependency-sync.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { MergeGateRevokedError } from "./merger-errors.js";
 import { cleanupLandedTaskWorktree, cleanupLandedWorkspaceTaskWorktrees } from "./post-landing-worktree-cleanup.js";
@@ -1225,7 +1225,8 @@ export async function landOneRepo(
         propagates. Non-workspace land keeps the original throw.
         */
         throwIfAborted(signal, taskId);
-        if (!ctx.nonFatalDependencySync) throw depsErr;
+        // Deterministic metadata evidence is an operator configuration decision, never a workspace-degrade case.
+        if (depsErr instanceof DependencyBootstrapConfigurationError || !ctx.nonFatalDependencySync) throw depsErr;
         const depsErrMessage = getErrorMessage(depsErr);
         dependencySyncDecision = `failed-nonfatal; deps-unavailable; reason=${depsErrMessage}`;
         await log(`AI merge (workspace): dependency sync FAILED for this sub-repo's clean room — landing without dep-dependent verification (deps unavailable): ${depsErrMessage}`);

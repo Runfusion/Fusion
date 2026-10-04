@@ -4,11 +4,10 @@ import { delimiter, join } from "node:path";
 import type { RunMutationContext, Settings, TaskStore } from "@fusion/core";
 import {
   buildNonFrozenRetryCommand,
-  getConfiguredWorktreeInitCommand,
-  getDependencySyncCommand,
   isOutdatedLockfileError,
 } from "../merge/merge-dependency-sync.js";
-import { analyzeUvDependencySelection, uvCommandSelectsOptionalDependencies } from "./python-uv-inference.js";
+import { formatDependencyBootstrapDiagnostic, getConfiguredWorktreeInitCommand, getInferredNodeDependencyCommand, resolveUvDependencyBootstrapDecision } from "./dependency-bootstrap-inference.js";
+import { uvCommandSelectsOptionalDependencies } from "./python-uv-inference.js";
 import { resolveWorktreePrivateGitDir } from "./worktree-paths.js";
 
 export const DEPENDENCY_INSTALL_RECORD_FILENAME = "fusion-dependency-install.json";
@@ -244,7 +243,7 @@ function scanWorktreeDependencies(
     "package.json",
   ]);
   if (nodeManifests.length > 0) {
-    const command = getDependencySyncCommand(rootDir, settings) ?? "npm install";
+    const command = getInferredNodeDependencyCommand(rootDir) ?? "npm install";
     plan.push({ ecosystem: "node", manifests: nodeManifests, command, binary: commandBinary(command) });
   }
 
@@ -253,11 +252,14 @@ function scanWorktreeDependencies(
   };
   const uvManifests = manifestsPresent(rootDir, entries, ["uv.lock"]);
   if (uvManifests.length > 0) {
-    const decision = analyzeUvDependencySelection(rootDir, env);
+    const decision = resolveUvDependencyBootstrapDecision(rootDir, settings, env);
+    const refusal = decision.kind === "configuration-required" || decision.kind === "environment-incompatible"
+      ? decision.kind
+      : undefined;
     const manifests = [...uvManifests, ...manifestsPresent(rootDir, entries, ["pyproject.toml", ".python-version"])];
     plan.push({
-      ecosystem: "python-uv", manifests, command: decision.command, binary: "uv", rationale: decision.rationale,
-      ...(decision.kind === "run" ? {} : { refusal: decision.kind, refusedCommand: decision.refusedCommand }),
+      ecosystem: "python-uv", manifests, command: decision.command ?? "uv sync --frozen", binary: "uv", rationale: formatDependencyBootstrapDiagnostic(decision),
+      ...(refusal ? { refusal, refusedCommand: decision.refusedCommand } : {}),
     });
   }
   add("python-poetry", manifestsPresent(rootDir, entries, ["poetry.lock"]), "poetry install --no-interaction", "poetry");
@@ -572,6 +574,23 @@ export async function ensureWorktreeDependencies(
   const record = makeRecord(readDependencyInstallRecord(options.worktreePath), scan.evidence);
   const now = options.now ?? Date.now;
   const startedAt = now();
+
+  /*
+  FNXC:DependencyBootstrap 2026-10-04-22:40:
+  A deterministic inferred-bootstrap refusal belongs to the complete worktree matrix, not one row's
+  turn in execution order. Preflight every row before spawning so an incompatible uv project cannot
+  partially install its Node dependencies; compatible mixed projects still retain distinct commands.
+  */
+  const deterministicRefusals = scan.plan.filter((plan) => plan.refusal);
+  if (deterministicRefusals.length > 0) {
+    for (const plan of deterministicRefusals) {
+      upsertEntry(record, entryForPlan(options.worktreePath, plan, plan.refusal!, { reason: plan.rationale }));
+      await logDependencyEvent(options, `Worktree dependency install [${plan.ecosystem}] ${plan.refusal}`, plan.rationale);
+    }
+    const readiness = resolveReadiness(options.worktreePath, scan.plan, scan.evidence, record);
+    writeDependencyInstallRecord(options.worktreePath, record);
+    return readiness;
+  }
 
   for (let index = 0; index < scan.plan.length; index += 1) {
     const plan = scan.plan[index]!;

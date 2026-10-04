@@ -5,6 +5,7 @@ import {
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
   WORKSPACE_PREPARATION_FAILURE_HOLD_VALUE,
 } from "../../workflows/workflow-graph-executor.js";
+import { DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE } from "../../errors/transient-error-detector.js";
 // graphFailureValue was peeled off TaskExecutor into executor/graph-failure-pure.ts (wave 18); use the re-exported free function.
 import { TaskExecutor, graphFailureValue } from "../../executor.js";
 import { activeSessionRegistry } from "../../agents/active-session-registry.js";
@@ -114,6 +115,34 @@ describe("graphFailureValue optional-group materialized ids", () => {
       context: { "node:steps:value": "awaiting-user-input" },
     });
     expect(value).toBe("awaiting-user-input");
+  });
+});
+
+describe("dependency bootstrap configuration graph hold (FN-9438)", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+    mockedExecSync.mockReturnValue("" as any);
+  });
+
+  it("does not dispatch a retry or consume the provider retry budget", async () => {
+    const initial = makeTask();
+    const { store, getLive } = trackingStore(initial);
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const execute = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await (executor as any).handleGraphFailure(initial, planReviewGraphFailure({
+      "node:plan-review:value": DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE,
+      "node:plan-review:error": "Dependency bootstrap requires project configuration.",
+    }));
+
+    expect(getLive().graphResumeRetryCount).toBeUndefined();
+    expect(execute).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      initial.id,
+      expect.stringContaining("requires project configuration"),
+      undefined,
+      undefined,
+    );
   });
 });
 

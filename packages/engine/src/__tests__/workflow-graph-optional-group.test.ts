@@ -8,6 +8,7 @@ import {
   type WorkflowNodeHandler,
 } from "../workflows/workflow-graph-executor.js";
 import { workflowStepVerdictNoNotesNotice } from "../executor/workflow-step-verdict.js";
+import { DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE } from "../errors/transient-error-detector.js";
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
@@ -633,6 +634,29 @@ describe("WorkflowGraphExecutor optional-group", () => {
         output: expect.stringContaining("Unable to select a usable model"),
       }),
     ]));
+  });
+
+  it("preserves deterministic dependency bootstrap configuration evidence instead of converting it to a provider retry", async () => {
+    const requestFix = vi.fn(async () => true);
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => node.id === "plan-review-step"
+          ? {
+              outcome: "failure",
+              value: DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE,
+              contextPatch: { output: "Dependency bootstrap requires project configuration." },
+            }
+          : { outcome: "success" },
+      },
+      requestPreMergeOptionalStepFix: requestFix,
+    });
+
+    const result = await executor.run(taskWith(["plan-review"]), settingsOn(), BUILTIN_CODING_WORKFLOW_IR);
+
+    expect(requestFix).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("failure");
+    expect(result.context["node:plan-review:value"]).toBe(DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE);
+    expect(result.visitedNodeIds).not.toContain("plan-replan");
   });
 
   it("keeps Plan Review task-storage read failures in place without sending the task to planning", async () => {

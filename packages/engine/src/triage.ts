@@ -273,7 +273,10 @@ export function buildPlanningDependencyInstallationInstruction(
       lines.push(`- \`${target.repository}\`: Fusion has no built-in command for ${readiness.evidence.join(", ")}. Determine the package manager and run its install command through \`fn_install_worktree_dependencies\`, or use its \`none\` action with a reason if no install step is genuinely required.`);
     }
   }
-  lines.push("", "Plan Review will return a REVISE beginning `Dependencies are not installed.` until these records are resolved.");
+  const configurationBlocked = blocking.some(({ readiness }) => readiness.unresolvedRepos.some((row) => row.refusal === "configuration-required" || row.refusal === "environment-incompatible"));
+  lines.push("", configurationBlocked
+    ? "Plan Review is held for project configuration and will not consume the replan budget. Configure `worktreeInitCommand` or record an engine-observed explicit resolution."
+    : "Plan Review will return a REVISE beginning `Dependencies are not installed.` until these records are resolved.");
   return lines.join("\n");
 }
 

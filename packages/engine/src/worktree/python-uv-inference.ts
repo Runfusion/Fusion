@@ -208,7 +208,7 @@ export function analyzeUvDependencySelection(rootDir: string, env: NodeJS.Proces
   try { pin = existsSync(pinPath) ? readFileSync(pinPath, "utf8").trim().split(/\s+/, 1)[0] : undefined; } catch { /* no pin */ }
   if (metadata.requiresPython && pin) {
     const pinned = satisfiesRequiresPython(pin, metadata.requiresPython);
-    if (pinned === false) return { kind: "environment-incompatible", command: BARE_UV_COMMAND, refusedCommand: BARE_UV_COMMAND, rationale: `.python-version pins ${pin}, which does not satisfy project.requires-python ${metadata.requiresPython}; Fusion declined inferred uv sync --frozen.` };
+    if (pinned === false) return { kind: "environment-incompatible", command: BARE_UV_COMMAND, refusedCommand: BARE_UV_COMMAND, rationale: `.python-version pins ${pin}, which does not satisfy project.requires-python ${metadata.requiresPython}; discovered versioned launchers: ${discovery.versions.join(", ") || "none"}${discovery.hasUnversioned ? " (an unversioned launcher is also present)" : ""}; Fusion declined inferred uv sync --frozen.` };
   }
   let fallback = "";
   const requiresPython = metadata.requiresPython;
