@@ -28,7 +28,7 @@
  * The date the rates in {@link MODEL_PRICING} were last verified, ISO-8601.
  * Bump this whenever you edit a rate. Surfaced in the UI as "prices as of".
  */
-export const pricingAsOf = "2026-07-16";
+export const pricingAsOf = "2026-10-01";
 
 /**
  * Pricing entries older than this (relative to a caller-supplied `now`) are
@@ -48,6 +48,15 @@ export const LITELLM_PRICING_SOURCE_URL =
 export const LITELLM_PRICING_SOURCE_LABEL = "litellm/model_prices_and_context_window.json";
 
 /** A single model's per-1M-token rates plus a citation. */
+export interface ModelPricingTier {
+  /** Select this rate when input, cache-read, and cache-write tokens exceed this count. */
+  inputTokensAbove: number;
+  inputPer1M: number;
+  outputPer1M: number;
+  cacheReadPer1M: number;
+  cacheWritePer1M: number;
+}
+
 export interface ModelPricing {
   /** USD per 1M uncached input tokens. */
   inputPer1M: number;
@@ -57,6 +66,8 @@ export interface ModelPricing {
   cacheReadPer1M: number;
   /** USD per 1M cache-write tokens. */
   cacheWritePer1M: number;
+  /** Higher-volume rates, selected using Pi's total input-token threshold semantics. */
+  tiers?: ModelPricingTier[];
   /** Where the rate came from (provider pricing page / docs). */
   source: string;
 }
@@ -296,12 +307,14 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
    * provider-qualified accounting rows without registering replacement models:
    * identical IDs may carry distinct provider rates, and unknown pairs stay
    * unavailable rather than falling through to a guessed bare-model price.
+   * Preserve Pi's input-volume tiers so estimates remain accurate beyond 272K tokens.
    */
   "openai:gpt-5.6-luna": {
     inputPer1M: 0.2,
     outputPer1M: 1.2,
     cacheReadPer1M: 0.02,
     cacheWritePer1M: 0.25,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 0.4, outputPer1M: 1.8, cacheReadPer1M: 0.04, cacheWritePer1M: 0.5 }],
     source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
   },
   "openai:gpt-5.6-sol": {
@@ -309,6 +322,7 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     outputPer1M: 20,
     cacheReadPer1M: 0.4,
     cacheWritePer1M: 5,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 8, outputPer1M: 30, cacheReadPer1M: 0.8, cacheWritePer1M: 10 }],
     source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
   },
   "openai:gpt-5.6-terra": {
@@ -316,6 +330,7 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     outputPer1M: 12,
     cacheReadPer1M: 0.2,
     cacheWritePer1M: 2.5,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 4, outputPer1M: 18, cacheReadPer1M: 0.4, cacheWritePer1M: 5 }],
     source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
   },
   "openai:gpt-6-astra": {
@@ -323,6 +338,7 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     outputPer1M: 50,
     cacheReadPer1M: 1,
     cacheWritePer1M: 12.5,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 20, outputPer1M: 75, cacheReadPer1M: 2, cacheWritePer1M: 25 }],
     source: "@earendil-works/pi-ai@0.86.1 providers/data/openai.json",
   },
 
@@ -393,31 +409,35 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     source: "openai.com/api/pricing",
   },
   "openai-codex:gpt-5.6-luna": {
-    inputPer1M: 1,
-    outputPer1M: 6,
-    cacheReadPer1M: 0.1,
-    cacheWritePer1M: 0,
-    source: "openai.com/api/pricing",
+    inputPer1M: 0.2,
+    outputPer1M: 1.2,
+    cacheReadPer1M: 0.02,
+    cacheWritePer1M: 0.25,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 0.4, outputPer1M: 1.8, cacheReadPer1M: 0.04, cacheWritePer1M: 0.5 }],
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai-codex.json",
   },
   "openai-codex:gpt-5.6-sol": {
     inputPer1M: 5,
     outputPer1M: 30,
     cacheReadPer1M: 0.5,
-    cacheWritePer1M: 0,
-    source: "openai.com/api/pricing",
+    cacheWritePer1M: 6.25,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 10, outputPer1M: 45, cacheReadPer1M: 1, cacheWritePer1M: 12.5 }],
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai-codex.json",
   },
   "openai-codex:gpt-5.6-terra": {
-    inputPer1M: 2.5,
-    outputPer1M: 15,
-    cacheReadPer1M: 0.25,
-    cacheWritePer1M: 0,
-    source: "openai.com/api/pricing",
+    inputPer1M: 2,
+    outputPer1M: 12,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 2.5,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 4, outputPer1M: 18, cacheReadPer1M: 0.4, cacheWritePer1M: 5 }],
+    source: "@earendil-works/pi-ai@0.86.1 providers/data/openai-codex.json",
   },
   "openai-codex:gpt-6-astra": {
     inputPer1M: 10,
     outputPer1M: 50,
     cacheReadPer1M: 1,
     cacheWritePer1M: 12.5,
+    tiers: [{ inputTokensAbove: 272_000, inputPer1M: 20, outputPer1M: 75, cacheReadPer1M: 2, cacheWritePer1M: 25 }],
     source: "@earendil-works/pi-ai@0.86.1 providers/data/openai-codex.json",
   },
   "openai-codex:codex-mini-latest": {
@@ -656,6 +676,8 @@ function isStale(now: number | undefined): boolean {
  * - Unknown model → `{ usd: null, unavailable: true, stale }` (never guessed).
  * - Cache-read tokens are priced at the cache-read rate, cache-write tokens at
  *   the cache-write rate — NOT the input rate.
+ * - Volume tiers use Pi's total input-token threshold semantics and apply the
+ *   highest matching rate to the entire request.
  * - `stale` is true when the (caller-supplied) `now` is more than
  *   {@link PRICING_STALE_AFTER_MS} past {@link pricingAsOf}. With no `now`,
  *   `stale` is always false.
@@ -671,11 +693,20 @@ export function costFor(
   if (!pricing) {
     return { usd: null, unavailable: true, stale };
   }
+  let rates: ModelPricing | ModelPricingTier = pricing;
+  let matchedThreshold = -1;
+  const inputTokens = usage.inputTokens + usage.cachedTokens + usage.cacheWriteTokens;
+  for (const tier of pricing.tiers ?? []) {
+    if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
+      rates = tier;
+      matchedThreshold = tier.inputTokensAbove;
+    }
+  }
   const usd =
-    (usage.inputTokens * pricing.inputPer1M +
-      usage.outputTokens * pricing.outputPer1M +
-      usage.cachedTokens * pricing.cacheReadPer1M +
-      usage.cacheWriteTokens * pricing.cacheWritePer1M) /
+    (usage.inputTokens * rates.inputPer1M +
+      usage.outputTokens * rates.outputPer1M +
+      usage.cachedTokens * rates.cacheReadPer1M +
+      usage.cacheWriteTokens * rates.cacheWritePer1M) /
     1_000_000;
   return { usd, unavailable: false, stale };
 }
