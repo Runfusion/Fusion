@@ -117,6 +117,29 @@ function GeminiIcon({ size, color, label = "Google Gemini" }: { size: number; co
   );
 }
 
+/*
+FNXC:ProviderIcon 2026-10-04-19:28:
+FN-9477 keeps Meta Muse, which is present in both static authentication catalogs, out of the unknown-provider Cpu fallback. The shared tokenized mark gives settings and onboarding the same accessible provider identity without host-specific icon workarounds.
+*/
+function MetaIcon({ size, color, label = "Meta Muse" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="meta-icon"
+      aria-label={label}
+    >
+      <path
+        d="M2.3 15.7c.8-4.7 2.5-8.2 4.8-9.5 2.7-1.5 4.3.8 4.9 4.1.7 3.7.9 5.8 2.4 5.8 1.5 0 3.1-2.3 4.6-6.8.5-1.5 1.4-2.7 2.7-3.6-1.4 4.4-3.7 11.9-7.4 11.9-3.1 0-3.8-4-4.5-7.2-.4-2.1-1.1-3.1-2.2-2.5-1.5.8-3.1 3.8-4.6 7.8h-.7Z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
 // Ollama llama head logo from SimpleIcons
 function OllamaIcon({ size, color, label = "Ollama" }: { size: number; color: string; label?: string }) {
   return (
@@ -869,6 +892,7 @@ const providerConfig: Record<
 
   google: { component: GeminiIcon, color: "var(--provider-gemini)" },
   gemini: { component: GeminiIcon, color: "var(--provider-gemini)" }, // Gemini alias family
+  meta: { component: MetaIcon, color: "var(--provider-meta)", label: "Meta Muse" },
   // Deprecated upstream in pi-coding-agent 0.71+, retained for legacy usage/auth history rendering.
   "google-antigravity": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Gemini" },
   antigravity: { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Gemini" },

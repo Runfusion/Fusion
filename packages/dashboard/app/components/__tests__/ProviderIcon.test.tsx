@@ -195,6 +195,43 @@ describe("ProviderIcon", () => {
     expect(screen.getByLabelText("Google Gemini")).toBeInTheDocument();
   });
 
+  it("renders Meta Muse with its accessible tokenized brand mark", () => {
+    render(<ProviderIcon provider="Meta" size="md" />);
+    const svg = screen.getByTestId("meta-icon");
+    const wrapper = svg.parentElement;
+
+    expect(svg).toHaveAccessibleName("Meta Muse");
+    expect(svg).toHaveAttribute("width", "20");
+    expect(svg.querySelector("path")).toHaveAttribute("fill", "var(--provider-meta)");
+    expect(wrapper).toHaveAttribute("data-provider", "meta");
+    expect(wrapper).toHaveStyle({ color: "var(--provider-meta)" });
+    expect(isNonCpuMark(svg)).toBe(true);
+  });
+
+  it.each([
+    ["sm", "16"],
+    ["md", "20"],
+    ["lg", "24"],
+  ] as const)("uses the shared %s size for Meta Muse", (size, expectedSize) => {
+    render(<ProviderIcon provider="meta" size={size} />);
+    const svg = screen.getByTestId("meta-icon");
+    expect(svg).toHaveAttribute("width", expectedSize);
+    expect(svg).toHaveAttribute("height", expectedSize);
+  });
+
+  it("deduplicates Meta Muse from both static catalogs before rendering its non-Cpu mark", () => {
+    const catalogMetaIds = [
+      ...STATIC_OAUTH_PROVIDER_CATALOG,
+      ...STATIC_API_KEY_PROVIDER_CATALOG,
+    ].filter(({ id }) => id === "meta");
+
+    expect(catalogMetaIds).toHaveLength(2);
+    expect(FIRST_CLASS_PROVIDER_IDS.filter((id) => id === "meta")).toEqual(["meta"]);
+    render(<ProviderIcon provider={FIRST_CLASS_PROVIDER_IDS.find((id) => id === "meta") ?? ""} />);
+    expect(screen.getByTestId("meta-icon")).toHaveAccessibleName("Meta Muse");
+    expect(isNonCpuMark(screen.getByTestId("meta-icon"))).toBe(true);
+  });
+
   it("renders Gemini brand icon for gemini provider", () => {
     render(<ProviderIcon provider="gemini" />);
     expect(screen.getByTestId("gemini-icon")).toBeInTheDocument();
@@ -259,10 +296,11 @@ describe("ProviderIcon", () => {
     render(<ProviderIcon provider="" />);
     expect(screen.queryByTestId("xai-icon")).not.toBeInTheDocument();
     const icon = screen.getByText((_, element) => {
-      return element?.tagName.toLowerCase() === "svg" && 
+      return element?.tagName.toLowerCase() === "svg" &&
              element?.parentElement?.getAttribute("data-provider") === "";
     });
     expect(icon).toBeInTheDocument();
+    expect(hasLucideCpuSignature(icon as SVGElement)).toBe(true);
   });
 
   it("normalizes provider name to lowercase", () => {
