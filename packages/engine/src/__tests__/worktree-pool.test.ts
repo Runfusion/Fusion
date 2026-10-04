@@ -515,7 +515,9 @@ describe("reapOrphanWorktrees", () => {
       return s === "/root/.worktrees" || s === "/root/.worktrees/leaked-wt/.git";
     });
 
-    const removed = await reapOrphanWorktrees("/root");
+    const removed = await reapOrphanWorktrees("/root", {
+      secretsEnv: { filename: ".runtime-secrets" },
+    } as any);
 
     expect(removed).toBe(1);
     expect(mockedRmSync).toHaveBeenCalledWith("/root/.worktrees/leaked-wt", { recursive: true, force: true });

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const cleanupSecretsEnvFile = vi.fn();
 
 vi.mock("../worktree/secrets-env-writer.js", () => ({
+  FINGERPRINT_FILE: ".fusion-secrets-env.fingerprint",
   cleanupSecretsEnvFile,
 }));
 
@@ -38,17 +39,20 @@ afterEach(async () => {
 });
 
 describe("worktree-pool secrets preservation", () => {
-  it("preserves a secret-bearing dangling orphan instead of deleting its environment file", async () => {
+  it("preserves a default .env dangling orphan when a custom filename is configured", async () => {
     cleanupSecretsEnvFile.mockResolvedValue({ outcome: "cleaned", reason: "fingerprint-match" });
     const root = tmpRoot();
     const worktrees = join(root, ".worktrees");
-    const orphan = join(worktrees, "orphan-1");
+    const orphan = join(worktrees, "orphan-default-env");
     execFileSync("git", ["init", "-q"], { cwd: root });
     seedOrphanWorktree(orphan);
     writeFileSync(join(orphan, ".env"), "A=1\n");
 
     const mod = await import("../worktree/worktree-pool.js");
-    const removed = await mod.reapOrphanWorktrees(root, { worktreesDir: ".worktrees" } as any);
+    const removed = await mod.reapOrphanWorktrees(root, {
+      worktreesDir: ".worktrees",
+      secretsEnv: { filename: ".runtime-secrets" },
+    });
 
     expect(removed).toBe(0);
     expect(cleanupSecretsEnvFile).not.toHaveBeenCalled();
@@ -63,6 +67,25 @@ describe("worktree-pool secrets preservation", () => {
     execFileSync("git", ["init", "-q"], { cwd: root });
     seedOrphanWorktree(orphan);
     writeFileSync(join(orphan, ".runtime-secrets"), "A=1\n");
+
+    const mod = await import("../worktree/worktree-pool.js");
+    const removed = await mod.reapOrphanWorktrees(root, {
+      worktreesDir: ".worktrees",
+      secretsEnv: { filename: ".runtime-secrets" },
+    });
+
+    expect(removed).toBe(0);
+    expect(cleanupSecretsEnvFile).not.toHaveBeenCalled();
+    expect(existsSync(orphan)).toBe(true);
+  });
+
+  it("preserves a fingerprint-bearing dangling orphan before any cleanup hook runs", async () => {
+    const root = tmpRoot();
+    const worktrees = join(root, ".worktrees");
+    const orphan = join(worktrees, "orphan-fingerprint");
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    seedOrphanWorktree(orphan);
+    writeFileSync(join(orphan, ".fusion-secrets-env.fingerprint"), "sha256\n.env\n");
 
     const mod = await import("../worktree/worktree-pool.js");
     const removed = await mod.reapOrphanWorktrees(root, {

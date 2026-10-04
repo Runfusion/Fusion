@@ -107,7 +107,7 @@ describe("reliability interactions: secrets env materialization", () => {
   environment artifact. Ground this production interaction on that exact shape and require the
   reaper to preserve the directory, leaving secret cleanup to its explicit owner.
   */
-  it("orphan reap preserves secret-bearing dangling worktrees", async () => {
+  it("orphan reap preserves default env and fingerprint under custom secret settings", async () => {
     const root = tmpRepo();
     const worktreesDir = join(root, ".worktrees");
     const orphan = join(worktreesDir, "ghost");
@@ -117,7 +117,10 @@ describe("reliability interactions: secrets env materialization", () => {
     writeFileSync(join(orphan, ".env"), "A=1\n");
     writeFileSync(join(orphan, ".fusion-secrets-env.fingerprint"), "abc\n.env\n");
 
-    const removed = await reapOrphanWorktrees(root);
+    const removed = await reapOrphanWorktrees(root, {
+      worktreesDir: ".worktrees",
+      secretsEnv: { filename: ".runtime-secrets" },
+    });
     expect(removed).toBe(0);
     expect(existsSync(orphan)).toBe(true);
   });

@@ -711,9 +711,15 @@ are safe to delete. Preserve generic and Fusion-managed secret material for expl
 than turning an orphan scan into a credential-deletion authority.
 */
 function hasSensitiveWorktreeArtifacts(worktreePath: string, secretsEnvFilename?: string): boolean {
-  // FNXC:WorktreeOrphanReap 2026-10-04-19:47: secret materialization permits a configured basename, so orphan reaping must preserve that configured file rather than treating only the default .env as sensitive.
-  const envFilename = secretsEnvFilename ?? ".env";
-  return existsSync(join(worktreePath, envFilename)) || existsSync(join(worktreePath, FINGERPRINT_FILE));
+  /*
+  FNXC:WorktreeOrphanReap 2026-10-04-20:17:
+  A configured secrets file supplements, rather than replaces, the standard `.env` preservation
+  signal. Retain either unique filename and the fingerprint so orphan reaping remains fail-closed
+  while explicit secret teardown keeps ownership of managed-file deletion.
+  */
+  const sensitiveEnvFilenames = new Set([".env", secretsEnvFilename].filter((filename): filename is string => !!filename));
+  return [...sensitiveEnvFilenames].some((filename) => existsSync(join(worktreePath, filename)))
+    || existsSync(join(worktreePath, FINGERPRINT_FILE));
 }
 
 function dotGitPointerIsDangling(dotGitPath: string): boolean {
