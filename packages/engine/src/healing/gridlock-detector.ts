@@ -23,7 +23,7 @@ deadlock are still possible — not whether capacity is simpler.
 import type { AgentStore, MissionStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
 import { compareTasksByPriorityThenAgeAndId, fileScopeLeaseBlocksCandidate, normalizeOverlapScopeForTask, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import { createLogger } from "../logger.js";
-import { classifyFileScopeLease, filterPathsByIgnoreList, isCoordinationOnlyTask, pathsOverlap } from "../scheduler.js";
+import { classifyFileScopeLease, filterPathsByIgnoreList, isCoordinationOnlyTask, pathsOverlap, resolveDependencySatisfactionColumns } from "../scheduler.js";
 
 const gridlockLog = createLogger("gridlock-detector");
 
@@ -152,11 +152,15 @@ export class GridlockDetector {
         }
       }
     }
+    const schedulingDependencyOptions = {
+      satisfactionColumnsByTaskId: await resolveDependencySatisfactionColumns(this.store, tasks, irCache),
+    };
     const classifications = new Map(
       tasks.map((task) => {
         const roles = rolesByTask.get(task.id);
         return [task.id, classifyFileScopeLease(task, tasks, roles
           ? {
+            schedulingDependencyOptions,
             mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
             handoffAccepted: handoffAcceptedByTaskId.get(task.id) ?? false,
             isWipColumn: roles.wip === task.column,
@@ -164,6 +168,7 @@ export class GridlockDetector {
             isTerminalColumn: roles.complete === task.column || roles.archived === task.column,
           }
           : {
+            schedulingDependencyOptions,
             mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
             handoffAccepted: handoffAcceptedByTaskId.get(task.id) ?? false,
           })] as const;

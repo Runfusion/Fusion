@@ -169,7 +169,7 @@ import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveLifecycleColumns, resolveReviewColumns, type LifecycleColumns } from "./workflows/workflow-lifecycle-traits.js";
-import { isReviewColumnRole, isWipColumnRole } from "./column-roles.js";
+import { isReviewColumnRole, isTerminalColumnRole, isWipColumnRole } from "./column-roles.js";
 import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
 import {
   appendPatchnodeEntry,
@@ -3187,6 +3187,29 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return scope;
     };
 
+    const dependencyReadiness = new Map<string, Promise<boolean>>();
+    const hasUnmetSchedulingDependencies = (candidate: Task): Promise<boolean> => {
+      const cached = dependencyReadiness.get(candidate.id);
+      if (cached) return cached;
+      const resolving = (async () => {
+        for (const dependencyId of candidate.dependencies ?? []) {
+          const dependency = taskById.get(dependencyId);
+          if (!dependency) continue;
+          const { lease } = await repairLanesFor(dependencyId);
+          // Admission accepts a prerequisite in any review or terminal lane of its own workflow.
+          if (lease) {
+            if (lease.terminal?.has(dependency.column) || repairLeaseLaneIncludes(lease.review, dependency.column)) continue;
+          } else if (isTerminalColumnRole(undefined, dependency.column) || isReviewColumnRole(undefined, dependency.column)) {
+            continue;
+          }
+          return true;
+        }
+        return false;
+      })();
+      dependencyReadiness.set(candidate.id, resolving);
+      return resolving;
+    };
+
     const taskScope = await getScope(task.id);
     if (blocker) {
       /*
@@ -3196,7 +3219,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       worktree cannot be cleared through the operator repair path before its work lands.
       */
       const blockerLanes = await repairLanesFor(blocker.id);
-      const blockerLeaseKind = classifyRepairFileScopeLease(blocker, blockerLanes.lease);
+      let blockerLeaseKind = classifyRepairFileScopeLease(blocker, blockerLanes.lease);
+      if (blockerLeaseKind === "dormant" && await hasUnmetSchedulingDependencies(blocker)) blockerLeaseKind = "none";
       const blockerHoldsLease = fileScopeLeaseBlocksCandidate(blocker, task, {
         kind: blockerLeaseKind,
         waivedForTaskIds: [],
@@ -3237,7 +3261,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     };
     const unresolvedDeps = (task.dependencies ?? []).filter(isUnresolvedDependency);
 
-    const currentOverlapBlocker = await this.findCurrentOverlapBlockerForRepair(task, taskScope, tasks, getScope, previousOverlapBlockedBy, repairLanesFor);
+    const currentOverlapBlocker = await this.findCurrentOverlapBlockerForRepair(task, taskScope, tasks, getScope, previousOverlapBlockedBy, repairLanesFor, hasUnmetSchedulingDependencies);
     const statusCleared = unresolvedDeps.length === 0 && !currentOverlapBlocker && task.status === "queued";
 
     /*
@@ -3354,6 +3378,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     /* The CALLER's resolver, so this search shares the repair's single IR cache rather than opening a
        second one — and so both halves of the repair resolve a given card's lane membership identically. */
     resolveLanes: (taskId: string) => Promise<RepairTaskLifecycleLanes>,
+    hasUnmetSchedulingDependencies: (candidate: Task) => Promise<boolean>,
   ): Promise<string | null> {
     /*
     FNXC:OverlapScheduling 2026-08-29-06:04:
@@ -3366,10 +3391,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     );
     const candidateLanesByTaskId = new Map<string, LifecycleColumns | undefined>();
     const candidateLeaseKinds = new Map<string, FileScopeLeaseKind>();
+    const dependencyBlockedCandidates = new Set<string>();
     for (const candidate of candidatePool) {
       const lanes = await resolveLanes(candidate.id);
       candidateLanesByTaskId.set(candidate.id, lanes.lifecycle);
-      candidateLeaseKinds.set(candidate.id, classifyRepairFileScopeLease(candidate, lanes.lease));
+      let kind = classifyRepairFileScopeLease(candidate, lanes.lease);
+      if (kind !== "active" && await hasUnmetSchedulingDependencies(candidate)) {
+        dependencyBlockedCandidates.add(candidate.id);
+        kind = "none";
+      }
+      candidateLeaseKinds.set(candidate.id, kind);
     }
     const activeCandidates = candidatePool
       .filter((candidate) => candidateLeaseKinds.get(candidate.id) === "active")
@@ -3395,6 +3426,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const taskRank = priorityRank[task.priority ?? "normal"] ?? 2;
     const taskCreatedAt = Date.parse(task.createdAt);
     const queuedCandidates = candidatePool
+      .filter((candidate) => !dependencyBlockedCandidates.has(candidate.id))
       .filter((candidate) => {
         const lanes = candidateLanesByTaskId.get(candidate.id);
         /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-01:10. */

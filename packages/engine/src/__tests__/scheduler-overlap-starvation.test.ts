@@ -823,6 +823,40 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-B", "in-progress", expect.anything());
   });
 
+  it.each(["prerequisite", "unrelated"])("schedules a ready %s while a dormant overlap holder waits for dependencies", async (kind) => {
+    const candidate = makeTask({ id: "FN-READY", createdAt: "2026-01-02T00:00:00Z" });
+    const dependency = kind === "prerequisite" ? candidate : makeTask({ id: "FN-DEP", column: "triage" });
+    const holder = makeTask({ id: "FN-HOLDER", worktree: "/wt/holder", dependencies: [dependency.id], blockedBy: dependency.id });
+    const tasks = [holder, candidate, ...(dependency === candidate ? [] : [dependency])];
+    const store = createStore(tasks, { [holder.id]: ["src/shared.ts"], [candidate.id]: ["src/shared.ts"] });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+    expect(store.moveTask).toHaveBeenCalledWith(candidate.id, "in-progress", expect.anything());
+    expect(holder.worktree).toBe("/wt/holder");
+    expect(holder.column).toBe("todo");
+  });
+
+  it.each(["priority-bridge", "transitive"])("breaks a three-card dormant %s dependency cycle without deleting work", async (mode) => {
+    const prerequisite = makeTask({ id: "FN-9439", createdAt: "2026-01-03T00:00:00Z" });
+    const middle = makeTask({ id: "FN-9438", worktree: "/wt/middle", createdAt: "2026-01-02T00:00:00Z",
+      dependencies: mode === "transitive" ? [prerequisite.id] : [] });
+    const holder = makeTask({ id: "FN-9436", worktree: "/wt/holder", dependencies: [mode === "transitive" ? middle.id : prerequisite.id] });
+    const tasks = [holder, middle, prerequisite];
+    const store = createStore(tasks, Object.fromEntries(tasks.map(task => [task.id, ["src/shared.ts"]])));
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+    expect(store.moveTask).toHaveBeenCalledWith(mode === "transitive" ? prerequisite.id : middle.id, "in-progress", expect.anything());
+    if (mode === "priority-bridge") {
+      middle.column = "done";
+      await scheduler.schedule();
+      expect(store.moveTask).toHaveBeenCalledWith(prerequisite.id, "in-progress", expect.anything());
+    }
+    expect(holder.worktree).toBe("/wt/holder");
+    expect(middle.worktree).toBe("/wt/middle");
+  });
+
   it("does not let a lower-priority dormant holder delay a higher-priority candidate", async () => {
     const tasks = [
       makeTask({ id: "FN-A", column: "triage", worktree: "/wt/a", priority: "low" }),

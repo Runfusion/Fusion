@@ -244,6 +244,16 @@ describe("GridlockDetector", () => {
     expect(event?.blockingTaskIds).toEqual(["FN-WORKSPACE"]);
   });
 
+  it("does not report gridlock for a ready prerequisite behind its dormant dependent", async () => {
+    tasks = [
+      createTask("FN-9439", { column: "todo" }),
+      createTask("FN-9436", { column: "todo", dependencies: ["FN-9439"], worktree: "/wt/holder", priority: "high" }),
+    ];
+    scopes = { "FN-9439": ["src/shared.ts"], "FN-9436": ["src/shared.ts"] };
+    expect(await detector.detectGridlock()).toBeNull();
+    expect(onGridlock).not.toHaveBeenCalled();
+  });
+
   it("reports a higher-priority dormant worktree holder as the overlap blocker", async () => {
     tasks = [
       createTask("FN-1", { column: "todo", priority: "normal" }),

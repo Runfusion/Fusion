@@ -5832,6 +5832,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         */
         const roles = await resolveLeaseRolesFor(blocker);
         const classification = classifyFileScopeLease(blocker, allTasks, {
+          schedulingDependencyOptions: {
+            satisfactionColumnsByTaskId: await resolveDependencySatisfactionColumns(
+              this.store, allTasks.filter((dependency) => blocker.dependencies?.includes(dependency.id)), leaseRoleIrCache,
+            ),
+          },
           mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
           handoffAccepted: settings.mergeRequestContractShadowEnabled === true && roles.isReviewColumn
             ? (await this.store.getCompletionHandoffAcceptedMarker(blocker.id)) !== null
@@ -7008,6 +7013,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!blocker) return false;
         const roles = await resolveLeaseRolesFor(blocker);
         const classification = classifyFileScopeLease(blocker, allTasks, {
+          schedulingDependencyOptions: {
+            satisfactionColumnsByTaskId: await resolveDependencySatisfactionColumns(
+              this.store, allTasks.filter((dependency) => blocker.dependencies?.includes(dependency.id)), leaseRoleIrCache,
+            ),
+          },
           mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
           handoffAccepted: settings.mergeRequestContractShadowEnabled === true && roles.isReviewColumn
             ? (await this.store.getCompletionHandoffAcceptedMarker(blocker.id)) !== null

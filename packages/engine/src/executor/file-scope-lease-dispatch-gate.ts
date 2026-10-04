@@ -25,6 +25,7 @@ import {
   filterPathsByIgnoreList,
   isCoordinationOnlyTask,
   pathsOverlap,
+  resolveDependencySatisfactionColumns,
 } from "../scheduler.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 
@@ -98,8 +99,11 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
       );
     }
   }
-  const schedulingDependencyOptions = mergeShadowEnabled ? { markerAcceptedByTaskId } : undefined;
   const irCache = new Map<string, WorkflowIr>();
+  const schedulingDependencyOptions = {
+    markerAcceptedByTaskId,
+    satisfactionColumnsByTaskId: await resolveDependencySatisfactionColumns(deps.store, tasks, irCache),
+  };
   const holders: Array<{ task: Task; kind: "active" | "dormant"; scope: string[]; waivedForTaskIds: readonly string[] }> = [];
 
   for (const holder of tasks) {

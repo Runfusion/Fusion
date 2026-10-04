@@ -85,6 +85,24 @@ describe("classifyFileScopeLease", () => {
     expect(fileScopeLeaseBlocksCandidate(holder, unrelated, classification)).toBe(true);
   });
 
+  it.each(["singular", "workspace"])("suspends a dependency-blocked dormant %s lease until its prerequisite completes", (kind) => {
+    const dependency = makeTask({ id: "FN-DEP" });
+    const unrelated = makeTask({ id: "FN-OTHER", createdAt: "2026-01-02T00:00:00Z" });
+    const holder = makeTask({ id: "FN-HOLDER", column: "backlog", dependencies: [dependency.id],
+      ...(kind === "singular" ? { worktree: "/wt/holder" } : { workspaceWorktrees: { repo: { worktreePath: "/wt/repo" } } as Task["workspaceWorktrees"] }),
+    });
+    const tasks = [holder, dependency, unrelated];
+    const roles = { isWipColumn: false, isReviewColumn: false, isTerminalColumn: false };
+    const blocked = classifyFileScopeLease(holder, tasks, roles);
+    expect(blocked).toEqual({ kind: "none", waivedForTaskIds: [] });
+    expect(fileScopeLeaseBlocksCandidate(holder, dependency, blocked)).toBe(false);
+    expect(fileScopeLeaseBlocksCandidate(holder, unrelated, blocked)).toBe(false);
+    dependency.column = "done";
+    const ready = classifyFileScopeLease(holder, tasks, roles);
+    expect(ready.kind).toBe("dormant");
+    expect(fileScopeLeaseBlocksCandidate(holder, unrelated, ready)).toBe(true);
+  });
+
   it("makes preserved worktrees dormant outside WIP and review", () => {
     expect(classifyFileScopeLease(makeTask({ column: "todo", worktree: "/wt/a" }), [])).toMatchObject({ kind: "dormant" });
     expect(classifyFileScopeLease(makeTask({ column: "triage", worktree: "/wt/a" }), [])).toMatchObject({ kind: "dormant" });

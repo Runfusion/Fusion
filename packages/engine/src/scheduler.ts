@@ -586,8 +586,9 @@ export interface FileScopeLeaseOptions {
 FNXC:OverlapScheduling 2026-08-29-05:49:
 File-scope ownership is a lifetime contract: a task keeps its claim until its work has landed, is
 archived/deleted, or a non-WIP lane has released its checkout. Paused, failed, and external-blocked
-cards therefore retain their claim while their unmerged singular or per-repository checkout exists;
-archiving, deleting, or clearing those checkouts is the explicit escape hatch for a dead holder.
+cards therefore retain their claim while their unmerged singular or per-repository checkout exists.
+Dormant claims yield while scheduling dependencies are unmet, retaining every checkout and resuming
+priority contention once those dependencies are satisfied; active claims retain their existing policy.
 
 Check every checkout form before granting a non-WIP card an active lease. A workspace task deliberately
 has no singular `task.worktree`, so review and dormant classification must recognize its repository
@@ -635,6 +636,12 @@ export function classifyFileScopeLease(
     return { kind: taskHoldsUnmergedCheckout(task) ? "active" : "none", waivedForTaskIds: [] };
   }
 
+  // A dormant checkout preserves work, but cannot win admission while its owner is
+  // waiting for prerequisites. Otherwise its priority can block those prerequisites
+  // directly or through an older ready contender, forming a scheduling cycle.
+  if (getUnmetSchedulingDependencies(task, tasks, options?.schedulingDependencyOptions).length > 0) {
+    return { kind: "none", waivedForTaskIds: [] };
+  }
   return { kind: taskHoldsUnmergedCheckout(task) ? "dormant" : "none", waivedForTaskIds: [] };
 }
 

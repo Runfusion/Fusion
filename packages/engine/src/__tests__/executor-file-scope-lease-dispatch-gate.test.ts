@@ -65,6 +65,19 @@ describe("blockOuterDispatchWhenFileScopeLeaseHeld", () => {
     expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
   });
 
+  it.each(["prerequisite", "unrelated"])("admits a ready %s past an older dependency-blocked dormant holder", async (kind) => {
+    const candidate = makeTask();
+    const dependency = kind === "prerequisite" ? candidate : makeTask({ id: "FN-DEP" });
+    const holder = makeTask({ id: "FN-HOLDER", worktree: "/wt/holder", dependencies: [dependency.id],
+      blockedBy: dependency.id, createdAt: "2026-01-01T00:00:00Z" });
+    const store = createStore([holder, candidate, ...(dependency === candidate ? [] : [dependency])], {
+      [holder.id]: ["src/shared.ts"], [candidate.id]: ["src/shared.ts"],
+    });
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(false);
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
+    expect(holder.worktree).toBe("/wt/holder");
+  });
+
   it("holds a fresh dispatch behind an overlapping active lease without moving its column", async () => {
     const holder = makeTask({ id: "FN-HOLDER", column: "in-progress", createdAt: "2026-01-01T00:00:00.000Z" });
     const candidate = makeTask({ blockedBy: "FN-DEP" });

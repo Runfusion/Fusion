@@ -166,6 +166,45 @@ describe("repairOverlapBlocker resolves the board's own lanes", () => {
     expect(blocker).toMatchObject({ column: "signoff", status: "failed" });
   });
 
+  it.each(["current", "reroute"])("ignores dependency-blocked dormant holders during %s repair", async (surface) => {
+    const subject = card("FN-9", "backlog", { overlapBlockedBy: surface === "current" ? "FN-1" : "FN-old", status: "queued" });
+    const holder = card("FN-1", "backlog", { worktree: "/wt/preserved", dependencies: ["FN-3"], priority: "urgent" });
+    const prerequisite = card("FN-3", "backlog", { priority: "low" });
+    const before = structuredClone(holder);
+    const { run, updates } = harness([subject, holder, prerequisite, card("FN-old", "shipped")], RENAMED_IR, subject);
+    await expect(run()).resolves.toMatchObject({ reason: "repaired", repaired: true });
+    expect(updates.at(-1)).toMatchObject({ overlapBlockedBy: null, status: null });
+    expect(holder).toEqual(before);
+  });
+
+  it.each(["signoff-secondary", "shipped-secondary", "vault"])("retains dormant ordering after a prerequisite reaches %s", async (column) => {
+    const subject = card("FN-9", "backlog", { overlapBlockedBy: "FN-1" });
+    const holder = card("FN-1", "backlog", { worktree: "/wt/preserved", dependencies: ["FN-3"] });
+    const { run } = harness([subject, holder, card("FN-3", column)], MULTI_LEASE_IR, subject);
+    await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap", repaired: false });
+  });
+
+  it("does not reroute to a queued holder without a checkout while its prerequisite is unmet", async () => {
+    const subject = card("FN-9", "backlog", { overlapBlockedBy: "FN-old" });
+    const holder = card("FN-1", "backlog", { dependencies: ["FN-3"], priority: "urgent" });
+    const { run } = harness([subject, holder, card("FN-3", "backlog", { priority: "low" }), card("FN-old", "shipped")], RENAMED_IR, subject);
+    await expect(run()).resolves.toMatchObject({ reason: "repaired", repaired: true });
+  });
+
+  it.each(["building", "signoff"])("preserves an active %s holder even with unmet prerequisites", async (column) => {
+    const subject = card("FN-9", "backlog", { overlapBlockedBy: "FN-1" });
+    const holder = card("FN-1", column, { worktree: "/wt/preserved", dependencies: ["FN-3"] });
+    const { run } = harness([subject, holder, card("FN-3", "backlog")], RENAMED_IR, subject);
+    await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap", repaired: false });
+  });
+
+  it("keeps a ready dormant holder eligible when a referenced prerequisite is absent", async () => {
+    const subject = card("FN-9", "backlog", { overlapBlockedBy: "FN-1" });
+    const holder = card("FN-1", "backlog", { worktree: "/wt/preserved", dependencies: ["FN-missing"] });
+    const { run } = harness([subject, holder], RENAMED_IR, subject);
+    await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap", repaired: false });
+  });
+
   it("accepts a card sitting in a RENAMED hold lane", async () => {
     // Pre-fix: `backlog` !== "todo" → "not a repairable todo state", and the repair stopped here.
     const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2" });
