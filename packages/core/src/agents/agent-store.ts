@@ -1730,11 +1730,13 @@ export class AgentStore extends EventEmitter {
       if (!row) return;
       const publishedTask = this.taskStore!.rowToTask(this.taskStore!.pgRowToTaskRow(row));
       /*
-      FNXC:DurableAgentHandoff 2026-10-04-17:41:
+      FNXC:DurableAgentHandoff 2026-10-04-20:44:
       Refresh cache and lifecycle observers from a row re-read under the same
       ownership fence as the handoff. The row lock makes ordinary assignment
       writers either win before this revalidation or wait until this committed
       publication completes; a stale released snapshot is never re-published.
+      This revalidated safe publisher belongs in the exact task-update producer
+      inventory, so the census cannot silently omit this handoff path.
       */
       if (this.taskStore!.isWatching) this.taskStore!.taskCache.set(taskId, { ...publishedTask });
       this.taskStore!.emitTaskLifecycleEventSafely("task:updated", [publishedTask]);
