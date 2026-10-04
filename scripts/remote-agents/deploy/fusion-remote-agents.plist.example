@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS launchd user agent for the collector. Copy to ~/Library/LaunchAgents/, replace every <PLACEHOLDER>,
+     then: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<LABEL>.plist
+     Restart after an upgrade: launchctl kickstart -k gui/$(id -u)/<LABEL> -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string><LABEL></string>
+  <key>ProgramArguments</key><array>
+    <string><PYTHON3></string>
+    <string><INSTALL_DIR>/collector.py</string>
+    <string>--url</string><string><FUSION_URL></string>
+    <string>--project</string><string><PROJECT_ID></string>
+    <string>--host</string><string><HOST_ID></string>
+    <string>--token-file</string><string><TOKEN_FILE></string>
+    <string>--state</string><string><STATE_DIR>/<HOST_ID>.sqlite</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string><STATE_DIR>/collector.log</string>
+  <key>StandardErrorPath</key><string><STATE_DIR>/collector.err.log</string>
+</dict></plist>

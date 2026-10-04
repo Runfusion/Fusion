@@ -37,4 +37,19 @@ Open Fusion's **Agents → Remote agents**, select the configured project and a 
 
 Agent launching/stopping/resuming, templates, notes/pins, transcript search, patches, AI summaries/watchers, rankings, notifications and historical AgentPulse migration are outside this implementation.
 
-Run the native protocol tests with `python3 -m unittest discover -s scripts/remote-agents -p 'test_*.py'`. `pnpm smoke:external-sessions` exercises the real isolated Fusion HTTP ingest/read/pricing/feedback/restart flow without AgentPulse.
+## Delivery speed
+
+A finished turn normally reaches Fusion within about a second:
+
+- The collector scans before it delivers, so a new turn ships in the same pass.
+- The feedback hooks wake the collector through a private datagram socket next to its spool (`<state>.wake`). Claude's `Stop` event is registered for this wake only; it prints nothing and never contacts Fusion. Codex keeps its existing hook definitions, because each new one needs native review and trust. Without a hook the collector polls every five seconds.
+- Turns go in batches of up to 50 (6 MiB) to `turn-ingest-batch`, with a result per turn, over one keep-alive connection per delivery round. A Fusion build without that route answers 404 (or 413 from its default body limit) and the collector sends turns singly, trying batches again every ten minutes, so collectors and Fusion can be upgraded in either order.
+- Heartbeats go every 15 seconds; Fusion marks a host stale after 60.
+
+## Contract and recovery
+
+`emit_turns.py` prints every turn the parser would send for a transcript. Fusion's core test suite runs it over `fixtures/` and validates each turn against the server's strict zod contract, so the parser and the contract cannot drift apart unnoticed. When they did drift in production, Fusion refused the affected turns and collectors set them aside as delivered. `repair_spool.py --state <spool>` reports what it would recover from such an incident; stop the collector, rerun it with `--apply`, then start the collector to redeliver.
+
+`deploy/` holds a launchd agent and a systemd user unit with placeholders for running the collector as a service.
+
+Run the native protocol tests with `python3 -m unittest discover -s scripts/remote-agents -p 'test_*.py'` and the cross-language contract test with `pnpm --filter @fusion/core exec vitest run src/__tests__/external-session-collector-contract.test.ts`. `pnpm smoke:external-sessions` exercises the real isolated Fusion HTTP ingest/read/pricing/feedback/restart flow without AgentPulse.
