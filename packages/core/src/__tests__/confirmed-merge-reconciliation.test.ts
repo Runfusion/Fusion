@@ -59,7 +59,7 @@ describe("required post-merge evidence", () => {
 
   it.each([
     [[], { outcome: "resumable", gateId: "post-merge-verification" }],
-    [[{ workflowStepId: "post-merge-verification", status: "skipped", remediationArchivedAt: "2026-10-04T03:11:56Z", remediationArchivedFromStatus: "failed" }], { outcome: "resumable", gateId: "post-merge-verification" }],
+    [[{ workflowStepId: "post-merge-verification", status: "skipped", remediationArchivedAt: "2026-10-04T03:11:56Z", remediationArchivedFromStatus: "failed" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "skipped" }],
     [[{ workflowStepId: "post-merge-verification", status: "pending" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "pending" }],
     [[{ workflowStepId: "post-merge-verification", status: "failed", verdict: "REVISE" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "failed" }],
     [[{ workflowStepId: "post-merge-verification", status: "skipped" }], { outcome: "blocked", gateId: "post-merge-verification", reason: "skipped" }],
