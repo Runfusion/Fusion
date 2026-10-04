@@ -1,3 +1,4 @@
+import { proveTaskWorktreeRebind } from "./prove-task-worktree-rebind.js";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -1000,6 +1001,40 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
           await persistWorktreeAssignment({ worktree: pinnedPath, branch: resumedBranch, branchWriteOrigin: branchWriteOriginFor(resumedBranch) });
         }
         return reuseWarmWorktree(pinnedPath, resumedBranch, "existing");
+      }
+      if (classification.ok) {
+        const snapshot = await store.getTask(task.id);
+        if (!snapshot.updatedAt) throw new Error("Task snapshot unavailable for branch rebind");
+        const proof = await proveTaskWorktreeRebind({
+          rootDir, worktreePath: pinnedPath, task, store,
+          integrationBranch: await resolveIntegrationBranch(rootDir, settings, { logger: logger ?? console }),
+        });
+        if (opts.suppressSingularWorktreePersist) throw new Error("Renamed branch recovery requires a singular task assignment");
+        let rebound = false;
+        const persisted = await store.updateTaskAtomic(task.id, (live) => {
+          const identityFields = ["branch", "worktree", "column", "status", "paused", "userPaused", "checkedOutBy", "workflowIrPinNodeId", "lineageId"] as const;
+          if (live.paused || live.userPaused || live.deletedAt || live.updatedAt !== snapshot.updatedAt || identityFields.some((key) => (live[key] ?? null) !== (task[key] ?? null))) return null;
+          if (activeSessionRegistry.isPathActive(pinnedPath)) return null;
+          rebound = true;
+          return { worktree: pinnedPath, branch: proof.branch, branchWriteOrigin: branchWriteOriginFor(proof.branch) };
+        }, runContext, () => !activeSessionRegistry.isPathActive(pinnedPath), {
+          expectedUpdatedAt: snapshot.updatedAt,
+          expectedCheckedOutBy: snapshot.checkedOutBy ?? null,
+          expectedCheckoutNodeId: snapshot.checkoutNodeId ?? null,
+          expectedCheckoutLeaseEpoch: snapshot.checkoutLeaseEpoch ?? 0,
+        });
+        if (!rebound || persisted.branch !== proof.branch || persisted.worktree !== pinnedPath)
+          throw new Error(`preserving ${pinnedPath}: task ownership changed during branch rebind`);
+        await installTaskWorktreeIdentityGuard({
+          worktreePath: pinnedPath, taskId: task.id, expectedBranch: proof.branch,
+          commitMsgHookEnabled: settings.commitMsgHookEnabled, taskPrefix: settings.taskPrefix,
+          taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],
+          commitAuthorEnabled: settings.commitAuthorEnabled, commitAuthorName: settings.commitAuthorName,
+          commitAuthorEmail: settings.commitAuthorEmail,
+        });
+        await store.logEntry(task.id, "Rebound task-pinned checkout to its ownership-proven renamed branch", proof.branch, runContext);
+        // This is identity repair, not a base refresh: preserve HEAD, dirty files and ignored evidence.
+        return guardAcquisitionReturn({ worktreePath: pinnedPath, branch: proof.branch, source: "existing", hydrated: false, isResume: true });
       }
       // Invalid / foreign-branch / stale (crash leftover, archive→restore) → reclaim in place: remove the
       // registered worktree (owner probe via removeWorktree) then recreate fresh at the SAME path — never suffix.

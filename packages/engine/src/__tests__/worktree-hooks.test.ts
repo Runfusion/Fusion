@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { access, readFile, stat, writeFile } from "node:fs/promises";
+import { access, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -7,35 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import { buildCommitMsgTrailerHook, buildIdentityGuardHook, installTaskWorktreeIdentityGuard } from "../worktree/worktree-hooks.js";
 
 describe("worktree-hooks", () => {
-  it("builds a hook with expected guard lines", () => {
-    const hook = buildIdentityGuardHook("FN-5210");
-    expect(hook).toContain("#!/bin/sh");
-    expect(hook).toContain("TASK_FILE=$(git rev-parse --git-path fusion-task-id)");
-    expect(hook).toContain('EXPECTED_BRANCH="fusion/fn-5210"');
-    expect(hook).toContain("tr '[:upper:]' '[:lower:]'");
-    expect(hook).toContain('EXPECTED_BRANCH="fusion/$(printf \'%s\' \"$WORKTREE_TASK_ID\" | tr \'[:upper:]\' \'[:lower:]\')"');
-    expect(hook).toContain('HEAD_BRANCH_CANONICAL=$(printf \'%s\' "$HEAD_BRANCH" | tr \'[:upper:]\' \'[:lower:]\')');
-    expect(hook).toContain('EXPECTED_BRANCH_CANONICAL=$(printf \'%s\' "$EXPECTED_BRANCH" | tr \'[:upper:]\' \'[:lower:]\')');
-    expect(hook).toContain("fusion: refusing commit — worktree owns");
-    expect(hook).toContain("fusion/step-[0-9]*-[a-z0-9-]*");
-    expect(hook).toContain('!= "fn-5210"');
-    expect(hook).toContain("# Keep this canonicalized in lockstep with canonicalFusionBranchName(taskId)");
-    expect(hook).not.toContain("FN-5210");
-  });
-
-  it.each([
-    ["FN-1", "fusion/fn-1"],
-    ["FN-9999", "fusion/fn-9999"],
-  ])("uses the install-time task id as the canonical default branch for %s", (taskId, expectedBranch) => {
-    const hook = buildIdentityGuardHook(taskId);
-
-    expect(hook).toContain(`EXPECTED_BRANCH=\"${expectedBranch}\"`);
-  });
-
-  it("uses an operator-selected working branch when supplied", () => {
-    const hook = buildIdentityGuardHook("FN-9161", undefined, "feature/PRD-1234-my-slug");
-
-    expect(hook).toContain('EXPECTED_BRANCH="feature/PRD-1234-my-slug"');
+  it("builds a shared hook independent of the installing checkout", () => {
+    expect(buildIdentityGuardHook("FN-1", undefined, "fusion/fn-1"))
+      .toBe(buildIdentityGuardHook("FN-1", undefined, "fusion/spawn-agent-child"));
+    expect(buildIdentityGuardHook("FN-1")).toBe(buildIdentityGuardHook("FN-2"));
   });
 
   it("honors the merger bypass marker on detached HEAD before computing EXPECTED_BRANCH", () => {
@@ -135,6 +110,44 @@ describe("worktree-hooks", () => {
     const hook = buildCommitMsgTrailerHook("not-a-numeric-id", { taskPrefix: "`id`" });
     expect(hook).toContain("PREFIX='`id`'");
     expect(hook).toContain('"$PREFIX"-*) ;;');
+  });
+
+  it("keeps parent and child branch policies independent when shared hooks are reinstalled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "wt-hook-siblings-"));
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+    git(root, "init");
+    git(root, "config", "user.name", "Test");
+    git(root, "config", "user.email", "test@example.com");
+    git(root, "commit", "--allow-empty", "-m", "init");
+    const parent = join(root, "parent");
+    const child = join(root, "child");
+    git(root, "worktree", "add", "-b", "fusion/fn-1", parent);
+    git(root, "worktree", "add", "-b", "fusion/spawn-agent-child", child);
+    let installation = 0;
+    for (const [path, branch] of [[parent, "fusion/fn-1"], [child, "fusion/spawn-agent-child"], [parent, "fusion/fn-1"]]) {
+      installation++;
+      await installTaskWorktreeIdentityGuard({ worktreePath: path, taskId: "FN-1", expectedBranch: branch });
+      for (const candidate of [parent, child]) {
+        // The child first receives its metadata at the second installation.
+        if (candidate === child && installation === 1) continue;
+        await writeFile(join(candidate, "change"), `${installation}-${candidate}`);
+        git(candidate, "add", "change");
+        git(candidate, "commit", "-m", "task change");
+      }
+    }
+    await Promise.all([
+      installTaskWorktreeIdentityGuard({ worktreePath: parent, taskId: "FN-1", expectedBranch: "fusion/fn-1" }),
+      installTaskWorktreeIdentityGuard({ worktreePath: child, taskId: "FN-1", expectedBranch: "fusion/spawn-agent-child" }),
+    ]);
+    // Legacy canonical checkouts still work without the newly introduced branch metadata.
+    await rm(git(parent, "rev-parse", "--git-path", "fusion-task-branch"));
+    await writeFile(join(parent, "change"), "legacy parent");
+    git(parent, "add", "change");
+    git(parent, "commit", "-m", "legacy canonical branch");
+    git(parent, "switch", "-c", "foreign/branch");
+    await writeFile(join(parent, "change"), "foreign");
+    git(parent, "add", "change");
+    expect(() => git(parent, "commit", "-m", "wrong branch")).toThrow();
   });
 
   it("installs metadata and pre-commit + commit-msg hooks in linked worktree", async () => {

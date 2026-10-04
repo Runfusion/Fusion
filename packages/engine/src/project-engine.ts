@@ -18,6 +18,7 @@ import type {
   PlannerOversightStage,
 } from "@fusion/core";
 import {
+  computeWorkflowIrPin,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
   resolveWorkflowIrForTask,
@@ -71,7 +72,6 @@ import {
   buildManualRetryResetPatch,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
-import { moveTaskToContainedBackwardTarget } from "./execution/lifecycle-move.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import { isTaskExecutionLive } from "./merge/merge-execution-exclusion.js";
 import { isMergeActiveStatus } from "./merge/merge-active-status.js";
@@ -2318,10 +2318,8 @@ export class ProjectEngine {
    * `injectGuidance`/`requestTargetedFix` post a planner-authored steering
    * comment via `store.addSteeringComment` (the same channel the executor's
    * real-time injection listener already watches); `retryStep` calls the
-   * store's existing in-progress→todo retry/re-enqueue path
-   * (`moveTask(id, "todo", { preserveProgress: true })`), preserving
-   * progress exactly like the auto-recovery/self-healing retry handlers do.
-   * No new session/tool/merge channel is introduced.
+   * durable idle continuation seam in the current WIP column. Recovery preserves
+   * progress and never claims revision authority to move a card backward.
    */
   private buildPlannerRecoveryHandlers(store: TaskStore): PlannerRecoveryHandlers {
     return {
@@ -2371,26 +2369,55 @@ export class ProjectEngine {
         }
         // Live surface cleared — allow a fresh skip log if work goes live again later.
         this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
-        /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
-        const recovery = await moveTaskToContainedBackwardTarget(store, task.id, "self-healing-stranded-recovery", {
-          preserveProgress: true,
-          moveSource: "engine",
-        }, task.column);
-        if (!recovery.moved) {
-          if (!("reason" in recovery) || recovery.reason !== "in-place-recovery"
-            || task.status !== "failed"
-            || (await this.resolveTaskColumnFlags(store, task, new Map()))?.countsTowardWip !== true) return false;
-          let resumed = false;
-          await store.updateTaskAtomic(task.id, (current) => {
-            if (current.column !== task.column || current.status !== "failed"
-              || current.error !== task.error || current.updatedAt !== task.updatedAt
-              || current.paused || current.userPaused || current.deletedAt
-              || executor?.isTaskLiveForOverseerRetry?.(task.id) === true) return null;
-            resumed = true;
-            return { status: "queued", error: null, sessionFile: null };
+        if (task.status !== "failed" || task.paused || task.userPaused || task.deletedAt
+          || !task.updatedAt || !task.workflowIrPinNodeId
+          || (await this.resolveTaskColumnFlags(store, task, new Map()))?.countsTowardWip !== true) return false;
+        const settings = await store.getSettings();
+        if (settings.globalPause || settings.enginePaused
+          || isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })) return false;
+        const selection = await store.getTaskWorkflowSelectionAsync(task.id);
+        const ir = await resolveWorkflowIrForTask(store, task.id);
+        const node = ir.version === "v2"
+          ? ir.nodes.find((candidate) => candidate.id === task.workflowIrPinNodeId && candidate.column === task.column)
+          : undefined;
+        if (!node) return false;
+        let resumed = false;
+        const resumedTask = await store.updateTaskAtomic(task.id, async (current) => {
+          if (current.column !== task.column || current.status !== "failed"
+            || current.error !== task.error || current.updatedAt !== task.updatedAt
+            || current.workflowIrPinNodeId !== node.id
+            || current.paused || current.userPaused || current.deletedAt
+            || executor?.isTaskLiveForOverseerRetry?.(task.id) === true) return null;
+          const currentSettings = await store.getSettings();
+          if (currentSettings.globalPause || currentSettings.enginePaused
+            || executor?.isTaskLiveForOverseerRetry?.(task.id) === true
+            || isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })) return null;
+          // Persist the wake before clearing failure. The idle seed refuses every
+          // active work-item kind and fences task/selection changes under its lock.
+          // Do not log before this CAS: task logs also advance updatedAt.
+          const items = await store.listWorkflowWorkItemsForTask(task.id);
+          const seeded = await store.seedWorkspaceCodeReviewContinuationIfIdle({
+            taskId: task.id, nodeId: node.id, kind: "task", state: "runnable",
+            runId: `${task.id}:planner-recovery:${node.id}:${items.length}`,
+            stableWorkflowRunId: `${task.id}:${ir.name}`,
+            continuationSequence: items.length,
+            sourceColumn: task.column, targetColumn: task.column,
+            irHash: computeWorkflowIrPin(ir, node.id).irHash,
+            expectedWorkflowSelection: selection ?? null,
+            expectedTaskUpdatedAt: current.updatedAt,
           });
-          if (!resumed) return false;
-        }
+          if (!seeded.seeded) return null;
+          resumed = true;
+          return { status: "queued", error: null, sessionFile: null };
+        }, undefined, () => executor?.isTaskLiveForOverseerRetry?.(task.id) !== true
+          && !isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock }), {
+          expectedUpdatedAt: task.updatedAt,
+          expectedCheckedOutBy: task.checkedOutBy ?? null,
+          expectedCheckoutNodeId: task.checkoutNodeId ?? null,
+          expectedCheckoutLeaseEpoch: task.checkoutLeaseEpoch ?? 0,
+        });
+        if (!resumed || resumedTask.status !== "queued" || resumedTask.error
+          || resumedTask.column !== task.column || resumedTask.paused || resumedTask.userPaused || resumedTask.deletedAt) return false;
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
         await this.emitOverseerInterventionSafe(() =>

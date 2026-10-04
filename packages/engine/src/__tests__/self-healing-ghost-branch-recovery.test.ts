@@ -75,6 +75,8 @@ describe("self-healing ghost branch reclaim", () => {
   it("invalidates cached metadata on stale-resolved and preserves branch ref", async () => {
     mockSweepTask({ id: "FN-9001", column: "in-review", checkedOutBy: null, branch: "fusion/fn-9001", worktree: "/tmp/ghost-cat", baseCommitSha: "m0", paused: true, pausedReason: "branch-conflict-unrecoverable", status: "failed" });
     vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValueOnce({ kind: "stale-resolved" } as any);
+    // It was usable on entry but disappeared during inspection.
+    vi.mocked(worktreePool.isUsableTaskWorktree).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
     await manager.reclaimSelfOwnedBranchConflicts();
 
@@ -83,6 +85,14 @@ describe("self-healing ghost branch reclaim", () => {
     // a missing provenance is exactly what the store guard rejects.
     expect(store.updateTask).toHaveBeenCalledWith("FN-9001", { worktree: null, branch: null, branchWriteOrigin: "engine", baseCommitSha: null });
     expect(execMock).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
+  });
+
+  it("preserves a registered checkout when only the cached branch disappeared", async () => {
+    mockSweepTask({ id: "FN-9001", column: "in-review", checkedOutBy: null, branch: "fusion/fn-9001", worktree: "/tmp/ghost-cat", baseCommitSha: "m0", paused: true, pausedReason: "branch-conflict-unrecoverable", status: "failed" });
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValueOnce({ kind: "stale-resolved" } as any);
+    await manager.reclaimSelfOwnedBranchConflicts();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("keeps genuine live-foreign conflicts parked", async () => {

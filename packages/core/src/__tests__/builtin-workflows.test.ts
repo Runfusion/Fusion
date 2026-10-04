@@ -304,6 +304,9 @@ describe("built-in workflows", () => {
       expect(postMergeStep?.prompt, workflow.id).toContain("completed conclusion for Pipeline smoke tier");
       expect(postMergeStep?.prompt, workflow.id).toContain("explicit evidence-backed disposition");
       expect(postMergeStep?.prompt, workflow.id).toContain("Never fabricate success");
+      expect(postMergeStep?.prompt, workflow.id).toContain("Do not require unrelated follow-up completion");
+      expect(postMergeStep?.prompt, workflow.id).toContain("a red shard count or an open follow-up alone is not a task regression");
+      expect(postMergeStep?.prompt, workflow.id).toContain("If attribution remains unknown, name the specific failure and missing evidence");
       expect(postMergeStep?.prompt, workflow.id).not.toContain("A successful conclusion");
       expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-1");
       expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-4");

@@ -39,13 +39,12 @@ function hasFreshCheckoutLease(
 
 export type PostMergeGateResumeResult =
   | { outcome: "resumed"; gateId: string }
-  | { outcome: "exhausted"; gateId: string }
   | { outcome: "not-resumable" };
 
 const EXHAUSTED_PREFIX = "Post-merge verification needs remediation";
 
-function hasExhaustedRechecks(result: WorkflowStepResult): boolean {
-  return (result.priorAttempts ?? []).filter((entry) => entry.status === "failed").length >= 3;
+function hasLegacyRecoveryFailure(task: Pick<Task, "status" | "error">): boolean {
+  return task.status === "failed" && task.error?.startsWith(`${EXHAUSTED_PREFIX}:`) === true;
 }
 
 /*
@@ -67,11 +66,11 @@ export function isPostMergeGateRecoveryDue(
   task: Pick<Task, "workflowStepResults" | "status" | "error">,
   decision: RequiredPostMergeEvidenceDecision,
 ): boolean {
+  if (hasLegacyRecoveryFailure(task)) return true;
   if (decision.outcome === "resumable") return true;
   if (decision.outcome !== "blocked" || decision.reason !== "failed") return false;
   const result = task.workflowStepResults?.find((entry) => entry.workflowStepId === decision.gateId);
-  return !!result && (isRejectedGateRecheckDue(result)
-    || (hasExhaustedRechecks(result) && !task.error?.startsWith(EXHAUSTED_PREFIX)));
+  return !!result && isRejectedGateRecheckDue(result);
 }
 
 export async function resumeMissingPostMergeGate(
@@ -81,7 +80,7 @@ export async function resumeMissingPostMergeGate(
 ): Promise<PostMergeGateResumeResult> {
   const fence = options.fence ?? createMergeWriteFence({ taskId });
   if (typeof store.seedWorkspaceCodeReviewContinuationIfIdle !== "function") return { outcome: "not-resumable" };
-  const task = await store.getTask(taskId);
+  let task: Task = await store.getTask(taskId);
   const settings = await store.getSettings();
   if (!task.mergeDetails?.mergeConfirmed || !task.updatedAt
     || task.paused || task.userPaused || task.deletedAt || task.autoMerge === false
@@ -91,25 +90,36 @@ export async function resumeMissingPostMergeGate(
     || hasFreshCheckoutLease(task, settings)
     || isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })) return { outcome: "not-resumable" };
 
-  const decision = await getRequiredPostMergeEvidenceDecision(store, task);
-  const manualRetry = options.manualRetry === true && decision.outcome === "blocked" && decision.reason === "failed";
-  if (decision.outcome === "finalizable" || (!manualRetry && !isPostMergeGateRecoveryDue(task, decision))) return { outcome: "not-resumable" };
-  const failedResult = task.workflowStepResults?.find((entry) => entry.workflowStepId === decision.gateId);
-  if (!manualRetry && failedResult?.status === "failed" && hasExhaustedRechecks(failedResult)
-    && !task.error?.startsWith(EXHAUSTED_PREFIX)) {
-    let recorded = false;
-    await fence.write("finalization", () => store.updateTaskAtomic(task.id, async (live) => {
-      if (live.updatedAt !== task.updatedAt || live.paused || live.userPaused || live.deletedAt
-        || !live.mergeDetails?.mergeConfirmed || live.autoMerge === false) return null;
+  if (hasLegacyRecoveryFailure(task)) {
+    // Old recovery marked waiting reviews failed. Clear only its owned diagnostic;
+    // the gate result and completion timestamp still govern approval and retry timing.
+    const snapshot = task;
+    let cleared = false;
+    const updated = await fence.write("finalization", () => store.updateTaskAtomic(task.id, async (live) => {
+      if (live.updatedAt !== snapshot.updatedAt || live.column !== snapshot.column
+        || live.status !== snapshot.status || live.error !== snapshot.error
+        || live.paused || live.userPaused || live.deletedAt
+        || !live.mergeDetails?.mergeConfirmed || live.autoMerge === false
+        || hasFreshCheckoutLease(live, settings)
+        || isTaskExecutionLive(live.id, { activeSessionRegistry, executingTaskLock })) return null;
       const items = await store.listWorkflowWorkItemsForTask(task.id);
       if (items.some((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state))) return null;
       fence.assertOwned("finalization");
-      recorded = true;
-      return { status: "failed", error: `${EXHAUSTED_PREFIX}: '${decision.gateId}' has repeated rejected evidence. ${failedResult.notes || failedResult.output || "Inspect the failed verification result."} Automatic evidence checks continue hourly; Retry can check again after remediation.` };
+      cleared = true;
+      return { status: null as unknown as Task["status"], error: null as unknown as Task["error"] };
+    }, undefined, () => !fence.isOrphaned(), {
+      expectedUpdatedAt: snapshot.updatedAt,
+      expectedCheckedOutBy: snapshot.checkedOutBy ?? null,
+      expectedCheckoutNodeId: snapshot.checkoutNodeId ?? null,
+      expectedCheckoutLeaseEpoch: snapshot.checkoutLeaseEpoch ?? 0,
     }));
-    if (recorded) await fence.write("log", () => store.logEntry(task.id, `[post-merge] Repeated rejected evidence for '${decision.gateId}'; remediation is required and automatic checks continue hourly. Merge proof and failed evidence are preserved.`));
-    return recorded ? { outcome: "exhausted", gateId: decision.gateId } : { outcome: "not-resumable" };
+    if (!cleared || !updated || updated.status != null || updated.error != null) return { outcome: "not-resumable" };
+    task = updated;
   }
+
+  const decision = await getRequiredPostMergeEvidenceDecision(store, task);
+  const manualRetry = options.manualRetry === true && decision.outcome === "blocked" && decision.reason === "failed";
+  if (decision.outcome === "finalizable" || (!manualRetry && !isPostMergeGateRecoveryDue(task, decision))) return { outcome: "not-resumable" };
   const selection = await store.getTaskWorkflowSelectionAsync(task.id);
   const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
   if (resolved.source === "default" && !resolved.selectionAbsent) return { outcome: "not-resumable" };
@@ -133,15 +143,6 @@ export async function resumeMissingPostMergeGate(
     expectedTaskUpdatedAt: task.updatedAt,
   }));
   if (!seeded?.seeded) return { outcome: "not-resumable" };
-  if (task.error?.startsWith(EXHAUSTED_PREFIX)) {
-    const previousError = task.error;
-    await fence.write("finalization", () => store.updateTaskAtomic(task.id, (live) => {
-      fence.assertOwned("finalization");
-      if (live.status !== "failed" || live.error !== previousError || live.paused || live.userPaused
-        || !live.mergeDetails?.mergeConfirmed) return null;
-      return { status: null as unknown as Task["status"], error: null as unknown as Task["error"] };
-    }));
-  }
   await fence.write("log", () => store.logEntry(task.id, `[post-merge] ${decision.outcome === "resumable" ? "Resuming missing verification" : "Rechecking rejected evidence"} at '${node.id}'; already-landed implementation and merge will not run again.`));
   return { outcome: "resumed", gateId: node.id };
 }

@@ -4762,6 +4762,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             continue;
           }
           if (inspection.kind === "stale-resolved") {
+            // A missing expected ref does not prove its registered checkout is gone. Acquisition
+            // can rebind a renamed, task-owned branch; clearing the pointers loses that evidence.
+            if (await isUsableTaskWorktree(this.options.rootDir, task.worktree)) continue;
             await this.store.updateTask(task.id, {
               worktree: null,
               branch: null, branchWriteOrigin: "engine" as const,

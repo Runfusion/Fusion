@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { exec } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -32,14 +33,14 @@ function toShellCasePattern(pattern: string): string {
  * Build the shared pre-commit identity-guard hook.
  *
  * The emitted script must stay metadata-aware because linked git worktrees share
- * the common hooks directory. It bakes in the install-time working branch,
- * then falls back to `fusion-task-id` when runtime metadata drifts so the shared
- * hook still follows the current owning task.
+ * the common hooks directory. Resolve the branch policy from the current checkout's
+ * git directory, including when sibling sessions share the same parent task ID.
+ * Legacy checkouts without branch metadata retain the canonical task branch fallback.
  */
 export function buildIdentityGuardHook(
-  taskId: string,
+  _taskId: string,
   allowedBranchPatterns: readonly string[] = DEFAULT_ALLOWED_BRANCH_PATTERNS,
-  expectedBranch = `fusion/${taskId.toLowerCase()}`,
+  _expectedBranch?: string,
 ): string {
   const allowChecks = allowedBranchPatterns.map((pattern) => `  ${toShellCasePattern(pattern)}) exit 0 ;;`).join("\n");
 
@@ -74,14 +75,14 @@ fi
 # new commits with --allow-empty.
 
 WORKTREE_TASK_ID=$(cat "$TASK_FILE")
-# Keep this canonicalized in lockstep with canonicalFusionBranchName(taskId)
-# FNXC:WorktreeIdentity 2026-08-20-03:38: FN-9161 permits an operator-selected
-# branch for a task worktree, so the hook follows that branch rather than
-# reconstructing Fusion's default.
-EXPECTED_BRANCH=${JSON.stringify(expectedBranch)}
-
-if [ "$(printf '%s' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')" != ${JSON.stringify(taskId.toLowerCase())} ]; then
-  EXPECTED_BRANCH="fusion/$(printf '%s' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')"
+EXPECTED_BRANCH="fusion/$(printf '%s' "$WORKTREE_TASK_ID" | tr '[:upper:]' '[:lower:]')"
+BRANCH_FILE=$(git rev-parse --git-path fusion-task-branch)
+if [ -f "$BRANCH_FILE" ]; then
+  POLICY_TASK_ID=$(sed -n '1p' "$BRANCH_FILE")
+  POLICY_BRANCH=$(sed -n '2p' "$BRANCH_FILE")
+  if [ "$POLICY_TASK_ID" = "$WORKTREE_TASK_ID" ] && [ -n "$POLICY_BRANCH" ]; then
+    EXPECTED_BRANCH="$POLICY_BRANCH"
+  fi
 fi
 
 if ! HEAD_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null); then
@@ -284,12 +285,16 @@ git interpret-trailers \
 
 export async function writeFileAtomic(targetPath: string, content: string, mode?: number): Promise<void> {
   await fs.mkdir(dirname(targetPath), { recursive: true });
-  const tmpPath = `${targetPath}.tmp`;
+  const tmpPath = `${targetPath}.${randomUUID()}.tmp`;
   const current = await fs.readFile(targetPath, "utf-8").catch(() => null);
   if (current === content) return;
-  await fs.writeFile(tmpPath, content, { encoding: "utf-8", mode });
-  if (mode != null) await fs.chmod(tmpPath, mode);
-  await fs.rename(tmpPath, targetPath);
+  try {
+    await fs.writeFile(tmpPath, content, { encoding: "utf-8", mode });
+    if (mode != null) await fs.chmod(tmpPath, mode);
+    await fs.rename(tmpPath, targetPath);
+  } finally {
+    await fs.rm(tmpPath, { force: true });
+  }
 }
 
 async function installCommitMsgHook(input: {
@@ -353,6 +358,8 @@ export async function installTaskWorktreeIdentityGuard(input: {
   const metadataPath = await resolveGitPath(input.worktreePath, "fusion-task-id");
   const hookPath = await resolveGitPath(input.worktreePath, "hooks/pre-commit");
 
+  const branchMetadataPath = await resolveGitPath(input.worktreePath, "fusion-task-branch");
+  await writeFileAtomic(branchMetadataPath, `${input.taskId}\n${input.expectedBranch ?? `fusion/${input.taskId.toLowerCase()}`}\n`);
   await writeFileAtomic(metadataPath, `${input.taskId}\n`);
   await writeFileAtomic(hookPath, hook, 0o755);
 

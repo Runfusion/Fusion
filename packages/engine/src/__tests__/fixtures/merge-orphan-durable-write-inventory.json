@@ -307,6 +307,7 @@
     "packages/engine/src/workflows/workflow-review-service.ts",
     "packages/engine/src/workflows/workflow-step-tool-policy.ts",
     "packages/engine/src/worktree-base-refresh.ts",
+    "packages/engine/src/worktree/prove-task-worktree-rebind.ts",
     "packages/engine/src/worktree/python-uv-inference.ts",
     "packages/engine/src/worktree/review-checkout-clean.ts",
     "packages/engine/src/worktree/review-diff-fingerprint.ts",
@@ -7075,82 +7076,22 @@
     },
     {
       "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.logEntry::#1",
-      "callSiteFingerprint": "store.logEntry(task.id,`[post-merge] Repeated rejected evidence for '${decision.gateId}'; remediation is required and automatic checks continue)",
-      "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
-      "enclosingSymbolPath": "resumeMissingPostMergeGate",
-      "writer": "store.logEntry",
-      "ordinal": 1,
-      "lineHint": 110,
-      "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
-      "reachableDataStates": [
-        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
-      ],
-      "axis1": "checkpoint-covered",
-      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
-      "axis2Provisional": "already-fenced",
-      "axis2Final": "already-fenced",
-      "observedInSuite": "layerB-observed",
-      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
-      "followUpTaskId": "none:no-follow-up-required"
-    },
-    {
-      "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.logEntry::#2",
       "callSiteFingerprint": "store.logEntry(task.id,`[post-merge] ${decision.outcome === \"resumable\" ? \"Resuming missing verification\" : \"Rechecking rejected evidence\"} at )",
       "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
       "enclosingSymbolPath": "resumeMissingPostMergeGate",
       "writer": "store.logEntry",
-      "ordinal": 2,
-      "lineHint": 145,
-      "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
-      "reachableDataStates": [
-        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
-      ],
-      "axis1": "checkpoint-covered",
-      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
-      "axis2Provisional": "already-fenced",
-      "axis2Final": "already-fenced",
-      "observedInSuite": "layerB-observed",
-      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
-      "followUpTaskId": "none:no-follow-up-required"
-    },
-    {
-      "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.updateTaskAtomic::#1",
-      "callSiteFingerprint": "store.updateTaskAtomic(task.id,async (live) => { if (live.updatedAt !== task.updatedAt || live.paused || live.userPaused || live.deletedAt || !live.mer)",
-      "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
-      "enclosingSymbolPath": "resumeMissingPostMergeGate",
-      "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 101,
+      "lineHint": 146,
       "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
       "reachableDataStates": [
-        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
+        "Confirmed merge awaiting required post-merge evidence; legacy recovery-owned failure cleanup and missing/rejected gate continuation reseeding."
       ],
       "axis1": "checkpoint-covered",
-      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
+      "axis1Evidence": "The finalizer supplies its merge ownership fence. Cleanup reasserts ownership after the active-work read and applies a final database timestamp/checkout-lease CAS plus shouldPersist ownership predicate. Continuation insertion is fenced and snapshot/selection checked; the success log is fenced after seeding.",
       "axis2Provisional": "already-fenced",
       "axis2Final": "already-fenced",
       "observedInSuite": "layerB-observed",
-      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
-      "followUpTaskId": "none:no-follow-up-required"
-    },
-    {
-      "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate::store.updateTaskAtomic::#2",
-      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(live) => { fence.assertOwned(\"finalization\"); if (live.status !== \"failed\" || live.error !== previousError || live.paus)",
-      "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
-      "enclosingSymbolPath": "resumeMissingPostMergeGate",
-      "writer": "store.updateTaskAtomic",
-      "ordinal": 2,
-      "lineHint": 138,
-      "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
-      "reachableDataStates": [
-        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
-      ],
-      "axis1": "checkpoint-covered",
-      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
-      "axis2Provisional": "already-fenced",
-      "axis2Final": "already-fenced",
-      "observedInSuite": "layerB-observed",
-      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during cleanup/idle reads, after cleanup and after seeding, and injects a concurrent persisted reset; later writes and stale cleanup are refused.",
       "followUpTaskId": "none:no-follow-up-required"
     },
     {
@@ -7160,17 +7101,37 @@
       "enclosingSymbolPath": "resumeMissingPostMergeGate>seeded",
       "writer": "store.seedWorkspaceCodeReviewContinuationIfIdle",
       "ordinal": 1,
-      "lineHint": 121,
+      "lineHint": 131,
       "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
       "reachableDataStates": [
-        "Confirmed merge with missing or rejected required post-merge evidence, including repeated failures and successful continuation reseeding."
+        "Confirmed merge awaiting required post-merge evidence; legacy recovery-owned failure cleanup and missing/rejected gate continuation reseeding."
       ],
       "axis1": "checkpoint-covered",
-      "axis1Evidence": "The finalizer forwards its merge ownership fence. Each continuation insert, task update, and log has an immediate fence; the asynchronous atomic callback reasserts ownership after its work-item read. Snapshot/selection and owned-error comparisons preserve successor state.",
+      "axis1Evidence": "The finalizer supplies its merge ownership fence. Cleanup reasserts ownership after the active-work read and applies a final database timestamp/checkout-lease CAS plus shouldPersist ownership predicate. Continuation insertion is fenced and snapshot/selection checked; the success log is fenced after seeding.",
       "axis2Provisional": "already-fenced",
       "axis2Final": "already-fenced",
       "observedInSuite": "layerB-observed",
-      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during idle-work and diagnostic reads, after diagnostic writes, and after continuation seeding; later mutations are suppressed.",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during cleanup/idle reads, after cleanup and after seeding, and injects a concurrent persisted reset; later writes and stale cleanup are refused.",
+      "followUpTaskId": "none:no-follow-up-required"
+    },
+    {
+      "callSiteId": "packages/engine/src/merge/post-merge-gate-reseed.ts::resumeMissingPostMergeGate>updated::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,async (live) => { if (live.updatedAt !== snapshot.updatedAt || live.column !== snapshot.column || live.status !== snapsh,undefined,() => !fence.isOrphaned(),{expectedUpdatedAt,expectedCheckedOutBy,expectedCheckoutNodeId,expectedCheckoutLeaseEpoch})",
+      "file": "packages/engine/src/merge/post-merge-gate-reseed.ts",
+      "enclosingSymbolPath": "resumeMissingPostMergeGate>updated",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 98,
+      "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
+      "reachableDataStates": [
+        "Confirmed merge awaiting required post-merge evidence; legacy recovery-owned failure cleanup and missing/rejected gate continuation reseeding."
+      ],
+      "axis1": "checkpoint-covered",
+      "axis1Evidence": "The finalizer supplies its merge ownership fence. Cleanup reasserts ownership after the active-work read and applies a final database timestamp/checkout-lease CAS plus shouldPersist ownership predicate. Continuation insertion is fenced and snapshot/selection checked; the success log is fenced after seeding.",
+      "axis2Provisional": "already-fenced",
+      "axis2Final": "already-fenced",
+      "observedInSuite": "layerB-observed",
+      "executionProof": "behavioral: confirmed-merge-must-finalize.test.ts aborts during cleanup/idle reads, after cleanup and after seeding, and injects a concurrent persisted reset; later writes and stale cleanup are refused.",
       "followUpTaskId": "none:no-follow-up-required"
     },
     {
@@ -10722,7 +10683,7 @@
       "enclosingSymbolPath": "recoverApprovedStrandedAiMergeCommit>finalized",
       "writer": "finalizeProvenAutoMergeTask",
       "ordinal": 1,
-      "lineHint": 13996,
+      "lineHint": 13999,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -10742,7 +10703,7 @@
       "enclosingSymbolPath": "recoverMergedReviewTasks>finalization",
       "writer": "finalizeProvenAutoMergeTask",
       "ordinal": 1,
-      "lineHint": 12865,
+      "lineHint": 12868,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -10998,7 +10959,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 537,
+      "lineHint": 538,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11018,7 +10979,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 1154,
+      "lineHint": 1189,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11038,7 +10999,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>acquirePinnedWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 946,
+      "lineHint": 947,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11053,12 +11014,12 @@
     },
     {
       "callSiteId": "packages/engine/src/worktree/worktree-acquisition.ts::acquireTaskWorktree>acquirePinnedWorktree::store.logEntry::#2",
-      "callSiteFingerprint": "store.logEntry(task.id,classification.ok ? `Task-pinned worktree ${pinnedPath} is checked out on a foreign branch; reclaiming in place` : `Task,undefined,runContext)",
+      "callSiteFingerprint": "store.logEntry(task.id,\"Rebound task-pinned checkout to its ownership-proven renamed branch\",proof.branch,runContext)",
       "file": "packages/engine/src/worktree/worktree-acquisition.ts",
       "enclosingSymbolPath": "acquireTaskWorktree>acquirePinnedWorktree",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 1016,
+      "lineHint": 1035,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11073,12 +11034,12 @@
     },
     {
       "callSiteId": "packages/engine/src/worktree/worktree-acquisition.ts::acquireTaskWorktree>acquirePinnedWorktree::store.logEntry::#3",
-      "callSiteFingerprint": "store.logEntry(task.id,`Preserved orphaned task-pinned directory ${pinnedPath} before recreation`,preservedPath,runContext)",
+      "callSiteFingerprint": "store.logEntry(task.id,classification.ok ? `Task-pinned worktree ${pinnedPath} is checked out on a foreign branch; reclaiming in place` : `Task,undefined,runContext)",
       "file": "packages/engine/src/worktree/worktree-acquisition.ts",
       "enclosingSymbolPath": "acquireTaskWorktree>acquirePinnedWorktree",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 1078,
+      "lineHint": 1051,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11093,12 +11054,12 @@
     },
     {
       "callSiteId": "packages/engine/src/worktree/worktree-acquisition.ts::acquireTaskWorktree>acquirePinnedWorktree::store.logEntry::#4",
-      "callSiteFingerprint": "store.logEntry(task.id,`Failed to reclaim task-pinned worktree ${pinnedPath}; leaving resume metadata intact for retry`,formatError(removeErr).detail ?? undefined,runContext)",
+      "callSiteFingerprint": "store.logEntry(task.id,`Preserved orphaned task-pinned directory ${pinnedPath} before recreation`,preservedPath,runContext)",
       "file": "packages/engine/src/worktree/worktree-acquisition.ts",
       "enclosingSymbolPath": "acquireTaskWorktree>acquirePinnedWorktree",
       "writer": "store.logEntry",
       "ordinal": 4,
-      "lineHint": 1109,
+      "lineHint": 1113,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11110,6 +11071,26 @@
       "executionProof": "none:out-of-frontier",
       "followUpTaskId": "none:out-of-frontier",
       "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo to acquireTaskWorktree>acquirePinnedWorktree; this imported module belongs to the legacy/independent subsystem closure."
+    },
+    {
+      "callSiteId": "packages/engine/src/worktree/worktree-acquisition.ts::acquireTaskWorktree>acquirePinnedWorktree::store.logEntry::#5",
+      "callSiteFingerprint": "store.logEntry(task.id,`Failed to reclaim task-pinned worktree ${pinnedPath}; leaving resume metadata intact for retry`,formatError(removeErr).detail ?? undefined,runContext)",
+      "file": "packages/engine/src/worktree/worktree-acquisition.ts",
+      "enclosingSymbolPath": "acquireTaskWorktree>acquirePinnedWorktree",
+      "writer": "store.logEntry",
+      "ordinal": 5,
+      "lineHint": 1144,
+      "owningEntryPoint": "other",
+      "reachableDataStates": [
+        "Executor acquisition of a pinned checkout: ownership-proven renamed-branch assignment or failed reclaim diagnostic."
+      ],
+      "axis1": "out-of-frontier",
+      "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo to acquireTaskWorktree>acquirePinnedWorktree; task/workspace executor acquisition is an independent subsystem imported into the module closure. The rebind assignment uses a timestamp/checkout-lease persistence CAS, separately exercised by worktree-acquisition.test.ts.",
+      "axis2Provisional": "out-of-frontier",
+      "axis2Final": "out-of-frontier",
+      "observedInSuite": "out-of-frontier",
+      "executionProof": "none:out-of-frontier",
+      "followUpTaskId": "none:out-of-frontier"
     },
     {
       "callSiteId": "packages/engine/src/worktree/worktree-acquisition.ts::acquireTaskWorktree>acquirePinnedWorktree::store.updateTask::#1",
@@ -11118,7 +11099,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>acquirePinnedWorktree",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 1114,
+      "lineHint": 1149,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11132,13 +11113,33 @@
       "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo to acquireTaskWorktree>acquirePinnedWorktree; this imported module belongs to the legacy/independent subsystem closure."
     },
     {
+      "callSiteId": "packages/engine/src/worktree/worktree-acquisition.ts::acquireTaskWorktree>acquirePinnedWorktree>persisted::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(live) => { const identityFields = [\"branch\", \"worktree\", \"column\", \"status\", \"paused\", \"userPaused\", \"checkedOutBy\", \"w,runContext,() => !activeSessionRegistry.isPathActive(pinnedPath),{expectedUpdatedAt,expectedCheckedOutBy,expectedCheckoutNodeId,expectedCheckoutLeaseEpoch})",
+      "file": "packages/engine/src/worktree/worktree-acquisition.ts",
+      "enclosingSymbolPath": "acquireTaskWorktree>acquirePinnedWorktree>persisted",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 1014,
+      "owningEntryPoint": "other",
+      "reachableDataStates": [
+        "Executor acquisition of a pinned checkout: ownership-proven renamed-branch assignment or failed reclaim diagnostic."
+      ],
+      "axis1": "out-of-frontier",
+      "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo to acquireTaskWorktree>acquirePinnedWorktree; task/workspace executor acquisition is an independent subsystem imported into the module closure. The rebind assignment uses a timestamp/checkout-lease persistence CAS, separately exercised by worktree-acquisition.test.ts.",
+      "axis2Provisional": "out-of-frontier",
+      "axis2Final": "out-of-frontier",
+      "observedInSuite": "out-of-frontier",
+      "executionProof": "none:out-of-frontier",
+      "followUpTaskId": "none:out-of-frontier"
+    },
+    {
       "callSiteId": "packages/engine/src/worktree/worktree-acquisition.ts::acquireTaskWorktree>createFreshWorktreeFromReturnGuard::store.logEntry::#1",
       "callSiteFingerprint": "store.logEntry(task.id,\"Acquisition attempted to return the project root as a task worktree; creating a fresh worktree instead\",guardedPath,runContext)",
       "file": "packages/engine/src/worktree/worktree-acquisition.ts",
       "enclosingSymbolPath": "acquireTaskWorktree>createFreshWorktreeFromReturnGuard",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 877,
+      "lineHint": 878,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11158,7 +11159,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>finalizeCreatedWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 789,
+      "lineHint": 790,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11178,7 +11179,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>finalizeCreatedWorktree",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 791,
+      "lineHint": 792,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11198,7 +11199,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>finalizeCreatedWorktree",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 793,
+      "lineHint": 794,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11218,7 +11219,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>finalizeCreatedWorktree",
       "writer": "store.logEntry",
       "ordinal": 4,
-      "lineHint": 803,
+      "lineHint": 804,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11238,7 +11239,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>finalizeCreatedWorktree",
       "writer": "store.logEntry",
       "ordinal": 5,
-      "lineHint": 816,
+      "lineHint": 817,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11258,7 +11259,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>finalizeCreatedWorktree",
       "writer": "store.logEntry",
       "ordinal": 6,
-      "lineHint": 830,
+      "lineHint": 831,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11278,7 +11279,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>finalizeCreatedWorktree",
       "writer": "store.logEntry",
       "ordinal": 7,
-      "lineHint": 834,
+      "lineHint": 835,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11298,7 +11299,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>hydrate",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 558,
+      "lineHint": 559,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11318,7 +11319,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>hydrate",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 562,
+      "lineHint": 563,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11338,7 +11339,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>hydrate",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 564,
+      "lineHint": 565,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11358,7 +11359,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>logConfiguredCopyFileResults",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 671,
+      "lineHint": 672,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11378,7 +11379,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>logConfiguredCopyFileResults",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 674,
+      "lineHint": 675,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11398,7 +11399,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>notifyFallback",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 447,
+      "lineHint": 448,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11418,7 +11419,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>persistWorktreeAssignment",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 387,
+      "lineHint": 388,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11438,7 +11439,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>persistWorktreeAssignment",
       "writer": "store.updateTask",
       "ordinal": 2,
-      "lineHint": 392,
+      "lineHint": 393,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11458,7 +11459,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>refreshExistingWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 418,
+      "lineHint": 419,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11478,7 +11479,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>refreshExistingWorktree",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 436,
+      "lineHint": 437,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11498,7 +11499,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>refreshExistingWorktree",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 441,
+      "lineHint": 442,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11518,7 +11519,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>resolveDependencyReadinessForPreparedWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 709,
+      "lineHint": 710,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11538,7 +11539,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>resolveDependencyReadinessForPreparedWorktree",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 719,
+      "lineHint": 720,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11558,7 +11559,7 @@
       "enclosingSymbolPath": "acquireTaskWorktree>reuseWarmWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 907,
+      "lineHint": 908,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11578,7 +11579,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 1398,
+      "lineHint": 1433,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11598,7 +11599,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree",
       "writer": "store.logEntry",
       "ordinal": 2,
-      "lineHint": 1539,
+      "lineHint": 1574,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11618,7 +11619,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree",
       "writer": "store.logEntry",
       "ordinal": 3,
-      "lineHint": 1883,
+      "lineHint": 1918,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11638,7 +11639,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree",
       "writer": "store.mergeWorkspaceWorktreeEntry",
       "ordinal": 1,
-      "lineHint": 1576,
+      "lineHint": 1611,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11658,7 +11659,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree",
       "writer": "store.releaseWorkspaceLease",
       "ordinal": 1,
-      "lineHint": 1548,
+      "lineHint": 1583,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11678,7 +11679,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree",
       "writer": "store.releaseWorkspaceLease",
       "ordinal": 2,
-      "lineHint": 1911,
+      "lineHint": 1946,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11698,7 +11699,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree>callbackStore>get",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 1592,
+      "lineHint": 1627,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11718,7 +11719,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree>callbackStore>get",
       "writer": "store.pauseTask",
       "ordinal": 1,
-      "lineHint": 1607,
+      "lineHint": 1642,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11738,7 +11739,7 @@
       "enclosingSymbolPath": "acquireWorkspaceRepoWorktree>callbackStore>get",
       "writer": "store.updateTask",
       "ordinal": 1,
-      "lineHint": 1599,
+      "lineHint": 1634,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11758,7 +11759,7 @@
       "enclosingSymbolPath": "maybeWarnForeignTaskStartPoint",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 289,
+      "lineHint": 290,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -11778,7 +11779,7 @@
       "enclosingSymbolPath": "verifyResumeBranchNotMisbound",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 1240,
+      "lineHint": 1275,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"

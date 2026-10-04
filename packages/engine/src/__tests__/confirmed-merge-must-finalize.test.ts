@@ -205,32 +205,39 @@ describe("missing post-merge continuation recovery", () => {
     expect(store.logEntry).not.toHaveBeenCalled();
   });
 
-  it.each(["during-diagnostic-read", "after-diagnostic-write", "after-seed"])("fences post-merge recovery mutations when aborted %s", async (point) => {
+  it.each(["during-cleanup-read", "after-cleanup-write", "after-seed"])("fences post-merge recovery mutations when aborted %s", async (point) => {
     const { task, store } = recoveryFixture();
     const controller = new AbortController();
     const fence = createMergeWriteFence({ taskId: task.id, signal: controller.signal });
     const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date(Date.now() - 61 * 60_000).toISOString() };
     task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    if (point !== "after-seed") {
+      task.status = "failed";
+      task.error = "Post-merge verification needs remediation: waiting for CI";
+    }
     const before = structuredClone(task);
-    if (point === "during-diagnostic-read") {
+    if (point === "during-cleanup-read") {
       store.listWorkflowWorkItemsForTask = vi.fn(async () => { controller.abort(); return []; });
-    } else if (point === "after-diagnostic-write") {
+    } else if (point === "after-cleanup-write") {
       const update = store.updateTaskAtomic;
       store.updateTaskAtomic = vi.fn(async (...args) => { const result = await update(...args); controller.abort(); return result; }) as typeof update;
     } else {
-      task.status = "failed";
-      task.error = "Post-merge verification needs remediation: waiting for CI";
       const seed = store.seedWorkspaceCodeReviewContinuationIfIdle;
       store.seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async (...args) => { const result = await seed(...args); controller.abort(); return result; });
     }
     const recovery = resumeMissingPostMergeGate(store, task.id, { fence });
-    if (point === "during-diagnostic-read") {
+    if (point === "during-cleanup-read") {
       await expect(recovery).rejects.toMatchObject({ name: "MergeAbortedError" });
       expect(task).toEqual(before);
     } else {
       await recovery;
-      expect(task.status).toBe("failed");
-      expect(task.error).toContain("Post-merge verification needs remediation");
+      if (point === "after-cleanup-write") {
+        expect(task.status).toBeNull();
+        expect(task.error).toBeNull();
+        expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+      } else {
+        expect(task).toEqual(before);
+      }
     }
     expect(store.logEntry).not.toHaveBeenCalled();
     if (point === "after-seed") expect(store.updateTaskAtomic).not.toHaveBeenCalled();
@@ -255,10 +262,57 @@ describe("missing post-merge continuation recovery", () => {
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
     if (condition === "exhausted") {
-      expect(task.status).toBe("failed");
-      expect(task.error).toContain("Post-merge verification needs remediation");
+      expect(task.status).toBeUndefined();
+      expect(task.error).toBeUndefined();
       expect(task.workflowStepResults?.[0].priorAttempts).toHaveLength(3);
     }
+  });
+
+  it("clears only legacy recovery failure while preserving the cooldown and rejected evidence", async () => {
+    const { task, store } = recoveryFixture();
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date().toISOString() };
+    task.workflowStepResults = [{ ...rejection, priorAttempts: Array(10).fill(rejection) }] as Task["workflowStepResults"];
+    task.status = "failed";
+    task.error = "Post-merge verification needs remediation: waiting for CI";
+    const evidence = structuredClone(task.workflowStepResults);
+    for (let n = 0; n < 3; n++) await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(task.status).toBeNull();
+    expect(task.error).toBeNull();
+    expect(task.column).toBe("in-review");
+    expect(task.workflowStepResults).toEqual(evidence);
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("keeps repeated rejected reviews in review without manufacturing task failure", async () => {
+    const { task, store, items } = recoveryFixture();
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date(Date.now() - 61 * 60_000).toISOString() };
+      task.workflowStepResults = [{ ...rejection, priorAttempts: Array(attempt).fill(rejection) }] as Task["workflowStepResults"];
+      items.length = 0;
+      await expect(resumeMissingPostMergeGate(store, task.id)).resolves.toMatchObject({ outcome: "resumed" });
+      expect(task.status).toBeUndefined();
+      expect(task.error).toBeUndefined();
+      expect(task.column).toBe("in-review");
+      expect(task.workflowStepResults[0]).toMatchObject({ status: "failed", verdict: "REVISE" });
+      expect(task.workflowStepResults[0].priorAttempts).toHaveLength(attempt);
+    }
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: "failed", error: "Execution failed: database unavailable" },
+    { status: "awaiting-approval", error: "Post-merge verification needs remediation: waiting for CI" },
+    { status: "failed", error: "Post-merge verification needs remediation: waiting for CI", userPaused: true },
+  ] as const)("preserves genuine failures and operator holds: %j", async (state) => {
+    const { task, store } = recoveryFixture();
+    Object.assign(task, state);
+    task.workflowStepResults = [{ workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date().toISOString() }];
+    const before = structuredClone(task);
+    await resumeMissingPostMergeGate(store, task.id);
+    expect(task).toEqual(before);
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
   });
 
   it("rechecks external evidence after the capped cooldown even after three rejected attempts", async () => {
@@ -288,10 +342,12 @@ describe("missing post-merge continuation recovery", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
-  it("does not overwrite a concurrent operator hold when surfacing an exhausted recovery", async () => {
+  it("does not overwrite a concurrent operator hold when clearing a legacy recovery failure", async () => {
     const { task, store } = recoveryFixture();
     const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: "2026-01-01T00:00:00Z" };
     task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    task.status = "failed";
+    task.error = "Post-merge verification needs remediation: waiting for CI";
     store.updateTaskAtomic = vi.fn(async (_id, update) => {
       task.userPaused = true;
       const patch = await update(task);
@@ -299,19 +355,47 @@ describe("missing post-merge continuation recovery", () => {
       return task;
     });
     expect(await resumeMissingPostMergeGate(store, task.id)).toEqual({ outcome: "not-resumable" });
-    expect(task.error).toBeUndefined();
+    expect(task.error).toContain("Post-merge verification needs remediation:");
     expect(task.userPaused).toBe(true);
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
   });
 
-  it("does not park an exhausted result while an explicit retry is already queued", async () => {
+  it("does not clear legacy recovery state while an explicit retry is already queued", async () => {
     const { task, store, items } = recoveryFixture();
     const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: "2026-01-01T00:00:00Z" };
     task.workflowStepResults = [{ ...rejection, priorAttempts: [rejection, rejection, rejection] }] as Task["workflowStepResults"];
+    task.status = "failed";
+    task.error = "Post-merge verification needs remediation: waiting for CI";
     items.push({ kind: "task", state: "runnable" });
     expect(await resumeMissingPostMergeGate(store, task.id)).toEqual({ outcome: "not-resumable" });
-    expect(task.status).toBeUndefined();
-    expect(task.error).toBeUndefined();
+    expect(task.status).toBe("failed");
+    expect(task.error).toContain("Post-merge verification needs remediation:");
+  });
+
+  it("does not clear a concurrent Reset committed after the cleanup's work-item read", async () => {
+    const { task, store } = recoveryFixture();
+    task.status = "failed";
+    task.error = "Post-merge verification needs remediation: waiting for CI";
+    task.workflowStepResults = [{ workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: "2026-01-01T00:00:00Z" }];
+    const original = structuredClone(task);
+    store.updateTaskAtomic = vi.fn(async (_id, update, _context, shouldPersist, persistFence) => {
+      const snapshot = structuredClone(task);
+      const patch = await update(snapshot);
+      expect(patch).toMatchObject({ status: null, error: null });
+      expect(shouldPersist?.()).toBe(true);
+      expect(persistFence).toEqual({ expectedUpdatedAt: original.updatedAt, expectedCheckedOutBy: null,
+        expectedCheckoutNodeId: null, expectedCheckoutLeaseEpoch: 0 });
+      // Another process commits Reset after the updater's awaits. PostgreSQL's
+      // final conditional UPDATE must refuse even though the updater accepted.
+      Object.assign(task, { updatedAt: "reset-committed", userPaused: true, error: "Reset in progress" });
+      if (persistFence?.expectedUpdatedAt === task.updatedAt && patch) Object.assign(task, patch);
+      return snapshot;
+    });
+    expect(await resumeMissingPostMergeGate(store, task.id)).toEqual({ outcome: "not-resumable" });
+    expect(task).toMatchObject({ status: "failed", error: "Reset in progress", userPaused: true });
+    expect(task.workflowStepResults).toEqual(original.workflowStepResults);
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
   });
 
   it("resumes the missing gate exactly once across repeated finalization polls, without merging or completing", async () => {

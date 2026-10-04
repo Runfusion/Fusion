@@ -1,3 +1,4 @@
+import { proveTaskWorktreeRebind } from "../worktree/prove-task-worktree-rebind.js";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -124,6 +125,82 @@ describe("acquireTaskWorktree", () => {
       updateTask: vi.fn().mockResolvedValue(undefined),
       logEntry: vi.fn().mockResolvedValue(undefined),
     };
+  });
+
+  it.each(["none", "reassigned", "persist-refused"])("rebinds a renamed task-owned pinned branch with concurrent change=%s", async (race) => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/renamed '${pinnedPath}'`);
+    writeFileSync(join(pinnedPath, ".gitignore"), ".fusion/\nnode_modules/\n");
+    git(pinnedPath, "git add .gitignore");
+    git(pinnedPath, 'git commit -m "task change" -m "Fusion-Task-Id: FN-1"');
+    const head = git(pinnedPath, "git rev-parse HEAD");
+    writeFileSync(join(pinnedPath, "README.md"), "user edits\n");
+    mkdirSync(join(pinnedPath, ".fusion"));
+    writeFileSync(join(pinnedPath, ".fusion", "evidence"), "retain\n");
+    store.listTasks = vi.fn().mockResolvedValue([]);
+    const snapshot = { ...task, worktree: pinnedPath, branch: "fusion/fn-1", updatedAt: "2026-10-04T00:00:00Z" };
+    store.getTask = vi.fn().mockResolvedValue(snapshot);
+    store.updateTaskAtomic = vi.fn(async (_id, updater) => {
+      const patch = await updater(race === "reassigned" ? { ...snapshot, branch: "operator/new-choice" } : snapshot);
+      if (race === "persist-refused") return snapshot;
+      if (patch) await store.updateTask("FN-1", patch);
+      return { ...snapshot, ...patch };
+    });
+    const acquisition = acquireTaskWorktree({
+      rootDir, task: { ...task, worktree: pinnedPath, branch: "fusion/fn-1" }, store,
+      settings: { worktreesDir: ".worktrees" }, runInitCommand: false,
+    });
+    if (race !== "none") {
+      await expect(acquisition).rejects.toThrow("ownership changed");
+      expect(store.updateTask).not.toHaveBeenCalled();
+    } else {
+      const result = await acquisition;
+      expect(result.branch).toBe("fusion/renamed");
+      expect(result.worktreePath).toBe(pinnedPath);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ branch: "fusion/renamed", worktree: pinnedPath }));
+    }
+    expect(git(pinnedPath, "git rev-parse HEAD")).toBe(head);
+    expect(readFileSync(join(pinnedPath, "README.md"), "utf8")).toBe("user edits\n");
+    expect(readFileSync(join(pinnedPath, ".fusion", "evidence"), "utf8")).toBe("retain\n");
+  });
+
+  it.each(["foreign", "unattributed", "mixed", "active", "active-alias", "contradictory", "foreign-lineage", "other-owner", "git-failure"])("preserves a mismatched checkout when rebind proof fails: %s", async (failure) => {
+    const rootDir = makeRepo();
+    const pinnedPath = join(rootDir, ".worktrees", "fn-1");
+    git(rootDir, `git worktree add -b fusion/renamed '${pinnedPath}'`);
+    writeFileSync(join(pinnedPath, "change"), "work\n");
+    git(pinnedPath, "git add change");
+    const owner = failure === "foreign" || failure === "mixed" ? "FN-2" : "FN-1";
+    git(pinnedPath, failure === "unattributed" ? 'git commit -m "unattributed"' : `git commit -m "work" -m "Fusion-Task-Id: ${owner}"`);
+    if (failure === "mixed") {
+      writeFileSync(join(pinnedPath, "change"), "more work\n");
+      git(pinnedPath, "git add change");
+      git(pinnedPath, 'git commit -m "own tip" -m "Fusion-Task-Id: FN-1"');
+    }
+    if (failure === "contradictory" || failure === "foreign-lineage") {
+      writeFileSync(join(pinnedPath, "change"), "contradictory evidence\n");
+      git(pinnedPath, "git add change");
+      const trailers = failure === "contradictory"
+        ? "Fusion-Task-Id: FN-1\nFusion-Task-Id: FN-2"
+        : "Fusion-Task-Id: FN-1\nFusion-Task-Lineage: own\nFusion-Task-Lineage: foreign";
+      git(pinnedPath, `git commit -m "ambiguous owner" -m '${trailers}'`);
+    }
+    const head = git(pinnedPath, "git rev-parse HEAD");
+    writeFileSync(join(pinnedPath, "user-file"), "retain\n");
+    if (failure === "active-alias") {
+      const alias = join(rootDir, "live-alias");
+      symlinkSync(pinnedPath, alias);
+      activeSessionRegistry.registerPath(alias, { taskId: "FN-1", kind: "step-session", ownerKey: "live" });
+    }
+    if (failure === "active") activeSessionRegistry.registerPath(pinnedPath, { taskId: "FN-2", kind: "executor", ownerKey: "other" });
+    store.listTasks = vi.fn().mockResolvedValue(failure === "other-owner" ? [{ id: "FN-2", branch: "fusion/renamed" }] : []);
+    await expect(proveTaskWorktreeRebind({ rootDir, worktreePath: pinnedPath, task, store,
+      integrationBranch: failure === "git-failure" ? "nonexistent" : "main",
+    })).rejects.toThrow();
+    expect(git(pinnedPath, "git rev-parse HEAD")).toBe(head);
+    expect(readFileSync(join(pinnedPath, "user-file"), "utf8")).toBe("retain\n");
+    expect(store.updateTask).not.toHaveBeenCalled();
   });
 
   function dependencyFixture() {
