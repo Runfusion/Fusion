@@ -27,9 +27,9 @@ describeIfGit("pipeline smoke harness guards", () => {
   });
 
   it("runs this project with the configured three-file worker envelope", () => {
-    const projects = (vitestConfig.test?.projects ?? []) as Array<{ test?: { name?: string; maxWorkers?: number; fileParallelism?: boolean } }>;
+    const projects = (vitestConfig.test?.projects ?? []) as Array<{ test?: { name?: string; pool?: string; maxWorkers?: number; fileParallelism?: boolean } }>;
     const project = projects.find((candidate) => candidate.test?.name === "engine-pipeline-smoke")?.test;
-    expect(project).toMatchObject({ maxWorkers: 3, fileParallelism: true });
+    expect(project).toMatchObject({ pool: "forks", maxWorkers: 3, fileParallelism: true });
   });
 
   it("creates and removes only its disposable local fixture", () => {

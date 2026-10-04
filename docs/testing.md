@@ -572,13 +572,15 @@ bounded evidence: watchdog outcome, elapsed duration, Vitest/scenario-report ava
 record count and final complete invocation, missing declared keys, and a truncated final JSONL record
 when present.
 
-<!-- FNXC:PipelineSmoke 2026-10-04-09:22: FN-9469 keeps the fixed watchdog while distributing independent S17 workflow partitions across the existing three-worker envelope, preventing one serial adapter from consuming the hosted smoke budget. -->
+<!-- FNXC:PipelineSmoke 2026-10-04-10:27: FN-9470 preserves the fixed watchdog and full scenario census by using fork workers, so each disposable fixture owns its HOME/TMPDIR lifecycle without serializing independent worker files through shared process environment state. -->
 S17 continues to cover all three built-in workflows at planning, execution, review, merge-in-flight,
 and post-merge, including the `builtin:coding-ideas-v2` post-merge boundary. Each workflow's five
-restart cases share one disposable fixture while the three independent workflow partitions run through
-the unchanged three-worker project envelope. A hosted push-to-main artifact is required proof: it must
-report exactly 41 unique passing manifest keys, `passed: true`, and `durationMs <= 175000`; local
-Vitest evidence is a supported diagnostic substitute on Darwin, not delivery evidence.
+restart cases share one disposable fixture while the unchanged three-worker fork-worker envelope keeps
+HOME/TMPDIR fixture ownership process-local. A timeout atomically replaces stale success with its
+complete partial evidence, including the final completed invocation, absent Vitest output, and every
+missing manifest key. A hosted push-to-main artifact is required proof: it must report exactly 41
+unique passing manifest keys, `passed: true`, and `durationMs <= 175000`; local Vitest evidence is a
+supported diagnostic substitute on Darwin, not delivery evidence.
 
 Each scenario declares one closed terminal state: `merged-done`, `inert-intake`,
 `parked`, `manual-hold`, or `no-op-merge`. The harness fails on an undeclared terminal

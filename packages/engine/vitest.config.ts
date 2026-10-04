@@ -455,7 +455,15 @@ export default defineConfig({
           three-worker child envelope. The scenario files isolate disposable Git fixtures and
           PostgreSQL state, so file-level parallelism restores the intended CI throughput without
           widening the fixed smoke watchdog budget.
+
+          FNXC:PipelineSmoke 2026-10-04-10:21:
+          The fixture owns HOME and TMPDIR for its full lifecycle. Thread workers share process
+          environment state, which serializes independent fixture files behind that ownership queue
+          and can exhaust the fixed hosted watchdog. Fork workers preserve the same three production
+          paths with process-local environments, so isolated files execute concurrently without
+          relaxing the workload or timeout.
           */
+          pool: "forks",
           testTimeout: 120_000,
           hookTimeout: 60_000,
           minWorkers: 1,
