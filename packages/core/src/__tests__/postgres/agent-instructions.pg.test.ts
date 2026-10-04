@@ -22,7 +22,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { AgentStore } from "../../agents/agent-store.js";
+import { AgentStore, AmbiguousAgentNameError } from "../../agents/agent-store.js";
 import { getCanonicalAgentInstructionsBundleDirName } from "../../types.js";
 import { BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST } from "../../agents/workflow-role-agent-defaults.js";
 
@@ -78,6 +78,70 @@ pgTest("AgentStore instructions fields (PostgreSQL)", () => {
     await agentStore.updateAgent(executor.id, { instructionsText: "operator instructions" });
     await agentStore.init();
     expect((await agentStore.getAgent(executor.id))?.instructionsText).toBe("operator instructions");
+  });
+
+  it("resolves exact IDs before reporting deterministic durable-name ambiguity", async () => {
+    const second = await agentStore.createAgent({
+      name: "temporary-merger-second",
+      roles: ["merger"],
+      instructionsText: "second instructions",
+      runtimeConfig: { enabled: false, identity: "second" },
+    });
+    const first = await agentStore.createAgent({
+      name: "temporary-merger-first",
+      roles: ["merger"],
+      instructionsText: "first instructions",
+      runtimeConfig: { enabled: false, identity: "first" },
+    });
+    const ephemeral = await agentStore.createAgent({
+      name: "Workflow Merger",
+      roles: ["merger"],
+      metadata: { type: "spawned" },
+    });
+
+    // Legacy rows can predate the durable-name creation guard. Seed the indexed identity exactly
+    // as production reads it while deliberately retaining reverse creation/query order.
+    await h.layer().db.update(postgresSchema.project.agents)
+      .set({ name: "Workflow Merger" })
+      .where(and(
+        eq(postgresSchema.project.agents.projectId, "proj_agent_instr"),
+        eq(postgresSchema.project.agents.id, second.id),
+      ));
+    await h.layer().db.update(postgresSchema.project.agents)
+      .set({ name: "Workflow Merger" })
+      .where(and(
+        eq(postgresSchema.project.agents.projectId, "proj_agent_instr"),
+        eq(postgresSchema.project.agents.id, first.id),
+      ));
+
+    await expect(agentStore.resolveAgent(first.id)).resolves.toMatchObject({
+      id: first.id,
+      instructionsText: "first instructions",
+      runtimeConfig: { identity: "first" },
+    });
+    await expect(agentStore.resolveAgent(second.id)).resolves.toMatchObject({
+      id: second.id,
+      instructionsText: "second instructions",
+      runtimeConfig: { identity: "second" },
+    });
+    await expect(agentStore.resolveAgent(ephemeral.id)).resolves.toMatchObject({ id: ephemeral.id });
+    await expect(agentStore.resolveAgent("Workflow Merger")).rejects.toEqual(expect.objectContaining({
+      name: "AmbiguousAgentNameError",
+      code: "AMBIGUOUS_AGENT_NAME",
+      query: "Workflow Merger",
+      normalizedName: "workflow-merger",
+      candidateAgentIds: [first.id, second.id].sort(),
+    } satisfies Partial<AmbiguousAgentNameError>));
+    await expect(agentStore.resolveAgent("workflow---merger")).rejects.toMatchObject({
+      candidateAgentIds: [first.id, second.id].sort(),
+    });
+    await expect(agentStore.resolveAgent(" ")).resolves.toBeNull();
+    await expect(agentStore.resolveAgent("missing-agent-name")).resolves.toBeNull();
+
+    const unique = await agentStore.createAgent({ name: "Unique Lookup", roles: ["reviewer"] });
+    await expect(agentStore.resolveAgent("unique_lookup")).resolves.toMatchObject({ id: unique.id });
+    expect((await agentStore.listAgents()).filter((agent) => agent.name === "Workflow Merger").map((agent) => agent.id).sort())
+      .toEqual([first.id, second.id].sort());
   });
 
   it("deterministically demotes duplicate built-in provenance without losing identity", async () => {
