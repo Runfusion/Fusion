@@ -55,7 +55,11 @@ import {
 } from "../types.js";
 import type { CentralClaimStore, CheckoutClaimContext, RunMutationContext } from "../types.js";
 import type { TaskStore } from "../store.js";
-import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
+import {columnsWithFlag, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
+import { classifyWorkflowAgentNode, type WorkflowIrNode } from "../workflows/workflow-ir-types.js";
+import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
+import { withTaskWorkflowSerialization } from "../task-store/async/async-workflow-workitems.js";
+import { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "../types.js";
 import { computeAccessState, normalizePermissions } from "./agent-permissions.js";
 import { assertImplementationTaskBindAllowed, evaluateImplementationTaskBind } from "./agent-role-policy.js";
 import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
@@ -1636,7 +1640,7 @@ export class AgentStore extends EventEmitter {
     agentId: string,
     taskId: string,
     runContext?: RunMutationContext,
-    options: { allowAgentOwnedPause?: boolean } = {},
+    options: { allowAgentOwnedPause?: boolean; allowIdleWipPrincipalHold?: boolean } = {},
   ): Promise<{ ok: true; task: Task } | { ok: false; reason: string; task?: Task }> {
     if (!this.taskStore) {
       throw new Error("TaskStore not configured for task-handoff operations");
@@ -1644,6 +1648,10 @@ export class AgentStore extends EventEmitter {
 
     // Resolve workflow lanes before taking the non-reentrant task-row lock.
     const lanes = await resolveTaskLifecycleColumns(this.taskStore, taskId).catch(() => undefined);
+    const handoffIr = options.allowIdleWipPrincipalHold
+      ? await resolveWorkflowIrForTask(this.taskStore, taskId).catch(() => undefined)
+      : undefined;
+    const wipColumns = new Set(handoffIr ? columnsWithFlag(handoffIr, "countsTowardWip") : []);
     const layer = this.asyncLayer;
     if (!layer) {
       throw new Error("TaskStore handoff requires PostgreSQL persistence");
@@ -1651,11 +1659,12 @@ export class AgentStore extends EventEmitter {
 
     const outcome = await this.taskStore.withTaskLock(taskId, async () => await layer.transactionImmediate(async (tx) => {
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
+      return withTaskWorkflowSerialization(tx, layer.projectId, taskId, async () => {
       const rows = await tx.select().from(postgresSchema.project.tasks).where(and(
         eq(postgresSchema.project.tasks.id, taskId),
         eq(postgresSchema.project.tasks.projectId, this.backendProjectId),
         isNull(postgresSchema.project.tasks.deletedAt),
-      ));
+      )).for("update");
       const row = rows[0];
       if (!row) return { ok: false as const, reason: "deleted" };
       const current = this.taskStore!.rowToTask(this.taskStore!.pgRowToTaskRow(row));
@@ -1670,7 +1679,41 @@ export class AgentStore extends EventEmitter {
         return { ok: false as const, reason: "paused", task: current };
       }
       if (current.checkedOutBy) return { ok: false as const, reason: "checkout_held", task: current };
-      if (current.column !== (lanes?.hold ?? "todo")) return { ok: false as const, reason: "not_queued", task: current };
+      const idleWipHandoff = options.allowIdleWipPrincipalHold === true && wipColumns.has(current.column);
+      let heldItemId: string | undefined;
+      if (idleWipHandoff) {
+        if (current.paused || current.userPaused) return { ok: false as const, reason: "paused", task: current };
+        const [owner] = await tx.select().from(postgresSchema.project.agents).where(and(
+          eq(postgresSchema.project.agents.id, agentId),
+          eq(postgresSchema.project.agents.projectId, this.backendProjectId),
+        )).for("update");
+        if (owner && owner.state !== "paused" && owner.state !== "error") {
+          return { ok: false as const, reason: "owner_available", task: current };
+        }
+        const items = await tx.select().from(postgresSchema.project.workflowWorkItems).where(and(
+          eq(postgresSchema.project.workflowWorkItems.taskId, taskId),
+          eq(postgresSchema.project.workflowWorkItems.projectId, this.backendProjectId),
+        ));
+        const active = items.filter(item => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state as import("../types.js").WorkflowWorkItemState));
+        const held = active.length === 1 ? active[0] : undefined;
+        const pinnedNode = handoffIr?.nodes.find(node => node.id === current.workflowIrPinNodeId);
+        const templateNodes = (pinnedNode?.config?.template as { nodes?: WorkflowIrNode[] } | undefined)?.nodes;
+        const nestedExecutor = pinnedNode?.kind === "foreach" && held != null
+          && held.nodeInstanceId === `${pinnedNode.id}#${current.currentStep}:${held.nodeId}`
+          && templateNodes?.some(node => node.id === held.nodeId && classifyWorkflowAgentNode(node) === "executor") === true;
+        if (!held || held.kind !== "task" || held.state !== "held"
+          || (held.nodeId !== current.workflowIrPinNodeId && !nestedExecutor)
+          || held.blockedReason !== "workflow-principal-named-principal-unavailable:executor"
+          || (held.workflowRole != null && held.workflowRole !== "executor")
+          || (held.authorityKind != null && held.authorityKind !== "task-assignee")
+          || (held.principalAgentId != null && held.principalAgentId !== agentId)
+          || held.leaseOwner != null) {
+          return { ok: false as const, reason: "not_idle_executor_hold", task: current };
+        }
+        heldItemId = held.id;
+      } else if (current.column !== (lanes?.hold ?? "todo")) {
+        return { ok: false as const, reason: "not_queued", task: current };
+      }
 
       /*
       FNXC:DurableAgentHandoff 2026-10-04-16:26:
@@ -1697,6 +1740,15 @@ export class AgentStore extends EventEmitter {
         eq(postgresSchema.project.agents.taskId, taskId),
       ));
 
+      if (heldItemId) {
+        const resumed = await this.taskStore!.transitionWorkflowWorkItem(heldItemId, "runnable", {
+          expectedState: "held", blockedReason: null, lastError: null, retryAfter: null,
+          leaseOwner: null, leaseExpiresAt: null,
+          principalAgentId: null, workflowRole: null, authorityKind: null,
+        }, tx);
+        if (resumed.state !== "runnable") throw new Error("Workflow executor handoff lost its held continuation");
+      }
+
       const releasedTask = this.taskStore!.rowToTask(this.taskStore!.pgRowToTaskRow(updatedRow));
       /*
       FNXC:DurableAgentHandoff 2026-10-04-17:19:
@@ -1707,6 +1759,7 @@ export class AgentStore extends EventEmitter {
       */
       await this.taskStore!.writeTaskJsonFile(this.taskStore!.taskDir(taskId), releasedTask);
       return { ok: true as const, task: releasedTask };
+      });
     }));
 
     if (!outcome.ok) return outcome;

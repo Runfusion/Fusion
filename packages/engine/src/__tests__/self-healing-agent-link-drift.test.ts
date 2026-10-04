@@ -1,3 +1,4 @@
+import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { isEphemeralAgent, TaskDeletedError, TaskNotFoundError, type Agent, type AgentStore, type Task } from "@fusion/core";
@@ -11,6 +12,8 @@ function makeAgent(id: string, taskId: string, state: Agent["state"] = "active")
 describe("FN-4296: self-healing agent link drift", () => {
   function buildManager(agents: Agent[], tasks: Record<string, Task | null | Error>, hasActiveAgentExecution?: (agentId: string) => boolean) {
     const store = {
+      getSettings: vi.fn(async () => ({})),
+      listWorkflowWorkItemsForTask: vi.fn(async () => []),
       getTask: vi.fn(async (taskId: string) => {
         const result = tasks[taskId] ?? null;
         if (result instanceof Error) throw result;
@@ -118,6 +121,46 @@ describe("FN-4296: self-healing agent link drift", () => {
       allowAgentOwnedPause: true,
     });
     manager.stop();
+  });
+
+  it.each(([null, "queued", undefined] as const).flatMap(status => ["executor", null].map(role => ({ status, role }))).flatMap(test => ["direct", "nested"].map(shape => ({ ...test, shape }))))("hands an idle WIP $shape principal hold with status=$status and role=$role to fenced recovery", async ({ status, role, shape }) => {
+    const owner = makeAgent("paused-owner", "FN-WIP", "paused");
+    const root = { id: "FN-WIP", column: "in-progress", status, assignedAgentId: owner.id, dependencies: [], workflowIrPinNodeId: "steps" } as Task;
+    const { manager, agentStore, store } = buildManager([owner], { [root.id]: root });
+    store.listWorkflowWorkItemsForTask.mockResolvedValue([{
+      id: "held", kind: "task", state: "held", nodeId: shape === "nested" ? "step-execute" : "steps",
+      nodeInstanceId: shape === "nested" ? "steps#0:step-execute" : null, workflowRole: role,
+      blockedReason: "workflow-principal-named-principal-unavailable:executor",
+    }]);
+    await expect(manager.recoverUnavailableQueuedAgentOwnership()).resolves.toBe(1);
+    expect(agentStore.handoffTaskToWorkflowExecutor).toHaveBeenCalledWith(owner.id, root.id, undefined, {
+      allowAgentOwnedPause: false, allowIdleWipPrincipalHold: true,
+    });
+    expect(root.column).toBe("in-progress");
+    expect(owner.state).toBe("paused");
+    manager.stop();
+  });
+
+  it.each(["task-pause", "user-pause", "active-session", "executing-lock", "other-item", "wrong-node", "wrong-reason", "other-authority", "healthy-owner", "engine-pause"])("preserves WIP owner when recovery is unsafe: %s", async (condition) => {
+    const owner = makeAgent("owner", "FN-WIP", condition === "healthy-owner" ? "idle" : "paused");
+    const root = { id: "FN-WIP", column: "in-progress", assignedAgentId: owner.id, dependencies: [], workflowIrPinNodeId: "steps",
+      paused: condition === "task-pause", userPaused: condition === "user-pause", pausedByAgentId: owner.id } as Task;
+    const { manager, agentStore, store } = buildManager([owner], { [root.id]: root });
+    const held = { id: "held", kind: "task", state: "held", nodeId: condition === "wrong-node" ? "other" : "steps", workflowRole: "executor",
+      blockedReason: condition === "wrong-reason" ? "capacity" : "workflow-principal-named-principal-unavailable:executor",
+      authorityKind: condition === "other-authority" ? "column-binding" : "task-assignee" };
+    store.listWorkflowWorkItemsForTask.mockResolvedValue(condition === "other-item" ? [held, { id: "live", state: "running" }] : [held]);
+    if (condition === "engine-pause") store.getSettings.mockResolvedValue({ enginePaused: true });
+    if (condition === "active-session") activeSessionRegistry.registerPath("/wt/wip-test", { taskId: root.id, kind: "executor", ownerKey: "live" });
+    if (condition === "executing-lock") executingTaskLock.tryClaim(root.id);
+    try {
+      await expect(manager.recoverUnavailableQueuedAgentOwnership()).resolves.toBe(0);
+      expect(agentStore.handoffTaskToWorkflowExecutor).not.toHaveBeenCalled();
+    } finally {
+      activeSessionRegistry.unregisterPath("/wt/wip-test");
+      executingTaskLock.release(root.id);
+      manager.stop();
+    }
   });
 
   it("FN-4296: durable agent linked to done task is cleared by sweep", async () => {
@@ -353,6 +396,8 @@ describe("FN-4296: self-healing agent link drift", () => {
 
   function buildRenamedManager(agents: Agent[], tasks: Record<string, Task | null>) {
     const store = {
+      getSettings: vi.fn(async () => ({})),
+      listWorkflowWorkItemsForTask: vi.fn(async () => []),
       getTask: vi.fn(async (taskId: string) => tasks[taskId] ?? null),
       recordRunAuditEvent: vi.fn(async () => {}),
       listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]),

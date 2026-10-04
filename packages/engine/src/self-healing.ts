@@ -15644,6 +15644,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverUnavailableQueuedAgentOwnership(): Promise<number> {
     const agentStore = this.options.agentStore;
     if (!agentStore) return 0;
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return 0;
+    const taskIsLive = (taskId: string) => executingTaskLock.has(taskId)
+      || activeSessionRegistry.pathsForTask(taskId).length > 0
+      || this.options.isTaskActive?.(taskId) === true;
+    const irCache = new Map<string, WorkflowIr>();
 
     const agents = await agentStore.listAgents({ includeEphemeral: false });
     const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
@@ -15663,9 +15669,27 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         && task.pausedByAgentId === ownerId
         && !task.userPaused;
       if (!ownerId || task.userPaused || (task.paused && !hasRecoverableAgentPause) || task.checkedOutBy || task.deletedAt) continue;
-      if (!await this.isPreWipColumn(task)) continue;
-
+      const preWip = await this.isPreWipColumn(task);
       const owner = agentsById.get(ownerId);
+      if (!preWip) {
+        // Startup can promote a queued task before unavailable-owner recovery runs.
+        // Only a lone executor principal hold may release ownership after that boundary.
+        if (task.paused || taskIsLive(task.id) || (owner && owner.state !== "paused" && owner.state !== "error")) continue;
+        const roles = await resolveFileScopeLeaseTaskRoles(this.store, task, irCache);
+        if (!roles.isWipColumn || !task.workflowIrPinNodeId) continue;
+        const items = await this.store.listWorkflowWorkItemsForTask(task.id);
+        const active = items.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
+        if (active.length !== 1) continue;
+        const held = active[0];
+        const matchesPinnedNode = held.nodeId === task.workflowIrPinNodeId
+          || held.nodeInstanceId?.startsWith(`${task.workflowIrPinNodeId}#`) === true;
+        // Core validates nested template identity under the selected IR inside its handoff fence.
+        if (held.kind !== "task" || held.state !== "held" || !matchesPinnedNode
+          || (held.workflowRole != null && held.workflowRole !== "executor")
+          || (held.authorityKind != null && held.authorityKind !== "task-assignee")
+          || held.blockedReason !== "workflow-principal-named-principal-unavailable:executor") continue;
+      }
+
       /*
       FNXC:DurableAgentHandoff 2026-10-04-16:50:
       A completed heartbeat leaves no active-run row, so absence of that row is
@@ -15680,12 +15704,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (owner && this.options.hasActiveAgentExecution?.(owner.id) === true) continue;
       if (owner?.state === "active" && hasRecentDurableOwnerHeartbeat(owner, now)) continue;
 
+      if (taskIsLive(task.id)) continue;
+      const currentSettings = await this.store.getSettings();
+      if (currentSettings.globalPause || currentSettings.enginePaused || taskIsLive(task.id)) continue;
       const result = await agentStore.handoffTaskToWorkflowExecutor(ownerId, task.id, undefined, {
         allowAgentOwnedPause: hasRecoverableAgentPause,
+        ...(!preWip ? { allowIdleWipPrincipalHold: true } : {}),
       });
       if (!result.ok) continue;
       recovered += 1;
-      log.log(`Released unavailable durable owner ${ownerId} from queued task ${task.id} for Workflow Executor admission`);
+      log.log(`Released unavailable durable owner ${ownerId} from ${preWip ? "queued task" : "held executor continuation"} ${task.id} for Workflow Executor admission`);
     }
     return recovered;
   }

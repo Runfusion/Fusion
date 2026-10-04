@@ -320,6 +320,65 @@ pgTest("task→agent routing policy (issue #2015)", () => {
       await expect(agentStore.claimTaskForAgent(executor.id, task.id)).resolves.toMatchObject({ ok: true });
     });
 
+    async function idlePrincipalHold() {
+      const engineer = await agentStore.createAgent({ name: "Unavailable Engineer", role: "engineer" });
+      const task = await h.store().createTask({ description: "admitted implementation" });
+      await agentStore.assignTask(engineer.id, task.id);
+      await h.store().updateTask(task.id, { assignedAgentId: engineer.id });
+      await h.store().moveTask(task.id, "todo");
+      await h.store().moveTask(task.id, "in-progress");
+      await h.store().updateTask(task.id, { workflowIrPinNodeId: "steps" });
+      await agentStore.updateAgentState(engineer.id, "paused");
+      const item = await h.store().upsertWorkflowWorkItem({
+        runId: `${task.id}:held`, taskId: task.id, nodeId: "step-execute", nodeInstanceId: "steps#0:step-execute", kind: "task", state: "held",
+        blockedReason: "workflow-principal-named-principal-unavailable:executor",
+        principalAgentId: engineer.id, workflowRole: "executor", authorityKind: "task-assignee",
+      });
+      return { engineer, task, item };
+    }
+
+    it("atomically releases an unavailable idle WIP owner and wakes its exact held continuation in place", async () => {
+      const { engineer, task, item } = await idlePrincipalHold();
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id)).resolves.toMatchObject({ ok: false, reason: "not_queued" });
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, {
+        allowIdleWipPrincipalHold: true,
+      })).resolves.toMatchObject({ ok: true });
+      expect(await h.store().getTask(task.id)).toMatchObject({ column: "in-progress", workflowIrPinNodeId: "steps", assignedAgentId: undefined });
+      expect(await agentStore.getAgent(engineer.id)).toMatchObject({ state: "paused", taskId: undefined });
+      expect(await h.store().listWorkflowWorkItemsForTask(task.id)).toEqual([expect.objectContaining({ id: item.id, state: "runnable", principalAgentId: null, blockedReason: null, nodeInstanceId: "steps#0:step-execute" })]);
+    });
+
+    it("rolls back assignment release when its durable continuation cannot be resumed", async () => {
+      const { engineer, task, item } = await idlePrincipalHold();
+      const transition = vi.spyOn(h.store(), "transitionWorkflowWorkItem").mockResolvedValue(item);
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, {
+        allowIdleWipPrincipalHold: true,
+      })).rejects.toThrow("lost its held continuation");
+      transition.mockRestore();
+      expect(await h.store().getTask(task.id)).toMatchObject({ assignedAgentId: engineer.id });
+      expect(await agentStore.getAgent(engineer.id)).toMatchObject({ taskId: task.id });
+      expect((await h.store().listWorkflowWorkItemsForTask(task.id))[0]).toMatchObject({ id: item.id, state: "held" });
+    });
+
+    it.each(["task-pause", "user-pause", "checkout", "running", "reviewer", "wrong-pin", "available-owner", "competing-work", "column-binding", "wrong-instance"])("preserves ownership and held work when WIP handoff sees %s", async (fence) => {
+      const { engineer, task, item } = await idlePrincipalHold();
+      if (fence === "task-pause") await h.store().updateTask(task.id, { paused: true, pausedByAgentId: engineer.id });
+      if (fence === "user-pause") await h.store().updateTask(task.id, { paused: true, userPaused: true });
+      if (fence === "checkout") await h.store().updateTask(task.id, { checkedOutBy: engineer.id });
+      if (fence === "running") await h.store().transitionWorkflowWorkItem(item.id, "running");
+      if (fence === "reviewer") await h.store().transitionWorkflowWorkItem(item.id, "held", { blockedReason: "workflow-principal-named-principal-unavailable:reviewer", workflowRole: "reviewer" });
+      if (fence === "column-binding") await h.store().transitionWorkflowWorkItem(item.id, "held", { authorityKind: "column-binding" });
+      if (fence === "wrong-instance") await h.store().transitionWorkflowWorkItem(item.id, "held", { nodeInstanceId: "steps#99:step-execute" });
+      if (fence === "wrong-pin") await h.store().updateTask(task.id, { workflowIrPinNodeId: "other" });
+      if (fence === "available-owner") await agentStore.updateAgentState(engineer.id, "active");
+      if (fence === "competing-work") await h.store().upsertWorkflowWorkItem({ runId: `${task.id}:other`, taskId: task.id, nodeId: "execute", kind: "workflow-step", state: "running" });
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, {
+        allowIdleWipPrincipalHold: true, allowAgentOwnedPause: true,
+      })).resolves.toMatchObject({ ok: false });
+      expect(await h.store().getTask(task.id)).toMatchObject({ column: "in-progress", assignedAgentId: engineer.id });
+      expect((await h.store().listWorkflowWorkItemsForTask(task.id)).find(work => work.id === item.id)?.state).toBe(fence === "running" ? "running" : "held");
+    });
+
     it("releases an unavailable owner's automatic pause but preserves human pause authority", async () => {
       const engineer = await agentStore.createAgent({ name: "Paused Engineer", role: "engineer" });
       const task = await h.store().createTask({ description: "agent-owned pause recovery" });

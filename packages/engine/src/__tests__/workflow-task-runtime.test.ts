@@ -551,6 +551,31 @@ describe("WorkflowTaskRuntime", () => {
     expect(observedRunIds).toContain("FN-9002:WF-001");
   });
 
+  it("dispatches a recovered nested executor continuation using its preserved instance identity", async () => {
+    const calls: string[] = [];
+    const workItem = {
+      id: "recovered", taskId: task.id, runId: "run:steps#0:step-execute", kind: "task", state: "running",
+      nodeId: "step-execute", nodeInstanceId: "steps#0:step-execute",
+      principalAgentId: null, workflowRole: null, authorityKind: null,
+    } as WorkflowWorkItem;
+    const ir = { ...selectedIr(), nodes: [{ id: "steps", kind: "foreach", config: {
+      template: { nodes: [{ id: "step-execute", kind: "prompt", config: { seam: "execute" } }], edges: [] },
+    } }], edges: [] } as WorkflowIr;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => ({ ...task, column: "in-progress", workflowIrPinNodeId: "steps" }),
+        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir }),
+        transitionWorkflowWorkItem: (_id, state, patch) => ({ ...workItem, ...patch, state }),
+      },
+      primitives: recordingPrimitives(calls),
+    });
+    const result = await runtime.runWorkItem(workItem, flagOff);
+    expect(result.disposition).toBe("completed");
+    expect(result.visitedNodeIds).toEqual(["step-execute"]);
+    expect(calls).toEqual(["prepare-worktree", "execute"]);
+  });
+
   it("runs a leased workflow work item at its addressed node and persists success", async () => {
     const calls: string[] = [];
     const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
