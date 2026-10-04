@@ -353,6 +353,13 @@ export {
 } from "./workflows/workflow-task-runtime.js";
 export { collectTaskEvaluationEvidence } from "./eval/evaluator-evidence.js";
 export {
+  LandedValidationEvidenceProvider,
+  type MissionForgeEvidenceReader,
+  type MissionValidationEvidenceProvider,
+  type MissionValidationEvidenceRecord,
+  type MissionValidationEvidenceUnavailable,
+} from "./missions/mission-validation-evidence.js";
+export {
   Scheduler,
   findFileScopeOverlaps,
   type FileScopeOverlapMatch,

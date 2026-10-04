@@ -49,6 +49,7 @@ export interface EngineManagerOptions {
   prReconcileGithubOps?: ProjectEngineOptions["prReconcileGithubOps"];
   getTaskMergeBlocker?: ProjectEngineOptions["getTaskMergeBlocker"];
   onInsightRunProcessed?: ProjectEngineOptions["onInsightRunProcessed"];
+  createMissionValidationEvidenceProvider?: ProjectEngineOptions["createMissionValidationEvidenceProvider"];
   /**
    * FNXC:SqliteFinalRemoval 2026-06-26-11:20: shared TaskStore from the central
    * backend boot so engines reuse one connection pool (no second embedded PG).
@@ -648,6 +649,7 @@ export class ProjectEngineManager {
       syncGroupPr: this.options.syncGroupPr,
       prNodeGithubOps: this.options.prNodeGithubOps,
       createPrNodeGithubOps: this.options.createPrNodeGithubOps,
+      createMissionValidationEvidenceProvider: this.options.createMissionValidationEvidenceProvider,
       prReconcileGithubOps: this.options.prReconcileGithubOps,
       getTaskMergeBlocker: this.options.getTaskMergeBlocker,
       onInsightRunProcessed: this.options.onInsightRunProcessed,

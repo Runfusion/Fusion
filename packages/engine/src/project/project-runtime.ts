@@ -76,6 +76,8 @@ export interface ProjectRuntimeConfig {
    * asking process-wide CLI wiring to rediscover task ownership.
    */
   createPrNodeGithubOps?: (store: TaskStore) => import("../merge/pr-nodes.js").PrNodeGithubOps;
+  /** Host-owned, read-only mission validation evidence factory bound to this project store. */
+  createMissionValidationEvidenceProvider?: (store: TaskStore) => import("../missions/mission-validation-evidence.js").MissionValidationEvidenceProvider;
   /**
    * Absolute URL of the dashboard's CLI-agent hook ingestion endpoint that
    * generated hook scripts POST to (e.g. `http://127.0.0.1:4040/api/cli-agent/hooks`).

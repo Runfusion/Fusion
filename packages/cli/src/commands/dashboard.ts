@@ -87,6 +87,8 @@ import {
   CliConfirmAdvanceRegistry,
   CliRelaunchRegistry,
   GitHubClient,
+  createDashboardMissionForgeReader,
+  resolveGitLabClient,
   createSkillsAdapter,
   getCliPackageVersion,
   isUnresolvedCliPackageVersion,
@@ -102,6 +104,7 @@ import {
   withWorkspaceMergeDispatchLease,
   MissionAutopilot,
   MissionExecutionLoop,
+  LandedValidationEvidenceProvider,
   HeartbeatMonitor,
   HeartbeatTriggerScheduler,
   type WakeContext,
@@ -1846,6 +1849,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           },
         },
         rootDir: cwd,
+        // FNXC:MissionValidationEvidence 2026-10-04-22:32:
+        // Dashboard-owned validation resolves GitLab from this task store, not
+        // from a process-global client, preserving the project evidence fence.
+        validationEvidenceProvider: new LandedValidationEvidenceProvider(undefined, createDashboardMissionForgeReader({
+          githubClient: new GitHubClient(),
+          getGitLabClient: async () => {
+            const resolved = await resolveGitLabClient(store);
+            return resolved.ok ? resolved.client : undefined;
+          },
+        })),
       })
     : undefined;
 

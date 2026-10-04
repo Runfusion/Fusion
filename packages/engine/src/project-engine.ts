@@ -442,6 +442,8 @@ export interface ProjectEngineOptions {
    * Use this for callbacks that need project-scoped settings.
    */
   createPrNodeGithubOps?: (store: TaskStore) => PrNodeGithubOps;
+  /** Builds project-scoped, read-only Mission validation evidence without importing host clients into engine. */
+  createMissionValidationEvidenceProvider?: (store: TaskStore) => import("./missions/mission-validation-evidence.js").MissionValidationEvidenceProvider;
   /**
    * Node-agnostic GitHub reconcile ops (U4): the injected ETag-probe +
    * deep-fetch callbacks backing {@link PrReconciler}. Injected from the CLI
@@ -878,6 +880,7 @@ export class ProjectEngine {
       ...(options.externalTaskStore ? { externalTaskStore: options.externalTaskStore } : {}),
       ...(options.prNodeGithubOps ? { prNodeGithubOps: options.prNodeGithubOps } : {}),
       ...(options.createPrNodeGithubOps ? { createPrNodeGithubOps: options.createPrNodeGithubOps } : {}),
+      ...(options.createMissionValidationEvidenceProvider ? { createMissionValidationEvidenceProvider: options.createMissionValidationEvidenceProvider } : {}),
     };
     this.runtime = new InProcessRuntime(runtimeConfig, centralCore);
     // Let the runtime's SelfHealingManager re-enqueue tasks directly into our

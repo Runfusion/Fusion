@@ -1461,6 +1461,7 @@ export class InProcessRuntime
             rootDir: this.config.workingDirectory,
             pluginRunner: this.pluginRunner,
             agentStore: this.agentStore,
+            validationEvidenceProvider: this.config.createMissionValidationEvidenceProvider?.(this.taskStore),
           })
         : undefined;
 

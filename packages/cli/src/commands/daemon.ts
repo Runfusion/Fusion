@@ -28,7 +28,7 @@ import {
   registerBuiltInZaiProvider,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
-import { createServer, GitHubClient, createSkillsAdapter, getCliPackageVersion, getProjectSettingsPath, isUnresolvedCliPackageVersion, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook } from "@fusion/dashboard";
+import { createServer, GitHubClient, createDashboardMissionForgeReader, createSkillsAdapter, getCliPackageVersion, getProjectSettingsPath, isUnresolvedCliPackageVersion, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook, resolveGitLabClient } from "@fusion/dashboard";
 import {
   ProjectEngineManager,
   PeerExchangeService,
@@ -38,6 +38,7 @@ import {
   createFusionAuthStorage,
   createFusionModelRegistry,
   refreshFusionModelRegistry,
+  LandedValidationEvidenceProvider,
 } from "@fusion/engine";
 import { setHostTaskStore, clearHostTaskStores } from "../extension.js";
 import {
@@ -379,6 +380,16 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       isNativeAutoMergeEnabled: async () => (await taskStore.getSettings()).githubNativeAutoMerge === true,
     }),
     prReconcileGithubOps: createPrReconcileGithubOps(githubClient),
+    // FNXC:MissionValidationEvidence 2026-10-04-22:32:
+    // Resolve GitLab credentials through each engine's project store so one
+    // daemon never lets validation reuse another project's forge access.
+    createMissionValidationEvidenceProvider: (taskStore) => new LandedValidationEvidenceProvider(undefined, createDashboardMissionForgeReader({
+      githubClient,
+      getGitLabClient: async () => {
+        const resolved = await resolveGitLabClient(taskStore);
+        return resolved.ok ? resolved.client : undefined;
+      },
+    })),
     getTaskMergeBlocker,
     onInsightRunProcessed: (s: unknown, r: unknown) => onMemoryInsightRunProcessed(s as ScheduledTask, r as AutomationRunResult),
   });

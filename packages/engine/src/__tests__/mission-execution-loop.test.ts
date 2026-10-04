@@ -10,7 +10,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TEST_MODE_RESOLVED, ValidatorRunOwnershipLostError } from "@fusion/core";
+import { TEST_MODE_RESOLVED, ValidatorRunOwnershipLostError, resolveTaskLifecycleColumns, registerBuiltinTraits } from "@fusion/core";
 import type {
   Mission,
   Milestone,
@@ -2888,9 +2888,9 @@ describe("MissionExecutionLoop", () => {
 
         expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
         expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(
-          expect.any(String),
+          "VR-001",
           "blocked",
-          expect.stringContaining("predates the merged code"),
+          expect.stringContaining("repository-checkout unavailable"),
           undefined,
           { featureId: "F-001", assertions: [] },
         );
@@ -2898,7 +2898,7 @@ describe("MissionExecutionLoop", () => {
           "validation:inconclusive",
           expect.objectContaining({
             featureId: "F-001",
-            reason: expect.stringContaining("predates the merged code"),
+            reason: expect.stringContaining("repository-checkout unavailable"),
           }),
         );
         expect(emitSpy).not.toHaveBeenCalledWith("validation:failed", expect.anything());
@@ -3002,7 +3002,7 @@ describe("MissionExecutionLoop", () => {
       expect(dispose).toHaveBeenCalledOnce();
     });
 
-    it("defers a fallback-root fail when its landed merge is absent", async () => {
+    it("reports a completed task's unavailable landed checkout as retryable inconclusive", async () => {
       primeFeature();
       primeFailVerdict();
       taskStore._setTask({
@@ -3019,17 +3019,21 @@ describe("MissionExecutionLoop", () => {
         rootDir: "/ambient-root",
         checkoutMaterializer: { materialize: vi.fn().mockRejectedValue(new Error("no checkout")), assertSourceClean: vi.fn() },
       });
-      const staleCheck = vi.spyOn(loop as any, "isValidationWorkspaceStale").mockResolvedValue({ workspaceStale: true });
       const failHandler = vi.spyOn(loop as any, "handleValidationFail");
       const inconclusiveHandler = vi.spyOn(loop as any, "handleValidationInconclusive");
       loop.start();
 
       await loop.processTaskOutcome("FN-001");
 
-      expect(createResolvedAgentSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/ambient-root" }));
+      expect(createResolvedAgentSession).not.toHaveBeenCalled();
       expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
-      expect(staleCheck).toHaveBeenCalledWith("landed-sha", "/ambient-root");
-      expect(inconclusiveHandler).toHaveBeenCalled();
+      expect(inconclusiveHandler).toHaveBeenCalledWith(
+        "F-001",
+        expect.any(String),
+        expect.stringContaining("repository-checkout unavailable"),
+        expect.any(Object),
+        expect.objectContaining({ source: "repository-checkout", retryable: true }),
+      );
       expect(failHandler).not.toHaveBeenCalled();
     });
 
@@ -3085,7 +3089,7 @@ describe("MissionExecutionLoop", () => {
         expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
         expect(emitSpy).toHaveBeenCalledWith(
           "validation:inconclusive",
-          expect.objectContaining({ featureId: "F-001", reason: expect.stringContaining("could not prove") }),
+          expect.objectContaining({ featureId: "F-001", reason: expect.stringContaining("repository-checkout unavailable") }),
         );
       },
     );
@@ -3272,6 +3276,156 @@ describe("MissionExecutionLoop", () => {
         }),
       );
       expectNoValidationBoardTaskMutation(taskStore);
+    });
+  });
+
+  describe("landed validation evidence recovery", () => {
+    it("redacts task and forge excerpts before assembling validator context", () => {
+      const context = (loop as any).buildTaskContext({
+        id: "FN-SECRET",
+        title: "Secret task",
+        description: "Authorization: Bearer sk-live-ABCDEFG1234567890abcdef",
+        log: [{ action: "token=ZZZ987654321" }],
+      }, [{ source: "forge-record", identifier: "pr:1", excerpt: "api_key=abcdef0123456789" }]);
+
+      expect(context).not.toContain("sk-live-ABCDEFG1234567890abcdef");
+      expect(context).not.toContain("ZZZ987654321");
+      expect(context).not.toContain("abcdef0123456789");
+    });
+
+    it("uses the completed task's landed SHA and reports forge outages as source-specific inconclusive evidence", async () => {
+      const feature = createMockFeature({ id: "F-LANDED-EVIDENCE", taskId: "FN-LANDED-EVIDENCE" });
+      const assertions = [{
+        ...makeAssertions(1)[0],
+        assertion: "The pull request includes the required issue comment",
+      }];
+      const dispose = vi.fn().mockResolvedValue(undefined);
+      const prepare = vi.fn().mockResolvedValue({
+        landedSha: "landed-sha-A",
+        checkout: { dir: "/non-origin-disposable", dispose },
+        records: [{ source: "durable-task-evidence", identifier: "landed-commit:landed-sha-A", excerpt: "Landed commit" }],
+        unavailable: { source: "forge-record", retryable: true, reason: "configured forge record read is unavailable" },
+      });
+      taskStore._setTask({
+        id: feature.taskId!,
+        title: "Landed feature",
+        column: "done",
+        mergeDetails: { commitSha: "landed-sha-A" },
+      } as any);
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/repository-with-upstream",
+        validationEvidenceProvider: { prepare },
+      });
+
+      const execution = await (loop as any).runValidation(feature, assertions, { id: "VR-LANDED" }, "feature");
+
+      expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+        rootDir: "/repository-with-upstream",
+        landedSha: "landed-sha-A",
+        requiresForgeEvidence: true,
+      }));
+      expect(execution).toMatchObject({
+        result: { status: "inconclusive" },
+        inspection: {
+          evidenceUnavailable: { source: "forge-record", retryable: true },
+          inspectionUnavailableReason: "forge-record unavailable: configured forge record read is unavailable",
+        },
+      });
+      expect(createResolvedAgentSession).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it("treats a selected workflow's renamed completed lane as landed delivery during manual recovery", async () => {
+      const feature = createMockFeature({ id: "F-RENAMED-COMPLETE", taskId: "FN-RENAMED-COMPLETE" });
+      const prepare = vi.fn().mockResolvedValue({
+        landedSha: "landed-custom-lane",
+        records: [],
+        unavailable: { source: "repository-checkout", retryable: true, reason: "landed revision checkout is unavailable" },
+      });
+      taskStore._setTask({
+        id: feature.taskId!,
+        title: "Custom complete lane task",
+        column: "shipped",
+        mergeDetails: { commitSha: "landed-custom-lane" },
+      } as any);
+      Object.assign(taskStore, {
+        getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "WF-CUSTOM", stepIds: [] })),
+        getWorkflowDefinition: vi.fn().mockResolvedValue({
+          ir: { version: "v2", name: "Custom workflow", nodes: [], edges: [], columns: [{ id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] }] },
+        }),
+      });
+      registerBuiltinTraits();
+      await expect(resolveTaskLifecycleColumns(taskStore as any, feature.taskId!)).resolves.toMatchObject({ complete: "shipped" });
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/repository-with-custom-workflow",
+        validationEvidenceProvider: { prepare },
+      });
+
+      const execution = await (loop as any).runValidation(feature, makeAssertions(1), { id: "VR-RENAMED" }, "feature");
+
+      expect(execution.inspection.landedSha).toBe("landed-custom-lane");
+      expect(taskStore.getTaskWorkflowSelection).toHaveBeenCalledWith(feature.taskId);
+      expect(taskStore.getWorkflowDefinition).toHaveBeenCalledWith("WF-CUSTOM");
+      expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ landedSha: "landed-custom-lane" }));
+      expect(execution).toMatchObject({
+        result: { status: "inconclusive" },
+        inspection: { evidenceUnavailable: { source: "repository-checkout" }, fallbackUsed: true },
+      });
+      expect(createResolvedAgentSession).not.toHaveBeenCalled();
+    });
+
+    it("keeps assertions retryable and emits forge-specific metadata without creating remediation", async () => {
+      const feature = createMockFeature({ id: "F-FORGE-RECOVERY", taskId: "FN-FORGE-RECOVERY", loopState: "implementing" });
+      const assertions = [{
+        ...makeAssertions(1)[0],
+        assertion: "The pull request includes the required issue comment",
+      }];
+      missionStore._setFeature(feature);
+      missionStore._setAssertionsForFeature(feature.id, assertions);
+      missionStore.getFeatureByTaskId = vi.fn().mockResolvedValue(feature);
+      taskStore._setTask({
+        id: feature.taskId!,
+        title: "Landed feature",
+        column: "done",
+        mergeDetails: { commitSha: "landed-sha-forge" },
+      } as any);
+      const dispose = vi.fn().mockResolvedValue(undefined);
+      const prepare = vi.fn().mockResolvedValue({
+        landedSha: "landed-sha-forge",
+        checkout: { dir: "/disposable", dispose },
+        records: [],
+        unavailable: { source: "forge-record", retryable: true, reason: "configured forge record read is unavailable" },
+      });
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/repository-with-upstream",
+        validationEvidenceProvider: { prepare },
+      });
+      loop.start();
+
+      await loop.processTaskOutcome(feature.taskId!);
+
+      expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
+      expect(missionStore.completeValidatorRun).toHaveBeenCalledWith(
+        expect.any(String),
+        "blocked",
+        expect.stringContaining("forge-record unavailable"),
+        undefined,
+        expect.objectContaining({ assertions: [] }),
+      );
+      const event = missionStore.logMissionEvent.mock.calls.find((call: unknown[]) => call[3]?.code === "verification_inconclusive");
+      expect(event?.[3]).toMatchObject({
+        outcome: "inconclusive",
+        infraFailure: true,
+        evidenceSource: "forge-record",
+        retryable: true,
+      });
+      expect(dispose).toHaveBeenCalledOnce();
     });
   });
 

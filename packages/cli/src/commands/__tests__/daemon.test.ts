@@ -589,6 +589,15 @@ resolveCliPackageVersionInfo: vi.fn(() => ({ version: "0.0.0-test", isUnresolved
     return {};
   }),
   createSkillsAdapter: mocks.createSkillsAdapterMock,
+  createDashboardMissionForgeReader: vi.fn((options: { getGitLabClient?: () => Promise<{ listNotes: (resource: string, project: string, iid: number) => Promise<string[]> } | undefined> }) => ({
+    read: async (task: { gitlabTracking?: { item?: { kind: string; projectPath?: string; iid?: number } } }) => {
+      const item = task.gitlabTracking?.item;
+      const client = await options.getGitLabClient?.();
+      if (item?.projectPath && item.iid && client) await client.listNotes(item.kind === "merge_request" ? "merge_requests" : "issues", item.projectPath, item.iid);
+      return { records: [] };
+    },
+  })),
+  resolveGitLabClient: vi.fn(),
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
   refreshAllCustomProviderModels: mocks.refreshAllCustomProviderModels,
@@ -747,6 +756,23 @@ describe("runDaemon", () => {
     const { runDaemon } = await import("../daemon.js");
     await runDaemon({});
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("binds GitLab mission evidence to the executing engine's project store", async () => {
+    const dashboard = await import("@fusion/dashboard");
+    const { ProjectEngineManager } = await import("@fusion/engine");
+    const listNotes = vi.fn().mockResolvedValue(["merged review receipt"]);
+    vi.mocked(dashboard.resolveGitLabClient).mockResolvedValue({ ok: true, client: { listNotes } } as any);
+    await runDaemon({});
+
+    const factory = vi.mocked(ProjectEngineManager).mock.calls.at(-1)?.[1]?.createMissionValidationEvidenceProvider;
+    const projectStore = {};
+    const reader = (factory?.(projectStore as never) as any).forgeReader;
+    await reader.read({ gitlabTracking: { item: { kind: "merge_request", projectPath: "group/project", iid: 3 } } });
+
+    expect(dashboard.resolveGitLabClient).toHaveBeenCalledWith(projectStore);
+    expect(listNotes).toHaveBeenCalledWith("merge_requests", "group/project", 3);
+    await triggerSignal("SIGINT");
   });
 
   it("binds native auto-merge to the executing engine's store", async () => {

@@ -26,10 +26,11 @@ import type {
   Mission,
   ValidationDiagnostics,
 } from "@fusion/core";
-import { MissionRemediationStoppedError, ValidatorRunOwnershipLostError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription,
+import { MissionRemediationStoppedError, ValidatorRunOwnershipLostError, normalizeMissionAssertionType, normalizeValidationDiagnostics, redactSecrets, renderValidationFailureDescription,
   resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag,
 } from "@fusion/core";
 import { GitCheckoutMaterializer, type CheckoutMaterializer, type DisposableCheckout, type VerificationOutcome } from "./mission-verification.js";
+import { LandedValidationEvidenceProvider, type MissionValidationEvidenceProvider, type MissionValidationEvidenceUnavailable } from "./mission-validation-evidence.js";
 import { createFnAgent, promptWithFallback, type AgentResult } from "../pi.js";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
 import {
@@ -92,6 +93,8 @@ interface ValidationInspection {
   workspaceStale: boolean;
   /** Why the inspected tree could not be proven to contain landed code. */
   inspectionUnavailableReason?: string;
+  /** Typed, bounded infrastructure diagnostic for source-specific recovery. */
+  evidenceUnavailable?: MissionValidationEvidenceUnavailable;
 }
 
 interface ValidationWorkspaceStaleness {
@@ -117,6 +120,7 @@ interface PreparedValidationMemoization {
   taskId?: string;
   taskTitle?: string;
   taskContext: string;
+  evidenceUnavailable?: MissionValidationEvidenceUnavailable;
   runtimeHint: ReturnType<typeof extractRuntimeHint>;
   settings?: Settings;
   checkout: DisposableCheckout;
@@ -177,6 +181,8 @@ export interface MissionExecutionLoopOptions {
   verificationCapability?: import("./mission-verification.js").VerificationCapability;
   /** Injectable disposable-checkout seam for validator inspection tests. */
   checkoutMaterializer?: CheckoutMaterializer;
+  /** Engine-owned delivered-revision evidence boundary. */
+  validationEvidenceProvider?: MissionValidationEvidenceProvider;
 }
 
 export class MissionExecutionLoop extends EventEmitter {
@@ -190,6 +196,7 @@ export class MissionExecutionLoop extends EventEmitter {
   private agentStore?: MissionExecutionLoopOptions["agentStore"];
   private verificationCapability?: MissionExecutionLoopOptions["verificationCapability"];
   private checkoutMaterializer: CheckoutMaterializer;
+  private validationEvidenceProvider: MissionValidationEvidenceProvider;
   private activeValidations = new Set<string>(); // feature IDs currently being validated
 
   constructor(options: MissionExecutionLoopOptions) {
@@ -203,6 +210,7 @@ export class MissionExecutionLoop extends EventEmitter {
     this.agentStore = options.agentStore;
     this.verificationCapability = options.verificationCapability;
     this.checkoutMaterializer = options.checkoutMaterializer ?? new GitCheckoutMaterializer();
+    this.validationEvidenceProvider = options.validationEvidenceProvider ?? new LandedValidationEvidenceProvider(this.checkoutMaterializer);
     loopLog.log("MissionExecutionLoop created");
   }
 
@@ -845,7 +853,18 @@ export class MissionExecutionLoop extends EventEmitter {
         // isolation setup failure, rejected proof) routes to a blocked/needs-
         // attention outcome that spawns NO Fix Feature, and is tracked with a
         // distinguishable infra-failure event so it is separable from real fails.
-        await this.handleValidationInconclusive(feature.id, run.id, result.blockedReason ?? result.summary, effects);
+        const inconclusiveReason = result.blockedReason ?? result.summary;
+        if (inspection.evidenceUnavailable) {
+          await this.handleValidationInconclusive(
+            feature.id,
+            run.id,
+            inconclusiveReason,
+            effects,
+            inspection.evidenceUnavailable,
+          );
+        } else {
+          await this.handleValidationInconclusive(feature.id, run.id, inconclusiveReason, effects);
+        }
       } else if (result.status === "blocked") {
         await this.handleValidationBlocked(feature.id, run.id, result.blockedReason ?? result.summary, effects);
       } else if (result.status === "error") {
@@ -922,13 +941,20 @@ export class MissionExecutionLoop extends EventEmitter {
       const model = this.resolveValidationSessionModel(task, settings, assignedAgent?.runtimeConfig);
       if (!model.provider || !model.modelId) return undefined;
       const userPrompt = this.buildValidationPrompt(feature, assertions, "feature");
-      const taskContext = task ? this.buildTaskContext(task) : "";
-      const systemPrompt = this.buildValidationSystemPrompt(feature, assertions, taskContext, "feature");
       // FNXC:MissionValidation 2026-08-01-16:40:
       // FN-8694 admits a fingerprint only after its landed checkout is ready.
       // An ambient-root fallback has ill-defined code inputs, so it follows the
       // legacy fail-open path rather than attaching a stale fingerprint to a run.
-      const checkout = await this.checkoutMaterializer.materialize(this.rootDir, landedSha);
+      const evidence = await this.validationEvidenceProvider.prepare({
+        rootDir: this.rootDir,
+        task: task!,
+        landedSha,
+        requiresForgeEvidence: this.requiresForgeEvidence(assertions),
+      });
+      if (!evidence.checkout) return undefined;
+      const checkout = evidence.checkout;
+      const taskContext = task ? this.buildTaskContext(task, evidence.records) : "";
+      const systemPrompt = this.buildValidationSystemPrompt(feature, assertions, taskContext, "feature");
       return {
         fingerprint: fingerprintMissionValidationInput(landedSha, model.provider, model.modelId, systemPrompt, userPrompt),
         hasBehavioralAssertions: assertions.some((assertion) => normalizeMissionAssertionType(assertion.type) === "behavioral"),
@@ -941,6 +967,7 @@ export class MissionExecutionLoop extends EventEmitter {
         taskId: task?.id,
         taskTitle: task?.title,
         taskContext,
+        evidenceUnavailable: evidence.unavailable,
         runtimeHint: extractRuntimeHint(assignedAgent?.runtimeConfig),
         settings,
         checkout,
@@ -975,8 +1002,8 @@ export class MissionExecutionLoop extends EventEmitter {
 
     // An admitted run must use the exact inputs that were fingerprinted. Manual
     // and milestone runs retain the legacy preparation path and fail open.
-    const task = prepared ? null : feature.taskId ? await this.taskStore.getTask(feature.taskId) : null;
-    const taskContext = prepared?.taskContext ?? (task ? this.buildTaskContext(task) : "");
+    const task = feature.taskId ? await this.taskStore.getTask(feature.taskId) : null;
+    let taskContext = prepared?.taskContext ?? (task ? this.buildTaskContext(task) : "");
     const assignedAgent = task?.assignedAgentId && this.agentStore
       ? await this.agentStore.getAgent(task.assignedAgentId).catch(() => null)
       : null;
@@ -999,16 +1026,74 @@ export class MissionExecutionLoop extends EventEmitter {
     let inspectionRoot = checkout?.dir ?? this.rootDir;
     let fallbackUsed = !checkout;
 
-    // Manual and milestone validation preserve the pre-FN-8694 fallback posture.
-    // Prepared automatic runs cannot reach this branch: failed materialization
-    // makes them memoization-ineligible before atomic admission.
-    if (!prepared && landedSha) {
+    if (prepared?.evidenceUnavailable) {
+      await checkout?.dispose().catch((error) => loopLog.warn(`Error disposing unavailable validation checkout for ${feature.id}:`, error));
+      checkout = undefined;
+      const reason = `${prepared.evidenceUnavailable.source} unavailable: ${prepared.evidenceUnavailable.reason}`;
+      return {
+        result: { status: "inconclusive", assertions: [], summary: reason, blockedReason: reason },
+        inspection: {
+          inspectionRoot,
+          landedSha,
+          fallbackUsed,
+          workspaceStale: false,
+          inspectionUnavailableReason: reason,
+          evidenceUnavailable: prepared.evidenceUnavailable,
+        },
+      };
+    }
+
+    // FNXC:MissionValidationEvidence 2026-10-04-22:32:
+    // Manual and recovery runs must resolve the selected workflow's terminal
+    // lanes before judging delivery. A renamed complete lane still requires the
+    // landed-SHA evidence path and must never fall back to an ambient checkout.
+    const taskLifecycle = task
+      ? await resolveTaskLifecycleColumns(this.taskStore, task.id).catch(() => undefined)
+      : undefined;
+    const completedLinkedTask = task !== null && (
+      task.column === (taskLifecycle?.complete ?? "done")
+      || task.column === (taskLifecycle?.archived ?? "archived")
+    );
+    if (!prepared && completedLinkedTask && landedSha) {
+      const evidence = await this.validationEvidenceProvider.prepare({
+        rootDir: this.rootDir,
+        task,
+        landedSha,
+        requiresForgeEvidence: this.requiresForgeEvidence(assertions),
+      });
+      taskContext = this.buildTaskContext(task, evidence.records);
+      if (evidence.unavailable || !evidence.checkout) {
+        await evidence.checkout?.dispose().catch((error) => loopLog.warn(`Error disposing unavailable validation checkout for ${feature.id}:`, error));
+        const unavailable = evidence.unavailable ?? {
+          source: "repository-checkout" as const,
+          retryable: true,
+          reason: "landed revision checkout is unavailable",
+        };
+        const reason = `${unavailable.source} unavailable: ${unavailable.reason}`;
+        return {
+          result: { status: "inconclusive", assertions: [], summary: reason, blockedReason: reason },
+          inspection: {
+            inspectionRoot,
+            landedSha,
+            fallbackUsed: true,
+            workspaceStale: false,
+            inspectionUnavailableReason: reason,
+            evidenceUnavailable: unavailable,
+          },
+        };
+      }
+      checkout = evidence.checkout;
+      inspectionRoot = checkout.dir;
+      fallbackUsed = false;
+    } else if (!prepared && landedSha) {
+      // Legacy/unlinked and pre-merge rows have no delivered-code proof yet.
+      // Their existing fallback posture remains outside FN-9464's completed-task contract.
       try {
         checkout = await this.checkoutMaterializer.materialize(this.rootDir, landedSha);
         inspectionRoot = checkout.dir;
         fallbackUsed = false;
-      } catch (err) {
-        loopLog.warn(`Unable to materialize validation checkout for ${feature.id}; using rootDir fallback:`, err);
+      } catch {
+        // The completed-task branch above is deliberately the only no-fallback path.
       }
     }
 
@@ -1826,18 +1911,36 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
   /**
    * Build task context string for validation.
    */
-  private buildTaskContext(task: { id: string; title?: string; description?: string; log?: Array<{ action?: string }> }): string {
+  private requiresForgeEvidence(assertions: MissionContractAssertion[]): boolean {
+    return assertions.some((assertion) => /\b(pull request|merge request|issue comment|pr comment|discussion)\b/i.test(assertion.assertion));
+  }
+
+  private buildTaskContext(
+    task: { id: string; title?: string; description?: string; log?: Array<{ action?: string }> },
+    evidence: Array<{ source: string; identifier: string; excerpt: string }> = [],
+  ): string {
+    /*
+    FNXC:MissionValidationEvidence 2026-10-04-22:32:
+    Validation context includes task-authored and durable text. Redact every
+    interpolated field here as a final boundary in case an older evidence source
+    bypassed receipt normalization.
+    */
+    const safe = (value: string) => redactSecrets(value);
     const lines: string[] = [];
-    lines.push(`Task: ${task.title || task.id}`);
+    lines.push(`Task: ${safe(task.title || task.id)}`);
     if (task.description) {
-      lines.push(`Description: ${task.description}`);
+      lines.push(`Description: ${safe(task.description)}`);
+    }
+    if (evidence.length > 0) {
+      lines.push("\nBounded delivery evidence:");
+      for (const record of evidence) lines.push(`  - [${record.source}:${record.identifier}] ${safe(record.excerpt)}`);
     }
     if (task.log && task.log.length > 0) {
       lines.push("\nRecent actions:");
       const recentLogs = task.log.slice(-10);
       for (const entry of recentLogs) {
         if (entry.action) {
-          lines.push(`  - ${entry.action}`);
+          lines.push(`  - ${safe(entry.action)}`);
         }
       }
     }
@@ -2210,6 +2313,7 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     runId: string | undefined,
     reason: string | undefined,
     effects?: import("@fusion/core").ValidatorRunCompletionEffects,
+    unavailable?: MissionValidationEvidenceUnavailable,
   ): Promise<void> {
     if (!(await this.completeValidatorRunIfStillRunning(featureId, runId, "blocked", reason, effects))) return;
     try {
@@ -2223,6 +2327,10 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
         reason: reason ?? null,
         outcome: "inconclusive",
         infraFailure: true,
+        ...(unavailable ? {
+          evidenceSource: unavailable.source,
+          retryable: unavailable.retryable,
+        } : {}),
       });
 
       // Explicitly does NOT call createGeneratedFixFeature — inconclusive mints

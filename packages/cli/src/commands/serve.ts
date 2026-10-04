@@ -25,7 +25,7 @@ import {
   registerBuiltInZaiProvider,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
-import { createServer, GitHubClient, createSkillsAdapter, getCliPackageVersion, getProjectSettingsPath, isUnresolvedCliPackageVersion, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook } from "@fusion/dashboard";
+import { createServer, GitHubClient, createDashboardMissionForgeReader, createSkillsAdapter, getCliPackageVersion, getProjectSettingsPath, isUnresolvedCliPackageVersion, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook, resolveGitLabClient } from "@fusion/dashboard";
 import {
   ProjectEngineManager,
   PeerExchangeService,
@@ -35,6 +35,7 @@ import {
   createFusionAuthStorage,
   createFusionModelRegistry,
   refreshFusionModelRegistry,
+  LandedValidationEvidenceProvider,
   setLocalDashboardPort,
   startCloudLinkPresence,
   stopCloudLinkPresence,
@@ -442,6 +443,16 @@ export async function runServe(
       isNativeAutoMergeEnabled: async () => (await taskStore.getSettings()).githubNativeAutoMerge === true,
     }),
     prReconcileGithubOps: createPrReconcileGithubOps(githubClient),
+    // FNXC:MissionValidationEvidence 2026-10-04-22:32:
+    // The selected engine store resolves its own configured GitLab read client.
+    // This keeps serve's multi-project validation evidence project-scoped.
+    createMissionValidationEvidenceProvider: (taskStore) => new LandedValidationEvidenceProvider(undefined, createDashboardMissionForgeReader({
+      githubClient,
+      getGitLabClient: async () => {
+        const resolved = await resolveGitLabClient(taskStore);
+        return resolved.ok ? resolved.client : undefined;
+      },
+    })),
     getTaskMergeBlocker,
     onInsightRunProcessed: (s: unknown, r: unknown) => onMemoryInsightRunProcessed(s as ScheduledTask, r as AutomationRunResult),
     // FNXC:SqliteFinalRemoval 2026-06-26-11:15: share the central boot's TaskStore
