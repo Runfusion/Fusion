@@ -1047,6 +1047,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const externalSessionIngestionParser = express.json({ limit: 2 * 1024 * 1024 + 1024, verify: preserveRawBody });
   const isExternalSessionIngestionBodyPath = (method: string, path: string): boolean =>
     method === "POST" && /^\/api\/external-sessions\/(?:ingest|turn-ingest)\/?$/.test(path);
+  // FNXC:RemoteAgents 2026-10-04-12:00: a turn batch is bounded by its collector to 6 MiB of turns; admit
+  // 8 MiB plus envelope on exactly that route so one oversized batch is a 413, never a parser crash.
+  const externalSessionTurnBatchParser = express.json({ limit: 8 * 1024 * 1024 + 1024, verify: preserveRawBody });
+  const isExternalSessionTurnBatchPath = (method: string, path: string): boolean =>
+    method === "POST" && /^\/api\/external-sessions\/turn-ingest-batch\/?$/.test(path);
 
   /*
   FNXC:LargeTextPayloads 2026-08-21-04:35:
@@ -1088,7 +1093,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           ? fileSaveParser
           : isExternalSessionIngestionBodyPath(req.method, req.path)
             ? externalSessionIngestionParser
-            : jsonParser;
+            : isExternalSessionTurnBatchPath(req.method, req.path)
+              ? externalSessionTurnBatchParser
+              : jsonParser;
     return parser(req, res, (error) => {
       // Keep the established global and route-specific size rejections observable as 413 instead
       // of allowing Express's parser error to fall through to the generic 500 handler.

@@ -2,6 +2,7 @@ import { ExternalSessionStore, ExternalSessionReader, ExternalSessionConflict, e
   externalSessionHeartbeatSchema, externalSessionListQuerySchema, externalSessionReadId,
   externalSessionCursorAfter, ExternalSessionFeedback, ExternalFeedbackConflict, feedbackClaimSchema, feedbackAckSchema,
   ExternalSessionTurnStore, ExternalSessionTurnReader, ExternalSessionTurnConflict, externalSessionTurnIngestionSchema } from "@fusion/core";
+import { z } from "zod";
 import { ApiError } from "../api-error.js";
 import { sessionCostBadge, summarizeTurnCost, summarizeIncrementCost } from "../remote-agents/session-cost.js";
 import { recordedRatesFor } from "../remote-agents/record-rates.js";
@@ -263,21 +264,50 @@ export const registerExternalSessionRoutes: ApiRouteRegistrar = ctx => {
     try { value = configured.length <= 131_072 ? JSON.parse(configured) : null; } catch { value = null; }
   }
   const credentials = configured === undefined ? undefined : parseExternalSessionCollectorCredentials(value);
+  type CollectorRequest = Parameters<Parameters<typeof ctx.router.post>[1]>[0];
+  const collectorPrincipal = (req: CollectorRequest) => {
+    if (credentials === undefined) throw new ApiError(404, "External session ingestion is disabled");
+    if (credentials === null) throw new ApiError(503, "Invalid external session collector configuration");
+    if (req.headers.origin || req.headers["sec-fetch-site"]) throw new ApiError(403, "Collector requests must not originate in a browser");
+    const principal = authenticateExternalSessionCollector(req.headers.authorization, credentials);
+    if (!principal) throw new ApiError(401, "Valid collector bearer token required");
+    if (req.query.projectId !== principal.projectId) throw new ApiError(403, "Collector project scope mismatch");
+    return principal;
+  };
+  type ProjectStore = Awaited<ReturnType<typeof ctx.getProjectContext>>["store"];
+  type Principal = ReturnType<typeof collectorPrincipal>;
+  type TurnIngestion = ReturnType<typeof externalSessionTurnIngestionSchema.parse>;
+  const collectorStorage = async (req: CollectorRequest, principal: Principal) => {
+    const { store, projectId } = await ctx.getProjectContext(req);
+    const layer = store.getAsyncLayer();
+    if (!layer || projectId !== principal.projectId || layer.projectId !== principal.projectId) {
+      throw new ApiError(503, "External session project storage unavailable");
+    }
+    return { store, layer };
+  };
+  /*
+  FNXC:ExternalSessionRates 2026-09-24-00:04: Stamp the applicable rates as the turn arrives; this is the
+  last moment the true rate is knowable. The stamp is always recomputed here and overwrites anything the
+  collector sent, so a host cannot choose the rates its own work is priced at. Shared by single and batched
+  ingestion so both store and price a turn identically.
+  */
+  const ingestTurn = async (store: ProjectStore, layer: NonNullable<ReturnType<ProjectStore["getAsyncLayer"]>>, principal: Principal, body: TurnIngestion) => {
+    let pricing: ReturnType<typeof recordedRatesFor>;
+    try {
+      const session = await new ExternalSessionReader(layer, principal.projectId).get(body.sessionId);
+      if (session) pricing = recordedRatesFor(body.turn.usage as never, session.provider, await store.getGlobalSettingsStore().getSettings());
+    } catch { pricing = undefined; }
+    // An unavailable rate table must not refuse the turn: unstamped stays honestly unstamped.
+    const turn = { ...body.turn, ...(pricing ? { pricing } : {}) };
+    if (!pricing) delete (turn as { pricing?: unknown }).pricing;
+    return new ExternalSessionTurnStore(layer, principal).ingest({ ...body, turn } as never);
+  };
   for (const operation of ["ingest", "turn-ingest", "heartbeat", "feedback-claim", "feedback-ack"] as const) {
     ctx.router.post(`/external-sessions/${operation}`, async (req, res) => {
-      if (credentials === undefined) throw new ApiError(404, "External session ingestion is disabled");
-      if (credentials === null) throw new ApiError(503, "Invalid external session collector configuration");
-      if (req.headers.origin || req.headers["sec-fetch-site"]) throw new ApiError(403, "Collector requests must not originate in a browser");
-      const principal = authenticateExternalSessionCollector(req.headers.authorization, credentials);
-      if (!principal) throw new ApiError(401, "Valid collector bearer token required");
-      if (req.query.projectId !== principal.projectId) throw new ApiError(403, "Collector project scope mismatch");
+      const principal = collectorPrincipal(req);
       const parsed = (operation === "ingest" ? externalSessionIngestionSchema : operation === "turn-ingest" ? externalSessionTurnIngestionSchema : operation === "heartbeat" ? externalSessionHeartbeatSchema : operation === "feedback-claim" ? feedbackClaimSchema : feedbackAckSchema).safeParse(req.body);
       if (!parsed.success) throw new ApiError(400, "Invalid external session envelope");
-      const { store, projectId } = await ctx.getProjectContext(req);
-      const layer = store.getAsyncLayer();
-      if (!layer || projectId !== principal.projectId || layer.projectId !== principal.projectId) {
-        throw new ApiError(503, "External session project storage unavailable");
-      }
+      const { store, layer } = await collectorStorage(req, principal);
       const sessions = new ExternalSessionStore(layer, principal);
       try {
         if (operation === "heartbeat") {
@@ -298,21 +328,7 @@ export const registerExternalSessionRoutes: ApiRouteRegistrar = ctx => {
           } catch { stamp = undefined; }
           res.json(await sessions.ingest(parsed.data, stamp));
         } else if (operation === "turn-ingest") {
-          /*
-          FNXC:ExternalSessionRates 2026-09-24-00:04: Stamp the applicable rates as the turn arrives; this is the
-          last moment the true rate is knowable. The stamp is always recomputed here and overwrites anything the
-          collector sent, so a host cannot choose the rates its own work is priced at.
-          */
-          const body = parsed.data as { sessionId: string; turn: Record<string, unknown> };
-          let pricing: ReturnType<typeof recordedRatesFor>;
-          try {
-            const session = await new ExternalSessionReader(layer, principal.projectId).get(body.sessionId);
-            if (session) pricing = recordedRatesFor(body.turn.usage as never, session.provider, await store.getGlobalSettingsStore().getSettings());
-          } catch { pricing = undefined; }
-          // An unavailable rate table must not refuse the turn: unstamped stays honestly unstamped.
-          const turn = { ...body.turn, ...(pricing ? { pricing } : {}) };
-          if (!pricing) delete (turn as { pricing?: unknown }).pricing;
-          res.json(await new ExternalSessionTurnStore(layer, principal).ingest({ ...body, turn }));
+          res.json(await ingestTurn(store, layer, principal, parsed.data as TurnIngestion));
         } else {
           const feedback = new ExternalSessionFeedback(layer, principal.projectId);
           res.json(operation === "feedback-claim" ? await feedback.claim(principal.hostId, parsed.data) : await feedback.acknowledge(principal.hostId, parsed.data));
@@ -328,4 +344,32 @@ export const registerExternalSessionRoutes: ApiRouteRegistrar = ctx => {
       }
     });
   }
+  /*
+  FNXC:RemoteAgents 2026-10-04-12:00: Batched turn ingestion. Catch-up after an outage sent one POST per turn,
+  which exhausted the per-client mutation rate limit (HTTP 429) and stretched recovery to tens of minutes. One
+  authenticated request now carries up to TURN_BATCH_MAX turns, each validated and stored exactly as a single
+  turn-ingest would be, with one result per turn in request order. A turn's own rejection never fails its
+  neighbours, so the collector can set aside exactly that turn. A storage failure still fails the whole request;
+  turns stored before it are idempotent by event id when the collector retries.
+  */
+  const TURN_BATCH_MAX = 50;
+  const turnBatchSchema = z.object({ schemaVersion: z.literal(1), turns: z.array(z.unknown()).min(1).max(TURN_BATCH_MAX) }).strict();
+  ctx.router.post("/external-sessions/turn-ingest-batch", async (req, res) => {
+    const principal = collectorPrincipal(req);
+    const parsed = turnBatchSchema.safeParse(req.body);
+    if (!parsed.success) throw new ApiError(400, "Invalid external session envelope");
+    const { store, layer } = await collectorStorage(req, principal);
+    const results: Array<Record<string, unknown>> = [];
+    for (const item of parsed.data.turns) {
+      const one = externalSessionTurnIngestionSchema.safeParse(item);
+      if (!one.success) { results.push({ status: 400, error: "invalid-turn" }); continue; }
+      try {
+        results.push({ status: 200, ...(await ingestTurn(store, layer, principal, one.data)) });
+      } catch (error) {
+        if (!(error instanceof ExternalSessionTurnConflict)) throw error;
+        results.push({ status: error.code === "session-not-found" ? 404 : 409, error: error.code, eventId: one.data.eventId });
+      }
+    }
+    res.json({ schemaVersion: 1, results });
+  });
 };

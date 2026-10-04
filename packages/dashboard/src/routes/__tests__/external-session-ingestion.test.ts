@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
-import { ExternalSessionStore, ExternalSessionConflict, ExternalSessionFeedback, ExternalSessionTurnStore } from "@fusion/core";
+import { ExternalSessionStore, ExternalSessionConflict, ExternalSessionFeedback, ExternalSessionTurnStore, ExternalSessionTurnConflict } from "@fusion/core";
 import type { ApiRoutesContext } from "../types.js";
 import { registerExternalSessionRoutes } from "../register-external-session-routes.js";
 import { createAuthMiddleware } from "../../auth-middleware.js";
@@ -72,6 +72,31 @@ describe("external-session ingestion registrar", () => {
     await s.handlers.get("/external-sessions/turn-ingest")!(s.req, s.res);
     expect(ingest).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "a".repeat(64), turn: expect.objectContaining({ nativeTurnId: "turn-1" }) }));
     expect(s.json).toHaveBeenCalledWith(result);
+  });
+
+  it("ingests a turn batch with one result per turn so a rejected turn never fails its neighbours", async () => {
+    const turn = (id: string) => ({ schemaVersion: 1, eventId: `event-${id}`, sessionId: "a".repeat(64),
+      turn: { nativeTurnId: id, revision: 1, ordinal: 0, state: "completed", prompts: [{ at: null, text: "Fix it" }], response: "Done",
+        startedAt: null, endedAt: null, durationMs: null, durationSource: null, toolCallCount: 1, fileChanges: [] } });
+    const ingest = vi.spyOn(ExternalSessionTurnStore.prototype, "ingest").mockImplementation(async input => {
+      if ((input as { turn: { nativeTurnId: string } }).turn.nativeTurnId === "gone") throw new ExternalSessionTurnConflict("session-not-found");
+      const t = input as { eventId: string; sessionId: string; turn: { nativeTurnId: string; revision: number } };
+      return { schemaVersion: 1 as const, eventId: t.eventId, sessionId: t.sessionId, nativeTurnId: t.turn.nativeTurnId, revision: t.turn.revision, applied: true };
+    });
+    const s = setup(); s.req.body = { schemaVersion: 1, turns: [turn("one"), { ...turn("bad"), turn: { prompts: [] } }, turn("gone"), turn("two")] };
+    await s.handlers.get("/external-sessions/turn-ingest-batch")!(s.req, s.res);
+    expect(ingest).toHaveBeenCalledTimes(3);
+    const { results } = s.json.mock.calls[0]![0] as { results: Array<{ status: number; nativeTurnId?: string; error?: string }> };
+    expect(results.map(r => r.status)).toEqual([200, 400, 404, 200]);
+    expect([results[0]!.nativeTurnId, results[2]!.error, results[3]!.nativeTurnId]).toEqual(["one", "session-not-found", "two"]);
+  });
+
+  it("refuses an unauthenticated or oversized turn batch before database access", async () => {
+    const s = setup(); s.req.body = { schemaVersion: 1, turns: Array.from({ length: 51 }, () => ({})) };
+    await expect(s.handlers.get("/external-sessions/turn-ingest-batch")!(s.req, s.res)).rejects.toMatchObject({ statusCode: 400 });
+    s.req.headers.authorization = undefined; s.req.body = { schemaVersion: 1, turns: [{}] };
+    await expect(s.handlers.get("/external-sessions/turn-ingest-batch")!(s.req, s.res)).rejects.toMatchObject({ statusCode: 401 });
+    expect(s.getProjectContext).not.toHaveBeenCalled();
   });
 
   it("discards a collector-supplied pricing stamp so a host cannot price its own work", async () => {
@@ -155,7 +180,8 @@ describe("dashboard authentication boundary", () => {
     const gate = createAuthMiddleware("dashboard-secret");
     for (const [method, path, allowed] of [
       ["POST", "/api/external-sessions/ingest", true], ["POST", "/api/external-sessions/heartbeat/", true],
-      ["POST", "/api/external-sessions/turn-ingest", true],
+      ["POST", "/api/external-sessions/turn-ingest", true], ["POST", "/api/external-sessions/turn-ingest-batch", true],
+      ["POST", "/api/external-sessions/turn-ingest-batch/nested", false],
       ["POST", "/api/external-sessions/feedback-claim", true], ["POST", "/api/external-sessions/feedback-ack/", true],
       ["GET", "/api/external-sessions/feedback-claim", false], ["POST", "/api/external-sessions/feedback-ack/nested", false],
       ["POST", "/api/external-sessions/" + "a".repeat(64) + "/feedback", false],
