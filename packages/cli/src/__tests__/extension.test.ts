@@ -5426,6 +5426,25 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.details.count).toBe(5);
     });
 
+    it("keeps an ephemeral exact-ID root out of the chart unless ephemeral agents are included", async () => {
+      const ephemeralId = await seedAgent(tmpDir, { ephemeral: true, name: "ephemeral-root" });
+      const tool = api.tools.get("fn_agent_org_chart")!;
+
+      const hidden = await tool.execute("oc-eph-1", { root_agent_id: ephemeralId }, undefined, undefined, makeCtx(tmpDir));
+      expect(hidden.isError).toBe(true);
+      expect(hidden.details).toEqual({ error: "Root agent not found" });
+
+      const shown = await tool.execute(
+        "oc-eph-2",
+        { root_agent_id: ephemeralId, include_ephemeral: true },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      expect(shown.isError).not.toBe(true);
+      expect(shown.content[0].text).toContain("ephemeral-root");
+    });
+
     it("returns single agent for lone agent", async () => {
       const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
       await agentStore.init();

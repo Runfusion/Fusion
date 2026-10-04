@@ -7132,6 +7132,18 @@ export default function kbExtension(pi: ExtensionAPI) {
             details: { error: "Root agent not found" },
           };
         }
+        /*
+        FNXC:AgentIdentityResolution 2026-10-04-18:20:
+        Exact-ID resolution now reaches ephemeral agents directly, but the org chart excludes them by
+        default. Keep that filter for an exact-ID root so the chart never shows an excluded agent.
+        */
+        if (!includeEphemeral && isEphemeralAgent(rootAgent)) {
+          return {
+            content: [{ type: "text", text: `Agent '${params.root_agent_id}' not found` }],
+            isError: true,
+            details: { error: "Root agent not found" },
+          };
+        }
 
         // Get the full tree, then find the subtree
         const fullTree = await agentStore.getOrgTree({ includeEphemeral });
