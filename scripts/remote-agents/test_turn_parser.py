@@ -180,6 +180,19 @@ class TurnUsageTests(unittest.TestCase):
         self.assertEqual(entry['outputTokens'], 20)
         self.assertEqual(turn['contextTokens'], 1050)
         self.assertEqual(turn['contextCapacity'], 200000)
+        self.assertEqual((entry['fast'], entry['longContext']), (False, False))
+
+    USAGE_CONTRACT_KEYS = {'requestId', 'model', 'inputTokens', 'cachedInputTokens', 'cacheWriteTokens',
+                           'cacheWriteHourTokens', 'outputTokens', 'reasoningTokens', 'fast', 'longContext'}
+
+    def test_usage_entries_carry_exactly_the_strict_contract_fields(self):
+        # FNXC:RemoteAgents 2026-10-04-09:20: the server schema is strict; a missing or extra key rejects the turn.
+        turn, _ = self.claude({'input_tokens': 100, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0,
+                               'output_tokens': 20, 'speed': 'fast'})
+        self.assertEqual(set(turn['usage'][0]), self.USAGE_CONTRACT_KEYS)
+        self.assertTrue(turn['usage'][0]['fast'])
+        big, _ = self.claude({'input_tokens': 250000, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0, 'output_tokens': 1})
+        self.assertTrue(big['usage'][0]['longContext'])
 
     def test_does_not_double_count_a_repeated_message_id(self):
         state = {}
@@ -240,6 +253,15 @@ class CodexTurnUsageTests(unittest.TestCase):
         self.assertEqual(entry['reasoningTokens'], 10)
         self.assertEqual(turn['contextTokens'], 1000)
         self.assertEqual(turn['contextCapacity'], 272000)
+        self.assertEqual((entry['fast'], entry['longContext']), (False, False))
+        self.assertEqual(set(entry), TurnUsageTests.USAGE_CONTRACT_KEYS)
+
+    def test_fast_service_tier_and_long_context_are_flagged(self):
+        events = self.events(usage={'input_tokens': 300000, 'cached_input_tokens': 0, 'cache_write_input_tokens': 0,
+                                    'output_tokens': 5, 'reasoning_output_tokens': 0})
+        events[2]['payload']['service_tier'] = 'fast'
+        turn, _ = self.drive(events)
+        self.assertEqual((turn['usage'][0]['fast'], turn['usage'][0]['longContext']), (True, True))
 
     def test_does_not_attach_usage_belonging_to_a_different_turn(self):
         # Guessing by position would attach this; the stated turn_id says it belongs elsewhere.

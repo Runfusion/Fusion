@@ -106,6 +106,10 @@ def consume_codex(state, event):
             models = state.setdefault('turnModels', {})
             if len(models) < 256:
                 models[identity] = bounded(model, 256)
+        if isinstance(identity, str) and identity:
+            tiers = state.setdefault('turnTiers', {})
+            if len(tiers) < 256:
+                tiers[identity] = payload.get('service_tier') in ('fast', 'priority')
     if kind == 'token_usage_record':
         identity = payload.get('turn_id')
         usage = codex_usage_record(payload)
@@ -117,8 +121,13 @@ def consume_codex(state, event):
             request = payload.get('response_id')
             entries = turn.setdefault('usage', [])
             if len(entries) < 64 and not any(u.get('requestId') == request for u in entries):
+                # FNXC:RemoteAgents 2026-10-04-09:20: the usage contract is strict and requires the pricing band
+                # flags on every entry; without them Fusion rejected the whole turn (HTTP 400) and a collector
+                # that sets rejected turns aside silently dropped it. Same derivation as session accounting.
                 entries.append(dict(requestId=bounded(str(request), 256) if request else identity,
-                                    model=state.get('turnModels', {}).get(identity), **usage))
+                                    model=state.get('turnModels', {}).get(identity),
+                                    fast=state.get('turnTiers', {}).get(identity, False),
+                                    longContext=usage['inputTokens'] > CONTEXT_CAPACITY['codex'], **usage))
                 turn['contextTokens'] = usage['inputTokens']
                 turn['contextCapacity'] = CONTEXT_CAPACITY['codex']
                 return dict(turn)
@@ -209,7 +218,9 @@ def consume_claude(state, event):
             if len(turn.setdefault('usage', [])) < 64 and not any(u.get('requestId') == identity for u in turn['usage']):
                 model = message.get('model')
                 turn['usage'].append(dict(requestId=bounded(identity, 256),
-                                          model=bounded(model, 256) if isinstance(model, str) else None, **usage))
+                                          model=bounded(model, 256) if isinstance(model, str) else None,
+                                          fast=(message.get('usage') or {}).get('speed') == 'fast',
+                                          longContext=usage['inputTokens'] > CONTEXT_CAPACITY['claude'], **usage))
                 turn['contextTokens'] = usage['inputTokens']
                 turn['contextCapacity'] = CONTEXT_CAPACITY['claude']
                 changed = True
