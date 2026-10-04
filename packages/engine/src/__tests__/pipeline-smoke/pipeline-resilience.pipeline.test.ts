@@ -52,26 +52,30 @@ describeIfReady("pipeline smoke: resilience scenarios", () => {
   afterAll(pg.afterAll);
 
   /*
-  FNXC:PipelineSmoke 2026-09-20-16:04:
-  S17's three workflow records for one restart boundary are independent durable tasks. Run them
-  through one PostgreSQL fixture lifecycle so the smoke lane stops repaying engine/database setup
-  ten extra times, while preserving every workflow × recorded-stage execution and its JSONL record.
+  FNXC:PipelineSmoke 2026-10-04-08:32:
+  The hosted watchdog reached S17 after only 24 of the required 41 invocation records. S17's
+  workflow × restart-stage records are independent durable tasks, so run every record through one
+  production PostgreSQL/Git fixture lifecycle rather than repaying setup five times. This retains
+  the complete invocation census and every live restart assertion; it removes only redundant test
+  fixture initialization that prevented the smoke lane from reaching later scenarios.
   */
-  it.each(scenario("S17").variants ?? [])("S17 runs every workflow at %s", async (variant) => {
+  it("S17 runs every workflow and restart stage through one fixture lifecycle", async () => {
     const selected = scenario("S17");
-    for (const workflowId of selected.workflows) {
-      const context = { harness, workflowId, variant };
-      await recordPipelineScenario({
-        scenarioId: selected.id,
-        workflowId,
-        variant,
-        expectedTerminal: selected.expectedTerminal,
-      }, async () => {
-        await executePipelineScenario(selected, context);
-        const observed = context.result;
-        if (!observed) throw new Error(`${selected.id} did not publish an observed terminal state.`);
-        return { observedTerminal: observed.observedTerminal, wedge: observed.wedge };
-      });
+    for (const variant of selected.variants ?? []) {
+      for (const workflowId of selected.workflows) {
+        const context = { harness, workflowId, variant };
+        await recordPipelineScenario({
+          scenarioId: selected.id,
+          workflowId,
+          variant,
+          expectedTerminal: selected.expectedTerminal,
+        }, async () => {
+          await executePipelineScenario(selected, context);
+          const observed = context.result;
+          if (!observed) throw new Error(`${selected.id} did not publish an observed terminal state.`);
+          return { observedTerminal: observed.observedTerminal, wedge: observed.wedge };
+        });
+      }
     }
   });
 

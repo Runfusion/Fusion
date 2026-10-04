@@ -15,6 +15,28 @@ test("runPipelineSmoke writes a strict multi-workflow invocation report", async 
   const summary = await runPipelineSmoke({ spawn: healthyPrerequisite, watchdog: successfulWatchdog(), now: (() => { const values = [0, 1, 30]; return () => values.shift(); })(), options: { reportPath }, write: () => undefined });
   assert.equal(summary.passed, true); assert.equal(summary.scenarioIds.length, expectedScenarioIds().length); assert.deepEqual(summary.invocationKeys, expectedInvocationKeys()); assert.deepEqual(JSON.parse(readFileSync(reportPath, "utf8")), summary);
 }));
+/*
+FNXC:PipelineSmoke 2026-10-04-08:32:
+The watchdog failure stopped before the post-merge restart boundary and later scenarios. A passing
+report must retain every unique S17–S21 invocation inside the fixed budget; accepting an early
+success would make the historical timeout look healthy while skipping production coverage.
+*/
+test("runPipelineSmoke retains the complete S17 through S21 invocation boundary", async () => withReports(async ({ reportPath }) => {
+  const summary = await runPipelineSmoke({
+    spawn: healthyPrerequisite,
+    watchdog: successfulWatchdog(),
+    now: (() => { const values = [0, 1, PIPELINE_SMOKE_DURATION_BUDGET_MS - 1]; return () => values.shift(); })(),
+    options: { reportPath },
+    write: () => undefined,
+  });
+  const postMergeScenarioIds = new Set(["S17", "S18", "S19", "S20", "S21"]);
+  const boundary = summary.invocationKeys.filter((key) => postMergeScenarioIds.has(key.slice(0, 3)));
+  const expectedBoundary = expectedInvocationKeys().filter((key) => postMergeScenarioIds.has(key.slice(0, 3)));
+  assert.deepEqual(boundary, expectedBoundary);
+  assert.equal(new Set(boundary).size, boundary.length);
+  assert.ok(summary.durationMs < PIPELINE_SMOKE_DURATION_BUDGET_MS);
+  assert.equal(summary.passed, true);
+}));
 test("runPipelineSmoke overrides inherited Vitest worker fan-out for the real smoke child", async () => withReports(async ({ reportPath }) => {
   const watchdog = async ({ args, env }) => {
     assert.equal(env.VITEST_MAX_WORKERS, String(PIPELINE_SMOKE_MAX_WORKERS));

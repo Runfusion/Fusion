@@ -35,7 +35,12 @@ describe("CLI quiet prompt and result source contracts", () => {
   });
 
   it("keeps all audited result writers attached to the output seam", () => {
-    for (const file of ["task.ts", "org-import.ts", "workflow.ts", "research.ts", "experiment-finalize.ts", "update.ts"]) {
+    /*
+    FNXC:CliOutputInventory 2026-10-04-08:01:
+    Result-writer inventory must name only live command modules. `research.ts` was retired, so
+    retaining it made this source-contract test fail before it could audit existing writers.
+    */
+    for (const file of ["task.ts", "org-import.ts", "workflow.ts", "experiment-finalize.ts", "update.ts"]) {
       const source = readFileSync(join(cliRoot, "commands", file), "utf8");
       expect(source, file).toMatch(/import\s*\{[^}]*\bresult\b[^}]*\}\s*from\s*["']\.\.\/output\.js["']/);
       expect(source, file).toMatch(/(?:result|outputResult)\(/);

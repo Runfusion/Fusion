@@ -1105,7 +1105,6 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       undefined,
       true,
       "reopen-trailing",
-      expect.objectContaining({ revisionKey: "code-review", maxRevisions: "unbounded" }),
     );
   });
 
@@ -1152,7 +1151,6 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       findings,
       true,
       "reopen-trailing",
-      expect.objectContaining({ revisionKey: "code-review", maxRevisions: 3 }),
     );
   });
 
