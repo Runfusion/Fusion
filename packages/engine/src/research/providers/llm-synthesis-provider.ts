@@ -190,6 +190,9 @@ export function classifySynthesisRuntimeError(error: unknown): ResearchProviderE
   if (/\b(?:429|rate[\s_-]*limit(?:ed)?|too many requests)\b/i.test(message)) {
     return new ResearchProviderError({ providerType: "llm-synthesis", code: "rate-limited", message: "The synthesis provider is rate limited.", retryable: true, cause: error });
   }
+  if (/\b(?:403|forbidden|unauthori[sz]ed|access denied|permission denied|do(?:es)? not have access|not allowed|invalid api[\s_-]*key|authentication failed)\b/i.test(message)) {
+    return new ResearchProviderError({ providerType: "llm-synthesis", code: "auth-failed", message: "The synthesis provider rejected authentication or model access.", retryable: false, cause: error });
+  }
   if (/\b(?:missing|no|not configured|could not find)\b[\s\S]{0,80}\b(?:credential|api[\s_-]*key|token|provider|model)\b/i.test(message)) {
     return new ResearchProviderError({ providerType: "llm-synthesis", code: "missing-configuration", message: "The synthesis provider or model is not configured.", retryable: false, cause: error });
   }

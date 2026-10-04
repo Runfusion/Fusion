@@ -174,6 +174,7 @@ describe("ResearchStepRunner", () => {
   it.each([
     ["Missing API key opaque-secret-123456", "missing-configuration"],
     ["403 forbidden: model access denied opaque-secret-123456", "auth-failed"],
+    ["You do not have access to model opaque-secret-123456", "auth-failed"],
     ["429 rate limit exceeded opaque-secret-123456", "rate-limited"],
   ] as const)("sanitizes production synthesis runtime failures as %s", async (message, code) => {
     const provider = new LLMSynthesisProvider({
