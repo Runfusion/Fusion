@@ -51,10 +51,13 @@ type RegistryWithProviderState = AnthropicModelRegistryLike & {
 /*
 FNXC:ModelCatalog 2026-10-01-02:51:
 The bundled Pi 0.86.1 Anthropic catalog omits Claude Opus 5.5 and Claude Sonnet 5.5 even though Fusion already has their published usage prices and OAuth identity support. Supply only these additive compatibility rows until Pi includes them; upstream rows always win unchanged.
+
+FNXC:ModelCatalog 2026-10-03-23:32:
+Anthropic provider registrations must use the origin URL because the Anthropic SDK appends `/v1/messages`. A `/v1` base path produces `/v1/v1/messages`, which returns the provider's sparse 404 `not_found_error` even for valid model IDs.
 */
 export const SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION: AnthropicProviderRegistration = {
   name: "Anthropic",
-  baseUrl: "https://api.anthropic.com/v1",
+  baseUrl: "https://api.anthropic.com",
   apiKey: "$ANTHROPIC_API_KEY",
   api: "anthropic-messages",
   models: [

@@ -10,7 +10,8 @@ import {
 const EXPECTED_IDS = [CLAUDE_OPUS_5_5_MODEL_ID, CLAUDE_SONNET_5_5_MODEL_ID];
 
 describe("SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION", () => {
-  it("contains the complete Opus 5.5 and Sonnet 5.5 compatibility metadata", () => {
+  it("uses the Anthropic SDK origin and contains the complete 5.5 compatibility metadata", () => {
+    expect(SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.baseUrl).toBe("https://api.anthropic.com");
     expect(SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.models).toHaveLength(2);
     for (const model of SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.models) {
       expect(model).toMatchObject({
@@ -38,6 +39,7 @@ describe("mergeSupplementalAnthropicModels", () => {
     mergeSupplementalAnthropicModels(registry);
 
     const provider = registeredProviders.get(ANTHROPIC_PROVIDER_ID) as typeof SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION;
+    expect(provider.baseUrl).toBe("https://api.anthropic.com");
     expect(provider.models.map((model) => model.id)).toEqual(EXPECTED_IDS);
   });
 
