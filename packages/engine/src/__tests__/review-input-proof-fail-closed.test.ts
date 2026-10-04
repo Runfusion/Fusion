@@ -361,8 +361,8 @@ describe("identity-only graph result writers", () => {
     expect(sink.results.get("code-review")).not.toHaveProperty("reviewedCommitSha");
   });
 
-  it("connects the real identity-only graph node to a mergeable persisted proof", async () => {
-    const row = task({ enabledWorkflowSteps: ["code-review"] });
+  it.each(["pre-merge", "post-merge"] as const)("connects the real %s graph node to persisted proof with its actual phase", async (phase) => {
+    const row = task({ enabledWorkflowSteps: ["code-review"], mergeDetails: phase === "post-merge" ? { mergeConfirmed: true } : undefined });
     const harness = graphHarness(row);
     harness.executeWorkflowStep.mockImplementation(async (...args: unknown[]) => ({
       success: true,
@@ -377,6 +377,7 @@ describe("identity-only graph result writers", () => {
       config: {
         name: "Code Review",
         defaultOn: false,
+        phase,
         template: {
           nodes: [{ id: "code-review-step", kind: "prompt", config: { name: "Code Review", prompt: "Review", gateMode: "gate" } }],
           edges: [],
@@ -413,6 +414,7 @@ describe("identity-only graph result writers", () => {
     await executor.run(row, {} as Settings, ir);
     const persisted = sink.results.get("code-review")!;
     expect(harness.executeWorkflowStep).toHaveBeenCalledTimes(1);
+    expect(harness.executeWorkflowStep.mock.calls[0][1]).toMatchObject({ phase });
     expect(persisted).toMatchObject({ status: "passed", reviewInputFingerprint: "proof-279", verdict: "APPROVE" });
     row.workflowStepResults = [persisted];
     for (const manual of [false, true]) {

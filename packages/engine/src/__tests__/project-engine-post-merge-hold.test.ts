@@ -41,6 +41,27 @@ function fixture(status = "failed", verdict: string | undefined = "REVISE") {
 }
 
 describe("landed task post-merge holds", () => {
+  it("schedules a due evidence recheck once while keeping the merge queue blocked", async () => {
+    const { task, store, poll } = fixture();
+    task.status = undefined;
+    task.autoMerge = true;
+    task.workflowStepResults![0].completedAt = new Date(Date.now() - 20 * 60_000).toISOString();
+    const items: unknown[] = [];
+    Object.assign(store, {
+      getTask: vi.fn(async () => task), getSettings: vi.fn(async () => ({})),
+      listWorkflowWorkItemsForTask: vi.fn(async () => items),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(async (input) => {
+        if (items.length) return { seeded: false };
+        items.push(input); return { seeded: true };
+      }),
+    });
+    for (let n = 0; n < 3; n++) expect(await poll()).toBe(false);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ nodeId: "post-merge-verification", sourceColumn: "in-review", targetColumn: "in-review" });
+    expect(task.workflowStepResults![0]).toMatchObject({ status: "failed", verdict: "REVISE" });
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+  });
+
   it.each(["failed", "pending", "skipped"])("does not repeatedly admit %s evidence or report active landing", async (status) => {
     const { task, store, poll } = fixture(status);
     const evidence = structuredClone(task.workflowStepResults);

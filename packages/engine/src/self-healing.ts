@@ -1,4 +1,4 @@
-import { resumeMissingPostMergeGate } from "./merge/post-merge-gate-reseed.js";
+import { isPostMergeGateRecoveryDue, resumeMissingPostMergeGate } from "./merge/post-merge-gate-reseed.js";
 /**
  * SelfHealingManager — enables unattended multi-day/week operation by
  * providing automatic recovery from common failure modes.
@@ -3460,7 +3460,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
-            if ((await getRequiredPostMergeEvidenceDecision(this.store, task)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, task.id);
+            await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3583,7 +3583,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (task.mergeDetails?.mergeConfirmed === true) {
           const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task);
           if (evidenceBlocker) {
-            if ((await getRequiredPostMergeEvidenceDecision(this.store, task)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, task.id);
+            await resumeMissingPostMergeGate(this.store, task.id);
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
           }
@@ -3826,7 +3826,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (live.mergeDetails?.mergeConfirmed === true) {
               const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, live);
               if (evidenceBlocker) {
-                if ((await getRequiredPostMergeEvidenceDecision(this.store, live)).outcome === "resumable") await resumeMissingPostMergeGate(this.store, live.id);
+                await resumeMissingPostMergeGate(this.store, live.id);
                 log.debug(`${live.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
                 continue;
               }
@@ -14228,10 +14228,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       evidence after the same pause, hold, liveness, lease, and auto-merge fences as every other owner.
       */
       const decision = await getRequiredPostMergeEvidenceDecision(this.store, task);
-      if (decision.outcome === "resumable") {
+      if (isPostMergeGateRecoveryDue(task, decision)) {
         const resumed = await resumeMissingPostMergeGate(this.store, task.id);
         if (resumed.outcome === "resumed") return resumed;
-        return { outcome: "raced", reason: "post-merge-continuation-not-idle" };
+        if (decision.outcome === "resumable") return { outcome: "raced", reason: "post-merge-continuation-not-idle" };
       }
       return { outcome: "ineligible", reason: decision.outcome === "blocked" ? "post-merge-evidence-pending" : "awaiting-finalization" };
     }

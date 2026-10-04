@@ -21,6 +21,7 @@ import { hasRepeatedUnchangedReview, reviewInputSignature, type RequestPreMergeO
 import { resolveReviewRemediationGate } from "./review-remediation-gate.js";
 import { resolveRemediationCheckout } from "./resolve-remediation-checkout.js";
 import { isDefiniteEmptyCodeReviewRevise } from "./review-empty-content-close.js";
+import { hasExhaustedNoVerdictRecovery, isUnavailablePlanLockResult } from "../merge/pre-merge-gate-reseed.js";
 
 export type RemediationRefusalReason =
   | "no-actionable-findings"
@@ -131,6 +132,10 @@ export async function recoverFailedPreMergeWorkflowStepDetailed(
     }
     if (!target) {
       executorLog.warn(`${task.id}: no failed pre-merge workflow step to recover from`);
+      return { kind: "skipped" };
+    }
+    /* FNXC:ReviewRecovery 2026-10-04-02:24: Self-healing must not turn parser or exhausted dispatch failures into implementation remediation. The durable failed result retains its diagnostic. */
+    if (target.verdict === undefined && (isUnavailablePlanLockResult(target) || hasExhaustedNoVerdictRecovery(target))) {
       return { kind: "skipped" };
     }
 

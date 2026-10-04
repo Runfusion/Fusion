@@ -154,6 +154,21 @@ describe("empty Code Review content", () => {
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
   });
 
+  it.each([true, false])("rechecks post-merge evidence even with unchanged content (noCommitsExpected=%s)", async (noCommitsExpected) => {
+    const subject = task({ noCommitsExpected, workflowStepResults: [{
+      workflowStepId: "delivery-review", phase: "post-merge", status: "failed", verdict: "REVISE",
+      reviewInputFingerprint: EMPTY_REVIEW_DIFF_FINGERPRINT, notes: "CI was pending",
+    }] });
+    const store = createMockStore();
+    store.getTask.mockImplementation(async () => subject);
+    const executor = new TaskExecutor(store as any, process.cwd());
+    vi.spyOn(executor as any, "readTaskArtifact").mockResolvedValue("# Approved plan\n");
+    await (executor as any).executeWorkflowStep(subject, {
+      ...codeReviewStep(), id: "delivery-review-step", optionalGroupId: "delivery-review", phase: "post-merge",
+    }, process.cwd(), {});
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+  });
+
   it("dispatches when the diff is non-empty", async () => {
     fingerprintState.value = "a".repeat(64);
     const subject = task({ noCommitsExpected: true });

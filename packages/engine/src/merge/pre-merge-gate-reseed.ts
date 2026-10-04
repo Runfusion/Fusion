@@ -7,6 +7,7 @@ current content and produce its own genuine result.
 import {
   computeWorkflowIrPin,
   PRE_MERGE_STEPS_NOT_RUN_BLOCKER,
+  PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC,
   IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
   evaluatePreMergeApprovals,
   resolveWorkflowIrForTask,
@@ -23,6 +24,7 @@ export type UnrunPreMergeGateRerouteReason =
   | "no-review-route"
   | "not-singular"
   | "operator-held"
+  | "already-landed"
   | "workflow-selection-changed";
 
 export type FailedNoVerdictPreMergeGateRerouteReason =
@@ -32,6 +34,7 @@ export type FailedNoVerdictPreMergeGateRerouteReason =
   | "no-review-route"
   | "not-singular"
   | "operator-held"
+  | "already-landed"
   | "workflow-selection-changed";
 
 /** Only the engine-owned unrun-gate park may be automatically released. */
@@ -65,10 +68,11 @@ async function seedPreMergeReviewIfIdle<Reason extends "no-unrun-gate" | "no-fai
   candidateStepIds: ReadonlySet<string>,
   noCandidateReason: Reason,
   runKind: "unrun-pre-merge-gate" | "failed-no-verdict-pre-merge-gate",
-): Promise<ReseedResult<"seeded" | "active-continuation" | Reason | "no-review-route" | "not-singular" | "operator-held" | "workflow-selection-changed">> {
+): Promise<ReseedResult<"seeded" | "active-continuation" | Reason | "no-review-route" | "not-singular" | "operator-held" | "already-landed" | "workflow-selection-changed">> {
   const { mergeContent, requiredPreMergeStepIds, expectedWorkflowSelection } = options;
   if (mergeContent.kind !== "singular" || task.workspaceWorktrees !== undefined) return { rerouted: false, reason: "not-singular" };
   if (task.paused || task.userPaused || task.deletedAt || task.autoMerge === false) return { rerouted: false, reason: "operator-held" };
+  if (task.mergeDetails?.mergeConfirmed) return { rerouted: false, reason: "already-landed" };
   if (requiredPreMergeStepIds.size === 0 || candidateStepIds.size === 0) return { rerouted: false, reason: noCandidateReason };
 
   const ir = await resolveWorkflowIrForTask(store, task.id);
@@ -88,6 +92,7 @@ async function seedPreMergeReviewIfIdle<Reason extends "no-unrun-gate" | "no-fai
     targetColumn: node.column ?? task.column,
     irHash: computeWorkflowIrPin(ir, node.id).irHash,
     expectedWorkflowSelection,
+    expectedTaskUpdatedAt: task.updatedAt,
   });
   if (result.seeded) return { rerouted: true, reason: "seeded", nodeId: node.id, workflowStepId: node.id };
   return {
@@ -105,7 +110,28 @@ export function isFailedNoVerdictPreMergeReviewResult(
   return (result.phase ?? "pre-merge") === "pre-merge"
     && result.status === "failed"
     && result.verdict === undefined
+    && !isUnavailablePlanLockResult(result)
+    && !hasExhaustedNoVerdictRecovery(result)
     && requiredPreMergeStepIds.has(result.workflowStepId);
+}
+
+/*
+FNXC:ReviewRecovery 2026-10-04-02:24:
+A deterministic spec-lock rejection is not a lost dispatch. Never spend another reviewer call on
+unchanged parser input. Bound genuine lost-dispatch recovery to three retries per recorded review
+input using durable history, so restarting the engine cannot reset the budget.
+*/
+export function isUnavailablePlanLockResult(result: Pick<WorkflowStepResult, "output" | "notes">): boolean {
+  return [result.output, result.notes].some((text) => text?.startsWith(PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC));
+}
+
+export function hasExhaustedNoVerdictRecovery(result: WorkflowStepResult): boolean {
+  if (result.status !== "failed" || result.verdict !== undefined) return false;
+  const previous = (result.priorAttempts ?? []).filter((entry) => !entry.supersededAt && !entry.remediationArchivedAt
+    && entry.reviewInputFingerprint === result.reviewInputFingerprint
+    && entry.reviewedCommitSha === result.reviewedCommitSha
+    && entry.status === "failed" && entry.verdict === undefined);
+  return previous.length >= 3;
 }
 
 export async function rerouteUnrunPreMergeGateToReview(

@@ -600,7 +600,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
     check and stays on the review success edge, avoiding the remediation node's WIP crossing. The
     empty-merge finalization guards remain authoritative and may still refuse completion.
     */
-    if (workflowStepMetadata.reviewKind === "code"
+    if (workflowStep.phase !== "post-merge" && workflowStepMetadata.reviewKind === "code"
       && reviewInputFingerprint === EMPTY_REVIEW_DIFF_FINGERPRINT
       && latestTaskForUserComments.workspaceWorktrees === undefined
       && latestTaskForUserComments.noCommitsExpected === true) {
@@ -619,7 +619,8 @@ CRITICAL SCOPING RULES — read before doing anything else:
         ...(repositoryScopeRevision !== undefined ? { repositoryScopeRevision } : {}),
       };
     }
-    const reusableReviewResult = reviewFindingsContract
+    // FNXC:ReviewRecovery 2026-10-04-02:24: Hosted evidence changes independently of the landed diff; post-merge gates must inspect it again.
+    const reusableReviewResult = workflowStep.phase !== "post-merge" && reviewFindingsContract
       ? findReusableReviewResult(
           latestTaskForUserComments,
           sameGateStepId,

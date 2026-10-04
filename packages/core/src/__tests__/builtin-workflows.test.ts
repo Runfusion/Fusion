@@ -301,7 +301,10 @@ describe("built-in workflows", () => {
       const postMergeStep = template?.nodes?.[0]?.config;
       expect(postMergeStep?.gateMode, workflow.id).toBe("gate");
       expect(postMergeStep?.prompt, workflow.id).toContain("first Full Suite push-to-main run at or after that SHA");
-      expect(postMergeStep?.prompt, workflow.id).toContain("successful conclusion for Pipeline smoke tier");
+      expect(postMergeStep?.prompt, workflow.id).toContain("completed conclusion for Pipeline smoke tier");
+      expect(postMergeStep?.prompt, workflow.id).toContain("explicit evidence-backed disposition");
+      expect(postMergeStep?.prompt, workflow.id).toContain("Never fabricate success");
+      expect(postMergeStep?.prompt, workflow.id).not.toContain("A successful conclusion");
       expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-1");
       expect(postMergeStep?.prompt, workflow.id).toContain("test-timings-shard-4");
       expect(postMergeStep?.prompt, workflow.id).toContain("Do NOT approve until");

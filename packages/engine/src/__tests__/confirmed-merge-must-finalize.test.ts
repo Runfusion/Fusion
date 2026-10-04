@@ -193,6 +193,26 @@ describe("missing post-merge continuation recovery", () => {
     return { task, store, items };
   }
 
+  it("rechecks an old rejection once without replacing its evidence or rerunning merge", async () => {
+    const { task, store, items } = recoveryFixture();
+    task.workflowStepResults = [{ workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: new Date(Date.now() - 20 * 60_000).toISOString(), notes: "CI run still in progress" }] as Task["workflowStepResults"];
+    const before = structuredClone(task.workflowStepResults);
+    for (let n = 0; n < 3; n++) await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ nodeId: "post-merge-verification", sourceColumn: "in-review", targetColumn: "in-review" });
+    expect(task.workflowStepResults).toEqual(before);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["recent", "invalid-time", "exhausted"])("does not spin on %s rejected post-merge evidence", async (condition) => {
+    const { task, store } = recoveryFixture();
+    const rejection = { workflowStepId: "post-merge-verification", phase: "post-merge", status: "failed", verdict: "REVISE", completedAt: condition === "recent" ? new Date().toISOString() : condition === "invalid-time" ? "invalid" : "2026-01-01T00:00:00Z" };
+    task.workflowStepResults = [{ ...rejection, priorAttempts: condition === "exhausted" ? [rejection, rejection, rejection] : [] }] as Task["workflowStepResults"];
+    for (let n = 0; n < 3; n++) await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("resumes the missing gate exactly once across repeated finalization polls, without merging or completing", async () => {
     const { task, store, items } = recoveryFixture();
     const results = [];

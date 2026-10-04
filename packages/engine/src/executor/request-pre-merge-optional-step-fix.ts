@@ -48,6 +48,7 @@ import {
   resolveWorkflowIrForTask,
 } from "@fusion/core";
 import { mergeEffectiveSettings } from "../project/effective-settings.js";
+import { hasExhaustedNoVerdictRecovery, isUnavailablePlanLockResult } from "../merge/pre-merge-gate-reseed.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
@@ -260,14 +261,18 @@ export async function requestPreMergeOptionalStepFix(
   }) as typeof baseStore;
   const scopedDeps = { ...deps, store: watchedStore };
   let scheduled = false;
+  let superseded = false;
   try {
     scheduled = await requestPreMergeOptionalStepFixInner(scopedDeps, taskId, fallbackTask, info, options);
     return scheduled;
   } catch (err: unknown) {
-    if (err instanceof ClaimSupersededError) return false;
+    if (err instanceof ClaimSupersededError) {
+      superseded = true;
+      return false;
+    }
     throw err;
   } finally {
-    if (!scheduled && !narrated) {
+    if (!scheduled && !narrated && !superseded) {
       const gate = info.nodeId ?? info.stepName;
       const silentDecline = `Pre-merge remediation declined without explanation — no fix steps were produced for '${gate}'`;
       executorLog.warn(`${taskId}: ${silentDecline} (status=${info.status}, verdict=${info.verdict ?? "none"}, findings=${info.findings?.length ?? 0}, claimed=${Boolean(options.claim)})`);
@@ -349,6 +354,30 @@ async function requestPreMergeOptionalStepFixInner(
       nodeId: info.nodeId,
     });
     return true;
+  }
+  const failedResult = liveTask.workflowStepResults?.find((entry) => entry.workflowStepId === info.nodeId);
+  if (isUnavailablePlanLockResult({ output: info.feedback })
+    && (!failedResult || failedResult.status !== "failed" || failedResult.verdict !== undefined)) {
+    throw new ClaimSupersededError();
+  }
+  if (info.verdict === undefined && failedResult?.status === "failed" && failedResult.verdict === undefined
+    && (isUnavailablePlanLockResult(failedResult) || hasExhaustedNoVerdictRecovery(failedResult))) {
+    /* FNXC:ReviewRecovery 2026-10-04-02:24: Parser rejection and exhausted transport retries are not REVISE authority. Keep recovery in its current lane with a visible remedy. */
+    const error = `Review recovery stopped at '${info.nodeId ?? info.stepName}': ${failedResult.notes || failedResult.output || "no verdict after bounded recovery"} Correct the review input or provider failure before retrying.`;
+    if (liveTask.error !== error) {
+      const parked = await deps.store.updateTaskAtomic(taskId, (current) => {
+        const result = current.workflowStepResults?.find((entry) => entry.workflowStepId === failedResult.workflowStepId);
+        if (current.updatedAt !== liveTask.updatedAt || current.column !== liveTask.column
+          || current.paused || current.userPaused || current.deletedAt || current.mergeDetails?.mergeConfirmed
+          || !result || result.status !== "failed" || result.verdict !== undefined
+          || result.startedAt !== failedResult.startedAt || result.completedAt !== failedResult.completedAt
+          || result.output !== failedResult.output || result.notes !== failedResult.notes) return null;
+        return { status: "failed", error };
+      }, deps.getRunContextFor(taskId));
+      if (!parked) throw new ClaimSupersededError();
+      await deps.store.logEntry(taskId, error, undefined, deps.getRunContextFor(taskId));
+    }
+    return false;
   }
   const isPlanReview = info.nodeId === "plan-review" || info.stepName === "Plan Review";
   if (isPlanReview) {

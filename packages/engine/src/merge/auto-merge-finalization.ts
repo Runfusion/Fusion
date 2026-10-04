@@ -15,7 +15,7 @@ import {
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
 import { cleanupLandedTaskWorktree } from "./post-landing-worktree-cleanup.js";
 import type { MergeWriteFence } from "./merge-write-fence.js";
-import { resumeMissingPostMergeGate } from "./post-merge-gate-reseed.js";
+import { isPostMergeGateRecoveryDue, resumeMissingPostMergeGate } from "./post-merge-gate-reseed.js";
 
 /*
 FNXC:WorkflowMergeFinalization 2026-07-19-07:20 (U7 / R2/R3/KTD-1):
@@ -283,7 +283,7 @@ export async function finalizeProvenAutoMergeTask({
     A recovery finalizer has no active graph left to traverse an absent post-merge edge. Only the
     structured resumable decision may seed that authored node; display text never authorizes work.
     */
-    const resumeResult = evidenceDecision.outcome === "resumable"
+    const resumeResult = isPostMergeGateRecoveryDue(latest, evidenceDecision)
       ? fence
         ? await fence.write("finalization", () => resumeMissingPostMergeGate(store, taskId))
         : await resumeMissingPostMergeGate(store, taskId)

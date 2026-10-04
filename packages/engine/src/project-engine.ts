@@ -75,6 +75,7 @@ import { moveTaskToContainedBackwardTarget } from "./execution/lifecycle-move.js
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import { isTaskExecutionLive } from "./merge/merge-execution-exclusion.js";
 import { isMergeActiveStatus } from "./merge/merge-active-status.js";
+import { isPostMergeGateRecoveryDue, resumeMissingPostMergeGate } from "./merge/post-merge-gate-reseed.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { execFile } from "node:child_process";
@@ -3014,6 +3015,9 @@ export class ProjectEngine {
     if (task.mergeDetails?.mergeConfirmed) {
       const decision = await getRequiredPostMergeEvidenceDecision(store, task);
       if (decision.outcome !== "blocked") return undefined;
+      if (isPostMergeGateRecoveryDue(task, decision) && !await this.isMergePending(task.id)) {
+        await resumeMissingPostMergeGate(store, task.id);
+      }
       if (!task.paused && !task.userPaused && !task.deletedAt && task.autoMerge !== false
         && !settings.globalPause && !settings.enginePaused && isMergeActiveStatus(task.status)
         && !isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })

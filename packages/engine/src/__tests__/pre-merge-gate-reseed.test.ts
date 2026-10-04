@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const core = vi.hoisted(() => ({
+  PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC: "Plan approved but spec lock unavailable:",
   computeWorkflowIrPin: vi.fn(() => ({ irHash: "ir-hash" })),
   evaluatePreMergeApprovals: vi.fn(),
   resolveWorkflowIrForTask: vi.fn(),
@@ -46,6 +47,44 @@ beforeEach(() => {
 });
 
 describe("unrun pre-merge gate reseed", () => {
+  it.each(["output", "notes"])("does not redispatch deterministic plan-lock failures carried in %s", async (field) => {
+    const fake = store();
+    const task = subject({ workflowStepResults: [{
+      workflowStepId: "security-review", reviewKind: "plan", status: "failed",
+      [field]: "Plan approved but spec lock unavailable: mission-missing (mission).",
+    }] });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      expect((await rerouteFailedNoVerdictPreMergeGateToReview(fake, task, {
+        requiredPreMergeStepIds: required, mergeContent: singular,
+      })).rerouted).toBe(false);
+    }
+    expect(fake.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it.each([rerouteUnrunPreMergeGateToReview, rerouteFailedNoVerdictPreMergeGateToReview])("never seeds pre-merge work after landing", async (reroute) => {
+    const fake = store();
+    const task = subject({ mergeDetails: { mergeConfirmed: true }, workflowStepResults: [{ workflowStepId: "code-review", status: "failed" }] });
+    expect((await reroute(fake, task, { requiredPreMergeStepIds: required, mergeContent: singular })).rerouted).toBe(false);
+    expect(fake.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("bounds consecutive failed no-verdict attempts without discarding evidence", async () => {
+    const fake = store();
+    const failure = { workflowStepId: "code-review", phase: "pre-merge", status: "failed" };
+    const task = subject({ workflowStepResults: [{ ...failure, priorAttempts: [failure, failure, failure] }] });
+    const before = structuredClone(task);
+    expect((await rerouteFailedNoVerdictPreMergeGateToReview(fake, task, { requiredPreMergeStepIds: required, mergeContent: singular })).rerouted).toBe(false);
+    expect(fake.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(task).toEqual(before);
+  });
+
+  it("allows recovery for new review input despite old failure history", async () => {
+    const fake = store();
+    const failure = { workflowStepId: "code-review", status: "failed", reviewInputFingerprint: "old" };
+    const task = subject({ workflowStepResults: [{ ...failure, reviewInputFingerprint: "new", priorAttempts: [failure, failure, failure] }] });
+    expect((await rerouteFailedNoVerdictPreMergeGateToReview(fake, task, { requiredPreMergeStepIds: required, mergeContent: singular })).rerouted).toBe(true);
+  });
+
   it("seeds the earliest missing gate without mutating review evidence or moving the card", async () => {
     const task = subject();
     const before = structuredClone(task);

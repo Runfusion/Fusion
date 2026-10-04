@@ -7,6 +7,7 @@ import {
   persistWorkflowStepResultWithOutcome,
 } from "../executor/execute-workflow-graph.js";
 import { __setResetPublicationFailureForTesting } from "../../../core/src/task-store/reset-lifecycle.js";
+import { rerouteFailedNoVerdictPreMergeGateToReview } from "../merge/pre-merge-gate-reseed.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,
@@ -230,6 +231,15 @@ describe("persistWorkflowStepResult abort and reset fence", () => {
       output: expect.stringContaining("section-duplicate (non-goals)"),
     })]);
     expect(logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("section-duplicate (non-goals)"), undefined, undefined);
+    const seed = vi.fn();
+    Object.assign(store, { seedWorkspaceCodeReviewContinuationIfIdle: seed });
+    for (let poll = 0; poll < 5; poll++) {
+      expect((await rerouteFailedNoVerdictPreMergeGateToReview(store as never, task, {
+        requiredPreMergeStepIds: new Set(["plan-review"]),
+        mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "same" } } as never,
+      })).rerouted).toBe(false);
+    }
+    expect(seed).not.toHaveBeenCalled();
     expect(getTaskMergeBlocker({
       ...task,
       column: "in-review",

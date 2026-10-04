@@ -773,6 +773,53 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     );
   });
 
+  it.each(["plan-review", "custom-plan-review"])("keeps deterministic spec-lock failure at %s in review without backward replan", async (nodeId) => {
+    const store = createMockStore();
+    const liveTask = task({ column: "in-review", workflowStepResults: [{ workflowStepId: nodeId, status: "failed", notes: "Plan approved but spec lock unavailable: mission-missing (mission)." }] });
+    store.getTask.mockResolvedValue(liveTask);
+    store.updateTaskAtomic = vi.fn(async (_id, update) => { const patch = update(liveTask); return patch ? Object.assign(liveTask, patch) : null; });
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      nodeId, stepName: "Plan Review", phase: "pre-merge", status: "failed",
+      feedback: "Plan approved but spec lock unavailable: mission-missing (mission).",
+    })).resolves.toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(liveTask).toMatchObject({
+      status: "failed", error: expect.stringContaining("Correct the review input"),
+    });
+  });
+
+  it("self-healing never sends deterministic plan-lock failures back to implementation", async () => {
+    const store = createMockStore();
+    const liveTask = task({ column: "in-review", workflowStepResults: [{ workflowStepId: "plan-review", status: "failed", output: "Plan approved but spec lock unavailable: mission-missing (mission)." }] });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+    for (let n = 0; n < 3; n++) expect(await executor.recoverFailedPreMergeWorkflowStep(liveTask)).toBe(false);
+    expect(sendBack).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["approval", "pause"])("does not overwrite a concurrent %s while parking a parser failure", async (race) => {
+    const store = createMockStore();
+    const liveTask = task({ column: "in-review", workflowStepResults: [{ workflowStepId: "plan-review", status: "failed", notes: "Plan approved but spec lock unavailable: mission-missing (mission)." }] });
+    store.getTask.mockResolvedValue(liveTask);
+    store.updateTaskAtomic = vi.fn(async (_id, update) => {
+      const current = structuredClone(liveTask);
+      if (race === "approval") Object.assign(current.workflowStepResults![0], { status: "passed", verdict: "APPROVE" });
+      else current.userPaused = true;
+      expect(update(current)).toBeNull();
+      return null;
+    });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      nodeId: "plan-review", stepName: "Plan Review", phase: "pre-merge", status: "failed",
+      feedback: liveTask.workflowStepResults![0].notes,
+    })).resolves.toBe(false);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+  });
+
   it("does not replan a malformed (advisory_failure, no verdict) Plan Review result", async () => {
     // FN-7561 invariant: a malformed reviewer response (no parseable verdict) is an
     // infra/formatting failure, not a plan defect, and must never bounce the task to triage.
