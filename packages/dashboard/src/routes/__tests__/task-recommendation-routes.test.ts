@@ -31,7 +31,16 @@ function task(overrides: Partial<Task> & { id: string; description: string; colu
 function buildApp(seed: Task[], projectId = "project-a") {
   const tasks = [...seed];
   const store: Partial<TaskStore> = {
-    getTask: vi.fn(async (id: string) => tasks.find((item) => item.id === id && !item.deletedAt) ?? null),
+    getTask: vi.fn(async (id: string, options?: { includeDeleted?: boolean }) => {
+      const candidate = tasks.find((item) => item.id === id);
+      if (!candidate) return null;
+      // Archive-detail reads expose the cold snapshot; includeDeleted models its retained proof row.
+      if (typeof candidate.archivedAt === "string" && candidate.preArchiveColumn && options?.includeDeleted) {
+        return { ...candidate, deletedAt: candidate.archivedAt };
+      }
+      if (candidate.deletedAt && !options?.includeDeleted) return null;
+      return candidate;
+    }),
     listTasks: vi.fn(async (options?: { includeDeleted?: boolean }) =>
       tasks.filter((item) => options?.includeDeleted || !item.deletedAt),
     ),
@@ -575,9 +584,12 @@ describe("recommendation task creation route", () => {
     expect(shipped.store.createTask).toHaveBeenCalledTimes(1);
     expect(shipped.tasks[0]?.recommendations?.[0]?.createdTaskId).toBe(shippedResponse.body.task.id);
 
+    const archivedAt = "2026-09-20T18:54:00.000Z";
     const boxed = buildApp([parent({
-      column: "boxed" as Column,
-      archivedAt: "2026-09-20T18:54:00.000Z",
+      // Archive serialization intentionally exposes its canonical display lane, not the renamed source lane.
+      column: "archived",
+      preArchiveColumn: "shipped",
+      archivedAt,
     })]);
     installCustomRecommendationWorkflow(boxed.store, ["FN-1"]);
 

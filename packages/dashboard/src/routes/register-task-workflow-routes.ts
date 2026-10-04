@@ -2395,13 +2395,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       })();
       const archivedColumns = await archivedColumnsForTask(scopedStore, parent.id);
+      const archivedSourceRecord = typeof parent.archivedAt === "string"
+        ? await scopedStore.getTask(parent.id, { includeDeleted: true }).catch(() => null)
+        : null;
       /*
-      FNXC:ArchivedRecommendations 2026-09-20-18:54:
-      Cold archive detail is a terminal source just like a complete lane. Resolve the parent lane
-      from its workflow's archived trait and require archivedAt, so a live lane name cannot bypass
-      the physical-snapshot gate while renamed archive lanes remain eligible.
+      FNXC:MailboxRecommendationCreation 2026-10-04-07:59:
+      Archive detail normalizes every cold snapshot to the legacy `archived` display lane, even when
+      its source workflow used a renamed archived trait. Require the retained soft-delete record as
+      physical proof so Mailbox can create the guarded follow-up from that snapshot without granting
+      a live custom lane the same privilege from an incidental timestamp.
       */
-      const isPhysicalArchivedSource = archivedColumns.has(parent.column) && typeof parent.archivedAt === "string";
+      const isPhysicalArchivedSource = Boolean(
+        typeof parent.archivedAt === "string"
+        && archivedSourceRecord?.deletedAt
+        && (archivedColumns.has(parent.column) || parent.column === "archived"),
+      );
       if (!completeColumns.has(parent.column) && !isPhysicalArchivedSource) {
         throw conflict("recommendations are available only on completed or archived tasks");
       }
