@@ -32,13 +32,19 @@ def identity(command):
         return None
 
 
-def install(path, command, apply=False):
+FEEDBACK_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse']
+# FNXC:RemoteAgents 2026-10-04-12:00: Claude's Stop marks the end of a turn, so it wakes the collector for prompt
+# delivery. Codex is not given a new event: each new definition needs the user's native review and trust.
+PROVIDER_EVENTS = {'claude': FEEDBACK_EVENTS + ['Stop'], 'codex': FEEDBACK_EVENTS}
+
+
+def install(path, command, apply=False, events=FEEDBACK_EVENTS):
     original = path.read_text() if path.exists() else '{}'
     config = json.loads(original)
     hooks = config.setdefault('hooks', {})
     changed = False
     owned = identity(command)
-    for event in ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse']:
+    for event in events:
         groups = hooks.setdefault(event, [])
         found = False
         retained = []
@@ -86,7 +92,7 @@ def main():
     script = Path(__file__).resolve().with_name('feedback_hook.py')
     for provider, path in [('codex', args.home / '.codex/hooks.json'), ('claude', args.home / '.claude/settings.json')]:
         command = shlex.join([sys.executable, str(script), '--url', args.url, '--project', args.project, '--host', args.host, '--provider', provider, '--token-file', str(args.token_file.resolve()), '--state', str(args.state.resolve())])
-        install(path, command, args.apply)
+        install(path, command, args.apply, PROVIDER_EVENTS[provider])
     print('Codex: enable its hooks feature if needed and review/trust the new definitions in the native CLI. Trust is never set by this installer.')
     print('Claude: restart or resume a session to load the updated hook settings.')
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
-from collector import connect, bind, post
+from collector import connect, bind, post, wake
 
 EVENTS = {'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse'}
 
@@ -68,6 +68,12 @@ def main():
             return
         payload = json.loads(raw)
         if not isinstance(payload, dict):
+            return
+        # FNXC:RemoteAgents 2026-10-04-12:00: every native hook event means the transcript just moved, so nudge
+        # the collector first. Stop is registered only for this wake: it carries no feedback, prints nothing and
+        # therefore can never block the agent from stopping.
+        wake(args.state)
+        if payload.get('hook_event_name') not in EVENTS:
             return
         db = connect(args.state); bind(db, args.project, args.host)
         deadline = time.monotonic() + 2

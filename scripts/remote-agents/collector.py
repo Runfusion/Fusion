@@ -9,6 +9,8 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import select
+import socket
 import sqlite3
 import time
 import urllib.parse
@@ -118,27 +120,65 @@ class Rejected(ValueError):
 PERMANENT_REJECTIONS = frozenset({400, 409, 413, 422})
 
 
-def post(url, project, token, operation, body, timeout=5):
+class StatusError(ValueError):
+    """Fusion answered with a non-2xx status that says nothing final about the record itself."""
+
+    def __init__(self, status):
+        super().__init__(f'Collector returned HTTP {status}')
+        self.status = status
+
+
+RESPONSE_LIMIT = 262144
+STALE_CONNECTION_ERRORS = (http.client.CannotSendRequest, http.client.BadStatusLine, OSError)
+_connections = {}
+
+
+def post(url, project, token, operation, body, timeout=5, reuse=False):
     # FNXC:RemoteAgents 2026-09-21-04:51: Host collectors may use WireGuard HTTP, but arbitrary cleartext or credential-bearing destinations must fail before any token-bearing request.
     parsed = urllib.parse.urlsplit(validate_url(url))
     connection_type = http.client.HTTPSConnection if parsed.scheme == 'https' else http.client.HTTPConnection
-    connection = connection_type(parsed.hostname, parsed.port, timeout=timeout)
     request_path = '/api/external-sessions/' + operation + '?' + urllib.parse.urlencode({'projectId': project})
-    connection.request('POST', request_path, body=json.dumps(body).encode(), headers={
-        'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token,
-    })
-    try:
-        response = connection.getresponse()
-        raw = response.read(262145)
-        if len(raw) > 262144:
-            raise ValueError('Collector response limit exceeded')
-        if response.status in PERMANENT_REJECTIONS:
-            raise Rejected(response.status)
-        if response.status < 200 or response.status >= 300:
-            raise ValueError(f'Collector returned HTTP {response.status}')
-        return json.loads(raw)
-    finally:
-        connection.close()
+    payload = json.dumps(body).encode()
+    headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token}
+    key = (parsed.scheme, parsed.hostname, parsed.port)
+    # FNXC:RemoteAgents 2026-10-04-12:00: the collector reuses one keep-alive connection across a delivery
+    # round instead of a TCP (and TLS) handshake per record. Every collector operation is idempotent (sequence
+    # or event id), so a request that fails on a reused connection the server already closed is retried once
+    # on a fresh one. Hooks keep the one-shot behaviour.
+    for attempt in (0, 1):
+        connection = _connections.pop(key, None) if reuse else None
+        fresh = connection is None
+        if fresh:
+            connection = connection_type(parsed.hostname, parsed.port, timeout=timeout)
+        try:
+            if not fresh:
+                connection.timeout = timeout
+                if connection.sock is not None:
+                    connection.sock.settimeout(timeout)
+            connection.request('POST', request_path, body=payload, headers=headers)
+            response = connection.getresponse()
+            raw = response.read(RESPONSE_LIMIT + 1)
+        except STALE_CONNECTION_ERRORS as error:
+            connection.close()
+            # A timeout is the server being slow, not a dropped keep-alive; never double the wait for it.
+            if fresh or attempt or isinstance(error, (TimeoutError, socket.timeout)):
+                raise
+            continue
+        except BaseException:
+            connection.close()
+            raise
+        if reuse and response.isclosed() and not response.will_close and len(raw) <= RESPONSE_LIMIT:
+            _connections[key] = connection
+        else:
+            connection.close()
+        break
+    if len(raw) > RESPONSE_LIMIT:
+        raise ValueError('Collector response limit exceeded')
+    if response.status in PERMANENT_REJECTIONS:
+        raise Rejected(response.status)
+    if response.status < 200 or response.status >= 300:
+        raise StatusError(response.status)
+    return json.loads(raw)
 
 
 def enqueue(db, session):
@@ -183,6 +223,61 @@ def drain_turns(db, project, host, send, limit=25):
             db.execute('UPDATE turns SET acked=max(acked,?) WHERE provider=? AND native=? AND turn_id=?',
                        (revision, provider, native, turn_id))
         delivered += 1
+    return delivered
+
+
+TURN_BATCH_LIMIT = 50
+TURN_BATCH_BYTES = 6 * 1024 * 1024
+
+
+def drain_turn_batches(db, project, host, send_batch, limit=TURN_BATCH_LIMIT, max_bytes=TURN_BATCH_BYTES):
+    """Send acknowledged sessions' turns as batches; same identities, acks and set-aside rules as drain_turns.
+
+    FNXC:RemoteAgents 2026-10-04-12:00: one request per turn turned every catch-up into hundreds of POSTs per
+    minute and ran into Fusion's per-client mutation rate limit. A batch carries up to ``limit`` turns and
+    ``max_bytes`` of request, and the server answers each turn separately: accepted turns are acknowledged,
+    turns Fusion permanently refuses are set aside exactly as single delivery does, and anything else stays
+    queued and fails the round so it retries with backoff.
+    """
+    if not db.execute('SELECT 1 FROM pending LIMIT 1').fetchone():
+        with db:
+            db.execute('INSERT OR IGNORE INTO acknowledged_sessions SELECT provider,native FROM observations')
+    rows = db.execute('SELECT t.provider,t.native,t.turn_id,t.revision,t.body FROM turns t '
+                      'JOIN acknowledged_sessions a ON a.provider=t.provider AND a.native=t.native '
+                      'WHERE t.revision>t.acked ORDER BY t.rowid LIMIT ?', (limit,)).fetchall()
+    batch, size = [], 0
+    for provider, native, turn_id, revision, body in rows:
+        session_id = hashlib.sha256(json.dumps([project, host, provider, native], separators=(',', ':')).encode()).hexdigest()
+        event_id = hashlib.sha256(json.dumps([session_id, turn_id, revision], separators=(',', ':')).encode()).hexdigest()
+        request = dict(schemaVersion=1, eventId=event_id, sessionId=session_id, turn=json.loads(body))
+        weight = len(body) + 256
+        if batch and size + weight > max_bytes:
+            break
+        batch.append((provider, native, turn_id, revision, request)); size += weight
+    if not batch:
+        return 0
+    answer = send_batch(dict(schemaVersion=1, turns=[entry[4] for entry in batch]))
+    results = answer.get('results') if isinstance(answer, dict) else None
+    if not isinstance(results, list) or len(results) != len(batch):
+        raise ValueError('Invalid turn batch acknowledgement')
+    delivered, deferred = 0, None
+    for (provider, native, turn_id, revision, request), result in zip(batch, results):
+        status = result.get('status') if isinstance(result, dict) else None
+        if status == 200:
+            if (result.get('eventId'), result.get('sessionId'), result.get('nativeTurnId')) != (request['eventId'], request['sessionId'], turn_id) or result.get('revision', 0) < revision:
+                raise ValueError('Invalid turn ingestion acknowledgement')
+            with db:
+                db.execute('UPDATE turns SET acked=max(acked,?) WHERE provider=? AND native=? AND turn_id=?', (revision, provider, native, turn_id))
+            delivered += 1
+        elif status in PERMANENT_REJECTIONS:
+            with db:
+                db.execute('UPDATE turns SET acked=max(acked,?) WHERE provider=? AND native=? AND turn_id=?', (revision, provider, native, turn_id))
+            bump(db, 'rejected_turns')
+            print('Turn rejected by Fusion and set aside:', provider, status, result.get('error', ''), flush=True)
+        else:
+            deferred = deferred or f'Turn batch deferred a turn: HTTP {status} {result.get("error", "")}'.strip()
+    if deferred:
+        raise ValueError(deferred)
     return delivered
 
 
@@ -313,6 +408,63 @@ def scan(db, path, provider):
 DELIVERY_BACKOFF_BASE_SECONDS = 5
 DELIVERY_BACKOFF_MAX_SECONDS = 300
 UNCHANGED_RESCAN_SECONDS = 60
+LOOP_SECONDS = 5
+HEARTBEAT_SECONDS = 15
+MIN_ROUND_SECONDS = 1
+WAKE_SETTLE_SECONDS = 0.2
+BATCH_RETRY_SECONDS = 600
+
+
+def wake_path(state):
+    return Path(state).with_suffix('.wake')
+
+
+def wake(state):
+    """Tell this host's collector that a native transcript just changed. Never fails and never blocks."""
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sock.setblocking(False)
+        sock.sendto(b'w', str(wake_path(state)))
+    except OSError:
+        pass
+    finally:
+        if sock is not None:
+            sock.close()
+
+
+def open_wake(state):
+    """FNXC:RemoteAgents 2026-10-04-12:00: native hooks wake the collector through a private datagram socket next
+    to its spool, so a finished turn is scanned and delivered within a second instead of on the next poll.
+    Polling every LOOP_SECONDS remains the fallback, so a missing or failing hook only costs latency."""
+    path = wake_path(state)
+    try:
+        if path.is_socket():
+            path.unlink()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sock.bind(str(path))
+        os.chmod(path, 0o600)
+        sock.setblocking(False)
+        return sock
+    except OSError as error:
+        print('Collector wake socket unavailable; polling only:', describe(error), flush=True)
+        return None
+
+
+def wait_for_wake(sock, seconds):
+    if sock is None:
+        time.sleep(seconds); return False
+    ready, _, _ = select.select([sock], [], [], seconds)
+    if not ready:
+        return False
+    try:
+        while sock.recv(64):
+            pass
+    except (BlockingIOError, OSError):
+        pass
+    # A hook fires as the native CLI finishes the record it announces; give that write a moment to land.
+    time.sleep(WAKE_SETTLE_SECONDS)
+    return True
 
 
 def describe(error):
@@ -361,13 +513,19 @@ def health(db):
                 parseFailures=counter(db, 'parse_failures'), deliveryFailures=counter(db, 'delivery_failures'))
 
 
-def deliver(db, args, token):
-    """One delivery round: heartbeat and spooled observations, then turns. Returns True when both succeed."""
+_batch_retry_at = 0.0
+
+
+def deliver(db, args, token, heartbeat=True):
+    """One delivery round: heartbeat (when due) and spooled observations, then turns. True when both succeed."""
+    global _batch_retry_at
     delivered = True
+    send = lambda operation, body, timeout=20: post(args.url, args.project, token, operation, body, timeout=timeout, reuse=True)
     try:
-        post(args.url, args.project, token, 'heartbeat', dict(schemaVersion=1, collectorVersion=VERSION, **health(db)))
+        if heartbeat:
+            send('heartbeat', dict(schemaVersion=1, collectorVersion=VERSION, **health(db)), timeout=5)
         for seq, body in db.execute('SELECT sequence,body FROM pending ORDER BY sequence LIMIT 100').fetchall():
-            b = json.loads(body); ack = post(args.url, args.project, token, 'ingest', b, timeout=20)
+            b = json.loads(body); ack = send('ingest', b)
             if ack.get('streamId') != b['streamId'] or ack.get('acknowledgedSequence', 0) < seq:
                 raise ValueError('Invalid ingestion acknowledgement')
             with db:
@@ -379,8 +537,19 @@ def deliver(db, args, token):
         bump(db, 'delivery_failures')
         print('Fusion delivery unavailable:', describe(error), flush=True)
     try:
-        drain_turns(db, args.project, args.host,
-                    lambda operation, body: post(args.url, args.project, token, operation, body, timeout=20))
+        if time.monotonic() >= _batch_retry_at:
+            try:
+                while drain_turn_batches(db, args.project, args.host, lambda body: send('turn-ingest-batch', body, timeout=60)) == TURN_BATCH_LIMIT:
+                    pass
+            except StatusError as error:
+                # A Fusion build without batched ingestion answers 404/405: deliver one turn per request instead
+                # and look again later, so collectors can be upgraded before or after the server.
+                if error.status not in (404, 405):
+                    raise
+                _batch_retry_at = time.monotonic() + BATCH_RETRY_SECONDS
+                print('Fusion has no batched turn ingestion; sending turns singly', flush=True)
+        if time.monotonic() < _batch_retry_at:
+            drain_turns(db, args.project, args.host, send)
     except Exception as error:
         delivered = False
         print('Fusion turn delivery unavailable:', describe(error), flush=True)
@@ -410,15 +579,14 @@ def main():
     with args.state.with_suffix('.collector.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         db = connect(args.state); bind(db, args.project, args.host)
-        failures, next_delivery = 0, 0.0
+        failures, next_delivery, last_round, last_heartbeat = 0, 0.0, float('-inf'), float('-inf')
         paused, settled = {}, {}
+        waker = None if args.once else open_wake(args.state)
         while True:
-            if time.monotonic() >= next_delivery:
-                delivered = deliver(db, args, token)
-                failures = 0 if delivered else failures + 1
-                next_delivery = time.monotonic() + delivery_delay(failures)
-                if failures:
-                    print('Fusion delivery backing off:', delivery_delay(failures), 'seconds', flush=True)
+            # FNXC:RemoteAgents 2026-10-04-12:00: scan before delivering. Delivering first made every new turn
+            # wait a full extra loop (measured median 10.5 s from turn end to Fusion); scanning first sends it in
+            # the same pass. Rounds are spaced by MIN_ROUND_SECONDS so hook wakes cannot multiply requests, and the
+            # heartbeat goes every HEARTBEAT_SECONDS rather than every pass (Fusion marks a host stale at 60 s).
             files = sorted(discover(args.home, args.days), key=lambda item: item[1].stat().st_mtime, reverse=True)
             # FNXC:RemoteAgents 2026-10-04-00:30: Scanning re-read and re-parsed every discovered transcript
             # every five seconds, and a failed scan (rolled back, cursor preserved) repeated the same megabyte
@@ -453,11 +621,22 @@ def main():
                     settled[key] = (signature, now)
             for stale in [key for key in paused if key not in current] + [key for key in settled if key not in current]:
                 paused.pop(stale, None); settled.pop(stale, None)
+            now = time.monotonic()
+            if now >= next_delivery and now - last_round >= MIN_ROUND_SECONDS:
+                beat = now - last_heartbeat >= HEARTBEAT_SECONDS
+                delivered = deliver(db, args, token, heartbeat=beat)
+                last_round = time.monotonic()
+                if beat:
+                    last_heartbeat = last_round
+                failures = 0 if delivered else failures + 1
+                next_delivery = time.monotonic() + delivery_delay(failures)
+                if failures:
+                    print('Fusion delivery backing off:', delivery_delay(failures), 'seconds', flush=True)
             if args.state.stat().st_size > 512 * 1024 * 1024:
                 raise ValueError('Collector storage capacity reached')
             if args.once:
                 break
-            time.sleep(5)
+            wait_for_wake(waker, LOOP_SECONDS)
 
 
 if __name__ == '__main__':
