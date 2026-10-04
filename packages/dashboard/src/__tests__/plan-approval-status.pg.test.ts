@@ -279,7 +279,11 @@ pgDescribe("plan approval status persistence", () => {
       const interrupted = await request(createApp(), "POST", `/api/tasks/${task.id}/reject-plan`);
       expect(interrupted.status).toBe(500);
       const partiallyRejected = await store.getTask(task.id);
-      expect(partiallyRejected.column).toBe(intakeColumn);
+      /*
+      FNXC:PlanApprovalRejection 2026-10-04-20:52:
+      The current workflow plans in its review lane, so rejection must not rehome the card before the final status clear. An interruption therefore leaves it in that lane.
+      */
+      expect(partiallyRejected.column).toBe("in-review");
       expect(partiallyRejected.status).toBe("awaiting-approval");
       expect(partiallyRejected.awaitingApprovalReason).toBe("plan-review-replan-cap");
     } finally {
@@ -290,7 +294,11 @@ pgDescribe("plan approval status persistence", () => {
 
     expect(response.status).toBe(200);
     const persisted = await store.getTask(task.id);
-    expect(persisted.column).toBe(intakeColumn);
+    /*
+    FNXC:PlanApprovalRejection 2026-10-04-20:52:
+    The split workflow owns Plan Review in its review lane; clearing an exhausted approval must not rehome it to a different lifecycle role.
+    */
+    expect(persisted.column).toBe("in-review");
     expect(persisted.status).toBeUndefined();
   });
 

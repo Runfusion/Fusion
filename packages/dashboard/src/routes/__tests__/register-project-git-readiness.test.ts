@@ -191,7 +191,8 @@ describe("POST /api/projects Git readiness", () => {
     await git(upstreamPath, ["add", "README.md"]);
     await git(upstreamPath, ["commit", "-m", "develop"]);
     await git(cloneParent, ["clone", "--branch", "develop", "--single-branch", upstreamPath, currentPath]);
-    await git(currentPath, ["symbolic-ref", "-d", "refs/remotes/origin/HEAD"]);
+    // Local-path clones need not create a remote HEAD symbolic ref; the fixture only requires it absent.
+    await git(currentPath, ["symbolic-ref", "-d", "refs/remotes/origin/HEAD"]).catch(() => undefined);
     await git(currentPath, ["checkout", "--detach", "HEAD"]);
     await git(currentPath, ["branch", "-D", "develop"]);
     const { central } = centralFor();

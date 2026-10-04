@@ -16,14 +16,14 @@ pgTest("workflow setting revision attribution", () => {
   let store: TaskStore;
 
   beforeEach(async () => {
-    harness = await createTaskStoreForTest();
+    harness = await createTaskStoreForTest({ projectId: "workflow-setting-attribution" });
     store = harness.store;
   });
   afterEach(async () => { await harness.teardown(); });
 
   function appFor(token?: string) {
     const app = express();
-    app.use(express.json());
+    app.use(express.json({ limit: "1mb" }));
     if (token) app.use(createAuthMiddleware(token));
     const router = express.Router();
     registerWorkflowRoutes({

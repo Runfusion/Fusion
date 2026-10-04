@@ -167,10 +167,11 @@ describe("applyChangesRequestedTransition rebounds to a lane the board actually 
     ],
   };
 
-  function storeForMove(ir: unknown, workflowId: string) {
-    const selection = { workflowId, stepIds: [] as string[] };
+  function storeForMove(ir: unknown, workflowId: string, task: { id: string; column: string; prInfo: { number: number } }) {
+    const selection = { workflowId, stepIds: [] as string[] }; 
     const moves: Array<{ id: string; to: string }> = [];
     const store = {
+      getTask: vi.fn(async () => task),
       getTaskWorkflowSelection: () => selection,
       getTaskWorkflowSelectionAsync: async () => selection,
       getWorkflowDefinition: async () => ({ id: workflowId, ir }),
@@ -184,8 +185,8 @@ describe("applyChangesRequestedTransition rebounds to a lane the board actually 
   }
 
   it("moves a card out of a RENAMED review lane into the board's own hold lane, not `todo`", async () => {
-    const { store, moves } = storeForMove(NO_TODO_IR, "wf-no-todo");
-    const task = { id: "FN-1", column: "signoff", prInfo: { number: 7 } } as never;
+    const task = { id: "FN-1", column: "signoff", prInfo: { number: 7 } };
+    const { store, moves } = storeForMove(NO_TODO_IR, "wf-no-todo", task);
 
     await applyChangesRequestedTransition(store as never, task, SNAPSHOT, { number: 7 } as never);
 
@@ -202,8 +203,8 @@ describe("applyChangesRequestedTransition rebounds to a lane the board actually 
     carries hold or intake, which for a v1 upgrade is `todo` — so the legacy behaviour is preserved
     without the literal being what produces it.
     */
-    const { store, moves } = storeForMove(V1_UPGRADED_IR, "wf-v1");
-    const task = { id: "FN-2", column: "in-review", prInfo: { number: 8 } } as never;
+    const task = { id: "FN-2", column: "in-review", prInfo: { number: 8 } };
+    const { store, moves } = storeForMove(V1_UPGRADED_IR, "wf-v1", task);
 
     await applyChangesRequestedTransition(store as never, task, SNAPSHOT, { number: 8 } as never);
 

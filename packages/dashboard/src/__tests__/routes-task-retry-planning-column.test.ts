@@ -107,7 +107,8 @@ function buildApp(input: { task: Task; workflowId?: string; definition?: unknown
     withPlanningLifecycleLock: async (_taskId: string, work: () => Promise<unknown>) => work(),
     updateTaskAtomic: async (_taskId: string, updater: (current: Task) => Partial<Task> | null | undefined | Promise<Partial<Task> | null | undefined>) => {
       const patch = await updater(structuredClone(input.task));
-      if (patch) Object.assign(input.task, patch);
+      // Record the atomic patch through the same in-memory writer used by this harness.
+      if (patch) await updateTask(_taskId, patch);
       return input.task;
     },
     pauseTask: async (_taskId: string, paused: boolean, _context?: unknown, options?: { pausedReason?: string }) => {

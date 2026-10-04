@@ -81,7 +81,7 @@ describe("task checklist step update route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(updateStep).toHaveBeenCalledWith("FN-001", 1, "done");
+    expect(updateStep.mock.calls[0]?.slice(0, 3)).toEqual(["FN-001", 1, "done"]);
     expect((response.body as { steps: Array<{ status: string }> }).steps[1].status).toBe("done");
   });
 

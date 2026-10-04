@@ -74,6 +74,7 @@ function buildApp(
     createSession,
     updateSession,
     findLatestActiveSessionForTarget,
+    listSessions: vi.fn(async () => sessions),
     listSessionsPage: vi.fn(async () => ({ total: sessions.length, hasMore: false, nextCursor: null, sessions })),
     getLastMessageForSessions: vi.fn(async (ids: string[]) => new Map(
       ids.flatMap((id) => {

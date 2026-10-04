@@ -61,7 +61,7 @@ describe("task workflow pause routes", () => {
     expect(res.status).toBe(200);
     expect(getTaskState().userPaused).toBeUndefined();
     expect(getTaskState().userPaused === true).toBe(false);
-    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", false);
+    expect(store.pauseTask.mock.calls[0]?.slice(0, 2)).toEqual(["FN-001", false]);
   });
 
   it("allows agent-assigned paused tasks to be manually unpaused", async () => {
@@ -78,7 +78,7 @@ describe("task workflow pause routes", () => {
     expect(res.status).toBe(200);
     expect(getTaskState().paused).toBeUndefined();
     expect(getTaskState().pausedByAgentId).toBeUndefined();
-    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", false);
+    expect(store.pauseTask.mock.calls[0]?.slice(0, 2)).toEqual(["FN-001", false]);
   });
 
   it("allows agent-assigned tasks to be manually paused", async () => {

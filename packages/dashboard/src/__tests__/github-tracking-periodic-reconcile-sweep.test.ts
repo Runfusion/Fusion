@@ -25,11 +25,11 @@ vi.mock("../github-auth.js", () => ({
 FNXC:GithubTrackingReconcile 2026-07-16-15:40:
 Spy the three individual reconcile passes on the prototype but keep the REAL runSweep, so this test
 exercises production's actual pass-isolation + offset-paging orchestration (not a re-implemented mock).
-This is what proves the sweep still pages reconcileDeletedTasks by offset after runSweep took
+This is what proves the sweep still pages reconcileDeletedAndArchived by offset after runSweep took
 ownership of that logic.
 */
 let reconcile: ReturnType<typeof vi.spyOn>;
-let reconcileDeletedTasks: ReturnType<typeof vi.spyOn>;
+let reconcileDeletedAndArchived: ReturnType<typeof vi.spyOn>;
 let reconcileSourceIssues: ReturnType<typeof vi.spyOn>;
 
 vi.mock("../github-issue-comment.js", () => ({
@@ -66,7 +66,7 @@ describe("GitHub tracking periodic reconcile sweep", () => {
     vi.clearAllMocks();
     // Keep the real runSweep; stub only the three passes so we can assert paged offsets.
     reconcile = vi.spyOn(GitHubTrackingReconciler.prototype, "reconcile").mockResolvedValue({ scanned: 0, closed: 0, skipped: 0, errors: 0 });
-    reconcileDeletedTasks = vi.spyOn(GitHubTrackingReconciler.prototype, "reconcileDeletedTasks");
+    reconcileDeletedAndArchived = vi.spyOn(GitHubTrackingReconciler.prototype, "reconcileDeletedAndArchived");
     reconcileSourceIssues = vi.spyOn(GitHubTrackingReconciler.prototype, "reconcileSourceIssues").mockResolvedValue({ scanned: 0, closed: 0, skipped: 0, errors: 0 });
   });
 
@@ -154,7 +154,7 @@ describe("GitHub tracking periodic reconcile sweep", () => {
   it("runs startup and periodic sweeps with paged offsets and clears interval on dispose", async () => {
     const store = createStore();
     const disposers: Array<() => void> = [];
-    reconcileDeletedTasks
+    reconcileDeletedAndArchived
       .mockResolvedValueOnce({ scanned: 200, closed: 0, skipped: 0, errors: 0, hasMore: true })
       .mockResolvedValueOnce({ scanned: 200, closed: 0, skipped: 0, errors: 0, hasMore: true })
       .mockResolvedValueOnce({ scanned: 10, closed: 0, skipped: 0, errors: 0, hasMore: false });
@@ -169,25 +169,25 @@ describe("GitHub tracking periodic reconcile sweep", () => {
     } as any);
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(reconcileDeletedTasks).toHaveBeenNthCalledWith(1, store, { offset: 0, limit: 200 });
+    expect(reconcileDeletedAndArchived).toHaveBeenNthCalledWith(1, store, { offset: 0, limit: 200 });
     // All three passes run per sweep (regression: a throwing pass must not starve the others).
     expect(reconcile).toHaveBeenCalledTimes(1);
     expect(reconcileSourceIssues).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(GITHUB_TRACKING_RECONCILE_INTERVAL_MS);
-    expect(reconcileDeletedTasks).toHaveBeenNthCalledWith(2, store, { offset: 200, limit: 200 });
+    expect(reconcileDeletedAndArchived).toHaveBeenNthCalledWith(2, store, { offset: 200, limit: 200 });
 
     await vi.advanceTimersByTimeAsync(GITHUB_TRACKING_RECONCILE_INTERVAL_MS);
-    expect(reconcileDeletedTasks).toHaveBeenNthCalledWith(3, store, { offset: 400, limit: 200 });
+    expect(reconcileDeletedAndArchived).toHaveBeenNthCalledWith(3, store, { offset: 400, limit: 200 });
 
     await vi.advanceTimersByTimeAsync(GITHUB_TRACKING_RECONCILE_INTERVAL_MS);
-    expect(reconcileDeletedTasks).toHaveBeenNthCalledWith(4, store, { offset: 0, limit: 200 });
+    expect(reconcileDeletedAndArchived).toHaveBeenNthCalledWith(4, store, { offset: 0, limit: 200 });
 
     for (const dispose of disposers) {
       dispose();
     }
-    const callsAfterDispose = reconcileDeletedTasks.mock.calls.length;
+    const callsAfterDispose = reconcileDeletedAndArchived.mock.calls.length;
     await vi.advanceTimersByTimeAsync(GITHUB_TRACKING_RECONCILE_INTERVAL_MS);
-    expect(reconcileDeletedTasks.mock.calls.length).toBe(callsAfterDispose);
+    expect(reconcileDeletedAndArchived.mock.calls.length).toBe(callsAfterDispose);
   });
 });
