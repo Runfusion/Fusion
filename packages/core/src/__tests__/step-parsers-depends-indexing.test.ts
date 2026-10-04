@@ -20,6 +20,41 @@ describe("step parser dependency indexing", () => {
     expect(parseStepHeadings(content)[3]).toMatchObject({ name: "Fourth", dependsOn: [0, 1] });
   });
 
+  it.each([0, 1])("accepts legacy suffix dependencies for contiguous headings starting at %s", (offset) => {
+    const steps = parseStepHeadings([
+      `### Step ${offset}: Preflight`,
+      `### Step ${offset + 1}: Implement (depends: ${offset})`,
+      `### Step ${offset + 2}: Check (depends: ${offset},${offset + 1})`,
+    ].join("\n"));
+    expect(steps.map(step => ({ name: step.name, dependsOn: step.dependsOn }))).toEqual([
+      { name: "Preflight", dependsOn: undefined }, { name: "Implement", dependsOn: [0] }, { name: "Check", dependsOn: [0, 1] },
+    ]);
+  });
+
+  it("preserves an explicit independent root in a legacy suffix", () => {
+    expect(parseStepHeadings("### Step 0: First\n### Step 1: Independent (depends:)")[1])
+      .toEqual({ name: "Independent", status: "pending", dependsOn: [] });
+  });
+
+  it("keeps positional prefix and authored-label suffix coordinates independent in mixed plans", () => {
+    const steps = parseStepHeadings("### Step 0: First\n### Step 1 (depends: 1): Second\n### Step 2: Third (depends: 1)");
+    expect(steps.map(step => step.dependsOn)).toEqual([undefined, [0], [1]]);
+  });
+
+  it.each([
+    "### Step 0: First\n### Step 2: Gap (depends: 0)",
+    "### Step 0: First\n### Step 0: Duplicate (depends: 0)",
+    "### Step 0: First\n### Step 1: Self (depends: 1)",
+    "### Step 0: First (depends: 1)\n### Step 1: Cycle (depends: 0)",
+    "### Step 0: First\n### Step 1: Missing (depends: 8)",
+    "### Step 0: First\n### Step 1: Invalid (depends: -1)",
+    "### Step 0: First\n### Step 1: Invalid (depends: 0,0)",
+    "### Step 0: First\n### Step 1: Invalid (depends: nope)",
+    "### Step 0: First\n### Step 1 (depends: 1): Duplicate declaration (depends: 0)",
+  ])("rejects ambiguous or invalid legacy suffix dependencies: %s", (content) => {
+    expect(() => parseStepHeadings(content)).toThrow(StepDependencyValidationError);
+  });
+
   it("preserves omitted dependencies and explicit roots", () => {
     const steps = parseStepHeadings("### Step 12: First\n### Step 42 (depends:): Independent");
     expect(steps[0]).not.toHaveProperty("dependsOn");

@@ -26,8 +26,8 @@ import type { TaskStep } from "../types.js";
 
 /**
  * A parsed step as produced by a parser. `dependsOn` is always a 0-indexed
- * persisted document index. Markdown `(depends:)` tokens are separately parsed
- * as 1-based positions in the parsed heading list, never as visible labels.
+ * persisted document index. Prefix Markdown `(depends:)` tokens use 1-based
+ * positions. Legacy title-suffix annotations use contiguous authored heading labels.
  *
  * FNXC:WorkflowSteps 2026-06-29-17:55:
  * Parser output must preserve array presence: omitted `dependsOn` means legacy previous-step fallback, while explicit `dependsOn: []` means an independent parallel root.
@@ -169,17 +169,11 @@ export class StepParserRegistry {
  * to the legacy regex `^###\s+Step\s+\d+[^:]*:\s*(.+)$` (name = text after the
  * first colon, trimmed).
  *
- * The annotation `### Step N (depends: 1,2): Title` is parsed explicitly (the
- * legacy regex breaks on the colon inside `depends:`): values name literal
- * `### Step N` headings and are rebased to 0-indexed document indices only for
- * an unambiguous fully-1-based legacy document. An empty `(depends:)` annotation
- * is preserved as `dependsOn: []` so planners can explicitly mark a non-first
- * step as independent; an absent annotation remains implicit previous-step dependency.
- *
- * Malformed `(depends: …)` annotations fall back deterministically: the heading
- * is treated as `### Step N:` with the name starting after the FIRST colon
- * following the closing paren (if present), else after the first colon — and no
- * `dependsOn` is recorded.
+ * Prefix annotations `### Step N (depends: 1,2): Title` use 1-based document positions.
+ * Legacy suffix annotations `### Step N: Title (depends: 0)` use authored labels,
+ * but only when the complete heading sequence is contiguous and starts at 0 or 1.
+ * Both forms preserve an empty annotation as an explicit independent root and
+ * validate every dependency before returning steps. Ambiguous or malformed input fails closed.
  */
 export interface StepHeadingMatch {
   headingNumber: number;
@@ -278,18 +272,27 @@ export function validateStepDependencies(steps: readonly Pick<ParsedStep, "depen
 
 export function parseStepHeadings(content: string): TaskStep[] {
   const annotatedRegex = /^###\s+Step\s+\d+\s*\(depends:\s*([^)]*)\)\s*:\s*([^\n]+)$/;
+  const suffixRegex = /^###\s+Step\s+\d+\s*:\s*(.+?)\s+\(depends:\s*([^)]*)\)\s*$/;
   const matches = matchStepHeadings(content);
+  const legacyOffset = matches[0]?.headingNumber;
+  const unambiguousLegacyLabels = (legacyOffset === 0 || legacyOffset === 1)
+    && matches.every((entry, index) => entry.headingNumber === index + legacyOffset);
   const steps: TaskStep[] = [];
-  const pendingDependencies: Array<{ position: number; raw: string } | undefined> = [];
+  const pendingDependencies: Array<{ position: number; raw: string; offset: number } | undefined> = [];
 
   for (const entry of matches) {
     const annotated = annotatedRegex.exec(entry.match);
-    if (entry.match.includes("(depends:") && !annotated) {
+    const suffix = suffixRegex.exec(entry.match);
+    const annotations = entry.match.split("(depends:").length - 1;
+    if (annotations > 1 || (annotations > 0 && !annotated && !suffix)
+      || (suffix && !unambiguousLegacyLabels)) {
       throw new StepDependencyValidationError({ coordinate: "markdown-position", dependentPosition: steps.length + 1, token: entry.match, reason: "malformed", stepCount: matches.length });
     }
-    const name = annotated?.[2] ?? /^###\s+Step\s+\d+[^:]*:\s*(.+)$/m.exec(entry.match)?.[1] ?? "";
+    const name = annotated?.[2] ?? suffix?.[1] ?? /^###\s+Step\s+\d+[^:]*:\s*(.+)$/m.exec(entry.match)?.[1] ?? "";
     steps.push({ name: name.trim(), status: "pending" });
-    pendingDependencies.push(annotated ? { position: steps.length, raw: annotated[1] } : undefined);
+    pendingDependencies.push(annotated
+      ? { position: steps.length, raw: annotated[1], offset: 1 }
+      : suffix ? { position: steps.length, raw: suffix[2], offset: legacyOffset! } : undefined);
   }
   if (steps.length > 0) {
     for (const pending of pendingDependencies) {
@@ -302,13 +305,14 @@ export function parseStepHeadings(content: string): TaskStep[] {
         const base = { coordinate: "markdown-position" as const, dependentPosition: pending.position, token, stepCount: steps.length };
         if (!/^-?\d+$/.test(token)) throw new StepDependencyValidationError({ ...base, reason: "malformed" });
         const value = Number(token);
-        if (value === 0) throw new StepDependencyValidationError({ ...base, reason: "zero" });
+        if (value === 0 && pending.offset === 1) throw new StepDependencyValidationError({ ...base, reason: "zero" });
         if (value < 0) throw new StepDependencyValidationError({ ...base, reason: "negative" });
-        if (value > steps.length) throw new StepDependencyValidationError({ ...base, reason: "out-of-range" });
+        const dependency = value - pending.offset;
+        if (dependency >= steps.length) throw new StepDependencyValidationError({ ...base, reason: "out-of-range" });
         if (seen.has(value)) throw new StepDependencyValidationError({ ...base, reason: "duplicate" });
-        if (value >= pending.position) throw new StepDependencyValidationError({ ...base, reason: "self-or-forward" });
+        if (dependency >= pending.position - 1) throw new StepDependencyValidationError({ ...base, reason: "self-or-forward" });
         seen.add(value);
-        dependencies.push(value - 1);
+        dependencies.push(dependency);
       }
       steps[pending.position - 1]!.dependsOn = dependencies;
     }

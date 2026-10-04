@@ -91,6 +91,22 @@ describe("parse-steps node handler (U12, KTD-12)", () => {
     ]);
   });
 
+  it("executes parsing for a legacy zero-based plan with trailing dependency annotations", async () => {
+    const { deps, written } = makeDeps({ readArtifact: async () => [
+      "### Step 0: Preflight",
+      "### Step 1: Establish bootstrap decision (depends: 0)",
+      "### Step 2: Durable configuration blocks",
+      "### Step 3: Merge callers",
+      "### Step 4: Documentation & delivery (depends: 1,2,3)",
+      "### Step 5: Testing & Verification",
+    ].join("\n") });
+    const result = await runParse(parseIr("step-headings"), deps);
+    expect(result.outcome).toBe("success");
+    expect(written[0]).toHaveLength(6);
+    expect(written[0][1]).toEqual({ name: "Establish bootstrap decision", status: "pending", dependsOn: [0] });
+    expect(written[0][4]).toEqual({ name: "Documentation & delivery", status: "pending", dependsOn: [1, 2, 3] });
+  });
+
   it("maps Markdown positional dependencies through the production parse node", async () => {
     const { deps, written } = makeDeps({
       readArtifact: async () => "### Step 12: Preflight\n### Step 99: Implement\n### Step 2 (depends: 2): Test",
