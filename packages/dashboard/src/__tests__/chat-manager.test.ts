@@ -12,7 +12,6 @@ import { runWithFusionSessionIdentity, resolveFusionSessionPrincipal, type Setti
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { GitHubClient } from "../github.js";
 import {
   ChatManager,
   __setBuildAgentChatPrompt,
@@ -2392,29 +2391,30 @@ describe("ChatManager.sendMessage", () => {
         return { id, title: "Selected-project dependency", column: "done" };
       }),
       getSettings: vi.fn().mockResolvedValue({}),
-      updatePrInfoByNumber: vi.fn().mockResolvedValue(undefined),
+      getPrEntityByNumber: vi.fn().mockResolvedValue({
+        headOid: "checked-sha",
+        readiness: {
+          observedHeadOid: "checked-sha",
+          observedAt: "2026-10-05T01:38:00.000Z",
+          state: "open",
+          requiredChecks: [{ name: "ci/build", state: "failure" }],
+          approval: "review-required",
+          mergeable: "behind",
+          protectionBlockers: ["required checks not successful: ci/build (failure)", "PR is behind its base branch"],
+          checks: { state: "supported" },
+          reviews: { state: "supported" },
+          merge: { state: "supported" },
+          deployments: { state: "supported" },
+          branchUpdate: { state: "supported" },
+        },
+      }),
     };
     /*
-    FNXC:TaskDetailChatPrStatus 2026-09-29-07:16:
-    The production ChatManager registration must expose both independent PR blockers in one
-    server-bound response, even when a caller supplies a foreign task id.
+    FNXC:TaskDetailChatPrStatus 2026-10-05-01:38:
+    The ChatManager integration fixture must provide a stored readiness snapshot matching the
+    entity head. Planner Chat consumes that snapshot rather than refreshing GitHub, while its
+    server-bound task identity still prevents foreign tool parameters from redirecting the read.
     */
-    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
-      decision: "REVIEW_REQUIRED",
-      checks: [{ name: "ci/build", required: true, state: "failure" }],
-      summary: { blockingReasons: ["required checks not successful: ci/build (failure)", "PR is behind its base branch"] },
-      prInfo: {
-        url: "https://github.com/owner/repo/pull/42",
-        number: 42,
-        status: "open",
-        title: "Task PR",
-        headBranch: "fusion/fn-9408",
-        baseBranch: "main",
-        commentCount: 0,
-        headOid: "checked-sha",
-        mergeable: "behind",
-      },
-    } as any);
     const chatManager = new ChatManager(
       mockChatStore as any,
       "/tmp/test",
@@ -2474,7 +2474,7 @@ describe("ChatManager.sendMessage", () => {
     expect(prStatus.content[0]?.text).toContain("behind its base branch");
     expect(prStatus.content[0]?.text).toContain("Head SHA: checked-sha");
     expect(prStatus.content[0]?.text).toContain("Last checked:");
-    expect(taskStore.updatePrInfoByNumber).toHaveBeenCalledWith("TEST-002", 42, expect.objectContaining({ headOid: "checked-sha", checkRollup: "failure" }));
+    expect(taskStore.getPrEntityByNumber).toHaveBeenCalledWith("owner/repo", 42);
     expect(mockChatStore.addMessage).toHaveBeenCalledWith("chat-001", expect.objectContaining({
       role: "user",
       content: "How should I plan this?",
