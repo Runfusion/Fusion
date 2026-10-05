@@ -2557,6 +2557,12 @@ Each accepted external block carries a bounded four-part operator report: verifi
 
 An agent's `outside-worktree` declaration is not sufficient authority. Unclassified causes such as missing tooling, an optional service, or an unrunnable command are refused without lifecycle mutation and returned to execution through a resolve → substitute → degrade-and-record ladder. The executor first uses or installs an available equivalent, otherwise substitutes a runnable automated check, and finally completes achievable work while recording a non-blocking deferred-verification recommendation when the missing capability does not prevent the objective. Internal implementation, test, planning, merge, and review failures continue through their existing remediation routes. Dependencies and file-scope overlap remain waiting states. Only dashboard Retry clears a classified external block and installs a runnable continuation at the recorded node before execution can resume.
 
+## Current-head pull-request readiness
+
+FN-9439 stores one provider-neutral readiness snapshot on each project-scoped PR entity. The snapshot is evidence for an exact observed head SHA: required checks, effective approval, mergeability and protection blockers, terminal state/merge commit, and each provider capability outcome. Capability outcomes are explicit (`supported`, `unsupported`, `permission-denied`, or `transient-unavailable`), so consumers never mistake absent deployment or branch-update support for pending success.
+
+Provider adapters read first and normalize credential-free data; the store then compare-and-sets the entity against its prior head. A new head replaces old evidence atomically, while a late prior-head observation loses the fence and cannot release lifecycle work. Reconciliation, merge admission, and task chat consume that persisted snapshot. A merged observation is terminal and idempotent; FN-9437 owns subsequent closeout routing.
+
 - **In-place backward review-gate entry (FN-9243):** Graph routing has no backward lifecycle authority. When a review-gate node (`optional-group` or `step-review`) is authored in a lower-ranked column than a card already in review, the boundary enters the node in place rather than moving the card backward. No `ENGINE_BACKWARD_MOVE_REASONS` entry was added: `workflow-graph-node-column` remains without backward authority.
 
 #### Merge-boundary evidence recovery (FN-9345)

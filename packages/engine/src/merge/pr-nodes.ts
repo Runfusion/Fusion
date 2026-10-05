@@ -16,6 +16,7 @@
 // client) and unit-testable with fakes.
 
 import {
+  isCurrentHeadReadinessReady,
   isPrEntityActionable,
   isPrEntityAutoMergeReady,
   type PrEntity,
@@ -555,9 +556,9 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
  * re-evaluates the LIVE PR entity each time (never trusts a cached/SSE copy) and
  * routes:
  *
- *   - `outcome:auto-on`  → toward `pr-merge`, when {@link isPrEntityAutoMergeReady}
- *     (opted in + approved + all checks concluded success + mergeable clean +
- *     verified).
+ *   - `outcome:auto-on`  → toward `pr-merge`, when the legacy policy and
+ *     {@link isCurrentHeadReadinessReady} both permit it. The latter fences
+ *     every provider capability and verdict to the entity's current head.
  *   - `outcome:auto-off` → park for a manual-release merge, for EVERY non-ready
  *     case: not opted in, pending/failed checks, UNKNOWN/conflicting mergeability,
  *     unverified entity, or no live entity at all. The gate never blocks the run.
@@ -587,10 +588,13 @@ export function createAutoMergeGateHandler(deps: Pick<PrNodeDeps, "getStore" | "
       return { outcome: "success", value: "auto-off" };
     }
 
-    // Re-fetch authoritative state: the entity row IS the live copy here (store
-    // read), so pending checks / UNKNOWN mergeable / unverified / not-opted-in all
-    // fall to auto-off via the shared predicate.
-    if (isPrEntityAutoMergeReady(entity)) {
+    /*
+    FNXC:PullRequestReadiness 2026-10-04-23:37:
+    The legacy mirrors remain useful for existing policy, but cannot independently
+    admit a merge. A current-head snapshot is the authority for provider capability
+    outcomes, so stale, unsupported, and permission-denied observations always park.
+    */
+    if (isPrEntityAutoMergeReady(entity) && isCurrentHeadReadinessReady(entity.readiness, entity.headOid)) {
       return { outcome: "success", value: "auto-on" };
     }
     return { outcome: "success", value: "auto-off" };

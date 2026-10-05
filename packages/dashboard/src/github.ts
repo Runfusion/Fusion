@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { BranchGroup, BranchGroupPrState, DirectMergeCommitStrategy, IssueInfo, PrConflictDiagnostics, PrConflictState, PrInfo, Task, TaskReviewData, TaskReviewItem, TaskReviewSummary, TaskSourceIssue } from "@fusion/core";
+import type { BranchGroup, BranchGroupPrState, DirectMergeCommitStrategy, IssueInfo, PrConflictDiagnostics, PrConflictState, PrInfo, PrReadinessSnapshot, Task, TaskReviewData, TaskReviewItem, TaskReviewSummary, TaskSourceIssue } from "@fusion/core";
 import {
   isGhAvailable,
   isGhAuthenticated,
@@ -358,6 +358,8 @@ export interface PrComment {
 
 const PR_REVIEW_PAGE_SIZE = 100;
 const MAX_PR_REVIEW_PAGES = 10;
+const PR_CHECK_PAGE_SIZE = 100;
+const MAX_PR_CHECK_PAGES = 10;
 
 /*
 FNXC:GitHubImport 2026-07-16-16:20:
@@ -438,11 +440,23 @@ export interface PrReviewSnapshot {
 
 export interface PrMergeStatus {
   prInfo: PrInfo;
+  /** Exact base SHA observed with this head; readiness evidence names both ends. */
+  baseOid?: string;
+  /** An incomplete check traversal is explicitly fail-closed for readiness consumers. */
+  checksCapability?: PrReadinessSnapshot["checks"]["state"];
+  /** Current-head review retrieval is capability-bearing, never inferred from an aggregate. */
+  reviewsCapability?: PrReadinessSnapshot["reviews"]["state"];
   reviewDecision: ReviewDecision;
   checks: PrCheckStatus[];
   mergeable: PrConflictState;
   mergeReady: boolean;
   blockingReasons: string[];
+}
+
+/** Provider-neutral readiness result paired with the provider-facing PR mirror. */
+export interface PrReadinessResult {
+  prInfo: PrInfo;
+  snapshot: PrReadinessSnapshot;
 }
 
 export interface FindPrParams {
@@ -517,6 +531,7 @@ export type BadgeBatchResponse = Record<
 interface GhReviewJson {
   id: string;
   state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "PENDING" | string;
+  commit_id?: string | null;
   body?: string | null;
   submittedAt?: string | null;
   author?: { login?: string | null } | null;
@@ -537,6 +552,7 @@ interface GhPrViewJson {
   mergeable?: GhPrMergeable;
   mergeStateStatus?: GhPrMergeStateStatus;
   baseRefName: string;
+  baseRefOid?: string;
   headRefName: string;
   headRefOid?: string;
   mergedAt?: string | null;
@@ -651,15 +667,6 @@ interface GhPrListJson {
   headRefName: string;
   isCrossRepository?: boolean;
   mergedAt?: string | null;
-}
-
-interface GhPrCheckJson {
-  name: string;
-  state: string;
-  link?: string;
-  startedAt?: string;
-  completedAt?: string;
-  bucket?: string;
 }
 
 interface GhIssueViewJson {
@@ -820,11 +827,14 @@ export function isPrMergeReady(input: {
   mergeable: PrConflictState;
   requiredCheckNames?: string[];
   checkListTruncated?: boolean;
+  reviewsIncomplete?: boolean;
 }): { ready: boolean; blockingReasons: string[] } {
   const blockingReasons: string[] = [];
 
   if (input.status !== "open") blockingReasons.push(`PR is ${input.status}`);
+  if (input.reviewsIncomplete) blockingReasons.push("current-head review list is incomplete; cannot confirm approval");
   if (input.reviewDecision === "CHANGES_REQUESTED") blockingReasons.push("changes requested review is active");
+  if (input.reviewDecision === "REVIEW_REQUIRED") blockingReasons.push("current head requires approval");
   if (input.mergeable !== "clean") blockingReasons.push(`PR mergeability is ${input.mergeable}`);
 
   const satisfies = (state: PrCheckState) => state === "success" || state === "skipped" || state === "neutral";
@@ -1610,6 +1620,16 @@ export class GitHubClient {
     number: number,
     label: string,
   ): Promise<T[]> {
+    return (await this.fetchGhApiPagesWithCompletion<T>(path, owner, repo, number, label)).items;
+  }
+
+  private async fetchGhApiPagesWithCompletion<T>(
+    path: string,
+    owner: string,
+    repo: string,
+    number: number,
+    label: string,
+  ): Promise<{ items: T[]; complete: boolean }> {
     const items: T[] = [];
 
     for (let page = 1; page <= MAX_PR_REVIEW_PAGES; page += 1) {
@@ -1618,14 +1638,14 @@ export class GitHubClient {
       const pageItems = await runGhJsonAsync<T[]>(["api", pagePath]);
       items.push(...pageItems);
       if (pageItems.length < PR_REVIEW_PAGE_SIZE) {
-        return items;
+        return { items, complete: true };
       }
     }
 
     process.stderr.write(
       `[github] PR review pagination cap hit for ${owner}/${repo}#${number} (${label}) after ${MAX_PR_REVIEW_PAGES} pages\n`,
     );
-    return items;
+    return { items, complete: false };
   }
 
   private async getPrReviewDetailsWithApi(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
@@ -1855,6 +1875,44 @@ export class GitHubClient {
     };
   }
 
+  /**
+   * Normalize both GitHub transports into the durable current-head contract.
+   * The store, rather than this adapter, owns the compare-and-set fence.
+   */
+  async getPrReadiness(owner: string | undefined, repo: string | undefined, number: number, options?: PrCheckGateOptions): Promise<PrReadinessResult> {
+    const status = await this.getPrMergeStatus(owner, repo, number, options);
+    const head = status.prInfo.headOid;
+    if (!head) throw new Error("GitHub did not return a pull-request head SHA");
+    const checkState = (check: PrCheckStatus): PrReadinessSnapshot["requiredChecks"][number]["state"] => {
+      if (check.state === "success" || check.state === "neutral" || check.state === "skipped") return "success";
+      if (check.state === "pending") return "pending";
+      return "failure";
+    };
+    const capability = { state: "supported" as const };
+    return {
+      prInfo: status.prInfo,
+      snapshot: {
+        observedHeadOid: head,
+        ...(status.baseOid ? { baseOid: status.baseOid } : {}),
+        headBehindBase: status.mergeable === "behind",
+        requiredChecks: status.checks.filter((check) => check.required).map((check) => ({ name: check.name, state: checkState(check) })),
+        approval: status.reviewDecision === "APPROVED" ? "approved" : status.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : status.reviewDecision === "REVIEW_REQUIRED" ? "review-required" : "none",
+        mergeable: status.mergeable,
+        protectionBlockers: status.blockingReasons,
+        state: status.prInfo.status === "merged" ? "merged" : status.prInfo.status === "closed" ? "closed" : "open",
+        ...(status.prInfo.mergeCommitSha ? { mergeCommitSha: status.prInfo.mergeCommitSha } : {}),
+        // GitHub's existing merge-status read does not request deployment or update-branch data.
+        // Mark those capabilities explicitly instead of encoding their absence as pending.
+        deployments: { state: "unsupported" },
+        branchUpdate: { state: "unsupported" },
+        checks: { state: status.checksCapability ?? capability.state },
+        reviews: { state: status.reviewsCapability ?? capability.state },
+        merge: capability,
+        observedAt: new Date().toISOString(),
+      },
+    };
+  }
+
   async getPrMergeStatus(owner: string | undefined, repo: string | undefined, number: number, options?: PrCheckGateOptions): Promise<PrMergeStatus> {
     const requiredCheckNames = resolveRequiredCheckNames({ requiredChecks: options?.requiredCheckNames });
     if (this.hasGhAuth()) {
@@ -1874,22 +1932,45 @@ export class GitHubClient {
     throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
   }
 
+  private async getCurrentHeadReviewDecisionWithGh(owner: string, repo: string, number: number, headOid?: string): Promise<{ decision: ReviewDecision; capability: PrReadinessSnapshot["reviews"]["state"]; incomplete?: boolean }> {
+    if (!headOid) return { decision: null, capability: "transient-unavailable" };
+    try {
+      const reviewPages = await this.fetchGhApiPagesWithCompletion<GhReviewJson>(`repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}/reviews`, owner, repo, number, "readiness-reviews");
+      /*
+      FNXC:PullRequestReadiness 2026-10-05-00:17:
+      Readiness may authorize merge admission only when every current-head review
+      was observed. A capped CLI traversal can omit a later dismissal or change
+      request, so it remains explicitly transient and fail-closed.
+      */
+      if (!reviewPages.complete) return { decision: null, capability: "transient-unavailable", incomplete: true };
+      const current = reviewPages.items.filter((review) => review.commit_id === headOid);
+      const latestByAuthor = new Map<string, GhReviewJson>();
+      for (const review of current) {
+        const author = review.author?.login ?? review.id;
+        const prior = latestByAuthor.get(author);
+        if (!prior || (review.submittedAt ?? "") >= (prior.submittedAt ?? "")) latestByAuthor.set(author, review);
+      }
+      const states = [...latestByAuthor.values()].map((review) => review.state);
+      return { decision: states.includes("CHANGES_REQUESTED") ? "CHANGES_REQUESTED" : states.includes("APPROVED") ? "APPROVED" : "REVIEW_REQUIRED", capability: "supported" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      return { decision: null, capability: message.includes("403") || message.includes("permission") ? "permission-denied" : "transient-unavailable" };
+    }
+  }
+
   private async getPrMergeStatusWithGh(owner: string | undefined, repo: string | undefined, number: number, requiredCheckNames: string[], resolveIngestedChecks?: PrCheckGateOptions["resolveIngestedChecks"]): Promise<PrMergeStatus> {
     const resolved = this.resolveRepo(owner, repo);
     const pr = await runGhJsonAsync<GhPrViewJson>([
       "pr", "view", String(number),
       "--repo", `${resolved.owner}/${resolved.repo}`,
-      "--json", "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,mergeCommit,reviewDecision,mergeable,mergeStateStatus",
+      "--json", "number,url,title,state,isDraft,baseRefName,baseRefOid,headRefName,headRefOid,mergedAt,mergeCommit,reviewDecision,mergeable,mergeStateStatus",
     ]);
     const mergeable = mapPrConflictState(pr.mergeable, pr.mergeStateStatus);
-    /* FNXC:PrMergeRequiredChecks 2026-08-09-06:39: named checks need the unfiltered list so an absent check blocks; retain the legacy required-only request when unset. */
-    const namedSet = new Set(requiredCheckNames);
-    const checks = requiredCheckNames.length > 0
-      ? await this.getAllPrChecksWithGh(owner, repo, number, requiredCheckNames).then((result) => result.checks).catch(() => [])
-      : await runGhJsonAsync<GhPrCheckJson[]>([
-        "pr", "checks", String(number), "--repo", `${resolved.owner}/${resolved.repo}`,
-        "--required", "--json", "name,state,link,startedAt,completedAt",
-      ]).catch(() => []);
+    /* FNXC:PrMergeRequiredChecks 2026-08-09-06:39: the cursor-verifiable query retains every context so configured names can fail closed when absent. */
+    const checksResult = await this.getAllPrChecksWithGh(owner, repo, number, requiredCheckNames, resolveIngestedChecks);
+    const reviews = pr.reviewDecision === "APPROVED" || pr.reviewDecision === "CHANGES_REQUESTED"
+      ? await this.getCurrentHeadReviewDecisionWithGh(resolved.owner, resolved.repo, number, pr.headRefOid)
+      : { decision: pr.reviewDecision ?? null, capability: "supported" as const };
 
     const prInfo = toPrInfo({
       url: pr.url,
@@ -1905,34 +1986,57 @@ export class GitHubClient {
       mergeCommitSha: pr.mergeCommit?.oid ?? undefined,
       mergedAt: pr.mergedAt ?? undefined,
     });
-    const normalizedChecks = checks.map((check) => ({
-      name: check.name,
-      required: requiredCheckNames.length === 0 ? true : (check as PrCheckStatus).required || ((check as GhPrCheckJson).bucket ? (check as GhPrCheckJson).bucket !== "none" : false) || namedSet.has(check.name),
-      state: normalizeCheckState(check.state),
-      detailsUrl: (check as GhPrCheckJson).link,
-      startedAt: (check as GhPrCheckJson).startedAt,
-      completedAt: (check as GhPrCheckJson).completedAt,
-    } satisfies PrCheckStatus));
-    const ingested = requiredCheckNames.length > 0 && pr.headRefOid?.trim() && resolveIngestedChecks
-      ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: pr.headRefOid }).catch(() => [])
-      : [];
-    const effectiveChecks = mergeIngestedCheckStates({ polled: normalizedChecks, ingested, requiredCheckNames, repo: `${resolved.owner}/${resolved.repo}`, headSha: pr.headRefOid }).checks as PrCheckStatus[];
+    /*
+    FNXC:PullRequestReadiness 2026-10-05-00:05:
+    A CLI PR view and its separately paginated check query must name the same
+    head. A push between those reads makes their combined evidence unsafe, so
+    retain no checks and expose an explicit fail-closed capability instead.
+    */
+    const checksMatchPrHead = !pr.headRefOid || !checksResult.observedHeadOid || checksResult.observedHeadOid === pr.headRefOid;
+    const checksCapability = checksMatchPrHead ? checksResult.checksCapability : "transient-unavailable";
+    const effectiveChecks = checksMatchPrHead ? checksResult.checks : [];
     const readiness = isPrMergeReady({
       status: prInfo.status,
-      reviewDecision: pr.reviewDecision ?? null,
+      reviewDecision: reviews.decision,
       checks: effectiveChecks,
       mergeable,
       requiredCheckNames,
+      checkListTruncated: checksCapability !== "supported",
+      reviewsIncomplete: "incomplete" in reviews && reviews.incomplete === true,
     });
 
     return {
       prInfo,
-      reviewDecision: pr.reviewDecision ?? null,
+      baseOid: pr.baseRefOid ?? undefined,
+      checksCapability,
+      reviewsCapability: reviews.capability,
+      reviewDecision: reviews.decision,
       checks: effectiveChecks,
       mergeable,
       mergeReady: readiness.ready,
       blockingReasons: readiness.blockingReasons,
     };
+  }
+
+  private async getCurrentHeadReviewDecisionWithApi(owner: string, repo: string, number: number, headOid?: string): Promise<{ decision: ReviewDecision; capability: PrReadinessSnapshot["reviews"]["state"] }> {
+    if (!headOid) return { decision: null, capability: "transient-unavailable" };
+    try {
+      const reviews: GhReviewJson[] = [];
+      for (let page = 1; page <= MAX_PR_REVIEW_PAGES; page += 1) {
+        const response = await fetch(`${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}/reviews?per_page=${PR_REVIEW_PAGE_SIZE}&page=${page}`, { headers: this.buildHeaders() });
+        if (!response.ok) return { decision: null, capability: response.status === 401 || response.status === 403 ? "permission-denied" : "transient-unavailable" };
+        const batch = await response.json() as GhReviewJson[];
+        reviews.push(...batch);
+        if (batch.length < PR_REVIEW_PAGE_SIZE) {
+          const current = reviews.filter((review) => review.commit_id === headOid);
+          const states = current.map((review) => review.state);
+          return { decision: states.includes("CHANGES_REQUESTED") ? "CHANGES_REQUESTED" : states.includes("APPROVED") ? "APPROVED" : "REVIEW_REQUIRED", capability: "supported" };
+        }
+      }
+      return { decision: null, capability: "transient-unavailable" };
+    } catch {
+      return { decision: null, capability: "transient-unavailable" };
+    }
   }
 
   private async getPrMergeStatusWithApi(owner: string | undefined, repo: string | undefined, number: number, requiredCheckNames: string[], resolveIngestedChecks?: PrCheckGateOptions["resolveIngestedChecks"]): Promise<PrMergeStatus> {
@@ -1953,6 +2057,7 @@ export class GitHubClient {
               mergeStateStatus
               isDraft
               baseRefName
+              baseRefOid
               headRefName
               headRefOid
               mergedAt
@@ -1962,8 +2067,8 @@ export class GitHubClient {
                 nodes {
                   commit {
                     statusCheckRollup {
-                      contexts(first: 100) {
-                        pageInfo { hasNextPage }
+                      contexts(first: ${PR_CHECK_PAGE_SIZE}) {
+                        pageInfo { hasNextPage endCursor }
                         nodes {
                           __typename
                           ... on CheckRun {
@@ -2007,6 +2112,7 @@ export class GitHubClient {
             mergeStateStatus?: GhPrMergeStateStatus;
             isDraft?: boolean;
             baseRefName: string;
+            baseRefOid?: string | null;
             headRefName: string;
             headRefOid?: string | null;
             mergedAt?: string | null;
@@ -2017,7 +2123,7 @@ export class GitHubClient {
                 commit: {
                   statusCheckRollup?: {
                     contexts?: {
-                      pageInfo?: { hasNextPage?: boolean };
+                      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
                       nodes?: Array<
                         | {
                           __typename: "CheckRun";
@@ -2055,9 +2161,69 @@ export class GitHubClient {
 
     const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
     const nodes = contexts?.nodes ?? [];
+    const allNodes = [...nodes];
+    let pageInfo = contexts?.pageInfo;
+    let checksCapability: PrReadinessSnapshot["checks"]["state"] = "supported";
+
+    /*
+    FNXC:PullRequestReadiness 2026-10-04-23:37:
+    Required checks may appear after the first GraphQL page. Traverse a bounded
+    cursor chain and fail closed when it cannot be completed; otherwise a later
+    failing check could be omitted while this head is incorrectly admitted.
+    */
+    for (let page = 1; pageInfo?.hasNextPage && page < MAX_PR_CHECK_PAGES; page += 1) {
+      if (!pageInfo.endCursor) {
+        checksCapability = "transient-unavailable";
+        break;
+      }
+      const pageResponse = await fetch(`${this.baseUrl}/graphql`, {
+        method: "POST",
+        headers: this.buildHeaders(),
+        body: JSON.stringify({
+          query: `query PullRequestMergeStatusChecksPage($owner: String!, $repo: String!, $number: Int!, $after: String!) {
+            repository(owner: $owner, name: $repo) {
+              pullRequest(number: $number) {
+                headRefOid
+                commits(last: 1) {
+                  nodes { commit { statusCheckRollup { contexts(first: ${PR_CHECK_PAGE_SIZE}, after: $after) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      __typename
+                      ... on CheckRun { name status conclusion detailsUrl startedAt completedAt isRequired(pullRequestNumber: $number) }
+                      ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
+                    }
+                  } } } }
+                }
+              }
+            }
+          }`,
+          variables: { owner: resolved.owner, repo: resolved.repo, number, after: pageInfo.endCursor },
+        }),
+      });
+      const pagePayload = await pageResponse.json() as {
+        data?: { repository?: { pullRequest?: {
+          headRefOid?: string | null;
+          commits?: { nodes?: Array<{ commit?: { statusCheckRollup?: { contexts?: typeof contexts } } }> };
+        } } };
+        errors?: Array<{ message: string }>;
+      };
+      if (!pageResponse.ok || pagePayload.errors?.length) {
+        checksCapability = "transient-unavailable";
+        break;
+      }
+      const pagePr = pagePayload.data?.repository?.pullRequest;
+      const pageContexts = pagePr?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
+      if (!pagePr || pagePr.headRefOid !== pr.headRefOid || !pageContexts) {
+        checksCapability = "transient-unavailable";
+        break;
+      }
+      allNodes.push(...(pageContexts.nodes ?? []));
+      pageInfo = pageContexts.pageInfo;
+    }
+    if (pageInfo?.hasNextPage) checksCapability = "transient-unavailable";
     const namedSet = new Set(requiredCheckNames);
     /* FNXC:PrMergeRequiredChecks 2026-08-09-06:39: conditional unfiltered GraphQL reads let absent configured checks fail closed without changing default payload behavior. */
-    const checks = nodes.flatMap((node) => {
+    const checks = allNodes.flatMap((node) => {
       if (!node) return [];
       if (node.__typename === "CheckRun") {
         return [{
@@ -2097,18 +2263,25 @@ export class GitHubClient {
       ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: pr.headRefOid }).catch(() => [])
       : [];
     const effectiveChecks = mergeIngestedCheckStates({ polled: gateChecks, ingested, requiredCheckNames, repo: `${resolved.owner}/${resolved.repo}`, headSha: pr.headRefOid ?? undefined }).checks as PrCheckStatus[];
+    // A non-approving aggregate cannot grant readiness; avoid an extra review read unless it could.
+    const reviews = pr.reviewDecision === "APPROVED" || pr.reviewDecision === "CHANGES_REQUESTED"
+      ? await this.getCurrentHeadReviewDecisionWithApi(resolved.owner, resolved.repo, number, pr.headRefOid ?? undefined)
+      : { decision: pr.reviewDecision, capability: "supported" as const };
     const readiness = isPrMergeReady({
       status: prInfo.status,
-      reviewDecision: pr.reviewDecision,
+      reviewDecision: reviews.decision,
       checks: effectiveChecks,
       mergeable,
       requiredCheckNames,
-      checkListTruncated: Boolean(contexts?.pageInfo?.hasNextPage) && requiredCheckNames.some((name) => !effectiveChecks.some((check) => check.name === name)),
+      checkListTruncated: checksCapability !== "supported",
     });
 
     return {
       prInfo,
-      reviewDecision: pr.reviewDecision,
+      baseOid: pr.baseRefOid ?? undefined,
+      checksCapability,
+      reviewsCapability: reviews.capability,
+      reviewDecision: reviews.decision,
       checks: effectiveChecks,
       mergeable,
       mergeReady: readiness.ready,
@@ -2160,49 +2333,111 @@ export class GitHubClient {
     number: number,
     requiredCheckNames: string[] = [],
     resolveIngestedChecks?: PrCheckGateOptions["resolveIngestedChecks"],
-  ): Promise<{ checks: PrCheckStatus[]; rollupRequired: PrCheckState | "unknown" }> {
+  ): Promise<{ checks: PrCheckStatus[]; rollupRequired: PrCheckState | "unknown"; checksCapability: PrReadinessSnapshot["checks"]["state"]; observedHeadOid?: string }> {
     const resolved = this.resolveRepo(owner, repo);
-    /* FNXC:PrMergeEventDrivenChecks 2026-08-09-14:35: retrieve the PR head with this transport; missing OID deliberately admits no event state. */
-    const headOid = await Promise.resolve(runGhJsonAsync<{ headRefOid?: string }>(["pr", "view", String(number), "--repo", `${resolved.owner}/${resolved.repo}`, "--json", "headRefOid"])).then((pr) => pr?.headRefOid).catch(() => undefined);
+    type GhChecksContext = {
+      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      nodes?: Array<{ __typename?: "CheckRun" | "StatusContext"; name?: string; context?: string; status?: string; conclusion?: string | null; state?: string; detailsUrl?: string | null; targetUrl?: string | null; startedAt?: string | null; completedAt?: string | null; isRequired?: boolean } | null>;
+    };
+    type GhChecksPage = {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            headRefOid?: string | null;
+            commits?: { nodes?: Array<{ commit?: { statusCheckRollup?: { contexts?: GhChecksContext } } }> };
+          };
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+    const query = (after?: string) => `query PullRequestChecks($owner:String!, $repo:String!, $number:Int!${after ? ", $after:String!" : ""}) {
+      repository(owner:$owner, name:$repo) { pullRequest(number:$number) { headRefOid
+        commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:${PR_CHECK_PAGE_SIZE}${after ? ", after:$after" : ""}) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            __typename
+            ... on CheckRun { name status conclusion detailsUrl startedAt completedAt isRequired(pullRequestNumber:$number) }
+            ... on StatusContext { context state targetUrl isRequired(pullRequestNumber:$number) }
+          }
+        } } } } }
+      } }
+    }`;
+    const readPage = (after?: string) => runGhJsonAsync<GhChecksPage>([
+      "api", "graphql", "-f", `query=${query(after)}`,
+      "-F", `owner=${resolved.owner}`, "-F", `repo=${resolved.repo}`, "-F", `number=${number}`,
+      ...(after ? ["-f", `after=${after}`] : []),
+    ]);
 
-    let checks = await Promise.resolve(runGhJsonAsync<GhPrCheckJson[]>([
-      "pr", "checks", String(number),
-      "--repo", `${resolved.owner}/${resolved.repo}`,
-      "--json", "name,state,link,startedAt,completedAt,bucket",
-    ])).catch(async () => {
-      const allChecks = await runGhJsonAsync<GhPrCheckJson[]>([
-        "pr", "checks", String(number),
-        "--repo", `${resolved.owner}/${resolved.repo}`,
-        "--json", "name,state,link,startedAt,completedAt",
-      ]);
-      const requiredChecks = await Promise.resolve(runGhJsonAsync<GhPrCheckJson[]>([
-        "pr", "checks", String(number),
-        "--repo", `${resolved.owner}/${resolved.repo}`,
-        "--required",
-        "--json", "name,state",
-      ])).catch(() => []);
-      const requiredNames = new Set(requiredChecks.map((check) => check.name));
-      return allChecks.map((check) => ({ ...check, bucket: requiredNames.has(check.name) ? "pass" : "none" }));
+    let firstPage: GhChecksPage;
+    try {
+      firstPage = await readPage();
+    } catch (error) {
+      // A token transport can replace an unavailable CLI read with its own complete cursor traversal.
+      if (this.token) throw error;
+      return { checks: [], rollupRequired: "unknown", checksCapability: "transient-unavailable" };
+    }
+    let pagePr = firstPage.data?.repository?.pullRequest;
+    let contexts = pagePr?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
+    if (firstPage.errors?.length || !pagePr?.headRefOid || !contexts) {
+      return { checks: [], rollupRequired: "unknown", checksCapability: "transient-unavailable" };
+    }
+
+    const headOid = pagePr.headRefOid;
+    const nodes = [...(contexts.nodes ?? [])];
+    let pageInfo = contexts.pageInfo;
+    let checksCapability: PrReadinessSnapshot["checks"]["state"] = "supported";
+
+    /*
+    FNXC:PullRequestReadiness 2026-10-04-23:51:
+    `gh pr checks` can truncate its list without exposing a completion cursor. Read
+    the GraphQL cursor chain through `gh api graphql`; any error, head change, or
+    cap is transient-unavailable so a hidden required failure cannot admit a merge.
+    */
+    for (let page = 1; pageInfo?.hasNextPage && page < MAX_PR_CHECK_PAGES; page += 1) {
+      if (!pageInfo.endCursor) {
+        checksCapability = "transient-unavailable";
+        break;
+      }
+      try {
+        const nextPage = await readPage(pageInfo.endCursor);
+        pagePr = nextPage.data?.repository?.pullRequest;
+        contexts = pagePr?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
+        if (nextPage.errors?.length || pagePr?.headRefOid !== headOid || !contexts) {
+          checksCapability = "transient-unavailable";
+          break;
+        }
+        nodes.push(...(contexts.nodes ?? []));
+        pageInfo = contexts.pageInfo;
+      } catch {
+        checksCapability = "transient-unavailable";
+        break;
+      }
+    }
+    if (pageInfo?.hasNextPage) checksCapability = "transient-unavailable";
+
+    const namedSet = new Set(requiredCheckNames);
+    const normalized = nodes.flatMap((check) => {
+      if (!check) return [];
+      const name = check.__typename === "StatusContext" ? check.context : check.name;
+      if (!name) return [];
+      return [{
+        name,
+        required: Boolean(check.isRequired) || namedSet.has(name),
+        state: normalizeCheckState(check.__typename === "StatusContext" ? check.state : (check.conclusion ?? check.status)),
+        detailsUrl: check.__typename === "StatusContext" ? check.targetUrl ?? undefined : check.detailsUrl ?? undefined,
+        startedAt: check.startedAt ?? undefined,
+        completedAt: check.completedAt ?? undefined,
+      } satisfies PrCheckStatus];
     });
 
-    checks = checks ?? [];
-    const namedSet = new Set(requiredCheckNames);
-    /* FNXC:PrMergeRequiredChecks 2026-08-09-06:39: gh bucket is only a heuristic; configured names are required by exact name, never by bucket inference. */
-    const normalized = checks.map((check) => ({
-      name: check.name,
-      required: (check.bucket ? check.bucket !== "none" : false) || namedSet.has(check.name),
-      state: normalizeCheckState(check.state),
-      detailsUrl: check.link,
-      startedAt: check.startedAt,
-      completedAt: check.completedAt,
-    } satisfies PrCheckStatus));
-
-    const ingested = requiredCheckNames.length > 0 && headOid?.trim() && resolveIngestedChecks
+    const ingested = requiredCheckNames.length > 0 && headOid.trim() && resolveIngestedChecks
       ? await resolveIngestedChecks({ owner: resolved.owner, repo: resolved.repo, headSha: headOid }).catch(() => []) : [];
     const effectiveChecks = mergeIngestedCheckStates({ polled: normalized, ingested, requiredCheckNames, repo: `${resolved.owner}/${resolved.repo}`, headSha: headOid }).checks as PrCheckStatus[];
     return {
       checks: effectiveChecks,
       rollupRequired: this.computeRequiredChecksRollup(effectiveChecks),
+      checksCapability,
+      observedHeadOid: headOid,
     };
   }
 

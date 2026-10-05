@@ -42,6 +42,8 @@ export interface PrEntityRow {
   prNumber: number | null;
   prUrl: string | null;
   headOid: string | null;
+  readiness: unknown | null;
+  readinessProvider: string | null;
   mergeable: string | null;
   checksRollup: string | null;
   reviewDecision: string | null;

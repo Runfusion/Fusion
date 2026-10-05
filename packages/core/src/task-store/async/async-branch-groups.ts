@@ -21,7 +21,7 @@
  *   it). These helpers are the async target the migrating store and the
  *   PostgreSQL integration tests consume.
  */
-import { and, asc, eq, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import { projectScopeFor, type AsyncDataLayer, type DbTransaction } from "../../postgres/data-layer.js";
 import {
@@ -34,6 +34,7 @@ import type {
   PrEntity,
   PrEntityCreateInput,
   PrEntityUpdate,
+  PrReadinessSnapshot,
   PrThreadState,
   PrThreadOutcome,
 } from "../../types.js";
@@ -304,6 +305,8 @@ export function rowToPrEntity(row: PrEntityRow): PrEntity {
     prNumber: row.prNumber ?? undefined,
     prUrl: row.prUrl ?? undefined,
     headOid: row.headOid ?? undefined,
+    readiness: (row.readiness as PrEntity["readiness"] | null) ?? undefined,
+    readinessProvider: row.readinessProvider ?? undefined,
     mergeable: (row.mergeable as PrEntity["mergeable"] | null) ?? undefined,
     checksRollup: (row.checksRollup as PrEntity["checksRollup"] | null) ?? undefined,
     reviewDecision: (row.reviewDecision as PrEntity["reviewDecision"]) ?? undefined,
@@ -323,11 +326,12 @@ export function rowToPrEntity(row: PrEntityRow): PrEntity {
 export async function getPrEntity(
   db: AsyncDataLayer["db"] | DbTransaction,
   id: string,
+  projectId?: string,
 ): Promise<PrEntity | null> {
   const rows = await db
     .select()
     .from(schema.project.pullRequests)
-    .where(eq(schema.project.pullRequests.id, id))
+    .where(and(eq(schema.project.pullRequests.id, id), projectScopeFor(schema.project.pullRequests.projectId, projectId)))
     .limit(1);
   const row = rows[0] as PrEntityRow | undefined;
   return row ? rowToPrEntity(row) : null;
@@ -343,8 +347,9 @@ export async function getPrEntity(
 export async function ensurePrEntityForSource(
   db: AsyncDataLayer["db"] | DbTransaction,
   input: PrEntityCreateInput,
+  projectId?: string,
 ): Promise<PrEntity> {
-  const existing = await getActivePrEntityBySource(db, input.sourceType, input.sourceId);
+  const existing = await getActivePrEntityBySource(db, input.sourceType, input.sourceId, projectId);
   if (existing) return existing;
 
   const id = generatePrEntityId();
@@ -366,7 +371,7 @@ export async function ensurePrEntityForSource(
     updatedAt: now,
   });
 
-  const created = await getPrEntity(db, id);
+  const created = await getPrEntity(db, id, projectId);
   if (!created) throw new Error(`Failed to read PR entity ${id} after create`);
   return created;
 }
@@ -378,6 +383,7 @@ export async function getActivePrEntityBySource(
   db: AsyncDataLayer["db"] | DbTransaction,
   sourceType: PrEntity["sourceType"],
   sourceId: string,
+  projectId?: string,
 ): Promise<PrEntity | null> {
   const rows = await db
     .select()
@@ -386,6 +392,7 @@ export async function getActivePrEntityBySource(
       and(
         eq(schema.project.pullRequests.sourceType, sourceType),
         eq(schema.project.pullRequests.sourceId, sourceId),
+        projectScopeFor(schema.project.pullRequests.projectId, projectId),
         notInArray(schema.project.pullRequests.state, ["merged", "closed", "failed"]),
       ),
     )
@@ -405,13 +412,22 @@ export async function updatePrEntity(
   db: AsyncDataLayer["db"] | DbTransaction,
   id: string,
   patch: PrEntityUpdate,
+  projectId?: string,
 ): Promise<PrEntity> {
-  const current = await getPrEntity(db, id);
+  const current = await getPrEntity(db, id, projectId);
   if (!current) throw new Error(`PR entity ${id} not found`);
 
   const nextState = patch.state ?? current.state;
   const now = Date.now();
   const isTerminal = nextState === "merged" || nextState === "closed";
+  const headChanged = patch.headOid !== undefined && patch.headOid !== current.headOid;
+  /*
+  FNXC:PullRequestReadiness 2026-10-04-23:37:
+  A direct head update is an observation boundary, even when it arrives from a
+  merge-side refresh rather than the reconciler. Clear every prior-head verdict
+  and re-mark the entity unverified so legacy mirrors cannot admit B using A's
+  approval, checks, deployment, or mergeability evidence.
+  */
   const nextClosedAt =
     patch.closedAt === null
       ? null
@@ -427,20 +443,22 @@ export async function updatePrEntity(
       prNumber: orCurrent(patch.prNumber, current.prNumber),
       prUrl: orCurrent(patch.prUrl, current.prUrl),
       headOid: orCurrent(patch.headOid, current.headOid),
-      mergeable: orCurrent(patch.mergeable, current.mergeable),
-      checksRollup: orCurrent(patch.checksRollup, current.checksRollup),
-      reviewDecision:
-        patch.reviewDecision === undefined ? current.reviewDecision ?? null : patch.reviewDecision,
+      readiness: headChanged ? null : patch.readiness === undefined ? current.readiness ?? null : patch.readiness,
+      readinessProvider: headChanged ? null : patch.readinessProvider === undefined ? current.readinessProvider ?? null : patch.readinessProvider,
+      mergeable: headChanged ? null : orCurrent(patch.mergeable, current.mergeable),
+      checksRollup: headChanged ? "none" : orCurrent(patch.checksRollup, current.checksRollup),
+      reviewDecision: headChanged ? null
+        : patch.reviewDecision === undefined ? current.reviewDecision ?? null : patch.reviewDecision,
       autoMerge: patch.autoMerge === undefined ? (current.autoMerge ? 1 : 0) : patch.autoMerge ? 1 : 0,
-      unverified: patch.unverified === undefined ? (current.unverified ? 1 : 0) : patch.unverified ? 1 : 0,
+      unverified: headChanged ? 1 : patch.unverified === undefined ? (current.unverified ? 1 : 0) : patch.unverified ? 1 : 0,
       failureReason: orCurrent(patch.failureReason, current.failureReason),
       responseRounds: patch.responseRounds ?? current.responseRounds,
       updatedAt: now,
       closedAt: nextClosedAt,
     })
-    .where(eq(schema.project.pullRequests.id, id));
+    .where(and(eq(schema.project.pullRequests.id, id), projectScopeFor(schema.project.pullRequests.projectId, projectId)));
 
-  const updated = await getPrEntity(db, id);
+  const updated = await getPrEntity(db, id, projectId);
   if (!updated) throw new Error(`PR entity ${id} disappeared after update`);
   return updated;
 }
@@ -448,13 +466,67 @@ export async function updatePrEntity(
 /**
  * List non-terminal PR entities (the reconcile poll set), oldest first.
  */
+/*
+FNXC:PullRequestReadiness 2026-10-04-23:13:
+Provider reads may return out of order. This conditional write makes the
+stored head the fence: an A observation cannot overwrite an already persisted
+B observation, and a B transition clears every A-derived readiness verdict in
+one row mutation.
+*/
+export async function updatePrReadiness(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  id: string,
+  expectedStoredHeadOid: string | undefined,
+  provider: string,
+  snapshot: PrReadinessSnapshot,
+  projectId?: string,
+): Promise<PrEntity | null> {
+  const expectedHead = expectedStoredHeadOid === undefined
+    ? isNull(schema.project.pullRequests.headOid)
+    : eq(schema.project.pullRequests.headOid, expectedStoredHeadOid);
+  const rows = await db
+    .update(schema.project.pullRequests)
+    .set({
+      headOid: snapshot.observedHeadOid,
+      readiness: snapshot,
+      readinessProvider: provider,
+      // Preserve legacy mirrors for old consumers, but only from this current-head snapshot.
+      checksRollup: snapshot.requiredChecks.some((check) => check.state === "failure") ? "failure"
+        : snapshot.requiredChecks.some((check) => check.state === "pending" || check.state === "missing") ? "pending"
+          : snapshot.requiredChecks.length > 0 ? "success" : "none",
+      reviewDecision: snapshot.approval === "approved" ? "APPROVED"
+        : snapshot.approval === "changes-requested" ? "CHANGES_REQUESTED"
+          : snapshot.approval === "review-required" ? "REVIEW_REQUIRED" : null,
+      mergeable: snapshot.mergeable,
+      state: snapshot.state,
+      unverified: 0,
+      updatedAt: Date.now(),
+      closedAt: snapshot.state === "open" ? null : Date.now(),
+    })
+    .where(and(
+      eq(schema.project.pullRequests.id, id),
+      projectScopeFor(schema.project.pullRequests.projectId, projectId),
+      expectedHead,
+      /*
+      FNXC:PullRequestReadiness 2026-10-05-00:28:
+      A later terminal observation owns this head permanently. A delayed open
+      poll has the same SHA and therefore needs this state fence too.
+      */
+      notInArray(schema.project.pullRequests.state, ["merged", "closed", "failed"]),
+    ))
+    .returning({ id: schema.project.pullRequests.id });
+  if (rows.length === 0) return null;
+  return getPrEntity(db, id, projectId);
+}
+
 export async function listActivePrEntities(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId?: string,
 ): Promise<PrEntity[]> {
   const rows = await db
     .select()
     .from(schema.project.pullRequests)
-    .where(notInArray(schema.project.pullRequests.state, ["merged", "closed", "failed"]))
+    .where(and(projectScopeFor(schema.project.pullRequests.projectId, projectId), notInArray(schema.project.pullRequests.state, ["merged", "closed", "failed"])))
     .orderBy(asc(schema.project.pullRequests.createdAt));
   return (rows as PrEntityRow[]).map((r) => rowToPrEntity(r));
 }
@@ -469,6 +541,7 @@ export async function getPrThreadState(
   prEntityId: string,
   threadId: string,
   headOid: string,
+  projectId?: string,
 ): Promise<PrThreadState | null> {
   const rows = await db
     .select()
@@ -478,6 +551,7 @@ export async function getPrThreadState(
         eq(schema.project.pullRequestThreadState.prEntityId, prEntityId),
         eq(schema.project.pullRequestThreadState.threadId, threadId),
         eq(schema.project.pullRequestThreadState.headOid, headOid),
+        projectScopeFor(schema.project.pullRequestThreadState.projectId, projectId),
       ),
     )
     .limit(1);
@@ -500,11 +574,12 @@ export async function getPrThreadState(
 export async function listPrThreadStates(
   db: AsyncDataLayer["db"] | DbTransaction,
   prEntityId: string,
+  projectId?: string,
 ): Promise<PrThreadState[]> {
   const rows = await db
     .select()
     .from(schema.project.pullRequestThreadState)
-    .where(eq(schema.project.pullRequestThreadState.prEntityId, prEntityId));
+    .where(and(eq(schema.project.pullRequestThreadState.prEntityId, prEntityId), projectScopeFor(schema.project.pullRequestThreadState.projectId, projectId)));
   return (rows as PrThreadStateRow[]).map((row) => ({
     prEntityId: row.prEntityId,
     threadId: row.threadId,
@@ -528,6 +603,7 @@ export async function recordPrThreadOutcome(
   headOid: string,
   outcome: PrThreadOutcome,
   fixCommitSha?: string,
+  _projectId?: string,
 ): Promise<void> {
   const now = Date.now();
   await db

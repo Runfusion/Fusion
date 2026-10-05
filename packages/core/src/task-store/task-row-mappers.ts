@@ -130,6 +130,8 @@ export function rowToPrEntityImpl(store: TaskStore, row: PrEntityRow): PrEntity 
       prNumber: row.prNumber ?? undefined,
       prUrl: row.prUrl ?? undefined,
       headOid: row.headOid ?? undefined,
+      readiness: (row.readiness as PrEntity["readiness"] | null) ?? undefined,
+      readinessProvider: row.readinessProvider ?? undefined,
       mergeable: (row.mergeable as PrConflictState | null) ?? undefined,
       checksRollup: (row.checksRollup as PrChecksRollup | null) ?? undefined,
       reviewDecision: (row.reviewDecision as PrReviewDecision) ?? undefined,

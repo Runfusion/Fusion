@@ -215,7 +215,7 @@ export async function updateBranchGroupImpl(store: TaskStore, id: string, patch:
 
 export async function updatePrEntityImpl(store: TaskStore, id: string, patch: PrEntityUpdate): Promise<PrEntity> {
         const layer = store.asyncLayer!;
-    return updatePrEntityAsync(layer.db, id, patch);
+    return updatePrEntityAsync(layer.db, id, patch, layer.projectId);
 }
 
 export async function listTasksForGithubTrackingReconcileImpl(store: TaskStore, options?: { offset?: number; limit?: number }): Promise<{ tasks: Task[]; hasMore: boolean }> {

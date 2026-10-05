@@ -5,6 +5,7 @@ import {
   isPrEntityActionable,
   isPrEntityActive,
   isPrEntityAutoMergeReady,
+  isCurrentHeadReadinessReady,
   summarizePrThreadActivity,
 } from "../merge/pr-entity.js";
 import type { PrEntity, PrThreadState } from "../types.js";
@@ -97,6 +98,33 @@ describe("PR entity predicates", () => {
     expect(autoMergeGateReason({ ...ready, reviewDecision: "CHANGES_REQUESTED" })).toBe("Waiting for approval");
     expect(autoMergeGateReason({ ...ready, checksRollup: "pending" })).toBe("Waiting for checks");
     expect(autoMergeGateReason({ ...ready, mergeable: "unknown" })).toBe("Waiting for checks");
+  });
+});
+
+describe("current-head readiness", () => {
+  const snapshot = (overrides: Partial<import("../types.js").PrReadinessSnapshot> = {}) => ({
+    observedHeadOid: "head-a",
+    headBehindBase: false,
+    requiredChecks: [{ name: "build", state: "success" as const }],
+    approval: "approved" as const,
+    mergeable: "clean" as const,
+    protectionBlockers: [],
+    state: "open" as const,
+    deployments: { state: "supported" as const },
+    branchUpdate: { state: "supported" as const },
+    checks: { state: "supported" as const },
+    reviews: { state: "supported" as const },
+    merge: { state: "supported" as const },
+    observedAt: "2026-10-04T23:13:00.000Z",
+    ...overrides,
+  });
+
+  it("fails closed when evidence is stale, incomplete, or capability denied", () => {
+    expect(isCurrentHeadReadinessReady(snapshot(), "head-a")).toBe(true);
+    expect(isCurrentHeadReadinessReady(snapshot(), "head-b")).toBe(false);
+    expect(isCurrentHeadReadinessReady(snapshot({ requiredChecks: [{ name: "build", state: "pending" }] }), "head-a")).toBe(false);
+    expect(isCurrentHeadReadinessReady(snapshot({ deployments: { state: "permission-denied" } }), "head-a")).toBe(false);
+    expect(isCurrentHeadReadinessReady(snapshot({ state: "merged" }), "head-a")).toBe(false);
   });
 });
 

@@ -100,7 +100,8 @@ interface GitHubOperations {
   }>;
   mergePr(params: { owner?: string; repo?: string; number: number; method?: "merge" | "squash" | "rebase"; expectedHeadOid?: string; auto?: boolean }): Promise<PrInfo>;
   getPrStatus(owner: string, repo: string, number: number): Promise<PrInfo>;
-  /** Reply to a specific review thread (U2). */
+  getPrReadiness?(owner: string, repo: string, number: number): Promise<{ prInfo: PrInfo; snapshot: import("@fusion/core").PrReadinessSnapshot }>;
+  /** Reply to a specific review thread (U2); */
   replyToReviewThread(threadId: string, body: string): Promise<void>;
   /** Resolve a review thread (U2); caller checks viewerCanResolve first. */
   resolveReviewThread(threadId: string): Promise<void>;
@@ -1041,7 +1042,7 @@ function mapPrStatusToFetchState(status: PrInfo["status"]): "open" | "merged" | 
  *   unverified entities (R19).
  */
 export function createPrReconcileGithubOps(
-  github: Pick<GitHubOperations, "probePrChanged" | "getPrStatus">,
+  github: Pick<GitHubOperations, "probePrChanged" | "getPrStatus" | "getPrReadiness">,
 ): PrReconcileGithubOps {
   return {
     probe: (repo, prNumber, etag) => {
@@ -1052,6 +1053,18 @@ export function createPrReconcileGithubOps(
       const { owner, name } = splitRepoSlug(repo);
       let info: PrInfo;
       try {
+        const readiness = await github.getPrReadiness?.(owner ?? "", name ?? "", prNumber);
+        if (readiness) {
+          return {
+            exists: true,
+            prState: mapPrStatusToFetchState(readiness.prInfo.status),
+            prNumber: readiness.prInfo.number,
+            prUrl: readiness.prInfo.url,
+            headOid: readiness.snapshot.observedHeadOid,
+            readiness: readiness.snapshot,
+            readinessProvider: "github",
+          };
+        }
         info = await github.getPrStatus(owner ?? "", name ?? "", prNumber);
       } catch (err) {
         // A 404 / "not found" means there is no PR behind this entity.

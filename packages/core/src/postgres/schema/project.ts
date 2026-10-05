@@ -1618,6 +1618,8 @@ export const pullRequests = projectSchema.table("pull_requests", {
   prNumber: integer("pr_number"),
   prUrl: text("pr_url"),
   headOid: text("head_oid"),
+  readiness: jsonb("readiness"),
+  readinessProvider: text("readiness_provider"),
   mergeable: text("mergeable"),
   checksRollup: jsonb("checks_rollup"),
   reviewDecision: text("review_decision"),

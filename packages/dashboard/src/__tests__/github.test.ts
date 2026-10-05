@@ -54,6 +54,25 @@ function createGraphQlBatchPayload(repository: Record<string, unknown>) {
   return JSON.stringify({ data: { repository } });
 }
 
+function ghChecksPayload(
+  nodes: Array<Record<string, unknown>>,
+  options: { headRefOid?: string | null; hasNextPage?: boolean; endCursor?: string | null } = {},
+) {
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          headRefOid: options.headRefOid === undefined ? "abc123" : options.headRefOid,
+          commits: { nodes: [{ commit: { statusCheckRollup: { contexts: {
+            nodes,
+            pageInfo: { hasNextPage: options.hasNextPage ?? false, endCursor: options.endCursor ?? null },
+          } } } }] },
+        },
+      },
+    },
+  };
+}
+
 describe("GitHub planning source issue helpers", () => {
   const canonicalSeed = [
     "Plan work for GitHub issue: Preserve original context",
@@ -1699,10 +1718,10 @@ describe("GitHubClient", () => {
           baseRefName: "main",
           headRefName: "fusion/fn-093",
         })
-        .mockResolvedValueOnce([
-          { name: "ci", state: "SUCCESS", link: "https://github.com/owner/repo/actions/runs/1", startedAt: "2026-01-01T00:00:00Z", completedAt: "2026-01-01T00:01:00Z" },
-          { name: "lint", state: "SUCCESS" },
-        ]);
+        .mockResolvedValueOnce(ghChecksPayload([
+          { __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://github.com/owner/repo/actions/runs/1", startedAt: "2026-01-01T00:00:00Z", completedAt: "2026-01-01T00:01:00Z", isRequired: true },
+          { __typename: "CheckRun", name: "lint", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true },
+        ]));
 
       const result = await client.getPrMergeStatus("owner", "repo", 42);
 
@@ -1719,8 +1738,95 @@ describe("GitHubClient", () => {
           startedAt: "2026-01-01T00:00:00Z",
           completedAt: "2026-01-01T00:01:00Z",
         },
-        { name: "lint", required: true, state: "success", detailsUrl: undefined, startedAt: undefined, completedAt: undefined },
+        { name: "lint", required: true, state: "success" },
       ]);
+    });
+
+    it("does not treat an approval of the previous head as a current-head approval", async () => {
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce({
+          number: 42, url: "https://github.com/owner/repo/pull/42", title: "New push", state: "OPEN",
+          reviewDecision: "APPROVED", mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+          baseRefName: "main", headRefName: "fusion/fn-9439", headRefOid: "head-b",
+        })
+        .mockResolvedValueOnce(ghChecksPayload([{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true }], { headRefOid: "head-b" }))
+        .mockResolvedValueOnce([{ id: "review-a", state: "APPROVED", commit_id: "head-a", submittedAt: "2026-10-05T00:00:00Z", author: { login: "reviewer" } }]);
+
+      const result = await client.getPrMergeStatus("owner", "repo", 42);
+
+      expect(result.reviewDecision).toBe("REVIEW_REQUIRED");
+      expect(result.mergeReady).toBe(false);
+      expect(result.reviewsCapability).toBe("supported");
+    });
+
+    it("fails closed when the CLI review traversal reaches its cap before a later current-head blocker", async () => {
+      const fullReviewPage = Array.from({ length: 100 }, (_, index) => ({
+        id: `review-${index}`,
+        state: "APPROVED",
+        commit_id: "abc123",
+        submittedAt: `2026-10-05T00:${String(index).padStart(2, "0")}:00Z`,
+        author: { login: `reviewer-${index}` },
+      }));
+      const cappedGh = mockRunGhJsonAsync
+        .mockResolvedValueOnce({
+          number: 42,
+          url: "https://github.com/owner/repo/pull/42",
+          title: "Capped reviews",
+          state: "OPEN",
+          reviewDecision: "APPROVED",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          baseRefName: "main",
+          headRefName: "fusion/fn-9439",
+          headRefOid: "abc123",
+        })
+        .mockResolvedValueOnce(ghChecksPayload([
+          { __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true },
+        ]));
+      for (let page = 0; page < 10; page += 1) cappedGh.mockResolvedValueOnce(fullReviewPage);
+
+      const result = await client.getPrMergeStatus("owner", "repo", 42);
+
+      expect(result.reviewDecision).toBeNull();
+      expect(result.reviewsCapability).toBe("transient-unavailable");
+      expect(result.mergeReady).toBe(false);
+      expect(result.blockingReasons).toContain("current-head review list is incomplete; cannot confirm approval");
+      expect(mockRunGhJsonAsync).toHaveBeenLastCalledWith([
+        "api",
+        "repos/owner/repo/pulls/42/reviews?per_page=100&page=10",
+      ]);
+      expect(mockRunGhJsonAsync).not.toHaveBeenCalledWith([
+        "api",
+        "repos/owner/repo/pulls/42/reviews?per_page=100&page=11",
+      ]);
+    });
+
+    it("fails closed when the CLI check read observes a newer head than the PR view", async () => {
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce({
+          number: 42,
+          url: "https://github.com/owner/repo/pull/42",
+          title: "Pushed during refresh",
+          state: "OPEN",
+          reviewDecision: "APPROVED",
+          mergeable: "MERGEABLE",
+          mergeStateStatus: "CLEAN",
+          baseRefName: "main",
+          baseRefOid: "base-a",
+          headRefName: "fusion/fn-9439",
+          headRefOid: "head-a",
+        })
+        .mockResolvedValueOnce(ghChecksPayload([
+          { __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true },
+        ], { headRefOid: "head-b" }));
+
+      const result = await client.getPrMergeStatus("owner", "repo", 42, { requiredCheckNames: ["ci"] });
+
+      expect(result.prInfo.headOid).toBe("head-a");
+      expect(result.checks).toEqual([]);
+      expect(result.checksCapability).toBe("transient-unavailable");
+      expect(result.mergeReady).toBe(false);
+      expect(result.blockingReasons).toContain("required check list truncated; cannot confirm: ci");
     });
 
     it("preserves provider merge evidence for an externally merged PR", async () => {
@@ -1738,7 +1844,7 @@ describe("GitHubClient", () => {
           mergedAt: "2026-09-29T05:00:00.000Z",
           mergeCommit: { oid: "external-sha" },
         })
-        .mockResolvedValueOnce([]);
+        .mockResolvedValueOnce(ghChecksPayload([]));
 
       const result = await client.getPrMergeStatus("owner", "repo", 42);
 
@@ -1807,7 +1913,7 @@ describe("GitHubClient", () => {
       expect(result.mergeable).toBe("blocked");
       expect(result.prInfo.mergeable).toBe("blocked");
       expect(result.mergeReady).toBe(false);
-      expect(result.blockingReasons).toEqual(["PR mergeability is blocked"]);
+      expect(result.blockingReasons).toEqual(["current head requires approval", "PR mergeability is blocked"]);
     });
 
     it("maps missing mergeability fields to unknown", async () => {
@@ -1900,7 +2006,7 @@ describe("GitHubClient", () => {
       expect(result.mergeReady).toBe(false);
       expect(result.mergeable).toBe("blocked");
       expect(result.prInfo.mergeable).toBe("blocked");
-      expect(result.blockingReasons).toEqual(["PR mergeability is blocked"]);
+      expect(result.blockingReasons).toEqual(["current head requires approval", "PR mergeability is blocked"]);
       expect(result.checks).toEqual([
         {
           name: "ci",
@@ -1935,8 +2041,65 @@ describe("GitHubClient", () => {
       } } },
     });
 
+    it("paginates token check contexts and observes a later required failure", async () => {
+      const tokenClient = new GitHubClient({ token: "ghp_token", forceMode: "token" });
+      const firstPage = apiPayload([{
+        __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true,
+      }], true);
+      const secondPage = {
+        data: { repository: { pullRequest: {
+          headRefOid: "abc123",
+          commits: { nodes: [{ commit: { statusCheckRollup: { contexts: {
+            nodes: [{ __typename: "CheckRun", name: "deploy", status: "COMPLETED", conclusion: "FAILURE", isRequired: true }],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          } } } }] },
+        } } },
+      };
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => ({
+          ...firstPage,
+          data: { repository: { pullRequest: {
+            ...firstPage.data.repository.pullRequest,
+            commits: { nodes: [{ commit: { statusCheckRollup: { contexts: {
+              ...firstPage.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts,
+              pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
+            } } } }] },
+          } } },
+        }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => secondPage });
+      global.fetch = fetchMock as typeof fetch;
+
+      const result = await tokenClient.getPrMergeStatus("owner", "repo", 42, { requiredCheckNames: ["build", "deploy"] });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "deploy", state: "failure", required: true })]));
+      expect(result.mergeReady).toBe(false);
+      vi.restoreAllMocks();
+    });
+
+    it("paginates gh GraphQL check contexts and observes a later required failure", async () => {
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce(ghPr)
+        .mockResolvedValueOnce(ghChecksPayload([
+          { __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true },
+        ], { hasNextPage: true, endCursor: "cursor-1" }))
+        .mockResolvedValueOnce(ghChecksPayload([
+          { __typename: "CheckRun", name: "deploy", status: "COMPLETED", conclusion: "FAILURE", isRequired: true },
+        ]));
+
+      const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("owner", "repo", 42, {
+        requiredCheckNames: ["build", "deploy"],
+      });
+
+      expect(result.mergeReady).toBe(false);
+      expect(result.checks).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "deploy", required: true, state: "failure" }),
+      ]));
+      expect(mockRunGhJsonAsync.mock.calls[2]?.[0]).toEqual(expect.arrayContaining(["api", "graphql", "-f", "after=cursor-1"]));
+    });
+
     it("fails closed for an absent configured check through the gh transport", async () => {
-      mockRunGhJsonAsync.mockResolvedValueOnce(ghPr).mockResolvedValueOnce([]);
+      mockRunGhJsonAsync.mockResolvedValueOnce(ghPr).mockResolvedValueOnce(ghChecksPayload([]));
       const ghClient = new GitHubClient({ forceMode: "gh-cli" });
 
       const result = await ghClient.getPrMergeStatus("owner", "repo", 42, { requiredCheckNames: ["build"] });
@@ -1946,24 +2109,25 @@ describe("GitHubClient", () => {
       expect(mockRunGhJsonAsync).toHaveBeenLastCalledWith(expect.not.arrayContaining(["--required"]));
     });
 
-    it("fails closed when the gh unfiltered check read is swallowed", async () => {
+    it("fails closed when the gh cursor check read fails", async () => {
       mockRunGhJsonAsync.mockResolvedValueOnce(ghPr).mockRejectedValueOnce(new Error("checks pending"));
       const ghClient = new GitHubClient({ forceMode: "gh-cli" });
 
       const result = await ghClient.getPrMergeStatus("owner", "repo", 42, { requiredCheckNames: ["build"] });
 
       expect(result.mergeReady).toBe(false);
-      expect(result.blockingReasons).toContain("required check not reported: build");
+      expect(result.blockingReasons).toContain("required check list truncated; cannot confirm: build");
+      expect(result.checksCapability).toBe("transient-unavailable");
     });
 
-    it("preserves the required-only gh request when no Fusion names are configured", async () => {
-      mockRunGhJsonAsync.mockResolvedValueOnce(ghPr).mockResolvedValueOnce([]);
+    it("uses cursor-verifiable GraphQL checks when no Fusion names are configured", async () => {
+      mockRunGhJsonAsync.mockResolvedValueOnce(ghPr).mockResolvedValueOnce(ghChecksPayload([]));
       const ghClient = new GitHubClient({ forceMode: "gh-cli" });
 
       const result = await ghClient.getPrMergeStatus("owner", "repo", 42);
 
       expect(result.mergeReady).toBe(true);
-      expect(mockRunGhJsonAsync).toHaveBeenLastCalledWith(expect.arrayContaining(["--required"]));
+      expect(mockRunGhJsonAsync).toHaveBeenLastCalledWith(expect.arrayContaining(["api", "graphql"]));
     });
 
     it("fails closed for an absent configured check through token while default token filtering remains unchanged", async () => {
@@ -1989,8 +2153,7 @@ describe("GitHubClient", () => {
       const resolver = vi.fn().mockResolvedValue([{ repo: "owner/repo", headSha: "abc123", checkName: "build", state: "success", reportedAt: "2026-08-09T00:00:00.000Z" }]);
       mockRunGhJsonAsync
         .mockResolvedValueOnce(ghPr)
-        .mockResolvedValueOnce({ headRefOid: "abc123" })
-        .mockResolvedValueOnce([]);
+        .mockResolvedValueOnce(ghChecksPayload([]));
       const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("owner", "repo", 42, {
         requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
       });
@@ -2004,8 +2167,7 @@ describe("GitHubClient", () => {
       const resolver = vi.fn().mockResolvedValue([{ repo: "owner/repo", headSha: "abc123", checkName: "build", state: "failure", reportedAt: "2026-08-09T00:00:00.000Z" }]);
       mockRunGhJsonAsync
         .mockResolvedValueOnce(ghPr)
-        .mockResolvedValueOnce({ headRefOid: "abc123" })
-        .mockResolvedValueOnce([{ name: "build", state: "SUCCESS", bucket: "pass" }]);
+        .mockResolvedValueOnce(ghChecksPayload([{ __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true }]));
       const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("owner", "repo", 42, {
         requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
       });
@@ -2018,14 +2180,14 @@ describe("GitHubClient", () => {
       const resolver = vi.fn();
       mockRunGhJsonAsync
         .mockResolvedValueOnce({ ...ghPr, headRefOid: undefined })
-        .mockResolvedValueOnce({ headRefOid: undefined })
-        .mockResolvedValueOnce([]);
+        .mockResolvedValueOnce(ghChecksPayload([], { headRefOid: null }));
       const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("owner", "repo", 42, {
         requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
       });
 
       expect(resolver).not.toHaveBeenCalled();
-      expect(result.blockingReasons).toContain("required check not reported: build");
+      expect(result.blockingReasons).toContain("required check list truncated; cannot confirm: build");
+      expect(result.checksCapability).toBe("transient-unavailable");
     });
 
     it("uses the same event-driven state through the GraphQL transport", async () => {
@@ -2066,10 +2228,10 @@ describe("GitHubClient", () => {
 
   describe("getAllPrChecks", () => {
     it("returns required and non-required checks in gh mode and computes rollup from required checks", async () => {
-      mockRunGhJsonAsync.mockResolvedValueOnce({ headRefOid: "abc123" }).mockResolvedValueOnce([
-        { name: "required-ci", state: "SUCCESS", link: "https://example.com/ci", bucket: "pass" },
-        { name: "optional-preview", state: "FAILURE", link: "https://example.com/preview", bucket: "none" },
-      ]);
+      mockRunGhJsonAsync.mockResolvedValueOnce(ghChecksPayload([
+        { __typename: "CheckRun", name: "required-ci", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://example.com/ci", isRequired: true },
+        { __typename: "CheckRun", name: "optional-preview", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://example.com/preview", isRequired: false },
+      ]));
 
       const result = await client.getAllPrChecks("owner", "repo", 42);
 
@@ -2084,7 +2246,7 @@ describe("GitHubClient", () => {
       const resolver = vi.fn().mockResolvedValue([
         { repo: "owner/repo", headSha: "abc123", checkName: "build", state: "success", reportedAt: "2026-08-09T00:00:00.000Z" },
       ]);
-      mockRunGhJsonAsync.mockResolvedValueOnce({ headRefOid: "abc123" }).mockResolvedValueOnce([]);
+      mockRunGhJsonAsync.mockResolvedValueOnce(ghChecksPayload([]));
 
       const result = await client.getAllPrChecks("owner", "repo", 42, {
         requiredCheckNames: ["build"], resolveIngestedChecks: resolver,
@@ -2108,7 +2270,7 @@ describe("GitHubClient", () => {
               headRefOid,
               commits: {
                 nodes: [{
-                  commit: { statusCheckRollup: { contexts: { nodes: [] } } },
+                  commit: { statusCheckRollup: { contexts: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } },
                 }],
               },
             },
@@ -2148,6 +2310,7 @@ describe("GitHubClient", () => {
           data: {
             repository: {
               pullRequest: {
+                headRefOid: "abc123",
                 commits: {
                   nodes: [
                     {
@@ -2527,7 +2690,7 @@ describe("GitHubClient", () => {
           { name: "optional-preview", required: false, state: "failure" },
         ],
         mergeable: "clean",
-      })).toEqual({ ready: true, blockingReasons: [] });
+      })).toEqual({ ready: false, blockingReasons: ["current head requires approval"] });
     });
 
     it.each(["blocked", "behind", "conflicting", "unknown"] as const)(
@@ -2845,5 +3008,29 @@ describe("isGitHubIssueAlreadyImported", () => {
   it("uses description URLs only as the final legacy fallback", () => {
     expect(isGitHubIssueAlreadyImported({ description: "Source: https://github.com/OWNER/REPO/issues/1" }, input)).toBe(true);
     expect(isGitHubIssueAlreadyImported({ description: "Unrelated" }, input)).toBe(false);
+  });
+});
+
+describe("getPrReadiness", () => {
+  it("normalizes current-head evidence and makes unsupported capabilities explicit", async () => {
+    const readinessClient = new GitHubClient();
+    vi.spyOn(readinessClient, "getPrMergeStatus").mockResolvedValue({
+      prInfo: { url: "https://github.com/owner/repo/pull/42", number: 42, status: "open", title: "Ready", headBranch: "head", baseBranch: "main", headOid: "head-b", commentCount: 0 },
+      baseOid: "base-a",
+      reviewDecision: "APPROVED",
+      checks: [{ name: "build", required: true, state: "success" }],
+      mergeable: "clean",
+      mergeReady: true,
+      blockingReasons: [],
+    });
+
+    const result = await readinessClient.getPrReadiness("owner", "repo", 42);
+
+    expect(result.snapshot.observedHeadOid).toBe("head-b");
+    expect(result.snapshot.baseOid).toBe("base-a");
+    expect(result.snapshot.requiredChecks).toEqual([{ name: "build", state: "success" }]);
+    expect(result.snapshot.approval).toBe("approved");
+    expect(result.snapshot.deployments.state).toBe("unsupported");
+    expect(result.snapshot.branchUpdate.state).toBe("unsupported");
   });
 });

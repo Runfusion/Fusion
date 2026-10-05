@@ -52,6 +52,7 @@ import {
   ensureBranchGroupForSource,
   ensurePrEntityForSource,
   updatePrEntity,
+  updatePrReadiness,
   getPrEntity,
   listActivePrEntities,
   recordPrThreadOutcome,
@@ -641,6 +642,89 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     await updatePrEntity(ctx.layer.db, created.id, { state: "merged" });
     const activeAfter = await listActivePrEntities(ctx.layer.db);
     expect(activeAfter.some((e) => e.id === created.id)).toBe(false);
+  });
+
+  it("clears prior-head readiness evidence on a direct head update", async () => {
+    const created = await ensurePrEntityForSource(ctx.layer.db, {
+      sourceType: "task",
+      sourceId: "task-readiness-head-fence",
+      repo: "owner/repo",
+      headBranch: "feature/readiness-head-fence",
+    });
+    const observed = await updatePrEntity(ctx.layer.db, created.id, {
+      state: "open",
+      headOid: "head-a",
+      readinessProvider: "github",
+      readiness: {
+        observedHeadOid: "head-a",
+        baseOid: "base-a",
+        headBehindBase: false,
+        requiredChecks: [{ name: "build", state: "success" }],
+        approval: "approved",
+        mergeable: "clean",
+        protectionBlockers: [],
+        state: "open",
+        deployments: { state: "supported" },
+        branchUpdate: { state: "supported" },
+        checks: { state: "supported" },
+        reviews: { state: "supported" },
+        merge: { state: "supported" },
+        observedAt: new Date().toISOString(),
+      },
+      mergeable: "clean",
+      checksRollup: "success",
+      reviewDecision: "APPROVED",
+      unverified: false,
+    });
+
+    const pushed = await updatePrEntity(ctx.layer.db, observed.id, { headOid: "head-b" });
+
+    expect(pushed).toMatchObject({
+      headOid: "head-b",
+      readiness: undefined,
+      readinessProvider: undefined,
+      mergeable: undefined,
+      checksRollup: "none",
+      reviewDecision: undefined,
+      unverified: true,
+    });
+  });
+
+  it("does not let a delayed open readiness observation reopen a merged PR at the same head", async () => {
+    const created = await ensurePrEntityForSource(ctx.layer.db, {
+      sourceType: "task",
+      sourceId: "task-readiness-terminal-fence",
+      repo: "owner/repo",
+      headBranch: "feature/readiness-terminal-fence",
+    });
+    await updatePrEntity(ctx.layer.db, created.id, { state: "open", headOid: "head-a", unverified: false });
+    const snapshot = (state: "open" | "merged") => ({
+      observedHeadOid: "head-a",
+      baseOid: "base-a",
+      headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "success" as const }],
+      approval: "approved" as const,
+      mergeable: "clean" as const,
+      protectionBlockers: [],
+      state,
+      ...(state === "merged" ? { mergeCommitSha: "merge-a" } : {}),
+      deployments: { state: "supported" as const },
+      branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const },
+      reviews: { state: "supported" as const },
+      merge: { state: "supported" as const },
+      observedAt: new Date().toISOString(),
+    });
+
+    const merged = await updatePrReadiness(ctx.layer.db, created.id, "head-a", "github", snapshot("merged"));
+    const staleOpen = await updatePrReadiness(ctx.layer.db, created.id, "head-a", "github", snapshot("open"));
+
+    expect(merged?.state).toBe("merged");
+    expect(staleOpen).toBeNull();
+    await expect(getPrEntity(ctx.layer.db, created.id)).resolves.toMatchObject({
+      state: "merged",
+      readiness: { state: "merged", mergeCommitSha: "merge-a" },
+    });
   });
 
   it("PR thread outcomes round-trip (record + read)", async () => {

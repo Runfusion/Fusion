@@ -4,7 +4,7 @@
 // and the reconcile all consult one definition and cannot drift — the same
 // discipline that put isBranchGroupMemberLanded in branch-group-completion.ts.
 
-import type { PrEntity, PrThreadState } from "../types.js";
+import type { PrEntity, PrReadinessSnapshot, PrThreadState } from "../types.js";
 
 /** Non-terminal lifecycle states — the entity is "live". */
 export function isPrEntityActive(entity: Pick<PrEntity, "state">): boolean {
@@ -62,6 +62,19 @@ export function isPrEntityAutoMergeReady(
   // mergeable must be the known-clean state; "unknown"/conflict/undefined all block.
   if (entity.mergeable !== "clean") return false;
   return true;
+}
+
+/**
+ * Whether a persisted provider-neutral snapshot is safe for merge admission.
+ * Callers must pass the entity's current head so evidence for an earlier push
+ * cannot authorize a later one.
+ */
+export function isCurrentHeadReadinessReady(snapshot: PrReadinessSnapshot | undefined, currentHeadOid: string | undefined): boolean {
+  if (!snapshot || !currentHeadOid || snapshot.observedHeadOid !== currentHeadOid) return false;
+  if (snapshot.state !== "open" || snapshot.headBehindBase || snapshot.approval !== "approved" || snapshot.mergeable !== "clean") return false;
+  if (snapshot.protectionBlockers.length > 0 || snapshot.requiredChecks.some((check) => check.state !== "success")) return false;
+  return [snapshot.checks, snapshot.reviews, snapshot.merge, snapshot.deployments, snapshot.branchUpdate]
+    .every((capability) => capability.state === "supported");
 }
 
 /**

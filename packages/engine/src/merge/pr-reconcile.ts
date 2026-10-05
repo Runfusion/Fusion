@@ -31,7 +31,7 @@
  *      the documented stall mode) and the repo backs off; the poller survives.
  */
 
-import type { PrEntity, PrConflictState, PrChecksRollup, PrReviewDecision } from "@fusion/core";
+import type { PrEntity, PrConflictState, PrChecksRollup, PrReadinessSnapshot, PrReviewDecision } from "@fusion/core";
 import { isPrEntityActive } from "@fusion/core";
 import { prReconcileLog } from "../logger.js";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
@@ -54,6 +54,9 @@ export interface PrReconcileFetchResult {
   mergeable?: PrConflictState;
   checksRollup?: PrChecksRollup;
   reviewDecision?: PrReviewDecision;
+  /** Canonical provider-neutral evidence for the observed head. */
+  readiness?: PrReadinessSnapshot;
+  readinessProvider?: string;
 }
 
 /**
@@ -80,6 +83,8 @@ export interface PrReconcileStore {
   listActivePrEntities(): Promise<PrEntity[]>;
   getPrEntity(id: string): Promise<PrEntity | null>;
   updatePrEntity(id: string, patch: import("@fusion/core").PrEntityUpdate): Promise<PrEntity>;
+  /** SHA-fenced writer; a null result means a newer observation won the race. */
+  updatePrReadiness?(id: string, expectedStoredHeadOid: string | undefined, provider: string, snapshot: PrReadinessSnapshot): Promise<PrEntity | null>;
   recordRunAuditEvent?: (input: import("@fusion/core").RunAuditEventInput) => unknown | Promise<unknown>;
 }
 
@@ -440,18 +445,31 @@ export class PrReconciler {
     const transitions = deriveTransitions(entity, fetched);
 
     // 5. Persist the corroborated mirror; clear `unverified` on first success.
-    const nextState =
-      fetched.prState === "merged" ? "merged" : fetched.prState === "closed" ? "closed" : entity.state;
-    void this.store.updatePrEntity(entity.id, {
-      state: nextState,
-      prNumber: fetched.prNumber ?? entity.prNumber,
-      prUrl: fetched.prUrl ?? null,
-      headOid: fetched.headOid ?? null,
-      mergeable: fetched.mergeable ?? null,
-      checksRollup: fetched.checksRollup ?? null,
-      reviewDecision: fetched.reviewDecision,
-      unverified: false,
-    });
+    // A stale provider response must not release a hold after a newer head has won.
+    if (fetched.readiness && this.store.updatePrReadiness) {
+      const fenced = await this.store.updatePrReadiness(
+        entity.id,
+        entity.headOid,
+        fetched.readinessProvider ?? "github",
+        fetched.readiness,
+      );
+      // Do not follow a successful CAS with an unfenced mirror write: another
+      // poll can persist a new head between those two operations.
+      if (!fenced) return "changed";
+    } else {
+      const nextState =
+        fetched.prState === "merged" ? "merged" : fetched.prState === "closed" ? "closed" : entity.state;
+      await this.store.updatePrEntity(entity.id, {
+        state: nextState,
+        prNumber: fetched.prNumber ?? entity.prNumber,
+        prUrl: fetched.prUrl ?? null,
+        headOid: fetched.headOid ?? null,
+        mergeable: fetched.mergeable ?? null,
+        checksRollup: fetched.checksRollup ?? null,
+        reviewDecision: fetched.reviewDecision,
+        unverified: false,
+      });
+    }
 
     // 6. Fire the generic external-event releases. The unverified gate (R19) is
     //    already cleared above only AFTER a real PR was corroborated, so a

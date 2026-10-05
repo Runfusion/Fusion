@@ -515,6 +515,49 @@ export type PrReviewDecision =
 /** Aggregate CI rollup mirror (matches PrInfo.checkRollup shape). */
 export type PrChecksRollup = "success" | "failure" | "pending" | "none";
 
+/** A provider capability outcome; unavailable data is never silently pending. */
+export type PrReadinessCapabilityState = "supported" | "unsupported" | "permission-denied" | "transient-unavailable";
+
+export interface PrReadinessCapability {
+  state: PrReadinessCapabilityState;
+  /** Bounded, credential-free provider diagnosis suitable for operators. */
+  reason?: string;
+}
+
+export type PrRequiredCheckState = "success" | "pending" | "failure" | "missing";
+
+export interface PrRequiredCheck {
+  name: string;
+  state: PrRequiredCheckState;
+}
+
+/**
+ * Provider-neutral observation for one exact pull-request head.
+ *
+ * FNXC:PullRequestReadiness 2026-10-04-23:13:
+ * Readiness is evidence, not a mutable PR property. A consumer may admit an
+ * action only when this snapshot names the entity's current head and every
+ * required capability is supported; missing, denied, and stale evidence fails
+ * closed instead of looking permanently pending.
+ */
+export interface PrReadinessSnapshot {
+  observedHeadOid: string;
+  baseOid?: string;
+  headBehindBase: boolean;
+  requiredChecks: PrRequiredCheck[];
+  approval: "approved" | "changes-requested" | "review-required" | "none";
+  mergeable: PrConflictState;
+  protectionBlockers: string[];
+  state: "open" | "closed" | "merged";
+  mergeCommitSha?: string;
+  deployments: PrReadinessCapability;
+  branchUpdate: PrReadinessCapability;
+  checks: PrReadinessCapability;
+  reviews: PrReadinessCapability;
+  merge: PrReadinessCapability;
+  observedAt: string;
+}
+
 export interface PrEntity {
   id: string;
   sourceType: PrEntitySourceType;
@@ -528,6 +571,9 @@ export interface PrEntity {
   prNumber?: number;
   prUrl?: string;
   headOid?: string;
+  /** Provider-neutral current-head observation, replaced atomically by the readiness fence. */
+  readiness?: PrReadinessSnapshot;
+  readinessProvider?: string;
   mergeable?: PrConflictState;
   checksRollup?: PrChecksRollup;
   reviewDecision?: PrReviewDecision;
@@ -566,6 +612,8 @@ export interface PrEntityUpdate {
   prNumber?: number | null;
   prUrl?: string | null;
   headOid?: string | null;
+  readiness?: PrReadinessSnapshot | null;
+  readinessProvider?: string | null;
   mergeable?: PrConflictState | null;
   checksRollup?: PrChecksRollup | null;
   reviewDecision?: PrReviewDecision;

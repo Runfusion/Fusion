@@ -1,8 +1,6 @@
 import type { PrInfo, Task, TaskStore } from "@fusion/core";
-import { createIngestedCheckResolver, resolveRequiredCheckNames } from "@fusion/core";
 import { getCurrentRepo } from "@fusion/core";
-import { GitHubClient, parseBadgeUrl, type PrCheckStatus } from "./github.js";
-import { githubRateLimiter } from "./github-poll.js";
+import { parseBadgeUrl } from "./github.js";
 
 const MAX_CHECKS = 50;
 const MAX_BLOCKERS = 20;
@@ -32,14 +30,6 @@ type TaskWithPrs = Pick<Task, "prInfo" | "prInfos">;
 /** Keep the task detail tool and Pull Request routes on the same persisted primary-PR convention. */
 export function getTaskPrimaryPr(task: TaskWithPrs): PrInfo | undefined {
   return task.prInfos?.[0] ?? task.prInfo;
-}
-
-function rollupChecks(checks: PrCheckStatus[]): "success" | "failure" | "pending" | "none" {
-  const required = checks.filter((check) => check.required);
-  if (required.length === 0) return "none";
-  if (required.some((check) => ["failure", "failed", "error", "cancelled", "timed_out"].includes(check.state.toLowerCase()))) return "failure";
-  if (required.some((check) => !["success", "neutral", "skipped"].includes(check.state.toLowerCase()))) return "pending";
-  return "success";
 }
 
 function formatError(error: unknown): string {
@@ -82,41 +72,38 @@ export async function resolveTaskPlannerPrStatus(store: TaskStore, taskId: strin
     };
   }
 
-  if (!githubRateLimiter.canMakeRequest(`${repository.owner}/${repository.repo}`)) {
-    return {
-      availability: "refresh-error",
-      pr: { number: prior.number, url: prior.url, state: prior.status, headSha: prior.headOid, headBranch: prior.headBranch, baseBranch: prior.baseBranch },
-      rollup: prior.checkRollup, checks: [], reviewDecision: prior.lastReviewDecision, mergeable: prior.mergeable,
-      blockers: [], stale: true, lastCheckedAt: prior.lastCheckedAt,
-      error: "GitHub rate limit prevents a current pull request status refresh.",
-    };
-  }
-
+  /*
+  FNXC:PullRequestReadiness 2026-10-04-23:13:
+  Chat is a consumer of the same stored snapshot as lifecycle automation. A
+  chat request must not fetch GitHub independently because a delayed provider
+  response could present A-head approval after the reconciler has fenced B.
+  */
   try {
-    const settings = await store.getSettings();
-    const resolveIngestedChecks = createIngestedCheckResolver(store.getAsyncLayer?.());
-    const checkOptions = { requiredCheckNames: resolveRequiredCheckNames(settings), ...(resolveIngestedChecks ? { resolveIngestedChecks } : {}) };
-    const snapshot = await new GitHubClient().getPrReviewSnapshot(repository.owner, repository.repo, prior.number, checkOptions);
-    const now = new Date().toISOString();
-    const rollup = snapshot.prInfo.checkRollup ?? rollupChecks(snapshot.checks);
-    const prInfo: PrInfo = {
-      ...prior,
-      ...snapshot.prInfo,
-      checkRollup: rollup,
-      lastCheckedAt: now,
-      lastReviewDecision: snapshot.decision,
-    };
-    await store.updatePrInfoByNumber(taskId, prior.number, prInfo);
-    const checks = snapshot.checks.slice(0, MAX_CHECKS).map((check) => ({ name: check.name, required: check.required, state: check.state }));
+    const entity = await store.getPrEntityByNumber(`${repository.owner}/${repository.repo}`, prior.number);
+    const snapshot = entity?.readiness;
+    if (!entity || !snapshot || snapshot.observedHeadOid !== entity.headOid) {
+      return {
+        availability: "refresh-error",
+        pr: { number: prior.number, url: prior.url, state: prior.status, headSha: prior.headOid, headBranch: prior.headBranch, baseBranch: prior.baseBranch },
+        checks: [], blockers: [], stale: true, lastCheckedAt: prior.lastCheckedAt,
+        error: "Current-head pull request readiness has not been observed.",
+      };
+    }
+    const rollup = snapshot.requiredChecks.some((check) => check.state === "failure") ? "failure"
+      : snapshot.requiredChecks.some((check) => check.state !== "success") ? "pending"
+        : snapshot.requiredChecks.length > 0 ? "success" : "none";
+    const capabilityBlockers = [snapshot.checks, snapshot.reviews, snapshot.merge, snapshot.deployments, snapshot.branchUpdate]
+      .filter((capability) => capability.state !== "supported")
+      .map((capability) => `capability ${capability.state}${capability.reason ? `: ${capability.reason}` : ""}`);
     return {
       availability: "fresh",
-      pr: { number: prInfo.number, url: prInfo.url, state: prInfo.status, headSha: prInfo.headOid, headBranch: prInfo.headBranch, baseBranch: prInfo.baseBranch },
+      pr: { number: prior.number, url: prior.url, state: snapshot.state, headSha: snapshot.observedHeadOid, headBranch: prior.headBranch, baseBranch: prior.baseBranch },
       rollup,
-      checks,
-      reviewDecision: snapshot.decision,
-      mergeable: prInfo.mergeable,
-      blockers: (snapshot.summary?.blockingReasons ?? []).slice(0, MAX_BLOCKERS),
-      lastCheckedAt: now,
+      checks: snapshot.requiredChecks.slice(0, MAX_CHECKS).map((check) => ({ name: check.name, required: true, state: check.state })),
+      reviewDecision: snapshot.approval === "approved" ? "APPROVED" : snapshot.approval === "changes-requested" ? "CHANGES_REQUESTED" : snapshot.approval === "review-required" ? "REVIEW_REQUIRED" : null,
+      mergeable: snapshot.mergeable,
+      blockers: [...snapshot.protectionBlockers, ...capabilityBlockers].slice(0, MAX_BLOCKERS),
+      lastCheckedAt: snapshot.observedAt,
       stale: false,
     };
   } catch (error) {

@@ -15,10 +15,10 @@ import { isBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
 import { FINGERPRINT_WINDOW_DEFAULT_MS, FINGERPRINT_WINDOW_MAX_MS } from "../duplicates/duplicate-guard.js";
 import * as schema from "../postgres/schema/index.js";
 import { taskProjectScope } from "../postgres/data-layer.js";
-import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePrEntityForSource as ensurePrEntityForSourceAsync, getActivePrEntityBySource as getActivePrEntityBySourceAsync, getBranchGroup as getBranchGroupAsync, getBranchGroupByBranchName as getBranchGroupByBranchNameAsync, getBranchGroupBySource as getBranchGroupBySourceAsync, getPrEntity as getPrEntityAsync, getPrThreadState as getPrThreadStateAsync, listActivePrEntities as listActivePrEntitiesAsync, listBranchGroups as listBranchGroupsAsync, listPrThreadStates as listPrThreadStatesAsync, recordPrThreadOutcome as recordPrThreadOutcomeAsync } from "./async/async-branch-groups.js";
+import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePrEntityForSource as ensurePrEntityForSourceAsync, getActivePrEntityBySource as getActivePrEntityBySourceAsync, getBranchGroup as getBranchGroupAsync, getBranchGroupByBranchName as getBranchGroupByBranchNameAsync, getBranchGroupBySource as getBranchGroupBySourceAsync, getPrEntity as getPrEntityAsync, getPrThreadState as getPrThreadStateAsync, listActivePrEntities as listActivePrEntitiesAsync, listBranchGroups as listBranchGroupsAsync, listPrThreadStates as listPrThreadStatesAsync, recordPrThreadOutcome as recordPrThreadOutcomeAsync, updatePrReadiness as updatePrReadinessAsync } from "./async/async-branch-groups.js";
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async/async-workflow-workitems.js";
 import { MergeRequestRow, PrEntityRow, WorkflowWorkItemRow } from "./row-types.js";
-import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
+import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrReadinessSnapshot, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
 import { validateNodeOverrideChange, resolveNodeOverrideLanes} from "../mesh/node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflows/workflow-extension-types.js";
 import { resolveWorkflowIrById, isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
@@ -89,12 +89,12 @@ export async function listTasksByBranchGroupImpl(store: TaskStore, groupId: stri
 
 export async function getPrEntityImpl(store: TaskStore, id: string): Promise<PrEntity | null> {
         const layer = store.asyncLayer!;
-    return getPrEntityAsync(layer.db, id);
+    return getPrEntityAsync(layer.db, id, layer.projectId);
 }
 
 export async function getActivePrEntityBySourceImpl(store: TaskStore, sourceType: PrEntity["sourceType"], sourceId: string): Promise<PrEntity | null> {
         const layer = store.asyncLayer!;
-    return getActivePrEntityBySourceAsync(layer.db, sourceType, sourceId);
+    return getActivePrEntityBySourceAsync(layer.db, sourceType, sourceId, layer.projectId);
 }
 
 export async function getPrEntityByNumberImpl(store: TaskStore, repo: string, prNumber: number): Promise<PrEntity | null> {
@@ -104,7 +104,7 @@ export async function getPrEntityByNumberImpl(store: TaskStore, repo: string, pr
     const rows = await layer.db
       .select()
       .from(schema.project.pullRequests)
-      .where(and(eq(schema.project.pullRequests.repo, repo), eq(schema.project.pullRequests.prNumber, prNumber)))
+      .where(and(eq(schema.project.pullRequests.repo, repo), eq(schema.project.pullRequests.prNumber, prNumber), taskProjectScope(layer)))
       .limit(1);
     const row = rows[0] as PrEntityRow | undefined;
     return row ? store.rowToPrEntity(row) : null;
@@ -112,22 +112,27 @@ export async function getPrEntityByNumberImpl(store: TaskStore, repo: string, pr
 
 export async function ensurePrEntityForSourceImpl(store: TaskStore, input: PrEntityCreateInput): Promise<PrEntity> {
         const layer = store.asyncLayer!;
-    return ensurePrEntityForSourceAsync(layer.db, input);
+    return ensurePrEntityForSourceAsync(layer.db, input, layer.projectId);
 }
 
 export async function listActivePrEntitiesImpl(store: TaskStore): Promise<PrEntity[]> {
         const layer = store.asyncLayer!;
-    return listActivePrEntitiesAsync(layer.db);
+    return listActivePrEntitiesAsync(layer.db, layer.projectId);
+}
+
+export async function updatePrReadinessImpl(store: TaskStore, id: string, expectedStoredHeadOid: string | undefined, provider: string, snapshot: PrReadinessSnapshot): Promise<PrEntity | null> {
+  const layer = store.asyncLayer!;
+  return updatePrReadinessAsync(layer.db, id, expectedStoredHeadOid, provider, snapshot, layer.projectId);
 }
 
 export async function getPrThreadStateImpl(store: TaskStore, prEntityId: string, threadId: string, headOid: string): Promise<PrThreadState | null> {
         const layer = store.asyncLayer!;
-    return getPrThreadStateAsync(layer.db, prEntityId, threadId, headOid);
+    return getPrThreadStateAsync(layer.db, prEntityId, threadId, headOid, layer.projectId);
 }
 
 export async function listPrThreadStatesImpl(store: TaskStore, prEntityId: string): Promise<PrThreadState[]> {
         const layer = store.asyncLayer!;
-    return listPrThreadStatesAsync(layer.db, prEntityId);
+    return listPrThreadStatesAsync(layer.db, prEntityId, layer.projectId);
 }
 
 export async function recordPrThreadOutcomeImpl(store: TaskStore,
@@ -138,7 +143,7 @@ export async function recordPrThreadOutcomeImpl(store: TaskStore,
     fixCommitSha?: string,
   ): Promise<void> {
         const layer = store.asyncLayer!;
-    return recordPrThreadOutcomeAsync(layer.db, prEntityId, threadId, headOid, outcome, fixCommitSha);
+    return recordPrThreadOutcomeAsync(layer.db, prEntityId, threadId, headOid, outcome, fixCommitSha, layer.projectId);
 }
 
 export async function getBranchProgressByTaskImpl(store: TaskStore,
