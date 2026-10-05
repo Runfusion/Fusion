@@ -131,7 +131,7 @@ describe("FN-198 dashboard task relocation removal", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("card-start-FN-198"));
     });
-    expect(onMoveTask).toHaveBeenLastCalledWith("FN-198", "implementation");
+    expect(onMoveTask).toHaveBeenLastCalledWith("FN-198", "implementation", { expectedColumn: "ideas" });
   });
 
   it("removes List row destination choices opened by a context click", async () => {

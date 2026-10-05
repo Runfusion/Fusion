@@ -1,4 +1,3 @@
-import { readAppFile } from "../../test/cssFixture";
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatView } from "../ChatView";
@@ -11,7 +10,6 @@ import {
 } from "./ChatView.test-harness";
 
 const { pushNav } = vi.hoisted(() => ({ pushNav: vi.fn() }));
-const source = readAppFile("components/ChatView.tsx");
 
 vi.mock("../../hooks/useChat");
 vi.mock("../../hooks/useChatRooms");
@@ -60,10 +58,12 @@ FN-169's pop-out contract is exercised through the rendered ChatView, rather tha
 strings, because the user-visible invariant is a thread pane on arrival across every host shape.
 */
 describe("ChatView direct-only UI contract", () => {
-  it("keeps removed Rooms UI out of the direct chat surface", () => {
-    expect(source).not.toContain("useChatRooms");
-    expect(source).not.toContain("chatScope");
-    expect(source).not.toContain("CreateRoomModal");
+  it("does not render room navigation in the direct chat surface", async () => {
+    setupMockChat({ activeSession: activeSessionFixture, sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture] });
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} persistChatPreferences={false} />);
+
+    expect(document.querySelector(".chat-room-item")).not.toBeInTheDocument();
+    expect(screen.queryByText("Create room")).not.toBeInTheDocument();
   });
 });
 

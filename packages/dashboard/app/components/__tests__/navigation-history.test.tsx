@@ -738,18 +738,19 @@ describe("Navigation history integration", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("task-detail-main-panel-content")).toBeTruthy();
-      expect(screen.queryByTestId("board-view")).toBeNull();
+      expect(screen.getByTestId("board-view")).not.toBeVisible();
     });
-    expect((window.history.pushState as any).mock.calls.length).toBeGreaterThan(pushCallsBefore);
+    const pushCallsAfterOpen = (window.history.pushState as any).mock.calls.length;
+    expect(pushCallsAfterOpen).toBeGreaterThan(pushCallsBefore);
 
-    // FNXC:BoardNavigation 2026-06-29-20:45: Desktop board-card detail keeps the same full-panel Back-to-board history contract while mobile adds scroll restoration coverage.
     fireEvent.click(screen.getByRole("button", { name: "Back to board" }));
     dispatchPopState({ navIndex: 0 });
 
     await waitFor(() => {
       expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
-      expect(screen.getByTestId("board-view")).toBeTruthy();
+      expect(screen.getByTestId("board-view")).toBeVisible();
     });
+    expect((window.history.pushState as any).mock.calls.length).toBe(pushCallsAfterOpen);
   });
 
   it("restores mobile board scroll after Back to board", async () => {
