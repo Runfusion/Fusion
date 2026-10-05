@@ -34,9 +34,9 @@ const LEDGER: LedgerRow[] = [
   ["packages/engine/src/merge/merger-ai.ts",638,"A","store","TaskStore","merger AI TaskStore"],
   ["packages/engine/src/merge/pr-response-run-ops.ts",112,"A","store","TaskStore","PR response TaskStore"],
   ["packages/engine/src/agent-heartbeat.ts",195,"A","taskStore","nullable-root","heartbeat accepts a nullable root"],
-  ["packages/engine/src/triage.ts",3552,"A","this.store","TaskStore","triage TaskStore"],
+  ["packages/engine/src/triage.ts",3555,"A","this.store","TaskStore","triage TaskStore"],
   ["packages/engine/src/scheduling/cron-runner.ts",1073,"A","store","TaskStore","cron TaskStore"],
-  ["packages/engine/src/missions/mission-execution-loop.ts",1040,"A","this.taskStore","TaskStore","mission TaskStore"],
+  ["packages/engine/src/missions/mission-execution-loop.ts",1125,"A","this.taskStore","TaskStore","mission TaskStore"],
   ["packages/engine/src/agents/agent-reflection.ts",161,"A","this.taskStore","TaskStore","reflection TaskStore"],
   ["packages/engine/src/eval/evaluator.ts",170,"A","this.deps.store","TaskStore","evaluator TaskStore"],
   // FNXC:MemoryMcpCoverage 2026-08-23-19:48: memory-semantics runs a readonly model session on `input.taskStore` (typed TaskStore, root-capable), so it is an A lane like every other store-backed resolver call.
