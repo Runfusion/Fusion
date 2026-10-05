@@ -118,6 +118,7 @@ import {
   OVERLAP_WAIT_SYNC_VERSION,
   DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
   STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
+  PULL_REQUEST_READINESS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -174,8 +175,10 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_PLANNING_FAILURE_VERSION).toBe("0072");
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0086");
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0086");
+    expect(PULL_REQUEST_READINESS_VERSION).toBe("0087");
+    expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION));
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(PULL_REQUEST_READINESS_VERSION));
+    expect(SCHEMA_BASELINE_VERSION).toBe("0087");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -726,7 +729,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     refusal marker (100 → 105); later baseline additions bring the count to 106; and 0048 adds
     GitHub check state (106 → 107); 0049 adds the agent-activity outbox and counter (→ 109);
     0050 adds immutable lock, evidence, and report history (109 → 112); 0052 adds recall records (→ 113);
-    0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Migration 0086 adds stale review callback waiver receipts (→ 118).
+    0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Migration 0086 adds stale review callback waiver receipts (→ 118). Migration 0087 adds columns to pull_requests without changing the table count.
     Plugin tables are added separately by the schema-init hook and are excluded here.
     */
     expect(bySchema.project).toBe(118);
@@ -1879,6 +1882,41 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
         updated_at text NOT NULL
       );
       CREATE INDEX "idxAutomationsScope" ON project.automations(scope);
+      /*
+      FNXC:PgSchemaApplier 2026-10-05-01:35:
+      The 0000 upgrade fixture must retain the real pull_requests relation so migration 0087
+      exercises its ALTER TABLE contract rather than passing through a synthetic missing-table escape hatch.
+      */
+      CREATE TABLE project.pull_requests (
+        id text PRIMARY KEY,
+        source_type text NOT NULL,
+        source_id text NOT NULL,
+        repo text NOT NULL,
+        head_branch text NOT NULL,
+        base_branch text,
+        state text NOT NULL DEFAULT 'creating',
+        pr_number integer,
+        pr_url text,
+        head_oid text,
+        mergeable text,
+        checks_rollup jsonb,
+        review_decision text,
+        auto_merge integer NOT NULL DEFAULT 0,
+        unverified integer NOT NULL DEFAULT 0,
+        failure_reason text,
+        response_rounds integer NOT NULL DEFAULT 0,
+        created_at bigint NOT NULL,
+        updated_at bigint NOT NULL,
+        closed_at bigint,
+        CONSTRAINT pull_requests_source_type_check CHECK (source_type IN ('task','branch-group')),
+        CONSTRAINT pull_requests_state_check CHECK (state IN ('creating','open','responding','merged','closed','failed'))
+      );
+      CREATE UNIQUE INDEX "idxPullRequestsOpenSource" ON project.pull_requests(source_type, source_id)
+        WHERE state NOT IN ('merged','closed','failed');
+      CREATE UNIQUE INDEX "idxPullRequestsOpenBranch" ON project.pull_requests(repo, head_branch)
+        WHERE state NOT IN ('merged','closed','failed');
+      CREATE UNIQUE INDEX "idxPullRequestsNumber" ON project.pull_requests(repo, pr_number)
+        WHERE pr_number IS NOT NULL;
       CREATE TABLE public.fusion_schema_migrations (
         version text PRIMARY KEY,
         applied_at timestamptz NOT NULL DEFAULT now()
@@ -1914,6 +1952,18 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SELECT project_id, id, name FROM project.automations
     `)) as unknown as Array<{ project_id: string; id: string; name: string }>;
     expect(rows).toEqual([{ project_id: "project-a", id: "legacy-automation", name: "Legacy" }]);
+    const readinessColumns = (await ctx.db.execute(sql`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'pull_requests'
+        AND column_name IN ('readiness', 'readiness_provider')
+      ORDER BY column_name
+    `)) as unknown as Array<{ column_name: string; data_type: string }>;
+    expect(readinessColumns).toEqual([
+      { column_name: "readiness", data_type: "jsonb" },
+      { column_name: "readiness_provider", data_type: "text" },
+    ]);
     const versions = (await ctx.db.execute(sql`
       SELECT version FROM public.fusion_schema_migrations ORDER BY version
     `)) as unknown as Array<{ version: string }>;
@@ -1994,8 +2044,21 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
+      PULL_REQUEST_READINESS_VERSION,
     ]);
+    const readinessMarkerCount = (await ctx.db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM public.fusion_schema_migrations
+      WHERE version = ${PULL_REQUEST_READINESS_VERSION}
+    `)) as unknown as Array<{ count: number }>;
+    expect(readinessMarkerCount).toEqual([{ count: 1 }]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
+    const rerunMarkerCount = (await ctx.db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM public.fusion_schema_migrations
+      WHERE version = ${PULL_REQUEST_READINESS_VERSION}
+    `)) as unknown as Array<{ count: number }>;
+    expect(rerunMarkerCount).toEqual([{ count: 1 }]);
   });
 
   it("fails loudly when legacy automation ownership is ambiguous", async () => {
@@ -2096,6 +2159,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
+      PULL_REQUEST_READINESS_VERSION,
     ]);
   });
 
@@ -2331,6 +2395,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
+      PULL_REQUEST_READINESS_VERSION,
     ]);
   });
 
@@ -2447,6 +2512,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
+      PULL_REQUEST_READINESS_VERSION,
     ]);
   });
 
@@ -2563,6 +2629,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       OVERLAP_WAIT_SYNC_VERSION,
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
+      PULL_REQUEST_READINESS_VERSION,
     ]);
   });
 });

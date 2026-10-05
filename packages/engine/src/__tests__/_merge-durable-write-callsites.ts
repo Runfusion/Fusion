@@ -277,6 +277,12 @@ const STORE_METHOD_CLASSIFICATION: Record<string, Omit<SurfaceClassification, "m
   updateGlobalSettings: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateIssueInfo: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updatePrEntity: { kind: "writer", reason: "persists or mutates TaskStore state" },
+  /*
+  FNXC:MergeDurableWriteInventory 2026-10-05-01:35:
+  Readiness snapshots persist project-scoped pull-request state under an expected-head CAS and
+  terminal-state fence, so the public writer remains classified even without a merge-body closure edge.
+  */
+  updatePrReadiness: { kind: "writer", reason: "persists project-scoped readiness through expected-head CAS and terminal-state fence" },
   updatePrInfo: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updatePrInfoByNumber: { kind: "writer", reason: "persists or mutates TaskStore state" },
   updateSettings: { kind: "writer", reason: "persists or mutates TaskStore state" },
