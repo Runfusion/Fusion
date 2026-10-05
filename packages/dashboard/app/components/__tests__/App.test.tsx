@@ -714,6 +714,17 @@ async function waitForAppShell(): Promise<void> {
   });
 }
 
+/*
+FNXC:MainViewKeepAliveTests 2026-10-05-06:15:
+Board remains mounted after a user enters another main view so returning preserves its in-view state.
+App integration assertions must prove the retained Board is hidden, rather than treating its retained DOM as a competing active surface.
+*/
+function expectRetainedBoardHidden(): void {
+  const board = document.querySelector<HTMLElement>(".board");
+  expect(board).toBeTruthy();
+  expect(board).not.toBeVisible();
+}
+
 describe("FN-8698 retained Board and List task popups", () => {
   it.each([
     ["desktop", "board", "list"],
@@ -2125,7 +2136,7 @@ describe("App deep link handling", () => {
     await waitFor(() => {
       expect(screen.queryByText("Nested task")).toBeNull();
       expect(screen.getByTestId("main-panel-task-detail")).toBeTruthy();
-      expect(screen.getByText("Back nav task")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Back nav task" })).toBeTruthy();
     });
   });
 
@@ -2669,7 +2680,7 @@ describe("App view switching", () => {
       expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("+ New Task"));
+    fireEvent.click(within(screen.getByTestId("list-view-body")).getByText("+ New Task"));
 
     // The NewTaskModal should be visible with its header and description field.
     // Scope the title to the modal heading; the left sidebar also renders a "New Task" nav label.
@@ -2934,8 +2945,8 @@ describe("App view switching", () => {
       expect(document.querySelector(".agents-view")).toBeTruthy();
     }, { timeout: 5000 });
 
-    // Should NOT show board or list view
-    expect(document.querySelector(".board")).toBeNull();
+    // Board stays mounted to preserve its state, but only the selected Agents view is visible.
+    expectRetainedBoardHidden();
     expect(screen.queryByTestId("list-view-body")).toBeNull();
   });
 
@@ -3001,8 +3012,8 @@ describe("App view switching", () => {
     // Insights view should be rendered (it has a insights-view container)
     expect(await screen.findByTestId("insights-view")).toBeTruthy();
 
-    // Should NOT show board, list, or agents view
-    expect(document.querySelector(".board")).toBeNull();
+    // Board stays mounted to preserve its state, but only the selected Insights view is visible.
+    expectRetainedBoardHidden();
     expect(screen.queryByTestId("list-view-body")).toBeNull();
     expect(document.querySelector(".agents-view")).toBeNull();
   });
@@ -3160,7 +3171,8 @@ describe("App view switching", () => {
 
     expect(screen.queryByTitle("Board view")).toBeNull();
     expect(document.querySelector(".insights-view")).toBeNull();
-    expect(document.querySelector(".board")).toBeNull();
+    // The retained bootstrap Board is inactive until settings hydrate the saved destination.
+    expectRetainedBoardHidden();
 
     resolveSettings?.({
       ...defaultSettings,
@@ -3171,7 +3183,7 @@ describe("App view switching", () => {
       expect(document.querySelector(".insights-view")).toBeTruthy();
     });
 
-    expect(document.querySelector(".board")).toBeNull();
+    expectRetainedBoardHidden();
     localStorage.removeItem(taskViewStorageKey());
   });
 
@@ -3207,7 +3219,7 @@ describe("App view switching", () => {
       expect(document.querySelector(".memory-view")).toBeTruthy();
     });
 
-    expect(document.querySelector(".board")).toBeNull();
+    expectRetainedBoardHidden();
     localStorage.removeItem(taskViewStorageKey());
   });
 
@@ -3245,7 +3257,7 @@ describe("App view switching", () => {
     });
 
     expect(screen.getByTestId("sidebar-nav-goals")).toBeTruthy();
-    expect(document.querySelector(".board")).toBeNull();
+    expectRetainedBoardHidden();
     localStorage.removeItem(taskViewStorageKey());
   });
 
@@ -4823,8 +4835,9 @@ describe("App board branch filters", () => {
 
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => {
-      expect(screen.getByText("Alpha Search")).toBeTruthy();
-      expect(screen.getByText("Beta Search")).toBeTruthy();
+      const listView = screen.getByTestId("list-view-body");
+      expect(within(listView).getByText("Alpha Search")).toBeTruthy();
+      expect(within(listView).getByText("Beta Search")).toBeTruthy();
     });
   });
 });
