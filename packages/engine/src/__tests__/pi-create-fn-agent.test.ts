@@ -2086,15 +2086,8 @@ describe("createFnAgent", () => {
       "/tmp",
       "/tmp/.fusion/disabled-auto-extension-discovery",
     );
-    expect(registerProviderMock).toHaveBeenNthCalledWith(1, "zai", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
-    }));
-    // FN-7711: registerBuiltInGrokProvider seeds grok-cli immediately after the built-in zai
-    // registration, before the extension's pending provider registrations replay.
-    expect(registerProviderMock).toHaveBeenNthCalledWith(2, "grok-cli", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: "grok-4.5" })]),
-    }));
-    expect(registerProviderMock).toHaveBeenNthCalledWith(3, "zai", expect.objectContaining({
+    expect(registerProviderMock).toHaveBeenCalledTimes(1);
+    expect(registerProviderMock).toHaveBeenCalledWith("zai", expect.objectContaining({
       models: [{ id: "glm-5.1" }],
     }));
     expect(refreshMock).toHaveBeenCalled();
@@ -2460,97 +2453,22 @@ describe("createFnAgent", () => {
     });
   });
 
-  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("synthesizes direct Anthropic %s when the live registry lacks it", async (modelId) => {
+  /*
+  FNXC:ModelCatalog 2026-10-05-04:07:
+  FN-9450 makes Pi's refreshed registry the only source of direct-provider rows. A legacy
+  selection absent from that registry must fail model resolution instead of recreating a fallback.
+  */
+  it.each(["claude-opus-5-5", "claude-sonnet-5-5", "gpt-5.6-luna"])("does not synthesize absent legacy row %s", async (modelId) => {
+    const provider = modelId.startsWith("claude-") ? "anthropic" : "openai-codex";
     getAllMock.mockReturnValue([]);
-    findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
+    findMock.mockReturnValue(undefined);
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
+    await expect(createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: provider, defaultModelId: modelId }))
+      .rejects.toThrow(`Configured model ${provider}/${modelId} (primary selection) was not found in the pi model registry`);
 
-    expect(registerProviderMock).toHaveBeenCalledWith("anthropic", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: modelId })]),
-    }));
-    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ model: { provider: "anthropic", id: modelId } }));
-  });
-
-  it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("preserves upstream %s while adding missing supplemental models", async (modelId) => {
-    const upstream = {
-      provider: "anthropic", id: modelId, name: `${modelId} Upstream`, reasoning: true, input: ["text", "image"],
-      cost: { input: 99, output: 199, cacheRead: 9.9, cacheWrite: 24.75 }, contextWindow: 42, maxTokens: 7,
-    };
-    getAllMock.mockReturnValue([upstream]);
-    findMock.mockImplementation((provider: string, id: string) => ({ provider, id }));
-
-    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({ cwd: "/tmp", systemPrompt: "test", tools: "readonly", defaultProvider: "anthropic", defaultModelId: modelId });
-
-    const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
-    expect(anthropicRegistrations).toHaveLength(1);
-    const rows = anthropicRegistrations[0]?.[1].models.filter((model: { id: string }) => model.id === modelId);
-    expect(rows).toEqual([expect.objectContaining({ name: upstream.name, contextWindow: upstream.contextWindow, cost: upstream.cost })]);
-  });
-
-  it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {
-    // FNXC:ModelCatalog 2026-07-09-00:00:
-    // FN-7754 regression coverage for the createFnAgent registry-seeding surface: a pi catalog with no openai-codex provider/models must still surface all GPT-5.6 codenamed variants through the shared additive supplemental merge.
-    getAllMock.mockReturnValue([]);
-    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
-
-    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({
-      cwd: "/tmp",
-      systemPrompt: "test",
-      tools: "readonly",
-      defaultProvider: "openai-codex",
-      defaultModelId: "gpt-5.6-luna",
-    });
-
-    expect(registerProviderMock).toHaveBeenCalledWith("openai-codex", expect.objectContaining({
-      models: expect.arrayContaining([
-        expect.objectContaining({ id: "gpt-5.6-luna" }),
-        expect.objectContaining({ id: "gpt-5.6-sol" }),
-        expect.objectContaining({ id: "gpt-5.6-terra" }),
-      ]),
-    }));
-    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-      model: { provider: "openai-codex", id: "gpt-5.6-luna" },
-    }));
-  });
-
-  it("does not duplicate OpenAI Codex GPT-5.6 rows already present in the pi registry", async () => {
-    const existingLunaRow = {
-      provider: "openai-codex",
-      id: "gpt-5.6-luna",
-      name: "GPT-5.6 Luna Upstream",
-      reasoning: true,
-      input: ["text"],
-      cost: { input: 1, output: 2 },
-      contextWindow: 200_000,
-      maxTokens: 16_000,
-    };
-    getAllMock.mockReturnValue([existingLunaRow]);
-    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
-
-    const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
-    await createFnAgent({
-      cwd: "/tmp",
-      systemPrompt: "test",
-      tools: "readonly",
-      defaultProvider: "openai-codex",
-      defaultModelId: "gpt-5.6-luna",
-    });
-
-    const openAiCodexRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "openai-codex");
-    expect(openAiCodexRegistrations).toHaveLength(1);
-    const registeredProvider = openAiCodexRegistrations[0]?.[1] as { models: Array<{ id: string; name?: string }> };
-    const registeredModels = registeredProvider.models;
-    const lunaRows = registeredModels.filter((model) => model.id === "gpt-5.6-luna");
-    expect(lunaRows).toHaveLength(1);
-    expect(lunaRows[0]).toMatchObject({ name: "GPT-5.6 Luna Upstream" });
-    expect(registeredModels).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "gpt-5.6-sol" }),
-      expect.objectContaining({ id: "gpt-5.6-terra" }),
-    ]));
+    expect(registerProviderMock).not.toHaveBeenCalled();
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
   });
 
   it("selects the requested current direct OpenAI and Codex Astra upstream rows", async () => {
@@ -2567,7 +2485,9 @@ describe("createFnAgent", () => {
     };
     const codexAstra = { ...directAstra, provider: "openai-codex", api: "openai-codex-responses" };
     getAllMock.mockReturnValue([directAstra, codexAstra]);
-    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+    findMock.mockImplementation((provider: string, modelId: string) => (
+      getAllMock().find((model: { provider: string; id: string }) => model.provider === provider && model.id === modelId)
+    ));
 
     const { createPiAgentSessionRaw: createFnAgent } = await import("../pi.js");
     await createFnAgent({
@@ -2586,19 +2506,10 @@ describe("createFnAgent", () => {
     });
 
     expect(createAgentSessionMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      model: { provider: "openai", id: "gpt-6-astra" },
+      model: expect.objectContaining({ ...directAstra }),
     }));
     expect(createAgentSessionMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      model: { provider: "openai-codex", id: "gpt-6-astra" },
-    }));
-    const codexRegistration = registerProviderMock.mock.calls.find(([provider]) => provider === "openai-codex")?.[1];
-    expect(codexRegistration).toEqual(expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({
-        id: "gpt-6-astra",
-        name: "GPT-6 Astra",
-        contextWindow: 272_000,
-        thinkingLevelMap: { max: "max", xhigh: "xhigh" },
-      })]),
+      model: expect.objectContaining({ ...codexAstra }),
     }));
   });
 

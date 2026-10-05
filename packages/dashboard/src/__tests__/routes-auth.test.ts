@@ -504,7 +504,7 @@ describe("GET /models", () => {
     expect(res.body.models).toEqual([]);
   });
 
-  it("advertises Pi-owned Anthropic rows for configured direct Anthropic users after the supplemental merge", async () => {
+  it("advertises Pi-owned Anthropic rows for configured direct Anthropic users", async () => {
     const modelRegistry = createMutableModelRegistry([
       { id: "claude-future-catalog-row", name: "Claude Future Catalog Row", provider: "anthropic", reasoning: true, contextWindow: 200000 },
       { id: "gpt-4o", name: "GPT-4o", provider: "openai", reasoning: false, contextWindow: 128000 },
@@ -516,7 +516,6 @@ describe("GET /models", () => {
     expect(res.body.models).toEqual(expect.arrayContaining([
       expect.objectContaining({ provider: "anthropic", id: "claude-future-catalog-row" }),
     ]));
-    expect(modelRegistry.registerProvider).toHaveBeenCalledWith("anthropic", expect.anything());
   });
 
   it("does not expose Claude Sonnet 5 when direct Anthropic is not configured", async () => {
@@ -537,13 +536,12 @@ describe("GET /models", () => {
       expect(res.body.models).toEqual([]);
       expect(modelRegistry.models.some((model) => model.id === "claude-sonnet-4-5")).toBe(true);
       expect(res.body.models.some((model: { id: string }) => model.id === "claude-sonnet-4-5")).toBe(false);
-      expect(modelRegistry.registerProvider).toHaveBeenCalledWith("anthropic", expect.anything());
     } finally {
       readFileSpy.mockRestore();
     }
   });
 
-  it("keeps duplicate Pi Anthropic catalog rows deduplicated after the supplemental merge", async () => {
+  it("keeps duplicate Pi Anthropic catalog rows deduplicated", async () => {
     const modelRegistry = createMutableModelRegistry([
       { id: "claude-future-catalog-row", name: "Claude Future Catalog Row", provider: "anthropic", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000 },
       { id: "claude-future-catalog-row", name: "Claude Future Catalog Row", provider: "anthropic", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000 },
@@ -553,7 +551,6 @@ describe("GET /models", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.models.filter((model: { provider: string; id: string }) => model.provider === "anthropic" && model.id === "claude-future-catalog-row")).toHaveLength(1);
-    expect(modelRegistry.registerProvider).toHaveBeenCalledWith("anthropic", expect.anything());
   });
 
   // Regression guard: FN-2370's auto-resolved squash inverted this filter,

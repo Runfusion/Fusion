@@ -5,8 +5,7 @@ must invalidate the same registry while a refresh is hung without losing its sin
 Changing the active credential instance is also a credential mutation, so it must invalidate the
 same cache before `/api/models` can reuse its successful window. These direct handler fixtures
 preserve the API boundary while keeping the 300-second regression
-reproduction deterministic with fake timers. Cached requests must also run the supplemental-model
-registration branch so their live rows match a completed-refresh response.
+reproduction deterministic with fake timers. Cached requests must retain the refreshed Pi-owned rows without rebuilding a static provider catalog.
 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Router } from "express";
@@ -201,43 +200,28 @@ describe("registerModelRoutes refresh bounding", () => {
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
-  it("runs supplemental registrations for cached requests as it does after a refresh", async () => {
-    const registeredProviders = new Map<string, { models: Array<Record<string, unknown>> }>([
-      ["openai-codex", { models: [] }],
-    ]);
+  /*
+  FNXC:ModelCatalog 2026-10-05-04:07:
+  FN-9450 retired supplemental provider registration. The production route must retain a Pi-owned
+  catalog row across its bounded cache window without reconstructing removed fallback inventory.
+  */
+  it("retains Pi-owned rows for cached requests without re-registering a provider", async () => {
+    const piRow = { provider: "openai-codex", id: "pi-runtime-row", name: "Pi Runtime Row", reasoning: true, contextWindow: 128_000 };
     const registry = {
       refresh: vi.fn().mockResolvedValue(undefined),
-      registeredProviders,
-      registerProvider: vi.fn((provider: string, config: { models: Array<Record<string, unknown>> }) => {
-        registeredProviders.set(provider, { models: config.models });
-      }),
-      getAll: () => [...registeredProviders.entries()].flatMap(([provider, config]) => config.models.map((model) => ({
-        ...model,
-        provider,
-      }))),
-      getAvailable: () => [
-        ...rows,
-        ...registeredProviders.get("openai-codex")!.models.map((model) => ({
-          provider: "openai-codex",
-          id: String(model.id),
-          name: String(model.name),
-          reasoning: Boolean(model.reasoning),
-          contextWindow: Number(model.contextWindow),
-        })),
-      ],
+      registerProvider: vi.fn(),
+      getAvailable: () => [piRow],
     };
     const { handler } = register(registry as never, ["openai-codex"]);
 
     const fresh = await request(handler);
-    expect(fresh.models.filter((model) => model.provider === "openai-codex").map((model) => model.id)).toEqual(expect.arrayContaining([
-      "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
-    ]));
-
-    // Simulate a catalog replacement between polls; the cached path must reapply supplements.
-    registeredProviders.set("openai-codex", { models: [] });
     const cached = await request(handler);
+
     expect(registry.refresh).toHaveBeenCalledOnce();
-    expect(cached.models).toEqual(fresh.models);
+    expect(registry.registerProvider).not.toHaveBeenCalled();
+    for (const response of [fresh, cached]) {
+      expect(response.models.filter((model) => model.provider === piRow.provider && model.id === piRow.id)).toHaveLength(1);
+    }
   });
 
   it("forces a fresh built-in catalog and exposes refreshed rows through GET /models", async () => {
