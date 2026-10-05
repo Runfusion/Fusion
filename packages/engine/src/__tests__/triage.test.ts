@@ -6727,10 +6727,15 @@ describe("specifyTask — status restore failure diagnostics", () => {
         updatedAt: new Date().toISOString(),
       } as Task;
 
+      let resolveRetryLog!: () => void;
+      const retryLogInvoked = new Promise<void>((resolve) => {
+        resolveRetryLog = resolve;
+      });
       const store = createMockStore({
         getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
         logEntry: vi.fn().mockImplementation(async (_taskId: string, message: string) => {
           if (message.includes("Rate limited — retry")) {
+            resolveRetryLog();
             throw new Error("log write failed");
           }
         }),
@@ -6758,31 +6763,19 @@ describe("specifyTask — status restore failure diagnostics", () => {
 
       const specifyPromise = processor.specifyTask(task);
       /*
-      FNXC:TriagePlanningRetry 2026-08-09-15:55: Runtime setup is async; schedule its retry sleep before advancing fake time.
-      FNXC:TriagePlanningRetry 2026-08-23-18:30: `specifyTask` now awaits real work (the FN-8840
-      pre-planning duplicate check reads PROMPT.md) before it reaches the planner, so ONE zero-tick
-      no longer reaches the retry sleep and advancing 60s scheduled nothing — the promise never
-      settled. Drain pending async setup until the sleep exists instead of guessing a tick count;
-      this only flushes setup, it does not relax the retry assertions below.
-
-      FNXC:TriagePlanningRetry 2026-09-24-22:49:
-      Planning now creates its 90-minute turn timeout before `promptWithFallback` rejects. Waiting
-      for any timer mistakes that guard for the retry sleep and leaves the 429 retry unadvanced.
-      Wait for the observable retry log, then flush once to assert the retry timer is registered before
-      retaining the existing 60-second advance; this proves callback-before-sleep under the production path.
+      FNXC:TriagePlanningRetry 2026-10-05-04:34:
+      The shard failure proved that repeated zero-time fake-clock advances do not admit the real
+      filesystem setup before `specifyTask` invokes the planner. Wait for the production retry-log
+      callback instead: it proves the 429 reached `withRateLimitRetry` and preserves the required
+      callback-before-backoff ordering without guessing event-loop turns.
       */
-      for (
-        let tick = 0;
-        tick < 100 && !store.logEntry.mock.calls.some(([, message]) => String(message).includes("Rate limited — retry"));
-        tick += 1
-      ) {
-        await vi.advanceTimersByTimeAsync(0);
-      }
+      await retryLogInvoked;
       expect(store.logEntry).toHaveBeenCalledWith("FN-207", expect.stringContaining("Rate limited — retry"));
       await vi.advanceTimersByTimeAsync(0);
       expect(vi.getTimerCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(60_000);
       await expect(specifyPromise).resolves.toBeUndefined();
+      expect(store.logEntry.mock.calls.filter(([, message]) => String(message).includes("Rate limited — retry"))).toHaveLength(1);
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("FN-207: failed to log rate-limit retry entry"),
       );
@@ -6794,39 +6787,47 @@ describe("specifyTask — status restore failure diagnostics", () => {
 
   it("logs warning when transient-error retry status update fails", async () => {
     const warnSpy = vi.spyOn(planLog, "warn");
-    const task: Task = {
-      id: "FN-208",
-      description: "Transient retry test",
-      column: "triage",
-      dependencies: [],
-      steps: [],
-      currentStep: 0,
-      log: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as Task;
+    try {
+      const task: Task = {
+        id: "FN-208",
+        description: "Transient retry test",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as Task;
 
-    const store = createMockStore({
-      getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
-      updateTask: vi.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
-        if (patch?.recoveryRetryCount === 1) {
-          throw new Error("retry status update failed");
-        }
-      }),
-    });
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        updateTask: vi.fn().mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+          if (patch?.recoveryRetryCount === 1) {
+            throw new Error("retry status update failed");
+          }
+        }),
+      });
 
-    mockCreateFnAgent.mockRejectedValueOnce(new Error("upstream connect error"));
+      mockCreateFnAgent.mockRejectedValueOnce(new Error("upstream connect error"));
 
-    const processor = new TriageProcessor(store, "/test/root", {
-      pollIntervalMs: 100_000,
-    });
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
 
-    await expect(processor.specifyTask(task)).resolves.toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("FN-208: failed to restore status to 'null' during transient-error retry scheduling"),
-    );
-
-    warnSpy.mockRestore();
+      await expect(processor.specifyTask(task)).resolves.toBeUndefined();
+      expect(store.updateTask).toHaveBeenCalledWith("FN-208", expect.objectContaining({
+        status: null,
+        recoveryRetryCount: 1,
+        nextRecoveryAt: expect.any(String),
+      }));
+      expect(store.updateTask.mock.calls.some(([, patch]) => patch?.status === "failed")).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("FN-208: failed to restore status to 'null' during transient-error retry scheduling"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
