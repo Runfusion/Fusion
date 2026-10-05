@@ -825,29 +825,21 @@ self-tests spawned `pnpm --filter @fusion/dashboard test`, re-entering the suite
 
 ---
 
-## Entry: `executor-prompt` pause-resume agent-creation count (first sighting)
+## Entry: `executor-prompt` pause-resume agent-creation count (quarantined second sighting)
 
+- **Status:** Quarantined 2026-10-05 by FN-9510 under the deletion ratchet; delete the file, ledger row, and engine-default exclusion after 2026-10-19 unless a non-appeasement root-cause repair rescues it.
 - **File:** `packages/engine/src/__tests__/executor-prompt.test.ts`
 - **Exact test:** `TaskExecutor pause behavior > resumes unpaused in-progress task with no active session`
-- **Owner:** unowned — first sighting, recorded rather than quarantined because the file's remaining 113 tests are substantial coverage and quarantine is file-level.
-- **Observed tree/SHA:** `5769d5cd6` plus the then-uncommitted main-checkout-guard narrowing (guard classification, its audit metadata, and the workspace prompt string) — none of which this test exercises.
-- **Observed frequency:** once, and only when the file ran in the same vitest command as five other executor/workspace files. Passes deterministically alone (114/114).
+- **Observed trees/SHAs:** [run 33034719148](https://github.com/Runfusion/Fusion/actions/runs/33034719148) at `5769d5cd610e8830be24c4ede6eb79b38d2143c1`, and [run 37339500295](https://github.com/Runfusion/Fusion/actions/runs/37339500295) at `1a648d35d3987a6722b221e37df3084f75df6f0d`.
+- **Observed frequency:** two shard/multi-file sightings. The first record's six-file arrangement and the current isolated file both passed locally; the current hosted shard failed with 564 reported engine results.
 
-Verbatim observed failure:
+The second-sighting timing artifact [`11358593242`](https://github.com/Runfusion/Fusion/actions/runs/37339500295) reports the exact identity failed in 79.776822 ms at `executor-prompt.test.ts:1083:51` with `AssertionError: expected 0 to be greater than or equal to 2`. Post-merge artifact `11359244080` confirms it was the only failed engine identity in shard 2. The original assertion is retained unchanged; only routine engine-default discovery excludes the file.
 
-```
-FAIL |engine-default| src/__tests__/executor-prompt.test.ts > TaskExecutor pause behavior > resumes unpaused in-progress task with no active session
-AssertionError: expected 0 to be greater than or equal to 2
- ❯ src/__tests__/executor-prompt.test.ts:1047:51
-```
-
-| run | result |
+| evidence | result |
 |---|---|
-| six files in one command (`task-done-refusal-x-invariant`, `executor-workspace`, `executor-prompt`, `verify-worktree-invariants-missing`, `executor-workspace-config-propagation`, `executor-workspace-capture`) | **failed** — 1 failed / 147 passed |
-| `executor-prompt.test.ts` alone, same tree | **passed** (114/114) |
+| first sighting: six files in one command (`task-done-refusal-x-invariant`, `executor-workspace`, `executor-prompt`, `verify-worktree-invariants-missing`, `executor-workspace-config-propagation`, `executor-workspace-capture`) | **failed** — 1 failed / 147 passed |
+| first sighting: `executor-prompt.test.ts` alone | **passed** (114/114) |
+| FN-9510: current `executor-prompt.test.ts` alone | **passed** in 6.3s |
+| FN-9510: documented six-file engine-default arrangement | **passed** in 8.6s |
 
-The assertion counts `createFnAgent` calls after a resume and observed ZERO, so the resume path never
-reached agent creation at all — reads as module-mock ownership racing across files that share the
-`@fusion/core` agent-factory mock, not a wait that needs lengthening. No timeout was widened, no retry
-added, and no assertion relaxed. A SECOND sighting is an ordinary on-sight quarantine with no further
-discretion, per the standing rule in AGENTS.md.
+The assertion counts `createFnAgent` calls after a resume and observed zero only in broad shard/multi-file execution. FN-9510 traced the production `task:updated` listener through its synchronous single-flight claim, pause/dependency admission, active session/graph re-check, resume log, and graph-owned execution handoff; no reachable resume invariant violation was found. No timeout was widened, no retry added, and no assertion relaxed. This is therefore a file-level quarantine rather than a product repair, with healthy coverage intentionally excluded until the 14-day deletion deadline.

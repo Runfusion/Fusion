@@ -10,6 +10,11 @@
       "file": "packages/cli/src/commands/__tests__/skills-get.test.ts",
       "reason": "Second sightings: https://github.com/Runfusion/Fusion/actions/runs/36562243319 and https://github.com/Runfusion/Fusion/actions/runs/36580840868; repeated default-timeout-shaped built guide request failure.",
       "quarantinedAt": "2026-09-29"
+    },
+    {
+      "file": "packages/engine/src/__tests__/executor-prompt.test.ts",
+      "reason": "Second sightings: https://github.com/Runfusion/Fusion/actions/runs/33034719148 (5769d5cd610e8830be24c4ede6eb79b38d2143c1) and https://github.com/Runfusion/Fusion/actions/runs/37339500295 (1a648d35d3987a6722b221e37df3084f75df6f0d); TaskExecutor pause-resume agent-creation count was zero only in shard/multi-file execution.",
+      "quarantinedAt": "2026-10-05"
     }
   ]
 }
