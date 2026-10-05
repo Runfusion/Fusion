@@ -14,7 +14,7 @@ vi.mock("@fusion/core", async (importOriginal) => ({
   runGhJsonAsync: mockRunGhJsonAsync,
 }));
 
-import { aggregateSignalsAnalytics, createIngestedCheckResolver, drizzleSql as sql, type AsyncDataLayer, type Task, type TaskStore } from "@fusion/core";
+import { aggregateSignalsAnalytics, createIngestedCheckResolver, drizzleSql as sql, recordGitHubCheckStateAsync, type AsyncDataLayer, type Task, type TaskStore } from "@fusion/core";
 import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { DeliveryNonceCache, type SignalSource } from "../signal-source.js";
 import {
@@ -149,6 +149,38 @@ function githubContext(payload: object, event: "check_suite" | "workflow_run" | 
     "x-github-event": event,
     "x-github-delivery": delivery,
   });
+}
+
+function emptyGitHubCheckPage(headRefOid = "abc1234") {
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          headRefOid,
+          commits: {
+            nodes: [{
+              commit: {
+                statusCheckRollup: {
+                  contexts: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+                },
+              },
+            }],
+          },
+        },
+      },
+    },
+  };
+}
+
+function mockGitHubMergeGateReads() {
+  mockRunGhJsonAsync
+    .mockResolvedValueOnce({
+      number: 42, url: "https://github.com/org/repo/pull/42", title: "Green PR", state: "OPEN",
+      isDraft: false, baseRefName: "main", headRefName: "feature", headRefOid: "abc1234",
+      reviewDecision: null, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+    })
+    .mockResolvedValueOnce(emptyGitHubCheckPage())
+    .mockResolvedValueOnce([]);
 }
 
 function signedSignalContext(source: SignalSource, payload: object) {
@@ -708,23 +740,74 @@ pgDescribe("ingestSignal — GitHub CI recovery", () => {
       ...githubContext(payload, "check_suite", "github-gate-green"),
       nonceCache: new DeliveryNonceCache(),
     })).status).toBe(200);
+    expect(await githubCheckStates(layer)).toEqual([{
+      projectId: "signal-routes-project", repo: "org/repo", headSha: "abc1234", checkName: "checks", state: "success",
+    }]);
 
-    mockRunGhJsonAsync
-      .mockResolvedValueOnce({
-        number: 42, url: "https://github.com/org/repo/pull/42", title: "Green PR", state: "OPEN",
-        isDraft: false, baseRefName: "main", headRefName: "feature", headRefOid: "abc1234",
-        reviewDecision: null, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
-      })
-      .mockResolvedValueOnce({ headRefOid: "abc1234" })
-      .mockResolvedValueOnce([]);
+    const resolver = createIngestedCheckResolver(layer);
+    expect(resolver).toBeTypeOf("function");
+    const scopedResolver = vi.fn(resolver);
+    mockGitHubMergeGateReads();
 
     const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("org", "repo", 42, {
       requiredCheckNames: ["checks"],
-      resolveIngestedChecks: createIngestedCheckResolver(layer),
+      resolveIngestedChecks: scopedResolver,
     });
 
+    expect(scopedResolver).toHaveBeenCalledWith({ owner: "org", repo: "repo", headSha: "abc1234" });
+    expect(mockRunGhJsonAsync.mock.calls[1]?.[0]).toEqual(expect.arrayContaining(["api", "graphql"]));
+    expect(mockRunGhJsonAsync.mock.calls[1]?.[0]).toContain("-f");
+    expect(mockRunGhJsonAsync.mock.calls[1]?.[0]).toEqual(expect.arrayContaining([
+      expect.stringContaining("query PullRequestChecks"),
+    ]));
     expect(result.mergeReady).toBe(true);
     expect(result.blockingReasons).not.toContain("required check not reported: checks");
+  });
+
+  /*
+  FNXC:SignedGitHubMergeGate 2026-10-05-03:07:
+  Ingested green checks may supplement a complete GitHub check page, but the resolver must retain
+  its project, repository, and exact-head fences so an otherwise identical delivery cannot admit a
+  different merge candidate.
+  */
+  async function expectSingleScopeMismatchToBlock(input: {
+    projectId?: string;
+    repo?: string;
+    headSha?: string;
+  }) {
+    const { layer } = await makeDbStore();
+    await recordGitHubCheckStateAsync(layer, {
+      repo: input.repo ?? "org/repo",
+      headSha: input.headSha ?? "abc1234",
+      checkName: "checks",
+      state: "success",
+      reportedAt: "2026-08-09T12:00:00.000Z",
+    }, input.projectId ?? "signal-routes-project");
+
+    const resolver = createIngestedCheckResolver(layer);
+    expect(resolver).toBeTypeOf("function");
+    const scopedResolver = vi.fn(resolver);
+    mockGitHubMergeGateReads();
+    const result = await new GitHubClient({ forceMode: "gh-cli" }).getPrMergeStatus("org", "repo", 42, {
+      requiredCheckNames: ["checks"],
+      resolveIngestedChecks: scopedResolver,
+    });
+
+    expect(scopedResolver).toHaveBeenCalledWith({ owner: "org", repo: "repo", headSha: "abc1234" });
+    expect(result.mergeReady).toBe(false);
+    expect(result.blockingReasons).toContain("required check not reported: checks");
+  }
+
+  it("keeps a green check for a different head SHA out of the merge gate", async () => {
+    await expectSingleScopeMismatchToBlock({ headSha: "def5678" });
+  });
+
+  it("keeps a green check for a different repository out of the merge gate", async () => {
+    await expectSingleScopeMismatchToBlock({ repo: "org/other-repo" });
+  });
+
+  it("keeps a green check for a different project out of the merge gate", async () => {
+    await expectSingleScopeMismatchToBlock({ projectId: "other-signal-routes-project" });
   });
 
   it("drops malformed GitHub repository descriptors so they cannot persist check state", async () => {
