@@ -32,8 +32,45 @@ function run(command, commandArgs, options = {}) {
   });
 
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    const error = new Error(`Command failed: ${command}`);
+    error.shardDiagnostic = {
+      stage: "preflight",
+      exitCode: result.status ?? 1,
+    };
+    throw error;
   }
+}
+
+/**
+ * Write a collector-compatible timing payload when a shard fails before Vitest
+ * can initialize its own JSON reporter. The empty result list is deliberate:
+ * it preserves the failure stage without fabricating a failed test assertion.
+ *
+ * @param {{ shard: number, total: number, stage: string, exitCode?: number, signal?: string, timedOut?: boolean }} diagnostic
+ * @param {{ projectRoot?: string }} [options]
+ * @returns {string}
+ */
+export function writeShardDiagnosticPayload(diagnostic, options = {}) {
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const outputFile = path.join(projectRoot, ".timings", `timings-shard${diagnostic.shard}-diagnostic.json`);
+  mkdirSync(path.dirname(outputFile), { recursive: true });
+  writeFileSync(
+    outputFile,
+    `${JSON.stringify({
+      testResults: [],
+      fusionShardDiagnostic: {
+        version: 1,
+        shard: diagnostic.shard,
+        total: diagnostic.total,
+        stage: diagnostic.stage,
+        exitCode: diagnostic.exitCode ?? null,
+        signal: diagnostic.signal ?? null,
+        timedOut: diagnostic.timedOut === true,
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  return outputFile;
 }
 
 // Test invocations run under the L2 wall-clock watchdog so a wedged vitest run
@@ -49,16 +86,15 @@ async function runWatched(command, commandArgs, { env, budgetMs, label } = {}) {
     log: console.error,
     spawn,
   });
-  if (timedOut) {
-    console.error(`[ci-test-shard] FAILED (timeout): ${label ?? command}`);
-    process.exit(124);
-  }
-  if (signal) {
-    console.error(`[ci-test-shard] FAILED (signal ${signal}): ${label ?? command}`);
-    process.exit(1);
-  }
-  if (code !== 0) {
-    process.exit(code ?? 1);
+  if (timedOut || signal || code !== 0) {
+    const error = new Error(`Test command failed: ${label ?? command}`);
+    error.shardDiagnostic = {
+      stage: "test-command",
+      exitCode: timedOut ? 124 : (code ?? 1),
+      signal,
+      timedOut,
+    };
+    throw error;
   }
 }
 
@@ -1408,36 +1444,55 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     FUSION_TEST_CONCURRENCY: env.FUSION_TEST_CONCURRENCY || String(concurrency),
   };
 
-  run("pnpm", ["sync:fusion-skill:check"], { env: shardEnv });
-  ensureTestArtifacts(process.cwd());
+  try {
+    run("pnpm", ["sync:fusion-skill:check"], { env: shardEnv });
+    ensureTestArtifacts(process.cwd());
 
-  // Per-shard timing telemetry (U1 / R4): each test invocation also emits a
-  // vitest JSON reporter file under .timings/. These are uploaded as CI
-  // artifacts and consumed by `--write-timings` to refresh the snapshot.
-  //
-  // The path MUST be RELATIVE: one pnpm invocation can fan out to several
-  // packages, each spawning its own vitest with these identical forwarded
-  // flags. A relative path resolves against each package's cwd, giving every
-  // package its own <pkgDir>/.timings/ file; an absolute path would make all
-  // packages in the invocation overwrite the same file (last writer wins,
-  // silently dropping every other package's timings).
-  let invocationIndex = 0;
-  const timingFlags = () => {
-    const outputFile = path.join(".timings", `timings-shard${shard}-${invocationIndex++}.json`);
-    return ["--reporter=json", `--outputFile.json=${outputFile}`];
-  };
+    // Per-shard timing telemetry (U1 / R4): each test invocation also emits a
+    // vitest JSON reporter file under .timings/. These are uploaded as CI
+    // artifacts and consumed by `--write-timings` to refresh the snapshot.
+    //
+    // The path MUST be RELATIVE: one pnpm invocation can fan out to several
+    // packages, each spawning its own vitest with these identical forwarded
+    // flags. A relative path resolves against each package's cwd, giving every
+    // package its own <pkgDir>/.timings/ file; an absolute path would make all
+    // packages in the invocation overwrite the same file (last writer wins,
+    // silently dropping every other package's timings).
+    let invocationIndex = 0;
+    const timingFlags = () => {
+      const outputFile = path.join(".timings", `timings-shard${shard}-${invocationIndex++}.json`);
+      return ["--reporter=json", `--outputFile.json=${outputFile}`];
+    };
 
-  const commands = buildShardCommands(shardEntries, { timingFlags });
-  for (const command of commands) {
-    const klass = command.kind === "dashboard-lane" ? "dashboard-lane" : "shard";
-    const budgetMs = deriveBudgetMs({
-      klass,
-      expectedDurationMs: command.weightMs,
-      timingsFresh,
+    const commands = buildShardCommands(shardEntries, { timingFlags });
+    for (const command of commands) {
+      const klass = command.kind === "dashboard-lane" ? "dashboard-lane" : "shard";
+      const budgetMs = deriveBudgetMs({
+        klass,
+        expectedDurationMs: command.weightMs,
+        timingsFresh,
+      });
+      const label = `shard ${shard}/${total}: ${command.label}`;
+      console.log(`[ci-test-shard] ${label} (watchdog budget ${Math.round(budgetMs / 1000)}s)`);
+      await runWatched("pnpm", command.args, { env: shardEnv, budgetMs, label });
+    }
+  } catch (error) {
+    /*
+     * FNXC:FullSuiteEvidence 2026-10-05-07:07:
+     * The shard artifact must identify failures that happen before Vitest creates
+     * a reporter file. Emit a schema-compatible empty report before rethrowing so
+     * the always-run upload and evidence collector retain the failed stage.
+     */
+    const details = error && typeof error === "object" ? error.shardDiagnostic : undefined;
+    writeShardDiagnosticPayload({
+      shard,
+      total,
+      stage: details?.stage ?? "shard-setup",
+      exitCode: details?.exitCode,
+      signal: details?.signal,
+      timedOut: details?.timedOut,
     });
-    const label = `shard ${shard}/${total}: ${command.label}`;
-    console.log(`[ci-test-shard] ${label} (watchdog budget ${Math.round(budgetMs / 1000)}s)`);
-    await runWatched("pnpm", command.args, { env: shardEnv, budgetMs, label });
+    throw error;
   }
 }
 
@@ -1445,6 +1500,7 @@ const currentFilePath = fileURLToPath(import.meta.url);
 if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
   main().catch((error) => {
     console.error(error);
-    process.exit(1);
+    const exitCode = error && typeof error === "object" ? error.shardDiagnostic?.exitCode : undefined;
+    process.exit(exitCode ?? 1);
   });
 }

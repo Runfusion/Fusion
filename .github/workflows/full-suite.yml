@@ -435,10 +435,15 @@ jobs:
                   .filter((assertion) => assertion?.status === "failed" && typeof assertion.fullName === "string")
                   .map((assertion) => assertion.fullName);
               });
+              const diagnostic = payload?.fusionShardDiagnostic;
+              if (diagnostic !== undefined && (!diagnostic || typeof diagnostic !== "object" || typeof diagnostic.stage !== "string")) {
+                throw new Error(`${file} has a malformed shard diagnostic payload`);
+              }
               reports.push({
                 path: path.relative("post-merge-evidence", file),
                 testResultCount: payload.testResults.length,
                 failedFullNames: [...new Set(failedFullNames)].sort(),
+                ...(diagnostic ? { diagnostic } : {}),
               });
             }
             shards.push({ artifact, reports });

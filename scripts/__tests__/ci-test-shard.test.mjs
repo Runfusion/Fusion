@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -35,6 +35,7 @@ import {
   laneProjectNames,
   buildShardCommands,
   TIMINGS_STALENESS_DAYS,
+  writeShardDiagnosticPayload,
 } from "../ci-test-shard.mjs";
 
 function silentLogger() {
@@ -685,6 +686,53 @@ test("U6 fix: computePackageDurationWeight excludes slow-tier files from weighti
   // slow file (which the package `test` script never runs).
   assert.equal(weighted.weight, 400);
   assert.equal(weighted.partiallyUntimed, false);
+});
+
+test("CI evidence: an early preflight failure emits a collector-compatible diagnostic payload", (t) => {
+  const binDir = mkdtempSync(path.join(tmpdir(), "ci-shard-failing-pnpm-"));
+  const fakePnpm = path.join(binDir, "pnpm");
+  const diagnosticFile = path.join(REPO_ROOT, ".timings", "timings-shard4-diagnostic.json");
+  const priorDiagnostic = existsSync(diagnosticFile) ? readFileSync(diagnosticFile) : null;
+  writeFileSync(fakePnpm, "#!/bin/sh\nexit 23\n");
+  chmodSync(fakePnpm, 0o755);
+  t.after(() => {
+    rmSync(binDir, { recursive: true, force: true });
+    if (priorDiagnostic) writeFileSync(diagnosticFile, priorDiagnostic);
+    else rmSync(diagnosticFile, { force: true });
+  });
+
+  const result = spawnSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-test-shard.mjs"), "--shard", "4", "--total", "4"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    },
+  );
+
+  assert.notEqual(result.status, 0, result.stderr);
+  const payload = JSON.parse(readFileSync(diagnosticFile, "utf8"));
+  assert.deepEqual(payload.testResults, []);
+  assert.deepEqual(payload.fusionShardDiagnostic, {
+    version: 1,
+    shard: 4,
+    total: 4,
+    stage: "preflight",
+    exitCode: 23,
+    signal: null,
+    timedOut: false,
+  });
+});
+
+test("CI evidence: diagnostic payload uses the timing artifact shape without inventing failures", (t) => {
+  const projectRoot = mkdtempSync(path.join(tmpdir(), "ci-shard-diagnostic-"));
+  t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+  const outputFile = writeShardDiagnosticPayload({ shard: 2, total: 4, stage: "test-command", timedOut: true, exitCode: 124 }, { projectRoot });
+  const payload = JSON.parse(readFileSync(outputFile, "utf8"));
+  assert.deepEqual(payload.testResults, []);
+  assert.equal(payload.fusionShardDiagnostic.stage, "test-command");
+  assert.equal(payload.fusionShardDiagnostic.timedOut, true);
 });
 
 test("U6: buildShardCommands forwards JSON timing flags to plain package test scripts", () => {

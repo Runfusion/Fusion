@@ -76,30 +76,34 @@ describe("mergeTaskPr native auto-merge", () => {
     expect(scopedStore.applyPrMergedTransition).not.toHaveBeenCalled();
   });
 
-  it("transitions only when GitHub already reports the PR merged", async () => {
+  it("delegates an already merged native auto-merge PR to the closeout owner", async () => {
     const scopedStore = store({ githubNativeAutoMerge: true });
+    const reconcileMerged = vi.fn().mockResolvedValue(true);
     mockClient({ ...prInfo, status: "merged" });
 
-    await mergeTaskPr(scopedStore as never, { id: "FN-8", prInfo } as never, undefined);
+    await mergeTaskPr(scopedStore as never, { id: "FN-8", prInfo } as never, undefined, undefined, undefined, reconcileMerged);
 
-    expect(scopedStore.applyPrMergedTransition).toHaveBeenCalledWith("FN-8", expect.any(Object));
+    expect(reconcileMerged).toHaveBeenCalledOnce();
+    expect(scopedStore.applyPrMergedTransition).not.toHaveBeenCalled();
   });
 
-  it("reconciles a freshly observed external merge before rejecting stale direct-merge readiness", async () => {
+  it("delegates a freshly observed external merge before rejecting stale direct-merge readiness", async () => {
     const scopedStore = store();
+    const reconcileMerged = vi.fn().mockResolvedValue(true);
     const GitHubClient = mockClient(
       prInfo,
       false,
       { ...prInfo, status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:58:00.000Z" },
     );
 
-    const result = await mergeTaskPr(scopedStore as never, { id: "FN-8", prInfo } as never, undefined);
+    const result = await mergeTaskPr(scopedStore as never, { id: "FN-8", prInfo } as never, undefined, undefined, undefined, reconcileMerged);
 
     expect(result.status).toBe("merged");
     expect(scopedStore.updatePrInfo).toHaveBeenCalledWith("FN-8", expect.objectContaining({
       status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:58:00.000Z",
     }));
-    expect(scopedStore.applyPrMergedTransition).toHaveBeenCalledWith("FN-8", expect.any(Object));
+    expect(reconcileMerged).toHaveBeenCalledOnce();
+    expect(scopedStore.applyPrMergedTransition).not.toHaveBeenCalled();
     expect(GitHubClient.prototype.mergePr).not.toHaveBeenCalled();
   });
 
