@@ -2754,11 +2754,37 @@ describe("POST /tasks/:id/approve-plan", () => {
       expect(items).toContainEqual(expect.objectContaining({ state: "held", waitReason: "capacity", sourceColumn: "todo" }));
       await expect(isUnplannedForExecution(integrationStore, task, ir)).resolves.toBe(false);
 
-      const scheduler = new Scheduler(integrationStore, { onSchedule: scheduled });
+      const scheduler = new Scheduler(integrationStore, {
+        onSchedule: scheduled,
+        agentStore: {
+          getAgent: vi.fn(async (id: string) => id === "executor-1" ? { id, state: "active" } : undefined),
+        } as unknown as import("@fusion/core").AgentStore,
+      });
       (scheduler as unknown as { running: boolean }).running = true;
       await scheduler.schedule();
+      expect(scheduled).toHaveBeenCalledTimes(1);
       expect(scheduled).toHaveBeenCalledWith(expect.objectContaining({ id: task.id, column: "in-progress" }));
       expect(logs).not.toContain("Execution dispatch refused — task is still unplanned");
+
+      /*
+      FNXC:PlanApprovalScheduling 2026-10-05-07:32:
+      A real approved-plan handoff may dispatch only when its assigned durable owner is eligible.
+      Re-run the scheduler with a missing owner to retain the admission fence beside the route-to-capacity path.
+      */
+      task.column = "todo";
+      const unavailableScheduled = vi.fn();
+      const unavailableScheduler = new Scheduler(integrationStore, {
+        onSchedule: unavailableScheduled,
+        agentStore: {
+          getAgent: vi.fn(async () => undefined),
+          getActiveHeartbeatRun: vi.fn(async () => undefined),
+          handoffTaskToWorkflowExecutor: vi.fn(async () => undefined),
+        } as unknown as import("@fusion/core").AgentStore,
+      });
+      (unavailableScheduler as unknown as { running: boolean }).running = true;
+      await unavailableScheduler.schedule();
+      expect(task.column).toBe("todo");
+      expect(unavailableScheduled).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

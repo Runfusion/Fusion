@@ -114,4 +114,29 @@ describe("scheduler releases workflow tasks for durable principal routing", () =
       expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: ready.id, column: "in-progress" }));
       expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowScheduling 2026-10-05-07:32:
+  Assigned tasks require an eligible durable owner at scheduler admission.
+  Missing owner lookup must preserve the hold and suppress dispatch rather than recreating permissive release behavior.
+  */
+  it("does not release an assigned task when its owner is missing", async () => {
+      const ready = task({ id: "FN-9503-SCHEDULER-MISSING-OWNER", assignedAgentId: "durable-owner" });
+      const store = storeWith(ready);
+      const onSchedule = vi.fn();
+      const scheduler = new Scheduler(store, {
+        onSchedule,
+        agentStore: {
+          getAgent: vi.fn(async () => undefined),
+          getActiveHeartbeatRun: vi.fn(async () => undefined),
+          handoffTaskToWorkflowExecutor: vi.fn(async () => undefined),
+        } as unknown as import("@fusion/core").AgentStore,
+      });
+      (scheduler as unknown as { running: boolean }).running = true;
+
+      await scheduler.schedule();
+
+      expect(ready.column).toBe("todo");
+      expect(onSchedule).not.toHaveBeenCalled();
+  });
 });
