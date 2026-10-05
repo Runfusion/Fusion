@@ -376,12 +376,16 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Download required shard timing artifacts
+        id: download-shard-timings
+        continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           pattern: test-timings-shard-*
           path: post-merge-evidence
 
       - name: Download required pipeline smoke report
+        id: download-pipeline-smoke
+        continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           name: pipeline-smoke-report
@@ -391,128 +395,11 @@ jobs:
         env:
           TEST_SHARDS_RESULT: ${{ needs.test-shards.result }}
           PIPELINE_SMOKE_RESULT: ${{ needs.test-pipeline-smoke.result }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { readdir, readFile, writeFile } from "node:fs/promises";
-          import path from "node:path";
-          import { expectedPipelineInvocations } from "./packages/engine/src/__tests__/pipeline-smoke/_pipeline-scenario-manifest.mjs";
+        run: node scripts/post-merge-full-suite-evidence.mjs
 
-          const requiredArtifacts = [
-            "test-timings-shard-1",
-            "test-timings-shard-2",
-            "test-timings-shard-3",
-            "test-timings-shard-4",
-          ];
-
-          async function jsonFiles(root) {
-            const entries = await readdir(root, { withFileTypes: true });
-            const files = [];
-            for (const entry of entries) {
-              const child = path.join(root, entry.name);
-              if (entry.isDirectory()) files.push(...await jsonFiles(child));
-              else if (entry.isFile() && entry.name.endsWith(".json")) files.push(child);
-            }
-            return files;
-          }
-
-          const shards = [];
-          for (const artifact of requiredArtifacts) {
-            const artifactRoot = path.join("post-merge-evidence", artifact);
-            const files = await jsonFiles(artifactRoot);
-            if (files.length === 0) throw new Error(`${artifact} contains no timing JSON`);
-
-            const reports = [];
-            for (const file of files) {
-              const payload = JSON.parse(await readFile(file, "utf8"));
-              if (!Array.isArray(payload.testResults)) {
-                throw new Error(`${file} is not a Vitest timing reporter payload`);
-              }
-              const failedFullNames = payload.testResults.flatMap((result) => {
-                if (!Array.isArray(result?.assertionResults)) {
-                  throw new Error(`${file} has a malformed Vitest assertion result`);
-                }
-                return result.assertionResults
-                  .filter((assertion) => assertion?.status === "failed" && typeof assertion.fullName === "string")
-                  .map((assertion) => assertion.fullName);
-              });
-              const diagnostic = payload?.fusionShardDiagnostic;
-              if (diagnostic !== undefined && (!diagnostic || typeof diagnostic !== "object" || typeof diagnostic.stage !== "string")) {
-                throw new Error(`${file} has a malformed shard diagnostic payload`);
-              }
-              reports.push({
-                path: path.relative("post-merge-evidence", file),
-                testResultCount: payload.testResults.length,
-                failedFullNames: [...new Set(failedFullNames)].sort(),
-                ...(diagnostic ? { diagnostic } : {}),
-              });
-            }
-            shards.push({ artifact, reports });
-          }
-
-          const expectedPipelineKeys = expectedPipelineInvocations()
-            .map(({ id, workflowId, variant }) => `${id}\u0000${workflowId}\u0000${variant ?? ""}`)
-            .sort();
-          const pipelineReportRoot = path.join("post-merge-evidence", "pipeline-smoke-report");
-          const pipelineReportFiles = await jsonFiles(pipelineReportRoot);
-          if (pipelineReportFiles.length !== 1) {
-            throw new Error(`pipeline-smoke-report must contain exactly one JSON report, found ${pipelineReportFiles.length}`);
-          }
-          const pipelineSmoke = JSON.parse(await readFile(pipelineReportFiles[0], "utf8"));
-          if (process.env.PIPELINE_SMOKE_RESULT !== "success" || pipelineSmoke?.passed !== true) {
-            throw new Error(`Pipeline smoke did not pass: job=${process.env.PIPELINE_SMOKE_RESULT}, report=${pipelineSmoke?.passed}`);
-          }
-          if (pipelineSmoke.durationBudgetMs !== 175000 || !Number.isInteger(pipelineSmoke.durationMs) || pipelineSmoke.durationMs < 0 || pipelineSmoke.durationMs > 175000) {
-            throw new Error(`Pipeline smoke must remain within the fixed 175000ms budget; received ${pipelineSmoke?.durationMs}/${pipelineSmoke?.durationBudgetMs}`);
-          }
-          const records = pipelineSmoke.records;
-          if (!Array.isArray(records) || records.length !== expectedPipelineKeys.length) {
-            throw new Error(`Pipeline smoke must retain exactly ${expectedPipelineKeys.length} scenario records`);
-          }
-          const recordKeys = records.map((record) => `${record?.scenarioId ?? ""}\u0000${record?.workflowId ?? ""}\u0000${record?.variant ?? ""}`);
-          const sortedRecordKeys = [...recordKeys].sort();
-          if (new Set(recordKeys).size !== recordKeys.length || JSON.stringify(sortedRecordKeys) !== JSON.stringify(expectedPipelineKeys)) {
-            throw new Error("Pipeline smoke invocation census is incomplete, duplicate, or unexpected");
-          }
-          if (records.some((record) => record?.verdict !== "pass" || record?.expectedTerminal !== record?.observedTerminal || record?.wedge)) {
-            throw new Error("Pipeline smoke contains a failed, wedged, or terminally inconsistent scenario");
-          }
-          if (!Array.isArray(pipelineSmoke.invocationKeys) || JSON.stringify([...pipelineSmoke.invocationKeys].sort()) !== JSON.stringify(expectedPipelineKeys)) {
-            throw new Error("Pipeline smoke summary invocation keys do not match the manifest census");
-          }
-          const normalizedPipelineSmoke = {
-            report: path.relative("post-merge-evidence", pipelineReportFiles[0]),
-            conclusion: process.env.PIPELINE_SMOKE_RESULT,
-            durationMs: pipelineSmoke.durationMs,
-            durationBudgetMs: pipelineSmoke.durationBudgetMs,
-            invocationCount: records.length,
-          };
-
-          const evidence = {
-            version: 2,
-            run: {
-              repository: process.env.GITHUB_REPOSITORY,
-              runId: process.env.GITHUB_RUN_ID,
-              sha: process.env.GITHUB_SHA,
-              url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
-            },
-            producers: {
-              testShards: {
-                conclusion: process.env.TEST_SHARDS_RESULT,
-                nonBlocking: true,
-              },
-              pipelineSmoke: {
-                conclusion: process.env.PIPELINE_SMOKE_RESULT,
-                nonBlocking: true,
-              },
-            },
-            shards,
-            pipelineSmoke: normalizedPipelineSmoke,
-          };
-          await writeFile("post-merge-evidence/manifest.json", `${JSON.stringify(evidence, null, 2)}\n`);
-          console.log(`Retained ${shards.length} shard artifacts and ${records.length} Pipeline smoke records; test-shards=${process.env.TEST_SHARDS_RESULT}, pipeline-smoke=${process.env.PIPELINE_SMOKE_RESULT}.`);
-          NODE
 
       - name: Retain normalized post-merge evidence
+        if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: post-merge-full-suite-evidence

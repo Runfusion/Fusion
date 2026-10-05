@@ -560,6 +560,21 @@ describe("Full suite workflow (.github/workflows/full-suite.yml)", () => {
     expect(content).toContain("test-timings-shard-${{ matrix.shard }}");
   });
 
+  it("retains fail-closed diagnostic evidence when a post-merge producer download or validation fails", () => {
+    const steps = workflow.jobs?.["post-merge-evidence-gate"]?.steps ?? [];
+    const shardDownload = steps.find((step: any) => step.name === "Download required shard timing artifacts");
+    const smokeDownload = steps.find((step: any) => step.name === "Download required pipeline smoke report");
+    const normalizeIndex = steps.findIndex((step: any) => step.name === "Validate and normalize shard and Pipeline smoke evidence");
+    const retainIndex = steps.findIndex((step: any) => step.name === "Retain normalized post-merge evidence");
+
+    expect(shardDownload?.["continue-on-error"]).toBe(true);
+    expect(smokeDownload?.["continue-on-error"]).toBe(true);
+    expect(steps[normalizeIndex]?.run).toBe("node scripts/post-merge-full-suite-evidence.mjs");
+    expect(steps[retainIndex]?.if).toBe("always()");
+    expect(retainIndex).toBeGreaterThan(normalizeIndex);
+    expect(steps[retainIndex]?.with?.path).toBe("post-merge-evidence/manifest.json");
+  });
+
   /*
   FNXC:CIGateSpeed 2026-07-22-23:30:
   Caches saved on a PR merge ref are invisible to other PRs, so the gate's
