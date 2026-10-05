@@ -153,6 +153,44 @@ describe("registerModelRoutes grok-cli merge and filter", () => {
     expect(response.models.filter((m) => m.provider === "grok-cli")).toHaveLength(1);
   });
 
+  it("projects refreshed xAI metadata to grok-cli before constructing the response", async () => {
+    const handlers = new Map<string, (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>>();
+    let piRows = [{ provider: "xai", id: "grok-before-refresh", name: "Stale", reasoning: false, contextWindow: 1 }];
+    let availableRows: Array<{ provider: string; id: string; name: string; reasoning: boolean; contextWindow: number }> = [];
+    const registry = {
+      refresh: vi.fn(async () => {
+        piRows = [{ provider: "xai", id: "grok-refreshed", name: "Refreshed Pi Grok", reasoning: true, contextWindow: 222_222 }];
+      }),
+      getAll: vi.fn(() => piRows),
+      getAvailable: vi.fn(() => availableRows),
+      unregisterProvider: vi.fn(() => { availableRows = []; }),
+      registerProvider: vi.fn((provider: string, config: { models: typeof piRows }) => {
+        availableRows = config.models.map((model) => ({ ...model, provider }));
+      }),
+    };
+    const router = {
+      get: vi.fn((path: string, handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) => handlers.set(path, handler)),
+      post: vi.fn(),
+    } as unknown as Router;
+    registerModelRoutes({
+      router,
+      store: {
+        getGlobalSettingsStore: () => ({ getSettings: vi.fn().mockResolvedValue({ useGrokCli: true }) }),
+        getSettingsFast: vi.fn().mockResolvedValue({}),
+      } as never,
+      runtimeLogger: { child: vi.fn(() => ({ warn: vi.fn() })) } as never,
+      options: { modelRegistry: registry } as never,
+    } as never);
+
+    const response = await invoke(handlers.get("/models")!);
+    expect(response.models).toContainEqual(expect.objectContaining({
+      provider: "grok-cli",
+      id: "grok-refreshed",
+      name: "Refreshed Pi Grok",
+    }));
+    expect(response.models).not.toContainEqual(expect.objectContaining({ id: "grok-before-refresh" }));
+  });
+
   it("final response is deduped by provider/id across all merged sources", async () => {
     mockedGetGrokPickerModels.mockResolvedValue([
       { provider: "grok-cli", id: "grok-dup", name: "A", reasoning: false, contextWindow: 0 },

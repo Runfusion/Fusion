@@ -403,6 +403,7 @@ const mocks = vi.hoisted(() => {
   const modelRegistry = {
     getAll: vi.fn().mockReturnValue([]),
     registerProvider: vi.fn(),
+    unregisterProvider: vi.fn(),
     refresh: vi.fn(),
   };
   /*
@@ -941,13 +942,20 @@ describe("runServe", () => {
     expect(process.exit).toHaveBeenCalledWith(130);
   });
 
-  it("registers built-in zai GLM-5.2 before refreshing models", async () => {
+  it("projects refreshed Pi xAI rows under grok-cli", async () => {
+    mocks.modelRegistry.getAll.mockReturnValue([{
+      provider: "xai",
+      id: "grok-dynamic",
+      name: "Pi Grok",
+      reasoning: true,
+    }]);
+
     await runServe(0, {});
 
-    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith("zai", expect.objectContaining({
-      models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
-    }));
     expect(mocks.modelRegistry.refresh).toHaveBeenCalled();
+    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith("grok-cli", expect.objectContaining({
+      models: [expect.objectContaining({ id: "grok-dynamic", name: "Pi Grok", reasoning: true })],
+    }));
 
     await triggerSignal("SIGINT");
   });

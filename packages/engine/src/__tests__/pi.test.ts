@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
+import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, createPiAgentSessionRaw, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
 import { createAgentSession, ModelRegistry, ModelRuntime, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
@@ -380,6 +380,37 @@ describe("createFnAgent skills parameter", () => {
     piWarnSpy.mockRestore();
     piErrorSpy.mockRestore();
     vi.clearAllMocks();
+  });
+
+  it("projects xAI metadata only after the session catalog refresh", async () => {
+    let models = [{ provider: "xai", id: "grok-stale", name: "Stale Pi Grok" }];
+    const registerProvider = vi.fn();
+    const registry = {
+      find: vi.fn((provider: string, id: string) => ({ provider, id, name: id })),
+      getAll: vi.fn(() => models),
+      registerProvider,
+      unregisterProvider: vi.fn(),
+      refresh: vi.fn(() => {
+        models = [{ provider: "xai", id: "grok-refreshed", name: "Refreshed Pi Grok", reasoning: true }];
+      }),
+    };
+    vi.mocked(ModelRegistry).mockImplementationOnce(function () { return registry as any; } as any);
+
+    await createPiAgentSessionRaw({
+      cwd: "/test/project",
+      systemPrompt: "Test dynamic Grok catalog",
+      defaultProvider: "grok-cli",
+      defaultModelId: "grok-refreshed",
+    });
+
+    const grokRegistrations = registerProvider.mock.calls
+      .filter(([provider]) => provider === "grok-cli")
+      .map(([, config]) => config as { models: Array<{ id: string; name: string; reasoning?: boolean }> });
+    expect(grokRegistrations).not.toHaveLength(0);
+    expect(grokRegistrations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ models: [expect.objectContaining({ id: "grok-refreshed", name: "Refreshed Pi Grok", reasoning: true })] }),
+    ]));
+    expect(grokRegistrations.flatMap(({ models: rows }) => rows)).not.toContainEqual(expect.objectContaining({ id: "grok-stale" }));
   });
 
   it("injects only resolved forced skills through the shared resource-loader prompt seam (FN-9114)", async () => {

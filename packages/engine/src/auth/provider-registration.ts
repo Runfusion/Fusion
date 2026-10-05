@@ -13,14 +13,7 @@ mergeBuiltInZaiProviderModels -> modelRegistry.refresh() -> registerCustomProvid
 DashboardAuthStorage callers MUST pass to `createServer(...)` (not the raw authStorage) plus a
 disposer to unsubscribe the settings listener on shutdown.
 */
-import {
-  mergeBuiltInGrokProviderModels,
-  mergeBuiltInZaiProviderModels,
-  registerBuiltInGrokProvider,
-  registerBuiltInZaiProvider,
-  type CustomProvider,
-  type TaskStore,
-} from "@fusion/core";
+import { hydrateGrokApiKeyFromUserSettings, projectPiXaiModelsToGrokCli, type CustomProvider, type TaskStore } from "@fusion/core";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { FusionAuthStorage } from "./auth-storage.js";
 import {
@@ -65,12 +58,8 @@ export async function seedDashboardProviders(
   const { store, authStorage, modelRegistry } = options;
   const log = options.log ?? (() => {});
 
-  registerBuiltInZaiProvider(modelRegistry, (message) => log("extensions", message));
-  registerBuiltInGrokProvider(modelRegistry, (message) => log("extensions", message));
+  hydrateGrokApiKeyFromUserSettings((message) => log("extensions", message));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
-
-  mergeBuiltInZaiProviderModels(modelRegistry, (message) => log("extensions", message));
-  mergeBuiltInGrokProviderModels(modelRegistry, (message) => log("extensions", message));
   /*
   FNXC:ModelRegistry 2026-07-21-17:15:
   Bound the post-seed refresh so a hung remote catalog cannot leave desktop/CLI
@@ -79,6 +68,7 @@ export async function seedDashboardProviders(
   await refreshFusionModelRegistry(modelRegistry as RefreshableModelRegistry, {
     log: (message) => log("extensions", message),
   });
+  projectPiXaiModelsToGrokCli(modelRegistry, (message) => log("extensions", message));
 
   try {
     const globalSettings = await store.getGlobalSettingsStore().getSettings();

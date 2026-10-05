@@ -22,11 +22,7 @@ import {
   isWorkspaceTask,
   resolveColumnFlags,
   resolveDefaultWorkflowIr,
-  mergeBuiltInGrokProviderModels,
-  mergeBuiltInZaiProviderModels,
   parseWorkflowIr,
-  registerBuiltInGrokProvider,
-  registerBuiltInZaiProvider,
   MissionStore,
   type WorkflowIrColumn,
   type TraitFlags,
@@ -40,6 +36,8 @@ import {
   DEFAULT_PROJECT_SETTINGS,
   resolveEffectiveConcurrency,
   resolveWorktreeCapacityLimit,
+  hydrateGrokApiKeyFromUserSettings,
+  projectPiXaiModelsToGrokCli,
   type WorkflowIr,
 } from "@fusion/core";
 
@@ -1873,8 +1871,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   */
   const authStorage = createFusionAuthStorage();
   const modelRegistry = await createFusionModelRegistry(authStorage);
-  registerBuiltInZaiProvider(modelRegistry, (message) => logSink.log(message, "extensions"));
-  registerBuiltInGrokProvider(modelRegistry, (message) => logSink.log(message, "extensions"));
+  hydrateGrokApiKeyFromUserSettings((message) => logSink.warn(message, "extensions"));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
   // PackageManager may be used for skills adapter even if extension loading fails.
@@ -2000,8 +1997,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     }
 
     extensionsResult.runtime.pendingProviderRegistrations = [];
-    mergeBuiltInZaiProviderModels(modelRegistry, (message) => logSink.log(message, "extensions"));
-    mergeBuiltInGrokProviderModels(modelRegistry, (message) => logSink.log(message, "extensions"));
     /*
     FNXC:ModelRegistry 2026-07-21-17:15:
     Unbounded modelRegistry.refresh() left the TUI on "Loading extensions…" forever when a remote
@@ -2010,6 +2005,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     await refreshFusionModelRegistry(modelRegistry, {
       log: (message) => logSink.log(message, "extensions"),
     });
+    projectPiXaiModelsToGrokCli(modelRegistry, (message) => logSink.warn(message, "extensions"));
 
     try {
       const globalSettings = await store.getGlobalSettingsStore().getSettings();
@@ -2038,6 +2034,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     await refreshFusionModelRegistry(modelRegistry, {
       log: (message) => logSink.log(message, "extensions"),
     });
+    projectPiXaiModelsToGrokCli(modelRegistry, (message) => logSink.warn(message, "extensions"));
   }
 
   void syncStartupModels({

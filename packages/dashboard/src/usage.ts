@@ -5,8 +5,8 @@ import * as https from "node:https";
 import * as child_process from "node:child_process";
 import {
   choosePreferredStoredCredential,
+  GROK_API_BASE_URL,
   GROK_CLI_PROVIDER_ID,
-  GROK_PROVIDER_REGISTRATION,
   readStoredCredentialsFromAuthFile,
 } from "@fusion/core";
 import { getAuthFileCandidates } from "./auth-paths.js";
@@ -1821,7 +1821,7 @@ async function fetchGrokUsage(authStorage?: AuthStorageLike): Promise<ProviderUs
     FNXC:UsageProviders 2026-07-10-00:00:
     xAI's inference key exposes GET /api-key as the verified auth-validity endpoint on the same direct provider base URL Fusion already uses for `grok-cli`. The public xAI API does not document a subscription reset-window or remaining-quota meter for inference keys, so this provider must remain an auth-validity card unless xAI returns confirmed consumption data in this response or standard rate-limit headers. Do not fabricate percent-used, reset timestamps, or UsageWindow entries from key metadata alone.
     */
-    const res = await httpsRequest(`${GROK_PROVIDER_REGISTRATION.baseUrl}/api-key`, {
+    const res = await httpsRequest(`${GROK_API_BASE_URL}/api-key`, {
       method: "GET",
       headers: {
         authorization: `Bearer ${apiKey}`,

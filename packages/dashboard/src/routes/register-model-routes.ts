@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { customProviderRegistryKey, mergeSupplementalAnthropicModels, mergeSupplementalOpenAiCodexModels, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
+import { customProviderRegistryKey, projectPiXaiModelsToGrokCli, resolvePlanningSettingsModel, toExecutionModelProviderId, ANTHROPIC_API_KEY_PROVIDER_ID, ANTHROPIC_PROVIDER_ID, ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, THINKING_LEVELS, type ThinkingLevel } from "@fusion/core";
 import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
@@ -271,6 +271,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
 
     invalidateModelRegistryRefreshCache(options.modelRegistry);
     const outcome = await refreshModelRegistryForRequest(options.modelRegistry);
+    projectPiXaiModelsToGrokCli(options.modelRegistry as unknown as Parameters<typeof projectPiXaiModelsToGrokCli>[0]);
     res.json(outcome === "failed"
       ? { outcome, error: "Model catalog refresh failed; showing the last available models." }
       : { outcome });
@@ -384,16 +385,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       if (["timed_out", "failed", "stale_in_flight", "negative_cached"].includes(refreshOutcome)) {
         runtimeLogger.child("models").warn(`Model registry refresh outcome: ${refreshOutcome}; serving retained catalog`);
       }
-      /*
-      FNXC:ModelCatalog 2026-10-01-02:51:
-      Refresh can replace provider rows, including on retained-catalog paths. Reapply the
-      upstream-first Anthropic compatibility merge on every request so Pi 1.0.2 exposes the
-      two 5.5 records without replacing newer upstream metadata or credential configuration.
-      */
-      if (options.modelRegistry.registerProvider) {
-        mergeSupplementalAnthropicModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalAnthropicModels>[0], (message) => runtimeLogger.child("models").warn(message));
-        mergeSupplementalOpenAiCodexModels(options.modelRegistry as unknown as Parameters<typeof mergeSupplementalOpenAiCodexModels>[0], (message) => runtimeLogger.child("models").warn(message));
-      }
+      projectPiXaiModelsToGrokCli(options.modelRegistry as unknown as Parameters<typeof projectPiXaiModelsToGrokCli>[0], (message) => runtimeLogger.child("models").warn(message));
       let models: Array<{
         provider: string;
         id: string;
