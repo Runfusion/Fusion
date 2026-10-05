@@ -3965,7 +3965,7 @@ describe("PR conflict refresh + reclaim routes", () => {
     expect(store.updatePrInfoByNumber).toHaveBeenCalledWith(task.id, task.prInfo.number, expect.objectContaining({
       status: "merged", mergeCommitSha: "external-sha", mergedAt: "2026-09-29T05:00:00.000Z",
     }));
-    expect(store.applyPrMergedTransition).toHaveBeenCalledWith(task.id, expect.objectContaining({ agentId: "dashboard" }));
+    expect(store.applyPrMergedTransition).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
@@ -4025,7 +4025,7 @@ describe("PR conflict refresh + reclaim routes", () => {
 
     const res = await responsePromise;
     expect(res.status).toBe(200);
-    expect(store.applyPrMergedTransition).toHaveBeenCalledWith(task.id, expect.objectContaining({ agentId: "dashboard" }));
+    expect(store.applyPrMergedTransition).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
@@ -4389,7 +4389,7 @@ describe("PR conflict refresh + reclaim routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.prInfo.status).toBe("merged");
-    expect(store.applyPrMergedTransition).toHaveBeenCalledTimes(1);
+    expect(store.applyPrMergedTransition).not.toHaveBeenCalled();
     expect(store.updatePrInfo).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "merged", lastMergeError: undefined }));
     expect(mergePrSpy).toHaveBeenCalledTimes(1);
     expect(getPrMergeStatusSpy).toHaveBeenCalledTimes(2);

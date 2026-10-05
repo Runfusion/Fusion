@@ -1889,6 +1889,10 @@ export class GitHubClient {
       return "failure";
     };
     const capability = { state: "supported" as const };
+    const mergeCommitIncludesHead = status.prInfo.status === "merged"
+      && status.prInfo.mergeCommitSha
+      ? await this.verifyMergedCommitIncludesHead(owner, repo, head, status.prInfo.mergeCommitSha)
+      : undefined;
     return {
       prInfo: status.prInfo,
       snapshot: {
@@ -1901,6 +1905,7 @@ export class GitHubClient {
         protectionBlockers: status.blockingReasons,
         state: status.prInfo.status === "merged" ? "merged" : status.prInfo.status === "closed" ? "closed" : "open",
         ...(status.prInfo.mergeCommitSha ? { mergeCommitSha: status.prInfo.mergeCommitSha } : {}),
+        ...(mergeCommitIncludesHead !== undefined ? { mergeCommitIncludesHead } : {}),
         // GitHub's existing merge-status read does not request deployment or update-branch data.
         // Mark those capabilities explicitly instead of encoding their absence as pending.
         deployments: { state: "unsupported" },
@@ -1911,6 +1916,35 @@ export class GitHubClient {
         observedAt: new Date().toISOString(),
       },
     };
+  }
+
+  /*
+  FNXC:ExternalPrCloseout 2026-10-05-03:15:
+  A merged PR status and merge SHA do not prove that Fusion's recorded head landed.
+  Compare the observed head to the merge commit at the provider so recovery can
+  fail closed on a foreign or mismatched merge without consulting local branches.
+  */
+  private async verifyMergedCommitIncludesHead(
+    owner: string | undefined,
+    repo: string | undefined,
+    headOid: string,
+    mergeCommitSha: string,
+  ): Promise<boolean | undefined> {
+    const resolved = this.resolveRepo(owner, repo);
+    const endpoint = `repos/${encodeURIComponent(resolved.owner)}/${encodeURIComponent(resolved.repo)}/compare/${encodeURIComponent(headOid)}...${encodeURIComponent(mergeCommitSha)}`;
+    try {
+      if (this.hasGhAuth()) {
+        const comparison = await runGhJsonAsync<{ status?: string }>(["api", endpoint]);
+        return comparison.status === "behind" || comparison.status === "identical";
+      }
+      if (!this.token) return undefined;
+      const response = await fetch(`${this.baseUrl}/${endpoint}`, { headers: this.buildHeaders() });
+      if (!response.ok) return undefined;
+      const comparison = await response.json() as { status?: string };
+      return comparison.status === "behind" || comparison.status === "identical";
+    } catch {
+      return undefined;
+    }
   }
 
   async getPrMergeStatus(owner: string | undefined, repo: string | undefined, number: number, options?: PrCheckGateOptions): Promise<PrMergeStatus> {

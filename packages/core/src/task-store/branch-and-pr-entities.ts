@@ -122,7 +122,14 @@ export async function listActivePrEntitiesImpl(store: TaskStore): Promise<PrEnti
     return listActivePrEntitiesAsync(layer.db, layer.projectId);
 }
 
-export async function updatePrReadinessImpl(store: TaskStore, id: string, expectedStoredHeadOid: string | undefined, provider: string, snapshot: PrReadinessSnapshot): Promise<PrEntity | null> {
+export async function updatePrReadinessImpl(
+  store: TaskStore,
+  id: string,
+  expectedStoredHeadOid: string | undefined,
+  provider: string,
+  snapshot: PrReadinessSnapshot,
+  deferMergedTerminalState = false,
+): Promise<PrEntity | null> {
   const layer = store.asyncLayer!;
   return layer.transactionImmediate(async (tx) => {
     const entity = await getPrEntityAsync(tx, id, layer.projectId);
@@ -130,7 +137,15 @@ export async function updatePrReadinessImpl(store: TaskStore, id: string, expect
     if (entity.sourceType === "task") {
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, entity.sourceId);
     }
-    return updatePrReadinessAsync(tx, id, expectedStoredHeadOid, provider, snapshot, layer.projectId);
+    return updatePrReadinessAsync(
+      tx,
+      id,
+      expectedStoredHeadOid,
+      provider,
+      snapshot,
+      layer.projectId,
+      deferMergedTerminalState,
+    );
   });
 }
 

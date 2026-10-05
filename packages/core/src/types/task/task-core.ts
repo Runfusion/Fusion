@@ -550,6 +550,8 @@ export interface PrReadinessSnapshot {
   protectionBlockers: string[];
   state: "open" | "closed" | "merged";
   mergeCommitSha?: string;
+  /** A fresh provider comparison proved this merge commit contains observedHeadOid. */
+  mergeCommitIncludesHead?: boolean;
   deployments: PrReadinessCapability;
   branchUpdate: PrReadinessCapability;
   checks: PrReadinessCapability;

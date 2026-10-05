@@ -403,6 +403,8 @@ const PRE_EXECUTION_WORKTREE_MAX_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
 export interface SelfHealingOptions {
   /** Project root directory (parent of .worktrees/) */
   rootDir: string;
+  /** Refreshes authoritative provider PR state before external-merge recovery. */
+  reconcileFreshExternalPrs?: () => Promise<number>;
   /** Injected only by tests; production uses exact profile + daemon-ancestry discovery. */
   reapExpiredFusionBrowserLeases?: () => Promise<number>;
   /*
@@ -995,6 +997,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private readonly githubCheckStateRetentionLastPrunedAt = new Map<string, number>();
   private readonly processBootStartedAt = Date.now();
   private lastDbCorruptionNotifiedAt: number | null = null;
+  private reconcileFreshExternalPrs?: () => Promise<number>;
 
   private boardStallWindow: {
     windowStartMs: number;
@@ -1027,6 +1030,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     /* U4 substrate PR1: the git-evidence readers moved to a base class, so this
        derived constructor needs an explicit super(). No other change. */
     super();
+    this.reconcileFreshExternalPrs = options.reconcileFreshExternalPrs;
   }
 
   /*
@@ -12737,36 +12741,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   // ── Misclassified failure recovery ───────────────────────────────
 
+  /** Install the runtime-owned authoritative provider refresh after startup wiring completes. */
+  setFreshExternalPrReconciler(reconciler: (() => Promise<number>) | undefined): void {
+    this.reconcileFreshExternalPrs = reconciler;
+  }
+
   /**
-   * Finalize review cards whose durable PR mirror already records an external merge.
-   *
-   * This is deliberately provider-independent: dashboard/CLI adapters write the remote state, and the
-   * TaskStore transition owns proof persistence and lifecycle movement. A closed PR is excluded because
-   * it is not merge evidence; active merger ownership is left untouched for its current owner to settle.
+   * Refresh provider state before recovery; persisted PR mirrors are never sufficient merge proof.
    */
   async reconcileExternallyMergedPrTasks(): Promise<number> {
-    const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
-    const candidates = new Map<string, Task>();
-    for (const column of reviewColumns) {
-      for (const task of await this.store.listTasks({ column, slim: true })) {
-        const prInfos = task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
-        if (task.deletedAt || task.paused || ["merging", "merging-pr", "merging-fix"].includes(task.status ?? "") || !prInfos.some((pr) => pr.status === "merged")) continue;
-        candidates.set(task.id, task);
-      }
-    }
-
-    let reconciled = 0;
-    for (const task of candidates.values()) {
-      const result = await this.store.applyPrMergedTransition(task.id, {
-        agentId: "self-healing",
-        runId: generateSyntheticRunId("external-pr-reconcile", task.id),
-      }).catch((error) => {
-        log.warn(`External PR reconciliation failed for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
-        return { moved: false };
-      });
-      if (result.moved) reconciled++;
-    }
-    return reconciled;
+    /*
+    FNXC:ExternalPrCloseout 2026-10-05-03:15:
+    Self-healing used to complete cards from a persisted `status:"merged"` mirror.
+    Only the ProjectEngine-owned reconciler can refresh and corroborate the current
+    head before closeout, so an unwired startup pass safely does nothing.
+    */
+    return this.reconcileFreshExternalPrs ? await this.reconcileFreshExternalPrs() : 0;
   }
 
   /**

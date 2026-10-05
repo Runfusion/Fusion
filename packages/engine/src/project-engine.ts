@@ -95,7 +95,7 @@ import {
 import { extractAdvisorAssistantText } from "./overseer/overseer-advise-tool.js";
 import { createResolvedAgentSession } from "./agents/agent-session-helpers.js";
 import type { PrNodeGithubOps } from "./merge/pr-nodes.js";
-import { PrReconciler, type PrReconcileGithubOps } from "./merge/pr-reconcile.js";
+import { PrReconciler, type PrReconcileFetchResult, type PrReconcileGithubOps } from "./merge/pr-reconcile.js";
 import { PrCommentHandler } from "./merge/pr-comment-handler.js";
 import { NtfyNotifier } from "./util/notifier.js";
 import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthRefreshScheduler, OAuthValidityLogger } from "./notification/index.js";
@@ -492,6 +492,69 @@ type MergeResolver = {
   reject: (err: Error) => void;
   graphOwnedPostMergeTraversal?: boolean;
 };
+
+const EXTERNAL_MERGE_REGION_KINDS = new Set([
+  "merge-gate", "merge-attempt", "manual-merge-hold", "retry-backoff",
+  "recovery-router", "branch-group-member-integration", "branch-group-promotion",
+]);
+
+/** Return the first success-reachable graph-native post-merge boundary for an external landing. */
+export function resolveExternalMergeCloseoutNode(ir: WorkflowIr): string | undefined {
+  const nodes = new Map(ir.nodes.map((node) => [node.id, node]));
+  const successors = new Map<string, string[]>();
+  for (const edge of ir.edges) {
+    if (edge.kind === "rework" || (edge.condition && edge.condition !== "success")) continue;
+    const values = successors.get(edge.from) ?? [];
+    values.push(edge.to);
+    successors.set(edge.from, values);
+  }
+
+  const queue = ir.nodes
+    .filter((node) => EXTERNAL_MERGE_REGION_KINDS.has(node.kind))
+    .map((node) => node.id);
+  const visited = new Set<string>();
+  const postMergeNodes: string[] = [];
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    if (visited.has(nodeId)) continue;
+    visited.add(nodeId);
+    const node = nodes.get(nodeId);
+    if (!node) continue;
+    if (node.kind === "optional-group" && node.config?.phase === "post-merge") {
+      postMergeNodes.push(nodeId);
+      continue;
+    }
+    for (const successor of successors.get(nodeId) ?? []) queue.push(successor);
+  }
+  return postMergeNodes.sort()[0];
+}
+
+/*
+FNXC:ExternalPrCloseout 2026-10-05-04:07:
+A runnable continuation is superseded only when its success path still enters the
+pre-merge region. Unknown and post-merge work retains its existing owner.
+*/
+function isConclusivePreMergeContinuation(ir: WorkflowIr, nodeId: string): boolean {
+  const nodes = new Map(ir.nodes.map((node) => [node.id, node]));
+  const node = nodes.get(nodeId);
+  if (!node || (node.kind === "optional-group" && node.config?.phase === "post-merge")) return false;
+  const successors = new Map<string, string[]>();
+  for (const edge of ir.edges) {
+    if (edge.kind === "rework" || (edge.condition && edge.condition !== "success")) continue;
+    successors.set(edge.from, [...(successors.get(edge.from) ?? []), edge.to]);
+  }
+  const pending = [nodeId];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const current = pending.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const currentNode = nodes.get(current);
+    if (currentNode && EXTERNAL_MERGE_REGION_KINDS.has(currentNode.kind)) return true;
+    pending.push(...(successors.get(current) ?? []));
+  }
+  return false;
+}
 
 export class ProjectEngine {
   private readonly staleContentRerouteAuditKeys = new Set<string>();
@@ -990,6 +1053,111 @@ export class ProjectEngine {
     });
   }
 
+  /**
+   * Reconcile a dashboard-observed PR through the same owner as the background
+   * provider poller. The caller supplies fresh provider evidence; this method
+   * deliberately declines when the observation cannot be bound to an active PR entity.
+   */
+  async reconcileDashboardMergedPr(taskId: string, result: PrReconcileFetchResult): Promise<boolean> {
+    const store = this.runtime.getTaskStore();
+    const task = await store.getTask(taskId);
+    if (!task?.prInfo?.number || !task.prInfo.headOid || result.prNumber !== task.prInfo.number) return false;
+    const entity = await store.getActivePrEntityBySource?.("task", taskId);
+    if (!entity) return false;
+    return this.reconcileExternallyMergedCurrentHead(entity, result);
+  }
+
+  /*
+  FNXC:ExternalPrCloseout 2026-10-05-04:10:
+  Fresh current-head proof may outrank stale retry selection, but never an
+  operator pause or a live executor/merge owner. Re-read under the task fence
+  before retiring a stale continuation so an external landing cannot steal
+  active work or resume a deliberately paused card.
+  */
+  private async reconcileExternallyMergedCurrentHead(
+    entity: import("@fusion/core").PrEntity,
+    result: PrReconcileFetchResult,
+  ): Promise<boolean> {
+    const readiness = result.readiness;
+    if (entity.sourceType !== "task" || readiness?.state !== "merged") return false;
+    const store = this.runtime.getTaskStore();
+    let accepted = false;
+    let closeoutTask: Task | undefined;
+    await store.withPlanningLifecycleLock(entity.sourceId, async () => {
+      const task = await store.getTask(entity.sourceId);
+      if (!task?.prInfo || task.prInfo.number !== entity.prNumber
+        || task.prInfo.headOid !== entity.headOid
+        || readiness.observedHeadOid !== task.prInfo.headOid
+        || result.headOid !== task.prInfo.headOid
+        || !readiness.mergeCommitSha
+        || readiness.mergeCommitIncludesHead !== true
+        || task.paused || task.userPaused || task.deletedAt
+        || isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })
+        || await this.isMergePending(task.id)) return;
+      const ir = await resolveWorkflowIrForTask(store, task.id);
+      const closeoutNodeId = resolveExternalMergeCloseoutNode(ir);
+      const active = (await store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] }))
+        .filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
+      if (active.some((item) => item.state === "running" || item.state === "held")) return;
+      /*
+      FNXC:ExternalPrCloseout 2026-10-05-04:07:
+      Unknown or post-merge continuations have their own owner; only a graph-proven
+      predecessor may be retired by an external-landing handoff.
+      */
+      if (active.some((item) => item.nodeId !== closeoutNodeId && !isConclusivePreMergeContinuation(ir, item.nodeId))) return;
+      const prInfo = {
+        ...task.prInfo,
+        status: "merged" as const,
+        mergeCommitSha: readiness.mergeCommitSha,
+        lastCheckedAt: readiness.observedAt,
+      };
+      await store.updatePrInfo(task.id, prInfo);
+      if (!closeoutNodeId) {
+        const finalized = await store.applyPrMergedTransition(task.id, {
+          agentId: "pr-reconcile",
+          runId: `external-pr-current-head:${entity.id}:${readiness.observedHeadOid}`,
+          externallyLanded: true,
+          lifecycleLockHeld: true,
+        });
+        accepted = finalized.moved;
+        return;
+      }
+      if (active.some((item) => item.nodeId === closeoutNodeId)) return;
+      const live = await store.updateTask(task.id, {
+        status: null,
+        error: null,
+        mergeDetails: {
+          ...task.mergeDetails,
+          mergeConfirmed: true,
+          commitSha: readiness.mergeCommitSha,
+          prNumber: task.prInfo.number,
+        },
+      });
+      await store.replaceActiveTaskWorkflowContinuation({
+        runId: `external-pr-current-head:${entity.id}:${readiness.observedHeadOid}`,
+        taskId: task.id,
+        nodeId: closeoutNodeId,
+        kind: "task",
+        state: "runnable",
+        stableWorkflowRunId: `${task.id}:${ir.name}`,
+        continuationSequence: 0,
+        waitReason: null,
+        sourceColumn: live.column,
+        targetColumn: live.column,
+        irHash: computeWorkflowIrPin(ir, closeoutNodeId).irHash,
+      });
+      closeoutTask = live;
+      accepted = true;
+    });
+    /*
+    FNXC:ExternalPrCloseout 2026-10-05-04:07:
+    Execute after releasing the cross-process lifecycle fence: the durable
+    continuation is the handoff, and graph execution may acquire that fence itself.
+    */
+    if (closeoutTask) await this.runtime.getExecutor?.()?.execute(closeoutTask);
+    return accepted;
+  }
+
   getActiveMergeTaskId(): string | null {
     return this.activeMergeTaskId;
   }
@@ -1422,7 +1590,12 @@ export class ProjectEngine {
         releaseAwaitingChecks: async (taskId, prEntityId, expectedHeadOid) => {
           await store.releaseAwaitingPrChecksIfCurrentHead(taskId, prEntityId, expectedHeadOid);
         },
+        onMergedCurrentHead: async (entity, result) =>
+          this.reconcileExternallyMergedCurrentHead(entity, result),
       });
+      this.runtime.getSelfHealingManager()?.setFreshExternalPrReconciler(async () =>
+        (await this.prReconciler?.reconcileAllOnce() ?? []).length,
+      );
       this.prReconciler.start();
     }
 

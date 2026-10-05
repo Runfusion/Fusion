@@ -267,6 +267,18 @@ function installFinalizationAtomics(store: TaskStore): void {
 }
 
 describe("SelfHealingManager", () => {
+  it("refreshes authoritative PR evidence instead of completing persisted merged mirrors", async () => {
+    const reconcileFreshExternalPrs = vi.fn(async () => 1);
+    const manager = new SelfHealingManager({} as never, {
+      rootDir: "/tmp/external-pr-closeout",
+      reconcileFreshExternalPrs,
+    });
+
+    await expect(manager.reconcileExternallyMergedPrTasks()).resolves.toBe(1);
+
+    expect(reconcileFreshExternalPrs).toHaveBeenCalledOnce();
+  });
+
   let store: TaskStore & EventEmitter;
   let manager: SelfHealingManager;
 

@@ -3012,6 +3012,30 @@ describe("isGitHubIssueAlreadyImported", () => {
 });
 
 describe("getPrReadiness", () => {
+  it("records provider merge inclusion proof for a merged current head", async () => {
+    mockIsGhAvailable.mockReturnValue(true);
+    mockIsGhAuthenticated.mockReturnValue(true);
+    mockRunGhJsonAsync.mockResolvedValue({ status: "behind" });
+    const readinessClient = new GitHubClient();
+    vi.spyOn(readinessClient, "getPrMergeStatus").mockResolvedValue({
+      prInfo: { url: "https://github.com/owner/repo/pull/42", number: 42, status: "merged", title: "Landed", headBranch: "head", baseBranch: "main", headOid: "head-b", mergeCommitSha: "merge-c", commentCount: 0 },
+      baseOid: "base-a",
+      reviewDecision: "APPROVED",
+      checks: [],
+      mergeable: "clean",
+      mergeReady: true,
+      blockingReasons: [],
+    });
+
+    const result = await readinessClient.getPrReadiness("owner", "repo", 42);
+
+    expect(result.snapshot.mergeCommitIncludesHead).toBe(true);
+    expect(mockRunGhJsonAsync).toHaveBeenCalledWith([
+      "api",
+      "repos/owner/repo/compare/head-b...merge-c",
+    ]);
+  });
+
   it("normalizes current-head evidence and makes unsupported capabilities explicit", async () => {
     const readinessClient = new GitHubClient();
     vi.spyOn(readinessClient, "getPrMergeStatus").mockResolvedValue({

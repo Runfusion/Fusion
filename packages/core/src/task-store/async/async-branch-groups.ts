@@ -480,6 +480,7 @@ export async function updatePrReadiness(
   provider: string,
   snapshot: PrReadinessSnapshot,
   projectId?: string,
+  deferMergedTerminalState = false,
 ): Promise<PrEntity | null> {
   const expectedHead = expectedStoredHeadOid === undefined
     ? isNull(schema.project.pullRequests.headOid)
@@ -498,10 +499,16 @@ export async function updatePrReadiness(
         : snapshot.approval === "changes-requested" ? "CHANGES_REQUESTED"
           : snapshot.approval === "review-required" ? "REVIEW_REQUIRED" : null,
       mergeable: snapshot.mergeable,
-      state: snapshot.state,
+      /*
+      FNXC:ExternalPrCloseout 2026-10-05-04:23:
+      A corroborated external landing stays pollable until the engine claims
+      its closeout handoff under the task lifecycle fence. Keeping the mirror
+      active prevents a paused or live owner from losing restart recovery.
+      */
+      state: deferMergedTerminalState && snapshot.state === "merged" ? "open" : snapshot.state,
       unverified: 0,
       updatedAt: Date.now(),
-      closedAt: snapshot.state === "open" ? null : Date.now(),
+      closedAt: deferMergedTerminalState || snapshot.state === "open" ? null : Date.now(),
     })
     .where(and(
       eq(schema.project.pullRequests.id, id),

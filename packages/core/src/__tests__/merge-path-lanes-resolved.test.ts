@@ -165,6 +165,17 @@ describe("the PR-merged transition follows the board's own lanes", () => {
     expect(moveTask).not.toHaveBeenCalled();
   });
 
+  it("finalizes a proven external landing from a failed non-review lane", async () => {
+    const { store, moveTask } = harness("building", RENAMED_IR);
+    const task = await store.getTask("FN-1");
+    task.status = "failed";
+
+    const result = await applyPrMergedTransitionImpl(store, "FN-1", { externallyLanded: true });
+
+    expect(result).toEqual({ moved: true });
+    expect(moveTask).toHaveBeenCalledWith("FN-1", "shipped", expect.objectContaining({ bypassGuards: true }));
+  });
+
   it("behaves identically on the DEFAULT board", async () => {
     // Passes either way by design — the legacy ids ARE this board's lanes. No-change evidence.
     const { store, moveTask } = harness("in-review", undefined);

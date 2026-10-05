@@ -106,7 +106,7 @@ export async function collectMergeDetailsImpl(store: TaskStore, _id: string, _br
     };
   }
 
-export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
+export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string; externallyLanded?: boolean; lifecycleLockHeld?: boolean },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
     /*
     FNXC:WorkflowLifecycleColumns 2026-08-02-10:20 (fleet: the PR-merged transition):
     The conditional move supplies ONE LOCKED LIVE ROW for evidence checks and the move target. Earlier
@@ -154,7 +154,7 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     project-scoped PostgreSQL advisory lock before moveTaskIf re-reads and transitions the task, so only
     one observer emits completion telemetry; the loser sees the committed complete lane and is a no-op.
     */
-    return store.withPlanningLifecycleLock(taskId, async () => {
+    const transitionWhileLifecycleLocked = async () => {
       const transition = await store.moveTaskIf(taskId, completeColumn as Column, async (live) => {
         if (live.column === completeColumn) {
           skipped = "already-done";
@@ -168,7 +168,7 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
           skipped = "not-merged";
           return false;
         }
-        if (live.column !== reviewColumn) {
+        if (live.column !== reviewColumn && ctx?.externallyLanded !== true) {
           storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${live.column}`);
           skipped = "wrong-column";
           return false;
@@ -200,8 +200,8 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
       moveSource: "engine",
       preserveProgress: true,
       preserveWorktree: true,
-      // External landing proves a PR result, not unresolved pre-merge review approval.
-      bypassGuards: false,
+      // Only fresh provider proof may complete a stale non-review card; ordinary PR mirrors retain review guards.
+      bypassGuards: ctx?.externallyLanded === true,
     });
 
       if (!transition.moved) {
@@ -239,6 +239,16 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
       }
 
       return { moved: true };
-    });
+    };
+
+    /*
+    FNXC:ExternalPrCloseout 2026-10-05-04:07:
+    Callers that already hold the project-scoped lifecycle advisory lock must not
+    reacquire it: PostgreSQL advisory locks are session-scoped and the nested wait
+    would deadlock the handoff that established the proof.
+    */
+    return ctx?.lifecycleLockHeld
+      ? transitionWhileLifecycleLocked()
+      : store.withPlanningLifecycleLock(taskId, transitionWhileLifecycleLocked);
   }
 
