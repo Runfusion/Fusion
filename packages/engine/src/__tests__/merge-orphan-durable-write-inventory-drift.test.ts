@@ -43,6 +43,10 @@ describe("FN-8923 orphan durable-write inventory drift guard", () => {
   it("pins derived writer surface and closure", () => {
     const surface = deriveDurableWriterSurface(); const closure = deriveMergeReachableModules();
     expect(surface.unclassified, "task-store method is not classified as a durable writer or non-writer").toEqual([]);
+    expect(surface.classified.filter(({ method }) => ["updatePrReadinessAndAwaitChecksIfBlocked", "releaseAwaitingPrChecksIfCurrentHead"].includes(method))).toEqual([
+      { method: "releaseAwaitingPrChecksIfCurrentHead", kind: "writer", reason: "persists a current-head-gated task-status release and lifecycle event" },
+      { method: "updatePrReadinessAndAwaitChecksIfBlocked", kind: "writer", reason: "persists readiness and the transactional awaiting-pr-checks task hold" },
+    ]);
     expect(surface.source, "writer-surface source drift").toBe(currentManifest.writerSurfaceSource);
     expect(surface.writers, "writer-set drift").toEqual(currentManifest.writerSurface);
     expect(surface.classified, "writer-surface classification drift").toEqual(currentManifest.writerSurfaceClassification);

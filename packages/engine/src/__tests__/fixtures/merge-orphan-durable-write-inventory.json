@@ -521,6 +521,7 @@
     "refreshTaskIdIntegrityReport",
     "registerArtifact",
     "rehomeOccupant",
+    "releaseAwaitingPrChecksIfCurrentHead",
     "releaseMergeQueueLease",
     "releaseStaleWorkspaceLeasesForNode",
     "releaseSymbolLocks",
@@ -583,6 +584,7 @@
     "updatePrInfo",
     "updatePrInfoByNumber",
     "updatePrReadiness",
+    "updatePrReadinessAndAwaitChecksIfBlocked",
     "updateSettings",
     "updateStep",
     "updateTask",
@@ -2691,6 +2693,11 @@
       "reason": "persists or mutates TaskStore state"
     },
     {
+      "method": "releaseAwaitingPrChecksIfCurrentHead",
+      "kind": "writer",
+      "reason": "persists a current-head-gated task-status release and lifecycle event"
+    },
+    {
       "method": "releaseMergeQueueLease",
       "kind": "writer",
       "reason": "persists or mutates TaskStore state"
@@ -3214,6 +3221,11 @@
       "method": "updatePrReadiness",
       "kind": "writer",
       "reason": "persists project-scoped readiness through expected-head CAS and terminal-state fence"
+    },
+    {
+      "method": "updatePrReadinessAndAwaitChecksIfBlocked",
+      "kind": "writer",
+      "reason": "persists readiness and the transactional awaiting-pr-checks task hold"
     },
     {
       "method": "updateSettings",
