@@ -21,6 +21,7 @@ const PRODUCERS = {
   "packages/core/src/agents/agent-store.ts": ["safe"],
   "packages/core/src/store.ts": ["emit"],
   "packages/core/src/task-store/audit-ops.ts": ["emit", "safe"],
+  "packages/core/src/task-store/branch-and-pr-entities.ts": ["safe"],
   "packages/core/src/task-store/branch-group-ops.ts": ["emit"],
   "packages/core/src/task-store/comments-ops.ts": ["emit"],
   "packages/core/src/task-store/merge-queue-ops.ts": ["emit"],
