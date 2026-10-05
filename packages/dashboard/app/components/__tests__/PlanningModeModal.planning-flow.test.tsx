@@ -1085,23 +1085,32 @@ describe("PlanningModeModal sequential flow", () => {
     });
     renderSession();
 
-    const workspace = await screen.findByTestId("planning-workspace");
+    await screen.findByTestId("planning-workspace");
+    /*
+    FNXC:PlanningMode 2026-10-05-03:07:
+    A resumed mobile session can first render its workspace before the question-keyed effect
+    resets the selected tab. Settle that hydration commit and reacquire controls so this test
+    validates the live Questions-to-Plan-preview interaction people can actually perform.
+    */
+    await act(async () => {});
     // The viewport-mode hook is mocked without changing jsdom's CSS media viewport.
+    const workspace = screen.getByTestId("planning-workspace");
     const questionsTab = screen.getByRole("tab", { name: "Questions", hidden: true });
     const planTab = screen.getByRole("tab", { name: "Plan preview", hidden: true });
     expect(questionsTab).toHaveAttribute("aria-selected", "true");
     expect(workspace).toHaveClass("planning-workspace--mobile-tab-question");
 
     fireEvent.click(planTab);
-    expect(planTab).toHaveAttribute("aria-selected", "true");
-    expect(questionsTab).toHaveAttribute("aria-selected", "false");
-    expect(workspace).toHaveClass("planning-workspace--mobile-tab-plan");
+    expect(screen.getByRole("tab", { name: "Plan preview", hidden: true })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Questions", hidden: true })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByTestId("planning-workspace")).toHaveClass("planning-workspace--mobile-tab-plan");
     expect(screen.getByTestId("planning-plan-pane")).toHaveTextContent("Build authentication system");
 
     fireEvent.click(screen.getByRole("button", { name: "History", hidden: true }));
     expect(screen.getByRole("region", { name: "Question and answer history" })).toBeInTheDocument();
     expect(screen.getByText("No history yet")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
+    expect(screen.queryByRole("region", { name: "Question and answer history" })).toBeNull();
   });
 
   it.each([
