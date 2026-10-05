@@ -63,7 +63,7 @@ vi.mock("node:child_process", async () => {
 
 import { execSync } from "node:child_process";
 import { SelfHealingManager } from "../self-healing.js";
-import type { Settings, TaskStore } from "@fusion/core";
+import type { Agent, AgentStore, Settings, Task, TaskStore } from "@fusion/core";
 
 const mockedExecSync = vi.mocked(execSync);
 
@@ -160,6 +160,48 @@ describe("RUFU-076 pause-gated maintenance (self-healing)", () => {
     });
   }
 
+  it("recovers an executor hold introduced after startup on the next periodic tick without a restart", async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const owner = { id: "paused-owner", state: "paused", taskId: "FN-HELD" } as Agent;
+    let task: Task | undefined;
+    const held = { id: "held", kind: "task", state: "held", nodeId: "step-execute", nodeInstanceId: "steps#0:step-execute",
+      workflowRole: "executor", authorityKind: "task-assignee", blockedReason: "workflow-principal-named-principal-unavailable:executor" };
+    const handoff = vi.fn(async () => {
+      task!.assignedAgentId = undefined;
+      held.state = "runnable";
+      return { ok: true, task };
+    });
+    manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore: {
+      listAgents: vi.fn(async () => [owner]), getActiveHeartbeatRun: vi.fn(async () => null), handoffTaskToWorkflowExecutor: handoff,
+    } as unknown as AgentStore });
+    // Keep unrelated maintenance on the existing empty-board fixture while exercising
+    // the real periodic dispatcher and recovery against a newly arrived blocked task.
+    let readingRecoveryCandidates = false;
+    vi.mocked(store.listTasks).mockImplementation(async () => readingRecoveryCandidates && task ? [task] : []);
+    vi.mocked(store.listWorkflowWorkItemsForTask).mockImplementation(async () => [held] as never);
+    const recover = manager.recoverUnavailableQueuedAgentOwnership.bind(manager);
+    vi.spyOn(manager, "recoverUnavailableQueuedAgentOwnership").mockImplementation(async () => {
+      readingRecoveryCandidates = true;
+      try { return await recover(); } finally { readingRecoveryCandidates = false; }
+    });
+    const internals = manager as unknown as { runMaintenance(): Promise<void> };
+    const runMaintenance = internals.runMaintenance.bind(manager);
+    let cycle: Promise<void> | undefined;
+    vi.spyOn(internals, "runMaintenance").mockImplementation(() => (cycle = runMaintenance()));
+    manager.start();
+    await settle();
+    expect(maintenanceArmed()).toBe(true);
+    expect(handoff).not.toHaveBeenCalled();
+    task = { id: "FN-HELD", column: "in-progress", assignedAgentId: owner.id, dependencies: [], workflowIrPinNodeId: "steps", currentStep: 0 } as Task;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await cycle;
+    expect(handoff).toHaveBeenCalledOnce();
+    expect(task).toMatchObject({ column: "in-progress", assignedAgentId: undefined });
+    expect(held).toMatchObject({ state: "runnable", nodeInstanceId: "steps#0:step-execute" });
+    expect(owner.state).toBe("paused");
+  });
+
   it("I1: paused start (enginePaused=true) never arms periodic maintenance", async () => {
     store = createMockStore({ enginePaused: true });
     manager = hydrateManager(store);
@@ -167,7 +209,7 @@ describe("RUFU-076 pause-gated maintenance (self-healing)", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     mockedExecSync.mockClear();
     await (manager as unknown as { runMaintenance(): Promise<void> }).runMaintenance();
-    expect(mockedExecSync).not.toHaveBeenCalled();
+    expect(mockedExecSync.mock.calls.filter(([command]) => /(?:^|\s|\/)git(?:\s|$)/.test(String(command)))).toEqual([]);
   });
 
   it("I1: paused start (globalPause=true) never arms periodic maintenance", async () => {
@@ -177,7 +219,7 @@ describe("RUFU-076 pause-gated maintenance (self-healing)", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     mockedExecSync.mockClear();
     await (manager as unknown as { runMaintenance(): Promise<void> }).runMaintenance();
-    expect(mockedExecSync).not.toHaveBeenCalled();
+    expect(mockedExecSync.mock.calls.filter(([command]) => /(?:^|\s|\/)git(?:\s|$)/.test(String(command)))).toEqual([]);
   });
 
   it("I2: active start arms the maintenance timer", async () => {
@@ -225,7 +267,7 @@ describe("RUFU-076 pause-gated maintenance (self-healing)", () => {
     expect(maintenanceArmed()).toBe(false);
     mockedExecSync.mockClear();
     await (manager as unknown as { runMaintenance(): Promise<void> }).runMaintenance();
-    expect(mockedExecSync).not.toHaveBeenCalled();
+    expect(mockedExecSync.mock.calls.filter(([command]) => /(?:^|\s|\/)git(?:\s|$)/.test(String(command)))).toEqual([]);
   });
 
   it("I5: an idle/paused project ticks with zero child_process git invocations", async () => {
@@ -237,7 +279,7 @@ describe("RUFU-076 pause-gated maintenance (self-healing)", () => {
     // Advance past several maintenance intervals — with the timer never armed under pause, no git runs.
     await vi.advanceTimersByTimeAsync(60_000 * 3);
     await (manager as unknown as { runMaintenance(): Promise<void> }).runMaintenance();
-    expect(mockedExecSync).not.toHaveBeenCalled();
+    expect(mockedExecSync.mock.calls.filter(([command]) => /(?:^|\s|\/)git(?:\s|$)/.test(String(command)))).toEqual([]);
   });
 
   it("coarse-cadence: batch-1 git churn runs on an active project at most once per hour", async () => {

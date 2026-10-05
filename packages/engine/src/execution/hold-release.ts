@@ -83,6 +83,8 @@ const strandedHoldWarningMemo = new Set<string>();
  *  sweep calls `release()` if the subsequent move rejects on capacity. */
 export interface SlotReservation {
   release(): void;
+  /** Revalidate external admission facts under the task move lock after reserving capacity. */
+  validateAdmission?: (task: Task) => boolean | Promise<boolean>;
 }
 
 /** Injected dependencies so the sweep stays unit-testable with fake timers and
@@ -942,6 +944,7 @@ async function issueRelease(
           || (targetIsProcessing && isTaskBlockedOnApproval(live))) {
           return false;
         }
+        if (reservation?.validateAdmission && !await reservation.validateAdmission(live)) return false;
         if (targetIsProcessing && await isUnplannedForExecution(store, live, ir)) {
           liveUnplanned = live;
           return false;

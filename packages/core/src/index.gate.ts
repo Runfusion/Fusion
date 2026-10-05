@@ -2590,3 +2590,5 @@ export type { ResearchFeaturePromotionInput } from "./research/research-feature-
 export { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "./types.js";
 export * from "./task-document-concurrency.js";
 export { TASK_LOG_READ_ONLY_SUFFIX, buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage, isTaskLogWriteRefusal } from "./task-store/task-log-write-refusal.js";
+
+export { findWorkflowNodeInstance } from "./workflows/workflow-node-instance.js";

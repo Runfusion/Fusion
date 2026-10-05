@@ -47,6 +47,8 @@ import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLane
   isTaskExternallyBlocked,
   isTaskLogWriteRefusal,
   hasNonTerminalSteps,
+  isBuiltinWorkflowRoleAgent,
+  isWorkflowPrincipalEligible,
   fileScopeLeaseBlocksCandidate,
   normalizeOverlapScopeForTask,
   resolveWorktreePathReservationDirectory,
@@ -15661,10 +15663,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!ownerId || task.userPaused || (task.paused && !hasRecoverableAgentPause) || task.checkedOutBy || task.deletedAt) continue;
       const preWip = await this.isPreWipColumn(task);
       const owner = agentsById.get(ownerId);
+      if (owner && isBuiltinWorkflowRoleAgent(owner) && isWorkflowPrincipalEligible(owner)) continue;
       if (!preWip) {
         // Startup can promote a queued task before unavailable-owner recovery runs.
         // Only a lone executor principal hold may release ownership after that boundary.
-        if (task.paused || taskIsLive(task.id) || (owner && owner.state !== "paused" && owner.state !== "error")) continue;
+        if (task.paused || taskIsLive(task.id) || (owner && isWorkflowPrincipalEligible(owner))) continue;
         const roles = await resolveFileScopeLeaseTaskRoles(this.store, task, irCache);
         if (!roles.isWipColumn || !task.workflowIrPinNodeId) continue;
         const items = await this.store.listWorkflowWorkItemsForTask(task.id);
@@ -15672,7 +15675,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (active.length !== 1) continue;
         const held = active[0];
         const matchesPinnedNode = held.nodeId === task.workflowIrPinNodeId
-          || held.nodeInstanceId?.startsWith(`${task.workflowIrPinNodeId}#`) === true;
+          || held.nodeInstanceId?.startsWith(`${task.workflowIrPinNodeId}#`) === true
+          || held.nodeInstanceId?.startsWith(`${task.workflowIrPinNodeId}::`) === true;
         // Core validates nested template identity under the selected IR inside its handoff fence.
         if (held.kind !== "task" || held.state !== "held" || !matchesPinnedNode
           || (held.workflowRole != null && held.workflowRole !== "executor")
@@ -15692,7 +15696,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       */
       if (owner && await agentStore.getActiveHeartbeatRun(owner.id)) continue;
       if (owner && this.options.hasActiveAgentExecution?.(owner.id) === true) continue;
-      if (owner?.state === "active" && hasRecentDurableOwnerHeartbeat(owner, now)) continue;
+      if (owner?.state === "active" && isWorkflowPrincipalEligible(owner) && hasRecentDurableOwnerHeartbeat(owner, now)) continue;
 
       if (taskIsLive(task.id)) continue;
       const currentSettings = await this.store.getSettings();

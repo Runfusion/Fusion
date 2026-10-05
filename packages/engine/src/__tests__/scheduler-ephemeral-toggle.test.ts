@@ -104,7 +104,7 @@ describe("scheduler releases workflow tasks for durable principal routing", () =
       const ready = task({ id: "FN-8821-SCHEDULER-ASSIGNED", assignedAgentId: "durable-owner" });
       const store = storeWith(ready);
       const onSchedule = vi.fn();
-      const scheduler = new Scheduler(store, { onSchedule });
+      const scheduler = new Scheduler(store, { onSchedule, agentStore: { getAgent: vi.fn(async () => ({ id: "durable-owner", state: "active" })) } as unknown as import("@fusion/core").AgentStore });
       (scheduler as unknown as { running: boolean }).running = true;
 
       await scheduler.schedule();

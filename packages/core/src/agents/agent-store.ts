@@ -56,12 +56,13 @@ import {
 import type { CentralClaimStore, CheckoutClaimContext, RunMutationContext } from "../types.js";
 import type { TaskStore } from "../store.js";
 import {columnsWithFlag, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
-import { classifyWorkflowAgentNode, type WorkflowIrNode } from "../workflows/workflow-ir-types.js";
+import { classifyWorkflowAgentNode } from "../workflows/workflow-ir-types.js";
+import { findWorkflowNodeInstance } from "../workflows/workflow-node-instance.js";
 import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 import { withTaskWorkflowSerialization } from "../task-store/async/async-workflow-workitems.js";
 import { ACTIVE_WORKFLOW_WORK_ITEM_STATES } from "../types.js";
 import { computeAccessState, normalizePermissions } from "./agent-permissions.js";
-import { assertImplementationTaskBindAllowed, evaluateImplementationTaskBind } from "./agent-role-policy.js";
+import { assertImplementationTaskBindAllowed, evaluateImplementationTaskBind, isWorkflowPrincipalEligible } from "./agent-role-policy.js";
 import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { normalizeAgentRoles } from "../types/agents/agents.js";
 import { Database } from "../db/db.js";
@@ -80,6 +81,7 @@ import { acquireTaskAdvisoryXactLock } from "../task-store/task-advisory-lock.js
  */
 import type { QueryHandle } from "../async-stores/async-mission-store-queries.js";
 import {
+  mergeAgentRow,
   writeAgent as writeAgentAsync,
   readAgent as readAgentAsync,
   listAgentRows as listAgentRowsAsync,
@@ -1640,7 +1642,7 @@ export class AgentStore extends EventEmitter {
     agentId: string,
     taskId: string,
     runContext?: RunMutationContext,
-    options: { allowAgentOwnedPause?: boolean; allowIdleWipPrincipalHold?: boolean } = {},
+    options: { allowAgentOwnedPause?: boolean; allowIdleWipPrincipalHold?: boolean; requireUnavailableOwner?: boolean } = {},
   ): Promise<{ ok: true; task: Task } | { ok: false; reason: string; task?: Task }> {
     if (!this.taskStore) {
       throw new Error("TaskStore not configured for task-handoff operations");
@@ -1681,15 +1683,17 @@ export class AgentStore extends EventEmitter {
       if (current.checkedOutBy) return { ok: false as const, reason: "checkout_held", task: current };
       const idleWipHandoff = options.allowIdleWipPrincipalHold === true && wipColumns.has(current.column);
       let heldItemId: string | undefined;
-      if (idleWipHandoff) {
-        if (current.paused || current.userPaused) return { ok: false as const, reason: "paused", task: current };
+      if (idleWipHandoff || options.requireUnavailableOwner) {
         const [owner] = await tx.select().from(postgresSchema.project.agents).where(and(
           eq(postgresSchema.project.agents.id, agentId),
           eq(postgresSchema.project.agents.projectId, this.backendProjectId),
         )).for("update");
-        if (owner && owner.state !== "paused" && owner.state !== "error") {
+        if (owner && isWorkflowPrincipalEligible(mergeAgentRow(owner as Parameters<typeof mergeAgentRow>[0]))) {
           return { ok: false as const, reason: "owner_available", task: current };
         }
+      }
+      if (idleWipHandoff) {
+        if (current.paused || current.userPaused) return { ok: false as const, reason: "paused", task: current };
         const items = await tx.select().from(postgresSchema.project.workflowWorkItems).where(and(
           eq(postgresSchema.project.workflowWorkItems.taskId, taskId),
           eq(postgresSchema.project.workflowWorkItems.projectId, this.backendProjectId),
@@ -1697,12 +1701,19 @@ export class AgentStore extends EventEmitter {
         const active = items.filter(item => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state as import("../types.js").WorkflowWorkItemState));
         const held = active.length === 1 ? active[0] : undefined;
         const pinnedNode = handoffIr?.nodes.find(node => node.id === current.workflowIrPinNodeId);
-        const templateNodes = (pinnedNode?.config?.template as { nodes?: WorkflowIrNode[] } | undefined)?.nodes;
-        const nestedExecutor = pinnedNode?.kind === "foreach" && held != null
-          && held.nodeInstanceId === `${pinnedNode.id}#${current.currentStep}:${held.nodeId}`
-          && templateNodes?.some(node => node.id === held.nodeId && classifyWorkflowAgentNode(node) === "executor") === true;
+        const instanceId = held?.nodeInstanceId;
+        const directExecutor = pinnedNode != null && held?.nodeId === pinnedNode.id
+          && (instanceId == null || instanceId === pinnedNode.id)
+          && classifyWorkflowAgentNode(pinnedNode) === "executor";
+        const nestedUnderPin = instanceId != null && pinnedNode != null && (
+          (pinnedNode.kind === "foreach" && instanceId.startsWith(`${pinnedNode.id}#${current.currentStep}:`))
+          || (pinnedNode.kind === "optional-group" && instanceId.startsWith(`${pinnedNode.id}::`))
+        );
+        const nestedNode = nestedUnderPin ? findWorkflowNodeInstance(handoffIr, instanceId) : undefined;
+        const nestedExecutor = nestedNode != null && nestedNode.id === held?.nodeId
+          && classifyWorkflowAgentNode(nestedNode) === "executor";
         if (!held || held.kind !== "task" || held.state !== "held"
-          || (held.nodeId !== current.workflowIrPinNodeId && !nestedExecutor)
+          || (!directExecutor && !nestedExecutor)
           || held.blockedReason !== "workflow-principal-named-principal-unavailable:executor"
           || (held.workflowRole != null && held.workflowRole !== "executor")
           || (held.authorityKind != null && held.authorityKind !== "task-assignee")

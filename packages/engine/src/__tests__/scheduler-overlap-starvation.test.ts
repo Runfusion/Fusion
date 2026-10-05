@@ -857,6 +857,50 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     expect(middle.worktree).toBe("/wt/middle");
   });
 
+  it.each(["paused", "error", "missing", "disabled"])("hands off an unavailable %s assignee before WIP admission", async (state) => {
+    const task = makeTask({ id: "FN-OWNED", assignedAgentId: "owner" });
+    const store = createStore([task], {});
+    const handoff = vi.fn(async () => { task.assignedAgentId = undefined; return { ok: true, task }; });
+    const agentStore = { getAgent: vi.fn(async () => state === "missing" ? null : { id: "owner", state: state === "disabled" ? "active" : state, runtimeConfig: { enabled: state !== "disabled" } }),
+      getActiveHeartbeatRun: vi.fn(async () => null), handoffTaskToWorkflowExecutor: handoff,
+      listAgents: vi.fn(async () => []),
+    } as unknown as AgentStore;
+    const scheduler = new Scheduler(store, { agentStore });
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+    expect(handoff).toHaveBeenCalledWith("owner", task.id, undefined, { requireUnavailableOwner: true });
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(task.column).toBe("todo");
+    await scheduler.schedule();
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.anything());
+    expect(task.assignedAgentId).toBeUndefined();
+  });
+
+  it.each(["active", "paused-task", "live-worker", "pause-after-reservation", "reassigned-after-reservation"])("preserves named ownership during scheduler admission: %s", async (scenario) => {
+    const task = makeTask({ id: "FN-OWNED", assignedAgentId: "owner", userPaused: scenario === "paused-task" });
+    let ownerState = scenario === "live-worker" || scenario === "paused-task" ? "paused" : "active";
+    const store = createStore([task], {});
+    const handoff = vi.fn();
+    const agentStore = { getAgent: vi.fn(async () => ({ id: "owner", state: ownerState })),
+      getActiveHeartbeatRun: vi.fn(async () => null), handoffTaskToWorkflowExecutor: handoff, listAgents: vi.fn(async () => []),
+    } as unknown as AgentStore;
+    if (scenario === "pause-after-reservation" || scenario === "reassigned-after-reservation") {
+      const original = vi.mocked(store.moveTaskIf).getMockImplementation()!;
+      vi.mocked(store.moveTaskIf).mockImplementation(async (...args) => {
+        if (scenario === "pause-after-reservation") ownerState = "paused";
+        else task.assignedAgentId = "replacement";
+        return original(...args);
+      });
+    }
+    const scheduler = new Scheduler(store, { agentStore, hasActiveAgentExecution: () => scenario === "live-worker" });
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+    expect(handoff).not.toHaveBeenCalled();
+    expect(task.assignedAgentId).toBe(scenario === "reassigned-after-reservation" ? "replacement" : "owner");
+    if (scenario === "active") expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.anything());
+    else expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("does not let a lower-priority dormant holder delay a higher-priority candidate", async () => {
     const tasks = [
       makeTask({ id: "FN-A", column: "triage", worktree: "/wt/a", priority: "low" }),

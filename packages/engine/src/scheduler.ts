@@ -1,5 +1,7 @@
+import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import {
   getCurrentRepo,
+  isWorkflowPrincipalEligible,
   computeBlockerFanoutMap,
   compareTasksByPriorityThenAgeAndId,
   normalizeOverlapScopeForTask,
@@ -1698,6 +1700,17 @@ export class Scheduler {
     });
   }
 
+  private async isTaskAssigneeAvailable(task: Task): Promise<boolean> {
+    if (!task.assignedAgentId) return true;
+    if (!this.options.agentStore) return false;
+    try {
+      const owner = await this.options.agentStore.getAgent(task.assignedAgentId);
+      return owner != null && isWorkflowPrincipalEligible(owner);
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Validate that a task's filesystem state is intact.
    * Checks that the task directory exists and PROMPT.md is present and non-empty.
@@ -2888,6 +2901,20 @@ export class Scheduler {
             return null;
           }
 
+          const reservedAssigneeId = freshTask.assignedAgentId ?? null;
+          if (!await this.isTaskAssigneeAvailable(freshTask)) {
+            const ownerId = freshTask.assignedAgentId!;
+            const agents = this.options.agentStore;
+            if (agents && !freshTask.checkedOutBy && !executingTaskLock.has(task.id)
+              && activeSessionRegistry.pathsForTask(task.id).length === 0
+              && this.options.hasActiveAgentExecution?.(ownerId) !== true
+              && !await agents.getActiveHeartbeatRun(ownerId)) {
+              await agents.handoffTaskToWorkflowExecutor(ownerId, task.id, undefined, { requireUnavailableOwner: true });
+            }
+            // The handoff emits task:updated. Admit only a fresh pass, never the stale assigned snapshot.
+            return null;
+          }
+
           if (freshTask.checkedOutBy && this.options.leaseManager) {
             const recovered = await this.options.leaseManager.recoverAbandonedLease(
               freshTask.id,
@@ -3313,6 +3340,8 @@ export class Scheduler {
             reservedConcurrentSlots += 1;
             let released = false;
             return {
+              validateAdmission: async (live) => (live.assignedAgentId ?? null) === reservedAssigneeId
+                && await this.isTaskAssigneeAvailable(live),
               release: () => {
                 if (released) return;
                 released = true;

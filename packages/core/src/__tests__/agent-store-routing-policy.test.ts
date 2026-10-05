@@ -11,6 +11,8 @@
  * project's tasks through any binding primitive.
  */
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from "vitest";
+import { getBuiltinWorkflow } from "../workflows/builtin-workflows.js";
+import type { WorkflowIrNode } from "../workflows/workflow-ir-types.js";
 import { AgentStore } from "../agents/agent-store.js";
 import { TaskStore } from "../store.js";
 import { AgentTaskRoutingPolicyError } from "../agents/agent-role-policy.js";
@@ -302,6 +304,20 @@ pgTest("task→agent routing policy (issue #2015)", () => {
   });
 
   describe("durable executor handoff", () => {
+    it.each(["paused", "error", "active"] as const)("rechecks %s queued ownership before automatic handoff", async (state) => {
+      const engineer = await agentStore.createAgent({ name: "Admission owner", role: "engineer" });
+      const task = await h.store().createTask({ description: "queued admission" });
+      await agentStore.assignTask(engineer.id, task.id);
+      await h.store().updateTask(task.id, { assignedAgentId: engineer.id });
+      await h.store().moveTask(task.id, "todo");
+      await agentStore.updateAgentState(engineer.id, state);
+      const result = await agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, { requireUnavailableOwner: true });
+      expect(result.ok).toBe(state !== "active");
+      if (state === "active") expect(result).toMatchObject({ reason: "owner_available" });
+      expect(await h.store().getTask(task.id)).toMatchObject({ column: "todo", assignedAgentId: state === "active" ? engineer.id : undefined });
+      expect(await agentStore.getAgent(engineer.id)).toMatchObject({ state });
+    });
+
     it("releases a queued engineer-owned task once so a Workflow Executor can claim it", async () => {
       const engineer = await agentStore.createAgent({ name: "Engineer", role: "engineer" });
       const executor = await agentStore.createAgent({ name: "Handoff Executor", role: "executor" });
@@ -320,7 +336,7 @@ pgTest("task→agent routing policy (issue #2015)", () => {
       await expect(agentStore.claimTaskForAgent(executor.id, task.id)).resolves.toMatchObject({ ok: true });
     });
 
-    async function idlePrincipalHold() {
+    async function idlePrincipalHold(direct = false) {
       const engineer = await agentStore.createAgent({ name: "Unavailable Engineer", role: "engineer" });
       const task = await h.store().createTask({ description: "admitted implementation" });
       await agentStore.assignTask(engineer.id, task.id);
@@ -330,7 +346,7 @@ pgTest("task→agent routing policy (issue #2015)", () => {
       await h.store().updateTask(task.id, { workflowIrPinNodeId: "steps" });
       await agentStore.updateAgentState(engineer.id, "paused");
       const item = await h.store().upsertWorkflowWorkItem({
-        runId: `${task.id}:held`, taskId: task.id, nodeId: "step-execute", nodeInstanceId: "steps#0:step-execute", kind: "task", state: "held",
+        runId: `${task.id}:held`, taskId: task.id, nodeId: direct ? "steps" : "step-execute", nodeInstanceId: direct ? "steps" : "steps#0:step-execute", kind: "task", state: "held",
         blockedReason: "workflow-principal-named-principal-unavailable:executor",
         principalAgentId: engineer.id, workflowRole: "executor", authorityKind: "task-assignee",
       });
@@ -346,6 +362,60 @@ pgTest("task→agent routing policy (issue #2015)", () => {
       expect(await h.store().getTask(task.id)).toMatchObject({ column: "in-progress", workflowIrPinNodeId: "steps", assignedAgentId: undefined });
       expect(await agentStore.getAgent(engineer.id)).toMatchObject({ state: "paused", taskId: undefined });
       expect(await h.store().listWorkflowWorkItemsForTask(task.id)).toEqual([expect.objectContaining({ id: item.id, state: "runnable", principalAgentId: null, blockedReason: null, nodeInstanceId: "steps#0:step-execute" })]);
+    });
+
+    it.each(["direct", "optional", "nested-optional", "nested-foreach", "multiple-templates"])("recovers the exact executor instance inside %s without changing its cursor", async (shape) => {
+      const { engineer, task, item } = await idlePrincipalHold(shape === "direct");
+      const ir = structuredClone(getBuiltinWorkflow("builtin:coding")!.ir);
+      const pin = ir.nodes.find(node => node.id === "steps")!;
+      const executor: WorkflowIrNode = { id: "step-execute", kind: "prompt", config: { seam: "execute" } };
+      let instance = "steps::step-execute";
+      if (shape === "direct") {
+        pin.kind = "prompt";
+        pin.config = { seam: "execute" };
+        instance = "steps";
+      } else if (shape === "optional") {
+        pin.kind = "optional-group";
+        pin.config = { template: { nodes: [executor], edges: [] } };
+      } else {
+        const nestedKind = shape === "nested-foreach" ? "foreach" : "optional-group";
+        const nested: WorkflowIrNode = { id: "inner", kind: nestedKind, config: { template: { nodes: [executor], edges: [] } } };
+        pin.config = { template: { nodes: [nested, ...(shape === "multiple-templates" ? [{ ...nested, id: "other" }] : [])], edges: [] } };
+        instance = nestedKind === "foreach" ? "steps#0:inner#2:step-execute" : "steps#0:inner::step-execute";
+      }
+      const selection = vi.spyOn(h.store(), "getTaskWorkflowSelectionAsync").mockResolvedValue({ workflowId: "custom-recovery", stepIds: [] });
+      const definition = vi.spyOn(h.store(), "getWorkflowDefinition").mockResolvedValue({ ir } as never);
+      try {
+        await h.store().transitionWorkflowWorkItem(item.id, "held", { nodeInstanceId: instance });
+        await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, {
+          allowIdleWipPrincipalHold: true,
+        })).resolves.toMatchObject({ ok: true });
+        expect((await h.store().listWorkflowWorkItemsForTask(task.id))[0]).toMatchObject({ state: "runnable", nodeInstanceId: instance });
+        expect(await h.store().getTask(task.id)).toMatchObject({ column: "in-progress", currentStep: 0 });
+      } finally {
+        selection.mockRestore();
+        definition.mockRestore();
+      }
+    });
+
+    it.each([false, true])("uses runtime principal eligibility for a disabled owner (builtin=%s)", async (builtin) => {
+      const { engineer, task } = await idlePrincipalHold();
+      await agentStore.updateAgentState(engineer.id, "active");
+      await agentStore.updateAgent(engineer.id, {
+        runtimeConfig: { enabled: false },
+        ...(builtin ? { metadata: { builtInWorkflowRole: true, workflowRole: "executor" } } : {}),
+      });
+      const result = await agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, { allowIdleWipPrincipalHold: true });
+      expect(result).toMatchObject(builtin ? { ok: false, reason: "owner_available" } : { ok: true });
+      expect((await h.store().getTask(task.id)).assignedAgentId).toBe(builtin ? engineer.id : undefined);
+    });
+
+    it("rejects a container incorrectly labelled as an executor hold", async () => {
+      const { engineer, task } = await idlePrincipalHold(true);
+      await expect(agentStore.handoffTaskToWorkflowExecutor(engineer.id, task.id, undefined, {
+        allowIdleWipPrincipalHold: true,
+      })).resolves.toMatchObject({ ok: false, reason: "not_idle_executor_hold" });
+      expect(await h.store().getTask(task.id)).toMatchObject({ assignedAgentId: engineer.id });
     });
 
     it("rolls back assignment release when its durable continuation cannot be resumed", async () => {
