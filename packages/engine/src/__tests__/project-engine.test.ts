@@ -4591,7 +4591,17 @@ pgDescribe("ProjectEngine research recall composition", () => {
 
   it("persists finalized research through ProjectEngine's live recall composition", async () => {
     const store = h.store();
-    const run = await store.getResearchStore().createRun({ query: "ProjectEngine recall composition", tags: ["project-engine"] });
+    const researchStore = store.getResearchStore();
+    const run = await researchStore.createRun({ query: "ProjectEngine recall composition", tags: ["project-engine"] });
+    /*
+    FNXC:FullSuiteShardInvestigation 2026-10-05-14:25:
+    This fixture invokes the finalization seam directly, so its persisted run must not remain queued
+    when ProjectEngine starts its real dispatcher. A queued run is production-dispatchable and can race
+    the direct finalization call into a real provider search; mark it running before startup to isolate
+    this composition contract without weakening dispatcher coverage.
+    */
+    await researchStore.updateStatus(run.id, "running");
+    const listQueuedRuns = vi.spyOn(researchStore, "listRuns");
     const realFactory = fusionCore.createRecallCaptureWriter;
     const writerFactory = vi.spyOn(fusionCore, "createRecallCaptureWriter");
     let writer: RecallCaptureWriterWithTestDrain | undefined;
@@ -4603,6 +4613,8 @@ pgDescribe("ProjectEngine research recall composition", () => {
 
     try {
       await engine.start();
+      await vi.waitFor(() => expect(listQueuedRuns).toHaveBeenCalledWith({ status: "queued" }));
+      expect(await researchStore.getRun(run.id)).toMatchObject({ status: "running" });
       const orchestrator = engine.getResearchOrchestrator() as unknown as {
         runFinalizing(runId: string, output: string, citations: string[], confidence: number | undefined, signal: AbortSignal): Promise<void>;
       };
@@ -4617,6 +4629,7 @@ pgDescribe("ProjectEngine research recall composition", () => {
         }),
       ]));
     } finally {
+      listQueuedRuns.mockRestore();
       writerFactory.mockRestore();
       await engine.stop();
     }
