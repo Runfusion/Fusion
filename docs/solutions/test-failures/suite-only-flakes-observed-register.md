@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **3 active observation records** (entries 2, 13, and 20), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **4 active observation records** (entries 2, 13, 20, and 21), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -298,6 +298,18 @@ The rate-limit identity was a repeated test-only failure, but a demonstrated str
 - **Observed frequency:** 1 sighting in the combined three-file command; exact test passed alone.
 
 The combined ProjectEngine/workspace-merger verification observed an empty recall list after the real detached writer was flushed. The exact test passed immediately in a file-scoped rerun, retaining its production `ProjectEngine` composition, real PostgreSQL layer, writer drain, and persisted-recall assertion. No timeout, retry, quarantine, or assertion weakening was applied. A second sighting requires same-change file-level quarantine under the repository deletion-ratchet policy.
+
+### 21. Agent Detail legacy skill discovery ordering
+
+- **Status:** Active first sighting — recorded 2026-10-05 by FN-9506; deterministic test repair landed, with a second sighting requiring file-level quarantine.
+- **File:** `packages/dashboard/app/components/__tests__/AgentDetailView.core.test.tsx`
+- **Exact test:** `AgentDetailView — core > loads compatible legacy skill details through the resolved canonical ID`
+- **Observed tree/SHA:** Full Suite run [37279527225](https://github.com/Runfusion/Fusion/actions/runs/37279527225), `52e790446dbcfff118e4c6150056cec3d090da0c`.
+- **Observed frequency:** One complete shard-3 reporter sighting; the exact focused test passed in isolation.
+
+The verified `test-timings-shard-3` artifact (`11332755977`, SHA-256 `85a8465f96e26a8ec9f0d80ff9f051f6a9e66673a0042fdd18c2d434a7577ec4`) reported the badge as `pending` rather than `auto-available` at `AgentDetailView.core.test.tsx:507` after 58.443616 ms. The shard command was `pnpm test:ci:shard --shard 3 --total 4`; its dashboard reporter was otherwise complete (176 suites, 6,008 passing tests, one failure).
+
+FN-9506 reproduced the pending-to-resolved transition with a deferred discovery response. It preserves the stored legacy reference in the tooltip, proves a pending click makes no content request, waits for `data-skill-state="auto-available"`, and then proves one `fetchSkillContent(canonicalId, projectId)` request. Production code was unchanged: `AgentDetailView` deliberately mounts skill discovery only after the agent has loaded, so agent-before-discovery is the reachable lifecycle. No retry, timeout, skip, or weakened assertion was introduced. The file has 55 focused cases and is outside the thin merge gate, so this high-value first sighting remains recorded rather than quarantined. A second sighting of this file requires a same-change file-level quarantine in `scripts/lib/test-quarantine.json` and `quarantinedDashboardTests`.
 
 ### Common shape and investigated result
 

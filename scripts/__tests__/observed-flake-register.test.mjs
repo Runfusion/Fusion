@@ -160,6 +160,11 @@ FNXC:TriagePlanningRetry 2026-10-05-04:34:
 FN-9498 closed entry 18 after the shard logs proved an abandoned fake-timer test was consuming
 its successor's mocks. Keep the active inventory and retained evidence separate: the closed record
 must preserve both test identities and the synchronization repair without authorizing quarantine.
+
+FNXC:AgentSkillDetailOrdering 2026-10-05-08:54:
+FN-9506 records the shard-three Agent Detail badge observation after a controlled pending-discovery
+repair. Keep the first-sighting record active so a second appearance follows the file-level
+quarantine rule rather than silently treating a deterministic test repair as a policy exemption.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -185,6 +190,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
     {
       heading: "20. ProjectEngine research recall composition ordering",
       status: "Active first sighting — recorded 2026-10-04, unattributed.",
+    },
+    {
+      heading: "21. Agent Detail legacy skill discovery ordering",
+      status: "Active first sighting — recorded 2026-10-05 by FN-9506; deterministic test repair landed, with a second sighting requiring file-level quarantine.",
     },
   ]);
 });

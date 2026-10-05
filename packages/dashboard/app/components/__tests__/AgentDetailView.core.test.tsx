@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent, act, cleanup } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { loadAllAppCss } from "../../test/cssFixture";
-import type { AgentHeartbeatRun } from "../../api";
+import type { AgentHeartbeatRun, DiscoveredSkill } from "../../api";
 import type { AgentLogEntry } from "@fusion/core";
 import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "../../utils/heartbeatIntervals";
 import {
@@ -493,24 +493,50 @@ it("renders assigned skills as readable badges with full id tooltip", async () =
   expect(missingSkillBadge.getAttribute("title")?.startsWith(`${UNDISCOVERED_SKILL_ID}: `)).toBe(true);
 });
 
+/*
+ * FNXC:AgentSkillDetailOrdering 2026-10-05-09:05:
+ * A persisted legacy reference can render before asynchronous discovery resolves. Keep this
+ * regression controlled so the detail request is asserted only after the visible badge reaches
+ * its resolved canonical state, while a pending click remains content-free.
+ */
 it("loads compatible legacy skill details through the resolved canonical ID", async () => {
   const storedReference = "legacy::skills/../../.agents/skills/review/SKILL.md";
   const canonicalId = "current::skills/review/SKILL.md";
+  const discoveredSkill: DiscoveredSkill = {
+    ...MOCK_SKILLS[0],
+    id: canonicalId,
+    name: "Review",
+    path: "",
+    relativePath: "skills/review/SKILL.md",
+  };
+  let resolveDiscovery!: (skills: DiscoveredSkill[]) => void;
+  const discovery = new Promise<DiscoveredSkill[]>((resolve) => {
+    resolveDiscovery = resolve;
+  });
   mockFetchAgent.mockResolvedValue(createMockAgent({ metadata: { skills: [storedReference] } }));
-  mockFetchDiscoveredSkills.mockResolvedValue([
-    { id: canonicalId, name: "Review", relativePath: "skills/review/SKILL.md", enabled: true },
-  ]);
+  mockFetchDiscoveredSkills.mockReturnValueOnce(discovery);
 
   render(<AgentDetailView agentId="agent-001" projectId="legacy-resolution-detail" onClose={vi.fn()} addToast={vi.fn()} />);
 
   const badge = await screen.findByRole("button", { name: "View details for review" });
-  expect(badge).toHaveAttribute("data-skill-state", "auto-available");
-  expect(badge).toHaveTextContent("Auto-available");
+  expect(badge).toHaveAttribute("data-skill-state", "pending");
   expect(badge).toHaveAttribute("title", expect.stringContaining(storedReference));
 
   fireEvent.click(badge);
-  await waitFor(() => expect(mockFetchSkillContent).toHaveBeenCalledWith(canonicalId, "legacy-resolution-detail"));
+  expect(mockFetchSkillContent).not.toHaveBeenCalled();
+
+  await act(async () => {
+    resolveDiscovery([discoveredSkill]);
+  });
+  await waitFor(() => expect(badge).toHaveAttribute("data-skill-state", "auto-available"));
+  expect(badge).toHaveTextContent("Auto-available");
+
+  fireEvent.click(badge);
+  fireEvent.click(badge);
+  await waitFor(() => expect(mockFetchSkillContent).toHaveBeenCalledTimes(1));
+  expect(mockFetchSkillContent).toHaveBeenCalledWith(canonicalId, "legacy-resolution-detail");
 });
+
 
 it("displays state badge", async () => {
   render(
