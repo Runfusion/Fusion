@@ -71,7 +71,10 @@ function getRunActionState(run: ResearchRunDetail | null) {
 
   const isTransitioning = IN_FLIGHT_STATUSES.includes(run.status);
   const cancelable = run.status === "queued" || run.status === "running";
-  const lifecycleRetryable = run.lifecycle?.retryable;
+  // FNXC:ResearchFailureDiagnostics 2026-09-28-21:10:
+  // Retry affordances follow the persisted canonical diagnosis. Status alone must not make denial,
+  // malformed-response, cancellation, or retry-exhaustion failures appear retryable.
+  const lifecycleRetryable = run.diagnosis?.retryable ?? run.lifecycle?.retryable;
   const retryableTerminal = run.status === "failed" || run.status === "timed_out";
   const retryable = Boolean(retryableTerminal && lifecycleRetryable);
 
@@ -91,7 +94,7 @@ function getRunActionState(run: ResearchRunDetail | null) {
   }
 
   if (!retryable && retryableTerminal && lifecycleRetryable === false) {
-    blockingReason = run.lifecycle?.errorCode === "RETRY_EXHAUSTED"
+    blockingReason = (run.diagnosis?.code ?? run.lifecycle?.errorCode) === "RETRY_EXHAUSTED"
       ? "Retry attempts exhausted"
       : "Run is not retryable";
   }
@@ -222,6 +225,7 @@ export function useResearch(options?: { projectId?: string }) {
         "research:run:completed": refreshIfActive,
         "research:run:failed": refreshIfActive,
         "research:run:cancelled": refreshIfActive,
+        "research:run:timed_out": refreshIfActive,
       },
       onReconnect: () => {
         recordResumeEvent({

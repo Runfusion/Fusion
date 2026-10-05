@@ -15,6 +15,7 @@ import {
   createRecallCaptureWriter,
   createLogger,
   NOOP_RECALL_CAPTURE_WRITER,
+  type ResearchErrorCode,
   type ResearchRunListOptions,
   type ResearchRunStatus,
 } from "@fusion/core";
@@ -38,10 +39,97 @@ function rethrowAsApiError(error: unknown, fallback = "Internal server error"): 
     const mappedCode = error.code === "not_retryable"
       ? "NON_RETRYABLE_PROVIDER_ERROR"
       : "INVALID_TRANSITION";
-    throw new ApiError(status, error.message, { code: mappedCode, retryable: false });
+    throw new ApiError(status, "The requested research lifecycle action is not allowed.", { code: mappedCode, retryable: false });
   }
-  if (error instanceof Error) throw new ApiError(500, error.message, { code: "INTERNAL_ERROR" });
+  if (error instanceof Error) throw new ApiError(500, fallback, { code: "INTERNAL_ERROR" });
   throw new ApiError(500, fallback, { code: "INTERNAL_ERROR" });
+}
+
+type ResearchApiDiagnosis = {
+  classification: string;
+  code: string;
+  retryable: boolean;
+  detail: string;
+  remediation?: string;
+};
+
+const RESEARCH_TERMINAL_STATUSES = new Set(["failed", "cancelled", "timed_out", "retry_exhausted"]);
+const MAX_DIAGNOSTIC_TEXT_LENGTH = 500;
+
+const CANONICAL_RESEARCH_DIAGNOSES: Record<ResearchErrorCode, ResearchApiDiagnosis> = {
+  FEATURE_DISABLED: { classification: "configuration", code: "FEATURE_DISABLED", retryable: false, detail: "Research is disabled in settings.", remediation: "Enable Research in Settings before starting a new run." },
+  MISSING_CREDENTIALS: { classification: "configuration", code: "MISSING_CREDENTIALS", retryable: false, detail: "The required research provider or model is not configured.", remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run." },
+  PROVIDER_UNAVAILABLE: { classification: "retryable_transient", code: "PROVIDER_UNAVAILABLE", retryable: true, detail: "The research provider is temporarily unavailable.", remediation: "Retry later or review provider availability." },
+  PROVIDER_DENIED: { classification: "provider_denied", code: "PROVIDER_DENIED", retryable: false, detail: "The research provider rejected authentication or access.", remediation: "Verify provider credentials, account access, and model permissions in Settings → Authentication." },
+  RATE_LIMITED: { classification: "retryable_transient", code: "RATE_LIMITED", retryable: true, detail: "The research provider is rate limited or temporarily unavailable.", remediation: "Retry later or review provider rate limits." },
+  PROVIDER_TIMEOUT: { classification: "timed_out", code: "PROVIDER_TIMEOUT", retryable: true, detail: "Research providers did not finish before the run deadline.", remediation: "Retry the run. If timeouts continue, review Research Settings and provider availability." },
+  MALFORMED_RESPONSE: { classification: "malformed_response", code: "MALFORMED_RESPONSE", retryable: false, detail: "The research provider returned an invalid response.", remediation: "Review the selected provider and model, then start a new run." },
+  RUN_CANCELLED: { classification: "cancelled", code: "RUN_CANCELLED", retryable: false, detail: "Research run was cancelled." },
+  RETRY_EXHAUSTED: { classification: "non_retryable", code: "RETRY_EXHAUSTED", retryable: false, detail: "Research run exhausted its retry attempts.", remediation: "Review provider configuration before starting a new run." },
+  INVALID_TRANSITION: { classification: "non_retryable", code: "INVALID_TRANSITION", retryable: false, detail: "The requested research lifecycle action is not allowed." },
+  NON_RETRYABLE_PROVIDER_ERROR: { classification: "non_retryable", code: "NON_RETRYABLE_PROVIDER_ERROR", retryable: false, detail: "The research provider returned a non-retryable error.", remediation: "Review provider configuration before starting a new run." },
+  INTERNAL_ERROR: { classification: "internal", code: "INTERNAL_ERROR", retryable: false, detail: "Research run failed without additional diagnostic detail.", remediation: "Review Research Settings and provider authentication, then start a new run." },
+};
+
+function safeDiagnosticText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  // FNXC:ResearchFailureDiagnostics 2026-09-28-21:05:
+  // API readers expose only bounded operator guidance. Defense-in-depth redaction prevents legacy lifecycle
+  // prose from carrying credentials, authorization headers, URLs with query values, or local paths to clients.
+  return trimmed
+    .replace(/\b(?:sk|pk|api|key|token)-[A-Za-z0-9_-]{8,}\b/gi, "[redacted]")
+    .replace(/\b(authorization|api[_ -]?key|access[_ -]?token|secret|password)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+    .replace(/(?:[A-Za-z]:\\|\/(?:home|Users|var|tmp)\/)\S+/g, "[redacted-path]")
+    .slice(0, MAX_DIAGNOSTIC_TEXT_LENGTH);
+}
+
+function fallbackDiagnosis(run: ResearchRun): ResearchApiDiagnosis {
+  switch (run.status) {
+    case "cancelled":
+      return { classification: "cancelled", code: "RUN_CANCELLED", retryable: false, detail: "Research run was cancelled." };
+    case "timed_out":
+      return {
+        classification: "timed_out",
+        code: "PROVIDER_TIMEOUT",
+        retryable: true,
+        detail: "Research providers did not finish before the run deadline.",
+        remediation: "Retry the run. If timeouts continue, review Research Settings and provider availability.",
+      };
+    case "retry_exhausted":
+      return {
+        classification: "non_retryable",
+        code: "RETRY_EXHAUSTED",
+        retryable: false,
+        detail: "Research run exhausted its retry attempts.",
+        remediation: "Review provider configuration before starting a new run.",
+      };
+    default:
+      return {
+        classification: "non_retryable",
+        code: "INTERNAL_ERROR",
+        retryable: false,
+        detail: "Research run failed without additional diagnostic detail.",
+        remediation: "Review Research Settings and provider authentication, then start a new run.",
+      };
+  }
+}
+
+function toRunDiagnosis(run: ResearchRun): ResearchApiDiagnosis | undefined {
+  if (!RESEARCH_TERMINAL_STATUSES.has(run.status)) return undefined;
+
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-10-01-04:45:
+  Persisted terminal prose is untrusted legacy data, even when a field was named safeDetail. API readers render only code-owned text for a recognized error code; unknown or missing codes use the status fallback so bearer tokens, opaque credentials, and provider payloads can never cross this boundary.
+  */
+  const code = run.lifecycle?.errorCode;
+  if (code && Object.hasOwn(CANONICAL_RESEARCH_DIAGNOSES, code)) {
+    return CANONICAL_RESEARCH_DIAGNOSES[code];
+  }
+  return fallbackDiagnosis(run);
 }
 
 function toRunListItem(run: ResearchRun) {
@@ -51,14 +139,35 @@ function toRunListItem(run: ResearchRun) {
     title: run.topic || run.query,
     status: run.status,
     summary: run.results?.summary,
+    diagnosis: toRunDiagnosis(run),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
 }
 
 function toRunDetail(run: ResearchRun) {
+  const diagnosis = toRunDiagnosis(run);
+  const lifecycle = run.lifecycle
+    ? {
+        ...run.lifecycle,
+        terminalCause: diagnosis?.detail,
+        ...("remediation" in run.lifecycle ? { remediation: diagnosis?.remediation } : {}),
+        ...("safeDetail" in run.lifecycle ? { safeDetail: diagnosis?.detail } : {}),
+        ...("detail" in run.lifecycle ? { detail: diagnosis?.detail } : {}),
+      }
+    : undefined;
   return {
     ...run,
+    // Raw legacy errors and event metadata may contain provider payloads. The bounded diagnosis is the only failure prose returned.
+    error: diagnosis?.detail,
+    lifecycle,
+    events: run.events.map((event) => ({
+      id: event.id,
+      timestamp: event.timestamp,
+      type: event.type,
+      message: event.type === "error" ? "Research step failed. See the run diagnosis for details." : (safeDiagnosticText(event.message) ?? "Research event"),
+    })),
+    diagnosis,
     title: run.topic || run.query,
   };
 }
@@ -227,10 +336,16 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
       const existing = await getStore().getRun(req.params.id);
       if (!existing) throw notFound(`Run not found: ${req.params.id}`);
       if (["completed", "failed", "cancelled", "timed_out", "retry_exhausted"].includes(existing.status)) {
+        const diagnosis = toRunDiagnosis(existing);
         res.status(409).json({
           error: `Run ${req.params.id} cannot be cancelled from status ${existing.status}`,
           code: "INVALID_TRANSITION",
-          details: { code: "INVALID_TRANSITION", retryable: false },
+          details: {
+            code: "INVALID_TRANSITION",
+            retryable: false,
+            setupHint: diagnosis?.remediation,
+            diagnosis,
+          },
         });
         return;
       }
@@ -252,19 +367,22 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
         const run = await getStore().getRun(req.params.id);
         const exhausted = run?.status === "retry_exhausted" || run?.lifecycle?.errorCode === "RETRY_EXHAUSTED";
         const code = exhausted ? "RETRY_EXHAUSTED" : "NON_RETRYABLE_PROVIDER_ERROR";
+        const diagnosis = run ? toRunDiagnosis(run) : undefined;
         res.status(409).json({
-          error: error.message,
+          error: diagnosis?.detail ?? "This research outcome is not retryable.",
           code,
           details: {
             code,
             retryable: false,
+            setupHint: diagnosis?.remediation,
+            diagnosis,
           },
         });
         return;
       }
       if (error instanceof ResearchLifecycleError && error.code === "invalid_transition") {
         res.status(409).json({
-          error: error.message,
+          error: "The research run cannot be retried from its current status.",
           code: "INVALID_TRANSITION",
           details: { code: "INVALID_TRANSITION", retryable: false },
         });
@@ -281,7 +399,7 @@ export function createResearchRouter(store: TaskStore, options?: ServerOptions):
 
       const format = String(req.query.format ?? "markdown");
       if (format === "json") {
-        res.json({ format, filename: `${run.id}.json`, content: JSON.stringify(run, null, 2) });
+        res.json({ format, filename: `${run.id}.json`, content: JSON.stringify(toRunDetail(run), null, 2) });
         return;
       }
       if (format === "html") {

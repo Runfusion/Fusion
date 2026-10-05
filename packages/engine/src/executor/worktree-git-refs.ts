@@ -67,7 +67,35 @@ export async function resolveContaminationBaseRef(worktreePath: string): Promise
  * Returns an empty array if no changes or if git commands fail.
  */
 export async function resolveDiffBaseRef(worktreePath: string, baseCommitSha?: string): Promise<string | undefined> {
-  if (baseCommitSha) return baseCommitSha;
+  /*
+  FNXC:ReviewBaseRecovery 2026-10-01-04:29:
+  A resumed or reset branch can include newer integration history while its task row retains an
+  older ancestor. Advance only to a Git-proven common ancestor of HEAD and an integration ref,
+  never to HEAD itself; review, modified-file capture and merge proof must share the same base.
+  Preserve the stored base when refs are missing, divergent, or already contain the whole task.
+  */
+  if (baseCommitSha) {
+    let selected = baseCommitSha;
+    for (const integrationRef of ["main", "origin/main"]) {
+      try {
+        const { stdout } = await execFileAsync("git", ["merge-base", "HEAD", integrationRef], {
+          cwd: worktreePath, encoding: "utf8", timeout: 30_000,
+        });
+        const candidate = stdout.trim();
+        const { stdout: head } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+          cwd: worktreePath, encoding: "utf8", timeout: 30_000,
+        });
+        if (!candidate || candidate === head.trim() || candidate === selected) continue;
+        await execFileAsync("git", ["merge-base", "--is-ancestor", selected, candidate], {
+          cwd: worktreePath, timeout: 30_000,
+        });
+        selected = candidate;
+      } catch {
+        // Unavailable or divergent integration history cannot justify discarding review input.
+      }
+    }
+    return selected;
+  }
 
   try {
     const { stdout } = await execAsync(

@@ -90,7 +90,22 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
 /* FNXC:OverlapWaitSynchronization 2026-09-17-00:22: advance the ceiling so an upgraded project has the durable wait table before any overlap-marker transition tries to record into it. Renumbered 0074->0084 (2026-09-18): upstream's own migrations 0074 (FN-323 project notes) through 0083 (FN-514) are absent from this branch by design (it excludes their source commits), but the numeric slots are real and must not be reused, or a database that ran the real 0074..0083 would be misread as compatible with this branch's different 0074. */
 /* FNXC:PullRequestReadiness 2026-10-04-23:13: upgraded stores must materialize SHA-fenced readiness evidence before PR readers use it. */
-export const SCHEMA_BASELINE_VERSION = "0087";
+/*
+FNXC:MainReconciliation 2026-10-05-13:58:
+Origin's released 0086 stale-review and 0087 pull-request-readiness identities remain canonical. The
+local external-session lineage moves intact to 0088-0094. Every collided identity is guarded by a
+schema-shape probe, so a database carrying the other lineage's historical marker repairs the missing
+shape instead of silently treating an unrelated migration as applied.
+*/
+export const SCHEMA_BASELINE_VERSION = "0094";
+export const EXTERNAL_SESSIONS_VERSION = "0088";
+export const EXTERNAL_SESSION_FEEDBACK_VERSION = "0089";
+export const EXTERNAL_SESSION_TURNS_VERSION = "0090";
+export const EXTERNAL_SESSION_TURN_SEARCH_VERSION = "0091";
+export const EXTERNAL_SESSION_HOST_HEALTH_VERSION = "0092";
+export const EXTERNAL_SESSION_INCREMENTS_VERSION = "0093";
+/** FNXC:ExternalSessionSummary 2026-09-24-07:05 (F3 = A): durable AI summaries of collected sessions. */
+export const EXTERNAL_SESSION_SUMMARIES_VERSION = "0094";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -402,6 +417,13 @@ function resolveMigrationsDir(): string {
 }
 
 const MIGRATIONS_DIR = resolveMigrationsDir();
+const EXTERNAL_SESSIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0088_external_sessions.sql");
+const EXTERNAL_SESSION_FEEDBACK_MIGRATION_PATH = join(MIGRATIONS_DIR, "0089_external_session_feedback.sql");
+const EXTERNAL_SESSION_TURNS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0090_external_session_turns.sql");
+const EXTERNAL_SESSION_TURN_SEARCH_MIGRATION_PATH = join(MIGRATIONS_DIR, "0091_external_session_turn_search.sql");
+const EXTERNAL_SESSION_HOST_HEALTH_MIGRATION_PATH = join(MIGRATIONS_DIR, "0092_external_session_host_health.sql");
+const EXTERNAL_SESSION_INCREMENTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0093_external_session_usage_increments.sql");
+const EXTERNAL_SESSION_SUMMARIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0094_external_session_summaries.sql");
 const BASELINE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0000_initial.sql");
 const AUTOMATION_ISOLATION_MIGRATION_PATH = join(
   MIGRATIONS_DIR,
@@ -1647,6 +1669,151 @@ export async function applySchemaBaseline(
     Migration 0086 originally created a delete-only task FK. Re-run the idempotent migration when
     that legacy shape remains so populated fallback partitions can rekey task receipts atomically.
     */
+    // FNXC:ExternalSessions 2026-09-19-00:00: Probe the full column contract; a ledger row alone cannot prove a restored schema is usable.
+    // FNXC:ExternalSessions 2026-09-22-17:54: The external-session base migration owns its tables independently of project.tasks, so the probe must not depend on that table existing.
+    // FNXC:ExternalSessions 2026-09-23-07:55: 0086 also owns the recency index, the project-id triggers and the named constraints, so probe those too; columns alone cannot prove a restored schema is usable.
+    // FNXC:ExternalSessions 2026-09-23-08:25: Bind each constraint to its OWNING table. PostgreSQL allows the same CHECK or foreign-key name on a different table, so a name-and-namespace match can read a damaged schema as intact.
+    const externalSessionsMissing = ((await tx.execute(sql`
+      SELECT EXISTS (
+        SELECT 1 FROM (VALUES
+          ('external_session_hosts', 'project_id'),
+          ('external_session_hosts', 'host_id'),
+          ('external_session_hosts', 'collector_version'),
+          ('external_session_hosts', 'last_heartbeat_at'),
+          ('external_session_streams', 'project_id'),
+          ('external_session_streams', 'host_id'),
+          ('external_session_streams', 'stream_id'),
+          ('external_session_streams', 'acknowledged_sequence'),
+          ('external_session_streams', 'last_event_id'),
+          ('external_session_streams', 'last_event_digest'),
+          ('external_session_streams', 'acknowledged_at'),
+          ('external_sessions', 'project_id'),
+          ('external_sessions', 'id'),
+          ('external_sessions', 'host_id'),
+          ('external_sessions', 'provider'),
+          ('external_sessions', 'native_session_id'),
+          ('external_sessions', 'origin'),
+          ('external_sessions', 'revision'),
+          ('external_sessions', 'observation'),
+          ('external_sessions', 'observation_digest'),
+          ('external_sessions', 'received_at')
+        ) AS required(table_name, column_name)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM information_schema.columns actual
+          WHERE actual.table_schema = 'project' AND actual.table_name = required.table_name
+            AND actual.column_name = required.column_name
+        )
+      )
+      OR to_regclass('project."idxExternalSessionsRecent"') IS NULL
+      OR EXISTS (
+        SELECT 1 FROM unnest(ARRAY['external_session_hosts', 'external_session_streams', 'external_sessions']) AS required(table_name)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid = to_regclass('project.' || required.table_name) AND tgname = 'fusion_assign_project_id'
+        )
+      )
+      OR EXISTS (
+        SELECT 1 FROM (VALUES
+          ('external_session_hosts', 'external_session_hosts_pkey'),
+          ('external_session_streams', 'external_session_streams_pkey'),
+          ('external_session_streams', 'external_session_streams_project_id_host_id_fkey'),
+          ('external_session_streams', 'external_session_stream_sequence'),
+          ('external_sessions', 'external_sessions_pkey'),
+          ('external_sessions', 'external_sessions_native_identity'),
+          ('external_sessions', 'external_sessions_project_id_host_id_fkey'),
+          ('external_sessions', 'external_sessions_observed_origin'),
+          ('external_sessions', 'external_sessions_revision')
+        ) AS required(table_name, conname)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pg_constraint actual
+          WHERE actual.conrelid = to_regclass('project.' || required.table_name) AND actual.conname = required.conname
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSIONS_VERSION) || externalSessionsMissing) {
+      const migrationSql = await readFile(EXTERNAL_SESSIONS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    // FNXC:RemoteAgents 2026-09-19-00:00: Feedback has its own forward identity after this rebase's 0084/0085 renumber; never reuse the overlap-sync/excluded-feature-schema bookkeeping IDs.
+    /*
+    FNXC:RemoteAgents 2026-09-22-17:54: A recorded feedback-migration row does not prove a usable feedback table.
+    Probe every column, the named constraints, the queue index and the project-id trigger; any gap re-runs the idempotent repair.
+    */
+    const feedbackMissing = ((await tx.execute(sql`
+      SELECT to_regclass('project.external_session_feedback') IS NULL
+        OR to_regclass('project.external_session_feedback_queue') IS NULL
+        OR EXISTS (
+          SELECT 1 FROM unnest(ARRAY['project_id', 'id', 'session_id', 'generation', 'text', 'fingerprint', 'state', 'created_at', 'expires_at', 'delivered_at']) AS required(column_name)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM information_schema.columns actual
+            WHERE actual.table_schema = 'project' AND actual.table_name = 'external_session_feedback'
+              AND actual.column_name = required.column_name
+          )
+        )
+        OR EXISTS (
+          SELECT 1 FROM unnest(ARRAY['external_session_feedback_pkey', 'external_session_feedback_state_check', 'external_session_feedback_project_id_session_id_fkey']) AS required(conname)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM pg_constraint actual
+            WHERE actual.conrelid = to_regclass('project.external_session_feedback') AND actual.conname = required.conname
+          )
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid = to_regclass('project.external_session_feedback') AND tgname = 'fusion_assign_project_id'
+        ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSION_FEEDBACK_VERSION) || feedbackMissing) {
+      await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_FEEDBACK_MIGRATION_PATH, "utf8")));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSION_FEEDBACK_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const turnsMissing = ((await tx.execute(sql`SELECT to_regclass('project.external_session_turns') IS NULL AS missing`)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSION_TURNS_VERSION) || turnsMissing) {
+      await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_TURNS_MIGRATION_PATH, "utf8")));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSION_TURNS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /* FNXC:ExternalSessionSearch 2026-09-23-22:51: The search index is probed by name, because the ledger row can
+       exist while the index was dropped by hand; a missing index silently turns search into a sequential scan. */
+    const searchMissing = ((await tx.execute(sql`
+      SELECT NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = 'external_session_turn_search'
+        AND relnamespace = to_regnamespace('project')) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSION_TURN_SEARCH_VERSION) || searchMissing) {
+      await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_TURN_SEARCH_MIGRATION_PATH, "utf8")));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSION_TURN_SEARCH_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /* FNXC:ExternalSessionHealth 2026-09-23-23:24: Probe the columns, not just the ledger: a hand-dropped column
+       would otherwise leave every heartbeat write failing while the ledger claimed the migration was applied. */
+    const healthMissing = ((await tx.execute(sql`
+      SELECT EXISTS (
+        SELECT 1 FROM (VALUES ('spool_depth'),('spool_bytes'),('parse_failures'),('delivery_failures'),('health_reported_at')) AS required(column_name)
+        WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+          WHERE c.table_schema = 'project' AND c.table_name = 'external_session_hosts' AND c.column_name = required.column_name)
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSION_HOST_HEALTH_VERSION) || healthMissing) {
+      await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_HOST_HEALTH_MIGRATION_PATH, "utf8")));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSION_HOST_HEALTH_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const incrementsMissing = ((await tx.execute(sql`SELECT to_regclass('project.external_session_usage_increments') IS NULL AS missing`)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSION_INCREMENTS_VERSION) || incrementsMissing) {
+      await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_INCREMENTS_MIGRATION_PATH, "utf8")));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSION_INCREMENTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /* FNXC:ExternalSessionSummary 2026-09-24-07:05: Probe the table, not just the ledger, for the same reason as
+       the usage-increments migration: a hand-dropped table would otherwise leave every summary write failing behind a satisfied ledger. */
+    const summariesMissing = ((await tx.execute(sql`SELECT to_regclass('project.external_session_summaries') IS NULL AS missing`)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!applied.includes(EXTERNAL_SESSION_SUMMARIES_VERSION) || summariesMissing) {
+      await tx.execute(sql.raw(await readFile(EXTERNAL_SESSION_SUMMARIES_MIGRATION_PATH, "utf8")));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${EXTERNAL_SESSION_SUMMARIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
     const staleReviewCallbackWaiverReceiptsMissing = ((await tx.execute(sql`
       SELECT COALESCE((
         SELECT NOT (c.relrowsecurity AND c.relforcerowsecurity)
@@ -1668,7 +1835,17 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
-    if (!pullRequestReadinessAlreadyApplied) {
+    const pullRequestReadinessMissing = ((await tx.execute(sql`
+      SELECT EXISTS (
+        SELECT 1 FROM (VALUES ('readiness'), ('readiness_provider')) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM information_schema.columns actual
+          WHERE actual.table_schema = 'project' AND actual.table_name = 'pull_requests'
+            AND actual.column_name = required.column_name
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? true;
+    if (!pullRequestReadinessAlreadyApplied || pullRequestReadinessMissing) {
       const migrationSql = await readFile(PULL_REQUEST_READINESS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PULL_REQUEST_READINESS_VERSION}) ON CONFLICT (version) DO NOTHING`);

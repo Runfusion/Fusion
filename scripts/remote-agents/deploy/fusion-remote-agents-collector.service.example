@@ -1,0 +1,17 @@
+# Linux systemd user unit for the collector. Copy to ~/.config/systemd/user/, replace every <PLACEHOLDER>, then:
+#   systemctl --user daemon-reload && systemctl --user enable --now fusion-remote-agents-collector.service
+# Upgrade by installing the new files into a new directory and overriding only ExecStart in a drop-in
+# (~/.config/systemd/user/fusion-remote-agents-collector.service.d/NN-<version>.conf with "ExecStart=" then the
+# new line). Rollback is deleting that drop-in, daemon-reload and restart.
+[Unit]
+Description=Fusion native remote-agent collector
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=<PYTHON3> <INSTALL_DIR>/collector.py --url <FUSION_URL> --project <PROJECT_ID> --host <HOST_ID> --token-file <TOKEN_FILE> --state <STATE_DIR>/<HOST_ID>.sqlite
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

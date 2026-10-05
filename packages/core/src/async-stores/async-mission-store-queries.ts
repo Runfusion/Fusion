@@ -44,7 +44,7 @@
  */
 import { and, asc, desc, eq, inArray, ne, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer, type DbTransaction } from "../postgres/data-layer.js";
 import { normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType } from "../missions/mission-types.js";
 import type {
   Mission,
@@ -110,8 +110,8 @@ export function missionProjectId(): SQL<string> {
   return sql<string>`COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__')`;
 }
 
-function missionProjectScope(column: AnyColumn): SQL {
-  return eq(column, missionProjectId());
+function missionProjectScope(column: AnyColumn, projectId?: string): SQL {
+  return eq(column, projectId === undefined ? missionProjectId() : projectOwnershipPartition(projectId));
 }
 
 // ── Row shapes (camelCase column aliases via Drizzle) ───────────────
@@ -733,11 +733,11 @@ export async function deleteMission(handle: QueryHandle, id: string): Promise<bo
 }
 
 /** Check whether a mission with the given id exists. */
-export async function missionExists(handle: QueryHandle, id: string): Promise<boolean> {
+export async function missionExists(handle: QueryHandle, id: string, projectId?: string): Promise<boolean> {
   const rows = await handle
     .select({ id: schema.project.missions.id })
     .from(schema.project.missions)
-    .where(and(missionProjectScope(schema.project.missions.projectId), eq(schema.project.missions.id, id)));
+    .where(and(missionProjectScope(schema.project.missions.projectId, projectId), eq(schema.project.missions.id, id)));
   return rows.length > 0;
 }
 
@@ -1350,13 +1350,14 @@ export async function getMissionGoalLink(
   handle: QueryHandle,
   missionId: string,
   goalId: string,
+  projectId?: string,
 ): Promise<MissionGoalLink | undefined> {
   const rows = await handle
     .select(missionGoalColumns)
     .from(schema.project.missionGoals)
     .where(
       and(
-        missionProjectScope(schema.project.missionGoals.projectId),
+        missionProjectScope(schema.project.missionGoals.projectId, projectId),
         eq(schema.project.missionGoals.missionId, missionId),
         eq(schema.project.missionGoals.goalId, goalId),
       ),
@@ -1373,11 +1374,14 @@ export async function insertMissionGoalLink(
   missionId: string,
   goalId: string,
   createdAt: string,
-): Promise<void> {
-  await handle
+  projectId?: string,
+): Promise<boolean> {
+  const inserted = await handle
     .insert(schema.project.missionGoals)
-    .values({ projectId: missionProjectId(), missionId, goalId, createdAt })
-    .onConflictDoNothing();
+    .values({ projectId: projectId === undefined ? missionProjectId() : projectOwnershipPartition(projectId), missionId, goalId, createdAt })
+    .onConflictDoNothing()
+    .returning({ missionId: schema.project.missionGoals.missionId });
+  return inserted.length > 0;
 }
 
 /** Delete a mission-goal link. Returns true if a row was deleted. */
@@ -1385,12 +1389,13 @@ export async function deleteMissionGoalLink(
   handle: QueryHandle,
   missionId: string,
   goalId: string,
+  projectId?: string,
 ): Promise<boolean> {
   const result = await handle
     .delete(schema.project.missionGoals)
     .where(
       and(
-        missionProjectScope(schema.project.missionGoals.projectId),
+        missionProjectScope(schema.project.missionGoals.projectId, projectId),
         eq(schema.project.missionGoals.missionId, missionId),
         eq(schema.project.missionGoals.goalId, goalId),
       ),
@@ -1400,49 +1405,49 @@ export async function deleteMissionGoalLink(
 }
 
 /** List goal IDs linked to a mission, ordered by createdAt ASC, goalId ASC. */
-export async function listGoalIdsForMission(handle: QueryHandle, missionId: string): Promise<string[]> {
+export async function listGoalIdsForMission(handle: QueryHandle, missionId: string, projectId?: string): Promise<string[]> {
   const rows = await handle
     .select({ goalId: schema.project.missionGoals.goalId })
     .from(schema.project.missionGoals)
-    .where(and(missionProjectScope(schema.project.missionGoals.projectId), eq(schema.project.missionGoals.missionId, missionId)))
+    .where(and(missionProjectScope(schema.project.missionGoals.projectId, projectId), eq(schema.project.missionGoals.missionId, missionId)))
     .orderBy(asc(schema.project.missionGoals.createdAt), asc(schema.project.missionGoals.goalId));
   return rows.map((row) => row.goalId);
 }
 
 /** List mission IDs linked to a goal, ordered by createdAt ASC, missionId ASC. */
-export async function listMissionIdsForGoal(handle: QueryHandle, goalId: string): Promise<string[]> {
+export async function listMissionIdsForGoal(handle: QueryHandle, goalId: string, projectId?: string): Promise<string[]> {
   const rows = await handle
     .select({ missionId: schema.project.missionGoals.missionId })
     .from(schema.project.missionGoals)
-    .where(and(missionProjectScope(schema.project.missionGoals.projectId), eq(schema.project.missionGoals.goalId, goalId)))
+    .where(and(missionProjectScope(schema.project.missionGoals.projectId, projectId), eq(schema.project.missionGoals.goalId, goalId)))
     .orderBy(asc(schema.project.missionGoals.createdAt), asc(schema.project.missionGoals.missionId));
   return rows.map((row) => row.missionId);
 }
 
 /** Count goals linked per mission (batch query for summaries). */
-export async function countGoalsByMission(handle: QueryHandle): Promise<Map<string, number>> {
+export async function countGoalsByMission(handle: QueryHandle, projectId?: string): Promise<Map<string, number>> {
   const rows = await handle
     .select({
       missionId: schema.project.missionGoals.missionId,
       count: sql<number>`count(*)::int`,
     })
     .from(schema.project.missionGoals)
-    .where(missionProjectScope(schema.project.missionGoals.projectId))
+    .where(missionProjectScope(schema.project.missionGoals.projectId, projectId))
     .groupBy(schema.project.missionGoals.missionId);
   return new Map(rows.map((row) => [row.missionId, row.count]));
 }
 
 /** Check whether a goal exists (for link validation). */
-export async function goalExists(handle: QueryHandle, goalId: string): Promise<boolean> {
+export async function goalExists(handle: QueryHandle, goalId: string, projectId?: string): Promise<boolean> {
   const rows = await handle
     .select({ id: schema.project.goals.id })
     .from(schema.project.goals)
-    .where(and(missionProjectScope(schema.project.goals.projectId), eq(schema.project.goals.id, goalId)));
+    .where(and(missionProjectScope(schema.project.goals.projectId, projectId), eq(schema.project.goals.id, goalId)));
   return rows.length > 0;
 }
 
 /** Get a goal by id. */
-export async function getGoal(handle: QueryHandle, goalId: string): Promise<Goal | undefined> {
+export async function getGoal(handle: QueryHandle, goalId: string, projectId?: string): Promise<Goal | undefined> {
   const rows = await handle
     .select({
       id: schema.project.goals.id,
@@ -1453,12 +1458,12 @@ export async function getGoal(handle: QueryHandle, goalId: string): Promise<Goal
       updatedAt: schema.project.goals.updatedAt,
     })
     .from(schema.project.goals)
-    .where(and(missionProjectScope(schema.project.goals.projectId), eq(schema.project.goals.id, goalId)));
+    .where(and(missionProjectScope(schema.project.goals.projectId, projectId), eq(schema.project.goals.id, goalId)));
   return rows[0] ? rowToGoal(rows[0] as GoalRow) : undefined;
 }
 
 /** Get goals by IDs (batch fetch). */
-export async function listGoalsByIds(handle: QueryHandle, goalIds: string[]): Promise<Goal[]> {
+export async function listGoalsByIds(handle: QueryHandle, goalIds: string[], projectId?: string): Promise<Goal[]> {
   if (goalIds.length === 0) return [];
   const rows = await handle
     .select({
@@ -1470,7 +1475,7 @@ export async function listGoalsByIds(handle: QueryHandle, goalIds: string[]): Pr
       updatedAt: schema.project.goals.updatedAt,
     })
     .from(schema.project.goals)
-    .where(and(missionProjectScope(schema.project.goals.projectId), inArray(schema.project.goals.id, goalIds)));
+    .where(and(missionProjectScope(schema.project.goals.projectId, projectId), inArray(schema.project.goals.id, goalIds)));
   return rows.map((row) => rowToGoal(row as GoalRow));
 }
 

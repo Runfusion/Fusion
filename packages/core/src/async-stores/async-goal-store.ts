@@ -15,9 +15,9 @@
  *   flip. These helpers are the async target the PostgreSQL integration tests
  *   consume.
  */
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+import { projectOwnershipPartition, type AsyncDataLayer, type DbTransaction } from "../postgres/data-layer.js";
 import {
   ACTIVE_GOAL_LIMIT,
   ActiveGoalLimitExceededError,
@@ -61,13 +61,20 @@ function toGoal(row: GoalRow): Goal {
 }
 
 /**
- * Get a single goal by id. Returns null if not found.
+ * FNXC:MissionGoalLinking 2026-09-23-08:55:
+ * Operational goal reads use the AsyncDataLayer ownership partition, not a
+ * natural id alone or the connection's optional RLS session binding. This keeps
+ * goal-show and mission-link validation identical on administrative connections
+ * and confines an unbound compatibility store to the legacy quarantine.
  */
-export async function getGoal(handle: QueryHandle, id: string): Promise<Goal | null> {
+export async function getGoal(handle: QueryHandle, id: string, projectId?: string): Promise<Goal | null> {
   const rows = await handle
     .select(goalColumns)
     .from(schema.project.goals)
-    .where(eq(schema.project.goals.id, id));
+    .where(and(
+      eq(schema.project.goals.projectId, projectOwnershipPartition(projectId)),
+      eq(schema.project.goals.id, id),
+    ));
   return rows[0] ? toGoal(rows[0] as GoalRow) : null;
 }
 
@@ -83,15 +90,20 @@ export async function createGoal(
 ): Promise<Goal> {
   const now = new Date().toISOString();
   const created = await layer.transactionImmediate(async (tx) => {
+    const projectId = projectOwnershipPartition(layer.projectId);
     const countRows = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.project.goals)
-      .where(eq(schema.project.goals.status, "active"));
+      .where(and(
+        eq(schema.project.goals.projectId, projectId),
+        eq(schema.project.goals.status, "active"),
+      ));
     const currentActive = countRows[0]?.count ?? 0;
     if (currentActive >= ACTIVE_GOAL_LIMIT) {
       throw new ActiveGoalLimitExceededError(ACTIVE_GOAL_LIMIT, currentActive);
     }
     await tx.insert(schema.project.goals).values({
+      projectId,
       id: input.id,
       title: input.title,
       description: input.description ?? null,
@@ -118,8 +130,10 @@ export async function updateGoal(
   handle: QueryHandle,
   id: string,
   input: GoalUpdateInput,
+  projectId?: string,
 ): Promise<Goal> {
-  const existing = await getGoal(handle, id);
+  const ownershipPartition = projectOwnershipPartition(projectId);
+  const existing = await getGoal(handle, id, ownershipPartition);
   if (!existing) throw new Error(`Goal ${id} not found`);
   const now = new Date().toISOString();
   await handle
@@ -129,24 +143,31 @@ export async function updateGoal(
       description: input.description ?? existing.description ?? null,
       updatedAt: now,
     })
-    .where(eq(schema.project.goals.id, id));
-  return (await getGoal(handle, id))!;
+    .where(and(
+      eq(schema.project.goals.projectId, ownershipPartition),
+      eq(schema.project.goals.id, id),
+    ));
+  return (await getGoal(handle, id, ownershipPartition))!;
 }
 
 /**
  * FNXC:GoalStore 2026-06-24-06:45:
  * Archive a goal. If already archived, returns the existing goal unchanged.
  */
-export async function archiveGoal(handle: QueryHandle, id: string): Promise<Goal> {
-  const existing = await getGoal(handle, id);
+export async function archiveGoal(handle: QueryHandle, id: string, projectId?: string): Promise<Goal> {
+  const ownershipPartition = projectOwnershipPartition(projectId);
+  const existing = await getGoal(handle, id, ownershipPartition);
   if (!existing) throw new Error(`Goal ${id} not found`);
   if (existing.status === "archived") return existing;
   const now = new Date().toISOString();
   await handle
     .update(schema.project.goals)
     .set({ status: "archived", updatedAt: now })
-    .where(eq(schema.project.goals.id, id));
-  return (await getGoal(handle, id))!;
+    .where(and(
+      eq(schema.project.goals.projectId, ownershipPartition),
+      eq(schema.project.goals.id, id),
+    ));
+  return (await getGoal(handle, id, ownershipPartition))!;
 }
 
 /**
@@ -159,14 +180,18 @@ export async function unarchiveGoal(
   id: string,
 ): Promise<Goal> {
   const result = await layer.transactionImmediate(async (tx) => {
-    const existing = await getGoal(tx, id);
+    const projectId = projectOwnershipPartition(layer.projectId);
+    const existing = await getGoal(tx, id, projectId);
     if (!existing) throw new Error(`Goal ${id} not found`);
     if (existing.status === "active") return { goal: existing, changed: false };
 
     const countRows = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.project.goals)
-      .where(eq(schema.project.goals.status, "active"));
+      .where(and(
+        eq(schema.project.goals.projectId, projectId),
+        eq(schema.project.goals.status, "active"),
+      ));
     const currentActive = countRows[0]?.count ?? 0;
     if (currentActive >= ACTIVE_GOAL_LIMIT) {
       throw new ActiveGoalLimitExceededError(ACTIVE_GOAL_LIMIT, currentActive);
@@ -175,8 +200,11 @@ export async function unarchiveGoal(
     await tx
       .update(schema.project.goals)
       .set({ status: "active", updatedAt: now })
-      .where(eq(schema.project.goals.id, id));
-    return { goal: (await getGoal(tx, id))!, changed: true };
+      .where(and(
+        eq(schema.project.goals.projectId, projectId),
+        eq(schema.project.goals.id, id),
+      ));
+    return { goal: (await getGoal(tx, id, projectId))!, changed: true };
   });
   return result.goal;
 }
@@ -187,14 +215,16 @@ export async function unarchiveGoal(
 export async function listGoals(
   handle: QueryHandle,
   filter?: GoalListFilter,
+  projectId?: string,
 ): Promise<Goal[]> {
+  const ownershipScope = eq(schema.project.goals.projectId, projectOwnershipPartition(projectId));
   const query = handle
     .select(goalColumns)
     .from(schema.project.goals)
     .orderBy(asc(schema.project.goals.createdAt));
   const rows = filter?.status
-    ? await query.where(eq(schema.project.goals.status, filter.status))
-    : await query;
+    ? await query.where(and(ownershipScope, eq(schema.project.goals.status, filter.status)))
+    : await query.where(ownershipScope);
   return rows.map((row) => toGoal(row as GoalRow));
 }
 
@@ -222,6 +252,10 @@ export async function listGoals(
 export class AsyncGoalStore {
   private idSequence = 0;
 
+  /*
+  FNXC:MissionGoalLinking 2026-09-23-08:55:
+  The layer projectId is the permanent ownership seam for every operation in this facade; never infer operational goal scope from whichever pooled session executes a query.
+  */
   constructor(private readonly layer: AsyncDataLayer) {}
 
   private generateGoalId(): string {
@@ -233,11 +267,11 @@ export class AsyncGoalStore {
   }
 
   async listGoals(filter?: GoalListFilter): Promise<Goal[]> {
-    return listGoals(this.layer.db, filter);
+    return listGoals(this.layer.db, filter, this.layer.projectId);
   }
 
   async getGoal(id: string): Promise<Goal | null> {
-    return getGoal(this.layer.db, id);
+    return getGoal(this.layer.db, id, this.layer.projectId);
   }
 
   async createGoal(input: GoalCreateInput): Promise<Goal> {
@@ -245,11 +279,11 @@ export class AsyncGoalStore {
   }
 
   async updateGoal(id: string, input: GoalUpdateInput): Promise<Goal> {
-    return updateGoal(this.layer.db, id, input);
+    return updateGoal(this.layer.db, id, input, this.layer.projectId);
   }
 
   async archiveGoal(id: string): Promise<Goal> {
-    return archiveGoal(this.layer.db, id);
+    return archiveGoal(this.layer.db, id, this.layer.projectId);
   }
 
   async unarchiveGoal(id: string): Promise<Goal> {

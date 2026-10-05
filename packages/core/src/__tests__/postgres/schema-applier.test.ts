@@ -25,12 +25,14 @@ import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
+import { TASK_QUEUE_ORDER_VERSION, TASK_HUMAN_MERGE_APPROVAL_VERSION } from "../../postgres/schema-applier.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   applySchemaBaseline,
   getAppliedMigrations,
   SCHEMA_BASELINE_VERSION,
+  EXTERNAL_SESSIONS_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   assertBinaryNotOlderThanDatabase,
   cePluginSchemaInit,
@@ -119,6 +121,12 @@ import {
   DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
   STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
   PULL_REQUEST_READINESS_VERSION,
+  EXTERNAL_SESSION_FEEDBACK_VERSION,
+  EXTERNAL_SESSION_TURNS_VERSION,
+  EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+  EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+  EXTERNAL_SESSION_INCREMENTS_VERSION,
+  EXTERNAL_SESSION_SUMMARIES_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -176,9 +184,14 @@ describe("schema-applier: immutable migration identities", () => {
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0086");
     expect(PULL_REQUEST_READINESS_VERSION).toBe("0087");
-    expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION));
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(PULL_REQUEST_READINESS_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0087");
+    expect(EXTERNAL_SESSIONS_VERSION).toBe("0088");
+    expect(EXTERNAL_SESSION_FEEDBACK_VERSION).toBe("0089");
+    expect(EXTERNAL_SESSION_TURNS_VERSION).toBe("0090");
+    expect(EXTERNAL_SESSION_TURN_SEARCH_VERSION).toBe("0091");
+    expect(EXTERNAL_SESSION_HOST_HEALTH_VERSION).toBe("0092");
+    expect(EXTERNAL_SESSION_INCREMENTS_VERSION).toBe("0093");
+    expect(EXTERNAL_SESSION_SUMMARIES_VERSION).toBe("0094");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0094");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -707,7 +720,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 113 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all project, central and archive tables", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -732,7 +745,8 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     0060 adds workspace coordination leases and land intents (→ 115); 0071 adds patchnode_entries and 0084 adds task_overlap_waits (→ 117). Migration 0086 adds stale review callback waiver receipts (→ 118). Migration 0087 adds columns to pull_requests without changing the table count.
     Plugin tables are added separately by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(118);
+    // FNXC:MainReconciliation 2026-10-05-13:58: Canonical 0086 adds the waiver table; external-session migrations 0088-0094 add seven more tables while 0087 readiness and the search/health migrations add only columns or indexes.
+    expect(bySchema.project).toBe(125);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -758,6 +772,77 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     await applySchemaBaseline(ctx.db);
     const second = await applySchemaBaseline(ctx.db);
     expect(second.applied).toBe(false);
+  });
+
+  /*
+  FNXC:MainReconciliation 2026-10-05-13:58:
+  The diverged local history used 0086/0087 for external-session shapes while upstream used those
+  markers for waiver/readiness shapes. A marker therefore cannot authorize a skip: retain the
+  historical rows and prove schema probes repair the canonical upstream objects transactionally.
+  */
+  it("repairs canonical upstream shapes when local-history 0086/0087 markers are reused", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DROP TABLE project.stale_review_callback_waiver_receipts;
+      ALTER TABLE project.pull_requests DROP COLUMN readiness;
+      ALTER TABLE project.pull_requests DROP COLUMN readiness_provider;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const repaired = (await ctx.db.execute(sql`
+      SELECT
+        to_regclass('project.stale_review_callback_waiver_receipts') IS NOT NULL AS waiver_receipts,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'project' AND table_name = 'pull_requests' AND column_name = 'readiness'
+        ) AS readiness
+    `)) as unknown as Array<{ waiver_receipts: boolean; readiness: boolean }>;
+    expect(repaired).toEqual([{ waiver_receipts: true, readiness: true }]);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
+  });
+
+  it("upgrades an upstream 0086/0087 database with every external-session migration", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      DROP TABLE project.external_session_summaries;
+      DROP TABLE project.external_session_usage_increments;
+      DROP TABLE project.external_session_feedback;
+      DROP TABLE project.external_session_turns;
+      DROP TABLE project.external_sessions CASCADE;
+      DROP TABLE project.external_session_streams CASCADE;
+      DROP TABLE project.external_session_hosts CASCADE;
+      DELETE FROM public.fusion_schema_migrations WHERE version BETWEEN '0088' AND '0094';
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    expect(await getAppliedMigrations(ctx.db)).toEqual(expect.arrayContaining([
+      STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
+      PULL_REQUEST_READINESS_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      EXTERNAL_SESSION_FEEDBACK_VERSION,
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
+    ]));
+    const externalTables = (await ctx.db.execute(sql`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'project' AND table_name LIKE 'external_session%'
+      ORDER BY table_name
+    `)) as unknown as Array<{ table_name: string }>;
+    expect(externalTables.map(({ table_name }) => table_name)).toEqual(expect.arrayContaining([
+      "external_session_feedback",
+      "external_session_hosts",
+      "external_session_streams",
+      "external_session_summaries",
+      "external_session_turns",
+      "external_session_usage_increments",
+      "external_sessions",
+    ]));
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 
   /*
@@ -2045,6 +2130,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      EXTERNAL_SESSION_FEEDBACK_VERSION,
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
     const readinessMarkerCount = (await ctx.db.execute(sql`
       SELECT count(*)::int AS count
@@ -2160,6 +2252,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      EXTERNAL_SESSION_FEEDBACK_VERSION,
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 
@@ -2396,6 +2495,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      EXTERNAL_SESSION_FEEDBACK_VERSION,
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 
@@ -2513,6 +2619,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      EXTERNAL_SESSION_FEEDBACK_VERSION,
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 
@@ -2630,6 +2743,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      EXTERNAL_SESSIONS_VERSION,
+      EXTERNAL_SESSION_FEEDBACK_VERSION,
+      EXTERNAL_SESSION_TURNS_VERSION,
+      EXTERNAL_SESSION_TURN_SEARCH_VERSION,
+      EXTERNAL_SESSION_HOST_HEALTH_VERSION,
+      EXTERNAL_SESSION_INCREMENTS_VERSION,
+      EXTERNAL_SESSION_SUMMARIES_VERSION,
     ]);
   });
 });

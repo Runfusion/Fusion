@@ -1092,6 +1092,18 @@ Review-to-fix remediation waves are unbounded while actionable evidence changes.
 
 Merge admission is fail-closed: Fusion never invokes a merge requester when required implementation evidence is missing. If an unfinished durable checklist reaches a resolved review lane without its implementation proof, the graph records an operator-visible evidence-recovery message and returns the card to the workflow's resolved implementation lane with progress and its worktree preserved. This named remediation is limited to the typed boundary condition; paused, deleted, terminal, externally blocked, and settled cards are not moved. A later merge attempt must re-evaluate durable proof—Fusion never creates checklist completion, node results, approvals, or no-commit outcomes to satisfy the boundary.
 
+### Review input and automatic retry
+
+Singular review and merge evidence use the same Git-proven base. If the stored base predates
+integration history already present on the task branch, a newer common ancestor with local
+`main` or `origin/main` can narrow the diff. Missing or divergent refs preserve the stored
+base; an integration ref containing the entire task never turns its review input into an empty diff.
+
+A review refused with `review-input-unprovable` did not dispatch a reviewer. Automatic
+no-verdict recovery must not re-seed that failure or invent implementation fix steps. The card
+stays in its review lane with failed evidence and an actionable error; repair its base or checkout
+and retry explicitly. Lost reviewer sessions without this deterministic refusal remain recoverable.
+
 #### Receipt-backed stale callback waiver (FN-9429)
 
 For an effective automatic singular-repository task, a required pre-merge node explicitly declared `reviewKind: "code"` may be waived when its callback is proven stale for at least 15 minutes. Fusion requires no active session, execution lock, or runtime owner, no fresh review lease, no pause or WIP ownership, no manual PR, and no unresolved finding. The terminal `skipped` carrier is not reviewer approval and records no approving verdict.

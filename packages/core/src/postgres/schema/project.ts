@@ -40,6 +40,8 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { desc, sql } from "drizzle-orm";
+import type { ExternalSessionObservation } from "../../external-sessions/contract.js";
+import type { ExternalSessionTurn } from "../../external-sessions/turn-contract.js";
 import { PROJECT_SCHEMA, bytea, tsvector } from "./_shared.js";
 
 /**
@@ -50,6 +52,115 @@ import { PROJECT_SCHEMA, bytea, tsvector } from "./_shared.js";
  * separate SQLite files (fusion.db / fusion-central.db / archive.db).
  */
 export const projectSchema = pgSchema(PROJECT_SCHEMA);
+
+/** FNXC:ExternalSessions 2026-09-17-04:00: Project-isolated observations have no foreign key to tasks or runtime handles. */
+export const externalSessionHosts = projectSchema.table("external_session_hosts", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  hostId: text("host_id").notNull(),
+  collectorVersion: text("collector_version").notNull(),
+  lastHeartbeatAt: text("last_heartbeat_at"),
+  // FNXC:ExternalSessionHealth 2026-09-23-23:24: NULL means the collector did not report, never a reported zero.
+  spoolDepth: bigint("spool_depth", { mode: "number" }),
+  spoolBytes: bigint("spool_bytes", { mode: "number" }),
+  parseFailures: bigint("parse_failures", { mode: "number" }),
+  deliveryFailures: bigint("delivery_failures", { mode: "number" }),
+  healthReportedAt: text("health_reported_at"),
+}, t => [primaryKey({ columns: [t.projectId, t.hostId] })]);
+
+export const externalSessionStreams = projectSchema.table("external_session_streams", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  hostId: text("host_id").notNull(),
+  streamId: text("stream_id").notNull(),
+  acknowledgedSequence: bigint("acknowledged_sequence", { mode: "number" }).notNull().default(0),
+  lastEventId: text("last_event_id"),
+  lastEventDigest: text("last_event_digest"),
+  acknowledgedAt: text("acknowledged_at"),
+}, t => [
+  primaryKey({ columns: [t.projectId, t.hostId, t.streamId] }),
+  foreignKey({ columns: [t.projectId, t.hostId], foreignColumns: [externalSessionHosts.projectId, externalSessionHosts.hostId] }).onDelete("cascade"),
+  check("external_session_stream_sequence", sql`${t.acknowledgedSequence} BETWEEN 0 AND 9007199254740991`),
+]);
+
+export const externalSessions = projectSchema.table("external_sessions", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(),
+  hostId: text("host_id").notNull(),
+  provider: text("provider").notNull(),
+  nativeSessionId: text("native_session_id").notNull(),
+  origin: text("origin").notNull().default("observed"),
+  revision: bigint("revision", { mode: "number" }).notNull(),
+  observation: jsonb("observation").$type<ExternalSessionObservation>().notNull(),
+  observationDigest: text("observation_digest").notNull(),
+  receivedAt: text("received_at").notNull(),
+}, t => [
+  primaryKey({ columns: [t.projectId, t.id] }),
+  unique("external_sessions_native_identity").on(t.projectId, t.hostId, t.provider, t.nativeSessionId),
+  foreignKey({ columns: [t.projectId, t.hostId], foreignColumns: [externalSessionHosts.projectId, externalSessionHosts.hostId] }).onDelete("cascade"),
+  check("external_sessions_observed_origin", sql`${t.origin} = 'observed'`),
+  check("external_sessions_revision", sql`${t.revision} BETWEEN 1 AND 9007199254740991`),
+  index("idxExternalSessionsRecent").on(t.projectId, t.receivedAt, t.id),
+]);
+
+export const externalSessionFeedback = projectSchema.table("external_session_feedback", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  id: text("id").notNull(), sessionId: text("session_id").notNull(), generation: text("generation").notNull(),
+  text: text("text").notNull(), fingerprint: text("fingerprint").notNull(), state: text("state").notNull(),
+  createdAt: text("created_at").notNull(), expiresAt: text("expires_at").notNull(), deliveredAt: text("delivered_at"),
+}, t => [primaryKey({ columns: [t.projectId, t.id] }),
+  foreignKey({ columns: [t.projectId, t.sessionId], foreignColumns: [externalSessions.projectId, externalSessions.id] }).onDelete("cascade"),
+  index("external_session_feedback_queue").on(t.projectId, t.sessionId, t.state, t.createdAt, t.id),
+]);
+
+/** Historical transcript data is immutable by identity and advances only by native revision. */
+// FNXC:ExternalSessionIncrements 2026-09-24-04:51: One immutable row per revision that added usage.
+export const externalSessionUsageIncrements = projectSchema.table("external_session_usage_increments", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  sessionId: text("session_id").notNull(),
+  revision: bigint("revision", { mode: "number" }).notNull(),
+  usage: jsonb("usage").notNull().$type<Record<string, unknown>[]>(),
+  pricing: jsonb("pricing").$type<Record<string, unknown> | null>(),
+  recordedAt: text("recorded_at").notNull(),
+}, t => [primaryKey({ columns: [t.projectId, t.sessionId, t.revision] })]);
+
+/*
+FNXC:ExternalSessionSummary 2026-09-24-07:05 (F3 = A): one current AI summary per session, stored with the turn
+range it covered so staleness can be DERIVED at read rather than stored. A failure never nulls `summary`: the
+previous summary plus an explicit failure beats an empty pane during an inference outage.
+*/
+export const externalSessionSummaries = projectSchema.table("external_session_summaries", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  sessionId: text("session_id").notNull(),
+  summary: text("summary"),
+  provider: text("provider"),
+  model: text("model"),
+  throughOrdinal: bigint("through_ordinal", { mode: "number" }),
+  turnCount: bigint("turn_count", { mode: "number" }),
+  generatedAt: text("generated_at"),
+  status: text("status").notNull().$type<"ready" | "failed">(),
+  failure: text("failure"),
+  attemptedAt: text("attempted_at").notNull(),
+}, t => [
+  primaryKey({ columns: [t.projectId, t.sessionId] }),
+  foreignKey({ columns: [t.projectId, t.sessionId], foreignColumns: [externalSessions.projectId, externalSessions.id] }).onDelete("cascade"),
+]);
+
+export const externalSessionTurns = projectSchema.table("external_session_turns", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  sessionId: text("session_id").notNull(),
+  nativeTurnId: text("native_turn_id").notNull(),
+  revision: bigint("revision", { mode: "number" }).notNull(),
+  ordinal: bigint("ordinal", { mode: "number" }).notNull(),
+  turn: jsonb("turn").$type<ExternalSessionTurn>().notNull(),
+  turnDigest: text("turn_digest").notNull(),
+  receivedAt: text("received_at").notNull(),
+}, t => [
+  primaryKey({ columns: [t.projectId, t.sessionId, t.nativeTurnId] }),
+  foreignKey({ columns: [t.projectId, t.sessionId], foreignColumns: [externalSessions.projectId, externalSessions.id] }).onDelete("cascade"),
+  check("external_session_turn_revision", sql`${t.revision} BETWEEN 1 AND 9007199254740991`),
+  check("external_session_turn_ordinal", sql`${t.ordinal} BETWEEN 0 AND 9007199254740991`),
+  index("external_session_turn_history").on(t.projectId, t.sessionId, t.ordinal, t.nativeTurnId),
+]);
+
 
 // ── Tasks ────────────────────────────────────────────────────────────
 export const tasks = projectSchema.table("tasks", {
@@ -443,6 +554,7 @@ export const config = projectSchema.table("config", {
   workflowSteps: jsonb("workflow_steps").default([]),
   updatedAt: text("updated_at"),
 });
+
 
 /*
 FNXC:PostgresMigrationCompleteness 2026-07-14-09:27:
@@ -2692,6 +2804,8 @@ export const staleReviewCallbackWaiverReceipts = projectSchema.table("stale_revi
 ]);
 
 export const projectTableNames = [
+  "external_session_hosts", "external_session_streams", "external_sessions", "external_session_feedback", "external_session_turns",
+  "external_session_usage_increments", "external_session_summaries",
   "tasks", "config", "boards", "project_auth_users", "project_auth_memberships",
   "project_auth_providers", "project_auth_sessions", "task_reviewer_runs",
   "distributed_task_id_state", "distributed_task_id_reservations",

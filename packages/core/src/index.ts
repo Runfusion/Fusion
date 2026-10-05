@@ -948,7 +948,7 @@ export {
   validateColumnAgentBindings,
   ColumnAgentBindingError,
 } from "./agents/column-agent-binding-validation.js";
-export { AgentStore, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS, formatCurrentTaskLine } from "./agents/agent-store.js";
+export { AgentStore, AmbiguousAgentNameError, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS, formatCurrentTaskLine } from "./agents/agent-store.js";
 export type { AgentStoreEvents } from "./agents/agent-store.js";
 export {
   isImplementationTask,
@@ -2492,6 +2492,7 @@ export {
   RESEARCH_ORCHESTRATION_PHASES,
   RESEARCH_ORCHESTRATION_STEP_STATUSES,
   RESEARCH_RUN_FAILURE_CLASSES,
+  RESEARCH_ERROR_CODES,
   resolveResearchFindingId,
 } from "./research/research-types.js";
 export type {
@@ -2508,6 +2509,7 @@ export type {
   ResearchRun,
   ResearchRunLifecycle,
   ResearchRunFailureClass,
+  ResearchErrorCode,
   ResearchRunEvent,
   ResearchExport,
   ResearchRunCreateInput,
@@ -3019,6 +3021,7 @@ export type {
 // can build raw queries against the AsyncDataLayer without depending on
 // drizzle-orm directly.
 export { sql as drizzleSql, eq as drizzleEq } from "drizzle-orm";
+export { ExternalSessionFeedback, ExternalFeedbackConflict, feedbackSubmitSchema, feedbackClaimSchema, feedbackAckSchema } from "./external-sessions/feedback.js";
 
 // FNXC:PostgresSchema 2026-07-04-00:00:
 // Re-export the PostgreSQL Drizzle schema namespace so plugin stores (which
@@ -3182,3 +3185,39 @@ export * from "./cloud-link/index.js";
 export { TASK_LOG_READ_ONLY_SUFFIX, buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage, isTaskLogWriteRefusal } from "./task-store/task-log-write-refusal.js";
 
 export { findWorkflowNodeInstance } from "./workflows/workflow-node-instance.js";
+/*
+FNXC:RemoteAgents 2026-09-19-00:00: standalone external-session (remote agent) storage/read
+surfaces from FN-332's predecessor PR lineage. `tasks/overlap-wait-release.js` and the
+`postgres`/`task-store` `dispatch-wake.js` modules this branch used to re-export here belong to
+that OLD lineage's own overlap-wait/dispatch-wake implementation, which origin/main replaced with
+its own (packages/core/src/task-store/overlap-wait-ops.ts + engine-owned dispatch wiring) when this
+PR was rebased onto the reduced fork — those modules no longer exist on this branch, so their
+exports are intentionally dropped rather than reintroduced.
+*/
+export * from "./external-sessions/contract.js";
+export * from "./external-sessions/turn-contract.js";
+export { ExternalSessionTurnStore, ExternalSessionTurnReader, ExternalSessionTurnConflict } from "./external-sessions/turn-store.js";
+export type { ExternalSessionTurnListQuery } from "./external-sessions/turn-store.js";
+export { externalSessionTurnPricingSchema } from "./external-sessions/turn-contract.js";
+export type { ExternalSessionTurnPricing } from "./external-sessions/turn-contract.js";
+export { ExternalSessionRankings } from "./external-sessions/rankings.js";
+export type { ExternalSessionRankingQuery, RankingSessionCandidate, RankingTurnCandidate, RankingScan } from "./external-sessions/rankings.js";
+export { ExternalSessionTurnRestamp } from "./external-sessions/turn-store.js";
+export type { RestampInput, RestampResult } from "./external-sessions/turn-store.js";
+export { ExternalSessionUsageIncrementReader, usageDelta } from "./external-sessions/usage-increments.js";
+export type { UsageIncrement, UsageBand } from "./external-sessions/usage-increments.js";
+export { ExternalSessionTurnSearch } from "./external-sessions/turn-search.js";
+export type { ExternalSessionTurnSearchQuery, ExternalSessionTurnSearchHit, ExternalSessionTurnSearchPage } from "./external-sessions/turn-search.js";
+export { ExternalSessionStore } from "./external-sessions/store.js";
+export * from "./external-sessions/read-contract.js";
+export { ExternalSessionReader } from "./external-sessions/reader.js";
+
+// FNXC:ExternalSessionSummary 2026-09-24-07:05 (F3 = A): durable session summaries with derived staleness.
+export { ExternalSessionSummaryStore, summaryInput, summaryState, boundSummary,
+  SUMMARY_TURN_LIMIT, SUMMARY_TURN_EXCERPT, SUMMARY_INPUT_LIMIT, SUMMARY_OUTPUT_LIMIT } from "./external-sessions/summary.js";
+export type { ExternalSessionSummaryRecord, SummaryCoverage, SummaryState } from "./external-sessions/summary.js";
+export { summarizeExternalSession, EXTERNAL_SESSION_SUMMARY_SYSTEM_PROMPT } from "./ai/ai-summarize.js";
+
+// FNXC:ExternalSessionAttribution 2026-09-24-07:05 (F4 = 1): deterministic provider + native-id reconciliation.
+export { ExternalSessionAttribution, fusionAdapterFor, FUSION_ADAPTER_FOR_PROVIDER } from "./external-sessions/attribution.js";
+export type { Attribution, SessionIdentity } from "./external-sessions/attribution.js";

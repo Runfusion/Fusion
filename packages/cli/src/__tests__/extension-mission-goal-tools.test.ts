@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { createSharedPgTaskStoreTestHarness, pgDescribe } from "../../../core/src/__test-utils__/pg-test-harness.js";
+import * as schema from "../../../core/src/postgres/schema/index.js";
 import kbExtension, { __setCachedStoreForTesting, closeCachedStores } from "../extension.js";
 
 interface RegisteredTool {
@@ -44,7 +45,10 @@ function makeCtx(cwd: string) {
 FNXC:CliTests 2026-07-18-07:45:
 FN-8271 restores this shard-4 collateral suite with the shared external PostgreSQL harness. Booting an embedded postmaster per test raced its own initialization and leaked child processes under the loaded CLI lane; inject the harness store through the extension test seam so tool coverage keeps real mission/goal persistence while one database is reset safely between cases.
 */
-const h = createSharedPgTaskStoreTestHarness({ prefix: "fn_mission_goal_tools" });
+const h = createSharedPgTaskStoreTestHarness({
+  prefix: "fn_mission_goal_tools",
+  projectId: "fx011-extension-mission-goals",
+});
 
 pgDescribe("extension mission goal tools", () => {
   let tmpDir: string;
@@ -82,13 +86,15 @@ pgDescribe("extension mission goal tools", () => {
     });
   });
 
-  it("links, lists, and unlinks goals correctly", async () => {
+  it("shows, links, lists, and unlinks goals correctly", async () => {
     const missionCreate = api.tools.get("fn_mission_create");
     const goalCreate = api.tools.get("fn_goal_create");
+    const goalShow = api.tools.get("fn_goal_show");
+    const missionShow = api.tools.get("fn_mission_show");
     const linkGoal = api.tools.get("fn_mission_link_goal");
     const listGoals = api.tools.get("fn_mission_list_goals");
     const unlinkGoal = api.tools.get("fn_mission_unlink_goal");
-    expect(missionCreate && goalCreate && linkGoal && listGoals && unlinkGoal).toBeTruthy();
+    expect(missionCreate && goalCreate && goalShow && missionShow && linkGoal && listGoals && unlinkGoal).toBeTruthy();
 
     const missionResult = await missionCreate!.execute("mission-create", { title: "Mission Alpha" }, undefined, undefined, makeCtx(tmpDir));
     const goalAResult = await goalCreate!.execute("goal-a", { title: "Goal A" }, undefined, undefined, makeCtx(tmpDir));
@@ -97,6 +103,11 @@ pgDescribe("extension mission goal tools", () => {
     const missionId = missionResult.details.missionId as string;
     const goalAId = goalAResult.details.goalId as string;
     const goalBId = goalBResult.details.goalId as string;
+
+    const shownGoal = await goalShow!.execute("show-goal-a", { id: goalAId }, undefined, undefined, makeCtx(tmpDir));
+    expect(shownGoal.details.goal).toMatchObject({ id: goalAId, status: "active" });
+    const shownMission = await missionShow!.execute("show-mission", { id: missionId }, undefined, undefined, makeCtx(tmpDir));
+    expect(shownMission.details.mission).toMatchObject({ id: missionId });
 
     await linkGoal!.execute("link-a", { missionId, goalId: goalAId }, undefined, undefined, makeCtx(tmpDir));
     await linkGoal!.execute("link-b", { missionId, goalId: goalBId }, undefined, undefined, makeCtx(tmpDir));
@@ -174,6 +185,20 @@ pgDescribe("extension mission goal tools", () => {
     const missingGoalLink = await linkGoal!.execute("missing-goal-link", { missionId, goalId: "G-404" }, undefined, undefined, makeCtx(tmpDir));
     expect(missingGoalLink.isError).toBe(true);
     expect(missingGoalLink.details).toEqual({ code: "GOAL_NOT_FOUND", goalId: "G-404" });
+
+    const now = new Date().toISOString();
+    await h.adminDb().insert(schema.project.goals).values({
+      projectId: "fx011-extension-foreign",
+      id: "G-FX011-FOREIGN",
+      title: "Foreign goal",
+      description: null,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const foreignGoalLink = await linkGoal!.execute("foreign-goal-link", { missionId, goalId: "G-FX011-FOREIGN" }, undefined, undefined, makeCtx(tmpDir));
+    expect(foreignGoalLink.isError).toBe(true);
+    expect(foreignGoalLink.details).toEqual({ code: "GOAL_NOT_FOUND", goalId: "G-FX011-FOREIGN" });
 
     const missingGoalUnlink = await unlinkGoal!.execute("missing-goal-unlink", { missionId, goalId: "G-404" }, undefined, undefined, makeCtx(tmpDir));
     expect(missingGoalUnlink.isError).toBe(true);

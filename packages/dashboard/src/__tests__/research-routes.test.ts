@@ -16,6 +16,8 @@ function createMockStore(options?: {
   runId?: string;
   runStatus?: string;
   runLifecycle?: Record<string, unknown>;
+  runError?: string;
+  runEvents?: Array<{ id: string; timestamp: string; type: string; message: string; metadata?: Record<string, unknown> }>;
   missingRun?: boolean;
   missingFinding?: boolean;
   missingTask?: boolean;
@@ -28,7 +30,8 @@ function createMockStore(options?: {
     topic: "test",
     status: options?.runStatus ?? "queued",
     sources: [],
-    events: [],
+    events: options?.runEvents ?? [],
+    error: options?.runError,
     tags: [],
     results: {
       summary: "Run summary",
@@ -108,6 +111,58 @@ describe("research-routes", () => {
     expect(response.status).toBe(200);
     expect(response.body.availability.available).toBe(true);
     expect(Array.isArray(response.body.runs)).toBe(true);
+  });
+
+  it("returns the same bounded terminal diagnosis from list and detail readers", async () => {
+    const store = createMockStore({
+      runStatus: "failed",
+      runError: "raw provider body secret=server-only-value",
+      runEvents: [{ id: "EV-1", timestamp: new Date().toISOString(), type: "error", message: "authorization=server-only-value", metadata: { detail: "raw server-only-value" } }],
+      runLifecycle: {
+        failureClass: "non_retryable",
+        errorCode: "MISSING_CREDENTIALS",
+        retryable: true,
+        terminalCause: "Provider rejected Bearer eyJhbGciOiJIUzI1NiJ9.opaque.signature at https://provider.example/private",
+        remediation: "Use opaque-unlabeled-credential-987654321 before retrying.",
+      },
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(createResearchRouter(store as any));
+
+    const [list, detail, exported] = await Promise.all([
+      performGet(app, "/runs"),
+      performGet(app, "/runs/RR-1"),
+      performGet(app, "/runs/RR-1/export?format=json"),
+    ]);
+
+    expect(list.body.runs[0].diagnosis).toEqual(detail.body.run.diagnosis);
+    expect(detail.body.run.diagnosis).toMatchObject({
+      classification: "configuration",
+      code: "MISSING_CREDENTIALS",
+      retryable: false,
+      detail: "The required research provider or model is not configured.",
+      remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run.",
+    });
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("opaque-unlabeled-credential-987654321");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("provider.example/private");
+    expect(JSON.stringify({ list: list.body, detail: detail.body, exported: exported.body })).not.toContain("server-only-value");
+  });
+
+  it("uses a safe diagnosis fallback for legacy terminal rows and none for successful runs", async () => {
+    const failedApp = express();
+    failedApp.use(express.json());
+    failedApp.use(createResearchRouter(createMockStore({ runStatus: "failed" }) as any));
+    const failed = await performGet(failedApp, "/runs/RR-1");
+    expect(failed.body.run.diagnosis).toMatchObject({ code: "INTERNAL_ERROR", retryable: false });
+
+    const completedApp = express();
+    completedApp.use(express.json());
+    completedApp.use(createResearchRouter(createMockStore({ runStatus: "completed" }) as any));
+    const completed = await performGet(completedApp, "/runs/RR-1");
+    expect(completed.body.run.diagnosis).toBeUndefined();
+    expect(completed.body.run.error).toBeUndefined();
   });
 
   it("supports run status actions, detail fetch, and export formats", async () => {

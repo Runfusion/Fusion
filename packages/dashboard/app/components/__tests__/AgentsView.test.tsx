@@ -1586,6 +1586,51 @@ describe("AgentsView", () => {
   });
 
   describe("view toggle (list/board)", () => {
+    it("loads a saved remote view without managed-agent requests and resumes them in list view", async () => {
+      localStorage.setItem("fn-agent-view", "remote");
+      renderView(<AgentsView addToast={mockAddToast} />);
+      expect(await screen.findByRole("button", { name: "Remote agents" })).toHaveAttribute("aria-pressed", "true");
+      expect(mockFetchAgents).not.toHaveBeenCalled();
+      expect(mockFetchAgentStats).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTitle("List view"));
+      await waitFor(() => expect(mockFetchAgents).toHaveBeenCalled());
+      expect(mockFetchAgentStats).toHaveBeenCalled();
+    });
+
+    /*
+    FNXC:RemoteAgents 2026-09-27-00:20: browser acceptance found a remote-session link landing on the saved tab
+    (List) because the saved-tab restore overrode it. A link must win over the saved tab for its own project,
+    and must not switch the tab of a different project.
+    */
+    it("opens the Remote tab for a remote-session link despite another saved tab", async () => {
+      localStorage.setItem(scopedKey("fn-agent-view", projectId), "org");
+      window.history.replaceState({}, "", `/?project=${projectId}&view=agents&remoteSession=${"a".repeat(64)}`);
+      try {
+        renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+        expect(await screen.findByRole("button", { name: "Remote agents" })).toHaveAttribute("aria-pressed", "true");
+      } finally { window.history.replaceState({}, "", "/"); }
+    });
+
+    it("applies a link for another project only after switching to that project", async () => {
+      localStorage.setItem(scopedKey("fn-agent-view", projectId), "org");
+      localStorage.setItem(scopedKey("fn-agent-view", "proj_other"), "list");
+      window.history.replaceState({}, "", `/?project=proj_other&view=agents&remoteSession=${"a".repeat(64)}`);
+      try {
+        const view = renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+        expect(await screen.findByRole("button", { name: "Remote agents" })).toHaveAttribute("aria-pressed", "false");
+        view.rerender(<ToastProvider><AgentsView addToast={mockAddToast} projectId="proj_other" /></ToastProvider>);
+        await waitFor(() => expect(screen.getByRole("button", { name: "Remote agents" })).toHaveAttribute("aria-pressed", "true"));
+      } finally { window.history.replaceState({}, "", "/"); }
+    });
+
+    it("limits the remote view to monitoring and feedback without local agent controls", async () => {
+      renderView(<AgentsView addToast={mockAddToast} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Remote agents" }));
+      expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Controls" })).toBeNull();
+      expect(screen.getAllByRole("button", { name: "Refresh" })).toHaveLength(1);
+    });
     it("can toggle between list and board view", async () => {
       renderView(<AgentsView addToast={mockAddToast} />);
 

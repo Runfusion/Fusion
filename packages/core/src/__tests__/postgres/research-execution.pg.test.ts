@@ -49,7 +49,7 @@ const pgTest = pgDescribe;
  * controls whether search yields a source (happy path) or returns empty (failure path —
  * the orchestrator throws "No sources discovered" internally and persists `failed`).
  */
-function makeStubStepRunner(mode: "ok" | "no-sources"): ResearchStepRunnerApi {
+function makeStubStepRunner(mode: "ok" | "no-sources" | "synthesis-unconfigured"): ResearchStepRunnerApi {
   return {
     async runSourceQuery(_query: string, _providerType: string, _config?: ResearchProviderConfig) {
       if (mode === "no-sources") {
@@ -68,6 +68,20 @@ function makeStubStepRunner(mode: "ok" | "no-sources"): ResearchStepRunnerApi {
       return { ok: true as const, data: { content: "stub content body", metadata: { fetched: true } } };
     },
     async runSynthesis(_request: ResearchSynthesisRequest, _model?: ResearchModelSettings) {
+      if (mode === "synthesis-unconfigured") {
+        return {
+          ok: false as const,
+          error: {
+            code: "provider_not_configured" as const,
+            message: "The required research provider or model is not configured.",
+            retryable: false,
+            failureClass: "configuration" as const,
+            errorCode: "MISSING_CREDENTIALS" as const,
+            remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run.",
+            providerType: "llm-synthesis",
+          },
+        };
+      }
       return {
         ok: true as const,
         data: { output: "final synthesized report", citations: ["https://example.com/a"], confidence: 0.9 },
@@ -169,6 +183,30 @@ pgTest("Research run execution (PostgreSQL backend mode)", () => {
         source: expect.objectContaining({ origin: "deep-research", sessionId: runId }),
       }),
     ]));
+  });
+
+  it("persists actionable sanitized synthesis configuration failure before its event", async () => {
+    const store = research();
+    const orchestrator = new ResearchOrchestrator({ store, stepRunner: makeStubStepRunner("synthesis-unconfigured"), maxConcurrentRuns: 1 });
+    const runId = await orchestrator.createRun({ providers: [{ type: "stub" }], maxSources: 1, maxSynthesisRounds: 2 });
+
+    await expect(orchestrator.startRun(runId, "reproduce missing synthesis")).resolves.toMatchObject({
+      status: "failed",
+      lifecycle: { failureClass: "configuration", errorCode: "MISSING_CREDENTIALS", retryable: false, providerType: "llm-synthesis" },
+    });
+
+    const reloaded = await store.getRun(runId);
+    expect(reloaded?.error).toBe("The required research provider or model is not configured.");
+    expect(reloaded?.lifecycle?.remediation).toContain("Settings → Authentication");
+    expect(JSON.stringify(reloaded)).not.toContain("All synthesis rounds failed");
+    const events = await store.listRunEvents(runId);
+    expect(events.filter((event) => event.metadata?.code === "provider_not_configured")).toHaveLength(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "status_changed",
+      status: "failed",
+      classification: "configuration",
+      metadata: { errorCode: "MISSING_CREDENTIALS", retryable: false, providerType: "llm-synthesis" },
+    }));
   });
 
   it("persists a failed status when a step yields no sources (clean failure, no unhandled throw)", async () => {
