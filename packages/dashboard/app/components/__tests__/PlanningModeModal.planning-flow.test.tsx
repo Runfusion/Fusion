@@ -68,7 +68,21 @@ async function selectResponseAfterHydration(label: string) {
   await screen.findByLabelText(label);
   await act(async () => {});
   fireEvent.click(screen.getByLabelText(label));
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await clickEnabledPlanningButton("Next");
+}
+
+/*
+FNXC:PlanningTestReadiness 2026-10-05-18:31:
+Answer selection commits through React before the live Next control becomes actionable. Re-query the
+rendered control after that commit so ordering coverage dispatches only a user-available action rather
+than retaining a disabled node that hydration is about to replace.
+*/
+async function clickEnabledPlanningButton(name: string) {
+  await waitFor(() => expect(screen.getByRole("button", { name })).toBeEnabled());
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name }));
+    await Promise.resolve();
+  });
 }
 
 describe("PlanningModeModal sequential flow", () => {
@@ -1260,12 +1274,7 @@ describe("PlanningModeModal sequential flow", () => {
      * The production action submits only after the selected answer commits and enables Next.
      * Await that observable readiness so a loaded dashboard lane cannot click the prior disabled form.
      */
-    const nextButton = await screen.findByRole("button", { name: "Next" });
-    await waitFor(() => expect(nextButton).toBeEnabled());
-    await act(async () => {
-      fireEvent.click(nextButton);
-      await Promise.resolve();
-    });
+    await clickEnabledPlanningButton("Next");
     await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledTimes(1));
 
     if (status === "awaiting_input") {
@@ -1987,12 +1996,16 @@ describe("PlanningModeModal sequential flow", () => {
     });
     renderSession();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    const stopButton = await screen.findByRole("button", { name: "Stop" });
+    await act(async () => {
+      fireEvent.click(stopButton);
+      await Promise.resolve();
+    });
     /*
-    FNXC:PlanningMode 2026-07-23-00:00:
-    Wait for the stop to settle into plan review before grabbing Refine. Clicking the workspace
-    pane's Refine while the stop transition remounts the plan pane dispatches on a detached node
-    and the refinement menu never opens.
+    FNXC:PlanningTestReadiness 2026-10-05-18:31:
+    Stop restores plan review after its best-effort request settles. Flush that request and find the
+    restored workspace before selecting Refine, because its former loading-pane button can remount
+    during the same event turn and cannot represent a user action.
     */
     await waitFor(() => expect(mockStopPlanningGeneration).toHaveBeenCalledWith("session-1", "project-1"));
     await screen.findByTestId("planning-plan-review");
