@@ -36,18 +36,39 @@ function makeAuthStorage() {
   } as any;
 }
 
-function makeModelRegistry() {
-  const registeredProviders = new Map<string, { models: Array<{ provider: string; id: string }> }>();
+type FakePiModel = { provider: string; id: string; [key: string]: unknown };
+
+/*
+FNXC:ModelCatalog 2026-10-05-06:05:
+FN-9500 requires this startup fixture to keep Pi catalog rows separate from locally registered
+projections. A successful refresh replaces the raw catalog, letting seedDashboardProviders prove
+that grok-cli is created only from current xAI rows and removed when they disappear.
+*/
+function makeModelRegistry({
+  initialPiModels = [],
+  refreshedPiModels = initialPiModels,
+}: {
+  initialPiModels?: FakePiModel[];
+  refreshedPiModels?: FakePiModel[];
+} = {}) {
+  let piModels = initialPiModels;
+  const registeredProviders = new Map<string, { models: FakePiModel[] }>();
   return {
-    registerProvider: vi.fn((name: string, config: { models?: Array<{ id: string }> }) => {
+    registerProvider: vi.fn((name: string, config: { models?: Array<Record<string, unknown>> }) => {
       registeredProviders.set(name, {
-        models: (config.models ?? []).map((model) => ({ provider: name, id: model.id })),
+        models: (config.models ?? []).map((model) => ({ ...model, provider: name, id: String(model.id) })),
       });
     }),
-    refresh: vi.fn(),
-    getAll: vi.fn(() =>
-      Array.from(registeredProviders.entries()).flatMap(([, provider]) => provider.models),
-    ),
+    unregisterProvider: vi.fn((name: string) => {
+      registeredProviders.delete(name);
+    }),
+    refresh: vi.fn(() => {
+      piModels = refreshedPiModels;
+    }),
+    getAll: vi.fn(() => [
+      ...piModels,
+      ...Array.from(registeredProviders.values()).flatMap((provider) => provider.models),
+    ]),
     registeredProviders,
   } as any;
 }
@@ -100,26 +121,50 @@ const customProvider = (overrides: Partial<CustomProvider> = {}): CustomProvider
 });
 
 describe("seedDashboardProviders", () => {
-  it("registers built-in API-key providers even with no custom providers (undefined)", async () => {
+  it("projects refreshed xAI metadata under grok-cli with no custom providers (undefined)", async () => {
     const store = makeStore(undefined);
     const authStorage = makeAuthStorage();
-    const modelRegistry = makeModelRegistry();
+    const xaiModel = {
+      provider: "xai",
+      id: "grok-4-fixture",
+      name: "Grok 4 Fixture",
+      api: "openai-completions",
+      contextWindow: 262_144,
+      maxTokens: 16_384,
+      reasoning: true,
+    };
+    const modelRegistry = makeModelRegistry({ refreshedPiModels: [xaiModel] });
 
     const { authStorage: wrapped } = await seedDashboardProviders({ store, authStorage, modelRegistry });
 
     const providerIds = wrapped.getApiKeyProviders().map((p) => p.id);
     expect(providerIds).toEqual(expect.arrayContaining(["zai", "openrouter", "kimi-coding", "grok-cli"]));
+    expect(modelRegistry.refresh).toHaveBeenCalled();
+    expect(modelRegistry.registeredProviders.get("grok-cli")?.models).toEqual([{
+      ...xaiModel,
+      provider: "grok-cli",
+    }]);
   });
 
-  it("registers built-in API-key providers with an empty customProviders array", async () => {
+  it("removes a prior grok-cli projection after an empty successful Pi refresh", async () => {
     const store = makeStore([]);
     const authStorage = makeAuthStorage();
-    const modelRegistry = makeModelRegistry();
+    const modelRegistry = makeModelRegistry({
+      initialPiModels: [{ provider: "xai", id: "grok-before-refresh" }],
+      refreshedPiModels: [],
+    });
+    modelRegistry.registerProvider("grok-cli", {
+      models: [{ id: "stale-grok", name: "Stale Grok", api: "openai-completions" }],
+    });
 
     const { authStorage: wrapped } = await seedDashboardProviders({ store, authStorage, modelRegistry });
 
     const providerIds = wrapped.getApiKeyProviders().map((p) => p.id);
-    expect(providerIds).toEqual(expect.arrayContaining(["zai", "openrouter", "kimi-coding", "grok-cli"]));
+    expect(providerIds).toEqual(expect.arrayContaining(["zai", "openrouter", "kimi-coding"]));
+    expect(providerIds).not.toContain("grok-cli");
+    expect(modelRegistry.refresh).toHaveBeenCalled();
+    expect(modelRegistry.unregisterProvider).toHaveBeenCalledWith("grok-cli");
+    expect(modelRegistry.registeredProviders.has("grok-cli")).toBe(false);
   });
 
   it("keeps native Kimi K3 available through the installed pi model registry", async () => {
