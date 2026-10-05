@@ -158,7 +158,7 @@ describe("model-pricing", () => {
       ["gpt-5.4-mini", 1.65],
       ["gpt-5.5", 11],
       ["gpt-5.6-luna", 0.76],
-      ["gpt-5.6-sol", 19],
+      ["gpt-5.6-sol", 14],
       ["gpt-5.6-terra", 7.6],
       ["gpt-6-astra", 35],
     ] as const;
