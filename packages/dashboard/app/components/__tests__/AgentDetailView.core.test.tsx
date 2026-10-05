@@ -479,7 +479,16 @@ it("renders assigned skills as readable badges with full id tooltip", async () =
   const simpleSkillBadge = screen.getByRole("button", { name: "View details for simple-skill" });
   const missingSkillBadge = screen.getByRole("button", { name: "View details for missing-skill" });
 
-  expect(fusionBadge).toHaveAttribute("data-skill-state", "auto-available");
+  /*
+   * FNXC:AgentSkills 2026-10-05-15:57:
+   * Agent data renders before asynchronous skill discovery. Wait for the resolved badge state so
+   * this assertion verifies readable discovered badges instead of treating the initial unknown state as a defect.
+   */
+  await waitFor(() => {
+    expect(fusionBadge).toHaveAttribute("data-skill-state", "auto-available");
+    expect(simpleSkillBadge).toHaveAttribute("data-skill-state", "auto-available");
+  });
+
   expect(fusionBadge).toHaveTextContent("fusion");
   const fusionTitle = fusionBadge.getAttribute("title");
   expect(fusionTitle?.startsWith(`${STORED_PATH_SKILL_ID}: `)).toBe(true);

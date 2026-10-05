@@ -1255,8 +1255,15 @@ describe("PlanningModeModal sequential flow", () => {
 
     renderSession();
     fireEvent.click(await screen.findByLabelText("Secure defaults"));
+    /*
+     * FNXC:PlanningTurnReconciliation 2026-10-05-15:57:
+     * The production action submits only after the selected answer commits and enables Next.
+     * Await that observable readiness so a loaded dashboard lane cannot click the prior disabled form.
+     */
+    const nextButton = await screen.findByRole("button", { name: "Next" });
+    await waitFor(() => expect(nextButton).toBeEnabled());
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      fireEvent.click(nextButton);
       await Promise.resolve();
     });
     await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledTimes(1));
