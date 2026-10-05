@@ -32,7 +32,7 @@
  */
 
 import type { PrEntity, PrConflictState, PrChecksRollup, PrReadinessSnapshot, PrReviewDecision } from "@fusion/core";
-import { isPrEntityActive } from "@fusion/core";
+import { isCurrentHeadReadinessReady, isPrEntityActive } from "@fusion/core";
 import { prReconcileLog } from "../logger.js";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { releaseHeldTaskByEvent } from "../execution/hold-release.js";
@@ -112,6 +112,8 @@ export interface PrReconcilerOptions {
   releaseByEvent?: PrReleaseByEventFn;
   /** Branch-group → representative task resolver (v1: omitted ⇒ skip groups). */
   resolveGroupReleaseTask?: ResolveGroupReleaseTaskFn;
+  /** Releases a legacy PR wait only after its current-head evidence is ready. */
+  releaseAwaitingChecks?: (taskId: string, prEntityId: string, expectedHeadOid: string) => Promise<void>;
   /** Override cadence/backoff knobs (tests use tiny intervals). */
   intervals?: Partial<PrReconcileIntervals>;
   /** Injected clock for the next-tick scheduler (defaults to setTimeout). */
@@ -150,7 +152,8 @@ export interface PrReconcileTransition {
     | "changes-requested"
     | "approved"
     | "conflict"
-    | "conflict-cleared";
+    | "conflict-cleared"
+    | "ready";
   /** The hold-release event tag: `github:pr-<event>`. */
   tag: string;
   /** Whether this transition makes the entity terminal (drop from poll). */
@@ -184,6 +187,17 @@ export function deriveTransitions(prev: PrEntity, next: PrReconcileFetchResult):
     } else if (next.reviewDecision === "APPROVED") {
       out.push({ event: "approved", tag: tag("approved"), terminal: false });
     }
+  }
+
+  // A current-head readiness success is a distinct external event. It is not
+  // inferred from legacy rollups: unsupported, denied, stale, or partial
+  // provider evidence remains held and actionable rather than waking a merge.
+  const previouslyReady = isCurrentHeadReadinessReady(prev.readiness, prev.headOid);
+  const newlyReady = next.readiness !== undefined
+    && next.headOid === next.readiness.observedHeadOid
+    && isCurrentHeadReadinessReady(next.readiness, next.headOid);
+  if (!previouslyReady && newlyReady) {
+    out.push({ event: "ready", tag: tag("ready"), terminal: false });
   }
 
   // Mergeability transitions. "conflicting" is the only conflict signal that
@@ -221,6 +235,7 @@ export class PrReconciler {
   private readonly ops: PrReconcileGithubOps;
   private readonly releaseByEvent: PrReleaseByEventFn;
   private readonly resolveGroupReleaseTask?: ResolveGroupReleaseTaskFn;
+  private readonly releaseAwaitingChecks?: (taskId: string, prEntityId: string, expectedHeadOid: string) => Promise<void>;
   private readonly intervals: PrReconcileIntervals;
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void;
@@ -236,6 +251,7 @@ export class PrReconciler {
       ((taskId, eventTag) =>
         releaseHeldTaskByEvent(this.store as unknown as import("@fusion/core").TaskStore, taskId, eventTag));
     this.resolveGroupReleaseTask = options.resolveGroupReleaseTask;
+    this.releaseAwaitingChecks = options.releaseAwaitingChecks;
     this.intervals = { ...DEFAULT_INTERVALS, ...(options.intervals ?? {}) };
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer ?? ((h) => clearTimeout(h));
@@ -469,6 +485,18 @@ export class PrReconciler {
         reviewDecision: fetched.reviewDecision,
         unverified: false,
       });
+    }
+
+    /*
+    FNXC:ExternalCheckWait 2026-10-05-00:37:
+    A reconciled current-head readiness transition releases the durable legacy
+    wait through the engine, never through a model session. Pending polls leave
+    the task untouched, so CI latency cannot spend execution or merge retries.
+    */
+    const readyTransition = transitions.find((transition) => transition.event === "ready");
+    const readyTaskId = readyTransition ? this.resolveReleaseTaskId(entity) : null;
+    if (readyTaskId && fetched.readiness?.observedHeadOid && this.releaseAwaitingChecks) {
+      await this.releaseAwaitingChecks(readyTaskId, entity.id, fetched.readiness.observedHeadOid);
     }
 
     // 6. Fire the generic external-event releases. The unverified gate (R19) is

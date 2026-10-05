@@ -690,6 +690,182 @@ pgDescribe("U14 taskstore-remaining (PostgreSQL)", () => {
     });
   });
 
+  it("persists a pending readiness observation and its await-checks hold before a ready release", async () => {
+    const taskId = "KB-readiness-atomic-wait";
+    await insertTaskRow(ctx.layer, makeMinimalTask(taskId), { lineageId: null });
+    const store = h.store();
+    const entity = await store.ensurePrEntityForSource({
+      sourceType: "task",
+      sourceId: taskId,
+      repo: "owner/repo",
+      headBranch: "feature/readiness-atomic-wait",
+    });
+    const pending = {
+      observedHeadOid: "head-a",
+      headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "pending" as const }],
+      approval: "approved" as const,
+      mergeable: "clean" as const,
+      protectionBlockers: [],
+      state: "open" as const,
+      deployments: { state: "supported" as const },
+      branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const },
+      reviews: { state: "supported" as const },
+      merge: { state: "supported" as const },
+      observedAt: new Date().toISOString(),
+    };
+
+    await expect(store.updatePrReadinessAndAwaitChecksIfBlocked(entity.id, undefined, "github", pending))
+      .resolves.toMatchObject({ headOid: "head-a", readiness: pending });
+    await expect(store.getTask(taskId)).resolves.toMatchObject({ status: "awaiting-pr-checks" });
+
+    const ready = { ...pending, requiredChecks: [{ name: "build", state: "success" as const }], observedAt: new Date().toISOString() };
+    await store.updatePrReadiness(entity.id, "head-a", "github", ready);
+    await expect(store.releaseAwaitingPrChecksIfCurrentHead(taskId, entity.id, "head-a")).resolves.toBe(true);
+    await expect(store.getTask(taskId)).resolves.toMatchObject({ status: undefined });
+  });
+
+  it("adopts a CAS-winning pending head into the same durable wait", async () => {
+    const taskId = "KB-readiness-cas-pending";
+    await insertTaskRow(ctx.layer, makeMinimalTask(taskId), { lineageId: null });
+    const store = h.store();
+    const entity = await store.ensurePrEntityForSource({
+      sourceType: "task",
+      sourceId: taskId,
+      repo: "owner/repo",
+      headBranch: "feature/readiness-cas-pending",
+    });
+    const winningPending = {
+      observedHeadOid: "head-b",
+      headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "pending" as const }],
+      approval: "approved" as const,
+      mergeable: "clean" as const,
+      protectionBlockers: [],
+      state: "open" as const,
+      deployments: { state: "supported" as const },
+      branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const },
+      reviews: { state: "supported" as const },
+      merge: { state: "supported" as const },
+      observedAt: new Date().toISOString(),
+    };
+    await store.updatePrReadiness(entity.id, undefined, "github", winningPending);
+
+    await expect(store.updatePrReadinessAndAwaitChecksIfBlocked(entity.id, undefined, "github", {
+      ...winningPending,
+      observedHeadOid: "head-a",
+    })).resolves.toMatchObject({ headOid: "head-b", readiness: winningPending });
+    await expect(store.getTask(taskId)).resolves.toMatchObject({ status: "awaiting-pr-checks" });
+  });
+
+  it("does not recreate a wait after a CAS-winning ready head was released", async () => {
+    const taskId = "KB-readiness-cas-ready";
+    await insertTaskRow(ctx.layer, makeMinimalTask(taskId), { lineageId: null });
+    const store = h.store();
+    const entity = await store.ensurePrEntityForSource({
+      sourceType: "task",
+      sourceId: taskId,
+      repo: "owner/repo",
+      headBranch: "feature/readiness-cas-ready",
+    });
+    const winningReady = {
+      observedHeadOid: "head-b",
+      headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "success" as const }],
+      approval: "approved" as const,
+      mergeable: "clean" as const,
+      protectionBlockers: [],
+      state: "open" as const,
+      deployments: { state: "supported" as const },
+      branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const },
+      reviews: { state: "supported" as const },
+      merge: { state: "supported" as const },
+      observedAt: new Date().toISOString(),
+    };
+    await store.updatePrReadiness(entity.id, undefined, "github", winningReady);
+
+    await expect(store.updatePrReadinessAndAwaitChecksIfBlocked(entity.id, undefined, "github", {
+      ...winningReady,
+      observedHeadOid: "head-a",
+    })).resolves.toMatchObject({ headOid: "head-b", readiness: winningReady });
+    await expect(store.getTask(taskId)).resolves.toMatchObject({ status: undefined });
+  });
+
+  it("does not recreate an await-checks hold after a terminal CAS winner", async () => {
+    const taskId = "KB-readiness-cas-terminal";
+    await insertTaskRow(ctx.layer, makeMinimalTask(taskId), { lineageId: null });
+    const store = h.store();
+    const entity = await store.ensurePrEntityForSource({
+      sourceType: "task",
+      sourceId: taskId,
+      repo: "owner/repo",
+      headBranch: "feature/readiness-cas-terminal",
+    });
+    const merged = {
+      observedHeadOid: "head-b",
+      headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "success" as const }],
+      approval: "approved" as const,
+      mergeable: "clean" as const,
+      protectionBlockers: [],
+      state: "merged" as const,
+      mergeCommitSha: "merge-b",
+      deployments: { state: "supported" as const },
+      branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const },
+      reviews: { state: "supported" as const },
+      merge: { state: "supported" as const },
+      observedAt: new Date().toISOString(),
+    };
+    await store.updatePrReadiness(entity.id, undefined, "github", merged);
+
+    await expect(store.updatePrReadinessAndAwaitChecksIfBlocked(entity.id, undefined, "github", {
+      ...merged,
+      observedHeadOid: "head-a",
+    })).resolves.toMatchObject({ state: "merged", headOid: "head-b" });
+    await expect(store.getTask(taskId)).resolves.toMatchObject({ status: undefined });
+  });
+
+  it("does not release an awaiting task when a newer head supersedes ready evidence", async () => {
+    const taskId = "KB-readiness-release-fence";
+    await insertTaskRow(ctx.layer, {
+      ...makeMinimalTask(taskId),
+      status: "awaiting-pr-checks",
+    }, { lineageId: null });
+    const store = h.store();
+    const entity = await store.ensurePrEntityForSource({
+      sourceType: "task",
+      sourceId: taskId,
+      repo: "owner/repo",
+      headBranch: "feature/readiness-release-fence",
+    });
+    const ready = {
+      observedHeadOid: "head-a",
+      headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "success" as const }],
+      approval: "approved" as const,
+      mergeable: "clean" as const,
+      protectionBlockers: [],
+      state: "open" as const,
+      deployments: { state: "supported" as const },
+      branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const },
+      reviews: { state: "supported" as const },
+      merge: { state: "supported" as const },
+      observedAt: new Date().toISOString(),
+    };
+    await store.updatePrReadiness(entity.id, undefined, "github", ready);
+
+    // Model the newer observation committing before the old ready release can
+    // enter its task/PR transaction. It must leave the durable wait intact.
+    await store.updatePrEntity(entity.id, { headOid: "head-b" });
+    await expect(store.releaseAwaitingPrChecksIfCurrentHead(taskId, entity.id, "head-a")).resolves.toBe(false);
+    await expect(store.getTask(taskId)).resolves.toMatchObject({ status: "awaiting-pr-checks" });
+  });
+
   it("does not let a delayed open readiness observation reopen a merged PR at the same head", async () => {
     const created = await ensurePrEntityForSource(ctx.layer.db, {
       sourceType: "task",

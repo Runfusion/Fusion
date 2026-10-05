@@ -2563,6 +2563,12 @@ FN-9439 stores one provider-neutral readiness snapshot on each project-scoped PR
 
 Provider adapters read first and normalize credential-free data; the store then compare-and-sets the entity against its prior head. A new head replaces old evidence atomically, while a late prior-head observation loses the fence and cannot release lifecycle work. Reconciliation, merge admission, and task chat consume that persisted snapshot. A merged observation is terminal and idempotent; FN-9437 owns subsequent closeout routing.
 
+### Durable external-check waits
+
+The legacy pull-request merge path records its current-head readiness observation on the task PR entity before it returns `awaiting-pr-checks`. This is a detached engine-owned wait, not an executor or implementation session: normal pending checks leave executor, model, transient-merge, conflict, and merge retry counters unchanged, so the inactivity watchdog has no silent agent work to terminate. Reconciliation continues its ETag-aware polling across restarts and only releases the wait after a SHA-fenced, current-head ready observation; duplicate polls and old-head observations are no-ops.
+
+A failed check remains held for correction. Unsupported, permission-denied, and transient provider capability outcomes are held as explicitly actionable readiness states rather than being relabeled as ordinary pending work. The merge queue excludes `awaiting-pr-checks` cards until that reconciled release, preventing periodic admission from turning a legitimate external wait into implementation retry activity.
+
 - **In-place backward review-gate entry (FN-9243):** Graph routing has no backward lifecycle authority. When a review-gate node (`optional-group` or `step-review`) is authored in a lower-ranked column than a card already in review, the boundary enters the node in place rather than moving the card backward. No `ENGINE_BACKWARD_MOVE_REASONS` entry was added: `workflow-graph-node-column` remains without backward authority.
 
 #### Merge-boundary evidence recovery (FN-9345)

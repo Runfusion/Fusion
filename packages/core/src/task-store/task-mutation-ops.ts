@@ -42,7 +42,8 @@ import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js
 import * as schema from "../postgres/schema/index.js";
 import {and, asc, eq, inArray, isNotNull, isNull, sql} from "drizzle-orm";
 import {recoverExpiredMergeQueueLeases as recoverExpiredMergeQueueLeasesAsync} from "../task-store/async/async-merge-coordination.js";
-import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async/async-branch-groups.js";
+import {getPrEntity as getPrEntityAsync, updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrEntityAsync} from "../task-store/async/async-branch-groups.js";
+import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async/async-workflow-workitems.js";
 import { projectScopeFor, taskProjectScope } from "../postgres/data-layer.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
@@ -55,7 +56,6 @@ import {loadWorkspaceConfig} from "../git/git-repository.js";
 import { mergeRestoredProjectSettings } from "../config/settings-schema.js";
 import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
-import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { invalidateSupersededRepositoryScopeReviews } from "../tasks/repository-scope.js";
 import { TaskAtomicPersistGuardRefusedError, type TaskAtomicPersistFence } from "./project-store-ops.js";
 import { STALE_REVIEW_CALLBACK_WAIVER_ACTOR, STALE_REVIEW_CALLBACK_WAIVER_POLICY_VERSION, STALE_REVIEW_CALLBACK_WAIVER_REASON, type StaleReviewCallbackWaiverReceipt } from "../merge/pre-merge-approval.js";
@@ -214,8 +214,15 @@ export async function updateBranchGroupImpl(store: TaskStore, id: string, patch:
 }
 
 export async function updatePrEntityImpl(store: TaskStore, id: string, patch: PrEntityUpdate): Promise<PrEntity> {
-        const layer = store.asyncLayer!;
-    return updatePrEntityAsync(layer.db, id, patch, layer.projectId);
+  const layer = store.asyncLayer!;
+  return layer.transactionImmediate(async (tx) => {
+    const entity = await getPrEntityAsync(tx, id, layer.projectId);
+    if (!entity) throw new Error(`PR entity ${id} not found`);
+    if (entity.sourceType === "task") {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, entity.sourceId);
+    }
+    return updatePrEntityAsync(tx, id, patch, layer.projectId);
+  });
 }
 
 export async function listTasksForGithubTrackingReconcileImpl(store: TaskStore, options?: { offset?: number; limit?: number }): Promise<{ tasks: Task[]; hasMore: boolean }> {

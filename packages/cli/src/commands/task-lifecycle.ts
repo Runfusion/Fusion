@@ -43,9 +43,10 @@ import {
   type WorktreePathReservation,
   resolveRequiredCheckNames,
   createIngestedCheckResolver,
+  isCurrentHeadReadinessReady,
   type IngestedCheckState,
 } from "@fusion/core";
-import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
+import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, PrEntity, Task } from "@fusion/core";
 import { resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "@fusion/core";
 
 /*
@@ -1570,7 +1571,87 @@ export async function processPullRequestMergeTask(
     throw new Error(`Failed to create or resolve pull request for ${task.id}`);
   }
 
+  /*
+  FNXC:ExternalCheckWait 2026-10-05-00:37:
+  A pull-request check wait belongs to the durable PR entity, not to an executor
+  session. Persist the provider-neutral observation before returning "waiting"
+  so the runtime reconciler can resume it after this merge worker has exited.
+  */
+  const prEntity = typeof store.ensurePrEntityForSource === "function"
+    ? await store.ensurePrEntityForSource({
+      sourceType: "task",
+      sourceId: task.id,
+      repo: `${prRepo.owner}/${prRepo.repo}`,
+      headBranch: branch,
+      baseBranch: projectDefaultBranch,
+      state: "open",
+      prNumber: prInfo.number,
+      prUrl: prInfo.url,
+    })
+    : undefined;
+
   const mergeStatus = await getPrMergeStatus(prInfo.number);
+  let readinessBlocked = false;
+  let readinessWaitPersisted = false;
+  let persistedPrReadiness: PrEntity | null | undefined;
+  if (prEntity && typeof store.updatePrReadiness === "function" && typeof github.getPrReadiness === "function") {
+    try {
+      const readiness = await github.getPrReadiness(prRepo.owner, prRepo.repo, prInfo.number);
+      // The task store CAS is the current-head fence. A racing reconciler that
+      // observed a newer head wins; this completed merge turn then simply waits.
+      const persistedReadiness = typeof store.updatePrReadinessAndAwaitChecksIfBlocked === "function"
+        ? await store.updatePrReadinessAndAwaitChecksIfBlocked(prEntity.id, prEntity.headOid, "github", readiness.snapshot)
+        : await store.updatePrReadiness(prEntity.id, prEntity.headOid, "github", readiness.snapshot);
+      persistedPrReadiness = persistedReadiness;
+      /*
+      FNXC:ExternalCheckWait 2026-10-05-01:53:
+      The atomic readiness writer can lose its CAS to a reconciler that has
+      already recorded a terminal PR. Complete or clear that terminal lifecycle
+      here; it must not be converted into a wait after its poll owner stopped.
+      */
+      if (persistedReadiness?.state === "merged") {
+        const mergedPrInfo: PrInfo = {
+          ...prInfo,
+          status: "merged",
+          lastCheckedAt: new Date().toISOString(),
+        };
+        await store.updatePrInfo(task.id, mergedPrInfo);
+        await finalizePullRequestMerge(store, cwd, task, mergedPrInfo, "Pull request merged by readiness reconciliation");
+        return "merged";
+      }
+      if (persistedReadiness?.state === "closed") {
+        await store.updatePrInfo(task.id, {
+          ...prInfo,
+          status: "closed",
+          lastCheckedAt: new Date().toISOString(),
+        });
+        await store.updateTask(task.id, { status: null });
+        await store.logEntry(task.id, "Pull request closed", `PR #${prInfo.number} closed before merge.`);
+        return "skipped";
+      }
+      /*
+      FNXC:ExternalCheckWait 2026-10-05-00:56:
+      Once provider-neutral readiness is available, it is the sole merge-admission
+      authority. A legacy green merge status cannot bypass a current-head pending
+      observation; the durable reconciler owns resumption after this worker exits.
+      */
+      readinessBlocked = !isCurrentHeadReadinessReady(
+        persistedReadiness?.readiness,
+        persistedReadiness?.headOid,
+      );
+      if (readinessBlocked) {
+        readinessWaitPersisted = typeof store.updatePrReadinessAndAwaitChecksIfBlocked === "function";
+        await store.logEntry(task.id, "Pull-request readiness blocked", "Current-head required checks, review, or merge readiness is not ready.");
+      }
+    } catch (error) {
+      readinessBlocked = true;
+      await store.logEntry(task.id, "Pull-request readiness unavailable", error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (readinessBlocked) {
+    if (!readinessWaitPersisted) await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+    return "waiting";
+  }
   const refreshedPrInfo: PrInfo = {
     ...prInfo,
     ...mergeStatus.prInfo,
@@ -1653,6 +1734,43 @@ export async function processPullRequestMergeTask(
   }
   // Rebase publication can reset approval/check state. Never merge from the
   // pre-refresh admission result.
+  /*
+  FNXC:ExternalCheckWait 2026-10-05-01:15:
+  A refresh publishes a different PR revision, so its readiness must be
+  persisted and matched to that exact SHA before this lifecycle owns a merge.
+  */
+  if (refreshedHead.refreshed && prEntity && typeof store.updatePrReadiness === "function" && typeof github.getPrReadiness === "function") {
+    try {
+      const refreshedReadiness = await github.getPrReadiness(prRepo.owner, prRepo.repo, prInfo.number);
+      const persistedRefreshedReadiness = typeof store.updatePrReadinessAndAwaitChecksIfBlocked === "function"
+        ? await store.updatePrReadinessAndAwaitChecksIfBlocked(
+          prEntity.id,
+          persistedPrReadiness?.headOid ?? prEntity.headOid,
+          "github",
+          refreshedReadiness.snapshot,
+        )
+        : await store.updatePrReadiness(
+          prEntity.id,
+          persistedPrReadiness?.headOid ?? prEntity.headOid,
+          "github",
+          refreshedReadiness.snapshot,
+        );
+      const refreshedReadinessBlocked = persistedRefreshedReadiness?.headOid !== refreshedHead.headOid
+        || !isCurrentHeadReadinessReady(persistedRefreshedReadiness?.readiness, refreshedHead.headOid);
+      if (refreshedReadinessBlocked) {
+        if (persistedRefreshedReadiness?.headOid !== refreshedHead.headOid
+          || typeof store.updatePrReadinessAndAwaitChecksIfBlocked !== "function") {
+          await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+        }
+        await store.logEntry(task.id, "Pull-request readiness blocked after refresh", "The refreshed pull-request head requires a new current-head readiness observation.");
+        return "waiting";
+      }
+    } catch (error) {
+      await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+      await store.logEntry(task.id, "Pull-request readiness unavailable after refresh", error instanceof Error ? error.message : String(error));
+      return "waiting";
+    }
+  }
   if (settings.requirePrApproval && latestMergeStatus.reviewDecision !== "APPROVED") {
     await store.updateTask(task.id, { status: "awaiting-pr-checks" });
     return "waiting";

@@ -1419,6 +1419,9 @@ export class ProjectEngine {
       this.prReconciler = new PrReconciler({
         store,
         ops: this.options.prReconcileGithubOps,
+        releaseAwaitingChecks: async (taskId, prEntityId, expectedHeadOid) => {
+          await store.releaseAwaitingPrChecksIfCurrentHead(taskId, prEntityId, expectedHeadOid);
+        },
       });
       this.prReconciler.start();
     }
@@ -3008,7 +3011,10 @@ export class ProjectEngine {
     // Terminal failure: don't let the cooldown sweep re-attempt a merge that
     // already gave up (verification cap, conflict-bounce cap, or non-conflict
     // error). The task is parked for human/follow-up intervention.
-    if (task.status === "failed" || task.status === "awaiting-approval" || task.status === "awaiting-user-review") return false;
+    // A PR check wait is released solely by PrReconciler after a SHA-fenced
+    // readiness observation. Sweeps must not turn ordinary CI latency into a
+    // fresh merge attempt or consume its retry budget.
+    if (task.status === "failed" || task.status === "awaiting-approval" || task.status === "awaiting-user-review" || task.status === "awaiting-pr-checks") return false;
     /*
     FNXC:AutoMergeRetries 2026-08-09-03:02:
     Retry backoff must be enforced at this shared admission point, not only by

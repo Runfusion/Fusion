@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PrEntity, PrReadinessSnapshot, TaskDetail } from "@fusion/core";
 
 import { createAutoMergeGateHandler } from "../merge/pr-nodes.js";
+import { deriveTransitions } from "../merge/pr-reconcile.js";
 
 function readiness(overrides: Partial<PrReadinessSnapshot> = {}): PrReadinessSnapshot {
   return {
@@ -54,6 +55,30 @@ async function invoke(entityResult: PrEntity) {
     { task: { id: "FN-9439" } as TaskDetail } as never,
   );
 }
+
+describe("PR readiness reconciliation", () => {
+  it("releases a durable wait only when a current-head observation becomes ready", () => {
+    const pending = readiness({ requiredChecks: [{ name: "build", state: "pending" }] });
+    const transitions = deriveTransitions(entity(pending), {
+      exists: true,
+      prState: "open",
+      headOid: "head-a",
+      readiness: readiness(),
+      readinessProvider: "github",
+    });
+    expect(transitions).toContainEqual(expect.objectContaining({ event: "ready", tag: "github:pr-ready" }));
+
+    const stale = deriveTransitions(entity(pending), {
+      exists: true,
+      prState: "open",
+      headOid: "head-b",
+      readiness: readiness({ observedHeadOid: "head-a" }),
+      readinessProvider: "github",
+    });
+    expect(stale.some((transition) => transition.event === "ready")).toBe(false);
+  });
+
+});
 
 describe("PR readiness auto-merge admission", () => {
   it("refuses legacy-green evidence fenced to a stale head", async () => {

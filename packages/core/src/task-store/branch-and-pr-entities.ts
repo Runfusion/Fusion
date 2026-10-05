@@ -15,10 +15,12 @@ import { isBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
 import { FINGERPRINT_WINDOW_DEFAULT_MS, FINGERPRINT_WINDOW_MAX_MS } from "../duplicates/duplicate-guard.js";
 import * as schema from "../postgres/schema/index.js";
 import { taskProjectScope } from "../postgres/data-layer.js";
+import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePrEntityForSource as ensurePrEntityForSourceAsync, getActivePrEntityBySource as getActivePrEntityBySourceAsync, getBranchGroup as getBranchGroupAsync, getBranchGroupByBranchName as getBranchGroupByBranchNameAsync, getBranchGroupBySource as getBranchGroupBySourceAsync, getPrEntity as getPrEntityAsync, getPrThreadState as getPrThreadStateAsync, listActivePrEntities as listActivePrEntitiesAsync, listBranchGroups as listBranchGroupsAsync, listPrThreadStates as listPrThreadStatesAsync, recordPrThreadOutcome as recordPrThreadOutcomeAsync, updatePrReadiness as updatePrReadinessAsync } from "./async/async-branch-groups.js";
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async/async-workflow-workitems.js";
 import { MergeRequestRow, PrEntityRow, WorkflowWorkItemRow } from "./row-types.js";
 import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrReadinessSnapshot, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
+import { isCurrentHeadReadinessReady, isPrEntityActive } from "../merge/pr-entity.js";
 import { validateNodeOverrideChange, resolveNodeOverrideLanes} from "../mesh/node-override-guard.js";
 import { WorkflowMovePolicyInput } from "../workflows/workflow-extension-types.js";
 import { resolveWorkflowIrById, isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
@@ -122,7 +124,96 @@ export async function listActivePrEntitiesImpl(store: TaskStore): Promise<PrEnti
 
 export async function updatePrReadinessImpl(store: TaskStore, id: string, expectedStoredHeadOid: string | undefined, provider: string, snapshot: PrReadinessSnapshot): Promise<PrEntity | null> {
   const layer = store.asyncLayer!;
-  return updatePrReadinessAsync(layer.db, id, expectedStoredHeadOid, provider, snapshot, layer.projectId);
+  return layer.transactionImmediate(async (tx) => {
+    const entity = await getPrEntityAsync(tx, id, layer.projectId);
+    if (!entity) return null;
+    if (entity.sourceType === "task") {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, entity.sourceId);
+    }
+    return updatePrReadinessAsync(tx, id, expectedStoredHeadOid, provider, snapshot, layer.projectId);
+  });
+}
+
+/*
+FNXC:ExternalCheckWait 2026-10-05-01:15:
+A pending readiness observation and its task hold commit under one advisory
+lock. A ready reconciler can then release the durable wait after it exists,
+rather than observing readiness in the gap before a separate task update.
+*/
+export async function updatePrReadinessAndAwaitChecksIfBlockedImpl(
+  store: TaskStore,
+  id: string,
+  expectedStoredHeadOid: string | undefined,
+  provider: string,
+  snapshot: PrReadinessSnapshot,
+): Promise<PrEntity | null> {
+  const layer = store.asyncLayer!;
+  return layer.transactionImmediate(async (tx) => {
+    const entity = await getPrEntityAsync(tx, id, layer.projectId);
+    if (!entity) return null;
+    if (entity.sourceType === "task") {
+      await acquireTaskAdvisoryXactLock(tx, layer.projectId, entity.sourceId);
+    }
+    let persisted = await updatePrReadinessAsync(tx, id, expectedStoredHeadOid, provider, snapshot, layer.projectId);
+    /*
+    FNXC:ExternalCheckWait 2026-10-05-01:31:
+    A lost head CAS means another reconciler has already established the current
+    PR observation. Re-read it after taking the shared task lock: atomically hold
+    its non-ready head, or return its current-ready proof without writing a stale
+    wait that a prior release could no longer wake.
+    */
+    if (!persisted) persisted = await getPrEntityAsync(tx, id, layer.projectId);
+    /*
+    FNXC:ExternalCheckWait 2026-10-05-01:53:
+    A terminal reconciler result is not an ordinary failed readiness check. Its
+    generic terminal release has already run, so recreating this legacy wait
+    would leave it outside the active PR poll set with no possible wake-up.
+    */
+    if (!persisted || persisted.sourceType !== "task" || !isPrEntityActive(persisted)
+      || isCurrentHeadReadinessReady(persisted.readiness, persisted.headOid)) return persisted;
+    await tx.update(schema.project.tasks)
+      .set({ status: "awaiting-pr-checks", updatedAt: new Date().toISOString() })
+      .where(and(
+        eq(schema.project.tasks.id, persisted.sourceId),
+        taskProjectScope(layer),
+      ));
+    return persisted;
+  });
+}
+
+/*
+FNXC:ExternalCheckWait 2026-10-05-00:56:
+PR readiness writes and wait release share the task advisory transaction lock.
+This keeps a newly observed head from racing an old ready observation into a
+premature task release; the current-head proof and status clear commit together.
+*/
+export async function releaseAwaitingPrChecksIfCurrentHeadImpl(
+  store: TaskStore,
+  taskId: string,
+  prEntityId: string,
+  expectedHeadOid: string,
+): Promise<boolean> {
+  const layer = store.asyncLayer!;
+  const released = await layer.transactionImmediate(async (tx) => {
+    await acquireTaskAdvisoryXactLock(tx, layer.projectId, taskId);
+    const entity = await getPrEntityAsync(tx, prEntityId, layer.projectId);
+    if (entity?.sourceType !== "task" || entity.sourceId !== taskId
+      || entity.headOid !== expectedHeadOid
+      || !isCurrentHeadReadinessReady(entity.readiness, expectedHeadOid)) return false;
+    const rows = await tx.update(schema.project.tasks)
+      .set({ status: null, updatedAt: new Date().toISOString() })
+      .where(and(
+        eq(schema.project.tasks.id, taskId),
+        taskProjectScope(layer),
+        eq(schema.project.tasks.status, "awaiting-pr-checks"),
+      ))
+      .returning({ id: schema.project.tasks.id });
+    return rows.length === 1;
+  });
+  if (!released) return false;
+  const task = await store.getTask(taskId);
+  store.emitTaskLifecycleEventSafely("task:updated", [task, {}]);
+  return true;
 }
 
 export async function getPrThreadStateImpl(store: TaskStore, prEntityId: string, threadId: string, headOid: string): Promise<PrThreadState | null> {

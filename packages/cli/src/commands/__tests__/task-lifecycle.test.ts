@@ -154,6 +154,8 @@ function makeStore(task: MockTask, settings: Record<string, unknown> = {}) {
       updates.push({ id, patch });
     }),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
+    ensurePrEntityForSource: vi.fn().mockResolvedValue({ id: `PR-${task.id}`, headOid: undefined }),
+    updatePrReadiness: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn(async (_id: string, column: string) => ({ ...task, column })),
     logEntry: vi.fn().mockResolvedValue(undefined),
     getActiveMergingTask: vi.fn().mockReturnValue(null),
@@ -180,6 +182,8 @@ function makeStatefulStore(task: MockTask, settings: Record<string, unknown> = {
       state = { ...state, prInfo: prInfo ?? undefined };
       return structuredClone(state);
     }),
+    ensurePrEntityForSource: vi.fn().mockResolvedValue({ id: `PR-${task.id}`, headOid: undefined }),
+    updatePrReadiness: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn(async (_id: string, column: string) => {
       state = { ...state, column };
       return structuredClone(state);
@@ -194,6 +198,267 @@ function makeStatefulStore(task: MockTask, settings: Record<string, unknown> = {
 }
 
 describe("processPullRequestMergeTask", () => {
+  it("persists a pending current-head observation and leaves retry counters unchanged", async () => {
+    const task: MockTask = { id: "FN-9436", title: "external check", description: "d", column: "in-review" };
+    const store = makeStore(task);
+    const pendingSnapshot = {
+      observedHeadOid: "head-current", headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "pending" as const }], approval: "approved" as const,
+      mergeable: "clean" as const, protectionBlockers: [], state: "open" as const,
+      deployments: { state: "supported" as const }, branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const }, reviews: { state: "supported" as const }, merge: { state: "supported" as const },
+      observedAt: "2026-10-05T00:37:00.000Z",
+    };
+    (store as Record<string, unknown>).updatePrReadiness = vi.fn(async () => ({
+      id: `PR-${task.id}`,
+      headOid: pendingSnapshot.observedHeadOid,
+      readiness: pendingSnapshot,
+    }));
+    const github = {
+      findPrForBranch: vi.fn(async () => ({ number: 36, url: "https://example.test/pr/36", status: "open" as const, headBranch: "fusion/FN-9436", baseBranch: "main" })),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({
+        prInfo: { number: 36, url: "https://example.test/pr/36", status: "open" as const },
+        reviewDecision: "APPROVED",
+        checks: [{ name: "build", required: true, state: "pending" }],
+        // Legacy status is intentionally green: canonical current-head readiness
+        // must still hold this pending check instead of calling mergePr.
+        mergeReady: true,
+        blockingReasons: [],
+      })),
+      getPrReadiness: vi.fn(async () => ({
+        prInfo: { number: 36, url: "https://example.test/pr/36", status: "open" as const },
+        snapshot: pendingSnapshot,
+      })),
+      mergePr: vi.fn(),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("waiting");
+
+    expect(store.ensurePrEntityForSource).toHaveBeenCalledWith(expect.objectContaining({ sourceId: task.id, prNumber: 36 }));
+    expect(store.updatePrReadiness).toHaveBeenCalledWith(`PR-${task.id}`, undefined, "github", expect.objectContaining({ observedHeadOid: "head-current" }));
+    expect(store._updates).toContainEqual({ id: task.id, patch: { status: "awaiting-pr-checks" } });
+    expect(github.mergePr).not.toHaveBeenCalled();
+    expect(store._updates.some((update: { patch: Record<string, unknown> }) => "mergeRetries" in update.patch || "mergeTransientRetryCount" in update.patch)).toBe(false);
+  });
+
+  it("uses a concurrent CAS-winning pending observation without a stale task write", async () => {
+    const task: MockTask = { id: "FN-9436-cas-pending", title: "external check", description: "d", column: "in-review" };
+    const store = makeStore(task);
+    const snapshot = {
+      observedHeadOid: "head-loser", headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "pending" as const }], approval: "approved" as const,
+      mergeable: "clean" as const, protectionBlockers: [], state: "open" as const,
+      deployments: { state: "supported" as const }, branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const }, reviews: { state: "supported" as const }, merge: { state: "supported" as const },
+      observedAt: "2026-10-05T01:31:00.000Z",
+    };
+    const winningSnapshot = { ...snapshot, observedHeadOid: "head-winner" };
+    const persistWait = vi.fn(async () => ({
+      id: `PR-${task.id}`,
+      sourceType: "task" as const,
+      sourceId: task.id,
+      headOid: winningSnapshot.observedHeadOid,
+      readiness: winningSnapshot,
+    }));
+    (store as Record<string, unknown>).updatePrReadinessAndAwaitChecksIfBlocked = persistWait;
+    const github = {
+      findPrForBranch: vi.fn(async () => ({ number: 38, url: "https://example.test/pr/38", status: "open" as const, headBranch: "fusion/FN-9436-cas-pending", baseBranch: "main" })),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({ prInfo: { number: 38, url: "https://example.test/pr/38", status: "open" as const }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] })),
+      getPrReadiness: vi.fn(async () => ({ prInfo: { number: 38, url: "https://example.test/pr/38", status: "open" as const }, snapshot })),
+      mergePr: vi.fn(),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("waiting");
+
+    expect(persistWait).toHaveBeenCalledWith(`PR-${task.id}`, undefined, "github", snapshot);
+    expect(store._updates).not.toContainEqual({ id: task.id, patch: { status: "awaiting-pr-checks" } });
+    expect(github.mergePr).not.toHaveBeenCalled();
+    expect(store._updates.some((update: { patch: Record<string, unknown> }) => "mergeRetries" in update.patch || "mergeTransientRetryCount" in update.patch)).toBe(false);
+  });
+
+  it("finalizes a terminal CAS-winning merged readiness result instead of creating a wait", async () => {
+    const task: MockTask = { id: "FN-9436-cas-terminal", title: "external check", description: "d", column: "in-review" };
+    const store = makeStore(task);
+    const terminalSnapshot = {
+      observedHeadOid: "head-winner", headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "success" as const }], approval: "approved" as const,
+      mergeable: "clean" as const, protectionBlockers: [], state: "merged" as const,
+      mergeCommitSha: "merge-winner",
+      deployments: { state: "supported" as const }, branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const }, reviews: { state: "supported" as const }, merge: { state: "supported" as const },
+      observedAt: "2026-10-05T01:53:00.000Z",
+    };
+    const persistWait = vi.fn(async () => ({
+      id: `PR-${task.id}`,
+      sourceType: "task" as const,
+      sourceId: task.id,
+      state: "merged" as const,
+      headOid: terminalSnapshot.observedHeadOid,
+      readiness: terminalSnapshot,
+    }));
+    (store as Record<string, unknown>).updatePrReadinessAndAwaitChecksIfBlocked = persistWait;
+    const github = {
+      findPrForBranch: vi.fn(async () => ({ number: 41, url: "https://example.test/pr/41", status: "open" as const, headBranch: "fusion/FN-9436-cas-terminal", baseBranch: "main" })),
+      createPr: vi.fn(),
+      // The worker's first status fetch can be stale while the reconciler wins
+      // its readiness CAS with this terminal observation.
+      getPrMergeStatus: vi.fn(async () => ({ prInfo: { number: 41, url: "https://example.test/pr/41", status: "open" as const }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] })),
+      getPrReadiness: vi.fn(async () => ({ prInfo: { number: 41, url: "https://example.test/pr/41", status: "merged" as const }, snapshot: terminalSnapshot })),
+      mergePr: vi.fn(),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("merged");
+
+    expect(store._updates).not.toContainEqual({ id: task.id, patch: { status: "awaiting-pr-checks" } });
+    expect(store.updatePrInfo).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "merged" }));
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "done");
+    expect(github.mergePr).not.toHaveBeenCalled();
+  });
+
+  it("clears an awaiting-checks status when a terminal CAS-winning closed readiness result arrives", async () => {
+    const task: MockTask = { id: "FN-9436-cas-closed", title: "external check", description: "d", column: "in-review" };
+    const store = makeStore(task);
+    const terminalSnapshot = {
+      observedHeadOid: "head-closed", headBehindBase: false,
+      requiredChecks: [], approval: "none" as const,
+      mergeable: "unknown" as const, protectionBlockers: [], state: "closed" as const,
+      deployments: { state: "supported" as const }, branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const }, reviews: { state: "supported" as const }, merge: { state: "supported" as const },
+      observedAt: "2026-10-05T01:53:00.000Z",
+    };
+    (store as Record<string, unknown>).updatePrReadinessAndAwaitChecksIfBlocked = vi.fn(async () => ({
+      id: `PR-${task.id}`, sourceType: "task" as const, sourceId: task.id,
+      state: "closed" as const, headOid: terminalSnapshot.observedHeadOid, readiness: terminalSnapshot,
+    }));
+    const github = {
+      findPrForBranch: vi.fn(async () => ({ number: 42, url: "https://example.test/pr/42", status: "open" as const, headBranch: "fusion/FN-9436-cas-closed", baseBranch: "main" })),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({ prInfo: { number: 42, url: "https://example.test/pr/42", status: "open" as const }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] })),
+      getPrReadiness: vi.fn(async () => ({ prInfo: { number: 42, url: "https://example.test/pr/42", status: "closed" as const }, snapshot: terminalSnapshot })),
+      mergePr: vi.fn(),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("skipped");
+
+    expect(store._updates).toContainEqual({ id: task.id, patch: { status: null } });
+    expect(store._updates).not.toContainEqual({ id: task.id, patch: { status: "awaiting-pr-checks" } });
+    expect(store.updatePrInfo).toHaveBeenCalledWith(task.id, expect.objectContaining({ status: "closed" }));
+    expect(github.mergePr).not.toHaveBeenCalled();
+  });
+
+  it("rechecks canonical readiness after a refreshed head before merging", async () => {
+    const task: MockTask = { id: "FN-9436-refreshed-readiness", title: "external check", description: "d", column: "in-review" };
+    const store = makeStore(task);
+    const readySnapshot = {
+      observedHeadOid: "1111111111111111111111111111111111111111", headBehindBase: false,
+      requiredChecks: [{ name: "build", state: "success" as const }], approval: "approved" as const,
+      mergeable: "clean" as const, protectionBlockers: [], state: "open" as const,
+      deployments: { state: "supported" as const }, branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const }, reviews: { state: "supported" as const }, merge: { state: "supported" as const },
+      observedAt: "2026-10-05T01:15:00.000Z",
+    };
+    const pendingSnapshot = { ...readySnapshot, observedHeadOid: "2222222222222222222222222222222222222222", requiredChecks: [{ name: "build", state: "pending" as const }] };
+    const persistWait = vi.fn(async (_id: string, _expected: string | undefined, _provider: string, snapshot: typeof readySnapshot) => ({
+      id: `PR-${task.id}`,
+      sourceType: "task" as const,
+      sourceId: task.id,
+      headOid: snapshot.observedHeadOid,
+      readiness: snapshot,
+    }));
+    (store as Record<string, unknown>).updatePrReadinessAndAwaitChecksIfBlocked = persistWait;
+    let headReads = 0;
+    let mergeBaseReads = 0;
+    execMock.mockImplementation((command: string) => {
+      if (command.includes("merge-base --is-ancestor") && ++mergeBaseReads === 1) throw Object.assign(new Error("not ancestor"), { code: 1 });
+      if (command === "git rev-parse HEAD") return ++headReads === 1
+        ? readySnapshot.observedHeadOid
+        : pendingSnapshot.observedHeadOid;
+      if (command.includes("ls-remote origin refs/heads/")) return `${readySnapshot.observedHeadOid}\trefs/heads/fusion/fn-9601\n`;
+      return undefined;
+    });
+    const github = {
+      findPrForBranch: vi.fn(async () => ({ number: 39, url: "https://example.test/pr/39", status: "open" as const, headBranch: "fusion/fn-9601", baseBranch: "main" })),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({ prInfo: { number: 39, url: "https://example.test/pr/39", status: "open" as const }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] })),
+      getPrReadiness: vi.fn()
+        .mockResolvedValueOnce({ prInfo: { number: 39, url: "https://example.test/pr/39", status: "open" as const }, snapshot: readySnapshot })
+        .mockResolvedValueOnce({ prInfo: { number: 39, url: "https://example.test/pr/39", status: "open" as const }, snapshot: pendingSnapshot }),
+      mergePr: vi.fn(),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("waiting");
+
+    expect(github.getPrReadiness).toHaveBeenCalledTimes(2);
+    expect(persistWait).toHaveBeenLastCalledWith(`PR-${task.id}`, readySnapshot.observedHeadOid, "github", pendingSnapshot);
+    expect(github.mergePr).not.toHaveBeenCalled();
+  });
+
+  it("merges only after a CAS-winning ready observation for a refreshed head", async () => {
+    const task: MockTask = { id: "FN-9436-refresh-cas-ready", title: "external check", description: "d", column: "in-review" };
+    const store = makeStore(task);
+    const headA = "1111111111111111111111111111111111111111";
+    const headB = "2222222222222222222222222222222222222222";
+    const snapshot = (observedHeadOid: string, state: "pending" | "success") => ({
+      observedHeadOid, headBehindBase: false,
+      requiredChecks: [{ name: "build", state }], approval: "approved" as const,
+      mergeable: "clean" as const, protectionBlockers: [], state: "open" as const,
+      deployments: { state: "supported" as const }, branchUpdate: { state: "supported" as const },
+      checks: { state: "supported" as const }, reviews: { state: "supported" as const }, merge: { state: "supported" as const },
+      observedAt: "2026-10-05T01:31:00.000Z",
+    });
+    const firstReady = snapshot(headA, "success");
+    const stalePending = snapshot(headB, "pending");
+    const winningReady = snapshot(headB, "success");
+    const persistWait = vi.fn()
+      .mockResolvedValueOnce({ id: `PR-${task.id}`, sourceType: "task", sourceId: task.id, headOid: headA, readiness: firstReady })
+      // The second call models the atomic primitive's post-CAS re-read: another
+      // reconciler owns head B and has already persisted its ready observation.
+      .mockResolvedValueOnce({ id: `PR-${task.id}`, sourceType: "task", sourceId: task.id, headOid: headB, readiness: winningReady });
+    (store as Record<string, unknown>).updatePrReadinessAndAwaitChecksIfBlocked = persistWait;
+    let headReads = 0;
+    let mergeBaseReads = 0;
+    execMock.mockImplementation((command: string) => {
+      if (command.includes("merge-base --is-ancestor") && ++mergeBaseReads === 1) throw Object.assign(new Error("not ancestor"), { code: 1 });
+      if (command === "git rev-parse HEAD") return ++headReads === 1 ? headA : headB;
+      if (command.includes("ls-remote origin refs/heads/")) return `${headA}\trefs/heads/fusion/fn-9601\n`;
+      return undefined;
+    });
+    const github = {
+      findPrForBranch: vi.fn(async () => ({ number: 40, url: "https://example.test/pr/40", status: "open" as const, headBranch: "fusion/fn-9601", baseBranch: "main" })),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({ prInfo: { number: 40, url: "https://example.test/pr/40", status: "open" as const }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] })),
+      getPrReadiness: vi.fn()
+        .mockResolvedValueOnce({ prInfo: { number: 40, url: "https://example.test/pr/40", status: "open" as const }, snapshot: firstReady })
+        .mockResolvedValueOnce({ prInfo: { number: 40, url: "https://example.test/pr/40", status: "open" as const }, snapshot: stalePending }),
+      mergePr: vi.fn(async () => ({ number: 40, url: "https://example.test/pr/40", status: "merged" as const })),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("merged");
+
+    expect(persistWait).toHaveBeenLastCalledWith(`PR-${task.id}`, headA, "github", stalePending);
+    expect(store._updates).not.toContainEqual({ id: task.id, patch: { status: "awaiting-pr-checks" } });
+    expect(github.mergePr).toHaveBeenCalledWith(expect.objectContaining({ expectedHeadOid: headB }));
+  });
+
+  it("holds an unavailable readiness provider without attempting a merge", async () => {
+    const task: MockTask = { id: "FN-9436-error", title: "readiness error", description: "d", column: "in-review" };
+    const store = makeStore(task);
+    const github = {
+      findPrForBranch: vi.fn(async () => ({ number: 37, url: "https://example.test/pr/37", status: "open" as const, headBranch: "fusion/FN-9436-error", baseBranch: "main" })),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({ prInfo: { number: 37, url: "https://example.test/pr/37", status: "open" as const }, reviewDecision: "APPROVED", checks: [], mergeReady: true, blockingReasons: [] })),
+      getPrReadiness: vi.fn(async () => { throw new Error("provider unavailable"); }),
+      mergePr: vi.fn(),
+    };
+
+    await expect(processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined)).resolves.toBe("waiting");
+    expect(github.mergePr).not.toHaveBeenCalled();
+    expect(store._updates).toContainEqual({ id: task.id, patch: { status: "awaiting-pr-checks" } });
+    expect(store._updates.some((update: { patch: Record<string, unknown> }) => "mergeRetries" in update.patch || "mergeTransientRetryCount" in update.patch)).toBe(false);
+  });
+
   beforeEach(() => {
     execMock.mockReset();
     execFileCalls.length = 0;
