@@ -183,7 +183,14 @@ describe("fetchAuthStatus", () => {
     const result = await fetchAuthStatus();
 
     expect(result.providers).toEqual([{ id: "anthropic", name: "Anthropic", authenticated: true }]);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/status", {
+    /*
+    FNXC:ProviderAuth 2026-10-05-08:27:
+    Status must carry the browser origin explicitly because same-origin GET requests omit the Origin
+    header. Build the expected URL with URLSearchParams so this client test preserves the encoded
+    device-code routing contract shared with login.
+    */
+    const expectedUrl = `/api/auth/status?${new URLSearchParams({ origin: window.location.origin }).toString()}`;
+    expect(globalThis.fetch).toHaveBeenCalledWith(expectedUrl, {
       headers: API_JSON_HEADERS,
     });
   });

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const proxyApiMock = vi.hoisted(() => vi.fn());
@@ -33,22 +31,29 @@ describe("createTask plan approval payload", () => {
     expect(postedBody()).not.toHaveProperty("requirePlanApproval");
   });
 
-  it("keeps supported create-time overrides in the explicit API whitelist", () => {
-    const source = readFileSync(resolve(__dirname, "../tasks/tasks.ts"), "utf8");
-    const start = source.indexOf("export async function createTask(");
-    const end = source.indexOf("/** Update explicit workspace repository intent", start);
-    const createTaskSource = source.slice(start, end);
+  /*
+  FNXC:CreateTaskPayload 2026-10-05-08:27:
+  The client contract is the serialized request body, not createTask source layout. Exercise the
+  production client seam so supported overrides remain forwarded while the retired per-task plan
+  approval field cannot return through a legacy-shaped browser input.
+  */
+  it("forwards supported create-time overrides while omitting the retired override", async () => {
+    await createTask({
+      description: "Create with explicit workflow behavior",
+      executionMode: "fast",
+      plannerOversightLevel: "strict",
+      sessionAdvisorEnabled: true,
+      enabledWorkflowSteps: ["plan-review", "code-review"],
+      requirePlanApproval: true,
+    } as never);
 
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    for (const override of [
-      "executionMode",
-      "plannerOversightLevel",
-      "sessionAdvisorEnabled",
-      "enabledWorkflowSteps",
-    ]) {
-      expect(createTaskSource).toContain(override);
-    }
-    expect(createTaskSource).not.toContain("requirePlanApproval");
+    expect(postedBody()).toMatchObject({
+      description: "Create with explicit workflow behavior",
+      executionMode: "fast",
+      plannerOversightLevel: "strict",
+      sessionAdvisorEnabled: true,
+      enabledWorkflowSteps: ["plan-review", "code-review"],
+    });
+    expect(postedBody()).not.toHaveProperty("requirePlanApproval");
   });
 });
