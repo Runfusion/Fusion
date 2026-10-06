@@ -1,13 +1,14 @@
 import type { AutoRecoveryFailureClass, AutoRecoveryMode, AutoRecoverySettings, Task, TaskStore } from "@fusion/core";
 import { createLogger, type Logger } from "../logger.js";
 import type { RunAuditor } from "../util/run-audit.js";
+import { computeRecoveryDecision, type RecoveryDisposition } from "./recovery-policy.js";
 
 // FN-5348 invariant: auto-recovery paths MUST NOT select cwd-integration-branch
 // (or legacy cwd-main) as a fallback after reuse-task-worktree handoff refusal.
 // Reuse refusal handling must reacquire a fresh task worktree or preserve failed
 // in-review state; any future mode fallback must emit merge:cwd-integration-fallback-removed.
 
-export type AutoRecoveryAction = "retry" | "spawn-ai-recovery" | "pause";
+export type AutoRecoveryAction = "retry" | "spawn-ai-recovery" | "escalate" | "pause";
 
 export interface AutoRecoveryFailure {
   class: AutoRecoveryFailureClass;
@@ -20,6 +21,8 @@ export interface AutoRecoveryFailure {
 
 export interface AutoRecoveryDecision {
   action: AutoRecoveryAction;
+  /** Typed recovery owner outcome; escalation is never a silent no-op. */
+  recoveryDisposition?: RecoveryDisposition | "hold";
   rationale: string;
   auditMetadata: Record<string, unknown>;
   legacyPausedReason: string;
@@ -84,6 +87,7 @@ export class AutoRecoveryDispatcher {
     if (context.settings.mode === "off") {
       return {
         action: "pause",
+        recoveryDisposition: "hold",
         rationale: "auto-recovery-disabled",
         legacyPausedReason: failure.pausedReason,
         auditMetadata: { class: failure.class, mode: "off", retryCount: context.retryCount, rationale: "auto-recovery-disabled" },
@@ -95,6 +99,7 @@ export class AutoRecoveryDispatcher {
     if (isDestructiveAmbiguity(failure)) {
       return {
         action: "pause",
+        recoveryDisposition: "hold",
         rationale: "destructive-ambiguity",
         legacyPausedReason: failure.pausedReason,
         auditMetadata: { class: failure.class, mode: effectiveMode, retryCount: context.retryCount, rationale: "destructive-ambiguity" },
@@ -102,9 +107,14 @@ export class AutoRecoveryDispatcher {
     }
 
     const maxRetries = context.settings.maxRetries ?? 3;
-    if (context.retryCount >= maxRetries) {
+    const recovery = computeRecoveryDecision(
+      { recoveryRetryCount: context.retryCount },
+      { maxRetries },
+    );
+    if (recovery.disposition === "escalate") {
       return {
-        action: "pause",
+        action: "escalate",
+        recoveryDisposition: recovery.disposition,
         rationale: "retry-budget-exhausted",
         legacyPausedReason: failure.pausedReason,
         auditMetadata: { class: failure.class, mode: effectiveMode, retryCount: context.retryCount, rationale: "retry-budget-exhausted", maxRetries },
@@ -115,6 +125,7 @@ export class AutoRecoveryDispatcher {
     const rationale = `mode-${effectiveMode}`;
     return {
       action,
+      recoveryDisposition: action === "pause" ? "hold" : recovery.disposition,
       rationale,
       legacyPausedReason: failure.pausedReason,
       auditMetadata: { class: failure.class, mode: effectiveMode, retryCount: context.retryCount, rationale },
@@ -130,6 +141,15 @@ export class AutoRecoveryDispatcher {
       metadata: decision.auditMetadata,
     });
 
+    if (decision.action === "escalate") {
+      await this.auditEmitter.database({
+        type: "auto-recovery:retry-budget-escalated",
+        target: failure.taskId,
+        metadata: decision.auditMetadata,
+      });
+      return decision;
+    }
+
     if (decision.rationale === "destructive-ambiguity") {
       await this.auditEmitter.database({
         type: "auto-recovery:pause-because-destructive-ambiguity",
@@ -142,7 +162,7 @@ export class AutoRecoveryDispatcher {
     if (decision.action === "retry") {
       if (!this.handlers.issueRetry) {
         this.logger.warn(`auto-recovery: handler-not-registered for class=${failure.class} action=retry — falling back to pause`);
-        return { ...decision, action: "pause", rationale: "handler-not-registered" };
+        return { ...decision, action: "pause", recoveryDisposition: "hold", rationale: "handler-not-registered" };
       }
       await this.handlers.issueRetry(failure, decision, context);
       await this.auditEmitter.database({
@@ -156,7 +176,7 @@ export class AutoRecoveryDispatcher {
     if (decision.action === "spawn-ai-recovery") {
       if (!this.handlers.spawnAiRecovery) {
         this.logger.warn(`auto-recovery: handler-not-registered for class=${failure.class} action=spawn-ai-recovery — falling back to pause`);
-        return { ...decision, action: "pause", rationale: "handler-not-registered" };
+        return { ...decision, action: "pause", recoveryDisposition: "hold", rationale: "handler-not-registered" };
       }
       await this.handlers.spawnAiRecovery(failure, decision, context);
       await this.auditEmitter.database({

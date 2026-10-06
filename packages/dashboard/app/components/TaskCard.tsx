@@ -3473,7 +3473,7 @@ function TaskCardComponent({
               : showQueuedBadge
                 ? t("tasks.statusQueued", "Queued")
                 : wipLifecycleBadgeLabel
-                  ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null });
+                  ?? getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null, sessionContentionWaitReason: task.sessionContentionWaitReason ?? null, recoveryRetryCount: task.recoveryRetryCount, recoveryDisposition: task.recoveryDisposition, nextRecoveryAt: task.nextRecoveryAt, userPaused: task.userPaused, paused: task.paused, awaitingApproval: task.status === "awaiting-approval", externalBlocked: task.status === "blocked" });
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in

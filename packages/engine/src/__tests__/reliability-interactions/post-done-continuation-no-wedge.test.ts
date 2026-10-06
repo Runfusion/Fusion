@@ -481,7 +481,7 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     manager.stop();
   });
 
-  it("falls through to terminal failure after the non-continuable fresh-session retry budget is exhausted", async () => {
+  it("reseeds non-continuable fresh-session exhaustion with a durable diagnostic", async () => {
     const task = makeTask({
       id: "FN-5866-INCOMPLETE-EXHAUSTED",
       recoveryRetryCount: MAX_RECOVERY_RETRIES,
@@ -504,35 +504,16 @@ describe("FN-5866 reliability interactions: post-done continuation no wedge", ()
     const executor = new TaskExecutor(store, "/tmp/test", { onError });
     await executor.execute(task);
 
-    // FNXC:WorkflowLifecycle 2026-07-01-21:15: When the non-continuable fresh-session retry budget is
-    // exhausted, the run falls through to the TERMINAL failure path, which under the workflow-graph model
-    // parks the task `status: "failed"` IN PLACE (column preserved, worktree/session state cleared, onError
-    // surfaced) — the failure-in-place model that superseded the legacy FN-1284 move-to-in-review
-    // escalation. The invariant under test is the wedge-avoidance one: budget exhaustion is TERMINAL (not a
-    // silent resume-preserving requeue) and clears the recovery bookkeeping so the task cannot re-wedge.
-    //
-    // FNXC:EngineTests 2026-07-21-18:00: Graph ownership surfaces the terminal error as a node-level
-    // failure string; the original non-continuable message may live in logs/onError rather than task.error.
-    expect(task.column).toBe("in-progress");
-    expect(task.status).toBe("failed");
-    expect(typeof task.error).toBe("string");
-    expect(task.error!.length).toBeGreaterThan(0);
-    const errorSurfaces = [
-      task.error,
-      ...((task.log ?? []).map((entry: any) => String(entry.action ?? ""))),
-      ...onError.mock.calls.map((c: unknown[]) => String(c[1] ?? c[0] ?? "")),
-    ].join("\n");
-    expect(
-      errorSurfaces.includes("Cannot continue from message role: assistant")
-        || errorSurfaces.includes("Workflow graph terminated with failure")
-        || errorSurfaces.includes("step-execute"),
-    ).toBe(true);
-    expect(task.recoveryRetryCount).toBeNull();
-    expect(task.nextRecoveryAt).toBeNull();
-    expect(task.sessionFile).toBeNull();
-    expect(store.moveTask).not.toHaveBeenCalledWith(task.id, "todo", { preserveResumeState: true });
+    expect(task.column).toBe("todo");
+    expect(task.status).toBeFalsy();
+    expect(task.error).toBeFalsy();
+    expect(task.recoveryDisposition).toBe("escalated-reseed");
+    expect(task.recoveryRetryCount).toBeFalsy();
+    expect(task.nextRecoveryAt).toBeFalsy();
+    expect(task.sessionFile).toBeFalsy();
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "todo", { preserveResumeState: true });
     expect(store.handoffToReview).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect((task.log ?? []).some((entry: any) => entry.action.includes("fresh-session retries exhausted"))).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    expect((task.log ?? []).some((entry: any) => entry.action.includes("recovery exhausted its retry cadence; reseeding"))).toBe(true);
   });
 });

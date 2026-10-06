@@ -510,6 +510,24 @@ describe("SelfHealingManager", () => {
     });
 
 
+    it("runs progress-owning recovery and the stalled-card watchdog before periodic maintenance", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({
+        globalPause: false,
+        enginePaused: false,
+      } as unknown as Settings);
+      const recoverTransitionPending = vi.spyOn(manager, "runStaleTransitionPendingSweep").mockResolvedValue(undefined);
+      const recoverPausedAbort = vi.spyOn(manager, "recoverPausedAbortFailures").mockResolvedValue(0);
+      const reboundPausedScope = vi.spyOn(manager, "autoReboundPausedScopeDecay").mockResolvedValue(0);
+      const detectStalledCards = vi.spyOn(manager, "detectStalledCards").mockResolvedValue(0);
+
+      await manager.runStartupRecovery();
+
+      expect(recoverTransitionPending).toHaveBeenCalledOnce();
+      expect(recoverPausedAbort).toHaveBeenCalledOnce();
+      expect(reboundPausedScope).toHaveBeenCalledOnce();
+      expect(detectStalledCards).toHaveBeenCalledOnce();
+    });
+
     it("runStartupRecovery clears stale blockedBy rows", async () => {
       vi.mocked(store.getSettings).mockResolvedValue({
         globalPause: false,
@@ -8280,7 +8298,7 @@ describe("SelfHealingManager", () => {
       recovery.stop();
     });
 
-    it("parks a retained handoff after the planning-lock transport retry budget is exhausted", async () => {
+    it("re-admits a retained handoff for planning after the planning-lock transport retry budget is exhausted", async () => {
       const task = {
         id: "FN-PLAN-HANDOFF-EXHAUSTED",
         column: "todo",
@@ -8311,9 +8329,23 @@ describe("SelfHealingManager", () => {
       vi.setSystemTime(new Date("2026-01-01T00:05:00.000Z"));
 
       await expect(recovery.recoverApprovedTriageTasks()).resolves.toBe(0);
-      expect(task.status).toBe("failed");
-      expect(task.error).toContain("PLANNING_LIFECYCLE_LOCK_RECOVERY_EXHAUSTED");
-      expect(exhaustedStore.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("PLANNING_LIFECYCLE_LOCK_RECOVERY_EXHAUSTED"));
+      expect(task).toMatchObject({
+        status: "needs-replan",
+        error: null,
+        recoveryRetryCount: null,
+        recoveryDisposition: "escalated-reseed",
+        nextRecoveryAt: null,
+      });
+      expect(exhaustedStore.logEntry).toHaveBeenCalledWith(
+        task.id,
+        expect.stringContaining("escalated to a fresh planning pass"),
+      );
+
+      // The escalation is no longer a planning-stage handoff candidate. Triage owns
+      // `needs-replan`, so a repeated self-healing sweep cannot terminalize or double-dispatch it.
+      await expect(recovery.recoverApprovedTriageTasks()).resolves.toBe(0);
+      expect(recoverApprovedTriageTask).toHaveBeenCalledTimes(1);
+      expect(task.status).toBe("needs-replan");
 
       recovery.stop();
     });

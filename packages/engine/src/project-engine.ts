@@ -4437,52 +4437,41 @@ export class ProjectEngine {
                 };
 
                 if (budgetExhausted) {
-                  // Retry budget exhausted — terminal park for manual review.
-                  // FN-4538-class invariant: failed `in-review` blockers at the
-                  // retry ceiling are recognized by downstream `clearStaleBlockedBy`
-                  // fast paths (FN-5488), so dependents won't deadlock.
-                  const errorMsg =
-                    `Auto-merge fast-path refused after ${currentRetries} attempts: commit ${shortSha} is not reachable from ` +
-                    `${integrationBranchForGate} (${reachability.reason}). Manual review required.`;
+                  /*
+                  FNXC:RecoveryEscalation 2026-10-06-15:13:
+                  A rejected merge-confirmed proof is recoverable work, not a human-only terminal
+                  park. Exhaustion clears only the poisoned proof and resets this fast-path budget
+                  before the normal merger owns a fresh, fenced attempt; no diagnostic text or git
+                  evidence is persisted in audit metadata.
+                  */
                   runtimeLog.warn(
-                    `Auto-merge: ${taskId} fast-path REFUSED + budget exhausted — ${reachability.reason}: ${reachability.diagnostic}`,
+                    `Auto-merge: ${taskId} fast-path budget exhausted; escalating to a fresh merge attempt (${reachability.reason})`,
                   );
                   await store.logEntry(
                     taskId,
-                    `[FN-5627] Auto-merge fast-path refused (retry budget exhausted) — ${errorMsg}`,
+                    "Auto-recovered: fast-path retry budget exhausted — cleared stale merge proof and reseeded a fresh merge attempt.",
                   );
                   await store.updateTask(taskId, {
                     mergeDetails: cleanedMergeDetails,
-                    status: "failed",
-                    error: errorMsg,
+                    mergeRetries: 0,
+                    status: null,
+                    error: null,
                   });
-                  try {
-                    const auditor = createRunAuditor(store, {
-                      runId: generateSyntheticRunId("merger-fast-path-refused", taskId),
-                      agentId: "merger",
+                  await emitBoundedRunAudit(store, {
+                    taskId,
+                    agentId: "merger",
+                    runId: generateSyntheticRunId("merger-fast-path-escalated", taskId),
+                    domain: "database",
+                    mutationType: "merger:fast-path-recovery-escalated",
+                    target: taskId,
+                    metadata: {
                       taskId,
-                      phase: "auto-merge-fast-path-gate",
-                    });
-                    await auditor.database({
-                      type: "merger:fast-path-blocked-foreign-commit",
-                      target: taskId,
-                      metadata: {
-                        taskId,
-                        commitSha: sha,
-                        integrationBranch: integrationBranchForGate,
-                        reason: reachability.reason,
-                        diagnostic: reachability.diagnostic,
-                        mergeRetries: currentRetries,
-                        budgetExhausted: true,
-                      },
-                    });
-                  } catch (auditErr) {
-                    runtimeLog.warn(
-                      `Auto-merge: ${taskId} fast-path audit emit failed: ${
-                        auditErr instanceof Error ? auditErr.message : String(auditErr)
-                      }`,
-                    );
-                  }
+                      reason: reachability.reason,
+                      priorRetryCount: currentRetries,
+                      outcome: "fresh-merge-reseeded",
+                    },
+                  }, { log: runtimeLog });
+                  this.internalEnqueueMerge(taskId);
                   continue;
                 }
 

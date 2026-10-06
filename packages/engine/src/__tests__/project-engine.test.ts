@@ -2871,12 +2871,10 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
   });
 
-  it("FN-5627: fast-path refusal parks task as failed when mergeRetries budget is exhausted", async () => {
-    // When auto-recovery has already cycled through 3 attempts without
-    // landing, the next refusal is terminal. The task is parked with
-    // status=failed for manual review, with no further re-enqueue. The
-    // downstream FN-5488 fast-path on `clearStaleBlockedBy` recognizes this
-    // as a permanent blocker so dependents aren't held forever.
+  it("FN-9512: fast-path exhaustion clears stale proof and reseeds a fresh merge", async () => {
+    // The fast-path proof can be stale even after its local retry budget is spent.
+    // Exhaustion must return ownership to the normal merger rather than strand an
+    // in-review card in a failed manual-review park.
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     mockStore.store.getTask.mockResolvedValueOnce({
       id: "FN-exhausted",
@@ -2925,18 +2923,21 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
     await vi.waitFor(() => {
       const calls = (mockStore.store.updateTask as ReturnType<typeof vi.fn>).mock.calls as unknown as Array<[string, Record<string, unknown>]>;
-      const terminalCall = calls.find((call) =>
+      const escalationCall = calls.find((call) =>
         call[0] === "FN-exhausted"
-        && call[1]?.status === "failed"
-        && typeof call[1]?.error === "string"
-        && /retry budget exhausted|after 3 attempts/.test(call[1].error as string),
+        && call[1]?.status === null
+        && call[1]?.error === null
+        && call[1]?.mergeRetries === 0,
       );
-      expect(terminalCall).toBeDefined();
-      const updates = terminalCall![1] as { mergeDetails?: { mergeConfirmed?: boolean; commitSha?: string } };
+      expect(escalationCall).toBeDefined();
+      const updates = escalationCall![1] as { mergeDetails?: { mergeConfirmed?: boolean; commitSha?: string } };
       expect(updates.mergeDetails?.mergeConfirmed).toBe(false);
       expect(updates.mergeDetails?.commitSha).toBeUndefined();
     });
 
+    const failedCall = (mockStore.store.updateTask as ReturnType<typeof vi.fn>).mock.calls
+      .find((call: unknown[]) => call[0] === "FN-exhausted" && (call[1] as { status?: string })?.status === "failed");
+    expect(failedCall).toBeUndefined();
     expect(mockStore.store.moveTask).not.toHaveBeenCalledWith("FN-exhausted", "done");
 
     await engine.stop();

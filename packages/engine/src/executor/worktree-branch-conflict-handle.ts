@@ -70,6 +70,47 @@ export async function reclaimExistingWorktree(
   await deps.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
 }
 
+/**
+ * FNXC:RecoveryOwnership 2026-10-06-15:51:
+ * A branch-conflict retry cap changes recovery strategy, not task ownership. The
+ * executor must clear only the conflicting checkout identity under the task fence,
+ * leaving the resolved workflow lane dispatchable for fresh acquisition on its next pass.
+ */
+export async function reseedExhaustedBranchConflict(
+  deps: Pick<BranchConflictHandleDeps, "store" | "getRunContextFor">,
+  task: Task,
+): Promise<boolean> {
+  let reseeded = false;
+  await deps.store.updateTaskAtomic(task.id, (live) => {
+    const sameGeneration = live.column === task.column
+      && (live.status ?? null) === (task.status ?? null)
+      && live.branch === task.branch
+      && live.worktree === task.worktree
+      && (live.recoveryRetryCount ?? null) === (task.recoveryRetryCount ?? null);
+    if (!sameGeneration || live.userPaused || live.paused || live.status === "blocked") return null;
+    reseeded = true;
+    return {
+      status: null,
+      error: null,
+      recoveryRetryCount: null,
+      recoveryDisposition: "escalated-reseed",
+      nextRecoveryAt: null,
+      worktree: null,
+      branch: null,
+      branchWriteOrigin: "engine" as const,
+    };
+  });
+  if (reseeded) {
+    await deps.store.logEntry(
+      task.id,
+      "Branch-conflict retry budget escalated to a fenced fresh-checkout reseed.",
+      undefined,
+      deps.getRunContextFor(task.id),
+    );
+  }
+  return reseeded;
+}
+
 export async function handleBranchConflict(
   deps: BranchConflictHandleDeps,
   task: Task,
@@ -187,6 +228,10 @@ export async function handleBranchConflict(
     retryCount: task.recoveryRetryCount ?? 0,
     settings: (await deps.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
   });
+
+  if (decision.action === "escalate") {
+    return (await reseedExhaustedBranchConflict(deps, task)) ? "recovered" : "sticky";
+  }
 
   if (decision.action === "pause") {
     await deps.store.updateTask(task.id, {

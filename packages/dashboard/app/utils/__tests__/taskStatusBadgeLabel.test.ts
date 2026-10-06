@@ -45,6 +45,14 @@ describe("isTaskPlanningActive", () => {
 });
 
 describe("getTaskStatusBadgeLabel", () => {
+  it("renders persisted recovery and explicit stationary classifications without internal errors", () => {
+    expect(getTaskStatusBadgeLabel("needs-replan", t, undefined, { recoveryRetryCount: 2 })).toBe("Recovery pending");
+    expect(getTaskStatusBadgeLabel("needs-replan", t, undefined, { recoveryDisposition: "escalated-reseed" })).toBe("Recovery reseeded");
+    expect(getTaskStatusBadgeLabel("needs-replan", t, undefined, { paused: true, recoveryRetryCount: 2 })).toBe("Paused");
+    expect(getTaskStatusBadgeLabel("needs-replan", t, undefined, { awaitingApproval: true, recoveryRetryCount: 2 })).toBe("Awaiting Approval");
+    expect(getTaskStatusBadgeLabel("blocked", t, undefined, { externalBlocked: true })).toBe("Blocked");
+  });
+
   it("maps external Blocked to operator copy while waiting states remain distinct", () => {
     expect(getTaskStatusBadgeLabel("blocked", t)).toBe("Blocked");
     expect(getTaskStatusBadgeLabel("contention-hold", t)).toBe("Waiting");

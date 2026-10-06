@@ -91,6 +91,15 @@ export interface TaskStatusBadgeContext {
   overlapBlockedBy?: string | null;
   /** FNXC:WorkspaceContention 2026-08-23-06:50: durable scheduling-wait copy is passed by every badge host. */
   sessionContentionWaitReason?: string | null;
+  /** Persisted shared recovery cadence; present only while an owner has scheduled another pass. */
+  recoveryRetryCount?: number | null;
+  recoveryDisposition?: "pending" | "verification-pending" | "escalated-reseed";
+  nextRecoveryAt?: string | null;
+  /** Explicit operator control and external holds remain stationary by policy, not stranded. */
+  userPaused?: boolean;
+  paused?: boolean;
+  awaitingApproval?: boolean;
+  externalBlocked?: boolean;
 }
 
 export function getTaskStatusBadgeLabel(
@@ -118,6 +127,23 @@ export function getTaskStatusBadgeLabel(
     return status === "merging-fix"
       ? t("tasks.statusMergingFix", "Merging fixes…")
       : t("tasks.statusMerging", "Merging…");
+  }
+  /*
+  FNXC:RecoveryVisibility 2026-10-06-15:28:
+  Recovery cadence is durable task state, so every board host can name an owned automatic
+  wait without exposing an internal error. Explicit stationary controls remain more specific
+  than a stale retry counter and are never presented as an automatic recovery.
+  */
+  if (context?.externalBlocked) return t("tasks.externalBlock.title", "Blocked");
+  // Terminal and failure badges retain their explicit lifecycle truth over stale pause/retry metadata.
+  const canOverrideLifecycleStatus = status !== "done" && status !== "failed";
+  if (canOverrideLifecycleStatus && (context?.userPaused || context?.paused)) return t("tasks.statusPaused", "Paused");
+  if (canOverrideLifecycleStatus && context?.awaitingApproval) return t("tasks.awaitingApproval", "Awaiting Approval");
+  if (canOverrideLifecycleStatus && context?.recoveryDisposition === "escalated-reseed") {
+    return t("tasks.statusRecoveryReseed", "Recovery reseeded");
+  }
+  if (canOverrideLifecycleStatus && (context?.recoveryDisposition === "verification-pending" || (typeof context?.recoveryRetryCount === "number" && context.recoveryRetryCount > 0))) {
+    return t("tasks.statusRecoveryPending", "Recovery pending");
   }
   if (workflowStepLabel) return workflowStepLabel;
   if (!status) return "";

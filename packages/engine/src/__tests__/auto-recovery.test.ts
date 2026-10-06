@@ -47,14 +47,15 @@ describe("auto-recovery dispatcher", () => {
     expect(decision.action).toBe("retry");
   });
 
-  it("forces pause on retry budget exhausted", () => {
+  it("routes retry budget exhaustion to a role-preserving escalation", () => {
     const { dispatcher } = createDispatcher();
     const decision = dispatcher.classify({ class: "branch-conflict-tripwire", taskId: "FN-1", pausedReason: "branch-conflict-tripwire" }, {
       task,
       retryCount: 3,
       settings: { mode: "programmatic", maxRetries: 3 },
     });
-    expect(decision.action).toBe("pause");
+    expect(decision.action).toBe("escalate");
+    expect(decision.recoveryDisposition).toBe("escalate");
     expect(decision.rationale).toBe("retry-budget-exhausted");
   });
 
@@ -82,6 +83,21 @@ describe("auto-recovery dispatcher", () => {
       settings: { mode, maxRetries: 3 },
     });
     expect(decision.action).toBe(expectedAction);
+  });
+
+  it("audits retry-budget exhaustion as an explicit escalation", async () => {
+    const { dispatcher, database } = createDispatcher();
+    const decision = await dispatcher.dispatch({ class: "branch-conflict-tripwire", taskId: "FN-1", pausedReason: "branch-conflict-tripwire" }, {
+      task,
+      retryCount: 3,
+      settings: { mode: "programmatic", maxRetries: 3 },
+    });
+
+    expect(decision.recoveryDisposition).toBe("escalate");
+    expect(database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "auto-recovery:retry-budget-escalated",
+      metadata: expect.objectContaining({ rationale: "retry-budget-exhausted" }),
+    }));
   });
 
   it("dispatch falls back to pause when handler missing", async () => {

@@ -896,6 +896,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.recoveryRetryCount !== undefined) {
         task.recoveryRetryCount = updates.recoveryRetryCount;
       }
+      if (updates.recoveryDisposition === null) {
+        task.recoveryDisposition = undefined;
+      } else if (updates.recoveryDisposition !== undefined) {
+        task.recoveryDisposition = updates.recoveryDisposition;
+      }
       if (updates.sessionContentionHoldCount === null) {
         task.sessionContentionHoldCount = undefined;
       } else if (updates.sessionContentionHoldCount !== undefined) {

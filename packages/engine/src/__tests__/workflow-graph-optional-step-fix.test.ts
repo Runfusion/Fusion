@@ -249,7 +249,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     );
   });
 
-  it("parks visibly when missing-artifact recovery is exhausted", async () => {
+  it("reseeds the current role when missing-artifact recovery is exhausted", async () => {
     const store = createMockStore();
     const liveTask = task({ recoveryRetryCount: MAX_RECOVERY_RETRIES });
     store.getTask.mockResolvedValue(liveTask);
@@ -268,12 +268,13 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(scheduled).toBe(true);
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
-      status: "failed",
-      error: expect.stringContaining("REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED"),
+      status: null,
+      error: null,
+      recoveryRetryCount: null,
     }), undefined);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:required-artifact-missing",
-      metadata: expect.objectContaining({ action: "park-failed" }),
+      metadata: expect.objectContaining({ action: "reseed-in-place" }),
     }));
   });
 

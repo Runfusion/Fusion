@@ -190,6 +190,7 @@ import {
 } from "./token-usage-pure.js";
 import { captureBaseCommitSha, resolveContaminationBaseRef } from "./worktree-git-refs.js";
 import { MAX_TASK_DONE_REQUEUE_RETRIES } from "./task-done-refusal-handler.js";
+import { reseedExhaustedBranchConflict } from "./worktree-branch-conflict-handle.js";
 import type { ImplementationExitReporter } from "./implementation-exit.js";
 import type { GraphCompletionCallback } from "./run-implementation-phase.js";
 import { resolveAndEmitGoalContext } from "../goals/goal-injection-diagnostics.js";
@@ -400,11 +401,58 @@ export async function retryPlanningLifecycleLockTransportFailure(
   resolveReboundColumnFor: (store: TaskStore, taskId: string) => Promise<string>,
 ): Promise<boolean> {
   const decision = computeRecoveryDecision({ recoveryRetryCount: task.recoveryRetryCount, nextRecoveryAt: task.nextRecoveryAt });
-  if (!decision.shouldRetry) return false;
+  if (!decision.shouldRetry) {
+    /* FNXC:RecoveryOwnership 2026-10-06-16:13: Planning-lock transport exhaustion retains executor ownership; a fenced fresh-session reseed replaces the former generic failure fallthrough. */
+    return reseedExhaustedTransientExecution(deps, task, resolveReboundColumnFor);
+  }
   const attempt = decision.nextState.recoveryRetryCount;
   const delay = formatDelay(decision.delayMs);
   await deps.store.logEntry(task.id, `Planning lifecycle lock transport failure (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
   await deps.store.updateTask(task.id, { recoveryRetryCount: attempt, nextRecoveryAt: decision.nextState.nextRecoveryAt });
+  deps.markGraphExecuteSelfRequeued(task.id);
+  await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
+  return true;
+}
+
+/**
+ * FNXC:RecoveryOwnership 2026-10-06-15:51:
+ * A transient executor failure remains owned by the execution role after its ordinary
+ * retry cadence is spent. Fence the reset on the live row so an operator pause or a
+ * newer session wins, then re-enter the current resolved execution lane with fresh
+ * session and checkout metadata rather than parking recoverable work as failed.
+ */
+export async function reseedExhaustedTransientExecution(
+  deps: Pick<RunImplementationDeps, "store" | "getRunContextFor" | "markGraphExecuteSelfRequeued">,
+  task: Task,
+  resolveReboundColumnFor: (store: TaskStore, taskId: string) => Promise<string>,
+): Promise<boolean> {
+  let reseeded = false;
+  await deps.store.updateTaskAtomic(task.id, (live) => {
+    const sameFailureGeneration = live.column === task.column
+      && (live.status ?? null) === (task.status ?? null)
+      && live.error === task.error
+      && (live.recoveryRetryCount ?? null) === (task.recoveryRetryCount ?? null);
+    if (!sameFailureGeneration || live.userPaused || live.paused || live.status === "blocked") return null;
+    reseeded = true;
+    return {
+      status: null,
+      error: null,
+      recoveryRetryCount: null,
+      recoveryDisposition: "escalated-reseed",
+      nextRecoveryAt: null,
+      sessionFile: null,
+      worktree: null,
+      branch: null,
+      branchWriteOrigin: "engine" as const,
+    };
+  });
+  if (!reseeded) return false;
+  await deps.store.logEntry(
+    task.id,
+    "Transient execution recovery retry budget escalated to a fenced fresh-session reseed.",
+    undefined,
+    deps.getRunContextFor(task.id),
+  );
   deps.markGraphExecuteSelfRequeued(task.id);
   await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveProgress: true });
   return true;
@@ -455,6 +503,15 @@ export async function runImplementation(
     // stuck-detector, resumeTaskForAgent, etc.). Per-instance state stays
     // consistent with the process-wide lock.
     deps.executing.add(task.id);
+
+    /*
+    FNXC:RecoveryVisibility 2026-10-06-15:51:
+    A new executor claim is the persisted reseed handoff boundary. Clear the board diagnostic
+    only after live ownership is established, so queued cards retain the route through the reset.
+    */
+    if (task.recoveryDisposition === "escalated-reseed") {
+      await deps.store.updateTask(task.id, { recoveryDisposition: null });
+    }
 
     if (task.deletedAt) {
       executorLog.warn(`${task.id}: refusing execute — task is soft-deleted`);
@@ -1807,23 +1864,18 @@ export async function runImplementation(
               return;
             }
 
-            executorLog.error(`✗ ${task.id} transient error retries exhausted: ${errorDetail}`);
+            executorLog.warn(`⚡ ${task.id} transient error retry cadence exhausted: ${errorDetail}`);
             if (errorStack) {
-              await deps.store.logEntry(task.id, `Transient error retries exhausted: ${errorMessage}`, errorStack, deps.getRunContextFor(task.id));
+              await deps.store.logEntry(task.id, `Transient error retry cadence exhausted: ${errorMessage}`, errorStack, deps.getRunContextFor(task.id));
             }
-            if (!(await parkExternalSessionObstacle(deps, task.id, errorMessage))) {
-              await deps.store.updateTask(task.id, {
-                status: "failed",
-                error: errorMessage,
-                recoveryRetryCount: null,
-                nextRecoveryAt: null,
-              });
+            const externallyBlocked = await parkExternalSessionObstacle(deps, task.id, errorMessage);
+            if (!externallyBlocked) {
+              await reseedExhaustedTransientExecution(deps, task, resolveReboundColumnFor);
             }
             if (accumulatedStepTokenUsage) {
               await deps.persistTaskTokenUsage(task.id, accumulatedStepTokenUsage);
             }
-            executorLog.log(`✗ ${task.id} transient retries exhausted — failed in execution`);
-            deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
+            executorLog.log(`⚡ ${task.id} transient retries exhausted — execution reseed requested`);
           } else {
             if (accumulatedStepTokenUsage) {
               await deps.persistTaskTokenUsage(task.id, accumulatedStepTokenUsage);
@@ -3255,21 +3307,25 @@ export async function runImplementation(
           nextRecoveryAt: liveTask.nextRecoveryAt,
         });
         if (!decision.shouldRetry) {
-          executorLog.error(`✗ ${task.id} stale assistant-continuation retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
+          /* FNXC:RecoveryOwnership 2026-10-06-15:28: Exhausted stale-session retries reseed a fresh executor session; terminalizing would strand a card whose worktree and graph state remain recoverable. */
+          executorLog.warn(`⚡ ${task.id} stale assistant-continuation retry cadence exhausted; reseeding fresh session`);
           await deps.store.logEntry(
             task.id,
-            `Stale assistant-continuation fresh-session retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`,
-            errorStack ?? errorDetail,
+            "Stale assistant-continuation recovery exhausted its retry cadence; reseeding a fresh session.",
+            undefined,
             deps.getRunContextFor(task.id),
           );
           await deps.store.updateTask(task.id, {
-            status: "failed",
-            error: errorMessage,
+            status: null,
+            error: null,
             recoveryRetryCount: null,
+            recoveryDisposition: "escalated-reseed",
             nextRecoveryAt: null,
+            sessionFile: null,
           });
+          deps.markGraphExecuteSelfRequeued(task.id);
+          await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
           await deps.persistTokenUsage(task.id);
-          deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         }
 
@@ -3551,14 +3607,16 @@ export async function runImplementation(
             return;
           }
 
-          executorLog.error(`✗ ${task.id} context-overflow requeue budget exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
-          await deps.store.logEntry(task.id, `Context-overflow requeues exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
-          // Reset so downstream failure path can persist cleanly
-          await deps.store.updateTask(task.id, {
-            recoveryRetryCount: null,
-            nextRecoveryAt: null,
-          });
-          // Fall through to terminal failure marking
+          /*
+          FNXC:RecoveryOwnership 2026-10-06-16:13:
+          A saturated context is recoverable with a fresh executor session even after the ordinary
+          cadence is spent. Preserve containment by using the fenced current-role reseed rather
+          than falling through to the generic terminal failure writer.
+          */
+          executorLog.warn(`⚡ ${task.id} context-overflow requeue cadence exhausted (${MAX_RECOVERY_RETRIES} attempts); reseeding fresh session`);
+          await deps.store.logEntry(task.id, "Context-overflow recovery cadence exhausted; reseeding a fresh execution session.", undefined, deps.getRunContextFor(task.id));
+          await reseedExhaustedTransientExecution(deps, task, resolveReboundColumnFor);
+          return;
         // Contamination recovery lives in executor because branch cross-contamination
         // is surfaced here from task execution preflight; merger empty-cherry-pick
         // handling does not throw BranchCrossContaminationError in its own path.
@@ -3781,6 +3839,10 @@ export async function runImplementation(
             retryCount: task.recoveryRetryCount ?? 0,
             settings: (await deps.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
           });
+          if (decision.action === "escalate") {
+            await reseedExhaustedBranchConflict(deps, task);
+            return;
+          }
           if (decision.action === "pause") {
             await deps.store.updateTask(task.id, {
               status: "failed",
@@ -3819,6 +3881,10 @@ export async function runImplementation(
               retryCount: task.recoveryRetryCount ?? 0,
               settings: (await deps.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
             });
+            if (decision.action === "escalate") {
+              await reseedExhaustedBranchConflict(deps, task);
+              return;
+            }
             if (decision.action === "pause") {
               await deps.store.updateTask(task.id, {
                 status: "failed",
@@ -3863,6 +3929,10 @@ export async function runImplementation(
               retryCount: task.recoveryRetryCount ?? 0,
               settings: (await deps.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
             });
+            if (decision.action === "escalate") {
+              await reseedExhaustedBranchConflict(deps, task);
+              return;
+            }
             if (decision.action === "pause") {
               await deps.store.updateTask(task.id, {
                 status: "failed",
@@ -3933,20 +4003,15 @@ export async function runImplementation(
             return;
           }
 
-          // Recovery budget exhausted — escalate to real failure
-          executorLog.error(`✗ ${task.id} transient error retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorDetail}`);
-          await deps.store.logEntry(task.id, `Transient error retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
-          if (!(await parkExternalSessionObstacle(deps, task.id, errorMessage))) {
-            await deps.store.updateTask(task.id, {
-              status: "failed",
-              error: errorMessage,
-              recoveryRetryCount: null,
-              nextRecoveryAt: null,
-            });
+          // The exhausted cadence is a role-preserving fresh-session reseed, not a terminal park.
+          executorLog.warn(`⚡ ${task.id} transient error retry cadence exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorDetail}`);
+          await deps.store.logEntry(task.id, `Transient error retry cadence exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, errorStack ?? errorDetail, deps.getRunContextFor(task.id));
+          const externallyBlocked = await parkExternalSessionObstacle(deps, task.id, errorMessage);
+          if (!externallyBlocked) {
+            await reseedExhaustedTransientExecution(deps, task, resolveReboundColumnFor);
           }
           await deps.persistTokenUsage(task.id);
-          executorLog.log(`✗ ${task.id} transient retries exhausted — terminal execution park recorded`);
-          deps.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
+          executorLog.log(`⚡ ${task.id} transient retries exhausted — execution reseed requested`);
           return;
         }
         const terminalError = err instanceof RetryStormError

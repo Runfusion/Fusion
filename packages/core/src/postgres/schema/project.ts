@@ -120,6 +120,7 @@ export const tasks = projectSchema.table("tasks", {
   executeRequeueLoopCount: integer("execute_requeue_loop_count").default(0),
   executeRequeueLoopSignature: text("execute_requeue_loop_signature"),
   recoveryRetryCount: integer("recovery_retry_count"),
+  recoveryDisposition: text("recovery_disposition"),
   sessionContentionHoldCount: integer("session_contention_hold_count").default(0),
   sessionContentionWaitReason: text("session_contention_wait_reason"),
   taskDoneRetryCount: integer("task_done_retry_count").default(0),

@@ -4,6 +4,7 @@ import {
   isPlanningLifecycleLockTransportFailure,
 } from "../planning-handoff-recovery.js";
 import {
+  reseedExhaustedTransientExecution,
   retryPlanningLifecycleLockTransportFailure,
   runImplementation,
 } from "../executor/run-implementation.js";
@@ -58,8 +59,8 @@ describe("executor planning lifecycle lock transport recovery", () => {
    * transport failure before transient or terminal cleanup. Calling the recovery helper alone
    * cannot detect either catch branch being removed or misordered.
    */
-  it("retries a typed planning-lock failure through runImplementation without removing the worktree", async () => {
-    const current = task({ dependencies: [], paused: false, userPaused: false });
+  it("reseeds an exhausted typed planning-lock failure through runImplementation without removing the worktree", async () => {
+    const current = task({ dependencies: [], paused: false, userPaused: false, recoveryRetryCount: 3 });
     const store = {
       getTask: vi.fn(async () => current),
       getSettings: vi.fn(async () => ({ autoMerge: true })),
@@ -69,6 +70,7 @@ describe("executor planning lifecycle lock transport recovery", () => {
       listTasks: vi.fn(async () => []),
       logEntry: vi.fn(async () => undefined),
       updateTask: vi.fn(async () => undefined),
+      updateTaskAtomic: vi.fn(async (_id: string, updater: (value: Task) => unknown) => updater(current)),
       moveTask: vi.fn(async () => undefined),
     } as unknown as TaskStore;
     const deps = {
@@ -103,24 +105,69 @@ describe("executor planning lifecycle lock transport recovery", () => {
 
     await runImplementation(deps, current, vi.fn());
 
-    expect((store as any).updateTask).toHaveBeenCalledWith(current.id, expect.objectContaining({ recoveryRetryCount: 1 }));
+    expect((store as any).updateTaskAtomic).toHaveBeenCalledWith(current.id, expect.any(Function));
     expect((store as any).moveTask).toHaveBeenCalledWith(current.id, "todo", { preserveProgress: true });
     expect((store as any).updateTask).not.toHaveBeenCalledWith(current.id, expect.objectContaining({ status: "failed" }));
     expect(current.worktree).toBe("/tmp/fn-179-worktree");
     expect(current.branch).toBe("fusion/FN-179-lock");
   });
 
-  it("leaves exhaustion for the existing terminal path rather than retrying forever", async () => {
+  it("reseeds exhausted transient execution into the resolved current lane", async () => {
+    const current = task({ recoveryRetryCount: 3, status: "queued", error: "network reset" });
+    const live = { ...current };
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, updater: (value: Task) => unknown) => updater(live)),
+      logEntry: vi.fn(async () => undefined),
+      moveTask: vi.fn(async () => undefined),
+    } as unknown as TaskStore;
+    const markGraphExecuteSelfRequeued = vi.fn();
+
+    await expect(reseedExhaustedTransientExecution(
+      { store, getRunContextFor: () => undefined, markGraphExecuteSelfRequeued } as never,
+      current,
+      async () => "todo",
+    )).resolves.toBe(true);
+
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(current.id, expect.any(Function));
+    expect(store.moveTask).toHaveBeenCalledWith(current.id, "todo", { preserveProgress: true });
+    expect(markGraphExecuteSelfRequeued).toHaveBeenCalledWith(current.id);
+  });
+
+  it("does not reseed when an operator pause wins the fenced transient recovery", async () => {
+    const current = task({ recoveryRetryCount: 3, status: "queued", error: "network reset" });
+    const store = {
+      updateTaskAtomic: vi.fn(async (_id: string, updater: (value: Task) => unknown) => updater({ ...current, paused: true })),
+      logEntry: vi.fn(async () => undefined),
+      moveTask: vi.fn(async () => undefined),
+    } as unknown as TaskStore;
+    const markGraphExecuteSelfRequeued = vi.fn();
+
+    await expect(reseedExhaustedTransientExecution(
+      { store, getRunContextFor: () => undefined, markGraphExecuteSelfRequeued } as never,
+      current,
+      async () => "todo",
+    )).resolves.toBe(false);
+
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(markGraphExecuteSelfRequeued).not.toHaveBeenCalled();
+  });
+
+  it("replaces lock-transport exhaustion with a fenced current-role reseed", async () => {
     const current = task({ recoveryRetryCount: 3 });
-    const store = { logEntry: vi.fn(), updateTask: vi.fn(), moveTask: vi.fn() } as unknown as TaskStore;
+    const store = {
+      logEntry: vi.fn(async () => undefined),
+      updateTask: vi.fn(),
+      updateTaskAtomic: vi.fn(async (_id: string, updater: (value: Task) => unknown) => updater(current)),
+      moveTask: vi.fn(async () => undefined),
+    } as unknown as TaskStore;
     await expect(retryPlanningLifecycleLockTransportFailure(
       { store, getRunContextFor: () => undefined, markGraphExecuteSelfRequeued: vi.fn() } as never,
       current,
       "Planning lifecycle lock acquisition timed out after 5000ms",
       async () => "todo",
-    )).resolves.toBe(false);
-    expect(store.updateTask).not.toHaveBeenCalled();
-    expect(store.moveTask).not.toHaveBeenCalled();
+    )).resolves.toBe(true);
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(current.id, expect.any(Function));
+    expect(store.moveTask).toHaveBeenCalledWith(current.id, "todo", { preserveProgress: true });
   });
 
   it("recognizes only canonical lock transport messages after graph error flattening", () => {

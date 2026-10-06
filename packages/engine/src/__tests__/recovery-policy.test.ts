@@ -15,6 +15,7 @@ describe("computeRecoveryDecision", () => {
 
   it("returns shouldRetry=true on first failure (count=0)", () => {
     const decision = computeRecoveryDecision({});
+    expect(decision.disposition).toBe("retry");
     expect(decision.shouldRetry).toBe(true);
     expect(decision.exhausted).toBe(false);
     expect(decision.nextState.recoveryRetryCount).toBe(1);
@@ -37,11 +38,18 @@ describe("computeRecoveryDecision", () => {
     const decision = computeRecoveryDecision({
       recoveryRetryCount: MAX_RECOVERY_RETRIES,
     });
+    expect(decision.disposition).toBe("escalate");
     expect(decision.shouldRetry).toBe(false);
     expect(decision.exhausted).toBe(true);
     expect(decision.nextState.recoveryRetryCount).toBeUndefined();
     expect(decision.nextState.nextRecoveryAt).toBeUndefined();
     expect(decision.delayMs).toBe(0);
+  });
+
+  it("honors an owner-specific bounded retry budget", () => {
+    const decision = computeRecoveryDecision({ recoveryRetryCount: 1 }, { maxRetries: 1 });
+    expect(decision.disposition).toBe("escalate");
+    expect(decision.exhausted).toBe(true);
   });
 
   it("also exhausts when count exceeds max (overflow safety)", () => {

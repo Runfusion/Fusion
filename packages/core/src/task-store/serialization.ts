@@ -126,6 +126,7 @@ export function rowToTask(row: TaskRow): Task {
     postReviewFixCount: row.postReviewFixCount ?? undefined,
     planReviewReplanCount: row.planReviewReplanCount ?? undefined,
     recoveryRetryCount: row.recoveryRetryCount ?? undefined,
+    recoveryDisposition: (row.recoveryDisposition || undefined) as Task["recoveryDisposition"],
     sessionContentionHoldCount: row.sessionContentionHoldCount ?? undefined,
     sessionContentionWaitReason: row.sessionContentionWaitReason ?? undefined,
     taskDoneRetryCount: row.taskDoneRetryCount ?? undefined,

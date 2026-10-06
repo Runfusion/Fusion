@@ -1279,6 +1279,8 @@ export interface Task {
    *  recovery-policy module on each recoverable failure; cleared when work restarts
    *  cleanly or reaches a terminal column (in-review, done, archived). */
   recoveryRetryCount?: number;
+  /** Structured, privacy-safe recovery state retained after a bounded owner reseeds work. */
+  recoveryDisposition?: "pending" | "verification-pending" | "escalated-reseed";
   /** FNXC:WorkspaceContention 2026-08-23-06:40: Durable owner-local retry budget for holdForSessionContention; manual retry, clean completion, and exhausted waits reset it. */
   sessionContentionHoldCount?: number;
   /** Operator-visible bounded reason owned only while holdForSessionContention schedules a retry. */

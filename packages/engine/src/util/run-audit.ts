@@ -929,6 +929,8 @@ export type DatabaseMutationType =
   | "auto-recovery:retry-issued"
   | "auto-recovery:ai-session-spawned"
   | "auto-recovery:pause-because-destructive-ambiguity"
+  /** FNXC:RecoveryOwnership 2026-10-06-15:14: FN-9512 surfaces a consumed bounded recovery budget separately from a deliberate hold. */
+  | "auto-recovery:retry-budget-escalated"
   | "contamination:retry-issued"
   | "contamination:irreducible-pause"
   | "message-delivery:retry-issued"

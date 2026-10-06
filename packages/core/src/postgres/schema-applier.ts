@@ -90,7 +90,8 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:ChatSidebarPerf 2026-09-08-04:48: baseline marker includes the chat-message recency index required for index-backed sidebar previews. */
 /* FNXC:OverlapWaitSynchronization 2026-09-17-00:22: advance the ceiling so an upgraded project has the durable wait table before any overlap-marker transition tries to record into it. Renumbered 0074->0084 (2026-09-18): upstream's own migrations 0074 (FN-323 project notes) through 0083 (FN-514) are absent from this branch by design (it excludes their source commits), but the numeric slots are real and must not be reused, or a database that ran the real 0074..0083 would be misread as compatible with this branch's different 0074. */
 /* FNXC:PullRequestReadiness 2026-10-04-23:13: upgraded stores must materialize SHA-fenced readiness evidence before PR readers use it. */
-export const SCHEMA_BASELINE_VERSION = "0087";
+/* FNXC:RecoveryVisibility 2026-10-06-15:51: durable reseed diagnostics must exist before task rows are read by board hosts. */
+export const SCHEMA_BASELINE_VERSION = "0088";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -281,6 +282,8 @@ export const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION = "0085";
 export const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION = "0086";
 /** FN-9439: provider-neutral current-head readiness snapshot columns. */
 export const PULL_REQUEST_READINESS_VERSION = "0087";
+/** FN-9512: privacy-safe route code for a recovery owner that has reseeded work. */
+export const RECOVERY_DISPOSITION_VERSION = "0088";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -552,6 +555,7 @@ const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0084_fn_332_overl
 const DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_MIGRATION_PATH = join(MIGRATIONS_DIR, "0085_drop_excluded_upstream_feature_schema.sql");
 const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0086_fn_9429_stale_review_callback_waiver_receipts.sql");
 const PULL_REQUEST_READINESS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_fn_9439_pull_request_readiness.sql");
+const RECOVERY_DISPOSITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0088_fn_9512_recovery_disposition.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -699,6 +703,7 @@ export async function applySchemaBaseline(
     const dropExcludedUpstreamFeatureSchemaAlreadyApplied = applied.includes(DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION);
     const staleReviewCallbackWaiverReceiptsAlreadyApplied = applied.includes(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION);
     const pullRequestReadinessAlreadyApplied = applied.includes(PULL_REQUEST_READINESS_VERSION);
+    const recoveryDispositionAlreadyApplied = applied.includes(RECOVERY_DISPOSITION_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1672,6 +1677,12 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(PULL_REQUEST_READINESS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PULL_REQUEST_READINESS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    if (!recoveryDispositionAlreadyApplied) {
+      const migrationSql = await readFile(RECOVERY_DISPOSITION_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${RECOVERY_DISPOSITION_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

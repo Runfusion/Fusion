@@ -61,7 +61,7 @@ export async function recoverMissingRequiredArtifacts(
   });
   const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
   const context = deps.getRunContextFor(task.id);
-  const action = decision.shouldRetry ? "retry-in-place" : "park-failed";
+  const action = decision.shouldRetry ? "retry-in-place" : "reseed-in-place";
 
   await emitBoundedRunAudit(deps.store, {
     taskId: task.id,
@@ -85,13 +85,15 @@ export async function recoverMissingRequiredArtifacts(
   if (!decision.shouldRetry) {
     const liveTask = await deps.store.getTask(task.id).catch(() => null);
     if (!liveTask || await deps.isRequiredArtifactRecoveryProtected(liveTask)) return;
-    const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: ${artifactKeys.join(", ")} remained missing after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
-    await deps.store.logEntry(task.id, error, undefined, context);
+    /* FNXC:RecoveryOwnership 2026-10-06-15:28: Missing artifacts re-enter their current graph role after bounded verification; a failed park has no artifact-repair owner. */
+    await deps.store.logEntry(task.id, "Required artifact recovery exhausted its retry cadence; reseeding the current execution role.", undefined, context);
     await deps.store.updateTask(task.id, {
-      status: "failed",
-      error,
+      status: null,
+      error: null,
       recoveryRetryCount: null,
+      recoveryDisposition: "escalated-reseed",
       nextRecoveryAt: null,
+      graphResumeRetryCount: 0,
     }, context);
     return;
   }

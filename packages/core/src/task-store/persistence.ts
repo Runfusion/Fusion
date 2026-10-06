@@ -67,6 +67,7 @@ export interface TaskRow {
   postReviewFixCount: number | null;
   planReviewReplanCount: number | null;
   recoveryRetryCount: number | null;
+  recoveryDisposition: string | null;
   sessionContentionHoldCount: number | null;
   sessionContentionWaitReason: string | null;
   taskDoneRetryCount: number | null;
@@ -318,6 +319,7 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("postReviewFixCount", (task) => task.postReviewFixCount ?? 0),
   defineTaskColumn("planReviewReplanCount", (task) => task.planReviewReplanCount ?? 0),
   defineTaskColumn("recoveryRetryCount", (task) => task.recoveryRetryCount ?? null),
+  defineTaskColumn("recoveryDisposition", (task) => task.recoveryDisposition ?? null),
   defineTaskColumn("sessionContentionHoldCount", (task) => task.sessionContentionHoldCount ?? 0),
   defineTaskColumn("sessionContentionWaitReason", (task) => task.sessionContentionWaitReason ?? null),
   defineTaskColumn("taskDoneRetryCount", (task) => task.taskDoneRetryCount ?? 0),

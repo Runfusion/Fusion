@@ -249,8 +249,8 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
     }
   });
 
-  it("returns paused-unrecoverable when conflict is unrecoverable and dispatcher pauses", async () => {
-    const task = makeTask();
+  it("reseeds an unrecoverable branch conflict at and beyond its retry cap", async () => {
+    const task = makeTask({ recoveryRetryCount: 3, status: "queued", error: "branch recovery" });
     const store = makeStore(task);
     vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({
       kind: "live-foreign",
@@ -263,11 +263,14 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
         recommendedAction: "manual",
       }),
     } as any);
-    vi.spyOn(AutoRecoveryDispatcher.prototype, "dispatch").mockResolvedValue({ action: "pause", reason: "test" } as any);
     const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+
     const result = await manager.reclaimPrConflictForTask(task.id);
-    expect(result.outcome).toBe("paused-unrecoverable");
-    expect(task).toMatchObject({ paused: true, pausedReason: "branch-conflict-unrecoverable", status: "failed" });
+
+    expect(result.outcome).toBe("escalated-reseed");
+    expect(task).toMatchObject({ column: "in-progress", paused: false, status: null, error: null });
+    expect(task.recoveryRetryCount).toBeNull();
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("fenced reclaim reseed"));
   });
 
   it("skips worktrunk operation failed paused tasks", async () => {

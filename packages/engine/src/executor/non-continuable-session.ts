@@ -107,11 +107,23 @@ export async function handleNonContinuableSessionRetry(
     return true;
   }
 
-  executorLog.error(`✗ ${task.id} non-continuable session fresh-session retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
-  await deps.store.logEntry(task.id, `Non-continuable session fresh-session retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, deps.getRunContextFor(task.id));
+  /*
+  FNXC:RecoveryOwnership 2026-10-06-15:28:
+  A non-continuable transcript has no safe terminal interpretation. After bounded fresh-session
+  verification, clear only the stale session/cadence and let the existing rebound owner create
+  a new session in the task's current lifecycle role.
+  */
+  executorLog.warn(`⚡ ${task.id} non-continuable session retry cadence exhausted; reseeding fresh session`);
+  await deps.store.logEntry(task.id, "Non-continuable session recovery exhausted its retry cadence; reseeding a fresh session.", undefined, deps.getRunContextFor(task.id));
   await deps.store.updateTask(task.id, {
+    status: null,
+    error: null,
     recoveryRetryCount: null,
+    recoveryDisposition: "escalated-reseed",
     nextRecoveryAt: null,
+    sessionFile: null,
   });
-  return false;
+  deps.markGraphExecuteSelfRequeued(task.id);
+  await deps.store.moveTask(task.id, await resolveReboundColumnFor(deps.store, task.id), { preserveResumeState: true });
+  return true;
 }

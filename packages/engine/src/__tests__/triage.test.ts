@@ -4627,7 +4627,7 @@ describe("taskCreate tool model inheritance", () => {
       }
     });
 
-    it("terminalizes a fallback-written plan when its shared retry budget is exhausted", async () => {
+    it("reseeds a fallback-written plan when its shared retry budget is exhausted", async () => {
       const task = createTriageTask({ id: "FN-FALLBACK-EXHAUSTED", recoveryRetryCount: 3 });
       const root = await createTriageFixtureRoot("fusion-triage-fallback-exhausted-");
       const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
@@ -4660,8 +4660,7 @@ describe("taskCreate tool model inheritance", () => {
       try {
         await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
         expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
-          status: "failed",
-          error: expect.stringContaining("Planner fallback engaged"),
+          error: null,
           recoveryRetryCount: null,
           nextRecoveryAt: null,
         }));
@@ -5186,7 +5185,7 @@ describe("taskCreate tool model inheritance", () => {
       });
     });
 
-    it("escalates to error state when triage retries are exhausted via specifyTask", async () => {
+    it("reseeds triage when transient retries are exhausted via specifyTask", async () => {
       const task = {
         id: "FN-201",
         description: "Test triage task",
@@ -5214,13 +5213,12 @@ describe("taskCreate tool model inheritance", () => {
 
       await processor.specifyTask(task);
 
-      // Should set error and clear recovery metadata
       expect(store.updateTask).toHaveBeenCalledWith("FN-201", expect.objectContaining({
-        error: expect.stringContaining("Specification failed after 3 transient errors"),
+        error: null,
         recoveryRetryCount: null,
         nextRecoveryAt: null,
       }));
-      expect(onSpecifyError).toHaveBeenCalled();
+      expect(onSpecifyError).not.toHaveBeenCalled();
     });
 
     it("parks missing provider credentials instead of making triage immediately claimable again", async () => {
@@ -5366,7 +5364,7 @@ describe("taskCreate tool model inheritance", () => {
       }));
     });
 
-    it("backfills blank titles when deterministic validation retries are exhausted", async () => {
+    it("reseeds deterministic validation exhaustion without terminal title backfill", async () => {
       const task = {
         id: "FN-7961-DETERMINISTIC",
         title: "",
@@ -5396,16 +5394,12 @@ describe("taskCreate tool model inheritance", () => {
       const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
       await processor.specifyTask(task);
 
-      const expectedError = "Specification failed deterministic validation after 3 retries (PROMPT.md file not found or empty). Retry after adjusting the task prompt or model.";
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-DETERMINISTIC", {
-        status: "failed",
-        error: expectedError,
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-DETERMINISTIC", expect.objectContaining({
+        error: null,
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-DETERMINISTIC", {
-        title: "Backfill blank titles after deterministic prompt",
-      });
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-7961-DETERMINISTIC", expect.objectContaining({ status: "failed" }));
     });
 
     it("backfills blank titles when planner model fallback is exhausted", async () => {
@@ -5491,7 +5485,7 @@ describe("taskCreate tool model inheritance", () => {
       });
     });
 
-    it("backfills blank titles when transient retries are exhausted", async () => {
+    it("reseeds transient retries without terminal title backfill", async () => {
       const task = {
         id: "FN-7961-TRANSIENT",
         title: "",
@@ -5514,14 +5508,12 @@ describe("taskCreate tool model inheritance", () => {
       const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
       await processor.specifyTask(task);
 
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-TRANSIENT", {
-        error: "Specification failed after 3 transient errors: connection reset",
+      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-TRANSIENT", expect.objectContaining({
+        error: null,
         recoveryRetryCount: null,
         nextRecoveryAt: null,
-      });
-      expect(store.updateTask).toHaveBeenCalledWith("FN-7961-TRANSIENT", {
-        title: "Identify failed rows after exhausted transient planning",
-      });
+      }));
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-7961-TRANSIENT", expect.objectContaining({ status: "failed" }));
     });
 
     /*
@@ -5567,7 +5559,7 @@ describe("taskCreate tool model inheritance", () => {
       );
     });
 
-    it("parks an unclassified planning failure once the retry budget is exhausted", async () => {
+    it("reseeds an unclassified planning failure once the retry budget is exhausted", async () => {
       const task = {
         id: "FN-GENERIC-EXHAUSTED",
         title: "Generic planning failure",
@@ -5590,15 +5582,15 @@ describe("taskCreate tool model inheritance", () => {
       const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
       await processor.specifyTask(task);
 
-      const parkWrite = store.updateTask.mock.calls.find(
-        ([id, patch]) => id === "FN-GENERIC-EXHAUSTED" && patch?.status === "failed",
+      const reseedWrite = store.updateTask.mock.calls.find(
+        ([id, patch]) => id === "FN-GENERIC-EXHAUSTED" && patch?.recoveryRetryCount === null,
       );
-      // `status: "failed"` is what suppresses triage rediscovery — without it the card is re-picked.
-      expect(parkWrite, "an exhausted budget must park the card for a human").toBeDefined();
-      expect(parkWrite?.[1]?.error).toContain("PLANNING_FAILED_EXHAUSTED:");
-      expect(parkWrite?.[1]?.error).toContain("kaboom: something nobody classified");
-      expect(parkWrite?.[1]?.recoveryRetryCount).toBeNull();
-      expect(parkWrite?.[1]?.nextRecoveryAt).toBeNull();
+      expect(reseedWrite, "an exhausted budget must return to triage's replan owner").toBeDefined();
+      expect(reseedWrite?.[1]).toMatchObject({ error: null, nextRecoveryAt: null });
+      expect(store.updateTask).not.toHaveBeenCalledWith(
+        "FN-GENERIC-EXHAUSTED",
+        expect.objectContaining({ status: "failed" }),
+      );
     });
 
     it("does not overwrite an existing title during terminal fallback exhaustion", async () => {

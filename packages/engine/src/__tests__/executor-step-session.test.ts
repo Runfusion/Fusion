@@ -497,7 +497,7 @@ describe("Workflow Steps Execution", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("fails a repeated stale assistant-continuation after the fresh-session retry budget is exhausted", async () => {
+  it("retains an escalated-reseed diagnostic after stale assistant-continuation recovery exhaustion", async () => {
     const store = createMockStore();
     const task = {
       id: "FN-ASSISTANT-STALE-EXHAUSTED",
@@ -545,16 +545,17 @@ describe("Workflow Steps Execution", () => {
     */
     const exhaustedRecoveryWrite = store.updateTask.mock.calls.find(
       ([id, patch, runContext]) => id === "FN-ASSISTANT-STALE-EXHAUSTED"
-        && patch?.status === "failed"
-        && patch?.error === "Cannot continue from message role: assistant"
+        && patch?.status === null
+        && patch?.error === null
         && patch?.recoveryRetryCount === null
+        && patch?.recoveryDisposition === "escalated-reseed"
         && patch?.nextRecoveryAt === null
         && runContext === undefined,
     );
     expect(exhaustedRecoveryWrite).toHaveLength(2);
     expect(exhaustedRecoveryWrite?.[2]).toBeUndefined();
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", "todo", expect.anything());
-    expect(onError).toHaveBeenCalledOnce();
+    expect(store.moveTask).toHaveBeenCalledWith("FN-ASSISTANT-STALE-EXHAUSTED", "todo", { preserveResumeState: true });
+    expect(onError).not.toHaveBeenCalled();
   });
 
   describe("FN-5436: pending-review skip on no-fn_task_done exit", () => {

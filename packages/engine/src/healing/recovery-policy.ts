@@ -50,15 +50,38 @@ export interface RecoveryState {
   nextRecoveryAt?: string;
 }
 
-export interface RecoveryDecision {
-  /** Whether the task should be retried (moved back to todo/triage). */
-  shouldRetry: boolean;
-  /** Whether the retry budget is exhausted (terminal failure). */
-  exhausted: boolean;
+export type RecoveryDisposition = "retry" | "escalate";
+
+interface RecoveryDecisionBase {
   /** Updated recovery state to persist on the task. */
   nextState: RecoveryState;
   /** Computed delay in milliseconds (for logging). Zero when exhausted. */
   delayMs: number;
+}
+
+export interface RecoveryRetryDecision extends RecoveryDecisionBase {
+  disposition: "retry";
+  /** Whether the task should be retried (moved back to todo/triage). */
+  shouldRetry: true;
+  exhausted: false;
+}
+
+export interface RecoveryEscalationDecision extends RecoveryDecisionBase {
+  disposition: "escalate";
+  shouldRetry: false;
+  /** The bounded retry owner must hand this failure to an operator-visible escalation. */
+  exhausted: true;
+}
+
+/**
+ * A discriminated recovery outcome prevents callers from treating an exhausted
+ * budget as an ordinary no-op pause.
+ */
+export type RecoveryDecision = RecoveryRetryDecision | RecoveryEscalationDecision;
+
+export interface RecoveryPolicyOptions {
+  /** Override the default budget for a recovery owner. */
+  maxRetries?: number;
 }
 
 // ── Decision function ────────────────────────────────────────────────
@@ -75,13 +98,20 @@ export interface RecoveryDecision {
  */
 export function computeRecoveryDecision(
   currentState: RecoveryState,
+  options: RecoveryPolicyOptions = {},
 ): RecoveryDecision {
+  const maxRetries = options.maxRetries ?? MAX_RECOVERY_RETRIES;
   const currentCount = currentState.recoveryRetryCount ?? 0;
   const nextCount = currentCount + 1;
 
-  if (nextCount > MAX_RECOVERY_RETRIES) {
-    // Budget exhausted — escalate to real failure
+  if (nextCount > maxRetries) {
+    /*
+    FNXC:RecoveryOwnership 2026-10-06-15:14:
+    FN-9512 requires every bounded recovery owner to surface exhaustion as an
+    explicit escalation, rather than leaving a card in an indistinguishable pause.
+    */
     return {
+      disposition: "escalate",
       shouldRetry: false,
       exhausted: true,
       nextState: { recoveryRetryCount: undefined, nextRecoveryAt: undefined },
@@ -102,6 +132,7 @@ export function computeRecoveryDecision(
   const nextRecoveryAt = new Date(Date.now() + delayMs).toISOString();
 
   return {
+    disposition: "retry",
     shouldRetry: true,
     exhausted: false,
     nextState: {

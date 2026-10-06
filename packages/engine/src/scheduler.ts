@@ -2851,14 +2851,21 @@ export class Scheduler {
               nextRecoveryAt: task.nextRecoveryAt,
             });
             if (!decision.shouldRetry) {
-              const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: filesystem validation failed (${validation.reason}) after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
+              /*
+              FNXC:RecoveryOwnership 2026-10-06-15:28:
+              An unreadable planning artifact needs a fresh role-owned replan, not a failed
+              card. Reset only the bounded cadence and preserve the current lane so triage
+              can recreate the specification through its normal lifecycle fence.
+              */
+              const message = `Filesystem validation exhausted its retry cadence; scheduling a fresh in-place replan.`;
               await this.store.updateTask(task.id, {
-                status: "failed",
-                error,
+                status: "needs-replan",
+                error: null,
                 recoveryRetryCount: null,
+                recoveryDisposition: "escalated-reseed",
                 nextRecoveryAt: null,
               });
-              await this.store.logEntry(task.id, error, validation.reason);
+              await this.store.logEntry(task.id, message, validation.reason);
               return null;
             }
             const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;

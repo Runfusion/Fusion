@@ -2025,6 +2025,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       every subsequent restart untouched.
       */
       { name: "reconcile-stranded-workflow-continuations", fn: () => this.reconcileStrandedWorkflowContinuations().then(() => undefined) },
+      /*
+      FNXC:ProgressOwningRecovery 2026-10-06-15:13:
+      A restart is the most likely point for the transition-pending marker to lose its
+      post-commit clearer. Recover it before any lifecycle classifier decides that a
+      card has no owner; waiting for periodic maintenance leaves a dispatchable card
+      stationary through the entire first maintenance interval.
+      */
+      { name: "recover-stale-transition-pending", fn: () => this.runStaleTransitionPendingSweep() },
       { name: "completed-tasks", fn: () => this.recoverCompletedTasks().then(() => undefined) },
       { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks().then(() => undefined) },
       { name: "recover-advanced-triage", fn: () => this.recoverAdvancedTriageTasks().then(() => undefined) },
@@ -2075,6 +2083,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       { name: "recover-orphan-only-scope-violations", fn: () => this.recoverOrphanOnlyScopeViolations().then(() => undefined) },
       { name: "recover-stuck-merge-deadlocks", fn: () => this.recoverStuckMergeDeadlocks().then(() => undefined) },
       { name: "misclassified-failures", fn: () => this.recoverMisclassifiedFailures().then(() => undefined) },
+      /*
+      FNXC:ProgressOwningRecovery 2026-10-06-15:13:
+      Abort parks are engine-owned retry states, not operator holds. Run their
+      bounded recovery at startup as well as maintenance so a process crash cannot
+      leave an otherwise eligible non-terminal card waiting for the next sweep.
+      */
+      { name: "recover-paused-abort-failures", fn: () => this.recoverPausedAbortFailures().then(() => undefined) },
       { name: "partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "orphaned-executions", fn: () => this.recoverOrphanedExecutions().then(() => undefined) },
       { name: "approved-triage", fn: () => this.recoverApprovedTriageTasks().then(() => undefined) },
@@ -2100,6 +2115,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       { name: "recover-drifted-agent-task-links", fn: () => this.recoverDriftedAgentTaskLinks().then(() => undefined) },
       { name: "reconcile-soft-delete-column-drift", fn: () => this.reconcileSoftDeletedColumnDrift().then(() => undefined) },
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
+      /*
+      FNXC:ProgressOwningRecovery 2026-10-06-15:13:
+      A paused scope holder with blocked followers has an automatic recovery owner.
+      Apply the normal age-gated rebound during startup before dependency repair so
+      followers can make progress without waiting for the periodic maintenance pass.
+      */
+      { name: "auto-rebound-paused-scope-decay", fn: () => this.autoReboundPausedScopeDecay().then(() => undefined) },
       { name: "reconcile-self-defeating-deps", fn: () => this.reconcileSelfDefeatingDependencies().then(() => undefined) },
       { name: "reconcile-missing-dependencies", fn: () => this.reconcileMissingDependencies().then(() => undefined) },
       { name: "reconcile-dependency-blocking-leases", fn: () => this.reconcileDependencyBlockingLeases().then(() => undefined) },
@@ -2120,6 +2142,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       { name: "surface-in-review-stalled", fn: () => this.surfaceInReviewStalled(startupSurfacing()).then(() => undefined) },
       { name: "surface-stale-paused-reviews", fn: () => this.surfaceStalePausedReviews(startupSurfacing()).then(() => undefined) },
       { name: "surface-stale-paused-todos", fn: () => this.surfaceStalePausedTodos(startupSurfacing()).then(() => undefined) },
+      /*
+      FNXC:ProgressOwningRecovery 2026-10-06-15:13:
+      Run the detector after all specialized recovery owners have had one chance.
+      It remains non-mutating, but an unknown stranded shape is now surfaced on
+      restart rather than silently waiting for the first maintenance interval.
+      */
+      { name: "detect-stalled-cards", fn: () => this.detectStalledCards().then(() => undefined) },
       { name: "audit-no-commits-expected-candidates", fn: () => this.auditNoCommitsExpectedCandidates().then(() => undefined) },
     ];
 
@@ -4236,14 +4265,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * Backward lifecycle move gated on triple proof (FN-5335).
    * When the predicate fails, emits `task:reclaim-pr-conflict-no-action` and skips lifecycle mutation.
    */
-  async reclaimPrConflictForTask(taskId: string): Promise<{ outcome: "reclaimed" | "stale-resolved" | "tip-already-merged" | "paused-unrecoverable" | "skipped"; reason?: string; perPr?: Array<{ number: number; outcome: "reclaimed" | "stale-resolved" | "tip-already-merged" | "paused-unrecoverable" | "skipped"; reason?: string }> }> {
+  async reclaimPrConflictForTask(taskId: string): Promise<{ outcome: "reclaimed" | "stale-resolved" | "tip-already-merged" | "paused-unrecoverable" | "escalated-reseed" | "held-by-policy" | "skipped"; reason?: string; perPr?: Array<{ number: number; outcome: "reclaimed" | "stale-resolved" | "tip-already-merged" | "paused-unrecoverable" | "escalated-reseed" | "held-by-policy" | "skipped"; reason?: string }> }> {
     const task = await this.store.getTask(taskId);
     if (!task) return { outcome: "skipped", reason: "task-not-found" };
     const conflictingPrs = (task.prInfos ?? (task.prInfo ? [task.prInfo] : [])).filter((pr) => pr.mergeable === "conflicting");
     if (conflictingPrs.length === 0) {
       return { outcome: "skipped", reason: "no-conflicting-pr" };
     }
-    const withPerPr = (result: { outcome: "reclaimed" | "stale-resolved" | "tip-already-merged" | "paused-unrecoverable" | "skipped"; reason?: string }) => {
+    const withPerPr = (result: { outcome: "reclaimed" | "stale-resolved" | "tip-already-merged" | "paused-unrecoverable" | "escalated-reseed" | "held-by-policy" | "skipped"; reason?: string }) => {
       if (conflictingPrs.length <= 1) {
         return result;
       }
@@ -4463,38 +4492,50 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         retryCount: task.recoveryRetryCount ?? 0,
         settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
       });
-      if (decision.action === "pause") {
-        /*
-        FNXC:BranchConflictRecoveryFence 2026-10-01-08:15:
-        The dispatcher can finish after an operator Retry has reset this failure. Persist its
-        pause only while the inspected recovery generation remains live; otherwise the old sweep
-        would restore branch-conflict-unrecoverable after the successful retry.
-        */
-        let pauseApplied = false;
-        await this.store.updateTaskAtomic(task.id, (live) => {
-          const stillOwnsFailure = live.branch === task.branch
-            && live.worktree === task.worktree
-            && live.status === task.status
-            && live.error === task.error
-            && live.paused === task.paused
-            && live.pausedReason === task.pausedReason
-            && live.userPaused !== true;
-          if (!stillOwnsFailure) return null;
-          pauseApplied = true;
-          return {
-            status: "failed",
-            error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
-            paused: true,
-            pausedReason: "branch-conflict-unrecoverable",
-          };
-        });
-        if (pauseApplied) {
-          await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-          await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
-        }
+      if (decision.action === "escalate") {
+        const escalated = await this.reseedExhaustedBranchConflict(task);
+        return withPerPr({ outcome: escalated ? "escalated-reseed" : "skipped", reason: message });
       }
-      return withPerPr({ outcome: "paused-unrecoverable", reason: message });
+      if (decision.action === "pause") {
+        return withPerPr({ outcome: "held-by-policy", reason: message });
+      }
+      return withPerPr({ outcome: "skipped", reason: message });
     }
+  }
+
+  /**
+   * FNXC:RecoveryOwnership 2026-10-06-15:28:
+   * Exhausting branch-conflict retries is evidence to re-run the existing non-destructive
+   * reclaim classifier, not authorization to convert a recoverable card into a manual park.
+   * Keep the current workflow lane intact and fence the reset against an operator pause or a
+   * newer ownership generation so the next maintenance pass owns the conservative reseed.
+   */
+  private async reseedExhaustedBranchConflict(task: Task): Promise<boolean> {
+    let reseeded = false;
+    await this.store.updateTaskAtomic(task.id, (live) => {
+      const stillOwnsFailure = live.branch === task.branch
+        && live.worktree === task.worktree
+        && live.status === task.status
+        && live.error === task.error
+        && live.paused === task.paused
+        && live.pausedReason === task.pausedReason
+        && live.userPaused !== true;
+      if (!stillOwnsFailure) return null;
+      reseeded = true;
+      return {
+        status: null,
+        error: null,
+        paused: false,
+        pausedReason: undefined,
+        recoveryRetryCount: null,
+        recoveryDisposition: "escalated-reseed",
+        nextRecoveryAt: null,
+      };
+    });
+    if (reseeded) {
+      await this.store.logEntry(task.id, "Branch-conflict recovery retry budget escalated to a fenced reclaim reseed");
+    }
+    return reseeded;
   }
 
   /**
@@ -5324,29 +5365,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             retryCount: task.recoveryRetryCount ?? 0,
             settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
           });
-          if (decision.action === "pause") {
-            let pauseApplied = false;
-            await this.store.updateTaskAtomic(task.id, (live) => {
-              const stillOwnsFailure = live.branch === task.branch
-                && live.worktree === task.worktree
-                && live.status === task.status
-                && live.error === task.error
-                && live.paused === task.paused
-                && live.pausedReason === task.pausedReason
-                && live.userPaused !== true;
-              if (!stillOwnsFailure) return null;
-              pauseApplied = true;
-              return {
-                status: "failed",
-                error: `Task branch conflict: ${task.branch} is not safely reclaimable (${message})`,
-                paused: true,
-                pausedReason: "branch-conflict-unrecoverable",
-              };
-            });
-            if (pauseApplied) {
-              await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
-              await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
-            }
+          if (decision.action === "escalate") {
+            await this.reseedExhaustedBranchConflict(task);
           }
         }
       }
@@ -16681,9 +16701,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       recoveryRetryCount: task.recoveryRetryCount,
       nextRecoveryAt: task.nextRecoveryAt,
     });
-    const exhaustedMessage =
-      `PLANNING_LIFECYCLE_LOCK_RECOVERY_EXHAUSTED: canonical planning handoff failed after `
-      + `${MAX_RECOVERY_RETRIES} retries — last error: ${error.message}`;
+    /*
+    FNXC:PlanningHandoffRecovery 2026-10-06-16:27:
+    A lifecycle-lock transport loss does not invalidate an approved plan. After bounded
+    verification retries, re-admit the card through triage's existing needs-replan owner
+    instead of terminalizing it, so startup and maintenance cannot strand planning work.
+    */
     const patch = decision.shouldRetry
       ? {
           status: "planning" as const,
@@ -16692,9 +16715,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           nextRecoveryAt: decision.nextState.nextRecoveryAt,
         }
       : {
-          status: "failed" as const,
-          error: exhaustedMessage,
+          status: "needs-replan" as const,
+          error: null,
           recoveryRetryCount: null,
+          recoveryDisposition: "escalated-reseed" as const,
           nextRecoveryAt: null,
         };
     let persisted = false;
@@ -16716,7 +16740,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (!persisted) return;
     const action = decision.shouldRetry
       ? `Planning lifecycle lock transport failure during approved triage recovery — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}: ${error.message}`
-      : exhaustedMessage;
+      : `Planning lifecycle lock transport recovery exhausted after ${MAX_RECOVERY_RETRIES} retries; escalated to a fresh planning pass.`;
     await this.store.logEntry(task.id, action).catch(() => undefined);
   }
 

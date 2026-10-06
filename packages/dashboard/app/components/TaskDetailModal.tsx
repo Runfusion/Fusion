@@ -1123,6 +1123,13 @@ export function TaskDetailContent({
       idle: true,
       overlapBlockedBy: workingTask.overlapBlockedBy ?? null,
       sessionContentionWaitReason: workingTask.sessionContentionWaitReason ?? null,
+      recoveryRetryCount: workingTask.recoveryRetryCount,
+      recoveryDisposition: workingTask.recoveryDisposition,
+      nextRecoveryAt: workingTask.nextRecoveryAt,
+      userPaused: workingTask.userPaused,
+      paused: workingTask.paused,
+      awaitingApproval: workingTask.status === "awaiting-approval",
+      externalBlocked: workingTask.status === "blocked",
     });
   const originalTaskPrompt = workingTask.description ?? "";
   const hasOriginalTaskPrompt = originalTaskPrompt.trim().length > 0;

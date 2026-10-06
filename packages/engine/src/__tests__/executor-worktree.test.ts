@@ -947,6 +947,38 @@ describe("TaskExecutor worktree recovery", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("reseeds an exhausted branch-conflict dispatcher decision instead of falling through to retry", async () => {
+    const store = createMockStore();
+    const executor = createWorktreeExecutor(store, "/tmp/test");
+    const conflictError = new BranchConflictError({
+      branchName: "fusion/fn-050",
+      conflictingWorktreePath: "/tmp/test/.worktrees/fn-050",
+      existingTipSha: "abc123def456",
+      strandedCommits: [],
+      startPoint: "main",
+      recommendedAction: "reclaim the conflicting checkout",
+    });
+    const exhaustedTask = makeTask({ recoveryRetryCount: 3, status: "queued", branch: "fusion/fn-050", worktree: "/tmp/test/.worktrees/fn-050" });
+    const { id: taskId, ...exhaustedPatch } = exhaustedTask;
+    store._setRow(taskId, exhaustedPatch);
+    vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValue({ kind: "stale" } as any);
+    vi.spyOn(executor as any, "getAutoRecoveryDispatcher").mockReturnValue({
+      dispatch: vi.fn(async () => ({ action: "escalate" })),
+    });
+
+    const result = await (executor as any).handleBranchConflict(exhaustedTask, conflictError);
+
+    expect(result).toBe("recovered");
+    expect(store.updateTaskAtomic).toHaveBeenCalled();
+    expect(await store.getTask(taskId)).toEqual(expect.objectContaining({
+      status: null,
+      error: null,
+      recoveryRetryCount: null,
+      worktree: null,
+      branch: null,
+    }));
+  });
+
   it("stops the original conflict retry after a foreign-unmerged recovery pins a sibling", async () => {
     const store = createMockStore();
     const executor = createWorktreeExecutor(store, "/tmp/test");
