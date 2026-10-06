@@ -111,6 +111,35 @@ test("collector fails closed with machine-readable malformed and duplicate produ
   }
 });
 
+test("collector retains fail-closed diagnostics for absent or malformed Pipeline smoke evidence", async () => {
+  const root = createEvidenceRoot();
+  try {
+    for (const artifact of REQUIRED_SHARD_ARTIFACTS) {
+      writeJson(path.join(root, artifact, "timing.json"), validTimingPayload());
+    }
+
+    await assert.rejects(
+      collectPostMergeFullSuiteEvidence({ evidenceRoot: root, env: collectorEnv(), expectedKeys: ["scenario\u0000workflow\u0000"] }),
+      /pipeline-report-count/,
+    );
+    let manifest = JSON.parse(readFileSync(path.join(root, "manifest.json"), "utf8"));
+    assert.equal(manifest.qualification.eligible, false);
+    assert.ok(manifest.failureReasons.some((reason) => reason.code === "pipeline-report-count" && reason.producer === "pipeline-smoke-report"));
+
+    mkdirSync(path.join(root, "pipeline-smoke-report"), { recursive: true });
+    writeFileSync(path.join(root, "pipeline-smoke-report", "report.json"), "not-json\n");
+    await assert.rejects(
+      collectPostMergeFullSuiteEvidence({ evidenceRoot: root, env: collectorEnv(), expectedKeys: ["scenario\u0000workflow\u0000"] }),
+      /malformed-pipeline-smoke-json/,
+    );
+    manifest = JSON.parse(readFileSync(path.join(root, "manifest.json"), "utf8"));
+    assert.equal(manifest.qualification.eligible, false);
+    assert.ok(manifest.failureReasons.some((reason) => reason.code === "malformed-pipeline-smoke-json" && reason.producer === "pipeline-smoke-report"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("collector preserves the versioned successful normalized evidence for complete input", async () => {
   const root = createEvidenceRoot();
   try {
