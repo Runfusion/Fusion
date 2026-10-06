@@ -64,7 +64,14 @@ describe("engine lifecycle move reason census", () => {
       .flatMap(directMoveWindows)
       .length;
 
-    expect(count).toBe(51);
+    /*
+     * FNXC:RecoveryOwnership 2026-10-06-17:39:
+     * FN-9512 adds three owner-preserving rebound moves: planning-lock transport retry,
+     * exhausted transient execution reseed, and exhausted branch-conflict reseed. Each first
+     * fences durable state, clears only automatic recovery metadata, and returns to its resolved
+     * current-lifecycle lane rather than introducing a direct terminal or backward move.
+     */
+    expect(count).toBe(54);
   });
 
   it("requires direct backward-target moves to carry a registered reason", () => {

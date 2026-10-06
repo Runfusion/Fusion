@@ -119,6 +119,7 @@ import {
   DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
   STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
   PULL_REQUEST_READINESS_VERSION,
+  RECOVERY_DISPOSITION_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -176,9 +177,11 @@ describe("schema-applier: immutable migration identities", () => {
     expect(CHAT_MESSAGES_SESSION_RECENCY_INDEX_VERSION).toBe("0073");
     expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0086");
     expect(PULL_REQUEST_READINESS_VERSION).toBe("0087");
+    expect(RECOVERY_DISPOSITION_VERSION).toBe("0088");
     expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION));
-    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(PULL_REQUEST_READINESS_VERSION));
-    expect(SCHEMA_BASELINE_VERSION).toBe("0087");
+    expect(Number(RECOVERY_DISPOSITION_VERSION)).toBeGreaterThan(Number(PULL_REQUEST_READINESS_VERSION));
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(RECOVERY_DISPOSITION_VERSION));
+    expect(SCHEMA_BASELINE_VERSION).toBe("0088");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1964,6 +1967,16 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       { column_name: "readiness", data_type: "jsonb" },
       { column_name: "readiness_provider", data_type: "text" },
     ]);
+    const recoveryDispositionColumns = (await ctx.db.execute(sql`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'tasks'
+        AND column_name = 'recovery_disposition'
+    `)) as unknown as Array<{ column_name: string; data_type: string }>;
+    expect(recoveryDispositionColumns).toEqual([
+      { column_name: "recovery_disposition", data_type: "text" },
+    ]);
     const versions = (await ctx.db.execute(sql`
       SELECT version FROM public.fusion_schema_migrations ORDER BY version
     `)) as unknown as Array<{ version: string }>;
@@ -2045,6 +2058,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
     ]);
     const readinessMarkerCount = (await ctx.db.execute(sql`
       SELECT count(*)::int AS count
@@ -2059,6 +2073,32 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       WHERE version = ${PULL_REQUEST_READINESS_VERSION}
     `)) as unknown as Array<{ count: number }>;
     expect(rerunMarkerCount).toEqual([{ count: 1 }]);
+  });
+
+  it("applies and records recovery disposition exactly once on an upgraded database", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.tasks DROP COLUMN recovery_disposition;
+      DELETE FROM public.fusion_schema_migrations WHERE version = '${RECOVERY_DISPOSITION_VERSION}';
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'tasks'
+        AND column_name = 'recovery_disposition'
+    `)) as unknown as Array<{ column_name: string; data_type: string }>;
+    expect(columns).toEqual([{ column_name: "recovery_disposition", data_type: "text" }]);
+    const marker = (await ctx.db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM public.fusion_schema_migrations
+      WHERE version = ${RECOVERY_DISPOSITION_VERSION}
+    `)) as unknown as Array<{ count: number }>;
+    expect(marker).toEqual([{ count: 1 }]);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 
   it("fails loudly when legacy automation ownership is ambiguous", async () => {
@@ -2160,6 +2200,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
     ]);
   });
 
@@ -2396,6 +2437,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
     ]);
   });
 
@@ -2513,6 +2555,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
     ]);
   });
 
@@ -2630,6 +2673,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       DROP_EXCLUDED_UPSTREAM_FEATURE_SCHEMA_VERSION,
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
     ]);
   });
 });

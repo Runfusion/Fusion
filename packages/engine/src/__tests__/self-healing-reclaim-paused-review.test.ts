@@ -154,8 +154,15 @@ describe("self-healing reclaim paused review", () => {
 
     const recovered = await manager.reclaimSelfOwnedBranchConflicts();
 
+    /*
+     * FNXC:BranchConflictRecoveryFence 2026-10-06-17:44:
+     * A foreign live conflict is refused before any recovery mutation. FN-9512 may reseed only
+     * self-owned, fenced recoverable work; this fixture proves a foreign checkout remains untouched.
+     */
     expect(recovered).toBe(0);
-    expect((store as any).updateTaskAtomic).toHaveBeenCalledWith("FN-4487", expect.any(Function));
+    expect((store as any).updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("does not reclaim userPaused tasks without branch-conflict paused reason", async () => {

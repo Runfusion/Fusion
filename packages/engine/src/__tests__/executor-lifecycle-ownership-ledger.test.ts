@@ -230,11 +230,23 @@ FN-9471 refreshes this AST-derived fixture ledger after graph-routing extraction
 */
 const LEDGER = {
   runImplementation: {
-    "column transitions (store.moveTask)": 10,
+    /*
+     * FNXC:RecoveryOwnership 2026-10-06-17:39:
+     * FN-9512 adds the fenced exhausted-transient reseed move. It is executor-owned only until
+     * the graph can model this recovery outcome; the live-row fence and resolved rebound lane
+     * prevent it from bypassing an operator pause or inventing a terminal park.
+     */
+    "column transitions (store.moveTask)": 11,
     /* U8: 3 -> 2. The pending-review handoff left this method — the graph's
        `review-pending-handoff` node performs it now. A decrement here is the unit working. */
     "review transitions (handoffTaskToReview)": 2,
-    "terminal parks (status: \"failed\")": 9,
+    /*
+     * FNXC:RecoveryOwnership 2026-10-06-17:39:
+     * FN-9512 replaces three ordinary exhausted transient-failure parks with owner-preserving
+     * reseeds. Explicit external obstacles and irreversible failures remain terminal where their
+     * existing policy requires it; this reduction must not be read as weakening those fences.
+     */
+    "terminal parks (status: \"failed\")": 6,
     "graph handbacks (graphCompletion)": 3,
   },
   /*
@@ -300,6 +312,6 @@ describe("U8 execution-lifecycle ownership ledger", () => {
   it("states the U8 baseline ratio: the implementation phase decides far more than it asks", () => {
     const owned = EXECUTOR_OWNED_LABELS.reduce<number>((sum, label) => sum + LEDGER.runImplementation[label], 0);
     const handbacks = LEDGER.runImplementation[GRAPH_HANDBACK_LABEL];
-    expect({ owned, handbacks }).toEqual({ owned: 21, handbacks: 3 });
+    expect({ owned, handbacks }).toEqual({ owned: 19, handbacks: 3 });
   });
 });

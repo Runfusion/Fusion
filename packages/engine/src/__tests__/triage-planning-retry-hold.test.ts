@@ -144,7 +144,7 @@ describe("planning retry hold safety gate (FN-9260)", () => {
     expect(task.status).toBe("awaiting-approval");
   });
 
-  it("keeps missing drafts claimable, preserves existing review holds, and terminalizes an exhausted retry", async () => {
+  it("keeps missing drafts claimable, preserves existing review holds, and reseeds an exhausted retry", async () => {
     /*
      * FNXC:TriagePlanningRetry 2026-10-01-05:53:
      * FN-9446 requires missing-draft and review-hold coverage to run through specifyTask. The
@@ -175,18 +175,39 @@ describe("planning retry hold safety gate (FN-9260)", () => {
       nextRecoveryAt: expect.any(String),
     });
 
-    const exhausted = taskFixture({ id: "FN-9260-EXHAUSTED", recoveryRetryCount: 3 });
-    const exhaustedStore = createStore(exhausted);
-    const exhaustedPath = join(rootDir, ".fusion", "tasks", exhausted.id, "PROMPT.md");
-    await mkdir(join(rootDir, ".fusion", "tasks", exhausted.id), { recursive: true });
-    mockPromptWithFallback.mockImplementationOnce(async () => {
-      await writeFile(exhaustedPath, INVALID_PLAN, "utf8");
-    });
-    await new TriageProcessor(exhaustedStore, rootDir).specifyTask(exhausted);
-    expect(exhaustedStore.updateTask).toHaveBeenCalledWith(exhausted.id, expect.objectContaining({
-      status: "failed",
-      recoveryRetryCount: null,
-      nextRecoveryAt: null,
-    }));
+    /*
+     * FNXC:TriagePlanningRetry 2026-10-06-19:53:
+     * FN-9512 makes ordinary deterministic planning exhaustion re-enter the existing planning
+     * owner at and beyond the retry cap. A failed status has no automatic claimant, so both
+     * boundary counts must retain needs-replan and the visible reseed disposition until a new
+     * planning claim clears it.
+     */
+    for (const recoveryRetryCount of [3, 4]) {
+      const exhausted = taskFixture({
+        id: `FN-9260-EXHAUSTED-${recoveryRetryCount}`,
+        recoveryRetryCount,
+      });
+      const exhaustedStore = createStore(exhausted);
+      const exhaustedPath = join(rootDir, ".fusion", "tasks", exhausted.id, "PROMPT.md");
+      await mkdir(join(rootDir, ".fusion", "tasks", exhausted.id), { recursive: true });
+      mockPromptWithFallback.mockImplementationOnce(async () => {
+        await writeFile(exhaustedPath, INVALID_PLAN, "utf8");
+      });
+      await new TriageProcessor(exhaustedStore, rootDir).specifyTask(exhausted);
+
+      expect(exhaustedStore.updateTask).toHaveBeenCalledWith(exhausted.id, expect.objectContaining({
+        status: "needs-replan",
+        error: null,
+        recoveryRetryCount: null,
+        recoveryDisposition: "escalated-reseed",
+        nextRecoveryAt: null,
+      }));
+      expect(exhausted.status).toBe("needs-replan");
+      expect(exhausted.error).toBeNull();
+      expect(await evaluateUnplannedForExecution(exhaustedStore, exhausted, EMPTY_IR)).toMatchObject({
+        unplanned: true,
+        reason: "needs-replan",
+      });
+    }
   });
 });

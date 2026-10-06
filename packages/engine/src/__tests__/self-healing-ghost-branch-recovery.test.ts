@@ -125,7 +125,13 @@ describe("self-healing ghost branch reclaim", () => {
 
     await manager.reclaimSelfOwnedBranchConflicts();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-9001", expect.objectContaining({ pausedReason: "branch-conflict-unrecoverable", status: "failed" }));
+    /*
+     * FNXC:BranchConflictRecovery 2026-10-06-18:03:
+     * A genuine foreign conflict remains an operator-owned hold. FN-9512 must not overwrite the
+     * existing paused failed state merely to repeat it; no automatic mutation is the safe refusal.
+     */
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("is idempotent after tip-already-merged cleanup", async () => {

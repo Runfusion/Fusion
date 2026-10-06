@@ -50,6 +50,7 @@ import {
   writeProjectConfig,
   patchProjectSettings,
 } from "../../task-store/async/async-settings.js";
+import { TaskStore } from "../../store.js";
 import type { WorkflowTransitionNotificationMarker } from "../../types.js";
 
 /*
@@ -109,6 +110,31 @@ pgDescribe("U12 taskstore-persistence (PostgreSQL)", () => {
     expect(row!.id).toBe("KB-001");
     expect(row!.description).toBe("test task");
     expect(row!.column).toBe("todo");
+  });
+
+  /*
+   * FNXC:RecoveryDispositionPersistence 2026-10-06-19:53:
+   * FN-9514 requires the migration field to round-trip through project-bound TaskStore callers.
+   * Colliding task ids must remain isolated because an id-only update could make one project's
+   * recovery owner expose or overwrite another project's escalation disposition.
+   */
+  it("round-trips recovery disposition through project-scoped TaskStores with colliding task ids", async () => {
+    const taskId = "FN-9514-RECOVERY-DISPOSITION";
+    const projectA = { ...h.layer(), projectId: "recovery-disposition-a" };
+    const projectB = { ...h.layer(), projectId: "recovery-disposition-b" };
+    const storeA = new TaskStore(h.rootDir(), undefined, { asyncLayer: projectA });
+    const storeB = new TaskStore(h.rootDir(), undefined, { asyncLayer: projectB });
+
+    await insertTaskRow(projectA, makeMinimalTask(taskId), { lineageId: null });
+    await insertTaskRow(projectB, makeMinimalTask(taskId), { lineageId: null });
+
+    await storeA.updateTask(taskId, { recoveryDisposition: "escalated-reseed" });
+    expect((await storeA.getTask(taskId))?.recoveryDisposition).toBe("escalated-reseed");
+    expect((await storeB.getTask(taskId))?.recoveryDisposition).toBeUndefined();
+
+    await storeB.updateTask(taskId, { recoveryDisposition: "verification-pending" });
+    expect((await storeA.getTask(taskId))?.recoveryDisposition).toBe("escalated-reseed");
+    expect((await storeB.getTask(taskId))?.recoveryDisposition).toBe("verification-pending");
   });
 
   it("round-trips JSON columns as JSONB with identical shape (VAL-SCHEMA-004)", async () => {
