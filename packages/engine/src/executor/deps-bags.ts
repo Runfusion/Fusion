@@ -766,10 +766,11 @@ export function buildCleanupTaskWorktreeDeps(host: any): any {
 export function buildResumeTaskForAgentDeps(host: any): any {
   return {
     ...facadeFields(host, [
-      "store", "executing", "activeSessions",
+      "store", "executing", "recoveringCompleted", "activeSessions",
       "activeStepExecutors", "activeWorkflowStepSessions",
     ]),
-    ...facadeMethods(host, ["listWipLaneTasks", "taskEffectiveAgentMatches", "execute"]),
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
+    ...facadeMethods(host, ["listWipLaneTasks", "taskEffectiveAgentMatches", "recoverCompletedTask", "execute"]),
   };
 }
 
