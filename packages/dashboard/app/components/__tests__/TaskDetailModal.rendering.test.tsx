@@ -2916,8 +2916,8 @@ describe("TaskDetailModal", () => {
 
       // After fetch resolves, spec content appears
       await waitFor(() => {
-        const markdownBody = document.querySelector(".markdown-body");
-        expect(markdownBody).toBeTruthy();
+        expect(document.querySelector(".markdown-body")).toBeTruthy();
+        expect(screen.getByText("This is the loaded spec content.")).toBeInTheDocument();
       }, { timeout: 3000 });
 
       // Loading indicator should be gone
@@ -2933,7 +2933,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Execution mode")).toBeInTheDocument();
       expect(screen.getByText("Runtime status")).toBeInTheDocument();
       expect(screen.getAllByText("Fast").length).toBeGreaterThan(0);
-      expectSingleStatsRuntimeStatus("executing");
+      expectSingleStatsRuntimeStatus("executing", "Recovery pending");
       const statsPanel = screen.getByRole("region", { name: "Task execution statistics" });
       expect(within(statsPanel).getByText((1200).toLocaleString())).toBeInTheDocument();
       expect(within(statsPanel).getByText((450).toLocaleString())).toBeInTheDocument();

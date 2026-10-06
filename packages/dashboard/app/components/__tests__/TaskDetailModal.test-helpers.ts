@@ -21,24 +21,17 @@ export { taskDetailSseSubscriptions };
 export const mockFetchOverlapBlockerReport = vi.fn();
 
 /*
-FNXC:TaskDetailOptimisticOpening 2026-08-05-07:39:
-A running task deliberately exposes its raw runtime status in two ownership regions: the modal
-header's lifecycle badge and the Stats panel's Runtime status row. Optimistic-opening assertions
-must scope the Stats claim to its named semantic region, then assert one row there and the expected
-two owned values overall; this catches a duplicated Stats panel without treating legitimate header
-context as a production rendering defect.
-
-FNXC:TaskDetailStatsAssertions 2026-08-09-16:50:
-FN-8906 requires every TaskDetailModal test to use this shared helper: a non-empty raw runtime
-status is owned by the header lifecycle badge and the Stats Runtime status row, so an unscoped
-getByText(status) after opening Stats is ambiguous.
+FNXC:TaskDetailStatsAssertions 2026-10-06-18:55:
+FN-9515 requires every TaskDetailModal test to distinguish the raw Stats Runtime status from the
+shared header badge. Recovery metadata may intentionally replace the header's ordinary runtime
+label without changing the execution detail reported in Stats.
 */
-export function expectSingleStatsRuntimeStatus(status: string): void {
+export function expectSingleStatsRuntimeStatus(status: string, headerStatus = status): void {
   const statsPanel = screen.getByRole("region", { name: "Task execution statistics" });
   expect(within(statsPanel).getByText(status)).toBeInTheDocument();
   expect(within(statsPanel).getAllByText(status)).toHaveLength(1);
-  expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent(status);
-  expect(screen.getAllByText(status)).toHaveLength(2);
+  expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent(headerStatus);
+  expect(screen.getAllByText(status)).toHaveLength(headerStatus === status ? 2 : 1);
 }
 
 vi.mock("../../sse-bus", () => ({
