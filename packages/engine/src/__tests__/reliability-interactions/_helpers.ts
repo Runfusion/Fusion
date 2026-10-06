@@ -2,16 +2,15 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
-import postgres from "postgres";
 import { Worker } from "node:worker_threads";
 import {
   AgentStore, DEFAULT_SETTINGS, TaskStore, type Settings, type Task,
   type AsyncDataLayer, type CentralClaimStore, type ResolvedBackend,
-  createConnectionSetFromUrl, applySchemaBaseline, createAsyncDataLayer,
+  createConnectionSetFromUrl, createAsyncDataLayer,
   drizzleEq, postgresSchema,
 } from "@fusion/core";
 import { aiMergeTask } from "../../merger.js";
-import { decoratePgProvisioningError } from "../../../../core/src/__test-utils__/pg-provisioning-diagnostics.js";
+import { createBaselinedPgTestDatabase } from "../../../../core/src/__test-utils__/pg-test-harness.js";
 import { SelfHealingManager } from "../../self-healing.js";
 
 export const hasGit = spawnSync("git", ["--version"], { stdio: "pipe" }).status === 0;
@@ -112,40 +111,6 @@ export const hasPg = process.env.FUSION_PG_TEST_SKIP !== "1" && (() => {
   return probeTcpReachable(host, port);
 })();
 
-async function adminExecAsync(statement: string, timeoutMs = 15_000): Promise<void> {
-  let timedOut = false;
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  let client: ReturnType<typeof postgres> | undefined;
-  try {
-    await Promise.race([
-      (async () => {
-        const maintUrl = new URL(PG_TEST_URL_BASE);
-        maintUrl.pathname = "/postgres";
-        client = postgres(maintUrl.toString(), { max: 1, prepare: false, onnotice: () => {} });
-        // Cancel on the server before the JS deadline and own the socket for force-close.
-        await client.unsafe(`SET statement_timeout = ${Math.max(1_000, timeoutMs - 500)}`);
-        await client.unsafe(statement);
-      })(),
-      new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          timedOut = true;
-          void client?.end({ timeout: 0 }).catch(() => {});
-          reject(new Error(`adminExec timed out after ${timeoutMs}ms: ${statement}`));
-        }, timeoutMs);
-      }),
-    ]);
-  } catch (error) {
-    if (timedOut) throw error;
-    const diagnosed = decoratePgProvisioningError(error, PG_TEST_URL_BASE);
-    throw new Error(`adminExec failed: ${diagnosed instanceof Error ? diagnosed.message : String(diagnosed)}\nstatement: ${statement}`);
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-    await client?.end({ timeout: 5 }).catch(() => {});
-  }
-}
-
-let relDbCounter = 0;
-
 export type PgLayerFixture = {
   layer: AsyncDataLayer;
   dbName: string;
@@ -158,11 +123,18 @@ export type PgLayerFixture = {
  * a TCP-reachable PostgreSQL maintenance database.
  */
 export async function createPgLayer(): Promise<PgLayerFixture> {
-  relDbCounter += 1;
-  const dbName = `fusion_rel_${process.pid}_${relDbCounter}_${Math.random().toString(36).slice(2, 8)}`;
-  // The pid/counter/random name is new for every fixture; a pre-create DROP only adds contention.
-  await adminExecAsync(`CREATE DATABASE "${dbName}"`);
-  const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+  /*
+  FNXC:ReliabilityFixtures 2026-09-29-01:17:
+  Slow-test fix: provision each reliability fixture from the core golden-template fast-copy
+  primitive (createBaselinedPgTestDatabase) instead of a per-fixture CREATE DATABASE +
+  applySchemaBaseline. The full baseline DDL dominated reliability-interactions wall-time
+  (~2s/fixture, so an 18-fixture file spent ~40s re-running identical migrations); the template
+  clone is a server-side file copy that pays the baseline exactly once per process and reuses
+  the harness's dead-pid template/per-file reclamation sweep. The returned `fusion_rel_*` name
+  still matches the harness orphan-sweep per-file tail so interrupted runs self-clean.
+  */
+  const baselined = await createBaselinedPgTestDatabase("fusion_rel");
+  const { dbName, testUrl } = baselined;
   const backend: ResolvedBackend = {
     mode: "external",
     runtimeUrl: testUrl,
@@ -178,14 +150,6 @@ export async function createPgLayer(): Promise<PgLayerFixture> {
     directSessionUrl: testUrl,
     directSessionProvenance: "migration-override",
   };
-  const schemaConn = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
-  try {
-    await applySchemaBaseline(schemaConn.migration);
-  } catch (error) {
-    throw decoratePgProvisioningError(error, PG_TEST_URL_BASE);
-  } finally {
-    await schemaConn.close();
-  }
   /*
   FN-8764 built-in workflow-owner provisioning during AgentStore.init() requires a bound
   asyncLayer.projectId (the project-scoped advisory lock hashes it), so the reliability layer
@@ -205,7 +169,7 @@ export async function createPgLayer(): Promise<PgLayerFixture> {
         console.warn(`[reliability-fixtures] failed to close ${dbName}`, error);
       }
       try {
-        await adminExecAsync(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+        await baselined.drop();
       } catch (error) {
         // Preserve best-effort teardown without concealing a persistent database leak.
         console.warn(`[reliability-fixtures] failed to drop ${dbName}`, error);
