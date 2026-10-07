@@ -59,12 +59,24 @@ describe("Memory Keeper provisioning", () => {
     expect(store.writeAgent).not.toHaveBeenCalled();
   });
 
-  it("restores the default interval when the saved one is not a positive number", async () => {
-    const owner = { ...memoryOwner(true), runtimeConfig: { ...heartbeatConfig(true), heartbeatIntervalMs: 0 } };
+  it.each([
+    ["not a positive number", 0],
+    ["below the 1,000 ms agent-config minimum", 500],
+    ["beyond Node's timer ceiling", 2_147_483_648],
+  ])("restores the default interval when the saved one is %s", async (_label, heartbeatIntervalMs) => {
+    const owner = { ...memoryOwner(true), runtimeConfig: { ...heartbeatConfig(true), heartbeatIntervalMs } };
     const store = fakeStore([owner]);
     const result = await store.provisionBuiltinMemoryAgent();
     expect(result?.runtimeConfig).toEqual(heartbeatConfig(true));
     expect(store.writeAgent).toHaveBeenCalledWith(expect.objectContaining({ runtimeConfig: heartbeatConfig(true) }), undefined);
+  });
+
+  it("preserves a saved interval at Node's timer ceiling", async () => {
+    const owner = { ...memoryOwner(true), runtimeConfig: { ...heartbeatConfig(true), heartbeatIntervalMs: 2_147_483_647 } };
+    const store = fakeStore([owner]);
+    const result = await store.provisionBuiltinMemoryAgent();
+    expect(result?.runtimeConfig).toEqual({ ...heartbeatConfig(true), heartbeatIntervalMs: 2_147_483_647 });
+    expect(store.writeAgent).not.toHaveBeenCalled();
   });
 
   it("converges a legacy owner without runtime config to the heartbeat-disabled default", async () => {

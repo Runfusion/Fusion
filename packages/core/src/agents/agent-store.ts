@@ -271,6 +271,11 @@ interface AgentLock {
  */
 export const DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS = 3_600_000;
 
+/** Shortest saved Memory Keeper interval startup keeps; matches the agent-config `heartbeat_interval_ms` minimum. */
+const MIN_MEMORY_AGENT_HEARTBEAT_INTERVAL_MS = 1_000;
+/** Longest saved Memory Keeper interval startup keeps; Node timers fire after ~1 ms for longer delays. */
+const MAX_MEMORY_AGENT_HEARTBEAT_INTERVAL_MS = 2_147_483_647;
+
 export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "column"> | null | undefined): string {
   /*
   FNXC:AgentTaskStateDrift 2026-06-27-16:05:
@@ -2423,11 +2428,16 @@ export class AgentStore extends EventEmitter {
       /*
       FNXC:MemoryAgent 2026-10-04-19:10:
       The heartbeat interval is an operator choice too. Startup convergence previously reset any saved
-      interval to the default on every store init, so a longer cadence could never stick. Keep a valid
-      saved interval and fall back to the default only when it is missing or not a positive number.
+      interval to the default on every store init, so a longer cadence could never stick. Keep a saved
+      interval the scheduler can honor: at least the 1,000 ms agent-config minimum (the scheduler clamps
+      anything shorter up to it) and at most Node's timer ceiling (longer delays fire after ~1 ms).
+      Anything else falls back to the default.
       */
       const savedInterval = currentRuntimeConfig.heartbeatIntervalMs;
-      const heartbeatIntervalMs = typeof savedInterval === "number" && Number.isFinite(savedInterval) && savedInterval > 0
+      const heartbeatIntervalMs = typeof savedInterval === "number"
+        && Number.isFinite(savedInterval)
+        && savedInterval >= MIN_MEMORY_AGENT_HEARTBEAT_INTERVAL_MS
+        && savedInterval <= MAX_MEMORY_AGENT_HEARTBEAT_INTERVAL_MS
         ? savedInterval
         : DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS;
       const runtimeConfig = currentRuntimeConfig.enabled === enabled
