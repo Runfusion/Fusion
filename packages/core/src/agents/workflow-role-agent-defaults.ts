@@ -55,3 +55,13 @@ export const BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULTS: Readonly<Record<BuiltinWorkfl
 };
 
 export const BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST: readonly WorkflowRoleAgentDefault[] = Object.values(BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULTS);
+
+/*
+FNXC:WorkflowAgentIdentities 2026-09-23-10:30:
+Durable agent names are unique within a project, so a built-in owner's canonical name can already belong to an
+agent without provenance — an operator's agent, or a copied row whose provenance keys were stripped. Provisioning
+then falls back to this name instead of adopting the other agent or failing, mirroring the Memory Keeper.
+*/
+export function builtinWorkflowOwnerFallbackName(canonicalName: string): string {
+  return `${canonicalName} (built-in)`;
+}
