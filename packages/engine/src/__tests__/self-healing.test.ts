@@ -2023,7 +2023,7 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(1);
       expect(store.listTasks).toHaveBeenCalledWith({ slim: true, includeArchived: false });
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-001");
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-001", expect.objectContaining({ agentId: "engine", callerKind: "engine" }));
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-002");
     });
 
@@ -2070,7 +2070,7 @@ describe("SelfHealingManager", () => {
       const result = await manager.archiveStaleDoneTasks();
 
       expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OLD");
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OLD", expect.objectContaining({ agentId: "engine", callerKind: "engine" }));
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-BLOCKED");
     });
 
@@ -2099,7 +2099,7 @@ describe("SelfHealingManager", () => {
       const result = await manager.archiveStaleDoneTasks();
 
       expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-030");
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-030", expect.objectContaining({ agentId: "engine", callerKind: "engine" }));
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-031");
       // self-healing.ts:2747 emits this at DEBUG level, not log.
       expect(getSelfHealingLogger().debug).toHaveBeenCalledWith(
@@ -2151,7 +2151,7 @@ describe("SelfHealingManager", () => {
       const result = await manager.archiveStaleDoneTasks();
 
       expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-FALLBACK");
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-FALLBACK", expect.objectContaining({ agentId: "engine", callerKind: "engine" }));
     });
 
     it("skips stale done tasks that have active dependents", async () => {
@@ -2192,7 +2192,7 @@ describe("SelfHealingManager", () => {
       const result = await manager.archiveStaleDoneTasks();
 
       expect(result).toBe(1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-101");
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-101", expect.objectContaining({ agentId: "engine", callerKind: "engine" }));
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-100");
     });
 
@@ -2261,7 +2261,7 @@ describe("SelfHealingManager", () => {
       );
       expect(exhaustedEvents).toHaveLength(1);
       expect((getSelfHealingLogger().error as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(priorErrorCalls + 1);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OTHER");
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OTHER", expect.objectContaining({ agentId: "engine", callerKind: "engine" }));
     });
 
     it("clears an archive failure budget after success and when a task leaves the candidate set", async () => {
@@ -2318,7 +2318,7 @@ describe("SelfHealingManager", () => {
       for (let index = 0; index < 6; index++) await manager.archiveStaleDoneTasks();
 
       expect(store.archiveTaskAndCleanup).toHaveBeenCalledTimes(6);
-      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-UNRELATED");
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-UNRELATED", expect.objectContaining({ agentId: "engine", callerKind: "engine" }));
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-TODO");
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-DONE");
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-PARENT-MULTI");
