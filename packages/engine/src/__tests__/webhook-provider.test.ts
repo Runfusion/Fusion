@@ -63,6 +63,32 @@ describe("WebhookNotificationProvider", () => {
     expect(body.content).toContain("My Task");
   });
 
+  it("sendNotification formats Feishu correctly", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    await provider.initialize({ webhookUrl: "https://example.com/hook", webhookFormat: "feishu" });
+
+    await provider.sendNotification("in-review", { taskId: "FN-1", taskTitle: "My Task", event: "in-review" });
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    // FNXC:WebhookFeishu 2026-09-18-07:09: Feishu bots reject any payload without msg_type
+    // (HTTP 200 + code 19002), so the text shape is the contract — not the prose.
+    expect(body.msg_type).toBe("text");
+    expect(body.content.text).toContain("My Task");
+  });
+
+  it("initialize falls back to generic for unknown format", async () => {
+    await provider.initialize({ webhookUrl: "https://example.com/hook", webhookFormat: "carrier-pigeon" });
+
+    fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    await provider.sendNotification("in-review", { taskId: "FN-1", taskTitle: "My Task", event: "in-review" });
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.event).toBe("in-review");
+    expect(body.timestamp).toBeTruthy();
+  });
+
   it("sendNotification formats Generic correctly", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
     await provider.initialize({
@@ -128,6 +154,39 @@ describe("WebhookNotificationProvider", () => {
     await expect(
       provider.sendNotification("in-review", { taskId: "FN-1", taskTitle: "My Task", event: "in-review" }),
     ).resolves.toEqual({ success: false, providerId: "webhook", error: expect.any(String) });
+  });
+
+  it("sendNotification returns failure when Feishu rejects with a body code (HTTP 200)", async () => {
+    // Feishu answers HTTP 200 even for rejected payloads; code != 0 means no delivery.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ code: 19002, msg: "params error, msg_type need" }),
+    });
+    await provider.initialize({ webhookUrl: "https://example.com/hook", webhookFormat: "feishu" });
+
+    await expect(
+      provider.sendNotification("in-review", { taskId: "FN-1", taskTitle: "My Task", event: "in-review" }),
+    ).resolves.toEqual({
+      success: false,
+      providerId: "webhook",
+      error: expect.stringContaining("19002"),
+    });
+  });
+
+  it("sendNotification returns success when Feishu accepts (body code 0)", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ code: 0, msg: "success" }),
+    });
+    await provider.initialize({ webhookUrl: "https://example.com/hook", webhookFormat: "feishu" });
+
+    await expect(
+      provider.sendNotification("in-review", { taskId: "FN-1", taskTitle: "My Task", event: "in-review" }),
+    ).resolves.toEqual({ success: true, providerId: "webhook" });
   });
 
   it("isEventSupported returns true when no filter", async () => {

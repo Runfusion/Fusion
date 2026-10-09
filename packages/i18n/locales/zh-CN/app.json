@@ -6639,6 +6639,7 @@
       "dashboardHostname": "",
       "discord": "",
       "enable": "",
+      "feishu": "飞书 / Lark",
       "failureNotificationDelayMs": "",
       "failureNotificationMode": "",
       "format": "",

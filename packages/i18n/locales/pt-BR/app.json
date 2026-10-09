@@ -6801,6 +6801,7 @@
       "customNtfyServerURLOptional": "URL personalizada do servidor ntfy (opcional)",
       "dashboardHostname": "Hostname do painel",
       "discord": "Discord",
+      "feishu": "",
       "enable": " Ativar ",
       "failureNotificationDelayMs": "Atraso da notificação de falha (ms)",
       "failureNotificationMode": "Modo de notificação de falha",
