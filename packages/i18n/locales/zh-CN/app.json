@@ -1,4 +1,10 @@
 {
+  "aiDisclosure": {
+    "interaction": "AI 交互",
+    "generatedOutput": "AI 生成",
+    "assistedAnalysis": "AI 辅助分析",
+    "translation": "AI 翻译"
+  },
   "actions": {
     "add": "添加",
     "apply": "应用",

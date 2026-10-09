@@ -11,6 +11,7 @@ Translation is opt-in (never automatic) so import provenance stays faithful unti
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AiDisclosure } from "./AiDisclosure";
 import { useTranslation } from "react-i18next";
 import { Languages, Loader2 } from "lucide-react";
 import type { Locale } from "@fusion/core";
@@ -524,6 +525,7 @@ function GitHubImportTranslateControls({
     >
       <div className="github-import-translate__row">
         <Languages size={14} aria-hidden="true" className="github-import-translate__icon" />
+        {hasTranslation && showingTranslation ? <AiDisclosure kind="ai-translation" compact /> : null}
         <span className="github-import-translate__message" data-testid="github-import-translate-message">
           {hasTranslation && showingTranslation
             ? t(
