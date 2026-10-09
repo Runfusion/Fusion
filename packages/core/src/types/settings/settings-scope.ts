@@ -565,6 +565,11 @@ export interface GlobalSettings {
    *  `https://api.orcarouter.ai/v1/models` into model pickers so operators can
    *  select OrcaRouter-hosted models by name. Default: true. */
   orcarouterModelSync?: boolean;
+  /** When true (default), startup syncs the Requesty managed policies from
+   *  `https://router.requesty.ai/v1/models/managed` and the full catalog from
+   *  `https://router.requesty.ai/v1/models` into model pickers so operators can
+   *  select Requesty-routed models by name. Default: true. */
+  requestyModelSync?: boolean;
   /** When true (default), checks npm for new versions of @runfusion/fusion and
    *  shows update notices in the CLI and dashboard. The actual cadence is
    *  governed by `updateCheckFrequency`. Disabled = no automatic checks at all. */

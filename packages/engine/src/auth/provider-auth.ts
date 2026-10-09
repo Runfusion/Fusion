@@ -91,6 +91,7 @@ export const BUILT_IN_API_KEY_PROVIDERS: ReadonlyArray<{ id: string; name: strin
   { id: "openrouter", name: "OpenRouter" },
   { id: "orcarouter", name: "OrcaRouter" },
   { id: "opencode-go", name: "Opencode (Go)" },
+  { id: "requesty", name: "Requesty" },
   { id: "tavily", name: "Tavily" },
   { id: "zai", name: "Zai" },
 ];

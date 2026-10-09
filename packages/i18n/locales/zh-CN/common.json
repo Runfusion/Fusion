@@ -167,6 +167,7 @@
       "openai": "",
       "openrouter": "",
       "orcarouter": "",
+      "requesty": "",
       "zai": ""
     },
     "apiKeyPlaceholder": {
@@ -184,6 +185,7 @@
       "openai": "",
       "openrouter": "",
       "orcarouter": "",
+      "requesty": "",
       "zai": ""
     },
     "apiKeyUsage": {
@@ -194,6 +196,7 @@
       "openai": "",
       "openrouter": "",
       "orcarouter": "",
+      "requesty": "",
       "zai": ""
     },
     "providerDesc": {
@@ -210,6 +213,7 @@
       "openaiCodex": "",
       "openrouter": "",
       "orcarouter": "",
+      "requesty": "",
       "zai": ""
     }
   },
