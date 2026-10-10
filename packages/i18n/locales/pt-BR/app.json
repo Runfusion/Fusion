@@ -1566,7 +1566,10 @@
     "collapseArchivedTitle": "Recolher tarefas arquivadas",
     "expandArchivedLabel": "Expandir tarefas arquivadas",
     "expandArchivedTitle": "Expandir tarefas arquivadas",
-    "failedToArchive": "Falha ao arquivar tarefas"
+    "failedToArchive": "Falha ao arquivar tarefas",
+    "archiveAllMessage_one": "",
+    "archivedTasks_one": "",
+    "archivedTasksWithSkips_one": ""
   },
   "commandCenter": {
     "activity": {
@@ -3449,7 +3452,6 @@
     "workflowLabel": "Fluxo de trabalho",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": "",
     "archiveSelected": "Arquivar selecionadas",
     "archiveSelectedTitle": "Arquivar as tarefas selecionadas que estão concluídas",
     "archiveUnavailable": "A ação de arquivar está indisponível",
@@ -3462,7 +3464,9 @@
     "bulkDeleteArchiveSummary": "{{archived}} arquivadas, {{deleted}} excluídas, {{failed}} com falha",
     "bulkDeleteNoTasks": "Nenhuma tarefa selecionada pode ser excluída (tarefas arquivadas são excluídas)",
     "bulkDeleteWithDoneMessage": "Excluir {{deletable}} tarefa(s), ou arquivar as {{done}} tarefa(s) concluídas e excluir o restante?",
-    "lineageArchiveMessage": "{{taskId}} tem filhos de linhagem ({{children}}) que a referenciam como origem.\n\nArquivar mesmo assim desvinculando essas referências primeiro?"
+    "lineageArchiveMessage": "{{taskId}} tem filhos de linhagem ({{children}}) que a referenciam como origem.\n\nArquivar mesmo assim desvinculando essas referências primeiro?",
+    "bulkArchiveDone_one": "",
+    "bulkArchiveMessage_one": ""
   },
   "mailbox": {
     "agent": "Agente",
@@ -6905,7 +6909,8 @@
       "qmdInstallFailed": "Falha ao instalar o qmd",
       "qmdInstallUnavailable": "A instalação do qmd foi concluída, mas o qmd ainda está indisponível",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "chatContextBudgetHelp": ""
     },
     "backups": {
       "02": "0 2 * * *",

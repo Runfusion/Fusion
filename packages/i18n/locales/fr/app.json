@@ -1556,7 +1556,10 @@
     "collapseArchivedTitle": "Réduire les tâches archivées",
     "expandArchivedLabel": "Développer les tâches archivées",
     "expandArchivedTitle": "Développer les tâches archivées",
-    "failedToArchive": "Échec de l’archivage des tâches"
+    "failedToArchive": "Échec de l’archivage des tâches",
+    "archiveAllMessage_one": "",
+    "archivedTasks_one": "",
+    "archivedTasksWithSkips_one": ""
   },
   "commandCenter": {
     "activity": {
@@ -3439,7 +3442,6 @@
     "statusReplan": "Replanifier",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": "",
     "archiveSelected": "Archiver la sélection",
     "archiveSelectedTitle": "Archiver les tâches sélectionnées qui sont terminées",
     "archiveUnavailable": "L’action d’archivage est indisponible",
@@ -3452,7 +3454,9 @@
     "bulkDeleteArchiveSummary": "{{archived}} archivées, {{deleted}} supprimées, {{failed}} en échec",
     "bulkDeleteNoTasks": "Aucune tâche sélectionnée ne peut être supprimée (les tâches archivées sont exclues)",
     "bulkDeleteWithDoneMessage": "Supprimer {{deletable}} tâche(s), ou archiver les {{done}} tâche(s) terminées et supprimer le reste ?",
-    "lineageArchiveMessage": "{{taskId}} a des enfants de lignage ({{children}}) qui le référencent comme parent source.\n\nArchiver quand même en dissociant d’abord ces références ?"
+    "lineageArchiveMessage": "{{taskId}} a des enfants de lignage ({{children}}) qui le référencent comme parent source.\n\nArchiver quand même en dissociant d’abord ces références ?",
+    "bulkArchiveDone_one": "",
+    "bulkArchiveMessage_one": ""
   },
   "mailbox": {
     "agent": "Agent",
@@ -6413,7 +6417,8 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "chatContextBudgetHelp": ""
     },
     "merge": {
       "abort": "",

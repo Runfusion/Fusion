@@ -1556,7 +1556,10 @@
     "collapseArchivedTitle": "Contraer tareas archivadas",
     "expandArchivedLabel": "Expandir tareas archivadas",
     "expandArchivedTitle": "Expandir tareas archivadas",
-    "failedToArchive": "No se pudieron archivar las tareas"
+    "failedToArchive": "No se pudieron archivar las tareas",
+    "archiveAllMessage_one": "",
+    "archivedTasks_one": "",
+    "archivedTasksWithSkips_one": ""
   },
   "commandCenter": {
     "activity": {
@@ -3439,7 +3442,6 @@
     "statusReplan": "Replanificar",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": "",
     "archiveSelected": "Archivar seleccionadas",
     "archiveSelectedTitle": "Archivar las tareas seleccionadas que están completadas",
     "archiveUnavailable": "La acción de archivar no está disponible",
@@ -3452,7 +3454,9 @@
     "bulkDeleteArchiveSummary": "{{archived}} archivadas, {{deleted}} eliminadas, {{failed}} fallidas",
     "bulkDeleteNoTasks": "No se puede eliminar ninguna tarea seleccionada (se excluyen las archivadas)",
     "bulkDeleteWithDoneMessage": "¿Eliminar {{deletable}} tarea(s), o archivar las {{done}} tarea(s) completadas y eliminar el resto?",
-    "lineageArchiveMessage": "{{taskId}} tiene hijos de linaje ({{children}}) que lo referencian como padre de origen.\n\n¿Archivar de todos modos desvinculando primero estas referencias?"
+    "lineageArchiveMessage": "{{taskId}} tiene hijos de linaje ({{children}}) que lo referencian como padre de origen.\n\n¿Archivar de todos modos desvinculando primero estas referencias?",
+    "bulkArchiveDone_one": "",
+    "bulkArchiveMessage_one": ""
   },
   "mailbox": {
     "agent": "Agente",
@@ -6413,7 +6417,8 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "chatContextBudgetHelp": ""
     },
     "merge": {
       "abort": "",
