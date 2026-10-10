@@ -908,8 +908,11 @@ export class TriageProcessor {
         taken off the row — `discoverReadyPlanningTasks` resolves them itself per candidate via
         `resolveWorkflowIrForTask`, and `specifyTask` re-reads the full row before plan work.
         */
+        /* FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the enumerated chain above stops at
+           `dependencies` and never reads `log`, and `specifyTask` re-reads the full row before it does
+           plan work — so the planning-admission poll can drop the heaviest column outright. */
         const tasks = await this.discoverReadyPlanningTasks(
-          await this.store.listTasks({ slim: true, includeArchived: false, derive: false }),
+          await this.store.listTasks({ slim: true, includeArchived: false, derive: false, excludeLog: true }),
           now,
         );
         return tasks.filter((task) => !this.coordinatorAdmittedTaskIds.has(task.id)).map((task) => ({
@@ -1284,8 +1287,10 @@ export class TriageProcessor {
     This sweep filters on `status`, keys by `id`, and then calls `updateTask(id, { status: null })`.
     Two persisted fields, no board badge, so the derivation block is pure waste here.
     */
+    /* FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): two persisted fields decide this sweep, so
+       the log column is 100% of its read cost and 0% of its input. */
     const swept = await Promise.all(
-      sweepColumns.map((column) => this.store.listTasks({ column, slim: true, derive: false })),
+      sweepColumns.map((column) => this.store.listTasks({ column, slim: true, derive: false, excludeLog: true })),
     );
     const seen = new Set<string>();
     const stale = swept.flat().filter((t) => {
@@ -2549,7 +2554,9 @@ export class TriageProcessor {
       them reads a derived badge, so `derive: false`.
       */
       // Fetch all tasks (not just triage) to count active agents across columns.
-      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false, derive: false });
+      /* FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the engine's hottest board read, and the
+         audit above names every field its five consumers touch — `log` is not among them. */
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false, derive: false, excludeLog: true });
       const now = Date.now();
 
       await this.sweepStalePlanningStatuses(allTasks, now);

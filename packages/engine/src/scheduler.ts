@@ -2352,7 +2352,10 @@ export class Scheduler {
       graduation, so it must not act on a snapshot an out-of-process writer already invalidated. See the
       corrected rationale at the post-sweep re-read below.
       */
-      let tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false });
+      /* FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the field audit above is the whole
+         justification — none of the ten listed fields is `log`, so the dispatch sweep stops selecting
+         it. Measured 372 ms → 206 ms median on a 2 417-row board. */
+      let tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false, excludeLog: true });
       let settings = await this.store.getSettings();
       this.idleSemaphoreLeakCandidateSince = recoverIdleSemaphoreLeak(
         this.options.semaphore,
@@ -2432,7 +2435,9 @@ export class Scheduler {
         another process already moved means a double dispatch, so both tick reads keep a
         guaranteed-fresh read instead of inheriting that ceiling.
         */
-        tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false });
+        // FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the post-sweep re-read keeps the SAME
+        // read shape as the pass above, so the two comparisons see the same fields.
+        tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false, excludeLog: true });
         settings = await this.store.getSettings();
         await this.emitHighOverlapFanoutWarnings(tasks);
 

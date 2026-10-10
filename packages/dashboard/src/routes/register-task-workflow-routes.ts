@@ -1468,7 +1468,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // in 21.7 s, of which 8.07 MB came from the Done lane and 4.6 MB of that was exactly the
         // fields `compactBoardFeedRow` drops (`workflowStepResults` bodies 2.35 MB + `summary`
         // 2.26 MB). A caller that needs reviewer bodies asks for them on `GET /api/tasks/:id`.
-        const listOptions = { limit, offset, slim: true, compactBoardFeed: true, includeArchived: false, ...(includeDeleted ? { includeDeleted } : {}), ...(column ? { column } : {}), ...(excludeColumns ? { excludeColumns } : {}) };
+        /*
+        FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): `excludeLog` is what the comment above this
+        line has always claimed — the heavy agent log is genuinely not selected now, instead of being
+        read and then stripped before the response. It became safe because the five log-derived board
+        figures (`timedExecutionMs`, `stalledReview`, `inReviewStall(ed)`, `stallReason`) are computed at
+        WRITE time into `timing_total_ms` + `log_recent`; before that, dropping the column while
+        deriving would have blanked a badge. `slim` already returned `log: []`, so the response body is
+        unchanged byte-for-byte — `task-log-projections.pg.test.ts` asserts that identity.
+        */
+        const listOptions = { limit, offset, slim: true, excludeLog: true, compactBoardFeed: true, includeArchived: false, ...(includeDeleted ? { includeDeleted } : {}), ...(column ? { column } : {}), ...(excludeColumns ? { excludeColumns } : {}) };
         tasks = await scopedStore.listTasks(listOptions);
       }
 

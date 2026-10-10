@@ -47,6 +47,8 @@ import {
   TASK_JSONB_COLUMNS,
   type TaskPersistSerializationContext,
 } from "../persistence.js";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): see `updateTaskColumns` for the invariant. */
+import { withTaskLogProjections } from "../task-log-projections.js";
 
 /**
  *FNXC:TaskStorePersistence 2026-06-24-13:05:
@@ -82,8 +84,14 @@ const LIST_READ_OMITTED_COLUMNS: ReadonlySet<string> = new Set(["searchVector"])
  * The full-row live-list column set: every column except the never-addressed ones.
  * Used where `log` must still be fetched (deriving consumers), replacing the bare
  * `.select()` that used to mean `SELECT *`.
+ *
+ * FNXC:TaskLogProjections 2026-10-10-21:28 (RUFU-615): exported (with the slim projection below) because
+ * this task's acceptance contract is stated about the SQL — "the executed SELECT for the
+ * `derive:true + excludeLog:true` shape does not reference the `log` column". Asserting a test-local copy
+ * of the projection would prove nothing about what the reader actually sends, so the objects themselves
+ * are the observable surface. Nothing outside tests imports them.
  */
-const TASK_READ_PROJECTION: Record<string, PgColumn> = Object.fromEntries(
+export const TASK_READ_PROJECTION: Record<string, PgColumn> = Object.fromEntries(
   Object.entries(schema.project.tasks)
     .filter(([, value]) => is(value, Column))
     .filter(([key]) => !LIST_READ_OMITTED_COLUMNS.has(key))
@@ -113,7 +121,7 @@ const TASK_READ_PROJECTION: Record<string, PgColumn> = Object.fromEntries(
  * Computed once at module load (the schema is static); `log` is restored to
  * `[]` by `pgRowToTaskRow` / `rowToTask` when a single task is fetched in full.
  */
-const TASK_SLIM_PROJECTION: Record<string, PgColumn> = Object.fromEntries(
+export const TASK_SLIM_PROJECTION: Record<string, PgColumn> = Object.fromEntries(
   Object.entries(schema.project.tasks)
     .filter(([, value]) => is(value, Column))
     .filter(([key]) => key !== "log")
@@ -776,10 +784,18 @@ export async function updateTaskColumns(
   id: string,
   updates: Record<string, unknown>,
 ): Promise<void> {
-  if (Object.keys(updates).length === 0) return;
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  THE WRITE PAIRING, targeted-UPDATE half. `logEntryImpl` and friends write `log` without going through
+  the column descriptors, so this is the central place where the two derived columns get recomputed from
+  the array the statement is about to store. Doing it here rather than at each call site is what keeps
+  the invariant true for the next log writer nobody has enumerated yet.
+  */
+  const withProjections = withTaskLogProjections(updates);
+  if (Object.keys(withProjections).length === 0) return;
   await layer.db
     .update(schema.project.tasks)
-    .set(updates as never)
+    .set(withProjections as never)
     .where(and(
       eq(schema.project.tasks.projectId, layer.projectId?.trim() || "__legacy_unscoped__"),
       eq(schema.project.tasks.id, id),

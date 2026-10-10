@@ -106,7 +106,10 @@ FNXC:ReviewLaneDispatch 2026-09-18-13:40 (sync the FN-511..526 wave): upstream r
 /* FNXC:MigrationVersionCollision 2026-10-01-15:26: upstream FN-9429 claimed 0086, the slot this line had already given its review-lane ledger, so one marker named two migrations. The ledger is re-issued at 0088 and FN-9429's receipts at 0089; the ceiling tracks the highest file so no boot can call a migration it just applied a newer Fusion's write. */
 /* FNXC:MigrationVersionCollision 2026-10-05-08:52 (merge origin/main): upstream FN-9439 shipped PR readiness as 0087, the slot this line already gave its overlap-owner FK repair, so the incoming migration re-issues at 0090 — the same rule that moved FN-9429's receipts to 0089 — and the ceiling follows the highest bundled file. */
 /* FNXC:MigrationVersionCollision 2026-10-08-13:06 (merge origin/main): upstream FN-9512 shipped the recovery-disposition column as 0088, the slot this line already gave its review-lane ledger, so the incoming migration re-issues at 0091 and the ceiling tracks the highest bundled file. A DB that ran an upstream build carries marker 0088 for the OTHER meaning — that ambiguity is why the slots are never reused, and it is the reason the ceiling must never sit below the highest file. */
-export const SCHEMA_BASELINE_VERSION = "0091";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): the ceiling includes the derived task-log projection
+ * columns, so neither an upgraded nor a freshly-opened database can be told it carries a newer Fusion's
+ * write. */
+export const SCHEMA_BASELINE_VERSION = "0092";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -336,6 +339,12 @@ export const PULL_REQUEST_READINESS_VERSION = "0090";
  * must stay equal — migration-wiring-integrity.test.ts requires every `^\d{4}_` file to be named in this source.
  */
 export const RECOVERY_DISPOSITION_VERSION = "0091";
+/**
+ * RUFU-615: `tasks.timing_total_ms` + `tasks.log_recent` and their one-time backfill. The marker value
+ * and the .sql basename stay equal, and the file is registered below rather than left to a scan — an
+ * unwired `.sql` in `migrations/` silently never runs.
+ */
+export const TASK_LOG_PROJECTIONS_VERSION = "0092";
 
 /** FNXC:MemoryFocus 2026-08-21-06:10: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060, then 0061, then 0065: the upstream FN-066..FN-101 batch (2026-08-21) owns 0061-0064 (activity-log index, splitting removal, AI-merge review, repository scope). */
 /* FNXC:MemoryFocus 2026-08-23-07:07: renumbered 0065 -> 0066 in the RUFU-160 origin/main merge: origin/main independently shipped 0065 as FN-149's review-convergence migration (v0.77.0-beta.7); keeping both lines' migrations requires the deploy-line file to take the next free sequence. */
@@ -643,6 +652,8 @@ const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR
 const PULL_REQUEST_READINESS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0090_fn_9439_pull_request_readiness.sql");
 /* FNXC:MigrationVersionCollision 2026-10-08-13:06: upstream shipped this as `0088_fn_9512_recovery_disposition.sql`; renamed locally so the file prefix matches the re-issued 0091 version. */
 const RECOVERY_DISPOSITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0091_fn_9512_recovery_disposition.sql");
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): explicit registration; see TASK_LOG_PROJECTIONS_VERSION. */
+const TASK_LOG_PROJECTIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0092_rufu_615_task_log_projections.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -802,6 +813,7 @@ export async function applySchemaBaseline(
     const staleReviewCallbackWaiverReceiptsAlreadyApplied = applied.includes(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION);
     const pullRequestReadinessAlreadyApplied = applied.includes(PULL_REQUEST_READINESS_VERSION);
     const recoveryDispositionAlreadyApplied = applied.includes(RECOVERY_DISPOSITION_VERSION);
+    const taskLogProjectionsAlreadyApplied = applied.includes(TASK_LOG_PROJECTIONS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -2028,6 +2040,20 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(RECOVERY_DISPOSITION_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${RECOVERY_DISPOSITION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+    The two derived columns must exist and be populated BEFORE the read path may ask for a `log`-free
+    board read, which is why the backfill rides the migration rather than a background sweep: a one-time
+    cost of seconds is acceptable here, a per-read cost is what the rejected prototype proved it is not.
+    The DDL is `ADD COLUMN IF NOT EXISTS` and the backfill only picks rows whose derived columns are
+    still NULL, so a re-run after a partial apply is safe and idempotent.
+    */
+    if (!taskLogProjectionsAlreadyApplied) {
+      const migrationSql = await readFile(TASK_LOG_PROJECTIONS_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_LOG_PROJECTIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

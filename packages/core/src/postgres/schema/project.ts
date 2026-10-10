@@ -31,6 +31,7 @@ import {
   integer,
   bigint,
   real,
+  doublePrecision,
   jsonb,
   primaryKey,
   foreignKey,
@@ -222,6 +223,27 @@ export const tasks = projectSchema.table("tasks", {
   steps: jsonb("steps").default([]),
   stepReports: jsonb("step_reports").default([]),
   log: jsonb("log").default([]),
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  Two narrow, write-time-maintained columns that carry everything the five log-derived read signals
+  consume, so a board refresh never has to read `log` (31.4 MB / 42.7% of live-row bytes measured).
+  A SQL-side derivation of the same signals was measured at 4.5-11.5 s of PostgreSQL CPU per full-board
+  read and rejected; the arithmetic runs where the full log is already in memory, at write time.
+
+  `double precision`, not the `bigint` the plan named, for one reason: `computeTimedExecutionMs` sums
+  `Number(match)` values and a `\`[timing\`\] … in 1.5ms\` line is legal, so an integer column would
+  round the figure the card displays. Both types are 8 bytes, so exactness cost nothing. Maintained by
+  `task-store/task-log-projections.ts` — never written independently of `log`.
+  */
+  timingTotalMs: doublePrecision("timing_total_ms"),
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  The bounded timestamp-signal envelope (max log ts, max stall-surfaced ts, capped windowed match
+  timestamp arrays, the trailing identical-stall run) that replaces the four log-derived stall signals.
+  Kept under `LOG_RECENT_INLINE_BYTE_BUDGET` deliberately: an envelope that overflowed into TOAST would
+  reintroduce the per-read amplification this pair exists to remove.
+  */
+  logRecent: jsonb("log_recent"),
   attachments: jsonb("attachments").default([]),
   steeringComments: jsonb("steering_comments").default([]),
   comments: jsonb("comments").default([]),

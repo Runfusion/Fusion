@@ -6,6 +6,9 @@ import type { OverlapWaitClaim, OverlapWaitDeliverySnapshot, OverlapWaitExecutio
 import type { TaskStore } from "../store.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { getTaskActivityLogEntryLimit, truncateTaskLogOutcome } from "./comments.js";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): this raw `tx.update(tasks).set({ log })` bypasses
+ * `updateTaskColumns`, so it pairs the derived columns itself. */
+import { withTaskLogProjections } from "./task-log-projections.js";
 import { overlapDeliverySnapshots, observedOverlapDeliveries, mergeOverlapDeliverySnapshots } from "../tasks/overlap-wait-release.js";
 
 /*
@@ -338,7 +341,7 @@ export async function completeTaskOverlapWaitImpl(
         log.push({ timestamp: now, dedupeKey, action: `Overlap wait released behind ${rows[0].blockerTaskId}`, outcome: truncateTaskLogOutcome(`${input.receipt.commonFiles.length} common files; decision=${input.receipt.decision}; freshness=${input.receipt.freshness}`) });
         const limit = getTaskActivityLogEntryLimit();
         if (log.length > limit) log.splice(0, log.length - limit);
-        await tx.update(schema.project.tasks).set({ log }).where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, input.taskId)));
+        await tx.update(schema.project.tasks).set(withTaskLogProjections({ log })).where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, input.taskId)));
       }
     }
     return mapRow(updated[0]);

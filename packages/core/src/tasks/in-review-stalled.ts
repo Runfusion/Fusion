@@ -1,5 +1,13 @@
 import { isActiveMergeStatus } from "../merge/active-merge-status.js";
 import { IN_REVIEW_STALL_LOG_PREFIX } from "./in-review-stall.js";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): projection-backed answers for the two log readers
+ * below, used ONLY when the caller says the row did not carry the `log` column. */
+import {
+  latestLogTimestampFromProjection,
+  projectionOverride,
+  stallSurfacedAtFromProjection,
+  type TaskLogRecentEnvelope,
+} from "../task-store/task-log-projections.js";
 import type { Task } from "../types.js";
 
 export type InReviewStalledCode = "in-review-stalled";
@@ -37,6 +45,14 @@ export interface InReviewStalledContext {
   executingTaskIds?: ReadonlySet<string>;
   engineActiveSinceMs?: number;
   engineActivationGraceMs?: number;
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  `logLoaded: false` plus an envelope is the ONLY way a caller can ask for the projection path; omitted
+  or `logLoaded: true` keeps the log arithmetic below byte-identical to today. That is deliberate — a
+  shared loader that still selects `log` must never silently change what a badge means.
+  */
+  logLoaded?: boolean;
+  projection?: TaskLogRecentEnvelope | null;
 }
 
 export const DEFAULT_IN_REVIEW_STALLED_THRESHOLD_MS = 24 * 60 * 60_000;
@@ -74,9 +90,22 @@ export function getInReviewStalledSignal(
   if (!Number.isFinite(thresholdMs) || thresholdMs <= 0) return undefined;
 
   const now = context.now ?? Date.now();
-  if (hasRecentReasonDrivenStall(task.log ?? [], now - thresholdMs)) return undefined;
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  The stored value is the MAX timestamp over every stall-prefixed entry; the LIVE `thresholdMs` is applied
+  here rather than baked into the column, so raising `settings.inReviewStalledThresholdMs` changes the
+  answer on the next read instead of freezing yesterday's threshold into stored data.
+  */
+  const surfaced = projectionOverride(context);
+  const recentReasonDriven = surfaced
+    ? (() => {
+        const at = stallSurfacedAtFromProjection(surfaced);
+        return at.ms !== null && at.ms >= now - thresholdMs;
+      })()
+    : hasRecentReasonDrivenStall(task.log ?? [], now - thresholdMs);
+  if (recentReasonDriven) return undefined;
 
-  const lastActivity = getLastActivity(task);
+  const lastActivity = getLastActivity(task, context);
   if (!lastActivity) return undefined;
 
   const activationFloorMs = getActivationFloorMs(context);
@@ -129,10 +158,19 @@ function hasRecentReasonDrivenStall(log: readonly Pick<Task["log"][number], "act
   return Number.isFinite(latestTime) && latestTime >= floor;
 }
 
-function getLastActivity(task: InReviewStalledTask): ActivityCandidate | undefined {
+function getLastActivity(task: InReviewStalledTask, context?: InReviewStalledContext): ActivityCandidate | undefined {
   const candidates: ActivityCandidate[] = [];
 
-  const logTime = getLatestLogTimestamp(task.log ?? []);
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  `getLatestLogTimestamp` is a MAX over the WHOLE log, which is precisely why `log_recent` stores that
+  MAX (`latestAt`) instead of a tail slice: a slice loses the maximum whenever timestamps are
+  non-monotonic. `-Infinity` means "no log candidate", the same answer the loop below gives.
+  */
+  const surfaced = projectionOverride(context);
+  const logTime = surfaced
+    ? latestLogTimestampFromProjection(surfaced).ms
+    : getLatestLogTimestamp(task.log ?? []);
   if (Number.isFinite(logTime)) {
     candidates.push({ time: logTime, source: "log", tiePriority: 0 });
   }

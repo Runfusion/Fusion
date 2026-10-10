@@ -28,6 +28,8 @@ import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../tasks/task-age-staleness.js";
 import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {detectStalledReview} from "../tasks/stalled-review-detector.js";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): defensive read of the `log_recent` envelope for rows read without `log`. */
+import { parseTaskLogRecent } from "./task-log-projections.js";
 import {computeRetrySummary} from "../tasks/retry-summary.js";
 import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
 // FNXC:PostMergeGateOperatorWaiver 2026-09-29-15:49 (RUFU-408): the bypass affordance must ask about the post-merge gates too.
@@ -643,30 +645,24 @@ export interface ListTasksOptions {
   */
   derive?: boolean;
   /*
-  FNXC:ListTasksExcludeLog 2026-09-09-01:48 (RUFU-202):
-  Drops the `log` jsonb column from the SQL projection for a consumer that provably never reads it.
-  On the live RunFusion board `log` is the single heaviest column (~11 KB/row) and the hold-release
-  sweep fetched it once per scheduler pass without ever reading it, so the projection was paying
-  ~14 MB per pass for a column nothing consumed.
+  FNXC:ListTasksExcludeLog 2026-10-10-19:13 (RUFU-615): SUPERSEDES the "documented no-op" contract.
+  `excludeLog: true` is now effective on its own. It used to be gated behind `derive: false` because
+  `log` was a derivation INPUT — `stalledReview`, `inReviewStall*` and `timedExecutionMs` were computed
+  from log entries before any wire stripping, so dropping the column would have silently disabled two
+  board badges (FNXC:TaskStoreReads 2026-07-05-15:30). Those five derivations now read the write-time
+  columns `timing_total_ms` and `log_recent` instead (see `task-store/task-log-projections.ts`), so a
+  deriving caller can ask for a `log`-free row and still get byte-identical badges — proven by
+  `__tests__/postgres/task-log-projections.pg.test.ts`.
 
-  Only effective alongside `derive: false`. With derivation on, `log` is a derivation INPUT —
-  `stalledReview` and `timedExecutionMs` are computed from log entries before any wire stripping —
-  so dropping it would silently disable two board badges (FNXC:TaskStoreReads 2026-07-05-15:30).
-  Passing `excludeLog` with derivation on is therefore a documented no-op, not a badge regression.
+  `slim` alone still does NOT drop the column while deriving: engine sweeps call `listTasks({slim:true})`
+  with derivation left on and read `log` MARKERS out of the rows they get back, so flipping `slim`
+  would prune a column a shared loader's consumers still read. Only an explicit `excludeLog` does that,
+  per call site, which keeps every existing caller's SQL shape untouched.
 
-  This is deliberately NOT `slim: true`. `slim` bundles three unrelated contracts, and the one that
-  matters here is `finalizeSlimListTask`: it re-parses PROMPT.md for EVERY task whose persisted
-  `steps` is empty. `parseStepsFromPromptImpl` is not memoised (one `existsSync` + one `readFile`
-  per such task per call), so `slim` trades a 14 MB column fetch for unbounded per-pass file I/O
-  whose size is only knowable from a live census. A board sweep that never reads `steps` has no
-  business paying it. `excludeLog` buys the column saving with zero file reads and zero other field
-  drops, so the release-decision fields (`prompt`, `description`, `paused*`, `workflowStepResults`)
-  stay byte-identical to the non-slim row. `slim` also blanks `prInfo`/`review`/`attachments` and
-  re-syncs `steps`, any of which could change a release decision on an unrelated future call site.
-
-  The startup memo needs no key extension: it is gated on `slim`, so a non-slim `excludeLog` read
-  can never enter it, and for slim-eligible shapes the effective decision depends only on `derive`,
-  which is already a key component.
+  This is still deliberately NOT `slim: true`: `slim` bundles three unrelated contracts, and the one
+  that matters here is `finalizeSlimListTask`, which re-parses PROMPT.md for EVERY task whose persisted
+  `steps` is empty — an unbounded per-pass file read whose cost is only knowable from a live census.
+  A consumer that wants badges and no log wants `excludeLog`, not `slim`.
   */
   excludeLog?: boolean;
 }
@@ -915,8 +911,17 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     way to ask for the drop: an explicitly opted-out non-slim consumer may now request it per call
     site. So the gate is `derivation off AND (slim || caller asked)` — derivation on always keeps
     `log`, and derivation off only drops it when somebody declared they do not read it.
+
+    FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+    The `!deriveUiSignals` veto is GONE, and that is the whole point of the two new columns. `log` was a
+    derivation input only because the five log-derived signals were computed here; they now read
+    `timing_total_ms` + `log_recent`, so an explicit `excludeLog: true` reaches the SELECT even while
+    deriving and the badges stay byte-identical (proven in
+    `__tests__/postgres/task-log-projections.pg.test.ts`). `slim` alone still cannot drop the column
+    while deriving: the engine's `slim` sweeps read `task.log` MARKERS out of the rows they get back, and
+    no shared loader may lose `log` — only a caller that asked per call site does.
     */
-    const effectiveExcludeLog = !deriveUiSignals && (slim || options?.excludeLog === true);
+    const effectiveExcludeLog = options?.excludeLog === true || (!deriveUiSignals && slim);
     const filteredRows = await readLiveTaskRows(layer, {
       ...(effectiveExcludeLog ? { excludeLog: true } : {}),
       includeDeleted: options?.includeDeleted,
@@ -956,6 +961,20 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     const tasks = await Promise.all(filteredRows.map(async (pgRow) => {
       const row = store.pgRowToTaskRow(pgRow);
       const task = store.rowToTask(row);
+      /*
+      FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+      Whether THIS row carried the column is what decides which path answers the log-derived signals —
+      not an option flag, because the projection gate above already resolved the flag into a SELECT.
+      `pgRowToTaskRow` hydrates an absent `log` to `[]`, which is otherwise indistinguishable from an
+      empty history, so the check runs on the RAW row before mapping.
+
+      With the column loaded, the log path below runs unchanged and byte-identical: the projection is
+      never preferred over the data it was derived from. Equality of the two paths is asserted in tests
+      (`task-log-projections.pg.test.ts`), never paid for on the hot read path.
+      */
+      const logLoaded = pgRow.log !== undefined;
+      const logProjections = logLoaded ? null : parseTaskLogRecent(pgRow.logRecent);
+      const timingTotalMs = typeof pgRow.timingTotalMs === "number" ? pgRow.timingTotalMs : 0;
       if (deriveFeed === null) {
         /*
         FNXC:ListTasksDeriveOptOut 2026-09-08-20:58 (RUFU-201):
@@ -1014,6 +1033,8 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
+        logLoaded,
+        projection: logProjections,
       } satisfies InReviewStalledContext);
       task.stalePausedTodo = getStalePausedTodoSignal(task, {
         now,
@@ -1050,7 +1071,7 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
         if (!(err instanceof RangeError)) throw err;
         task.ageStaleness = undefined;
       }
-      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now, reviewColumns: reviewColumnsForRow });
+      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now, reviewColumns: reviewColumnsForRow, logLoaded, projection: logProjections });
       task.retrySummary = computeRetrySummary(task);
       /* FNXC:TaskStallReason 2026-09-01-15:35 (RUFU-174): parity with getTaskImpl above — same
          helper, same inputs, same suppression rule (merge-queued OR fresh agent-log activity),
@@ -1071,7 +1092,13 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
          and the capability reaches the slim board row the context menu renders from. */
       task.reviewBypass = await resolveReviewBypassForTask(store, task, listPassIrCache, listPassSelectionCache);
       if (slim) {
-        task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
+        /*
+        FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+        `timedExecutionMs` is the only figure that summed the WHOLE log, which is why `timing_total_ms`
+        is unwindowed and maintained per write. When the column was loaded the same exported function
+        still runs over it; when it was not, the stored sum answers with the identical arithmetic.
+        */
+        task.timedExecutionMs = logLoaded ? store.computeTimedExecutionMs(task.log) : timingTotalMs;
         task.log = [];
       }
       if (options?.compactBoardFeed) compactBoardFeedRow(task);
@@ -1287,6 +1314,15 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
       ...columnScope,
       includeArchived: false,
       slim: true,
+      /*
+      FNXC:TaskLogProjections 2026-10-10-20:01 (RUFU-615): the hot board feed drops `log` while still
+      deriving. Before RUFU-615 this combination was a documented no-op — the five log-derived signals
+      were computed FROM the column, so asking for badges and the drop together returned the whole
+      column (31.4 MB of 73.6 MB of live-row bytes, measured). They are now read from
+      `timing_total_ms` + `log_recent`, both written with the log they summarise, so the badges survive
+      the drop. `task-log-projections.pg.test.ts` proves the five figures are deep-equal either way.
+      */
+      excludeLog: true,
       compactBoardFeed: true,
       limit: limit + 1,
       sort: "created-asc",
@@ -1376,6 +1412,9 @@ export async function listTaskQueuePageImpl(store: TaskStore, options: TaskQueue
       columns: columns as ColumnId[],
       includeArchived: false,
       slim: true,
+      // FNXC:TaskLogProjections 2026-10-10-20:01 (RUFU-615): same settlement as the board page above —
+      // a lane-scoped feed reads badges from the write-time projections, not from the log column.
+      excludeLog: true,
       limit: limit + 1,
       sort: order === "intake" ? "intake-desc" : "queue-order",
       startupMemo: false,

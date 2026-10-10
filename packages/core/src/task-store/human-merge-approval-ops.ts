@@ -20,6 +20,7 @@ transaction owns a non-reentrant lock, and the model, push and provider calls ha
 */
 
 import { and, eq, isNull } from "drizzle-orm";
+import { withTaskLogProjections } from "./task-log-projections.js";
 
 import { toJson } from "../db/db.js";
 import * as schema from "../postgres/schema/index.js";
@@ -129,11 +130,13 @@ async function withHumanMergeApprovalTransaction(
       if ("refusal" in computed) return { applied: false, reason: computed.refusal, detail: computed.detail };
       if ("replayOnly" in computed) return { applied: true, task: current, replayed: true };
 
-      const [updatedRow] = await tx.update(schema.project.tasks).set({
+      /* FNXC:TaskLogProjections 2026-10-10-20:01 (RUFU-615): this statement writes `log`, so the two
+         derived columns must ride with it — see the pairing invariant in task-log-projections.ts. */
+      const [updatedRow] = await tx.update(schema.project.tasks).set(withTaskLogProjections({
         humanMergeApproval: computed.state === null ? null : toJson(computed.state),
         log: toJson(appendLog(current, computed.logEntry)),
         updatedAt: new Date().toISOString(),
-      }).where(and(
+      })).where(and(
         eq(schema.project.tasks.id, id),
         eq(schema.project.tasks.projectId, layer.projectId ?? schema.project.tasks.projectId),
         isNull(schema.project.tasks.deletedAt),

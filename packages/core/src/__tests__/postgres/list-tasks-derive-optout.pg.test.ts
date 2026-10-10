@@ -392,7 +392,17 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
     expect(row.description).toContain("RUFU-201 probe");
   });
 
-  it("ignores excludeLog while derivation is on, so it cannot disable a board badge", async () => {
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): this test asserted the OPPOSITE contract.
+  It pinned `excludeLog` as a documented NO-OP while deriving, on the reasoning that
+  `stalledReview`/`timedExecutionMs` are derived FROM the log so a caller could not ask for both.
+  That premise is what RUFU-615 removed: the five log-derived signals are now computed at WRITE time
+  into `timing_total_ms` + `log_recent`, so a deriving caller can drop the column and keep every badge.
+  Weakening the assertion would be the wrong fix — the guarantee it existed to protect ("a board badge
+  cannot be switched off by a bandwidth option") is now asserted directly, by comparing the derived
+  fields against a read that did load the log.
+  */
+  it("honours excludeLog while deriving AND keeps every log-derived figure it protects", async () => {
     await seedInProgressCard("RUFU-9208");
     const store = h.store();
     const parsedRowKeys: string[][] = [];
@@ -402,8 +412,15 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
       return parseOriginal(pgRow);
     };
 
-    // FNXC:TaskStoreReads 2026-07-05-15:30 — `stalledReview`/`timedExecutionMs` are derived FROM the
-    // log, so a caller cannot ask for both derivation and the drop. This is the documented no-op.
+    // Control first: what the same card reports when the log IS loaded.
+    const withLog = await store.listTasks({ column: "in-progress", slim: true, startupMemo: false });
+    expect(withLog).toHaveLength(1);
+    expect(parsedRowKeys.length).toBeGreaterThan(0);
+    for (const keys of parsedRowKeys) {
+      expect(keys).toContain("log");
+    }
+
+    parsedRowKeys.length = 0;
     const rows = await store.listTasks({
       column: "in-progress",
       slim: true,
@@ -412,11 +429,13 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
     });
 
     expect(rows).toHaveLength(1);
-    expect(parsedRowKeys.length).toBeGreaterThan(0);
+    // The projection is real now: the column was never selected, yet the figure it produced survives.
     for (const keys of parsedRowKeys) {
-      expect(keys).toContain("log");
+      expect(keys).not.toContain("log");
     }
     expect(rows[0]!.timedExecutionMs).toBeDefined();
+    expect(rows[0]!.timedExecutionMs).toEqual(withLog[0]!.timedExecutionMs);
+    expect(rows[0]!.stalledReview).toEqual(withLog[0]!.stalledReview);
   });
 
   it("keeps archived cards off the board for an excludeLog read", async () => {

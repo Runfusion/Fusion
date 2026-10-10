@@ -132,6 +132,7 @@ import {
   STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
   PULL_REQUEST_READINESS_VERSION,
   RECOVERY_DISPOSITION_VERSION,
+  TASK_LOG_PROJECTIONS_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -247,7 +248,12 @@ describe("schema-applier: immutable migration identities", () => {
     change — which is what makes renumbering a published identity survivable here.
     */
     expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0089");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0091");
+    /*
+    FNXC:TaskLogProjections 2026-10-10-19:55 (RUFU-615): 0092 (task-log projections) is the new ceiling.
+    Kept as the single ceiling equality this file allows; an incoming upstream 0092 renumbers onto 0093
+    by the convention documented just below rather than by editing this line twice.
+    */
+    expect(SCHEMA_BASELINE_VERSION).toBe("0092");
 
       /*
       FNXC:MigrationVersionCollision 2026-10-05-09:43 (merge origin/main, upstream FN-9439):
@@ -2297,6 +2303,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
     RECOVERY_DISPOSITION_VERSION,
+    TASK_LOG_PROJECTIONS_VERSION,
       /* FNXC:MigrationCollisionRepair 2026-10-05-11:29: this fork records the non-numeric repair
       identity and ORDER BY version is TEXT, so it sorts after every numeric slot. Keep it last. */
       MIXED_0065_REPAIR_VERSION,
@@ -2626,6 +2633,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
     RECOVERY_DISPOSITION_VERSION,
+    TASK_LOG_PROJECTIONS_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);
@@ -2770,6 +2778,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
     RECOVERY_DISPOSITION_VERSION,
+    TASK_LOG_PROJECTIONS_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);

@@ -1,4 +1,5 @@
 import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+import { withTaskLogProjections } from "./task-log-projections.js";
 /* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 import { createLogger } from "../process/logger.js";
 import { resolveLegacyStampReviewColumns } from "./task-store-helpers.js";
@@ -642,7 +643,13 @@ export async function publishReviewRemediationFencedImpl(
         values.postReviewFixCount = patch.postReviewFixCount ?? 0;
       }
 
-      const [updatedRow] = await tx.update(schema.project.tasks).set(values).where(and(
+      /*
+      FNXC:TaskLogProjections 2026-10-10-20:01 (RUFU-615): `values.log` is assigned conditionally above,
+      so this is a log write the pairing invariant covers, and the `.set(values)` shape is exactly what a
+      literal source scan cannot see. `withTaskLogProjections` derives only when the `log` key is really
+      on the record, so a patch that never touched the log keeps its envelope untouched.
+      */
+      const [updatedRow] = await tx.update(schema.project.tasks).set(withTaskLogProjections(values) as typeof values).where(and(
         eq(schema.project.tasks.id, id),
         taskProjectScope(layer),
         isNull(schema.project.tasks.deletedAt),
@@ -744,7 +751,8 @@ export async function issueStaleReviewCallbackWaiverImpl(
       const nextResults = [...(current.workflowStepResults ?? [])];
       nextResults[index] = { ...prior, status: "skipped", completedAt: issuedAt, priorAttempts: [prior, ...(prior.priorAttempts ?? [])].slice(0, 5), automatedStaleCallbackWaiver: { receiptId: receipt.id, policyVersion: receipt.policyVersion, actor: receipt.actor, reason: receipt.reason, issuedAt, priorStatus: issue.expectedStatus, attemptId: issue.attemptId } };
       const log = [...(current.log ?? []), { timestamp: issuedAt, action: "System waived a proven stale code-review callback after the safety wait." }];
-      const [updatedRow] = await tx.update(schema.project.tasks).set({ workflowStepResults: nextResults, log, updatedAt: issuedAt }).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer), isNull(schema.project.tasks.deletedAt))).returning();
+      // FNXC:TaskLogProjections 2026-10-10-20:01 (RUFU-615): log write → derived pair rides with it.
+      const [updatedRow] = await tx.update(schema.project.tasks).set(withTaskLogProjections({ workflowStepResults: nextResults, log, updatedAt: issuedAt })).where(and(eq(schema.project.tasks.id, id), taskProjectScope(layer), isNull(schema.project.tasks.deletedAt))).returning();
       if (!updatedRow) return { applied: false, reason: "task-missing" };
       return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)), receipt };
     });
@@ -780,11 +788,12 @@ export async function updateWorkflowStepResultsWithLogFencedImpl(
       const entryLimit = getTaskActivityLogEntryLimit();
       if (log.length > entryLimit) log.splice(0, log.length - entryLimit);
 
-      const [updatedRow] = await tx.update(schema.project.tasks).set({
+      // FNXC:TaskLogProjections 2026-10-10-20:01 (RUFU-615): log write → derived pair rides with it.
+      const [updatedRow] = await tx.update(schema.project.tasks).set(withTaskLogProjections({
         workflowStepResults: patch.workflowStepResults ?? [],
         log,
         updatedAt: new Date().toISOString(),
-      }).where(and(
+      })).where(and(
         eq(schema.project.tasks.id, id),
         taskProjectScope(layer),
         isNull(schema.project.tasks.deletedAt),

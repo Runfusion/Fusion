@@ -360,7 +360,14 @@ describe("GET /tasks", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
-    expect(store.listTasks).toHaveBeenCalledWith({ limit: 10, offset: 5, slim: true, compactBoardFeed: true, includeArchived: false });
+    /*
+    FNXC:TaskLogProjections 2026-10-10-21:42 (RUFU-615): `excludeLog` joined this expectation because the
+    board feed stopped selecting the ~31 MB `log` column. It is asserted, not tolerated: the route's whole
+    claim is that the five log-derived figures survive without the column, so a shape that dropped the
+    opt-out (back to the megabyte read) or added `derive: false` (blanking the badges) is a regression.
+    */
+    expect(store.listTasks).toHaveBeenCalledWith({ limit: 10, offset: 5, slim: true, excludeLog: true, compactBoardFeed: true, includeArchived: false });
+    expect((store.listTasks as ReturnType<typeof vi.fn>).mock.calls[0]![0]).not.toMatchObject({ derive: false });
   });
 
   it.each(["triage", "todo", "in-progress"] as const)(
@@ -385,6 +392,7 @@ describe("GET /tasks", () => {
         limit: 20,
         offset: undefined,
         slim: true,
+        excludeLog: true,
         compactBoardFeed: true,
         includeArchived: false,
         column,

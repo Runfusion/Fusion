@@ -1,4 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
+import { withTaskLogProjections } from "./task-log-projections.js";
 import type { TaskStore } from "../store.js";
 import type { Task, TaskOverlapWait } from "../types.js";
 import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
@@ -128,7 +129,9 @@ export async function reconcileTaskOverlapWaitsImpl(
       ? "Overlap predecessor reconciled — resuming execution in place"
       : "Cleared obsolete overlap/dependency indicators", outcome: [...new Set(result.clearedBlockerIds)].join(", ") }].slice(-getTaskActivityLogEntryLimit());
     // FNXC:OverlapWaitRelease 2026-09-17-06:38: Also fence legacy writers which do not yet take the task advisory lock. A concurrent pause, Reset, retry or replacement blocker must win over this snapshot.
-    const [updated] = await tx.update(schema.project.tasks).set({ ...values, log, updatedAt: now }).where(and(
+    /* FNXC:TaskLogProjections 2026-10-10-20:01 (RUFU-615): pairing the derived columns with this `log`
+       write is what keeps a later log-free board read from answering off the previous envelope. */
+    const [updated] = await tx.update(schema.project.tasks).set(withTaskLogProjections({ ...values, log, updatedAt: now }) as never).where(and(
       eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, taskId), isNull(schema.project.tasks.deletedAt),
       eq(schema.project.tasks.updatedAt, current.updatedAt),
       sql`${schema.project.tasks.status} IS NOT DISTINCT FROM ${raw.status ?? null}`,

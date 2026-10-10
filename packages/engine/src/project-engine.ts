@@ -6805,6 +6805,14 @@ export class ProjectEngine {
   `log: []`, which would silently stop auto-healing retry-exhausted verification failures. slim also
   re-syncs `steps` from PROMPT.md, and a card with empty persisted steps would gain parsed steps and
   could newly trip the "task has incomplete steps" merge blocker.
+
+  FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): and it deliberately does NOT take
+  `excludeLog: true`. That option is now cheap and correct for every consumer that only needs the five
+  log-derived figures, because they are read from `timing_total_ms` + `log_recent` — but this lane read
+  feeds a consumer that pattern-matches the log's CONTENT (a verification-failure reason in the trailing
+  entries), which no bounded envelope carries. Dropping the column here would trade a milliseconds
+  saving for an auto-heal that silently stops happening, which is the failure mode this task exists to
+  remove. Consumers like this one are why `excludeLog` stays opt-in per call site.
   */
   private async listTasksInLaneRoles(
     store: TaskStore,

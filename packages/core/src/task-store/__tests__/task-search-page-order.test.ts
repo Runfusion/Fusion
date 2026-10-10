@@ -55,9 +55,23 @@ describe("task search page order", () => {
   });
 
   it("keeps board table pagination ascending and free of the search page order", () => {
-    // Construction guard (call-site allowlist), not a prose assertion: the no-query branch must keep
-    // its ascending listTasks contract and must never adopt the descending search helpers.
-    const noQueryBranch = readsSource.slice(readsSource.indexOf("const completeColumns"));
+    /*
+    Construction guard (call-site allowlist), not a prose assertion: the no-query branch must keep
+    its ascending listTasks contract and must never adopt the descending search helpers.
+
+    FNXC:TaskSearchPageOrder 2026-10-10-20:15 (RUFU-615): the anchor was the literal `const completeColumns`,
+    which was already stale on `main` — `listCompletedTaskPage` grew that declaration earlier in the file,
+    so the slice started in the WRONG function and the ascending contract it meant to guard was no longer
+    inside the window. Anchored to the function it is about, bounded at the next export, so the `not.toContain`
+    half cannot be tripped by an unrelated caller further down the file.
+    */
+    const start = readsSource.indexOf("export async function listCurrentTasksPageImpl");
+    const fnEnd = readsSource.indexOf("export async function", start + 1);
+    expect(start).toBeGreaterThan(-1);
+    // The no-query branch is the one that lists; the query branch legitimately uses the search helpers.
+    const noQueryStart = readsSource.indexOf("store.listTasks({", start);
+    expect(noQueryStart).toBeGreaterThan(start);
+    const noQueryBranch = readsSource.slice(noQueryStart, fnEnd > start ? fnEnd : undefined);
     expect(noQueryBranch).toContain('sort: "created-asc"');
     expect(noQueryBranch).toContain("afterCreatedAt: cursor?.createdAt");
     expect(noQueryBranch).toContain("afterId: cursor?.id");

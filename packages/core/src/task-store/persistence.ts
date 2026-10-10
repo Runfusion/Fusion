@@ -9,6 +9,13 @@
  */
 import type { Task } from "../types.js";
 import { normalizeTaskQueueBoost } from "../tasks/task-queue-order.js";
+/*
+FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+The derivation is imported as a VALUE here because the column descriptors must compute it on every
+full-row write. The module sits above `serialization`/`db-helpers`, both of which reach back into this
+file only through `import type`, so adding this edge does not create a runtime cycle.
+*/
+import { deriveTaskLogProjections } from "./task-log-projections.js";
 import { toJson, toJsonNullable, fromJson} from "../db/db.js";
 
 /** Database row shape for the tasks table (all columns). */
@@ -139,6 +146,14 @@ export interface TaskRow {
   stepReports: string | null;
   customFields: string | null;
   log: string | null;
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  Read/write shapes for the two derived columns. They are ROW shapes, deliberately NOT `Task` fields:
+  the dashboard task JSON and the `.fusion/tasks/<ID>/task.json` mirror must stay byte-identical, so the
+  board hydrators read these off the raw SQL row instead of carrying them onto the domain object.
+  */
+  timingTotalMs: number | null;
+  logRecent: string | null;
   attachments: string | null;
   steeringComments: string | null;
   comments: string | null;
@@ -245,6 +260,9 @@ PostgreSQL task JSONB conversion must use one registry for both descriptor write
 */
 export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "dependencies", "steps", "stepReports", "customFields", "log", "attachments", "steeringComments",
+  /* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): `log_recent` is jsonb like `log`, so it takes the
+     same descriptor-JSON-string → jsonb-value round trip; `timing_total_ms` is a plain double. */
+  "logRecent",
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
   "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "planningFailure", "humanPlanApproval", "humanMergeApproval", "enabledWorkflowSteps",
   "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
@@ -408,6 +426,17 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("stepReports", (task) => toJson(task.stepReports || [])),
   defineTaskColumn("customFields", (task) => toJson(task.customFields ?? {})),
   defineTaskColumn("log", (task) => toJson(task.log || [])),
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  THE WRITE PAIRING, full-row half. Every task column write goes through these descriptors, so the two
+  derived columns are recomputed from the log the same statement is about to store — a wholesale
+  `task.log = []` rewrite is correct with no extra plumbing precisely because the derivation is a pure
+  function of the whole array rather than an append delta. Cost: two O(log) passes per full-row write
+  (log entry retention caps the array at 1 000), against removing a 31 MB read per board refresh.
+  The targeted-UPDATE half of the same invariant is `withTaskLogProjections`.
+  */
+  defineTaskColumn("timingTotalMs", (task) => deriveTaskLogProjections(task.log).timingTotalMs),
+  defineTaskColumn("logRecent", (task) => toJson(deriveTaskLogProjections(task.log).logRecent)),
   defineTaskColumn("attachments", (task) => toJson(task.attachments || [])),
   defineTaskColumn("steeringComments", (task) => toJson(task.steeringComments || [])),
   defineTaskColumn("comments", (task) => toJson(task.comments || [])),

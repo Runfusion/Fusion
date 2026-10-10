@@ -1,6 +1,12 @@
 import { getTaskMergeBlocker, isPreMergeStepsNotRunBlocker } from "../merge/task-merge.js";
 /* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514's delivery lock is a human WAIT, never a stall. */
 import { isHumanMergeApprovalBlocker } from "../merge/human-merge-approval.js";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): projection-backed trailing-run count. */
+import {
+  countIdenticalStallFromProjection,
+  projectionOverride,
+  type TaskLogProjectionInput,
+} from "../task-store/task-log-projections.js";
 /* FNXC:ReviewRevisionWait 2026-09-29-14:12 (RUFU-280): one predicate decides "this card is working through an authored revision" for the stall ladder, the derived chip, and the dashboard copy. */
 import {
   AWAITING_REVIEW_REVISION_STALL_REASON,
@@ -271,8 +277,21 @@ export function countRecentIdenticalStallEntries(
   task: Pick<Task, "log">,
   signal: Pick<InReviewStallSignal, "code" | "reason">,
   progressAt?: number,
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  Optional, and every existing caller stays on the log walk. The envelope can answer this WITHOUT the
+  log because the walk stops at the first non-matching entry: the run is therefore a property of the
+  trailing entries alone, so the writer keys it on the newest trailing stall entry's own code+reason and
+  the reader only has to test the live signal against that stored identity. When they agree, "count of
+  entries matching the signal" and "count of entries in the stored run" are the same number.
+  */
+  logProjections?: TaskLogProjectionInput,
 ): number {
   const trimmedReason = signal.reason.trim();
+  const projection = projectionOverride(logProjections);
+  if (projection) {
+    return countIdenticalStallFromProjection(projection, signal, progressAt).count;
+  }
   const reversed = [...(task.log ?? [])].reverse();
   let count = 0;
 

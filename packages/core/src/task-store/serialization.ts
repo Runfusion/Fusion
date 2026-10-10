@@ -348,21 +348,15 @@ export function generateBranchGroupId(): string {
   return `BG-${timestamp}-${random}`;
 }
 
-export function computeTimedExecutionMs(log: import("../types.js").TaskLogEntry[] | undefined): number {
-  if (!log || log.length === 0) return 0;
-  let total = 0;
-  for (const entry of log) {
-    const action = typeof entry.action === "string" ? entry.action : "";
-    const outcome = typeof entry.outcome === "string" ? entry.outcome : "";
-    if (!action.includes("[timing]") && !outcome.includes("[timing]")) continue;
-    const haystack = `${action}\n${outcome}`;
-    const match = haystack.match(/(\d+(?:\.\d+)?)ms\b/i);
-    if (!match) continue;
-    const ms = Number(match[1]);
-    if (Number.isFinite(ms)) total += ms;
-  }
-  return total;
-}
+/*
+FNXC:TaskLogProjections 2026-10-10-20:55 (RUFU-615): moved VERBATIM to `tasks/log-timing.ts`, a
+browser-safe leaf, so the write-time projection module can use the rule without importing this file
+(which pulls `node:crypto`). Re-exported here under the same name so no existing importer changes.
+*/
+export { computeTimedExecutionMs } from "../tasks/log-timing.js";
+// A re-export does not bind the name locally, and this module's own `archiveEntryToTask` calls it.
+import { computeTimedExecutionMs } from "../tasks/log-timing.js";
+
 
 export function archiveEntryToTask(
   entry: ArchivedTaskEntry,

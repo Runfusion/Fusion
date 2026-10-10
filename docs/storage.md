@@ -524,6 +524,59 @@ FN-509 removed task priority levels. An ordinary queue is strictly arrival-order
 
 **Merge lease order.** The merge queue applies the same rank. See the `mergeQueue` row in the table below.
 
+## Derived task-log projection columns (`timing_total_ms`, `log_recent`, RUFU-615)
+
+<!-- FNXC:TaskLogProjections 2026-10-10-20:15: RUFU-615 added the two write-time projections that let a board refresh stop reading `tasks.log`. Document the columns, their single maintainer, the write-pairing invariant, the per-caller read shapes, and the settled `slim` answer. -->
+
+`project.tasks.log` was 31.4 MB of the 73.6 MB of live-row bytes measured over 2 417 live rows (42.7 %), and every board refresh selected it because five UI figures were computed **from** it at read time. The fix is not a read-side projection: locating a `[timing]` entry or the maximum timestamp needs per-row `jsonb` expansion, and any per-row touch of `log` decompresses the whole column. A SQL-side derivation was prototyped, proven equivalent over 482 709 log entries, and rejected at 4.5–11.5 s of PostgreSQL CPU per full-board read against a 0.2–0.35 s no-`log` baseline.
+
+**The two columns.** Migration `0092_rufu_615_task_log_projections.sql` adds:
+
+| Column | Type | Answers |
+|---|---|---|
+| `project.tasks.timing_total_ms` | `double precision` (never `bigint` — the sum is fractional milliseconds) | `timedExecutionMs`, the figure the card's execution-time chip shows |
+| `project.tasks.log_recent` | `jsonb`, capped inline at `LOG_RECENT_INLINE_BYTE_BUDGET` (2 040 bytes) | the latest log timestamp, the newest reason-driven stall marker, the two `stalledReview` heuristics' match sets, and the trailing identical-stall run |
+
+`log_recent` is a bounded **signal envelope**, not a slice of the log: it stores the timestamps and identities a reader needs to answer its question, plus `unparseableCount`, which is how the envelope states whether it can prove its answer at all. **Today no reader consumes that sufficiency proof**: the three resolvers in `task-log-projections.ts` return `provablyComplete` and every caller ignores it, because a log-free feed cannot fall back per row — it already decided the SELECT. The consequence is bounded and one-directional (a `stalledReview` `matchCount` can be understated on a row holding unparseable timestamps; nothing is invented upward), and making the read refuse instead of guess is RUFU-636, whose cheap shape is one aggregate over `log_recent` (`select count(*) … where coalesce((log_recent->>'unparseableCount')::int,0) > 0`) consulted BEFORE the read chooses its column set. Timestamps are parsed by one shared strict ISO-8601 rule (never `Date.parse`, which is implementation-defined), so the TypeScript and PostgreSQL implementations cannot drift on a legitimate date.
+
+**Single maintainer.** `packages/core/src/task-store/task-log-projections.ts` holds the derivation. It is called from the `TASK_COLUMN_DESCRIPTORS` entries used by every full-row write, and through `withTaskLogProjections()` from every targeted `UPDATE` that writes `log` while bypassing the descriptors. `project.fusion_task_log_projections()` in migration 0092 is a transliteration of the same module, used ONLY by the one-time backfill — a read never calls it, because reading is exactly what costs too much.
+
+**The invariant.** *No SQL statement may write `log` without writing both derived columns in the same statement.* A half-written pair is a card whose badge disagrees with the history it came from, and no runtime check can tell a fresh envelope from a stale one. `packages/core/src/task-store/__tests__/task-log-projection-pairing.test.ts` enforces it by scanning `packages/core/src` and `packages/engine/src` for `.update(tasks)…set(…)` statements that name `log`, including the `.set(values)` shape whose log assignment is conditional. The guard found five unwrapped writers the first time it ran.
+
+**`excludeLog` semantics.** `listTasks({ excludeLog: true })` used to be a documented no-op while deriving, because deriving meant reading. It is now effective on its own: the five figures come from the two columns. `slim` alone still does **not** drop `log` while deriving — shared loaders keep their default shape, so an engine sweep that reads `log` markers out of a list-loaded row cannot be starved by a bandwidth flag that was named for something else.
+
+**Settled `slim` answer.** `slim` stays what it was: a *row-shape* flag that re-parses `PROMPT.md` for cards with empty persisted `steps` and blanks a few fields; it is not a bandwidth flag, and it is not gated on `derive`. A caller that wants badges and no log wants `excludeLog`, not `slim`. Measured on a distribution-matched 2 417-row board (31.8 MB of `log`, envelope 841 KB, 38:1 after TOAST):
+
+(median of 3, `--expose-gc`, heap sampled after an explicit GC; `board-read-shape.bench.pg.test.ts`
+under `FUSION_BOARD_BENCH=1` reproduces it)
+
+| Read shape | median | retained heap |
+|---|---|---|
+| `{}` — today's full-row deriving board read | 910 ms | 190.6 MB |
+| `{ derive: false }` | 647 ms | 123.2 MB |
+| `{ derive: false, excludeLog: true }` — the RUFU-202 shape | **245 ms** | 88.5 MB |
+| `{ slim: true }` | 898 ms | 187.0 MB |
+| `{ slim: true, excludeLog: true }` — the board page now | **616 ms** | **60.0 MB** |
+| `{ derive: true, excludeLog: true }` — badges from the projections | 489 ms | 129.4 MB |
+
+Two readings of that table matter for how it is used:
+
+- **The 0.2–0.35 s target is met by the shape it was set for.** The prototype's no-`log` baseline was a
+  `derive:false` read; that same shape with the column dropped lands at 245 ms, inside the band. A
+  badge-deriving board read lands at 489–616 ms because hydrating and deriving 2 417 cards in JavaScript
+  is what is left — the column is off the bill, per-row work is not.
+- **The PROMPT.md re-read cost is NOT in these numbers.** Every seeded row carries persisted `steps`, so
+  `finalizeSlimListTask` never fired and the bench performed zero task-file reads. `slim`'s per-card
+  re-parse is documented above from the code path, not measured here; nobody should read 898 → 616 ms as
+  the price of dropping `slim`.
+- **Write side, from the same run:** the derivation alone over the worst-case log (271 entries, 1.1 MB)
+  medians **0.25 ms**; a full `logEntry` append on that row medians 94 ms, which is the pre-existing cost
+  of rewriting a megabyte column, and 19 ms on a typical ~5 KB row.
+
+**Per-caller shapes.** Board page and queue page (`listCurrentTasksPageImpl`, `listTaskQueuePageImpl`), `GET /api/tasks`, and the triage/scheduler/gridlock sweeps pass `excludeLog: true`; the hold-release sweep already did. The lane-role read that feeds merge eligibility deliberately does **not**: `hasAutoHealableVerificationBufferFailure` pattern-matches log *content*, which no bounded envelope carries. `packages/engine/src/__tests__/board-read-shape-guard.test.ts` pins both halves, so dropping the column where a consumer reads it fails a test just as keeping it where nobody reads it does.
+
+**Neither field is a `Task` field.** `timingTotalMs`/`logRecent` exist on the row and in the database only, so the dashboard payload and the `.fusion/tasks/<ID>/task.json` mirror are unchanged; `task-log-projections.pg.test.ts` pins the serialized board row and the mirror key set.
+
 ## 4) Legacy SQLite Tables Inventory (`packages/core/src/db.ts`, migration reference)
 
 | Table | Purpose |

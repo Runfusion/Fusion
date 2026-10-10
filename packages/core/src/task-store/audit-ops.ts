@@ -19,6 +19,9 @@ import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
 import {readTaskRow, updateTaskColumns} from "../task-store/async/async-persistence.js";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): the raw `tx.update(tasks).set({ log })` seams in this
+ * file bypass `updateTaskColumns`, so each one pairs the derived columns itself. */
+import { withTaskLogProjections } from "./task-log-projections.js";
 import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { ARCHIVED_SENTINEL_LANES } from "../project-lane-vocabulary.js";
@@ -154,7 +157,7 @@ export async function logEntryOnceImpl(
     log.push({ timestamp: now.toISOString(), action: input.action, outcome: truncateTaskLogOutcome(input.outcome), dedupeKey: input.dedupeKey });
     const limit = getTaskActivityLogEntryLimit();
     if (log.length > limit) log.splice(0, log.length - limit);
-    const updated = await tx.update(schema.project.tasks).set({ log, updatedAt: now.toISOString() }).where(and(
+    const updated = await tx.update(schema.project.tasks).set(withTaskLogProjections({ log, updatedAt: now.toISOString() })).where(and(
       eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id),
     )).returning();
     return { appended: true, row: updated[0]! };
@@ -244,14 +247,14 @@ export async function transitionQueuedEpisodeImpl(
       const limit = getTaskActivityLogEntryLimit();
       if (log.length > limit) log.splice(0, log.length - limit);
     }
-    const updated = await tx.update(schema.project.tasks).set({
+    const updated = await tx.update(schema.project.tasks).set(withTaskLogProjections({
       status: "queued",
       blockedBy: transition.blockedBy,
       overlapBlockedBy: transition.overlapBlockedBy,
       queuedLogEpisodeSignature: transition.signature,
       ...(appended ? { log } : {}),
       updatedAt: now,
-    }).where(and(
+    })).where(and(
       eq(schema.project.tasks.projectId, projectId),
       eq(schema.project.tasks.id, id),
     )).returning();
@@ -303,7 +306,7 @@ export async function checkAndRecordUnplannedExecutionBlockImpl(
        * This diagnostic must not make an old planning handoff look fresh to
        * recovery grace windows. The marker timestamp records audit recency.
        */
-      .set({ log })
+      .set(withTaskLogProjections({ log }))
       .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id)));
     return true;
   });

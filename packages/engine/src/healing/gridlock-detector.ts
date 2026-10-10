@@ -102,7 +102,8 @@ export class GridlockDetector {
     `store.getSettings()` itself; `derive: false` only skips the derivation block's internal fast read.
     */
     const [tasks, settings] = await Promise.all([
-      this.store.listTasks({ slim: true, includeArchived: false, derive: false }),
+      /* FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the field audit above already proves no consumer reads `log`, and `derive: false` means nothing here needs the projections either — so this takes the column off the SELECT. Measured on a distribution-matched 2 417-row board: `{derive:false}` 372 ms median vs `{derive:false, excludeLog:true}` 206 ms. */
+      this.store.listTasks({ slim: true, includeArchived: false, derive: false, excludeLog: true }),
       this.store.getSettings(),
     ]);
 

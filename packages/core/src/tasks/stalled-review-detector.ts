@@ -1,4 +1,6 @@
 import type { Task } from "../types.js";
+/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): the projection path for a row read without `log`. */
+import { stalledReviewFromProjection, type TaskLogProjectionInput } from "../task-store/task-log-projections.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
@@ -70,15 +72,37 @@ legacy id too, so a board mid-rename is never skipped.
 */
 export function detectStalledReview(
   task: Pick<Task, "column" | "paused" | "log">,
-  options?: { now?: number; windowMs?: number; reviewColumns?: ReadonlySet<string> },
+  options?: { now?: number; windowMs?: number; reviewColumns?: ReadonlySet<string> } & TaskLogProjectionInput,
 ): StalledReviewSignal | undefined {
   const inReview = (options?.reviewColumns ?? LEGACY_REVIEW_LANES).has(task.column);
-  if (!inReview || task.paused === true || task.log.length === 0) {
+  if (!inReview || task.paused === true) {
     return undefined;
   }
 
+  /*
+  FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+  Two things had to move for a `log`-free read to answer this, and only one of them is the window:
+  `STALLED_REVIEW_INVALID_TRANSITION_PATTERN` is tested against `outcome` as well as `action`, and
+  `outcome` is capped at 4 000 chars per entry, so no stored slice is provably match-equivalent. The
+  envelope therefore resolves the MATCHES at write time, against the full text, and stores only their
+  timestamps — which keeps `matchCount`, `firstMatchAt` and `lastMatchAt` exact, and `matchCount` is
+  embedded in the operator-visible reason sentence, so it may not be approximate.
+  The `log.length === 0` guard stays behind: with the column excluded `task.log` is `[]` by hydration,
+  which would otherwise short-circuit every review-lane card into "not stalled".
+  */
   const now = options?.now ?? Date.now();
   const windowMs = options?.windowMs ?? STALLED_REVIEW_WINDOW_MS;
+  if (options?.logLoaded === false && options.projection) {
+    const derived = stalledReviewFromProjection(options.projection, { now, windowMs });
+    if (!derived.signal) return undefined;
+    const minutes = Math.floor(windowMs / (60 * 1000));
+    return stalledReviewReason(derived.signal, minutes);
+  }
+
+  if (task.log.length === 0) {
+    return undefined;
+  }
+
   const windowStart = now - windowMs;
   const windowedEntries = task.log.filter((entry) => {
     const ts = Date.parse(entry.timestamp);
@@ -92,13 +116,12 @@ export function detectStalledReview(
   const reenqueueMatches = windowedEntries.filter((entry) => entry.action.includes(STALLED_REVIEW_REENQUEUE_PATTERN));
   if (reenqueueMatches.length >= STALLED_REVIEW_REENQUEUE_THRESHOLD) {
     const minutes = Math.floor(windowMs / (60 * 1000));
-    return {
-      reason: `Re-enqueued for merge ${reenqueueMatches.length} times in the last ${minutes} minutes without leaving in-review`,
+    return stalledReviewReason({
       heuristic: "reenqueue-churn",
       matchCount: reenqueueMatches.length,
       firstMatchAt: reenqueueMatches[0]!.timestamp,
       lastMatchAt: reenqueueMatches[reenqueueMatches.length - 1]!.timestamp,
-    };
+    }, minutes);
   }
 
   const invalidTransitionMatches = windowedEntries.filter((entry) => {
@@ -110,14 +133,33 @@ export function detectStalledReview(
 
   if (invalidTransitionMatches.length >= STALLED_REVIEW_INVALID_TRANSITION_THRESHOLD) {
     const minutes = Math.floor(windowMs / (60 * 1000));
-    return {
-      reason: `Repeated invalid-transition recovery errors (${invalidTransitionMatches.length}) in the last ${minutes} minutes`,
+    return stalledReviewReason({
       heuristic: "invalid-transition-loop",
       matchCount: invalidTransitionMatches.length,
       firstMatchAt: invalidTransitionMatches[0]!.timestamp,
       lastMatchAt: invalidTransitionMatches[invalidTransitionMatches.length - 1]!.timestamp,
-    };
+    }, minutes);
   }
 
   return undefined;
+}
+
+/*
+FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615):
+The reason sentence, shared by the log path and the projection path. Both must produce it from the same
+function or a card would read one wording through the board and another through a `log`-free sweep.
+*/
+function stalledReviewReason(
+  signal: Omit<StalledReviewSignal, "reason">,
+  minutes: number,
+): StalledReviewSignal {
+  return signal.heuristic === "reenqueue-churn"
+    ? {
+        ...signal,
+        reason: `Re-enqueued for merge ${signal.matchCount} times in the last ${minutes} minutes without leaving in-review`,
+      }
+    : {
+        ...signal,
+        reason: `Repeated invalid-transition recovery errors (${signal.matchCount}) in the last ${minutes} minutes`,
+      };
 }
