@@ -46,7 +46,11 @@ radius is reported for an operator decision first.
 */
 
 import { afterEach, beforeEach, expect, it, beforeAll, afterAll } from "vitest";
+import { and, eq } from "drizzle-orm";
 import { taskAdvisoryLockKey } from "../../task-store/task-advisory-lock.js";
+import { DEFAULT_WORKFLOW_POOL_ID } from "../../workflows/workflow-capacity.js";
+import * as schema from "../../postgres/schema/index.js";
+import { projectPartition } from "../../task-store/async/async-lifecycle.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
@@ -494,5 +498,208 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     }
 
     expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe("builtin:coding-ideas");
+  });
+
+  /*
+  FNXC:ColumnCapacity 2026-10-10-20:08 (RUFU-362):
+  THE OPERATOR'S REPRO, AT THE STORE SEAM.
+
+  Production project saneca ran `maxConcurrent: 3` with three `status:"failed"` parks sitting in
+  `in-progress`. The store's in-transaction count returned 3, so every ready card was refused with
+  `capacity-exhausted`, the graph column boundary re-suspended on `waitReason:"capacity"`, and the
+  board recorded 294 suspends in 30 minutes with ZERO board-wide moves: a lane full of dead cards
+  reporting itself permanently full.
+
+  FN-8704 had already ruled this shape out on the AGENT dimension — a failed park is operator-visible
+  debris, not a live capacity holder — but that ruling reached `isRunningAgentTask` only, so the
+  COLUMN dimension kept counting dead rows. These cases pin the ruling at the column seam and keep
+  the opposite failure mode honest: LIVE occupants must still refuse, or the fix would trade a freeze
+  for worktree contention. The parks themselves are never moved, archived, or cleaned up here — the
+  debris rule keeps them visible to the operator.
+  */
+
+  /** Park `n` cards in `in-progress`, each carrying `status` (null leaves it live). */
+  async function fillLane(n: number, status: "failed" | null): Promise<string[]> {
+    const store = h.store();
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const occupant = await store.createTask({ description: `capacity occupant ${i}` });
+      await store.moveTask(occupant.id, "todo");
+      await store.moveTask(occupant.id, "in-progress");
+      if (status) await store.updateTask(occupant.id, { status });
+      ids.push(occupant.id);
+    }
+    return ids;
+  }
+
+  /** Move one fresh card from planning toward `in-progress`; report refusal + landing column. */
+  async function admitContender(): Promise<{ error: Error | null; column?: string }> {
+    const store = h.store();
+    const contender = await store.createTask({ description: "capacity contender" });
+    await store.moveTask(contender.id, "todo");
+    const error = await store
+      .moveTask(contender.id, "in-progress")
+      .then(() => null, (cause: unknown) => cause as Error);
+    return { error, column: (await store.getTask(contender.id))?.column };
+  }
+
+  it.each([1, 2, 3])(
+    "RUFU-362: %i failed park(s) filling the WIP limit do not occupy it — the contender is admitted",
+    async (seats) => {
+      const store = h.store();
+      await store.updateSettings({ maxConcurrent: seats });
+      await assertMovePathLive();
+
+      const parkIds = await fillLane(seats, "failed");
+      const { error, column } = await admitContender();
+
+      expect(error).toBeNull();
+      expect(column).toBe("in-progress");
+
+      for (const id of parkIds) {
+        const parked = await store.getTask(id);
+        expect(parked?.column).toBe("in-progress");
+        expect(parked?.status).toBe("failed");
+      }
+    },
+  );
+
+  it.each([1, 2, 3])(
+    "RUFU-362 negative proof: %i LIVE occupant(s) at the limit still refuse the contender", // over-admission is the other bug
+    async (seats) => {
+      const store = h.store();
+      await store.updateSettings({ maxConcurrent: seats });
+      await assertMovePathLive();
+
+      await fillLane(seats, null);
+      const { error, column } = await admitContender();
+
+      expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+        "capacity-exhausted",
+      );
+      expect(column).toBe("todo");
+    },
+  );
+
+  it("RUFU-362 sanity: an empty capacity lane still admits its first card", async () => {
+    const store = h.store();
+    await store.updateSettings({ maxConcurrent: 1 });
+    await assertMovePathLive();
+
+    const { error, column } = await admitContender();
+
+    expect(error).toBeNull();
+    expect(column).toBe("in-progress");
+  });
+
+  /*
+  FNXC:ColumnCapacity 2026-10-10-20:08 (RUFU-362):
+  THE MARKER ARM, NOT JUST THE IN-COLUMN ARM. The `wip` trait defaults `countPending` to true, so a
+  row OUTSIDE the lane that still carries a crash-safe `transitionPending` marker aimed AT it holds a
+  reserved seat. A failed park must lose that reservation too, or the freeze simply moves to the
+  mid-transition window. The control is the SAME row with ONLY its status flipped back to live, so a
+  passing run cannot be explained by the marker being ignored altogether.
+  */
+  /**
+   * The pool the counter will ask about, resolved the SAME way `moves.ts` resolves it for a real
+   * move — from the row's own workflow selection, falling back to the default pool. Hard-coding
+   * `DEFAULT_WORKFLOW_POOL_ID` here would ask about a pool these rows are not bucketed into, which
+   * returns 0 for every row and would make the failed-park assertions pass vacuously. RUFU-362 hit
+   * exactly that: the live controls read 0 and only the controls caught it.
+   */
+  async function poolOf(taskId: string): Promise<string> {
+    const selection = await h.store().getTaskWorkflowSelectionAsync(taskId);
+    return selection?.workflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+  }
+
+  it("RUFU-362: a failed park reserves nothing through the transitionPending marker (live control counts)", async () => {
+    const store = h.store();
+    await store.updateSettings({ maxConcurrent: 1 });
+    await assertMovePathLive();
+
+    const marker = '{"toColumn":"in-progress","hooksRemaining":[],"startedAt":1}';
+    const row = await store.createTask({ description: "marker holder" });
+    await store.moveTask(row.id, "todo");
+    const pool = await poolOf(row.id);
+
+    const countLane = () =>
+      h.layer().transactionImmediate((tx) =>
+        store.countActiveInCapacitySlotAsync({
+          tx,
+          targetColumn: "in-progress",
+          workflowId: pool,
+          countPending: true,
+          excludeTaskId: "capacity-probe-not-a-task",
+        }),
+      );
+
+    // Write through the store's own data layer so the row lands in the schema the counter reads.
+    const seedMarker = () =>
+      h.layer().db
+        .update(schema.project.tasks)
+        .set({ transitionPending: marker })
+        .where(and(
+          eq(schema.project.tasks.projectId, projectPartition(h.layer().projectId)),
+          eq(schema.project.tasks.id, row.id),
+        ));
+
+    // Live holder reserving the lane's only seat: the marker arm is genuinely armed.
+    await seedMarker();
+    expect(await countLane()).toBe(1);
+
+    // Same row, same marker, only the status differs — the seat is released.
+    await store.updateTask(row.id, { status: "failed" });
+    expect(await countLane()).toBe(0);
+
+    const { error, column } = await admitContender();
+    expect(error).toBeNull();
+    expect(column).toBe("in-progress");
+  });
+
+  /*
+  FNXC:ColumnCapacity 2026-10-10-20:08 (RUFU-362):
+  THE SAME ARBITRATION GOVERNS EVERY BUDGETED COLUMN, not just the WIP lane: `resolveWipBudgetColumns`
+  can fold pooled review/merge lanes into one budget, and the counter receives the budget column as a
+  parameter and never reads a column identity. This drives the counter directly against a review-lane
+  row so the exclusion cannot be accused of being `in-progress`-specific.
+  */
+  it("RUFU-362: the exclusion is column-agnostic — a failed park in a review lane holds no seat either", async () => {
+    const store = h.store();
+    await assertMovePathLive();
+
+    const parked = await store.createTask({ description: "review-lane park" });
+    await store.moveTask(parked.id, "todo");
+    const pool = await poolOf(parked.id);
+
+    await h.layer().db
+      .update(schema.project.tasks)
+      .set({ column: "in-review", status: "failed" })
+      .where(and(
+        eq(schema.project.tasks.projectId, projectPartition(h.layer().projectId)),
+        eq(schema.project.tasks.id, parked.id),
+      ));
+
+    const countReviewLane = () =>
+      h.layer().transactionImmediate((tx) =>
+        store.countActiveInCapacitySlotAsync({
+          tx,
+          targetColumn: "in-review",
+          workflowId: pool,
+          countPending: true,
+          excludeTaskId: "capacity-probe-not-a-task",
+        }),
+      );
+
+    expect(await countReviewLane()).toBe(0);
+
+    // Control: the identical row, back to live, occupies the review lane.
+    await h.layer().db
+      .update(schema.project.tasks)
+      .set({ status: null })
+      .where(and(
+        eq(schema.project.tasks.projectId, projectPartition(h.layer().projectId)),
+        eq(schema.project.tasks.id, parked.id),
+      ));
+    expect(await countReviewLane()).toBe(1);
   });
 });

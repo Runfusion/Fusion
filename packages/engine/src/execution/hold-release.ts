@@ -44,6 +44,7 @@ import {
   PLAN_REVIEW_GROUP_ID,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   resolveCapacityPoolId,
+  isFailedWipPark,
   sortTasksByQueueOrder,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
@@ -824,6 +825,16 @@ function resolveTimerDeadline(holdConfig: Record<string, unknown>, task: Task): 
  * (when countPending) cards mid-`transitionPending` targeting it, scoped to the
  * SAME effective workflow. This is the sweep's *pre-check* — the authoritative
  * arbitration is still the in-txn check, which rejects a losing racer.
+ *
+ * FNXC:ColumnCapacity 2026-10-10-19:52 (RUFU-362): the mirror holds only while the
+ * failed-park exclusion is present here too. This loop previously counted every
+ * non-deleted row, so a lane filled with `status:"failed"` parks reported itself full
+ * and this sweep refused to release a ready card into it (`downstream-full`) even
+ * though live WIP was zero — the mirror agreed with the store while BOTH disagreed
+ * with FN-8704. Occupancy now filters through `isFailedWipPark`, the same predicate
+ * `isRunningAgentTask` and both store counters use, so the four consumers cannot drift
+ * again: the exclusion sits before BOTH count arms, so a dead row also cannot keep a
+ * `transitionPending` reservation on the column.
  */
 function countCapacitySlot(
   allTasks: Task[],
@@ -840,6 +851,8 @@ function countCapacitySlot(
   let count = 0;
   for (const t of allTasks) {
     if (resolveCapacityPoolId(effectiveWorkflowIdByTask.get(t.id)) !== workflowId) continue;
+    // Dead parks hold no slot — see `isFailedWipPark` for the ruling and its history.
+    if (isFailedWipPark(t)) continue;
     if (budgetColumns.has(t.column)) {
       count += 1;
       continue;

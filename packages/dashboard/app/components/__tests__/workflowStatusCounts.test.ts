@@ -278,4 +278,69 @@ describe("computeWorkflowStatusCounts", () => {
     expect(counts.get("default")).toEqual({ plan: 0, progress: 0, review: 2, merging: 2 });
     expect(counts.get(ALL_WORKFLOWS_BOARD_VIEW_ID)).toEqual({ plan: 0, progress: 0, review: 2, merging: 2 });
   });
+
+  /*
+  FNXC:ColumnCapacity 2026-10-10-20:08 (RUFU-362):
+  Production shape that froze project saneca: a WIP lane whose every row had died with a failure badge.
+  The switcher reported it as fully loaded work in progress while live occupancy was zero, so the board
+  looked busy to an operator while the engine re-suspended ready cards on `capacity-exhausted`. The
+  bucket rule now matches the lane's real admission answer, and the live card beside each park is what
+  keeps these assertions non-vacuous — a counter that simply never incremented would also read 0.
+  */
+  it("reports a WIP lane full of failed parks as zero work in progress", () => {
+    const counts = computeWorkflowStatusCounts(
+      [
+        task("SANE-435", "active", "failed"),
+        task("SANE-515", "active", "failed"),
+        task("SANE-453", "active", "failed"),
+      ],
+      boardWorkflows,
+    );
+
+    expect(counts.get("default")).toEqual(ZERO_COUNTS);
+    expect(counts.get(ALL_WORKFLOWS_BOARD_VIEW_ID)).toEqual(ZERO_COUNTS);
+  });
+
+  it.each([
+    ["progress", "active"],
+    ["review", "review"],
+  ])("drops a failed park from %s occupancy while a live card in the same lane still counts", (_phase, column) => {
+    const counts = computeWorkflowStatusCounts(
+      [task("FN-dead", column, "failed"), task("FN-live", column)],
+      boardWorkflows,
+    );
+
+    const expected = { plan: 0, progress: 0, review: 0, merging: 0 };
+    expected[_phase as "progress" | "review"] = 1;
+    expect(counts.get("default")).toEqual(expected);
+    expect(counts.get(ALL_WORKFLOWS_BOARD_VIEW_ID)).toEqual(expected);
+  });
+
+  it("keeps a failed park in the Plan bucket, which reports queue depth rather than occupancy", () => {
+    const counts = computeWorkflowStatusCounts(
+      [task("FN-dead-todo", "todo", "failed"), task("FN-dead-ready", "ready", "failed")],
+      boardWorkflows,
+    );
+
+    expect(counts.get("default")).toEqual({ plan: 2, progress: 0, review: 0, merging: 0 });
+  });
+
+  it("applies the exclusion on the canonical-column fallback path too, not only resolved traits", () => {
+    const legacy = singleWorkflowPayload("legacy", [
+      { id: "todo", name: "Todo", flags: {} },
+      { id: "in-progress", name: "In progress", flags: {} },
+      { id: "in-review", name: "In review", flags: {} },
+      { id: "done", name: "Done", flags: {} },
+    ]);
+
+    const counts = computeWorkflowStatusCounts(
+      [
+        task("FN-legacy-dead", "in-progress", "failed"),
+        task("FN-legacy-live", "in-review"),
+      ],
+      legacy,
+    );
+
+    expect(counts.get("legacy")).toEqual({ plan: 0, progress: 0, review: 1, merging: 0 });
+  });
 });

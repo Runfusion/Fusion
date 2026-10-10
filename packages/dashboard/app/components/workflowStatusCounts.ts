@@ -4,6 +4,14 @@ FNXC:MergeQueue 2026-07-15-10:40:
 Vite aliases `@fusion/core` to types.ts only in the dashboard app build; import the active-merge predicate from its source module (same pattern as resolveEffectiveAutoMerge).
 */
 import { isActiveMergeStatus } from "../../../core/src/merge/active-merge-status";
+/*
+FNXC:ColumnCapacity 2026-10-10-20:08 (RUFU-362):
+The failed-park rule is read from its one home in core (`isFailedWipPark`), the same predicate
+`isRunningAgentTask` (FN-8704) and the column-capacity counters consume, so the switcher's occupancy
+can never answer differently from the lane's real admission decision. Imported from source for the
+same reason as `isActiveMergeStatus` above: the app build aliases `@fusion/core` to `types.ts` only.
+*/
+import { isFailedWipPark } from "../../../core/src/agents/live-agent-count";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload } from "../api";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 
@@ -116,8 +124,22 @@ export function computeWorkflowStatusCounts(
     if (bucket === "excluded") continue;
 
     const counts = countsByWorkflow.get(workflow.id) ?? EMPTY_COUNTS();
-    counts[bucket] += 1;
-    aggregateCounts[bucket] += 1;
+    /*
+    FNXC:ColumnCapacity 2026-10-10-20:08 (RUFU-362):
+    A `status:"failed"` WIP park is operator-visible debris, not live work: it stays rendered in its
+    lane until someone retries or re-homes it, but FN-8704 already decided it holds no agent slot and
+    RUFU-362 extends that to the column slot (a lane of limit N holding N failed parks is 0% busy, and
+    reporting it as N in progress told operators the board was working while the engine spun on
+    `capacity-exhausted` suspensions). Only the two occupancy buckets drop it — `plan` counts queue
+    depth, and the merge flash below keys on the task's own merge status — so neither loses meaning.
+    The card itself is untouched: this suppresses a count, never a render.
+    */
+    const countsOccupancy =
+      !isFailedWipPark(task) || (bucket !== "progress" && bucket !== "review");
+    if (countsOccupancy) {
+      counts[bucket] += 1;
+      aggregateCounts[bucket] += 1;
+    }
     if (isActiveMergeStatus(task.status)) {
       /*
       FNXC:WorkflowSwitcher 2026-06-22-20:30:

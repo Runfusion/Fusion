@@ -789,6 +789,8 @@ export {
   getRunningAgentCountSource,
   deriveRunningAgentCounts,
   isRunningAgentTask,
+  isFailedWipPark,
+  type FailedWipParkShape,
   isWaitingAgentTask,
   countRunningAgentTasks,
   enrichRunningAgentTaskShape,

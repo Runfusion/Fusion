@@ -10,6 +10,7 @@
  */
 import {TaskStore, storeLog, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX, WORKFLOW_MOVE_POLICY_TIMEOUT_MS} from "../store.js";
 import { resolveCapacityPoolId } from "../workflows/workflow-capacity.js";
+import { isFailedWipPark } from "../agents/live-agent-count.js";
 import {resolveWorkflowIntakeFacts} from "./task-creation.js";
 import {resolveTaskTitleWrite} from "../ai/ai-summarize.js";
 import {TransitionRejectionError} from "./errors.js";
@@ -1033,6 +1034,24 @@ export async function createWorkflowDefinitionImpl(store: TaskStore, input: Work
 /*
 FNXC:WorkflowSuccession 2026-09-06-02:54:
 Both capacity counters canonicalize the requested pool and every persisted occupant through the shared resolver. This keeps historical retired selections in the successor budget regardless of which identity belongs to the candidate.
+
+FNXC:ColumnCapacity 2026-10-10-19:39 (RUFU-362):
+Both counters now also exclude a failed park, through the SAME predicate the agent-capacity
+lanes use (`isFailedWipPark`), because they previously agreed with each other and with
+`hold-release.ts` while disagreeing with FN-8704's ruling.
+
+Measured before the fix (production project saneca): `in-progress` held three rows and every one
+was status:"failed" — one honest-blocked park (`BLOCKED: pi.ai auth — missing model/provider
+credential`), one graph-parse failure, one worktree-carrying failure with 4 unmerged commits.
+Both counters reported that lane full, so every todo→in-progress crossing was refused
+`capacity-exhausted` (988 refusals in 30 min, 371 of them on one card) and the board froze: 294
+graph suspends on waitReason:"capacity", zero board-wide moves. Neither counter selected `status`,
+so the exclusion had to be added to the projection, not just the filter.
+
+The exclusion covers BOTH arms of the count — rows sitting in the column AND `transitionPending`
+reservations aimed at it — because a dead row holds neither kind of slot. Live occupants are
+untouched: this is the failed-park atom only, deliberately NOT all of `isRunningAgentTask`
+(paused / stale-planning / externally-blocked rows still occupy a column slot).
 */
 export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { targetColumn: string; workflowId: string; countPending: boolean; excludeTaskId: string; }): number {
     const { targetColumn, workflowId, countPending, excludeTaskId } = params;
@@ -1041,7 +1060,7 @@ export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { ta
     // LEFT JOIN the selection row so we can scope by effective workflow id in JS.
     const rows = store.db
       .prepare(
-        `SELECT t.id AS id, t."column" AS col, t.transitionPending AS tp, s.workflowId AS wid
+        `SELECT t.id AS id, t."column" AS col, t."status" AS status, t.transitionPending AS tp, s.workflowId AS wid
          FROM tasks t
          LEFT JOIN task_workflow_selection s ON s.taskId = t.id
          WHERE t.deletedAt IS NULL
@@ -1051,6 +1070,7 @@ export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { ta
       .all(excludeTaskId, targetColumn) as Array<{
         id: string;
         col: string;
+        status: string | null;
         tp: string | null;
         wid: string | null;
       }>;
@@ -1059,6 +1079,8 @@ export function countActiveInCapacitySlotSyncImpl(store: TaskStore, params: { ta
     for (const row of rows) {
       const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
       if (effectiveWorkflowId !== requestedWorkflowId) continue;
+      // Dead parks hold no slot — see `isFailedWipPark` for the ruling and its history.
+      if (isFailedWipPark(row)) continue;
 
       if (row.col === targetColumn) {
         count += 1;
@@ -1086,6 +1108,7 @@ export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, param
       .select({
         id: schema.project.tasks.id,
         col: schema.project.tasks.column,
+        status: schema.project.tasks.status,
         tp: schema.project.tasks.transitionPending,
         wid: schema.project.taskWorkflowSelection.workflowId,
       })
@@ -1112,6 +1135,8 @@ export async function countActiveInCapacitySlotAsyncImpl(store: TaskStore, param
     for (const row of rows) {
       const effectiveWorkflowId = resolveCapacityPoolId(row.wid);
       if (effectiveWorkflowId !== requestedWorkflowId) continue;
+      // Dead parks hold no slot — see `isFailedWipPark` for the ruling and its history.
+      if (isFailedWipPark(row)) continue;
 
       if (row.col === targetColumn) {
         count += 1;

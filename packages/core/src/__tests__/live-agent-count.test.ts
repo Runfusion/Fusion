@@ -3,9 +3,12 @@ import {
   countRunningAgentTasks,
   deriveRunningAgentCounts,
   enrichRunningAgentTaskShapeFromFlags,
+  isFailedWipPark,
   isRunningAgentTask,
   isWaitingAgentTask,
 } from "../agents/live-agent-count.js";
+import { isFailedWipPark as isFailedWipParkGate, isRunningAgentTask as isRunningAgentTaskGate } from "../index.gate.js";
+import { isFailedWipPark as isFailedWipParkFull } from "../index.js";
 import type { RunningAgentTaskShape } from "../agents/live-agent-count.js";
 
 function task(overrides: Partial<RunningAgentTaskShape> & Pick<RunningAgentTaskShape, "column">): RunningAgentTaskShape {
@@ -188,5 +191,81 @@ describe("the no-flags fallback keeps the legacy planner vocabulary", () => {
     expect(isRunningAgentTask(wipTodo)).toBe(true);
     // And the renamed planner lane becomes Waiting as soon as its flags arrive.
     expect(isWaitingAgentTask(enrichRunningAgentTaskShapeFromFlags(bare("backlog"), { intake: true }))).toBe(true);
+  });
+});
+
+/*
+FNXC:ColumnCapacity 2026-10-10-19:34 (RUFU-362):
+The failed-park atom moved out of `isRunningAgentTask`'s body because it turned out to answer a
+SECOND question: does this row occupy a COLUMN WIP slot? Production project saneca proved the two
+answers had drifted — `in-progress` held three rows and every one of them was status:"failed", so
+the in-transaction capacity check reported the lane full, refused every todo→in-progress move with
+`capacity-exhausted`, and the board froze (294 graph suspends on waitReason:"capacity" inside 30
+minutes, zero board-wide moves). A dead row must never hold a slot in any dimension; a live row
+must keep holding one in every dimension.
+
+The truth table is pinned in BOTH directions. The `null` / `"merging"` / `"planning"` rows are the
+control that stops the exclusion from widening into "ignore the lane": a counter that dropped
+EVERY row would also clear the frozen-board symptom test while quietly deleting capacity.
+*/
+describe("isFailedWipPark — the single spelling of the failed-park rule", () => {
+  const row = (status: string | null | undefined) =>
+    isFailedWipPark({ status } as Parameters<typeof isFailedWipPark>[0]);
+
+  it("is true only for a failed park, so live and non-failed rows keep their slot", () => {
+    expect(row("failed")).toBe(true);
+    // Controls: live, absent, and non-failed terminal statuses all still occupy a slot.
+    expect(row(null)).toBe(false);
+    expect(row(undefined)).toBe(false);
+    expect(row("merging")).toBe(false);
+    expect(row("planning")).toBe(false);
+    expect(row("done")).toBe(false);
+  });
+
+  /*
+  This is a PARITY PIN, honest about what it can catch. Production holds exactly one call site, so
+  a re-literalized status check could only return as a SECOND rule beside this one — which is
+  precisely how the column dimension drifted away from the agent dimension. Asserting that the atom
+  implies not-running across every lane is what makes that drift fail loudly.
+  */
+  it("keeps isRunningAgentTask agreeing with the atom across every lane", () => {
+    const lanes: Array<Partial<RunningAgentTaskShape> & Pick<RunningAgentTaskShape, "column">> = [
+      { column: "in-progress", columnCountsTowardWip: true },
+      { column: "working", columnCountsTowardWip: true },
+      { column: "in-review", columnTerminalKind: "none", columnIsReviewOrMerge: true },
+      { column: "todo", columnIsIntakeOrHold: true },
+    ];
+    for (const lane of lanes) {
+      for (const status of ["failed", null, "planning", "merging", "done"] as const) {
+        const shape = task({ ...lane, status });
+        if (isFailedWipPark(shape)) expect(isRunningAgentTask(shape), `${lane.column}/${status}`).toBe(false);
+      }
+      // Non-vacuous control per lane: a live row's answer is not the atom's doing.
+      expect(isFailedWipPark(task({ ...lane, status: null }))).toBe(false);
+    }
+    // And the live WIP row really does still hold its slot.
+    expect(isRunningAgentTask(task({ column: "in-progress", columnCountsTowardWip: true, status: null }))).toBe(true);
+  });
+});
+
+/*
+FNXC:MergeGatePolicy 2026-10-10-19:34 (RUFU-362):
+Same both-barrels pin as `file-scope-lease.test.ts` and `agent-log-read-guard.test.ts` establish,
+and load-bearing for the same reason: the `engine-core` merge-gate vitest project aliases
+`@fusion/core` to the gate bundle built from `index.gate.ts`, and `hold-release.ts` imports this
+predicate through that specifier. A gate-barrel omission is not a type-only annoyance there — the
+sweep would call `undefined` at runtime. RUFU-204's Code Review died mid-reasoning while checking
+exactly this, which is why the pin is written the same way.
+*/
+describe("isFailedWipPark is exposed from BOTH core barrels (index + index.gate stay in sync)", () => {
+  it("resolves the identical function through the full and gate barrels", () => {
+    expect(typeof isFailedWipParkGate).toBe("function");
+    // Re-export of the same module instance → the same function, so the barrels cannot drift.
+    expect(isFailedWipParkGate).toBe(isFailedWipPark);
+    expect(isFailedWipParkFull).toBe(isFailedWipPark);
+    expect(isFailedWipParkGate({ status: "failed" })).toBe(true);
+    expect(isFailedWipParkGate({ status: null })).toBe(false);
+    // The neighbour the atom was extracted from is still published from both barrels too.
+    expect(isRunningAgentTaskGate).toBe(isRunningAgentTask);
   });
 });

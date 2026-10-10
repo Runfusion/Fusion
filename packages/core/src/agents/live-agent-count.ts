@@ -170,6 +170,55 @@ function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
   return task.columnTerminalKind ?? (task.column === "done" ? "complete" : "none");
 }
 
+/*
+FNXC:ConcurrencyIndicators 2026-08-01-19:22:
+Failed WIP parks (honest-blocked, graph parse failure, exhausted recovery) remain in the
+WIP column until an operator or rebound moves them, but they are not live agents. Counting
+them filled maxWorktrees/maxConcurrent and blocked ready work (e.g. FN-8704 sitting
+in-progress/failed while todos waited on capacity). Match review-lane semantics, which
+already exclude status:"failed" from active merge holders.
+
+FNXC:ColumnCapacity 2026-10-10-19:34 (RUFU-362):
+That decision was only ever applied to the AGENT-capacity dimension, so the same dead rows
+still consumed COLUMN WIP slots. Measured on production project saneca: `in-progress` held
+three rows and all three were status:"failed", so the pooled check reported the lane full,
+every todo→in-progress move was refused `capacity-exhausted`, and the graph re-suspended on
+`waitReason:"capacity"` 294 times in 30 minutes with zero board-wide moves.
+
+This predicate is now the ONLY spelling of the rule, consumed by four groups that must
+agree or the board freezes again:
+1. the agent-capacity predicate {@link isRunningAgentTask} (FN-8704's original home);
+2. both column-capacity counters (`countActiveInCapacitySlotSyncImpl` /
+   `countActiveInCapacitySlotAsyncImpl`), i.e. the in-transaction arbitration behind every
+   column crossing, drag-and-drop, promote and scheduler release;
+3. the hold/release sweep's mirror (`countCapacitySlot`), whose own header claims it
+   "mirrors the in-txn count";
+4. the dashboard workflow-switcher phase counts (`computeWorkflowStatusCounts`).
+
+Scope of the atom, deliberately: the failed check ONLY. `isRunningAgentTask` additionally
+drops paused, stale-planning and external-blocked rows, and none of those change what
+occupies a COLUMN slot — adopting it wholesale would be a much larger scheduling change.
+Failed rows stay RENDERED in their lane (the FN-8704 debris rule); they only stop holding a
+slot, so an operator still sees what failed and can retry or clean it up.
+*/
+/**
+ * The minimum row shape {@link isFailedWipPark} answers for. Deliberately wider than
+ * `Pick<Task, "status">`: both store counters call the predicate directly on their SQL projection,
+ * where `project.tasks.status` is a nullable column, while a hydrated `Task` expresses the same
+ * absence as `undefined`. A narrower signature would force every counter to coalesce `null` before
+ * asking a question whose answer cannot change, and a coalescing step in front of a guard is exactly
+ * the kind of ceremony that gets dropped by the next caller.
+ */
+export type FailedWipParkShape = {
+  /** SQL NULL for store projections; `undefined` for hydrated rows. Neither is a live occupant. */
+  status?: string | null;
+};
+
+/** A `status:"failed"` row is operator-visible debris, not a live capacity holder. */
+export function isFailedWipPark(task: FailedWipParkShape): boolean {
+  return task.status === "failed";
+}
+
 /**
  * Returns true only for a live, unpaused top-level agent.
  * Planning may run in any non-terminal workflow column. Unpaused WIP columns
@@ -196,15 +245,8 @@ export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   */
   if (isTaskExternallyBlocked(task)) return true;
   if (task.paused || task.userPaused) return false;
-  /*
-  FNXC:ConcurrencyIndicators 2026-08-01-19:22:
-  Failed WIP parks (honest-blocked, graph parse failure, exhausted recovery) remain in the
-  WIP column until an operator or rebound moves them, but they are not live agents. Counting
-  them filled maxWorktrees/maxConcurrent and blocked ready work (e.g. FN-8704 sitting
-  in-progress/failed while todos waited on capacity). Match review-lane semantics, which
-  already exclude status:"failed" from active merge holders.
-  */
-  if (task.status === "failed") return false;
+  // Rationale for excluding a dead park lives at `isFailedWipPark`, the single spelling.
+  if (isFailedWipPark(task)) return false;
   /*
   FNXC:CapacitySlotLeak 2026-09-19-04:07:
   Requisito (relato do operador): "um card sem sessão viva não pode segurar vaga de capacidade; caso
