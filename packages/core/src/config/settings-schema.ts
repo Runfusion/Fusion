@@ -175,6 +175,15 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   */
   quickAddSubmitOnEnter: true,
   language: undefined,
+  /*
+  FNXC:OperatorLanguage 2026-09-15-07:18:
+  The operator's prose language for agent-generated text (mailbox, reports, logs, verdicts, chat
+  replies). Default "auto": mirror each incoming message's language, which leaves autonomous lanes
+  on today's English. buildOperatorLanguageDirective turns a concrete code into the prompt directive
+  injected into every operator-facing lane. Kept present-but-string (not undefined) so scope-key
+  derivation and the settings-defaults guard see a stated default matching the UI's "Automatic".
+  */
+  operatorLanguage: "auto",
   defaultProvider: undefined,
   defaultCredentialInstanceId: undefined,
   defaultModelId: undefined,

@@ -6755,7 +6755,10 @@
       "channelStable": "Stable (recomendado)",
       "channelBeta": "Beta — builds iniciais da main",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": ""
+      "quickAddSubmitOnEnterHint": "",
+      "operatorLanguage": "",
+      "operatorLanguageHint": "",
+      "operatorLanguageAuto": ""
     },
     "nodeSync": {
       "alwaysAsk": "Sempre perguntar",

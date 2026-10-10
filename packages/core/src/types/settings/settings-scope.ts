@@ -362,6 +362,16 @@ export interface GlobalSettings {
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */
   language?: Locale;
+  /**
+   * FNXC:OperatorLanguage 2026-09-15-07:18:
+   * The operator's prose language for AGENT-GENERATED text (mailbox messages, heartbeat reports,
+   * task logs, completion summaries, verdict explanations, chat replies). Global-only: it is a
+   * property of the human reading the output, so a shared project must never override it.
+   * `"auto"` (default) and empty = mirror the language of each incoming message, which for
+   * autonomous lanes keeps today's English. Distinct from `language`, which selects dashboard UI
+   * chrome locale.
+   */
+  operatorLanguage?: string;
   /** Default AI model provider name (e.g. `"anthropic"`, `"openai"`).
    *  Must be set together with `defaultModelId`. When both are undefined,
    *  the engine uses pi's automatic model resolution. */
