@@ -120,6 +120,28 @@ describe("unrun pre-merge gate wedge regression", () => {
     expect(store.logEntry).toHaveBeenCalledWith(live.id, expect.stringContaining("re-seeded at unrun pre-merge gate"), undefined, undefined);
   });
 
+  it("parks deterministic review-input refusal without re-seeding or inventing implementation fixes", async () => {
+    const live = resultlessReviewTask({ workflowStepResults: [{
+      workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge",
+      status: "failed", output: "Code Review failed before producing a verdict: review-input-unprovable",
+    }] });
+    const store = Object.assign(createMockStore(), recoveryStore(live));
+    store.getTask.mockResolvedValue(live);
+    const executor = new TaskExecutor(store, "/tmp/fn-review-proof");
+    vi.spyOn(executor as any, "routeRetryableRemediationGraphFailureToPreMergeFix").mockResolvedValue(false);
+    vi.spyOn(executor as any, "routeGraphFailureToExecutionResume").mockResolvedValue(false);
+    const remediate = vi.spyOn(executor as any, "requestPreMergeOptionalStepFix");
+    await (executor as any).handleGraphFailure(live, {
+      disposition: "failed", outcome: "failure", visitedNodeIds: ["code-review"],
+      context: { "node:code-review:outcome": "failure", "node:code-review:value": "gate-result-not-approved" },
+    });
+    expect(store.updateTask).toHaveBeenCalledWith(live.id, expect.objectContaining({
+      status: "failed", error: expect.stringContaining("automatic review recovery stopped"),
+    }), undefined);
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+    expect(remediate).not.toHaveBeenCalled();
+  });
+
   it("uses the self-healing production sweep to seed an unrun gate and suppress merge enqueue", async () => {
     const live = resultlessReviewTask();
     const store = recoveryStore(live);

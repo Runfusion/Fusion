@@ -19,7 +19,10 @@ describe("LLMSynthesisProvider", () => {
     const session = { state: { messages: [] as Array<{ role: string; content: string }> }, dispose: disposeMock };
     createFnAgentMock.mockResolvedValue({ session });
     promptWithFallbackMock.mockImplementation(async (s: typeof session, _prompt: string) => {
-      s.state.messages.push({ role: "assistant", content: '```json\n{"summary":"ok","confidence":0.8}\n```\n[1]' });
+      s.state.messages.push({
+        role: "assistant",
+        content: '```json\n{"summary":"ok","findings":[{"statement":"supported","citations":["[1]"]}],"confidence":0.8,"followUps":[]}\n```',
+      });
     });
   });
 

@@ -86,6 +86,27 @@ pgTest("ResearchStore (PostgreSQL backend mode)", () => {
     });
   });
 
+  it("arbitrates cancellation and terminal writes against the authoritative status", async () => {
+    const s = research();
+    const cancelledFirst = await s.createRun({ query: "cancel wins" });
+    await s.updateStatus(cancelledFirst.id, "running");
+    await s.requestCancellation(cancelledFirst.id);
+
+    expect(await s.updateStatusIfCurrent(cancelledFirst.id, ["running"], "failed", {
+      lifecycle: { failureClass: "retryable_transient", errorCode: "PROVIDER_UNAVAILABLE" },
+    })).toBe(false);
+    expect(await s.updateStatusIfCurrent(cancelledFirst.id, ["cancelling"], "cancelled")).toBe(true);
+    expect((await s.getRun(cancelledFirst.id))?.status).toBe("cancelled");
+
+    const providerFirst = await s.createRun({ query: "provider wins" });
+    await s.updateStatus(providerFirst.id, "running");
+    expect(await s.updateStatusIfCurrent(providerFirst.id, ["running"], "timed_out", {
+      lifecycle: { failureClass: "timed_out", errorCode: "PROVIDER_TIMEOUT" },
+    })).toBe(true);
+    expect((await s.requestCancellation(providerFirst.id)).status).toBe("timed_out");
+    expect((await s.getRun(providerFirst.id))?.status).toBe("timed_out");
+  });
+
   it("appendEvent dual-writes: the event appears in getRun().events", async () => {
     const s = research();
     const run = await s.createRun({ query: "dual write events" });
@@ -214,6 +235,49 @@ pgTest("ResearchStore (PostgreSQL backend mode)", () => {
     }
     expect(caught).toBeInstanceOf(ResearchLifecycleError);
     expect((caught as ResearchLifecycleError).code).toBe("invalid_transition");
+  });
+
+  it.each([
+    ["configuration", "MISSING_CREDENTIALS", false, "failed"],
+    ["provider_denied", "PROVIDER_DENIED", false, "failed"],
+    ["malformed_response", "MALFORMED_RESPONSE", false, "failed"],
+    ["retryable_transient", "RATE_LIMITED", true, "failed"],
+    ["timed_out", "PROVIDER_TIMEOUT", true, "timed_out"],
+    ["cancelled", "RUN_CANCELLED", false, "cancelled"],
+  ] as const)("persists sanitized %s terminal diagnosis and bounded event metadata", async (failureClass, errorCode, retryable, status) => {
+    const s = research();
+    const secret = "raw-provider-secret";
+    const run = await s.createRun({ query: `terminal ${failureClass}` });
+    await s.updateStatus(run.id, "running");
+    await s.updateStatus(run.id, status, {
+      error: `raw body ${secret}`,
+      lifecycle: {
+        failureClass,
+        errorCode,
+        retryable,
+        terminalCause: `credential=${secret}`,
+        remediation: `leaked ${secret}`,
+        providerType: "web-search",
+      },
+    });
+
+    const reloaded = await s.getRun(run.id);
+    expect(reloaded).toMatchObject({
+      status,
+      lifecycle: { failureClass, errorCode, retryable, providerType: "web-search" },
+    });
+    expect(reloaded?.lifecycle?.terminalCause).toBeTruthy();
+    expect(JSON.stringify(reloaded)).not.toContain(secret);
+
+    const events = await s.listRunEvents(run.id);
+    const terminal = events.at(-1);
+    expect(terminal).toMatchObject({
+      type: "status_changed",
+      status,
+      classification: failureClass,
+      metadata: { errorCode, retryable, providerType: "web-search" },
+    });
+    expect(JSON.stringify(events)).not.toContain(secret);
   });
 
   it("deleteRun removes the run", async () => {

@@ -29,6 +29,7 @@ import {
   defaultErrorCodeForFailureClass,
 } from "../research/research-store.js";
 import type {
+  ResearchErrorCode,
   ResearchEvent,
   ResearchExport,
   ResearchExportFormat,
@@ -49,6 +50,38 @@ type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
 
 function normalizeStatus(status: ResearchRunStatus | "pending"): ResearchRunStatus {
   return status === "pending" ? "queued" : status;
+}
+
+const SAFE_TERMINAL_DIAGNOSTICS: Partial<Record<ResearchErrorCode, { detail: string; remediation?: string }>> = {
+  MISSING_CREDENTIALS: { detail: "The required research provider or model is not configured.", remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run." },
+  PROVIDER_DENIED: { detail: "The research provider rejected authentication or access.", remediation: "Verify provider credentials, account access, and model permissions in Settings → Authentication." },
+  RATE_LIMITED: { detail: "The research provider is rate limited or temporarily unavailable.", remediation: "Retry later or review provider rate limits." },
+  PROVIDER_UNAVAILABLE: { detail: "The research provider is unavailable.", remediation: "Check provider availability and configuration before retrying." },
+  PROVIDER_TIMEOUT: { detail: "The research provider did not respond before the configured deadline.", remediation: "Retry the run. If timeouts continue, verify provider availability and research timeout settings." },
+  MALFORMED_RESPONSE: { detail: "The research provider returned a response Fusion could not validate.", remediation: "Verify the configured provider and model are compatible with research synthesis." },
+  RUN_CANCELLED: { detail: "The research run was cancelled by the operator." },
+  RETRY_EXHAUSTED: { detail: "The research run exhausted its configured retry attempts.", remediation: "Resolve the underlying provider or configuration issue before starting a new run." },
+  NON_RETRYABLE_PROVIDER_ERROR: { detail: "The research provider returned a non-retryable error.", remediation: "Verify provider access and configuration before starting a new run." },
+  INTERNAL_ERROR: { detail: "Research failed because of an unexpected internal error.", remediation: "Review sanitized engine diagnostics and verify the configured research providers." },
+};
+
+function sanitizeTerminalPatch(patch: ResearchRunUpdateInput): ResearchRunUpdateInput {
+  const code = patch.lifecycle?.errorCode;
+  const diagnosis = code ? SAFE_TERMINAL_DIAGNOSTICS[code] : undefined;
+  if (!diagnosis) return patch;
+  const providerType = typeof patch.lifecycle?.providerType === "string" && /^[a-z0-9-]{1,40}$/i.test(patch.lifecycle.providerType)
+    ? patch.lifecycle.providerType
+    : undefined;
+  return {
+    ...patch,
+    error: diagnosis.detail,
+    lifecycle: {
+      ...(patch.lifecycle ?? {}),
+      terminalCause: diagnosis.detail,
+      remediation: diagnosis.remediation,
+      providerType,
+    },
+  };
 }
 
 function rowToRun(row: Record<string, unknown>): ResearchRun {
@@ -354,7 +387,12 @@ export async function updateResearchRun(
 
   const nonMutableKeys = Object.keys(input).filter((key) => key !== "events" && key !== "metadata");
   if (TERMINAL_STATUSES.has(normalizedExistingStatus) && nonMutableKeys.length > 0) {
-    const allowedTerminalMutation = nonMutableKeys.every((key) => key === "status" || key === "lifecycle");
+    const isAllowedTerminalTransition = Boolean(
+      normalizedInputStatus
+      && normalizedInputStatus !== normalizedExistingStatus
+      && VALID_STATUS_TRANSITIONS[normalizedExistingStatus].includes(normalizedInputStatus),
+    );
+    const allowedTerminalMutation = nonMutableKeys.every((key) => key === "status" || key === "lifecycle" || (isAllowedTerminalTransition && key === "error"));
     if (!allowedTerminalMutation) {
       throw new ResearchLifecycleError(`Run ${id} is terminal and immutable`, "terminal_immutable");
     }
@@ -562,24 +600,17 @@ export async function setResearchResults(handle: QueryHandle, runId: string, res
  * cancelled→cancelledAt+retryable=false; timed_out→retryable=true+timeoutAt;
  * retry_exhausted→retryable=false+errorCode), then appends a status_changed lifecycle event.
  */
-export async function updateResearchStatus(
-  layer: AsyncDataLayer,
-  runId: string,
+function createResearchStatusPatch(
+  run: ResearchRun,
   status: ResearchRunStatus,
   extra?: Partial<ResearchRun>,
-): Promise<void> {
-  const run = await getResearchRun(layer.db, runId);
-  if (!run) throw new Error(`Research run not found: ${runId}`);
-
+): ResearchRunUpdateInput {
   const normalizedStatus = normalizeStatus(status as ResearchRunStatus | "pending");
   const now = new Date().toISOString();
   const patch: ResearchRunUpdateInput = {
     ...(extra ?? {}),
     status: normalizedStatus,
-    lifecycle: {
-      ...(run.lifecycle ?? {}),
-      ...(extra?.lifecycle ?? {}),
-    },
+    lifecycle: { ...(run.lifecycle ?? {}), ...(extra?.lifecycle ?? {}) },
   };
 
   if (normalizedStatus === "running" && !run.startedAt) patch.startedAt = now;
@@ -598,40 +629,87 @@ export async function updateResearchStatus(
     };
   } else if (normalizedStatus === "cancelled") {
     patch.lifecycle = {
-      ...(patch.lifecycle ?? {}),
-      terminalReason: "cancelled",
-      retryable: false,
-      failureClass: "cancelled",
-      errorCode: patch.lifecycle?.errorCode ?? "RUN_CANCELLED",
+      ...(patch.lifecycle ?? {}), terminalReason: "cancelled", retryable: false,
+      failureClass: "cancelled", errorCode: patch.lifecycle?.errorCode ?? "RUN_CANCELLED",
     };
   } else if (normalizedStatus === "timed_out") {
     patch.lifecycle = {
-      ...(patch.lifecycle ?? {}),
-      terminalReason: "timed_out",
-      retryable: true,
-      failureClass: "timed_out",
-      errorCode: patch.lifecycle?.errorCode ?? "PROVIDER_TIMEOUT",
+      ...(patch.lifecycle ?? {}), terminalReason: "timed_out", retryable: true,
+      failureClass: "timed_out", errorCode: patch.lifecycle?.errorCode ?? "PROVIDER_TIMEOUT",
       timeoutAt: patch.lifecycle?.timeoutAt ?? now,
     };
   } else if (normalizedStatus === "retry_exhausted") {
     patch.lifecycle = {
-      ...(patch.lifecycle ?? {}),
-      terminalReason: "retry_exhausted",
-      retryable: false,
-      failureClass: patch.lifecycle?.failureClass ?? "non_retryable",
-      errorCode: "RETRY_EXHAUSTED",
+      ...(patch.lifecycle ?? {}), terminalReason: "retry_exhausted", retryable: false,
+      failureClass: patch.lifecycle?.failureClass ?? "non_retryable", errorCode: "RETRY_EXHAUSTED",
     };
   }
 
-  const updated = await updateResearchRun(layer.db, runId, patch);
-  if (!updated) return;
+  return TERMINAL_STATUSES.has(normalizedStatus) ? sanitizeTerminalPatch(patch) : patch;
+}
 
+async function persistResearchStatusIfCurrent(
+  layer: AsyncDataLayer,
+  runId: string,
+  expectedStatuses: readonly ResearchRunStatus[] | undefined,
+  status: ResearchRunStatus,
+  extra?: Partial<ResearchRun>,
+): Promise<ResearchRun | undefined> {
+  return layer.transactionImmediate(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:research-run-status:${runId}`}, 0))`);
+    const run = await getResearchRun(tx, runId);
+    if (!run) throw new Error(`Research run not found: ${runId}`);
+    if (expectedStatuses && !expectedStatuses.includes(run.status)) return undefined;
+    return updateResearchRun(tx, runId, createResearchStatusPatch(run, status, extra));
+  });
+}
+
+async function appendResearchStatusEvent(
+  layer: AsyncDataLayer,
+  runId: string,
+  updated: ResearchRun,
+): Promise<void> {
   await appendResearchLifecycleEvent(layer, runId, {
     type: "status_changed",
-    message: `Status changed to ${normalizedStatus}`,
-    status: normalizedStatus,
+    message: `Status changed to ${updated.status}`,
+    status: updated.status,
     classification: updated.lifecycle?.failureClass,
+    metadata: TERMINAL_STATUSES.has(updated.status) ? {
+      errorCode: updated.lifecycle?.errorCode,
+      retryable: updated.lifecycle?.retryable,
+      providerType: updated.lifecycle?.providerType,
+    } : undefined,
   });
+}
+
+export async function updateResearchStatus(
+  layer: AsyncDataLayer,
+  runId: string,
+  status: ResearchRunStatus,
+  extra?: Partial<ResearchRun>,
+): Promise<void> {
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-10-01-04:45:
+  PostgreSQL serializes every run-status decision under one transaction-scoped lock. Conditional terminal writers compare and persist inside that transaction, so an earlier cancellation request cannot be overwritten by failure, timeout, or completion after a stale read.
+
+  FNXC:ResearchFailureDiagnostics 2026-09-28-19:27:
+  PostgreSQL persists the sanitized terminal row before its lifecycle event. Event failure may reduce history, but it must never erase the authoritative diagnosis or leak caller/provider prose into JSONB.
+  */
+  const updated = await persistResearchStatusIfCurrent(layer, runId, undefined, status, extra);
+  if (updated) await appendResearchStatusEvent(layer, runId, updated);
+}
+
+export async function updateResearchStatusIfCurrent(
+  layer: AsyncDataLayer,
+  runId: string,
+  expectedStatuses: readonly ResearchRunStatus[],
+  status: ResearchRunStatus,
+  extra?: Partial<ResearchRun>,
+): Promise<boolean> {
+  const updated = await persistResearchStatusIfCurrent(layer, runId, expectedStatuses, status, extra);
+  if (!updated) return false;
+  await appendResearchStatusEvent(layer, runId, updated);
+  return true;
 }
 
 /**
@@ -645,26 +723,28 @@ export async function requestResearchCancellation(
   runId: string,
   reason = "Cancelled by user",
 ): Promise<ResearchRun> {
-  const run = await getResearchRun(layer.db, runId);
-  if (!run) throw new Error(`Research run not found: ${runId}`);
-  if (TERMINAL_STATUSES.has(run.status)) {
-    return run;
-  }
+  const result = await layer.transactionImmediate(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fusion:research-run-status:${runId}`}, 0))`);
+    const run = await getResearchRun(tx, runId);
+    if (!run) throw new Error(`Research run not found: ${runId}`);
+    if (TERMINAL_STATUSES.has(run.status)) return { updated: run, requested: false };
 
-  const now = new Date().toISOString();
-  const alreadyCancelling = run.status === "cancelling";
-  const updated = await updateResearchRun(layer.db, runId, {
-    status: "cancelling",
-    lifecycle: {
-      ...(run.lifecycle ?? {}),
-      cancellationRequestedAt: run.lifecycle?.cancellationRequestedAt ?? now,
-      terminalCause: reason,
-      errorCode: "RUN_CANCELLED",
-      retryable: false,
-    },
+    const now = new Date().toISOString();
+    const alreadyCancelling = run.status === "cancelling";
+    const updated = await updateResearchRun(tx, runId, {
+      status: "cancelling",
+      lifecycle: {
+        ...(run.lifecycle ?? {}),
+        cancellationRequestedAt: run.lifecycle?.cancellationRequestedAt ?? now,
+        terminalCause: reason,
+        errorCode: "RUN_CANCELLED",
+        retryable: false,
+      },
+    });
+    if (!updated) throw new Error(`Research run not found: ${runId}`);
+    return { updated, requested: !alreadyCancelling };
   });
-  if (!updated) throw new Error(`Research run not found: ${runId}`);
-  if (!alreadyCancelling) {
+  if (result.requested) {
     await appendResearchLifecycleEvent(layer, runId, {
       type: "cancel_requested",
       message: reason,
@@ -672,7 +752,7 @@ export async function requestResearchCancellation(
       classification: "cancelled",
     });
   }
-  return updated;
+  return result.updated;
 }
 
 /**
@@ -697,8 +777,7 @@ export async function createResearchRetryRun(
   const configuredMaxAttempts = maxAttempts ?? run.lifecycle?.maxAttempts ?? 3;
   const nextAttempt = currentAttempt + 1;
   if (nextAttempt > configuredMaxAttempts) {
-    await updateResearchRun(layer.db, runId, {
-      status: "retry_exhausted",
+    await updateResearchStatus(layer, runId, "retry_exhausted", {
       lifecycle: {
         ...(run.lifecycle ?? {}),
         terminalReason: "retry_exhausted",
@@ -893,8 +972,22 @@ export class AsyncResearchStore extends EventEmitter<ResearchStoreEvents> {
 
   async updateStatus(runId: string, status: ResearchRunStatus, extra?: Partial<ResearchRun>): Promise<void> {
     await updateResearchStatus(this.layer, runId, status, extra);
-    // Mirror sync ResearchStore.updateStatus emit set: run:status_changed always,
-    // plus the terminal-specific event keyed off the persisted (normalized) status.
+    await this.emitPersistedStatus(runId);
+  }
+
+  async updateStatusIfCurrent(
+    runId: string,
+    expectedStatuses: readonly ResearchRunStatus[],
+    status: ResearchRunStatus,
+    extra?: Partial<ResearchRun>,
+  ): Promise<boolean> {
+    const updated = await updateResearchStatusIfCurrent(this.layer, runId, expectedStatuses, status, extra);
+    if (updated) await this.emitPersistedStatus(runId);
+    return updated;
+  }
+
+  private async emitPersistedStatus(runId: string): Promise<void> {
+    // Mirror sync ResearchStore.updateStatus emit set after persistence succeeds.
     const updated = await getResearchRun(this.layer.db, runId);
     if (!updated) return;
     this.emit("run:status_changed", updated);

@@ -285,24 +285,14 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
   it("linkGoal / unlinkGoal round-trips through listGoalIdsForMission", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Goal-linked" });
-    // GoalStore is not ported; seed a goal row directly via the async layer.
-    const now = new Date().toISOString();
-    const goalId = "G-TEST-MISSION";
-    await h.store().getAsyncLayer()!.db.insert(schema.project.goals).values({
-      id: goalId,
-      title: "A goal",
-      description: null,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
+    const goal = await h.store().getGoalStore().createGoal({ title: "A goal" });
 
-    const link = await m.linkGoal(mission.id, goalId);
-    expect(link.goalId).toBe(goalId);
-    expect(await m.listGoalIdsForMission(mission.id)).toEqual([goalId]);
-    expect(await m.listMissionIdsForGoal(goalId)).toEqual([mission.id]);
+    const link = await m.linkGoal(mission.id, goal.id);
+    expect(link.goalId).toBe(goal.id);
+    expect(await m.listGoalIdsForMission(mission.id)).toEqual([goal.id]);
+    expect(await m.listMissionIdsForGoal(goal.id)).toEqual([mission.id]);
 
-    expect(await m.unlinkGoal(mission.id, goalId)).toBe(true);
+    expect(await m.unlinkGoal(mission.id, goal.id)).toBe(true);
     expect(await m.listGoalIdsForMission(mission.id)).toEqual([]);
   });
 
@@ -2221,20 +2211,12 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const slice = await m.addSlice(milestone.id, { title: "SL" });
     const feature = await m.addFeature(slice.id, { title: "Feature" });
     const task = await h.store().createTask({ description: "mission delivery" });
-    const now = new Date().toISOString();
-    await h.store().getAsyncLayer()!.db.insert(schema.project.goals).values({
-      id: "G-TASK-PROVENANCE",
-      title: "Task goal",
-      description: null,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await m.linkGoal(mission.id, "G-TASK-PROVENANCE");
+    const goal = await h.store().getGoalStore().createGoal({ title: "Task goal" });
+    await m.linkGoal(mission.id, goal.id);
     await m.linkFeatureToTask(feature.id, task.id);
 
-    expect(await m.listGoalIdsForTask(task.id)).toEqual(["G-TASK-PROVENANCE"]);
-    expect((await m.listGoalsForTask(task.id)).map((goal) => goal.id)).toEqual(["G-TASK-PROVENANCE"]);
+    expect(await m.listGoalIdsForTask(task.id)).toEqual([goal.id]);
+    expect((await m.listGoalsForTask(task.id)).map((linkedGoal) => linkedGoal.id)).toEqual([goal.id]);
   });
 
   it("computeMissionStatus reflects milestone state", async () => {

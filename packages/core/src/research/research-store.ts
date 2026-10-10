@@ -61,7 +61,7 @@ export const TERMINAL_STATUSES = new Set<ResearchRunStatus>([
 export const VALID_STATUS_TRANSITIONS: Record<ResearchRunStatus, ResearchRunStatus[]> = {
   queued: ["running", "cancelling", "cancelled", "failed", "retry_waiting", "timed_out"],
   running: ["completed", "failed", "cancelling", "cancelled", "retry_waiting", "timed_out"],
-  cancelling: ["cancelled", "failed", "timed_out"],
+  cancelling: ["cancelled"],
   retry_waiting: ["queued", "running", "cancelled", "retry_exhausted", "failed"],
   completed: [],
   failed: ["retry_exhausted"],
@@ -77,6 +77,10 @@ function normalizeStatus(status: ResearchRunStatus | "pending"): ResearchRunStat
 export function defaultErrorCodeForFailureClass(failureClass?: ResearchRunFailureClass): ResearchErrorCode {
   if (failureClass === "timed_out") return "PROVIDER_TIMEOUT";
   if (failureClass === "cancelled") return "RUN_CANCELLED";
+  if (failureClass === "configuration") return "MISSING_CREDENTIALS";
+  if (failureClass === "provider_denied") return "PROVIDER_DENIED";
+  if (failureClass === "malformed_response") return "MALFORMED_RESPONSE";
+  if (failureClass === "retryable_transient") return "PROVIDER_UNAVAILABLE";
   if (failureClass === "non_retryable") return "NON_RETRYABLE_PROVIDER_ERROR";
   return "INTERNAL_ERROR";
 }
@@ -448,6 +452,22 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     if (normalizedStatus === "failed") this.emit("run:failed", updated);
     if (normalizedStatus === "cancelled") this.emit("run:cancelled", updated);
     if (normalizedStatus === "timed_out") this.emit("run:timed_out", updated);
+  }
+
+  /*
+  FNXC:ResearchFailureDiagnostics 2026-10-01-04:45:
+  Terminal arbitration must compare the persisted status and write the winner as one operation. The synchronous store has no await boundary between this check and update; PostgreSQL provides the matching contract with a transaction-scoped lock.
+  */
+  updateStatusIfCurrent(
+    runId: string,
+    expectedStatuses: readonly ResearchRunStatus[],
+    status: ResearchRunStatus,
+    extra?: Partial<ResearchRun>,
+  ): boolean {
+    const current = this.getRun(runId);
+    if (!current || !expectedStatuses.includes(current.status)) return false;
+    this.updateStatus(runId, status, extra);
+    return true;
   }
 
   createExport(runId: string, format: ResearchExportFormat, content: string): ResearchExport {

@@ -53,7 +53,8 @@ const { MockStream } = vi.hoisted(() => {
   return { MockStream };
 });
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   AssistantMessageEventStream: MockStream,
   calculateCost: vi.fn(),
 }));

@@ -504,6 +504,8 @@ export interface ServerOptions {
   /** Daemon mode configuration with bearer token authentication.
    *  When provided, all API requests (except /api/health) require valid bearer token. */
   daemon?: { token: string };
+  /** Host/project-scoped SHA-256 collector credentials. Omit to disable external ingestion; env fallback is FUSION_EXTERNAL_SESSION_COLLECTORS. */
+  externalSessionCollectors?: readonly import("./routes/external-session-collector-auth.js").ExternalSessionCollectorCredential[];
   /** Explicitly disable bearer-token auth, ignoring FUSION_DAEMON_TOKEN /
    *  FUSION_DASHBOARD_TOKEN env vars. Used by `fn dashboard --no-auth` so a
    *  stale token in a project .env doesn't silently override the flag. */
@@ -1034,6 +1036,22 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const planningImageCaptureParser = express.json({ limit: "5mb", verify: preserveRawBody });
   const chatMessageParser = express.json({ limit: 2 * 1024 * 1024, verify: preserveRawBody });
   const fileSaveParser = express.json({ limit: 6 * MAX_FILE_SIZE + 1024, verify: preserveRawBody });
+  /*
+  FNXC:ExternalSessions 2026-09-23-11:10:
+  Collector observations and turns are bounded by their own contracts, not by Express's 100 KiB default:
+  a turn may carry 256 KiB prompts and patches and a 1 MiB response, and host collectors spool turns up to
+  2 MiB. The default parser answered a 131 KiB turn with a bare 413 before collector authentication, and
+  in-order turn delivery then stalled every later turn on that host. Admit the collector's 2 MiB cap plus
+  1 KiB of request envelope on exactly the two ingestion routes; every other route keeps its limit.
+  */
+  const externalSessionIngestionParser = express.json({ limit: 2 * 1024 * 1024 + 1024, verify: preserveRawBody });
+  const isExternalSessionIngestionBodyPath = (method: string, path: string): boolean =>
+    method === "POST" && /^\/api\/external-sessions\/(?:ingest|turn-ingest)\/?$/.test(path);
+  // FNXC:RemoteAgents 2026-10-04-12:00: a turn batch is bounded by its collector to 6 MiB of turns; admit
+  // 8 MiB plus envelope on exactly that route so one oversized batch is a 413, never a parser crash.
+  const externalSessionTurnBatchParser = express.json({ limit: 8 * 1024 * 1024 + 1024, verify: preserveRawBody });
+  const isExternalSessionTurnBatchPath = (method: string, path: string): boolean =>
+    method === "POST" && /^\/api\/external-sessions\/turn-ingest-batch\/?$/.test(path);
 
   /*
   FNXC:LargeTextPayloads 2026-08-21-04:35:
@@ -1073,7 +1091,11 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         ? chatMessageParser
         : req.method === "POST" && (isTaskFileSavePath(req.path) || isWorkspaceFileSavePath(req.path))
           ? fileSaveParser
-          : jsonParser;
+          : isExternalSessionIngestionBodyPath(req.method, req.path)
+            ? externalSessionIngestionParser
+            : isExternalSessionTurnBatchPath(req.method, req.path)
+              ? externalSessionTurnBatchParser
+              : jsonParser;
     return parser(req, res, (error) => {
       // Keep the established global and route-specific size rejections observable as 413 instead
       // of allowing Express's parser error to fall through to the generic 500 handler.

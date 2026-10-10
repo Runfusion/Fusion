@@ -18,6 +18,7 @@
  * on BOTH cutover paths.
  */
 
+import { realpathSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { acquireSqliteMigrationStateLock } from "./advisory-locks.js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -486,8 +487,33 @@ export async function lookupRegisteredProjectIdByPath(
     const rows = (await db.execute(
       sql`SELECT id FROM central.projects WHERE path = ${path} LIMIT 1`,
     )) as Array<{ id: string }>;
-    return rows[0]?.id;
+    if (rows[0]?.id) return rows[0].id;
+    /*
+    FNXC:CentralProjectIdentity 2026-09-27-01:01:
+    A registered project must resolve whichever spelling of its directory the process was started from.
+    Registration stores the path it was given, while a booting process looks up `process.cwd()`, which the OS
+    reports as the real path. Through a symlink (every macOS temp path: /var -> /private/var; any symlinked
+    home or volume) the exact match missed, so the store bound a path-derived `local-...` partition instead of
+    the registry id. Measured symptom: every remote-agent read for the start project answered 503 "storage
+    unavailable", because its storage no longer carried the project's own id; the same split puts that
+    session's task data in a different partition from the registry id.
+
+    Match on the real path only as a fallback, and only when exactly ONE registered project resolves to the
+    same directory. Two registrations of one directory are ambiguous, so they stay unresolved (the pre-existing
+    fallback) rather than picking one. Paths that no longer exist are skipped.
+    */
+    const target = realPathOrNull(path);
+    if (!target) return undefined;
+    const registered = (await db.execute(
+      sql`SELECT id, path FROM central.projects LIMIT 5000`,
+    )) as Array<{ id: string; path: string }>;
+    const matches = registered.filter((row) => realPathOrNull(row.path) === target);
+    return matches.length === 1 ? matches[0]!.id : undefined;
   } catch {
     return undefined;
   }
+}
+
+function realPathOrNull(path: string): string | null {
+  try { return realpathSync(path); } catch { return null; }
 }

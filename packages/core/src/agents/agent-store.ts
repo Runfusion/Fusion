@@ -117,6 +117,7 @@ import { FsWatchPollController } from "../process/fs-watch-poll-controller.js";
 import {
   BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG,
   BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST,
+  builtinWorkflowOwnerFallbackName,
   type BuiltinWorkflowRole,
 } from "./workflow-role-agent-defaults.js";
 import {
@@ -127,6 +128,35 @@ import {
 } from "./memory-agent-defaults.js";
 
 const agentStoreLog = createLogger("agent-store");
+
+/**
+ * Raised when a normalized durable-agent display name identifies more than one record.
+ * Exact agent IDs never use this conflict path.
+ *
+ * FNXC:AgentIdentityResolution 2026-10-04-10:41:
+ * Durable display names are operator-editable and legacy data may contain duplicates. Name-capable
+ * surfaces must expose every matching ID in stable order rather than selecting a database-order
+ * winner or making unrelated exact-ID reads depend on a full roster scan.
+ */
+export class AmbiguousAgentNameError extends Error {
+  readonly code = "AMBIGUOUS_AGENT_NAME";
+
+  constructor(
+    readonly query: string,
+    readonly normalizedName: string,
+    readonly candidateAgentIds: string[],
+  ) {
+    super(`Agent name "${query}" is ambiguous; matching agent IDs: ${candidateAgentIds.join(", ")}`);
+    this.name = "AmbiguousAgentNameError";
+  }
+}
+
+function normalizeAgentLookupName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 /*
 FNXC:WorkflowAgentIdentities 2026-08-08-06:11:
@@ -2276,23 +2306,32 @@ export class AgentStore extends EventEmitter {
       for (const definition of BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST) {
         let agent = winners.get(definition.role);
         if (!agent) {
-          agent = await this.createAgent({
-            name: definition.name,
-            roles: [definition.role],
-            title: definition.title,
-            metadata: { builtInWorkflowRole: true, workflowRole: definition.role },
-            /*
-            FNXC:WorkflowAgentRouting 2026-08-10-01:15:
-            Heartbeat OFF and auto-claim OFF is correct for these four: they are invoked BY the workflow engine
-            as stage principals and must not run autonomous loops or claim work on their own. This no longer
-            costs routability — `isWorkflowPrincipalEligible` treats built-in owners as routable structurally,
-            precisely so the heartbeat setting and the routing question stay separate concerns.
-            */
-            runtimeConfig: { enabled: false, autoClaimRelevantTasks: false },
-            instructionsText: definition.instructionsText,
-            soul: definition.soul,
-            bundleConfig: { ...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG, files: [...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG.files] },
-          }, executor);
+          /*
+          FNXC:WorkflowAgentIdentities 2026-09-23-10:30:
+          A missing owner used to be created under its canonical name unconditionally. When that name already
+          belonged to an agent without provenance, `createAgent` threw, the throw rolled back the whole
+          provisioning transaction — including owners created earlier in this loop — and `init()` failed. The
+          project was left with NO workflow principals, so every card needing planning held on
+          `role-pool-exhausted:triage` forever. Probe the name, fall back to a reserved alternative, and treat
+          a collision as this role's problem only: log it and keep provisioning the other roles.
+          */
+          const fallbackName = builtinWorkflowOwnerFallbackName(definition.name);
+          const name = (await this.findAgentByName(definition.name, executor)) === null
+            ? definition.name
+            : (await this.findAgentByName(fallbackName, executor)) === null ? fallbackName : null;
+          if (!name) {
+            agentStoreLog.warn(`Built-in ${definition.role} owner not provisioned: both "${definition.name}" and "${fallbackName}" are in use`);
+            continue;
+          }
+          try {
+            agent = await this.createBuiltinWorkflowOwner(definition, name, executor);
+          } catch (error) {
+            if (error instanceof Error && error.message.includes("already exists")) {
+              agentStoreLog.warn(`Built-in ${definition.role} owner not provisioned: "${name}" was claimed during creation`);
+              continue;
+            }
+            throw error;
+          }
         } else {
           const canonicalOrPartialBundle = isCanonicalOrPartialBuiltinWorkflowBundle(agent.bundleConfig);
           const customInstructions = Boolean(agent.instructionsPath?.trim())
@@ -2352,6 +2391,30 @@ export class AgentStore extends EventEmitter {
     */
     await Promise.all(agents.map((agent) => this.materializeBuiltinWorkflowRoleBundle(agent)));
     return agents;
+  }
+
+  private async createBuiltinWorkflowOwner(
+    definition: (typeof BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULT_LIST)[number],
+    name: string,
+    executor?: QueryHandle,
+  ): Promise<Agent> {
+    return this.createAgent({
+      name,
+      roles: [definition.role],
+      title: definition.title,
+      metadata: { builtInWorkflowRole: true, workflowRole: definition.role },
+      /*
+      FNXC:WorkflowAgentRouting 2026-08-10-01:15:
+      Heartbeat OFF and auto-claim OFF is correct for these four: they are invoked BY the workflow engine
+      as stage principals and must not run autonomous loops or claim work on their own. This no longer
+      costs routability — `isWorkflowPrincipalEligible` treats built-in owners as routable structurally,
+      precisely so the heartbeat setting and the routing question stay separate concerns.
+      */
+      runtimeConfig: { enabled: false, autoClaimRelevantTasks: false },
+      instructionsText: definition.instructionsText,
+      soul: definition.soul,
+      bundleConfig: { ...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG, files: [...BUILTIN_WORKFLOW_AGENT_BUNDLE_CONFIG.files] },
+    }, executor);
   }
 
   /*
@@ -2897,31 +2960,37 @@ export class AgentStore extends EventEmitter {
   }
 
   /**
-   * Resolve an agent by exact ID or normalized shortname derived from display name.
+   * Resolve an agent by authoritative exact ID or normalized durable display name.
    * @param shortname - Agent ID or normalized agent name
-   * @returns Matching agent when unambiguous; otherwise null
+   * @returns Matching agent, or null when no durable identity matches
+   * @throws {AmbiguousAgentNameError} when a normalized name matches multiple durable agents
    */
   async resolveAgent(shortname: string): Promise<Agent | null> {
-    const normalize = (value: string): string =>
-      value
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-
-    const all = await this.listAgents();
-
-    const exact = all.find((agent) => agent.id === shortname);
+    /*
+    FNXC:AgentIdentityResolution 2026-10-04-10:41:
+    Project-scoped IDs are authoritative and must remain readable even when legacy durable rows
+    share a display name. Only an ID miss may enumerate durable agents for normalized-name lookup.
+    */
+    const exact = await this.getAgent(shortname);
     if (exact) {
       return exact;
     }
 
-    const normalizedTarget = normalize(shortname);
+    const normalizedTarget = normalizeAgentLookupName(shortname);
     if (!normalizedTarget) {
       return null;
     }
 
-    const matches = all.filter((agent) => normalize(agent.name) === normalizedTarget);
-    return matches.length === 1 ? matches[0] : null;
+    const matches = (await this.listAgents())
+      .filter((agent) => normalizeAgentLookupName(agent.name) === normalizedTarget);
+    if (matches.length > 1) {
+      throw new AmbiguousAgentNameError(
+        shortname,
+        normalizedTarget,
+        matches.map((agent) => agent.id).sort((a, b) => a.localeCompare(b)),
+      );
+    }
+    return matches[0] ?? null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
