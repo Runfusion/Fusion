@@ -1556,7 +1556,10 @@
     "collapseArchivedTitle": "收起已归档任务",
     "expandArchivedLabel": "展开已归档任务",
     "expandArchivedTitle": "展开已归档任务",
-    "failedToArchive": "归档任务失败"
+    "failedToArchive": "归档任务失败",
+    "archiveAllMessage_one": "",
+    "archivedTasks_one": "",
+    "archivedTasksWithSkips_one": ""
   },
   "commandCenter": {
     "activity": {
@@ -3438,7 +3441,6 @@
     "statusReplan": "重新规划",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": "",
     "archiveSelected": "归档所选任务",
     "archiveSelectedTitle": "归档已完成的所选任务",
     "archiveUnavailable": "归档操作不可用",
@@ -3451,7 +3453,10 @@
     "bulkDeleteArchiveSummary": "已归档 {{archived}} 个，已删除 {{deleted}} 个，失败 {{failed}} 个",
     "bulkDeleteNoTasks": "没有可删除的所选任务（不包括已归档任务）",
     "bulkDeleteWithDoneMessage": "要删除 {{deletable}} 个任务，还是归档 {{done}} 个已完成任务并删除其余任务？",
-    "lineageArchiveMessage": "{{taskId}} 有 {{children}} 个谱系子任务将其引用为源父任务。\n\n要先解除这些引用再继续归档吗？"
+    "lineageArchiveMessage": "{{taskId}} 有 {{children}} 个谱系子任务将其引用为源父任务。\n\n要先解除这些引用再继续归档吗？",
+    "bulkArchiveDone_one": "",
+    "bulkArchiveMessage_one": "",
+    "bulkDeleteSummary_one": ""
   },
   "mailbox": {
     "agent": "代理",
@@ -6412,7 +6417,9 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "chatContextBudgetHelp": "",
+      "preOverflowCompactionHelp": ""
     },
     "merge": {
       "abort": "",
