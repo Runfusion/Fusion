@@ -17,8 +17,11 @@ vi.mock("../process-manager.js", () => ({
 // Belt-and-suspenders: no real CLI spawn even if a probe slips through.
 vi.mock("node:child_process", () => ({ spawn: vi.fn(() => ({ on: vi.fn(), stdout: { on: vi.fn() }, stderr: { on: vi.fn() }, stdin: { write: vi.fn(), end: vi.fn() }, kill: vi.fn() })), execSync: vi.fn(() => Buffer.from("")) }));
 
-vi.mock("@earendil-works/pi-ai", () => ({
-  getModels: vi.fn(() => []),
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  // The extension reads the catalog from the root entry (loader-safe); under
+  // Vitest the root lacks it, so expose the real static catalog here.
+  getBuiltinModels: (await import("@earendil-works/pi-ai/providers/all")).getBuiltinModels,
   AssistantMessageEventStream: vi.fn(),
   calculateCost: vi.fn(),
 }));

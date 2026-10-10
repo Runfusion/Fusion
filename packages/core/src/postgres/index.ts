@@ -94,6 +94,15 @@ export {
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
   PROJECT_OWNERSHIP_SCHEMA_VERSION,
   SESSION_ADVISOR_ENABLED_SCHEMA_VERSION,
+  /*
+  FNXC:RemoteAgents 2026-09-19-00:00: TASK_HUMAN_PLAN_APPROVAL_VERSION/TASK_PAUSE_ACCOUNTING_VERSION
+  from this branch's old PR lineage are dropped here: origin/main's reduced fork already carries
+  FN-408's per-card decision column and FN-457's paused-time columns in its own baseline (see the
+  FNXC:HumanPlanApproval/FNXC:TaskPauseAccounting ceiling comments in schema-applier.ts), so those
+  named exports no longer exist and re-adding them would reintroduce already-landed migrations under
+  colliding version slots.
+  */
+  EXTERNAL_SESSIONS_VERSION,
   MIGRATION_BOOKKEEPING_TABLE,
 } from "./schema-applier.js";
 export {

@@ -173,6 +173,8 @@ describe("unrun pre-merge gate reseed", () => {
 
   it.each([
     ["a real REVISE", { status: "failed", verdict: "REVISE" }],
+    ["a deterministic input-proof failure", { status: "failed", output: "Code Review failed before producing a verdict: review-input-unprovable" }],
+    ["a direct input-proof diagnostic", { status: "failed", output: "Code Review review input is unprovable (git-diff-too-large); reviewer dispatch refused." }],
     ["a pending result", { status: "pending" }],
     ["a bypassed result", { status: "skipped", bypassedBy: "operator" }],
     ["a post-merge result", { status: "failed", phase: "post-merge" }],

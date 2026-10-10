@@ -1,0 +1,14 @@
+{"type": "session_meta", "timestamp": "2026-10-01T10:00:00.000Z", "payload": {"id": "codex-fixture", "cwd": "/work"}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:01.000Z", "payload": {"type": "user_message", "message": "Add a test"}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:02.000Z", "payload": {"type": "task_started", "turn_id": "turn-1"}}
+{"type": "turn_context", "timestamp": "2026-10-01T10:00:03.000Z", "payload": {"turn_id": "turn-1", "model": "gpt-fixture", "service_tier": "priority"}}
+{"type": "token_usage_record", "timestamp": "2026-10-01T10:00:04.000Z", "payload": {"turn_id": "turn-1", "response_id": "resp-1", "usage": {"input_tokens": 300000, "cached_input_tokens": 200, "cache_write_input_tokens": 0, "output_tokens": 50, "reasoning_output_tokens": 10}}}
+{"type": "response_item", "timestamp": "2026-10-01T10:00:05.000Z", "payload": {"type": "message", "role": "assistant", "phase": "final", "content": [{"type": "output_text", "text": "Added."}]}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:06.000Z", "payload": {"type": "task_complete", "last_agent_message": "Added.", "duration_ms": 5000}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:10.000Z", "payload": {"type": "task_started", "turn_id": "turn-auto"}}
+{"type": "token_usage_record", "timestamp": "2026-10-01T10:00:11.000Z", "payload": {"turn_id": "turn-auto", "response_id": "resp-2", "usage": {"input_tokens": 10, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 1}}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:12.000Z", "payload": {"type": "task_complete"}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:20.000Z", "payload": {"type": "user_message", "message": "And another"}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:21.000Z", "payload": {"type": "task_started", "turn_id": "turn-2"}}
+{"type": "token_usage_record", "timestamp": "2026-10-01T10:00:22.000Z", "payload": {"turn_id": "turn-2", "response_id": "resp-3", "usage": {"input_tokens": 100, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 5}}}
+{"type": "event_msg", "timestamp": "2026-10-01T10:00:23.000Z", "payload": {"type": "task_complete", "last_agent_message": "Ok."}}

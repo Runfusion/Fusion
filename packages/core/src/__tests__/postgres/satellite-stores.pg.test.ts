@@ -1240,14 +1240,14 @@ pgDescribe("PostgreSQL satellite stores (U6 consolidated, shared harness)", () =
 
       const goal = await createGoal(layer(), { id: "G-1", title: "Ship", description: "Ship the product" });
       expect(goal.status).toBe("active");
-      expect((await getGoal(layer().db, "G-1"))?.title).toBe("Ship");
+      expect((await getGoal(layer().db, "G-1", layer().projectId))?.title).toBe("Ship");
 
-      const archived = await archiveGoal(layer().db, "G-1");
+      const archived = await archiveGoal(layer().db, "G-1", layer().projectId);
       expect(archived.status).toBe("archived");
 
-      const active = await listGoals(layer().db, { status: "active" });
+      const active = await listGoals(layer().db, { status: "active" }, layer().projectId);
       expect(active).toHaveLength(0);
-      const archivedGoals = await listGoals(layer().db, { status: "archived" });
+      const archivedGoals = await listGoals(layer().db, { status: "archived" }, layer().projectId);
       expect(archivedGoals).toHaveLength(1);
 
       const unarchived = await unarchiveGoal(layer(), "G-1");

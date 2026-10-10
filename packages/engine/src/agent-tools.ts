@@ -19,7 +19,6 @@ import { promoteHeldTask } from "./execution/hold-release.js";
 import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research/research-orchestrator.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
-import { ResearchStepRunner } from "./research/research-step-runner.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import type { AgentReflectionService } from "./agents/agent-reflection.js";
@@ -672,7 +671,7 @@ export const researchCancelParams = Type.Object({
 });
 
 export const researchRetryParams = Type.Object({
-  id: Type.String({ description: "Failed or cancelled research run ID to retry" }),
+  id: Type.String({ description: "Retryable failed or timed-out research run ID to retry" }),
 });
 
 export const memoryAppendParams = Type.Object({
@@ -6332,11 +6331,46 @@ type ResearchToolsOptions = {
   store: TaskStore;
   rootDir: string;
   getSettings: () => Promise<Settings>;
+  /** Narrow no-network composition seam used to verify the production tool path. */
+  createProviderRegistry?: (settings: Settings, rootDir: string) => ResearchProviderRegistry;
 };
+
+const TERMINAL_RESEARCH_STATUSES = new Set<ResearchRunStatus>(["failed", "cancelled", "timed_out", "retry_exhausted"]);
+
+/*
+FNXC:ResearchFailureDiagnostics 2026-09-28-19:22:
+Every agent-tool reader renders diagnosis from canonical codes, not legacy error prose. This keeps get/list/wait/retry output actionable while preventing historical raw provider text or injected secrets from crossing the tool boundary.
+*/
+function formatResearchDiagnosis(run: ResearchRun) {
+  if (!TERMINAL_RESEARCH_STATUSES.has(run.status)) return null;
+  const code = run.lifecycle?.errorCode ?? (run.status === "cancelled" ? "RUN_CANCELLED" : run.status === "timed_out" ? "PROVIDER_TIMEOUT" : run.status === "retry_exhausted" ? "RETRY_EXHAUSTED" : "INTERNAL_ERROR");
+  const defaults: Record<string, { detail: string; remediation?: string; retryable: boolean }> = {
+    MISSING_CREDENTIALS: { detail: "The required research provider or model is not configured.", remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run.", retryable: false },
+    PROVIDER_DENIED: { detail: "The research provider rejected authentication or access.", remediation: "Verify the provider credential, account access, and model permissions in Settings → Authentication.", retryable: false },
+    RATE_LIMITED: { detail: "The research provider is rate limited or temporarily unavailable.", remediation: "Retry later or review provider rate limits.", retryable: true },
+    PROVIDER_UNAVAILABLE: { detail: "The research provider is unavailable.", remediation: "Check provider availability and configuration before retrying.", retryable: true },
+    PROVIDER_TIMEOUT: { detail: "The research provider did not respond before the configured deadline.", remediation: "Retry the run. If timeouts continue, verify provider availability and the research timeout settings.", retryable: true },
+    MALFORMED_RESPONSE: { detail: "The research provider returned a response Fusion could not validate.", remediation: "Verify the configured provider and model are compatible with research synthesis.", retryable: false },
+    RUN_CANCELLED: { detail: "The research run was cancelled by the operator.", retryable: false },
+    RETRY_EXHAUSTED: { detail: "The research run exhausted its configured retry attempts.", remediation: "Resolve the underlying provider or configuration issue before starting a new run.", retryable: false },
+    NON_RETRYABLE_PROVIDER_ERROR: { detail: "The research provider returned a non-retryable error.", remediation: "Verify provider access and configuration before starting a new run.", retryable: false },
+    INTERNAL_ERROR: { detail: "Research failed because of an unexpected internal error.", remediation: "Review sanitized engine diagnostics and verify the configured research providers.", retryable: false },
+  };
+  const fallback = defaults[code] ?? defaults.INTERNAL_ERROR!;
+  return {
+    classification: run.lifecycle?.failureClass ?? (run.status === "cancelled" ? "cancelled" : run.status === "timed_out" ? "timed_out" : "internal"),
+    code,
+    retryable: run.lifecycle?.retryable ?? fallback.retryable,
+    detail: fallback.detail,
+    remediation: run.lifecycle?.remediation ?? fallback.remediation ?? null,
+    providerType: run.lifecycle?.providerType ?? null,
+  };
+}
 
 function formatResearchRunDetails(run: ResearchRun) {
   const findings = run.results?.findings ?? [];
   const citations = run.results?.citations ?? [];
+  const diagnosis = formatResearchDiagnosis(run);
   return {
     runId: run.id,
     status: run.status,
@@ -6345,9 +6379,17 @@ function formatResearchRunDetails(run: ResearchRun) {
     findings,
     citations,
     sourceCount: run.sources.length,
-    error: run.error ?? null,
+    error: diagnosis?.detail ?? null,
+    diagnosis,
     setup: null as null | { code: string; message: string },
   };
+}
+
+function formatResearchRunText(run: ResearchRun): string {
+  const diagnosis = formatResearchDiagnosis(run);
+  if (!diagnosis) return `Research run ${run.id} is ${run.status}.`;
+  const remediation = diagnosis.remediation ? ` ${diagnosis.remediation}` : "";
+  return `Research run ${run.id} is ${run.status} (${diagnosis.code}, ${diagnosis.classification}, retryable=${diagnosis.retryable}). ${diagnosis.detail}${remediation}`;
 }
 
 function researchUnavailable(code: string, message: string) {
@@ -6390,7 +6432,8 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     }
 
     if (!orchestratorState.providerRegistry) {
-      orchestratorState.providerRegistry = new ResearchProviderRegistry(settings, options.rootDir);
+      orchestratorState.providerRegistry = options.createProviderRegistry?.(settings, options.rootDir)
+        ?? new ResearchProviderRegistry(settings, options.rootDir);
     } else {
       orchestratorState.providerRegistry.refreshSettings(settings);
     }
@@ -6401,16 +6444,12 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       return null;
     }
 
-    if (!orchestratorState.orchestrator) {
-      const stepRunner = new ResearchStepRunner({
-        providers: availableProviders
-          .map((type) => registry.getProvider(type))
-          .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider)),
-      });
+    // Recompose between runs so refreshed credentials/model settings cannot remain cached.
+    if (!orchestratorState.orchestrator || orchestratorState.inFlight.size === 0) {
       const layer = options.store.getAsyncLayer();
       orchestratorState.orchestrator = new ResearchOrchestrator({
         store: resolveResearchStore(),
-        stepRunner,
+        stepRunner: registry.createStepRunner(),
         maxConcurrentRuns: resolved.limits.maxConcurrentRuns,
         ...(layer ? { recallCaptureWriter: fusionCore.createRecallCaptureWriter({ layer, logger: fusionCore.createLogger("research-recall-capture") }) } : {}),
       });
@@ -6495,7 +6534,9 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       const details = formatResearchRunDetails(completed);
       const text = details.status === "completed"
         ? `Research run ${runId} completed. ${details.summary ?? "No summary generated."}`
-        : `Research run ${runId} is ${details.status}. Use fn_research_get for updates.`;
+        : TERMINAL_RESEARCH_STATUSES.has(completed.status)
+          ? formatResearchRunText(completed)
+          : `Research run ${runId} is ${details.status}. Use fn_research_get for updates.`;
       return { content: [{ type: "text" as const, text }], details };
     },
   };
@@ -6512,7 +6553,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
         limit,
       });
       const text = runs.length
-        ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n")
+        ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}${formatResearchDiagnosis(run) ? ` — ${formatResearchDiagnosis(run)!.code}: ${formatResearchDiagnosis(run)!.detail}` : ""}`).join("\n")
         : "No research runs found.";
       return {
         content: [{ type: "text" as const, text }],
@@ -6536,7 +6577,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       }
       const details = formatResearchRunDetails(run);
       return {
-        content: [{ type: "text" as const, text: `Research run ${run.id} is ${run.status}.` }],
+        content: [{ type: "text" as const, text: formatResearchRunText(run) }],
         details,
       };
     },
@@ -6570,19 +6611,34 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
   const retryTool: ToolDefinition = {
     name: "fn_research_retry",
     label: "Retry Research Run",
-    description: "Create a retry from a failed or cancelled research run.",
+    description: "Create a retry from a retryable failed or timed-out research run.",
     parameters: researchRetryParams,
     execute: async (_id: string, params: Static<typeof researchRetryParams>) => {
       const orchestrator = await ensureOrchestrator();
       if (!orchestrator) {
         return researchUnavailable("provider-unavailable", "Research orchestrator is unavailable because research providers are not configured.");
       }
-      const newRunId = await orchestrator.retryRun(params.id);
-      const run = await resolveResearchStore().getRun(newRunId);
-      return {
-        content: [{ type: "text" as const, text: `Created retry run ${newRunId} from ${params.id}.` }],
-        details: run ? formatResearchRunDetails(run) : { runId: newRunId, status: "retry_waiting", summary: null, findings: [], citations: [], error: null, setup: null },
-      };
+      try {
+        const newRunId = await orchestrator.retryRun(params.id);
+        const run = await resolveResearchStore().getRun(newRunId);
+        return {
+          content: [{ type: "text" as const, text: `Created retry run ${newRunId} from ${params.id}.` }],
+          details: run ? formatResearchRunDetails(run) : { runId: newRunId, status: "retry_waiting", summary: null, findings: [], citations: [], error: null, diagnosis: null, setup: null },
+        };
+      } catch {
+        const source = await resolveResearchStore().getRun(params.id);
+        if (!source) {
+          return {
+            content: [{ type: "text" as const, text: `Research run ${params.id} not found.` }],
+            details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", diagnosis: null, setup: null },
+          };
+        }
+        const details = formatResearchRunDetails(source);
+        return {
+          content: [{ type: "text" as const, text: `${formatResearchRunText(source)} This outcome cannot be retried.` }],
+          details,
+        };
+      }
     },
   };
 

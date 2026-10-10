@@ -69,6 +69,28 @@ describe("createListAgentsTool", () => {
     agentStore = createMockAgentStore();
   });
 
+  it("returns duplicate durable display names as distinct ID-addressable rows", async () => {
+    const agents = [
+      createAgent({ id: "agent-duplicate-b", name: "Workflow Merger", role: "merger" }),
+      createAgent({ id: "agent-duplicate-a", name: "Workflow Merger", role: "merger" }),
+    ];
+    vi.mocked(agentStore.listAgents).mockResolvedValue(agents);
+
+    const result = await createListAgentsTool(agentStore).execute(
+      "session-duplicates",
+      {},
+      undefined as any,
+      undefined as any,
+      undefined as any,
+    );
+
+    expect(result.details).toEqual({ agents });
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("ID: agent-duplicate-a");
+    expect(text).toContain("ID: agent-duplicate-b");
+    expect(text.match(/Name: Workflow Merger/g)).toHaveLength(2);
+  });
+
   it("returns formatted list of agents with their details", async () => {
     const agents = [
       createAgent({ id: "agent-001", name: "Alice", role: "executor", state: "idle", taskId: undefined }),

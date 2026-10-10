@@ -103,6 +103,17 @@ async function seedPreMergeReviewIfIdle<Reason extends "no-unrun-gate" | "no-fai
   };
 }
 
+/**
+ * FNXC:ReviewRetryRecovery 2026-10-01-04:29:
+ * A deterministic input-proof refusal never dispatched a reviewer. Repeating it is not lost-session
+ * recovery; retain the failed gate until its base/checkout is repaired and an operator retries.
+ */
+export function isUnprovableReviewInputResult(result: WorkflowStepResult): boolean {
+  return result.status === "failed" && result.verdict === undefined
+    && (result.output?.includes("review-input-unprovable") === true
+      || result.output?.includes("review input is unprovable") === true);
+}
+
 export function isFailedNoVerdictPreMergeReviewResult(
   result: WorkflowStepResult,
   requiredPreMergeStepIds: ReadonlySet<string>,
@@ -112,6 +123,7 @@ export function isFailedNoVerdictPreMergeReviewResult(
     && result.verdict === undefined
     && !isUnavailablePlanLockResult(result)
     && !hasExhaustedNoVerdictRecovery(result)
+    && !isUnprovableReviewInputResult(result)
     && requiredPreMergeStepIds.has(result.workflowStepId);
 }
 

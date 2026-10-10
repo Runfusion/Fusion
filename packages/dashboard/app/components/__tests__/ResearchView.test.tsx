@@ -59,11 +59,11 @@ vi.mock("lucide-react", async (importOriginal) => {
   };
 });
 
-function mockMatchMediaDesktop() {
+function mockMatchMediaDesktop(matches = false) {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
+      matches,
       media: query,
       onchange: null,
       addEventListener: vi.fn(),
@@ -224,6 +224,78 @@ describe("ResearchView", () => {
     expect(await screen.findByText("Cancel")).toBeDisabled();
     expect(screen.getByText("Retry")).toBeDisabled();
     expect(screen.getByText("Completed runs cannot be cancelled")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["desktop", false],
+    ["phone", true],
+  ])("renders one actionable sanitized run diagnosis at %s width", async (_viewport, mobile) => {
+    mockMatchMediaDesktop(mobile);
+    mockUseResearch.mockReturnValue({
+      ...baseHookValue,
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "failed" }],
+      selectedRun: {
+        id: "RR-1",
+        title: "t",
+        query: "q",
+        status: "failed",
+        error: "raw secret sk-test-secret-value",
+        events: [],
+        results: { findings: [], citations: [] },
+        diagnosis: {
+          classification: "non_retryable",
+          code: "MISSING_CREDENTIALS",
+          retryable: false,
+          detail: "Provider credentials are not configured.",
+          remediation: "Add provider credentials in Authentication settings.",
+        },
+      },
+      selectedRunId: "RR-1",
+      runActionState: { cancelable: false, retryable: false, isTransitioning: false, blockingReason: "Run is not retryable" },
+    });
+    mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
+    const onOpenSettings = vi.fn();
+
+    render(<ResearchView projectId="p1" onOpenSettings={onOpenSettings} />);
+
+    const diagnosis = await screen.findByTestId("research-run-diagnosis");
+    expect(diagnosis).toHaveTextContent("MISSING_CREDENTIALS");
+    expect(diagnosis).toHaveTextContent("Provider credentials are not configured.");
+    expect(diagnosis).toHaveTextContent("Add provider credentials in Authentication settings.");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryByText(/sk-test-secret-value/)).not.toBeInTheDocument();
+    fireEvent.click(within(diagnosis).getByRole("button", { name: "Open Authentication Settings" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("authentication");
+  });
+
+  it("renders a safe legacy fallback and no diagnostic shell for completed runs", async () => {
+    mockUseResearch.mockReturnValue({
+      ...baseHookValue,
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "failed" }],
+      selectedRun: {
+        id: "RR-1",
+        title: "t",
+        query: "q",
+        status: "failed",
+        error: "unsafe legacy provider payload",
+        events: [],
+      },
+      selectedRunId: "RR-1",
+    });
+    mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
+    const { rerender } = render(<ResearchView projectId="p1" />);
+    expect(await screen.findByTestId("research-run-diagnosis")).toHaveTextContent("failed without additional diagnostic detail");
+    expect(screen.queryByText("unsafe legacy provider payload")).not.toBeInTheDocument();
+
+    mockUseResearch.mockReturnValue({
+      ...baseHookValue,
+      runs: [{ id: "RR-2", title: "done", query: "q", status: "completed" }],
+      selectedRun: { id: "RR-2", title: "done", query: "q", status: "completed", events: [], results: { summary: "Success" } },
+      selectedRunId: "RR-2",
+      runActionState: { cancelable: false, retryable: false, isTransitioning: false, blockingReason: "Completed runs cannot be cancelled" },
+    });
+    rerender(<ResearchView projectId="p1" />);
+    expect(screen.queryByTestId("research-run-diagnosis")).not.toBeInTheDocument();
   });
 
   it("shows actionable uiError guidance", async () => {

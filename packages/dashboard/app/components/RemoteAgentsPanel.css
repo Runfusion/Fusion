@@ -1,0 +1,92 @@
+.remote-agents-panel { overflow-y: auto; padding: var(--space-lg); min-height: 0; flex: 1; }
+.remote-agent-filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-lg); margin-bottom: var(--space-lg); }
+.remote-agent-filters label, .remote-agent-detail form { display: flex; flex-direction: column; gap: var(--space-sm); }
+.remote-agent-layout { display: flex; flex-wrap: wrap; align-items: start; gap: var(--space-lg); }
+.remote-agent-list { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-md); }
+.remote-agent-row { display: flex; flex-direction: column; gap: var(--space-sm); text-align: start; padding: var(--space-lg); color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
+.remote-agent-row[aria-pressed="true"] { background: var(--bg-secondary); }
+.remote-agent-detail { flex: 2; min-width: 0; padding: var(--space-lg); overflow-wrap: anywhere; }
+.remote-agent-detail h4 { margin-top: var(--space-xl); }
+.remote-agent-meta { color: var(--text-muted); font-size: var(--font-size-sm); }
+.remote-agent-path, .remote-agent-activity pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); }
+.remote-agent-activity { padding-block: var(--space-md); }
+.remote-agent-usage { margin-block: var(--space-lg); }
+.remote-agent-usage dl { display: grid; grid-template-columns: 1fr auto; gap: var(--space-sm); }
+.remote-agent-usage dd { margin: 0; }
+.remote-agent-detail textarea { width: 100%; resize: vertical; }
+.remote-agent-receipts small { display: block; color: var(--text-muted); }
+/*
+FNXC:RemoteAgents 2026-09-23-21:32: The session list and server summary are real lists so assistive
+technology announces their size and position; the marker is removed for sighted layout only.
+*/
+.remote-agent-rows, .remote-agent-host-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-md); }
+.remote-agent-host-list { gap: var(--space-sm); }
+.remote-agent-host { display: flex; flex-wrap: wrap; gap: var(--space-sm) var(--space-md); align-items: baseline; color: var(--text-muted); font-size: var(--font-size-sm); }
+.remote-agent-host strong { color: var(--text); }
+.remote-agent-hosts h3 { margin-block: 0 var(--space-sm); }
+.remote-agent-cost { font-variant-numeric: tabular-nums; }
+
+/* FNXC:RemoteAgents 2026-09-23-22:07: Turn history reuses the panel's card and meta primitives; patches keep monospace and wrap rather than scroll the page sideways. */
+.remote-turn-list, .remote-turn-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-md); }
+.remote-turn { padding: var(--space-lg); display: flex; flex-direction: column; gap: var(--space-sm); }
+.remote-turn h5 { margin: 0 0 var(--space-xs); }
+.remote-turn pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); margin: 0; }
+.remote-turn-patch { font-size: var(--font-size-sm); }
+.remote-turn-file summary { display: flex; flex-wrap: wrap; gap: var(--space-sm); cursor: pointer; }
+.remote-turn-op { text-transform: uppercase; font-size: var(--font-size-sm); color: var(--text-muted); }
+.remote-turn-path { font-family: var(--font-mono); overflow-wrap: anywhere; }
+
+/* FNXC:ExternalSessionSearch 2026-09-23-23:05: Search sits above the server summary; results reuse the card primitive. */
+.remote-agent-search form { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: end; }
+.remote-agent-search input[type="search"] { flex: 1; min-width: 12rem; }
+.remote-search-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-sm); }
+.remote-search-hit { padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-xs); }
+.remote-search-hit button { display: flex; flex-direction: column; gap: var(--space-xs); text-align: start; background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; }
+.remote-search-snippet { margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+
+/* FNXC:ExternalSessionRankings 2026-09-24-00:04: Ranking rows reuse the card primitive; the ordered list keeps rank order for assistive technology. */
+.remote-ranking-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-sm); }
+.remote-ranking-row { padding: var(--space-md); }
+.remote-ranking-row button { display: flex; flex-direction: column; gap: var(--space-xs); text-align: start; background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; width: 100%; }
+.remote-agent-rankings .remote-agent-meta p { margin: 0 0 var(--space-xs); }
+
+/* FNXC:ExternalSessionSummary 2026-09-24-07:05: The summary reuses the panel's meta primitive; qualifying state (coverage, staleness, failure) sits directly under the text so it cannot be read without them. */
+.remote-agent-summary { display: flex; flex-direction: column; gap: var(--space-sm); align-items: start; }
+.remote-agent-summary-text { margin: 0; overflow-wrap: anywhere; }
+.remote-agent-summary .remote-agent-meta p { margin: 0 0 var(--space-xs); }
+
+@media (max-width: 48rem) { .remote-agent-layout { flex-direction: column; } .remote-agent-list, .remote-agent-detail { width: 100%; } }
+
+/* FNXC:ExternalSessionAttribution 2026-09-24-07:05: The Fusion-run marker reuses the muted meta treatment; it qualifies the cost above it rather than competing with it. */
+.remote-agent-attribution { color: var(--text-muted); font-size: var(--font-size-sm); }
+
+/* FNXC:ExternalSessionOverview 2026-09-24-08:12: Breakdown lists reuse the panel's meta treatment; the groups wrap so a narrow viewport stacks them rather than scrolling sideways. */
+.remote-overview-groups { display: flex; flex-wrap: wrap; gap: var(--space-lg); }
+.remote-overview-group { min-width: 12rem; }
+.remote-overview-group h4 { margin-block: 0 var(--space-xs); }
+.remote-overview-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-xs); }
+.remote-overview-group li { display: flex; justify-content: space-between; gap: var(--space-md); font-size: var(--font-size-sm); color: var(--text-muted); }
+.remote-overview-group strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.remote-agent-overview .remote-agent-meta p { margin: 0 0 var(--space-xs); }
+
+/* FNXC:RemoteAgents 2026-09-26-23:39: The cost popover is a disclosure anchored under its trigger; it reuses the card primitive and design tokens only. */
+.remote-cost-popover { position: relative; display: inline-block; }
+.remote-cost-trigger { background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; text-align: start; text-decoration: underline dotted; }
+.remote-cost-panel { position: absolute; inset-inline-start: 0; top: 100%; z-index: var(--z-popover); margin-top: var(--space-xs); padding: var(--space-md); box-shadow: var(--shadow-md); min-width: min(28rem, 90vw); max-width: 90vw; }
+.remote-cost-panel[hidden] { display: none; }
+.remote-cost-table { width: 100%; border-collapse: collapse; margin-block: var(--space-sm); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; }
+.remote-cost-table caption { text-align: start; font-weight: 600; }
+.remote-cost-table th, .remote-cost-table td { text-align: start; padding: var(--space-xs); }
+.remote-cost-table td { text-align: end; }
+
+/* FNXC:RemoteAgents 2026-09-26-23:39: a deep-linked turn is marked with the accent border, not colour alone; aria-current carries the same fact for assistive technology. */
+.remote-turn--linked { outline: var(--space-3xs) solid var(--accent); }
+.remote-copy-link { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+/*
+FNXC:RemoteAgents 2026-09-27-00:20: the cost popover sits beside the card button (a button cannot contain one), and a
+button sizes to its content, so browser acceptance showed the card squeezed to one character wide. Stack the two and
+let the card take the full row width.
+*/
+.remote-agent-rows > li { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-xs); }
+.remote-agent-rows > li > .remote-cost-popover { align-self: flex-start; padding-inline: var(--space-lg); }
+.remote-agent-row { width: 100%; }

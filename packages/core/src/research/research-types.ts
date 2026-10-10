@@ -53,16 +53,22 @@ export type ResearchEventType = typeof RESEARCH_EVENT_TYPES[number];
 export const RESEARCH_RUN_FAILURE_CLASSES = [
   "cancelled",
   "timed_out",
+  "configuration",
+  "provider_denied",
+  "malformed_response",
   "retryable_transient",
   "non_retryable",
+  "internal",
 ] as const;
 
 export const RESEARCH_ERROR_CODES = [
   "FEATURE_DISABLED",
   "MISSING_CREDENTIALS",
   "PROVIDER_UNAVAILABLE",
+  "PROVIDER_DENIED",
   "RATE_LIMITED",
   "PROVIDER_TIMEOUT",
+  "MALFORMED_RESPONSE",
   "RUN_CANCELLED",
   "RETRY_EXHAUSTED",
   "INVALID_TRANSITION",
@@ -74,12 +80,18 @@ export type ResearchErrorCode = typeof RESEARCH_ERROR_CODES[number];
 
 export type ResearchRunFailureClass = typeof RESEARCH_RUN_FAILURE_CLASSES[number];
 
+/*
+FNXC:ResearchFailureDiagnostics 2026-09-28-19:04:
+Terminal research diagnostics are a bounded, sanitized contract shared by persistence, tools, APIs, and UI. These fields must contain operator-safe classifications and guidance only—never provider bodies, prompts, credentials, stacks, URLs with query credentials, or absolute paths.
+*/
 export interface ResearchRunLifecycle {
   terminalReason?: "completed" | "cancelled" | "failed" | "timed_out" | "retry_exhausted";
   terminalCause?: string;
   failureClass?: ResearchRunFailureClass;
   errorCode?: ResearchErrorCode;
   retryable?: boolean;
+  remediation?: string;
+  providerType?: string;
   retryAfterMs?: number;
   cancellationRequestedAt?: string;
   timeoutAt?: string;

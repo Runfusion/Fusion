@@ -1,11 +1,14 @@
 import type {
+  ResearchErrorCode,
   ResearchModelSettings,
   ResearchProviderConfig,
+  ResearchRunFailureClass,
   ResearchSource,
   ResearchSynthesisRequest,
   ResearchSynthesisResult,
 } from "@fusion/core";
 import { createLogger, formatError } from "../logger.js";
+import { ResearchProviderError, type ResearchProviderType } from "./types.js";
 
 const log = createLogger("research-step-runner");
 
@@ -45,14 +48,20 @@ export interface ResearchProvider {
   isConfigured(): boolean;
 }
 
+export interface ResearchStepFailure {
+  code: "provider_not_configured" | "timeout" | "aborted" | "provider_error" | "malformed_response";
+  message: string;
+  retryable: boolean;
+  failureClass: ResearchRunFailureClass;
+  errorCode: ResearchErrorCode;
+  remediation?: string;
+  providerType?: string;
+}
+
 export interface ResearchStepResult<T> {
   ok: boolean;
   data?: T;
-  error?: {
-    code: "provider_not_configured" | "timeout" | "aborted" | "provider_error";
-    message: string;
-    retryable: boolean;
-  };
+  error?: ResearchStepFailure;
 }
 
 export interface ResearchStepRunnerApi {
@@ -82,6 +91,70 @@ export interface ResearchStepRunnerOptions {
     modelSettings: ResearchModelSettings,
     signal?: AbortSignal,
   ) => Promise<ResearchSynthesisResult>;
+}
+
+/*
+FNXC:ResearchFailureDiagnostics 2026-09-28-19:08:
+Provider and runtime errors cross one normalization boundary. Returned text is deliberately fixed and bounded so credentials, raw provider payloads, prompts, stacks, and filesystem paths cannot enter persisted research rows or reader responses.
+*/
+export function normalizeResearchFailure(error: unknown, _step: string): ResearchStepFailure {
+  if (error instanceof ResearchStepTimeoutError) {
+    return {
+      code: "timeout",
+      message: "The research provider did not respond before the configured deadline.",
+      retryable: true,
+      failureClass: "timed_out",
+      errorCode: "PROVIDER_TIMEOUT",
+      remediation: "Retry the run. If timeouts continue, verify provider availability and the research timeout settings.",
+    };
+  }
+  if (error instanceof ResearchStepAbortError || (error instanceof ResearchProviderError && error.code === "abort")) {
+    return {
+      code: "aborted",
+      message: "The research run was cancelled.",
+      retryable: false,
+      failureClass: "cancelled",
+      errorCode: "RUN_CANCELLED",
+    };
+  }
+  if (error instanceof ResearchProviderError) {
+    return normalizeProviderFailure(error.code, error.providerType, error.retryable);
+  }
+  return {
+    code: "provider_error",
+    message: "Research failed because of an unexpected internal error.",
+    retryable: false,
+    failureClass: "internal",
+    errorCode: "INTERNAL_ERROR",
+    remediation: "Review the sanitized engine diagnostics and verify the configured research providers.",
+  };
+}
+
+function normalizeProviderFailure(
+  code: ResearchProviderError["code"],
+  providerType: ResearchProviderType,
+  providerRetryable: boolean,
+): ResearchStepFailure {
+  const common = { providerType };
+  switch (code) {
+    case "timeout":
+      return { ...common, code: "timeout", message: "The research provider did not respond before the configured deadline.", retryable: true, failureClass: "timed_out", errorCode: "PROVIDER_TIMEOUT", remediation: "Retry the run. If timeouts continue, verify provider availability and the research timeout settings." };
+    case "abort":
+      return { ...common, code: "aborted", message: "The research run was cancelled.", retryable: false, failureClass: "cancelled", errorCode: "RUN_CANCELLED" };
+    case "missing-configuration":
+      return { ...common, code: "provider_not_configured", message: "The required research provider or model is not configured.", retryable: false, failureClass: "configuration", errorCode: "MISSING_CREDENTIALS", remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run." };
+    case "auth-failed":
+      return { ...common, code: "provider_error", message: "The research provider rejected authentication or access.", retryable: false, failureClass: "provider_denied", errorCode: "PROVIDER_DENIED", remediation: "Verify the provider credential, account access, and model permissions in Settings → Authentication." };
+    case "rate-limited":
+      return { ...common, code: "provider_error", message: "The research provider is rate limited or temporarily unavailable.", retryable: true, failureClass: "retryable_transient", errorCode: "RATE_LIMITED", remediation: "Retry later or review provider rate limits." };
+    case "network-error":
+      return { ...common, code: "provider_error", message: "The research provider is temporarily unreachable.", retryable: true, failureClass: "retryable_transient", errorCode: "PROVIDER_UNAVAILABLE", remediation: "Retry the run after checking provider and network availability." };
+    case "malformed-response":
+      return { ...common, code: "malformed_response", message: "The research provider returned a response Fusion could not validate.", retryable: false, failureClass: "malformed_response", errorCode: "MALFORMED_RESPONSE", remediation: "Verify the configured provider and model are compatible with research synthesis." };
+    case "provider-unavailable":
+    default:
+      return { ...common, code: "provider_error", message: "The research provider is unavailable.", retryable: providerRetryable, failureClass: providerRetryable ? "retryable_transient" : "non_retryable", errorCode: "PROVIDER_UNAVAILABLE", remediation: providerRetryable ? "Retry the run after checking provider availability." : "Verify the provider and model configuration in Settings → Authentication." };
+  }
 }
 
 export class ResearchStepRunner implements ResearchStepRunnerApi {
@@ -180,32 +253,22 @@ export class ResearchStepRunner implements ResearchStepRunnerApi {
   }
 
   private classifyError<T>(step: string, error: unknown): ResearchStepResult<T> {
-    if (error instanceof ResearchStepTimeoutError) {
-      return { ok: false, error: { code: "timeout", message: error.message, retryable: true } };
-    }
-    if (error instanceof ResearchStepAbortError) {
-      return { ok: false, error: { code: "aborted", message: error.message, retryable: false } };
-    }
-
-    const { message, detail } = formatError(error);
+    const failure = normalizeResearchFailure(error, step);
+    const { detail } = formatError(error);
     log.warn(`${step} failed`, detail);
-    return {
-      ok: false,
-      error: {
-        code: "provider_error",
-        message,
-        retryable: true,
-      },
-    };
+    return { ok: false, error: failure };
   }
 
-  private unconfigured<T>(message: string): ResearchStepResult<T> {
+  private unconfigured<T>(_message: string): ResearchStepResult<T> {
     return {
       ok: false,
       error: {
         code: "provider_not_configured",
-        message,
+        message: "The required research provider or model is not configured.",
         retryable: false,
+        failureClass: "configuration",
+        errorCode: "MISSING_CREDENTIALS",
+        remediation: "Configure the research provider and synthesis model in Settings → Authentication, then start a new run.",
       },
     };
   }

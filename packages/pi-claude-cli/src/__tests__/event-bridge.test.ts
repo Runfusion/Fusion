@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock @earendil-works/pi-ai before importing event-bridge
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   calculateCost: vi.fn(),
 }));
 
