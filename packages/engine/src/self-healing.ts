@@ -228,6 +228,7 @@ import {
 } from "./notification/vanished-task-detection.js";
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./merge/auto-merge-finalization.js";
 import { noteFinalizationPass } from "./merge/finalization-refusal-notice.js";
+import { diagnosticSignature, logDiagnosticOnce } from "./util/durable-diagnostic-log.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
 import {
@@ -16265,7 +16266,17 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
               Done-task metadata repair is not allowed to convert stale workflow proof into truth. Missing merge confirmation, pending workflow steps, or invalid no-op proof still block repair; stale branch residue does not, because finalization only needs durable evidence that the task patch landed.
               */
               log.warn(`recoverDoneTaskMergeMetadata: skipped ${task.id} — invalid done merge proof (${confirmedProofVerdict.reason})`);
-              await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid workflow merge proof (${confirmedProofVerdict.reason})`).catch(() => undefined);
+              /*
+              FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+              This refusal had no bound at all: every maintenance pass over a `done` card whose merge proof
+              stays invalid re-stated the same sentence, 12,346 rows board-wide. The verdict is a property of
+              the card's stored proof, not of the pass, so the reason is the episode key and one line per
+              window is the honest operator-visible record.
+              */
+              await logDiagnosticOnce(this.store, task.id, {
+                action: `Done-task merge metadata repair skipped: invalid workflow merge proof (${confirmedProofVerdict.reason})`,
+                dedupeKey: `done-merge-repair-skipped:confirmed-proof:${diagnosticSignature(confirmedProofVerdict.reason)}`,
+              });
               continue;
             }
             const landedFilesMismatch = Boolean(
@@ -16352,7 +16363,10 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
           } as Task);
           if (!repairedProofVerdict.ok) {
             log.warn(`recoverDoneTaskMergeMetadata: skipped ${task.id} — invalid repaired merge proof (${repairedProofVerdict.reason})`);
-            await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid repaired workflow merge proof (${repairedProofVerdict.reason})`).catch(() => undefined);
+            await logDiagnosticOnce(this.store, task.id, {
+              action: `Done-task merge metadata repair skipped: invalid repaired workflow merge proof (${repairedProofVerdict.reason})`,
+              dedupeKey: `done-merge-repair-skipped:repaired-proof:${diagnosticSignature(repairedProofVerdict.reason)}`,
+            });
             continue;
           }
 
@@ -16593,7 +16607,14 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
               refusalNotice,
               "warn",
             )) {
-              await this.store.logEntry(task.id, refusalNotice);
+              /*
+              FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643): same restart-proofing as the auto-merge
+              fast path in `project-engine.ts` — the in-process slot gate survives a pass, not a restart.
+              */
+              await logDiagnosticOnce(this.store, task.id, {
+                action: refusalNotice,
+                dedupeKey: `merge-finalize:self-heal-outcome:${diagnosticSignature(`${resumed ? "resumed" : "blocked"}|${refusalReason}`)}`,
+              });
             }
             continue;
           }

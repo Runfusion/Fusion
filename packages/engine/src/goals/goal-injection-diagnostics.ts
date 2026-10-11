@@ -7,6 +7,7 @@ import type { EngineRunContext } from "../util/run-audit.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { createLogger } from "../logger.js";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
+import { diagnosticSignature, logDiagnosticOnce } from "../util/durable-diagnostic-log.js";
 
 const diagnosticsLog = createLogger("goal-injection-diagnostics");
 
@@ -239,7 +240,27 @@ export async function emitGoalInjectionDiagnostic(
 
   if (input.store && record.taskId) {
     try {
-      await input.store.logEntry(record.taskId, formatAgentLogLine(record), undefined, input.runContext ?? undefined);
+      /*
+      FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+      This line is written on EVERY executor dispatch, so the majority case — a project with no active
+      goals — re-stated the identical sentence 21,770 times on the live board (`no-goals count=0 ids=[]
+      provenance=[] truncated=false`, 1.4 MB of the 125.8 MB log corpus). The byte cost is not the point:
+      each `logEntry` re-reads the card's full row twice, rewrites its `task.json` mirror, and emits
+      `task:updated`, and the sampled heap showed one such append re-materializing the whole board in the
+      dashboard process. The card now records the sentence once per window per distinct state — the key is
+      the formatted line itself, so a goal set that actually changes is still news. The per-dispatch
+      machine-readable record is untouched: `prompt:goal-injection` still lands in run-audit every time.
+      */
+      const agentLine = formatAgentLogLine(record);
+      await logDiagnosticOnce(input.store, record.taskId, {
+        action: agentLine,
+        outcome: undefined,
+        dedupeKey: `goal-injection:${diagnosticSignature(agentLine)}`,
+        ...(input.runContext ? { runContext: input.runContext } : {}),
+        onWarn: (message) => diagnosticsLog.warn(
+          `failed to append goal-injection task log for ${record.taskId}: ${message}`,
+        ),
+      });
     } catch (error) {
       diagnosticsLog.warn(
         `failed to append goal-injection task log for ${record.taskId}: ${error instanceof Error ? error.message : String(error)}`,

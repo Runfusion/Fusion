@@ -4320,46 +4320,6 @@
       "followUpTaskId": "none:out-of-frontier"
     },
     {
-      "callSiteId": "packages/engine/src/execution/lifecycle-move.ts::moveTaskToContainedBackwardTarget::store.logEntry::#1",
-      "callSiteFingerprint": "store.logEntry(taskId,`Lifecycle recovery retained in '${column}' — ${reason} has no backward-move authority`)",
-      "file": "packages/engine/src/execution/lifecycle-move.ts",
-      "enclosingSymbolPath": "moveTaskToContainedBackwardTarget",
-      "writer": "store.logEntry",
-      "ordinal": 1,
-      "lineHint": 43,
-      "owningEntryPoint": "runAiMerge",
-      "reachableDataStates": [
-        "single-repository merge finalization or fenced merge-failure recovery"
-      ],
-      "axis1": "checkpoint-covered",
-      "axis1Evidence": "FN-8958 applies a fresh per-boundary fence or ownership checkpoint at this call site.",
-      "axis2Provisional": "must-be-fenced",
-      "axis2Final": "already-fenced",
-      "observedInSuite": "layerB-observed",
-      "executionProof": "static:per-call-site merge write fence or ownership checkpoint",
-      "followUpTaskId": "none:no-follow-up-required"
-    },
-    {
-      "callSiteId": "packages/engine/src/execution/lifecycle-move.ts::moveTaskToContainedBackwardTarget::store.logEntry::#2",
-      "callSiteFingerprint": "store.logEntry(taskId,`Lifecycle rebound contained in '${column}' — the workflow declares no adjacent backward destination`)",
-      "file": "packages/engine/src/execution/lifecycle-move.ts",
-      "enclosingSymbolPath": "moveTaskToContainedBackwardTarget",
-      "writer": "store.logEntry",
-      "ordinal": 2,
-      "lineHint": 51,
-      "owningEntryPoint": "runAiMerge",
-      "reachableDataStates": [
-        "single-repository merge finalization or fenced merge-failure recovery"
-      ],
-      "axis1": "checkpoint-covered",
-      "axis1Evidence": "FN-8958 applies a fresh per-boundary fence or ownership checkpoint at this call site.",
-      "axis2Provisional": "must-be-fenced",
-      "axis2Final": "already-fenced",
-      "observedInSuite": "layerB-observed",
-      "executionProof": "static:per-call-site merge write fence or ownership checkpoint",
-      "followUpTaskId": "none:no-follow-up-required"
-    },
-    {
       "callSiteId": "packages/engine/src/execution/lifecycle-move.ts::moveTaskWithLifecycleReason::store.logEntry::#1",
       "callSiteFingerprint": "store.logEntry(taskId,`Lifecycle move deferred: ${task.column} → ${toColumn} (backward) — ${summary} (destination at capacity; retrying later))",
       "file": "packages/engine/src/execution/lifecycle-move.ts",

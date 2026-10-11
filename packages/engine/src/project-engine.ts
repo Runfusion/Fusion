@@ -184,6 +184,7 @@ import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { noteFinalizationPass } from "./merge/finalization-refusal-notice.js";
+import { diagnosticSignature, logDiagnosticOnce } from "./util/durable-diagnostic-log.js";
 import { isTransientError } from "./errors/transient-error-detector.js";
 import { classifyTransientMergeError, MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "./errors/transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
@@ -4759,6 +4760,15 @@ export class ProjectEngine {
               counts its strikes as markers in that same log (measured: SANE-507 held 0 markers against
               ~30 real re-runs). The durable log is now written on the transition only; the repeated pass
               still leaves a `debug()` line for `FUSION_DEBUG`.
+
+              FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+              That bound was necessary but not sufficient, because `noteFinalizationPass` remembers sightings
+              in a process map. Measured on the live board 2026-10-11, these two writes still carried 14,059
+              and 9,942 rows: every supervised-dashboard restart (every ~14-27 min while RUFU-642 is open)
+              emptied the map, so the first auto-merge pass after each restart re-announced every stuck card.
+              The durable append now rides `logDiagnosticOnce`, keyed on the same transition the in-process
+              gate uses, so the bound holds across restarts and across processes. The gate itself stays: it is
+              what keeps a hot sweep from issuing a database transaction per pass.
               */
               if (noteFinalizationPass(
                 runtimeLog,
@@ -4767,10 +4777,10 @@ export class ProjectEngine {
                 "attempted",
                 `Auto-merge: ${taskId} already has mergeConfirmed — refreshing row and finalizing to done`,
               )) {
-                await store.logEntry(
-                  taskId,
-                  "Merge already confirmed; refreshing row and completing task (recovered from post-merge state inconsistency)",
-                );
+                await logDiagnosticOnce(store, taskId, {
+                  action: "Merge already confirmed; refreshing row and completing task (recovered from post-merge state inconsistency)",
+                  dedupeKey: "merge-finalize:fast-path-attempt:attempted",
+                });
               }
               const auditor = createRunAuditor(store, {
                 runId: generateSyntheticRunId("merger-fast-path-finalize", taskId),
@@ -4814,14 +4824,14 @@ export class ProjectEngine {
                   `Auto-merge: ${taskId} merge-confirmed finalize blocked — ${finalization.reason ?? "unknown"}`,
                   "warn",
                 )) {
-                  await store.logEntry(
-                    taskId,
-                    finalization.resumedPostMergeEvidence
+                  await logDiagnosticOnce(store, taskId, {
+                    action: finalization.resumedPostMergeEvidence
                       ? `Merge confirmed; resumed graph-owned post-merge verification — ${finalization.reason}.`
                       : finalization.deferredPostMergeEvidence
                         ? `Merge confirmed; awaiting graph-owned post-merge verification — ${finalization.reason}.`
                         : `Merge confirmed finalization blocked — ${finalization.reason ?? "unknown"}.`,
-                  );
+                    dedupeKey: `merge-finalize:fast-path-outcome:${diagnosticSignature(blockedSignature)}`,
+                  });
                 }
                 continue;
               }

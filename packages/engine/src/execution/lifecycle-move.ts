@@ -5,6 +5,7 @@ import {
   type MoveTaskOptions,
   type TaskStore,
 } from "@fusion/core";
+import { diagnosticSignature, logDiagnosticOnce } from "../util/durable-diagnostic-log.js";
 
 export type LifecycleMoveResult =
   | { moved: true }
@@ -119,22 +120,32 @@ export async function moveTaskToContainedBackwardTarget(
     lane change. So the refusal stays log-only HERE (this seam has no re-entry authority) and the caller
     routes the card into `attemptExecutionRearm`; the line is written once per state signature so a
     card nobody owns can no longer look busy forever.
+
+    FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+    That bound was in-process, and this refusal line still measured 16,025 rows on the live board: the
+    WeakMap dies with the process, and the supervised dashboard restarts every ~14-27 min (RUFU-642), so
+    each restart re-announced every card's refusal. The in-process gate stays — it is what keeps a
+    45-second recovery cadence from touching the database at all — and the append it grants is now also
+    keyed durably on the same state signature, so "first sighting" means first sighting since six hours
+    ago, across processes.
     */
-    if (shouldLogContainmentRefusal(store, taskId, `retained:${reason}`, containmentLiveSignature(live))) {
-      await store.logEntry(
-        taskId,
-        `Lifecycle recovery retained in '${column}' — ${reason} has no backward-move authority`,
-      ).catch(() => undefined);
+    const retainedSignature = containmentLiveSignature(live);
+    if (shouldLogContainmentRefusal(store, taskId, `retained:${reason}`, retainedSignature)) {
+      await logDiagnosticOnce(store, taskId, {
+        action: `Lifecycle recovery retained in '${column}' — ${reason} has no backward-move authority`,
+        dedupeKey: `lifecycle-containment:retained:${reason}:${diagnosticSignature(retainedSignature)}`,
+      });
     }
     return { moved: false, reason: "in-place-recovery", column };
   }
   const target = await resolveContainedBackwardTargetForTask(store, taskId, column);
   if (!target) {
-    if (shouldLogContainmentRefusal(store, taskId, "no-contained-target", containmentLiveSignature(live))) {
-      await store.logEntry(
-        taskId,
-        `Lifecycle rebound contained in '${column}' — the workflow declares no adjacent backward destination`,
-      ).catch(() => undefined);
+    const containedSignature = containmentLiveSignature(live);
+    if (shouldLogContainmentRefusal(store, taskId, "no-contained-target", containedSignature)) {
+      await logDiagnosticOnce(store, taskId, {
+        action: `Lifecycle rebound contained in '${column}' — the workflow declares no adjacent backward destination`,
+        dedupeKey: `lifecycle-containment:no-contained-target:${diagnosticSignature(containedSignature)}`,
+      });
     }
     return { moved: false, reason: "no-contained-target", column };
   }

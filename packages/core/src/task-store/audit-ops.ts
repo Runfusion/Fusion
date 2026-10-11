@@ -162,10 +162,21 @@ export async function logEntryOnceImpl(
     )).returning();
     return { appended: true, row: updated[0]! };
   });
+  /*
+  FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+  A suppressed append used to finish by materializing the row it had just read: `rowToTask` over the
+  whole record (the JSONB log column plus its stringified fields — the double parse the heap profile
+  measures as `at p.rowToTask <- fromJson`), a full `task.json` mirror rewrite, and a cache copy. The
+  caller only ever consumed the boolean, so every suppressed diagnostic paid the card's full byte cost
+  to record nothing — and one card measured 3.99 MB of `log`. Returning the decision alone makes "the
+  repeat was suppressed" cost one indexed SELECT instead of one whole-card materialization, which is the
+  point of the seam. The appended arm is unchanged: the mirror and cache must still follow the write.
+  */
+  if (!result.appended) return false;
   const task = store.rowToTask(store.pgRowToTaskRow(result.row as unknown as Record<string, unknown>));
   await store.writeTaskJsonFile(store.taskDir(id), task);
   if (store.isWatching) store.taskCache.set(id, { ...task });
-  return result.appended;
+  return true;
 }
 
 export interface QueuedEpisodeTransition {

@@ -416,6 +416,7 @@ import {
   buildDuplicateReplanExhaustedError,
 } from "./duplicate-marker-clear.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
+import { diagnosticSignature, logDiagnosticOnce } from "./util/durable-diagnostic-log.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
 import { readPlanPremiseRejectionEpisode } from "./execution/plan-premise-ladder.js";
@@ -4810,10 +4811,22 @@ export class TriageProcessor {
           nextRecoveryAt: task.nextRecoveryAt,
         });
         planLog.error(`✗ ${task.id} planning failed:`, errorDetail);
+        /*
+        FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+        This was the fattest writer on the live board: 7,942 `Specification failed: …` rows, 14.0 MB,
+        because the sentence carries a JS stack and every unclassified planning failure re-stated it —
+        including `Failed query: insert into "project"."workflow_work_items" (…)`, whose message IS the
+        whole failed statement (3.7 KB per entry, 3,107 entries). The engine log still gets the full
+        `errorDetail` on every pass through `planLog.error` above; the card needs the failure once per
+        episode, not once per poll. Keyed on a fingerprint of the message, so a DIFFERENT fault is still
+        news and the first sighting keeps its stack.
+        */
         if (errorStack) {
-          await this.store.logEntry(task.id, `Specification failed: ${errorMessage}`, errorStack).catch((logErr: unknown) => {
-            const msg = logErr instanceof Error ? logErr.message : String(logErr);
-            planLog.warn(`${task.id}: failed to persist specification-failure stack trace: ${msg}`);
+          await logDiagnosticOnce(this.store, task.id, {
+            action: `Specification failed: ${errorMessage}`,
+            outcome: errorStack,
+            dedupeKey: `specification-failure:${diagnosticSignature(errorMessage)}`,
+            onWarn: (msg) => planLog.warn(`${task.id}: failed to persist specification-failure stack trace: ${msg}`),
           });
         }
 
@@ -4821,12 +4834,16 @@ export class TriageProcessor {
           const attempt = genericDecision.nextState.recoveryRetryCount;
           const delay = formatDelay(genericDecision.delayMs);
           planLog.warn(`⚡ ${task.id} planning failed — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}: ${errorMessage}`);
-          await this.store.logEntry(
-            task.id,
-            `Specification failed (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`,
-          ).catch((logErr: unknown) => {
-            const msg = logErr instanceof Error ? logErr.message : String(logErr);
-            planLog.warn(`${task.id}: failed to log planning-failure retry entry: ${msg}`);
+          /*
+          FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+          The attempt number stays in the key so the bounded 1/2/3 ladder still reads as a ladder on the
+          card; only a re-entry into the SAME attempt (the usual shape after a restart, which is what
+          RUFU-642 makes frequent) is suppressed.
+          */
+          await logDiagnosticOnce(this.store, task.id, {
+            action: `Specification failed (retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`,
+            dedupeKey: `specification-failure-retry:${attempt}:${diagnosticSignature(errorMessage)}`,
+            onWarn: (msg) => planLog.warn(`${task.id}: failed to log planning-failure retry entry: ${msg}`),
           });
           // For interrupted recovery states, restore the original triage-held status;
           // otherwise clear to null so the next poll can re-pick ordinary tasks up.

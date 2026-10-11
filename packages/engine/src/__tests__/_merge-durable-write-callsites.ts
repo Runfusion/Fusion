@@ -426,6 +426,17 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "appendSpecDriftReport",
   "appendSpecDriftReportWhilePlanningLocked",
   "appendSpecLock",
+  /*
+  FNXC:WorkflowCacheEpoch 2026-10-11-22:51 (RUFU-584 follow-up):
+  The workflow-cache epoch pair is the drift guard's own admission test: RUFU-584 replaced fifteen
+  per-sweep workflow caches with one epoch-guarded cache, and its four new public TaskStore surfaces are
+  an in-process counter and its readers. They persist nothing, so they are not durable writers and must
+  not be listed as such; they still have to be NAMED here, because an unclassified public method is what
+  refuses the whole inventory regeneration (`assertInventoryRegenerationInputs`), and an unclassified
+  surface is exactly the blind spot this ratchet exists to close.
+  */
+  "bumpWorkflowDefinitionEpoch",
+  "bumpWorkflowSelectionEpoch",
   "applyBuiltInPromptOverridesAsync",
   "applyBuiltInPromptOverridesSync",
   "applyLegacyWorkflowStepOverrides",
@@ -915,6 +926,8 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "writeArtifactData",
   "writeConfig",
   "writeTaskJsonFile",
+  "workflowDefinitionEpoch",
+  "workflowSelectionEpoch",
   "writeTaskWorkflowSelection",
 ].map((method) => [method, "reviewed public TaskStore operation; not a durable writer reached by this merge frontier"]));
 

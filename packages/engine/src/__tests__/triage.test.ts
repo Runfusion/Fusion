@@ -5295,6 +5295,63 @@ describe("taskCreate tool model inheritance", () => {
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-7952", expect.objectContaining({ status: null }));
     });
 
+    /*
+    FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+    This branch was the fattest writer on the live board: 7,942 `Specification failed: …` rows worth
+    14.0 MB, because the entry carries a JS stack and every unclassified planning failure re-stated it on
+    every poll (the worst offender's message IS the whole failed SQL statement, 3.7 KB per row). The card
+    must still show the failure — once per episode — and must still show a DIFFERENT fault as new.
+    */
+    it("records an unclassified planning failure once per episode instead of once per poll", async () => {
+      const task = {
+        id: "FN-643-SPEC",
+        description: "Plan a card whose planning fault has no classifier",
+        column: "triage",
+        status: "planning",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+      const appended: Array<{ action: string; dedupeKey: string }> = [];
+      const seenKeys = new Set<string>();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        logEntryOnce: vi.fn(async (_id: string, input: { action: string; dedupeKey: string }) => {
+          if (seenKeys.has(input.dedupeKey)) return false;
+          seenKeys.add(input.dedupeKey);
+          appended.push({ action: input.action, dedupeKey: input.dedupeKey });
+          return true;
+        }),
+      });
+      const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+
+      mockCreateFnAgent.mockRejectedValue(new Error("Specification fault that no classifier recognizes"));
+      await processor.specifyTask(task);
+      await processor.specifyTask(task);
+
+      const failureKeys = store.logEntryOnce.mock.calls
+        .map(([, input]: [string, { action: string; dedupeKey: string }]) => input)
+        .filter((input) => input.action.startsWith("Specification failed: "));
+      // Both polls reached the writer, and the durable key is what stopped the second entry.
+      expect(failureKeys).toHaveLength(2);
+      expect(failureKeys[0]!.dedupeKey).toBe(failureKeys[1]!.dedupeKey);
+      expect(appended.filter((entry) => entry.action.startsWith("Specification failed: "))).toHaveLength(1);
+
+      mockCreateFnAgent.mockRejectedValue(new Error("A completely different planning fault"));
+      await processor.specifyTask(task);
+
+      const recorded = appended
+        .filter((entry) => entry.action.startsWith("Specification failed: "))
+        .map((entry) => entry.action);
+      expect(recorded).toEqual([
+        "Specification failed: Specification fault that no classifier recognizes",
+        "Specification failed: A completely different planning fault",
+      ]);
+    });
+
     it("uses bounded transient recovery when a credential refresh fails because the connection reset", async () => {
       const task = {
         id: "FN-7952-TRANSIENT",

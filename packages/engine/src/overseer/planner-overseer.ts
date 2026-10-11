@@ -15,6 +15,7 @@
  */
 
 import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task, type TraitFlags } from "@fusion/core";
+import { diagnosticSignature, logDiagnosticOnce } from "../util/durable-diagnostic-log.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet — inline fallback arms):
@@ -674,9 +675,18 @@ export class PlannerOverseerMonitor {
           FNXC:PlannerOversight 2026-07-19-00:00:
           Activity feed label is short "planner" (not "planner-overseer") so operators scanning the task feed can tell this is planner lifecycle observation without the longer overseer product name.
           */
-          await this.store
-            .logEntry(task.id, `[planner] stage=${stage} signal=${signal}: ${reason}`)
-            .catch(() => undefined);
+          /*
+          FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+          `lastLoggedKey` is per-process, so it bounded the feed inside one run and nowhere else: an
+          unchanged (stage, signal) observation still measured 11,465 rows board-wide, because every
+          supervised-dashboard restart (RUFU-642) let the next sweep re-announce every card. The durable
+          append is keyed on the same triple the in-process gate uses, so a card that has sat in the merge
+          phase all day says so once per window instead of once per restart.
+          */
+          await logDiagnosticOnce(this.store, task.id, {
+            action: `[planner] stage=${stage} signal=${signal}: ${reason}`,
+            dedupeKey: `planner-oversight:${diagnosticSignature(loggedKey)}`,
+          });
         }
       }
 

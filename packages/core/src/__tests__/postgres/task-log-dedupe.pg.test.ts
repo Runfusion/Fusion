@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+import type { TaskStore } from "../../types.js";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../../__test-utils__/pg-test-harness.js";
 
 /*
@@ -61,5 +62,50 @@ pgDescribe("workspace operator log dedupe", () => {
       .rejects.toThrow(/not found while logging episode/);
     const afterThrow = await store.getTask(task.id);
     expect(afterThrow.log?.filter((entry) => entry.dedupeKey === input.dedupeKey)).toHaveLength(1);
+  });
+
+  /*
+  FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
+  A suppressed append is the case a chatty lane hits thousands of times a day, so its cost is the whole
+  design question: the caller reads a boolean, and materializing the card to answer it (full-row
+  `rowToTask`, `task.json` mirror rewrite, cache copy) made "we wrote nothing" cost as much as writing.
+  Measured on the live board one card carried 3.99 MB of `log`. This pins the cheap arm against the real
+  advisory-locked transaction and keeps the expensive arm attached to the arm that actually wrote.
+  */
+  it("answers a duplicate without materializing the card, and materializes only after a real append", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "suppressed append cost" });
+    const mirrorWrites: string[] = [];
+    const originalMirror = store.writeTaskJsonFile.bind(store);
+    store.writeTaskJsonFile = (async (dir: string, value: unknown) => {
+      mirrorWrites.push(typeof (value as { log?: unknown[] })?.log?.length === "number" ? `log=${(value as { log: unknown[] }).log.length}` : "log=none");
+      return originalMirror(dir, value as never);
+    }) as typeof store.writeTaskJsonFile;
+
+    const input = {
+      action: "Auto-recovery skipped: merge confirmed but finalization blocked — gate unreachable.",
+      dedupeKey: "merge-finalize:self-heal-outcome:blocked-gate-unreachable",
+      windowMs: 15 * 60_000,
+    };
+
+    try {
+      expect(await store.logEntryOnce(task.id, input)).toBe(true);
+      expect(mirrorWrites.length).toBeGreaterThan(0);
+
+      const mirrorsBeforeDuplicate = mirrorWrites.length;
+      expect(await store.logEntryOnce(task.id, input)).toBe(false);
+      expect(mirrorWrites).toHaveLength(mirrorsBeforeDuplicate);
+
+      // A different episode on the same card still writes, so the cheap arm is a dedupe, not a silence switch.
+      expect(await store.logEntryOnce(task.id, { ...input, dedupeKey: "merge-finalize:self-heal-outcome:resumed-gate" })).toBe(true);
+      expect(mirrorWrites.length).toBeGreaterThan(mirrorsBeforeDuplicate);
+      const current = await store.getTask(task.id);
+      expect(current.log?.filter((entry) => entry.dedupeKey).map((entry) => entry.dedupeKey)).toEqual([
+        "merge-finalize:self-heal-outcome:blocked-gate-unreachable",
+        "merge-finalize:self-heal-outcome:resumed-gate",
+      ]);
+    } finally {
+      delete (store as Partial<TaskStore>).writeTaskJsonFile;
+    }
   });
 });
