@@ -471,9 +471,11 @@ interface MergeAdvanceEvent {
     dirty: boolean;
     untrackedCount: number;
   } | null;
-  /** Per-worktree outcomes of the merger's post-advance auto-sync hook. Empty
-   *  array when `mergeAdvanceAutoSync: "off"` or no other worktree was on the
-   *  integration branch. A `synced-with-pop-conflict` entry carries
+  /** Per-worktree outcomes of the merger's post-advance auto-sync hook. The
+   *  auto-sync hook was retired by STAS-292 — landing now refreshes the checkout
+   *  that owns the integration branch — so this array only ever renders
+   *  `merge:auto-sync` audit events recorded before that change. A
+   *  `synced-with-pop-conflict` entry carries
    *  `patchPath` pointing at the user's saved edits and `conflictedFiles` /
    *  `untrackedSkippedAsTracked` for surfacing in the conflict modal. */
   autoSync: AutoSyncOutcome[];

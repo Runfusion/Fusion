@@ -57,7 +57,6 @@ import {
   isFusionDeletableBranch,
   isPreMergeStepsNotRunBlocker,
   PreMergeStepsNotRunError,
-  normalizeMergeAdvanceAutoSyncMode,
   resolvePersistAgentThinkingLog,
   resolveTaskMergeTarget,
   resolveValidatorSettingsModel,
@@ -87,7 +86,7 @@ import { isMergeActiveStatus, shouldClearOrphanedMergeStamp } from "./merge-acti
 
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "../worktree/workspace-base-branch.js";
 import { captureWorkspaceReviewEvidence, WorkspaceMemberEvidenceError } from "../worktree/workspace-review-evidence.js";
-import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
+import { advanceIntegrationBranchRef, assertLandingTargetHealthy } from "./merger-ref-update-advance.js";
 import { enforceAiMergeSquashGates } from "./merger-ai-squash-gates.js";
 /*
 FNXC:ZeroCommitDeliveryProof 2026-09-26-08:40 (RUFU-274):
@@ -131,7 +130,6 @@ import {
   parsePushRemoteTarget,
   pushWithTransientRetries,
   pushToRemoteAfterMerge,
-  runMergeAdvanceAutoSync,
   syncGroupPrOnLanding,
   type MergerOptions,
 } from "../merger.js";
@@ -453,7 +451,7 @@ async function recoverApprovedPreexistingAiMergeWorktree(
 
   await store.updateTask(taskId, { aiMergeReviewReconciliation: null });
   await log(`AI merge: recovered already-landed clean-room commit ${short(selected.squashSha)} before pruning`);
-  return { outcome: "landed", squashSha: selected.squashSha, localSync: "skipped-other-branch", tipSha: selected.tipSha, integrationBranch, dependencySyncDecision: "recovered-no-new-sync" };
+  return { outcome: "landed", squashSha: selected.squashSha, localSync: "none-already-landed", tipSha: selected.tipSha, integrationBranch, dependencySyncDecision: "recovered-no-new-sync" };
 }
 
 export {
@@ -727,14 +725,26 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
 // Local checkout sync
 // ---------------------------------------------------------------------------
 
+/*
+FNXC:LandingVocabulary 2026-09-29 (STAS-292):
+The two `skipped-*` outcomes of the old vocabulary existed because a landing could
+advance the ref and deliberately leave a checkout behind — which is the defect this
+task removes. Every outcome now describes what actually happened to the checkout
+that owns the integration branch.
+*/
 export type LocalSyncOutcome =
-  | "ff"
+  /** The owning checkout's HEAD, index and files moved together with the ref. */
+  | "refreshed-worktree"
+  /** The branch is checked out nowhere, so advancing the ref is the whole operation. */
+  | "no-checkout-advance"
   | "stash-ff-restore"
   | "stash-ff-airesolved"
   | "stash-ff-conflict"
   | "blocked-dirty-checkout"
-  | "skipped-dirty-unstashable"
-  | "skipped-other-branch";
+  /** Nothing was landed because the target already carries this squash. */
+  | "none-already-landed"
+  /** Nothing was landed — the advance was refused or is being rebuilt on a new tip. */
+  | "none-not-landed";
 
 export interface LandResult {
   /** "advanced" — the integration ref now points at the squash. "concurrent" —
@@ -764,8 +774,9 @@ async function hasUnresolvedConflicts(cwd: string): Promise<boolean> {
  *      a concurrent advance → rebuild.
  *
  *   B. The checkout is on a different branch (or the target isn't checked out
- *      here). We advance the ref atomically via `update-ref` (CAS) and leave the
- *      user's checkout alone.
+ *      here). The advance helper still finds the worktree that owns the target
+ *      branch, if any, and moves it with the ref; only a branch attached to no
+ *      checkout advances as a bare ref write. Nothing is ever left behind.
  *
  * Uncommitted work is never destroyed: an unresolvable restore leaves the user's
  * edits in a stash with a warning.
@@ -802,6 +813,16 @@ export async function landSquash(input: {
     audit.git({ type: "merge:ai-local-sync", target: integrationBranch, metadata: { taskId, outcome, squashSha, ...extra } }).catch(() => undefined);
 
   const currentBranch = await git(["rev-parse", "--abbrev-ref", "HEAD"], projectRootDir).catch(() => "");
+  /*
+  FNXC:LandingRefusal 2026-09-29 (STAS-292):
+  Health-check the landing target before this function has side effects. A landing
+  stashes a user's edits and (for workspace lands) publishes a fenced shared ref;
+  neither should happen on a checkout whose index already contradicts its HEAD,
+  because the advance would refuse anyway and the refusal would land on top of
+  half-finished work. Same assertion the advance itself performs — one rule, run
+  as early as it can be run.
+  */
+  await assertLandingTargetHealthy({ rootDir: mergeRoot, integrationBranch });
   let sharedRefAdvanced = false;
   const advanceSharedWorkspaceRef = async (): Promise<void> => {
     if (!workspaceFence || sharedRefAdvanced) return;
@@ -821,31 +842,51 @@ export async function landSquash(input: {
     sharedRefAdvanced = true;
   };
 
-  // Case B — target not checked out here: bare CAS ref advance.
-  if (currentBranch !== integrationBranch) {
+  /*
+  FNXC:LandingAdvance 2026-09-29 (STAS-292):
+  One advance mechanic for every case. `advanceIntegrationBranchRef` discovers the
+  worktree that has `integrationBranch` attached to HEAD — which is NOT necessarily
+  `projectRootDir` — and moves that checkout's HEAD, index and files together with
+  the ref, or refuses with the ref unmoved. Before this, Case B was a blind CAS
+  write from the clean-room: the ref advanced, the real checkout stayed on the old
+  tip, and `git status` in it reported the freshly landed content as a staged
+  revert of it (STAS-233's forensics, STAS-238's "shipped work rolled back" report).
+  */
+  const advanceOntoSquash = async (): Promise<LandResult> => {
     assertMergeGenerationOwned(signal, taskId);
     await assertMergeGateStillOpen?.();
     await advanceSharedWorkspaceRef();
     const adv = await advanceIntegrationBranchRef({
-      rootDir: mergeRoot, projectRootDir, integrationBranch,
-      newSha: squashSha, expectedCurrentSha: tipSha, taskId, audit,
+      rootDir: mergeRoot,
+      integrationBranch,
+      newSha: squashSha,
+      expectedCurrentSha: tipSha,
+      taskId,
+      audit,
     });
     if (!adv.advanced) {
       if (adv.reason === "concurrent-advance" || adv.reason === "non-fast-forward-advance") {
-        return { outcome: "concurrent", localSync: "skipped-other-branch" };
+        return { outcome: "concurrent", localSync: "none-not-landed" };
       }
       throw new Error(`AI merge could not advance ${integrationBranch} for ${taskId}: ${adv.reason} (${adv.diagnostic})`);
     }
-    await emit("skipped-other-branch", { currentBranch });
-    return { outcome: "advanced", localSync: "skipped-other-branch" };
-  }
+    const localSync: LocalSyncOutcome = adv.advanceMode === "merge-ff-only" ? "refreshed-worktree" : "no-checkout-advance";
+    await emit(localSync, { currentBranch, advanceMode: adv.advanceMode, ...(adv.worktreePath ? { worktreePath: adv.worktreePath } : {}) });
+    return { outcome: "advanced", localSync };
+  };
 
-  // Case A — checkout is on the target branch. Read real dirty state NOW, while
-  // HEAD === tipSha (accurate; not yet polluted by the ref move).
+  // Case B — no checkout of the target branch here. The branch may still be
+  // checked out in another worktree, which the advance above is responsible for
+  // refreshing; when it is checked out nowhere, the ref advances alone.
+  if (currentBranch !== integrationBranch) return await advanceOntoSquash();
+
+  // Case A — this checkout is on the target branch: reconcile its local edits
+  // around the advance so the user's work lands back on the new tip. Read real
+  // dirty state NOW, while HEAD === tipSha (not yet polluted by the ref move).
   const head = await git(["rev-parse", "HEAD"], projectRootDir).catch(() => "");
   if (head !== tipSha) {
     // The checkout already moved off the tip we built on — concurrent advance.
-    return { outcome: "concurrent", localSync: "skipped-other-branch" };
+    return { outcome: "concurrent", localSync: "none-not-landed" };
   }
   const dirty = (await git(["status", "--porcelain"], projectRootDir)).length > 0;
   if (dirty && !allowDirtyLocalCheckoutSync) {
@@ -874,40 +915,27 @@ export async function landSquash(input: {
     : false;
 
   if (dirty && !stashed) {
-    // The dirty state couldn't be stashed (e.g. untracked/tracked collision or a
-    // stash hook failure). Don't risk `merge --ff-only` aborting/clobbering:
-    // advance the ref atomically and leave the user's working tree as-is.
-    assertMergeGenerationOwned(signal, taskId);
-    await assertMergeGateStillOpen?.();
-    await advanceSharedWorkspaceRef();
-    const adv = await advanceIntegrationBranchRef({
-      rootDir: mergeRoot, projectRootDir, integrationBranch,
-      newSha: squashSha, expectedCurrentSha: tipSha, taskId, audit,
-    });
-    if (!adv.advanced) {
-      if (adv.reason === "concurrent-advance" || adv.reason === "non-fast-forward-advance") {
-        return { outcome: "concurrent", localSync: "skipped-dirty-unstashable" };
-      }
-      throw new Error(`AI merge could not advance ${integrationBranch} for ${taskId}: ${adv.reason} (${adv.diagnostic})`);
-    }
-    aiMergeLog.warn(`${taskId}: local checkout has un-stashable dirty state — advanced ${integrationBranch} without syncing your working tree; pull manually.`);
-    await emit("skipped-dirty-unstashable");
-    return { outcome: "advanced", localSync: "skipped-dirty-unstashable" };
+    /*
+    FNXC:LandingRefusal 2026-09-29 (STAS-292): This lane used to advance the ref and
+    leave the working tree behind ("pull manually", `skipped-dirty-unstashable`). That
+    is precisely the ref-ahead-of-its-checkout state the landing guard exists to make
+    impossible, so the lane now refuses with the ref unmoved instead of landing it.
+    */
+    await emit("blocked-dirty-checkout", { reason: "un-stashable-dirty-checkout" });
+    throw new Error(
+      `AI merge for ${taskId}: ${projectRootDir} carries dirty state that cannot be stashed; `
+      + `refusing to advance ${integrationBranch} to ${short(squashSha)} with a working tree that cannot follow it. `
+      + `Commit, stash, or clean the local changes (git status lists them), then retry the merge.`,
+    );
   }
 
-  // Fast-forward the checkout (and the branch ref) to the squash.
-  assertMergeGenerationOwned(signal, taskId);
-  await assertMergeGateStillOpen?.();
-  await advanceSharedWorkspaceRef();
-  if (!(await gitOk(["merge", "--ff-only", squashSha], projectRootDir))) {
-    if (stashed) await gitOk(["stash", "pop"], projectRootDir); // restore the user's edits
-    return { outcome: "concurrent", localSync: "skipped-other-branch" };
-  }
-
-  if (!stashed) {
-    await emit("ff");
-    return { outcome: "advanced", localSync: "ff" };
-  }
+  const landed = await advanceOntoSquash().catch(async (error: unknown) => {
+    // A refused advance must not leave OUR stash behind: put the user's edits back
+    // exactly as they were, then propagate the refusal untouched.
+    if (stashed) await gitOk(["stash", "pop"], projectRootDir);
+    throw error;
+  });
+  if (landed.outcome !== "advanced" || !stashed) return landed;
 
   // Re-apply the user's stashed edits onto the new tip.
   if (await gitOk(["stash", "pop"], projectRootDir)) {
@@ -4293,7 +4321,6 @@ export async function pushAfterMergeToRemote(input: {
     assertMergeGenerationOwned(signal, taskId);
     const adv = await advanceIntegrationBranchRef({
       rootDir: canonicalPushRoot,
-      projectRootDir,
       integrationBranch,
       newSha: rebasedSha,
       expectedCurrentSha: localSha,
@@ -4304,23 +4331,6 @@ export async function pushAfterMergeToRemote(input: {
     if (!adv.advanced) {
       await log(`Push after merge: pushed rebased result to ${remote}/${targetBranch}, but ${integrationBranch} moved concurrently — local ref left as-is (${adv.reason}); the next merge's push will reconcile`);
       return { pushed: true, remote, targetBranch, refAdvanced: false, rebasedSha };
-    }
-    const autoSyncMode = normalizeMergeAdvanceAutoSyncMode(settings.mergeAdvanceAutoSync);
-    if (autoSyncMode !== "off") {
-      try {
-        await runMergeAdvanceAutoSync({
-          store,
-          audit,
-          taskId,
-          projectRootDir,
-          integrationBranch,
-          previousSha: localSha,
-          newSha: rebasedSha,
-          mode: autoSyncMode,
-        });
-      } catch (syncErr: unknown) {
-        aiMergeLog.warn(`${taskId}: merge-advance auto-sync after push rebase threw — continuing: ${getErrorMessage(syncErr)}`);
-      }
     }
     return { pushed: true, remote, targetBranch, refAdvanced: true, rebasedSha };
   } finally {

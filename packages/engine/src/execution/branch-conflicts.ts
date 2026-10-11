@@ -1,7 +1,9 @@
 import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
+import { listIntegrationBranchWorktrees } from "../merge/merger-ref-update-advance.js";
 
 const execAsync = promisify(exec);
 const FUSION_TASK_ID_TRAILER_KEY = "Fusion-Task-Id";
@@ -1142,6 +1144,23 @@ export async function autoRecoverCrossContamination(
   }
 
   const originalTip = await revParse(repoDir, branchName);
+  /*
+  FNXC:LandingAdvance 2026-10-11-22:05:
+  This recovery detaches HEAD, replays commits, CAS-re-points `refs/heads/<branch>`, and then
+  checks the branch back out HERE — so index and working tree follow the rewritten tip only in
+  this worktree. If a different worktree owns the branch, the same update-ref would leave that
+  checkout's ref ahead of its index and produce the phantom staged-revert diff again (STAS-292,
+  the `stas-190` signature). Refuse before mutating anything instead.
+  */
+  const otherOwners = (await listIntegrationBranchWorktrees({ rootDir: repoDir, integrationBranch: branchName }))
+    .map((entry) => entry.path)
+    .filter((path) => resolve(path) !== resolve(repoDir));
+  if (otherOwners.length > 0) {
+    throw new Error(
+      `branch rewrite refused: ${branchName} is checked out in ${otherOwners.join(", ")}, `
+      + `and this recovery can only re-point a branch from the worktree that owns it`,
+    );
+  }
   const commitListOutput = await runGit(repoDir, `git rev-list --reverse ${quoteShellArg(`${baseSha}..${branchName}`)}`)
     .catch(() => "");
   const commits = commitListOutput.split("\n").map((line) => line.trim()).filter(Boolean);

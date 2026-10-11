@@ -143,7 +143,6 @@ import {
   type TaskComment,
   type TaskDetail,
   type AutostashOrphanRecord,
-  normalizeMergeAdvanceAutoSyncMode,
   isMergeRequestContractShadowEnabled,
   resolveMergerFallbackModel,
   resolveWorkflowIrForTask,
@@ -176,7 +175,7 @@ const LEGACY_COMPLETE_LANES: readonly string[] = ["done"];
 
 import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
-import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath } from "./worktree/worktree-pool.js";
+import { classifyTaskWorktree, isRepoRootPath } from "./worktree/worktree-pool.js";
 import { RemovalReason, removeWorktree } from "./worktree/worktree-backend.js";
 import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { AgentLogger } from "./agents/agent-logger.js";
@@ -353,7 +352,6 @@ import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { isPushAfterMergeEnabled } from "./merge/push-after-merge-policy.js";
 import { evaluateBranchGroupPromotion, resolveBranchGroupMergeRouting } from "./merge/group-merge-coordinator.js";
 import { advanceIntegrationBranchRef, IntegrationBranchConcurrentAdvanceError } from "./merge/merger-ref-update-advance.js";
-import { syncWorktreeToHead, type SyncWorktreeResult } from "./worktree/worktree-ref-sync.js";
 import { appendAutoWidenedScopeToPrompt, evaluateScopeAutoWiden } from "./merge/merger-scope-auto-widen.js";
 import { moveTaskToContainedBackwardTarget } from "./execution/lifecycle-move.js";
 
@@ -410,141 +408,6 @@ async function resolveMergerMcpServers(store?: TaskStore, agentId?: string | nul
   // Merger-owned sessions resolve enabled MCP servers at session creation for conflict resolution, verification fixes, autostash recovery, and post-merge workflow nodes. Secret material stays in memory and is forwarded only through the shared runtime guard.
   return store ? (await resolveMcpServersForStore(store, { agentId: agentId ?? undefined })).servers : undefined;
 }
-
-/**
- * After `advanceIntegrationBranchRef` ff-updates `refs/heads/<integrationBranch>`,
- * any other worktree still checked out on that branch keeps its index + working
- * tree pinned at the previous tip. `git status` in such a worktree then shows
- * the new commits inverted as "staged changes to be committed" — the surprise
- * behavior that made many users think the merge had been silently reverted.
- *
- * This helper enumerates other worktrees on the integration branch and calls
- * `syncWorktreeToHead` inside each — snap-forward when the worktree is clean
- * against the previous tip, or capture-patch + reset + reapply when the user
- * has real local edits. Each attempt emits a `merge:auto-sync` audit event
- * with the outcome.
- *
- * Best-effort: any per-worktree failure is recorded as an audit event and the
- * loop continues — the merge has already landed and the auto-sync is convenience.
- */
-/*
-FNXC:MergePush 2026-07-11-22:10:
-Exported for the unified AI merge path: after a push-time divergence rebase CAS-advances
-refs/heads/<integrationBranch>, the same other-worktree catch-up (stash-and-ff / ff-only)
-must run so the user's checkout doesn't show the rebased commits inverted as staged changes.
-*/
-export async function runMergeAdvanceAutoSync(input: {
-  store: TaskStore;
-  audit: RunAuditor;
-  taskId: string;
-  projectRootDir: string;
-  integrationBranch: string;
-  previousSha: string;
-  newSha: string;
-  mode: "ff-only" | "stash-and-ff";
-}): Promise<void> {
-  const { audit, taskId, projectRootDir, integrationBranch, previousSha, newSha, mode } = input;
-  // `getRegisteredWorktreeBranches` returns ALL (branch, path) pairs, not a
-  // Map keyed by branch — multiple worktrees can share a branch when the user
-  // created secondary checkouts via `git worktree add --force -b`. Collapsing
-  // to a Map would silently skip all but the last-iterated of those, which is
-  // exactly the surprise-`git status` bug this hook was meant to fix.
-  let entries: Array<{ branch: string; worktreePath: string }>;
-  try {
-    entries = await getRegisteredWorktreeBranches(projectRootDir);
-  } catch (err: unknown) {
-    await audit.git({
-      type: "merge:auto-sync",
-      target: projectRootDir,
-      metadata: {
-        taskId,
-        integrationBranch,
-        mode,
-        outcome: "enumeration-failed",
-        error: err instanceof Error ? err.message : String(err),
-      },
-    });
-    return;
-  }
-
-  const matchingWorktrees: string[] = [];
-  for (const entry of entries) {
-    if (entry.branch === integrationBranch) {
-      matchingWorktrees.push(entry.worktreePath);
-    }
-  }
-
-  if (matchingWorktrees.length === 0) {
-    return;
-  }
-
-  for (const worktreePath of matchingWorktrees) {
-    let result: SyncWorktreeResult;
-    try {
-      result = await syncWorktreeToHead({
-        worktreePath,
-        integrationBranch,
-        previousSha,
-        newSha,
-        mode,
-        taskId,
-        emit: async (event) => {
-          try {
-            await audit.git({
-              type: event.mutationType,
-              target: worktreePath,
-              metadata: { ...event.metadata, autoSync: true },
-            });
-          } catch {
-            // best-effort: never let inner audit failure abort the loop
-          }
-        },
-      });
-    } catch (err: unknown) {
-      await audit.git({
-        type: "merge:auto-sync",
-        target: worktreePath,
-        metadata: {
-          taskId,
-          integrationBranch,
-          mode,
-          newSha,
-          worktreePath,
-          outcome: "exception",
-          error: err instanceof Error ? err.message : String(err),
-        },
-      });
-      continue;
-    }
-
-    await audit.git({
-      type: "merge:auto-sync",
-      target: worktreePath,
-      metadata: {
-        taskId,
-        integrationBranch,
-        mode,
-        newSha,
-        previousSha,
-        worktreePath,
-        outcome: result.kind,
-        ...(result.kind === "synced-with-pop-conflict"
-          ? { conflictedFiles: result.conflictedFiles, patchPath: result.patchPath, stashedFiles: result.stashedFiles, untrackedSkippedAsTracked: result.untrackedSkippedAsTracked }
-          : {}),
-        ...(result.kind === "synced-with-edits-restored"
-          ? { stashedFiles: result.stashedFiles, untrackedRestored: result.untrackedRestored, untrackedSkippedAsTracked: result.untrackedSkippedAsTracked }
-          : {}),
-        ...(result.kind === "failed"
-          ? { stage: result.stage, error: result.error }
-          : {}),
-        ...(result.kind === "skipped-dirty"
-          ? { dirtyFiles: result.dirtyFiles, untrackedFiles: result.untrackedFiles }
-          : {}),
-      },
-    });
-  }
-}
-
 
 const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
   "package.json",
@@ -2161,7 +2024,6 @@ export const __test__ = {
   applyAutostashBySha,
   getAutostashDiff,
   notifyAutostashOrphans,
-  runMergeAdvanceAutoSync,
 };
 
 export async function stashUnrelatedRootDirChanges(
@@ -9893,12 +9755,19 @@ export async function aiMergeTask(
   }
 
   // 5c. Advance integration branch ref after squash
-  // FN-5350 invariant: the integration branch is assumed checked out in
-  // projectRootDir with possibly dirty + untracked files. Advance refs/heads/<integration>
-  // via `git update-ref` only — NEVER `git checkout` / `git merge` / `git rebase`
-  // in projectRootDir. Compare-and-swap (expectedCurrentSha → newSha) preserves
-  // the FN concurrent-advance rule: if integration moved, we refuse and let
-  // upstream re-rebase machinery (FN-4500 / FN-5083 rebind / standard re-execution) recover.
+  /*
+  FNXC:LandingAdvance 2026-10-11 (STAS-292), supersedes the FN-5350 invariant:
+  The integration branch is usually checked out somewhere in this repo — most often
+  the project root, but the owner is discovered from `git worktree list`, never
+  assumed from a passed-in directory — possibly dirty + untracked. FN-5350 therefore forbade `git merge` there and advanced
+  `refs/heads/<integration>` with `git update-ref` alone — which moved the ref while
+  that checkout's HEAD, index and files stayed on the old tip, so `git status` inside
+  it reported the just-landed work as a staged revert of itself (STAS-233 forensics,
+  STAS-238 user report). The advance now runs through `advanceIntegrationBranchRef`,
+  which moves ref, HEAD, index and working tree together in the owning worktree via
+  `merge --ff-only`, keeps the compare-and-swap concurrent-advance rule, and refuses
+  loudly (ref unmoved, nothing reset or stashed) when it cannot.
+  */
   if (reuseTaskWorktreeMerge) {
     try {
       const worktreeHeadSha = execSyncText("git rev-parse HEAD", {
@@ -9915,7 +9784,6 @@ export async function aiMergeTask(
         }).trim();
         const advanceResult = await advanceIntegrationBranchRef({
           rootDir,
-          projectRootDir,
           integrationBranch,
           newSha: worktreeHeadSha,
           expectedCurrentSha,
@@ -9939,10 +9807,12 @@ export async function aiMergeTask(
               taskId,
             });
           }
-          throw new Error(`Failed to advance ${integrationBranch} via update-ref: ${advanceResult.diagnostic}`);
+          throw new Error(`Failed to advance ${integrationBranch}: ${advanceResult.diagnostic}`);
         }
         mergerLog.log(
-          `${taskId}: ${integrationBranch} advanced to ${worktreeHeadSha.slice(0, 8)} via update-ref; your checked-out worktree at ${projectRootDir} is now behind`,
+          advanceResult.advanceMode === "merge-ff-only"
+            ? `${taskId}: ${integrationBranch} advanced to ${worktreeHeadSha.slice(0, 8)} and refreshed its checkout at ${advanceResult.worktreePath ?? projectRootDir}`
+            : `${taskId}: ${integrationBranch} advanced to ${worktreeHeadSha.slice(0, 8)}; ${integrationBranch} is checked out in no worktree, so there is nothing to refresh`,
         );
 
         // FN-5627: Promote `mergeConfirmed` to true ONLY after the ref-advance
@@ -9968,37 +9838,11 @@ export async function aiMergeTask(
           );
         }
 
-        // Auto-sync other worktrees still on the integration branch so their
-        // index + working tree catch up to the new tip. When `off`, the legacy
-        // surprise behavior is preserved and the user pulls manually via the
-        // Merge Advance Notice banner. Isolated in its own try-catch because
-        // the merge has already landed at this point: failing the merger run
-        // because a downstream worktree sync threw would leave the project in
-        // a worse state than just emitting the failure as an audit event.
-        const autoSyncMode = normalizeMergeAdvanceAutoSyncMode(settings.mergeAdvanceAutoSync);
-        if (autoSyncMode !== "off") {
-          try {
-            await runMergeAdvanceAutoSync({
-              store,
-              audit,
-              taskId,
-              projectRootDir,
-              integrationBranch,
-              previousSha: expectedCurrentSha,
-              newSha: worktreeHeadSha,
-              mode: autoSyncMode,
-            });
-          } catch (syncErr: unknown) {
-            mergerLog.warn(
-              `${taskId}: mergeAdvanceAutoSync threw — continuing merge: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`,
-            );
-          }
-        }
       }
     } catch (advErr: unknown) {
       const advMsg = advErr instanceof Error ? advErr.message : String(advErr);
       mergerLog.error(
-        `${taskId}: failed to advance ${mergeTarget.branch} via update-ref: ${advMsg}`,
+        `${taskId}: failed to advance ${mergeTarget.branch}: ${advMsg}`,
       );
       // Abort: leaving reuseTaskWorktreeMerge=true would cause the subsequent
       // push step to operate on projectRootDir where the target ref was never

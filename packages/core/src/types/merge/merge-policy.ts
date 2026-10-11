@@ -42,11 +42,6 @@ export function normalizeMergeIntegrationWorktreeMode(
 export const DIRECT_MERGE_COMMIT_STRATEGIES = ["auto", "always-squash", "always-rebase"] as const;
 export type DirectMergeCommitStrategy = (typeof DIRECT_MERGE_COMMIT_STRATEGIES)[number];
 
-export const MERGE_ADVANCE_AUTO_SYNC_MODES = ["off", "ff-only", "stash-and-ff"] as const;
-export type MergeAdvanceAutoSyncMode = (typeof MERGE_ADVANCE_AUTO_SYNC_MODES)[number];
-export function normalizeMergeAdvanceAutoSyncMode(value: unknown): MergeAdvanceAutoSyncMode {
-  return value === "off" || value === "ff-only" || value === "stash-and-ff" ? value : "stash-and-ff";
-}
 /** How merge conflicts are resolved when the AI agent can't (or shouldn't) decide.
  *
  *  Both `smart-*` strategies share the same cascade: pre-merge fetch +

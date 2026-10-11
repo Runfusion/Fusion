@@ -173,7 +173,6 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "includeTaskIdInCommit",
     "integrationBranch",
     "maxAutoMergeRetries",
-    "mergeAdvanceAutoSync",
     "mergeConflictStrategy",
     "mergeIntegrationWorktree",
     "mergeStrategy",

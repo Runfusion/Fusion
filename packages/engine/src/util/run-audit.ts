@@ -358,16 +358,28 @@ export type GitMutationType =
    *   refName: string;
    *   fromSha: string | null;
    *   toSha: string;
-   *   advanceMode: "fast-forward" | "non-fast-forward" | "update-ref";
+   *   advanceMode: "merge-ff-only" | "fast-forward" | "non-fast-forward" | "update-ref" | "not-attempted";
+   *   worktreePath?: string;
    *   aiResolved?: boolean;
    *   succeeded: boolean;
    *   error?: string;
    * }
    * ```
+   *
+   * `advanceMode` names the lane that ran: `merge-ff-only` when a worktree owns the branch, so ref,
+   * HEAD, index and working tree moved together there; `update-ref` for the checked-out-nowhere
+   * compare-and-swap; `not-attempted` when the landing guard refused before any ref moved. One
+   * codepath backs every landing: `merger-ref-update-advance.ts` (STAS-292).
    */
   | "merge:integration-ref-advance"
   /**
-   * Emitted by the merger's post-ref-advance auto-sync hook for each other
+   * HISTORICAL — no producer since STAS-292 (FNXC:LandingAdvance 2026-10-11). The auto-sync hook was
+   * deleted because it was a second refresh codepath that ran only AFTER the ref had already moved
+   * outside the owning checkout, which is exactly what left that checkout's index rewound. Landing now
+   * refreshes the owning worktree itself or refuses loudly. The event type and the dashboard's
+   * `autoSyncOutcome` readers stay so already-stored events keep rendering; nothing writes new ones.
+   *
+   * Emitted by the retired auto-sync hook for each other
    * worktree it attempts to fast-forward (typically the user's project-root
    * checkout). Records the per-worktree outcome of the
    * `mergeAdvanceAutoSync` pipeline (`stash → ff → pop`, or pure `ff-only`).

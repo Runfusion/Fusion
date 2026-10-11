@@ -243,7 +243,6 @@ describe("SettingsModal", () => {
         executorEscalationNodeId: undefined,
         chatMessageLayout: "bubbles",
         gitlabAuthTokenType: "personal",
-        mergeAdvanceAutoSync: "stash-and-ff",
         /*
         FNXC:RightSidebarOptional 2026-09-15-17:29:
         FN-426: this fixture states the persisted value of every project preference the Appearance form normalizes on

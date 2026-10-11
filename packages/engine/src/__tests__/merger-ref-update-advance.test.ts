@@ -72,7 +72,6 @@ describe("advanceIntegrationBranchRef", () => {
 
       const result = await advanceIntegrationBranchRef({
         rootDir: dir,
-        projectRootDir: dir,
         integrationBranch,
         newSha,
         expectedCurrentSha,
@@ -82,7 +81,9 @@ describe("advanceIntegrationBranchRef", () => {
         } as any,
       });
 
-      expect(result).toEqual({ advanced: true, previousSha: expectedCurrentSha, newSha });
+      // Nothing checks `main` out in this fixture (HEAD sits on `feat`), so the advance must
+      // take the no-owner compare-and-swap lane rather than a worktree refresh.
+      expect(result).toEqual({ advanced: true, advanceMode: "update-ref", previousSha: expectedCurrentSha, newSha });
       expect(git(dir, `git rev-parse refs/heads/${integrationBranch}`)).toBe(newSha);
       expect(events[0]?.type).toBe("merge:integration-ref-advance");
       expect(events[0]?.metadata?.advanceMode).toBe("update-ref");
@@ -114,7 +115,6 @@ describe("advanceIntegrationBranchRef", () => {
 
       const result = await advanceIntegrationBranchRef({
         rootDir: dir,
-        projectRootDir: dir,
         integrationBranch: "main",
         newSha,
         expectedCurrentSha: staleExpectedSha,
@@ -154,7 +154,6 @@ describe("advanceIntegrationBranchRef", () => {
 
       const result = await advanceIntegrationBranchRef({
         rootDir: dir,
-        projectRootDir: dir,
         integrationBranch: "main",
         newSha,
         expectedCurrentSha,
@@ -162,7 +161,13 @@ describe("advanceIntegrationBranchRef", () => {
         audit: { git: async () => undefined } as any,
       });
 
-      expect(result.advanced).toBe(true);
+      // `main` is checked out here, so this advances through the owning worktree: ref, HEAD,
+      // index and files move together and the local edits still survive — the invariant that
+      // makes the phantom staged-revert diff (STAS-233/STAS-238) impossible.
+      expect(result).toMatchObject({ advanced: true, advanceMode: "merge-ff-only" });
+      expect(git(dir, "git rev-parse HEAD")).toBe(newSha);
+      expect(git(dir, "git write-tree")).toBe(git(dir, "git rev-parse HEAD^{tree}"));
+      expect(existsSync(join(dir, "feature.txt"))).toBe(true);
       expect(readFileSync(join(dir, "tracked.txt"), "utf-8")).toBe(trackedBefore);
       expect(readFileSync(join(dir, "untracked.txt"), "utf-8")).toBe(untrackedBefore);
       expect(existsSync(join(dir, "untracked.txt"))).toBe(true);
@@ -202,7 +207,6 @@ describe("advanceIntegrationBranchRef", () => {
 
       const result = await advanceIntegrationBranchRef({
         rootDir: dir,
-        projectRootDir: dir,
         integrationBranch: "main",
         newSha: siblingBSha,
         expectedCurrentSha: siblingASha,
@@ -242,7 +246,6 @@ describe("advanceIntegrationBranchRef", () => {
 
       const result = await advanceIntegrationBranchRef({
         rootDir: dir,
-        projectRootDir: dir,
         integrationBranch: "main",
         newSha,
         expectedCurrentSha: baseSha,
@@ -302,7 +305,6 @@ describe("advanceIntegrationBranchRef", () => {
       try {
         const result = await advanceIntegrationBranchRef({
           rootDir: dir,
-          projectRootDir: dir,
           integrationBranch: "main",
           newSha,
           expectedCurrentSha,
@@ -340,7 +342,6 @@ describe("advanceIntegrationBranchRef", () => {
     try {
       await expect(advanceIntegrationBranchRef({
         rootDir: dir,
-        projectRootDir: dir,
         integrationBranch: "main",
         newSha: "",
         expectedCurrentSha: "abc",
@@ -350,7 +351,6 @@ describe("advanceIntegrationBranchRef", () => {
 
       await expect(advanceIntegrationBranchRef({
         rootDir: dir,
-        projectRootDir: dir,
         integrationBranch: "main",
         newSha: "abc",
         expectedCurrentSha: "",

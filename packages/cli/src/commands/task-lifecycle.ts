@@ -76,7 +76,7 @@ export async function resolveCompleteTargetForTask(store: TaskStore, taskId: str
   } catch { /* degraded: legacy id */ }
   return "done";
 }
-import { activeSessionRegistry, resolveIntegrationBranch, resolveIntegrationRemote } from "@fusion/engine";
+import { activeSessionRegistry, resolveIntegrationBranch, resolveIntegrationRemote, rewindBranchRef } from "@fusion/engine";
 import type {
   CreateGroupPrFn,
   SyncGroupPrFn,
@@ -254,26 +254,30 @@ async function abortRebase(cwd: string): Promise<void> {
 
 /**
  * Restore the canonical head only when it is still the exact ref advanced by
- * this refresh. `update-ref <new> <old>` is the CAS fence: a concurrent local
- * writer is never overwritten while recovering from a rejected publication.
+ * this refresh. The rewind goes through the engine's shared guarded lane: the
+ * ref move carries a reflog message naming the rollback, a compare-and-swap on
+ * the observed value protects a concurrent local writer, and the checkout that
+ * owns the branch moves its index and files with the ref instead of being left
+ * behind it (STAS-292 — the message-less `update-ref` + `reset --hard` pair
+ * shipped here is what made a task worktree report its own landed work as a
+ * staged revert).
  */
 async function restoreRefreshHead(
   root: string,
-  checkout: string,
   ref: string,
   before: string | undefined,
 ): Promise<void> {
   if (!before) return;
   const current = await gitStdout(root, ["rev-parse", "--verify", ref]).catch(() => "");
   if (!current || current === before) return;
-  await execFileAsync("git", ["update-ref", ref, before, current], { cwd: root, timeout: 30_000 });
-  // The symbolic checkout now resolves to `before`; reset its index and tree
-  // without changing the ref again. This is deliberately not cancellable.
-  const restoredHead = await gitStdout(checkout, ["rev-parse", "HEAD"]);
-  if (restoredHead !== before) {
-    throw new Error(`PR head refresh rollback refused: ${ref} changed during recovery`);
-  }
-  await execFileAsync("git", ["reset", "--hard", before], { cwd: checkout, timeout: 30_000 });
+  const integrationBranch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+  await rewindBranchRef({
+    rootDir: root,
+    integrationBranch,
+    targetSha: before,
+    expectedCurrentSha: current,
+    reason: `fusion pr-head rollback: ${before}`,
+  });
 }
 
 /*
@@ -541,7 +545,7 @@ export async function refreshAutomatedPrHead(
         Restore that canonical ref with compare-and-swap before surfacing failure,
         so a later ordinary push cannot publish the rewrite that lost its lease.
         */
-        await restoreRefreshHead(root, checkout, requestedRef, refreshStartHead);
+        await restoreRefreshHead(root, requestedRef, refreshStartHead);
       }
     } catch (rollbackError) {
       const original = error instanceof Error ? error.message : String(error);

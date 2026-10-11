@@ -21,7 +21,7 @@ interface MergeAdvanceEvent {
   refName: string;
   toSha: string;
   fromSha: string | null;
-  advanceMode: "fast-forward" | "non-fast-forward" | "update-ref" | string;
+  advanceMode: "merge-ff-only" | "fast-forward" | "non-fast-forward" | "update-ref" | string;
   succeeded: boolean;
   advancedAt: string;
   userCheckout: {

@@ -769,6 +769,12 @@ async function getPatchFingerprint(cwd: string, sha: string): Promise<string | n
   }
 }
 
+/*
+FNXC:LandingAdvance 2026-10-11-22:05:
+The `merge:auto-sync` half of this join reads HISTORICAL events only — STAS-292 deleted the
+hook that wrote them, landing now refreshes the owning checkout itself. The read stays so
+advance notices recorded before that change still explain themselves in the banner.
+*/
 export async function collectRecentMergeAdvances(
   scopedStore: TaskStore & {
     getRunAuditEventsAsync: (filters: {
@@ -1529,18 +1535,24 @@ export async function pullGitBranch(cwd?: string, options?: PullGitBranchOptions
       await tryFastForwardFromOrigin(rootDir, taskId, integration.integrationBranch, integration.integrationRemote ?? "origin");
     }
 
-    // Sync working tree + index to the local integration tip. The merger
-    // advances `refs/heads/<integrationBranch>` via `git update-ref` without
-    // touching any worktree. When HEAD here is symbolic to that branch
-    // (the normal case in the user's project-root checkout), HEAD already
-    // resolves to the new sha — but the working files and index don't
-    // follow until something forces it. `tryFastForwardFromOrigin` only
-    // updates the worktree when origin is ahead of local; when the local
-    // tip is ahead of origin (the post-merge, pre-push state), it returns
-    // a no-op and the user sees "Pull completed" with no visible change.
-    // Reset against the branch ref explicitly so the worktree advances to
-    // the local tip regardless of whether the origin FF ran. The autostash
-    // above protects user edits, so --hard is safe here.
+    /*
+    FNXC:LandingAdvance 2026-09-29 (STAS-292): corrects the premise of this
+    comment, which used to read "the merger advances `refs/heads/<integrationBranch>`
+    via `git update-ref` without touching any worktree." That is no longer true:
+    a landing now fast-forwards the checkout that owns the integration branch,
+    so ref, index and files arrive together and this route is no longer the
+    thing that patches up a checkout left behind.
+
+    What it still does is operator-triggered repair, which is a different job
+    from a landing: this Pull route is a human pressing a button on a checkout
+    that may be in any state, and it is the only way to bring a worktree onto a
+    tip that moved outside the merger (an origin fast-forward, a manual ref
+    edit). It stays a plain `reset --hard` against the branch ref because an
+    operator lane is allowed to discard tracked local edits when it says so out
+    loud — the autostash above protects them, and it is cancellable by the
+    operator walking away. Engine code gets no such licence; see
+    `merger-ref-update-advance.ts`.
+    */
     const localIntegrationTip = (await runGitCommand(
       ["rev-parse", "--verify", `refs/heads/${integration.integrationBranch}`],
       rootDir,

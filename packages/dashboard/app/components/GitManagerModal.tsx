@@ -1787,8 +1787,8 @@ function StatusPanel({
           <div>
             <Trans
               i18nKey="app:git.staleIndexWarning"
-              defaults="<strong>Stale index detected.</strong> HEAD has advanced (typically because Fusion's merger updated the integration-branch ref) but the index still reflects the previous tip — `git status` will report the new commits inverted as &quot;staged changes.&quot; Enable <mergeCode>mergeAdvanceAutoSync</mergeCode> in Settings to have the merger reconcile automatically, or run <resetCode>git reset --hard HEAD</resetCode> to snap forward manually."
-              components={{ strong: <strong />, mergeCode: <code />, resetCode: <code /> }}
+              defaults="<strong>Stale index detected.</strong> HEAD has advanced but the index still reflects the previous tip — `git status` will report the new commits inverted as &quot;staged changes.&quot; The merger now refuses to land into a checkout in this state, so nothing was merged. Clear it per file with <resetCode>git restore --source=HEAD --staged --worktree -- FILE</resetCode>, then retry the merge."
+              components={{ strong: <strong />, resetCode: <code /> }}
             />
           </div>
         </div>

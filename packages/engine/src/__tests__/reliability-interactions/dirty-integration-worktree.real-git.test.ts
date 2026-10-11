@@ -49,8 +49,8 @@ afterAll(() => {
   cleanupTmpDirsSync();
 });
 
-describe.skipIf(!hasGit)("reliability interaction: dirty integration worktree with ref-only advance", () => {
-  it.each(["main", "master"] as const)("advances %s without touching dirty/untracked files", async (integrationBranch) => {
+describe.skipIf(!hasGit)("reliability interaction: dirty integration worktree with an owning-checkout advance", () => {
+  it.each(["main", "master"] as const)("advances %s through its dirty owning checkout without touching dirty/untracked files", async (integrationBranch) => {
     const projectRootDir = mintTmpDir("fusion-test-ref-project-");
     const rootDir = join(projectRootDir, "task-wt");
     const events: any[] = [];
@@ -80,7 +80,6 @@ describe.skipIf(!hasGit)("reliability interaction: dirty integration worktree wi
 
       const result = await advanceIntegrationBranchRef({
         rootDir,
-        projectRootDir,
         integrationBranch,
         newSha,
         expectedCurrentSha,
@@ -88,23 +87,30 @@ describe.skipIf(!hasGit)("reliability interaction: dirty integration worktree wi
         audit: { git: async (event: any) => events.push(event) } as any,
       });
 
-      expect(result).toEqual({ advanced: true, previousSha: expectedCurrentSha, newSha });
+      expect(result).toEqual({ advanced: true, advanceMode: "merge-ff-only", previousSha: expectedCurrentSha, newSha, worktreePath: projectRootDir });
       expect(git(projectRootDir, `git rev-parse refs/heads/${integrationBranch}`)).toBe(newSha);
+      // The branch is checked out in projectRootDir, so the advance ran THROUGH that checkout:
+      // ref, HEAD, index and files moved as one unit — the invariant that stops an unstaged
+      // local edit from being reported back as a staged revert of the work that just landed.
+      expect(git(projectRootDir, "git rev-parse HEAD")).toBe(newSha);
+      expect(git(projectRootDir, "git write-tree")).toBe(git(projectRootDir, `git rev-parse 'HEAD^{tree}'`));
       expect(readFileSync(join(projectRootDir, "tracked.ts"), "utf-8")).toBe(trackedBefore);
       expect(readFileSync(join(projectRootDir, "new-untracked.txt"), "utf-8")).toBe(untrackedBefore);
       expect(existsSync(join(projectRootDir, "new-untracked.txt"))).toBe(true);
       expect(git(projectRootDir, "git status --porcelain")).toContain("new-untracked.txt");
 
-      const updateRefCalls = runGitSpy.mock.calls.filter(([args]) => Array.isArray(args) && args[0] === "update-ref");
-      expect(updateRefCalls).toHaveLength(1);
-      expect(updateRefCalls[0]?.[1]).toBe(rootDir);
-      expect(runGitSpy.mock.calls.some(([args, cwd]) => {
-        if (cwd !== projectRootDir || !Array.isArray(args)) return false;
-        return ["checkout", "merge", "rebase", "update-ref"].includes(args[0] ?? "");
-      })).toBe(false);
+      // The owning checkout moves by exactly one git command — `merge --ff-only` there. A bare
+      // ref write, a checkout, a reset or a stash in that directory is the regression this locks.
+      expect(runGitSpy.mock.calls.filter(([args, cwd]) =>
+        cwd === projectRootDir && Array.isArray(args) && ["checkout", "reset", "stash", "update-ref"].includes(args[0] ?? "")))
+        .toEqual([]);
+      const ownerMergeCalls = runGitSpy.mock.calls.filter(([args, cwd]) =>
+        cwd === projectRootDir && Array.isArray(args) && args[0] === "merge");
+      expect(ownerMergeCalls).toHaveLength(1);
+      expect(ownerMergeCalls[0]?.[0]).toEqual(["merge", "--ff-only", newSha]);
 
       const advanceEvent = events.find((event) => event.type === "merge:integration-ref-advance");
-      expect(advanceEvent?.metadata?.advanceMode).toBe("update-ref");
+      expect(advanceEvent?.metadata?.advanceMode).toBe("merge-ff-only");
       expect(advanceEvent?.metadata?.succeeded).toBe(true);
       expect(advanceEvent?.target).toBe(integrationBranch);
       if (integrationBranch === "master") {

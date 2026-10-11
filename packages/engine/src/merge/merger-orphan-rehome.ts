@@ -172,7 +172,6 @@ export async function rehomeOrphanOntoIntegration(
 
   const advanceResult = await advanceIntegrationBranchRef({
     rootDir: input.rootDir,
-    projectRootDir: input.projectRootDir,
     integrationBranch: input.integrationBranch,
     newSha: input.orphanSha,
     expectedCurrentSha: integrationTipSha,

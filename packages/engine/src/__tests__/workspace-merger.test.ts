@@ -503,7 +503,9 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
       if (checkout === "integration") {
         expect(workspaceResult.repos[0]?.localSync).toBe("stash-ff-restore");
       } else {
-        expect(workspaceResult.repos[0]?.localSync).toBe("skipped-other-branch");
+        // `main` is checked out nowhere here, so landing moves the ref by compare-and-swap and
+        // leaves the operator's own branch checkout exactly as it found it.
+        expect(workspaceResult.repos[0]?.localSync).toBe("no-checkout-advance");
         for (const repo of ["workspace-repo", "single-repo"]) {
           expect(fx.git(repo, "git branch --show-current")).toBe("operator-draft");
         }

@@ -17714,7 +17714,6 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       } else {
         const advanced = await advanceIntegrationBranchRef({
           rootDir: this.options.rootDir,
-          projectRootDir: this.options.rootDir,
           integrationBranch,
           newSha: selected.strandedSha,
           expectedCurrentSha: selected.tipSha,

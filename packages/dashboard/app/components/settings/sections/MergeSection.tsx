@@ -404,20 +404,6 @@ export function MergeSection({ form, setForm, integrationBranchOptions, integrat
             {(form.mergeIntegrationWorktree ?? "reuse-task-worktree") !== "reuse-task-worktree" && (<div className="settings-warning-banner" role="alert" aria-live="polite" data-testid="merge-integration-worktree-warning">
                 <strong>{t("settings.merge.legacyIntegrationBranchMode", "Legacy integration-branch mode.")}</strong>{" "}{t("settings.merge.autoMergeWillRunRebaseConflictResolutionAnd", " Auto-merge will run rebase, conflict resolution, and squash commits inside the project root (the user's checked-out integration-branch worktree) instead of the task worktree. Fusion assumes that directory is already on the integration branch and clean; if it isn't, merges may fail or touch the user's working tree. Reuse-task-worktree is the recommended default (FN-5279). Switch back unless you have a specific reason to opt in (FN-5348). ")}</div>)}
           </div>
-          <div className="form-group">
-            <div className="settings-field-label-row">
-              <label htmlFor="mergeAdvanceAutoSync">{t("settings.merge.autoSyncProjectCheckoutAfterMerge", "Auto-sync project checkout after merge")}</label>
-              <SettingsHelpTip settingKey="mergeAdvanceAutoSync">{t("settings.merge.afterFusionAdvancesTheIntegrationBranchRefThe", " After Fusion advances the integration branch ref, the merger can auto-sync other worktrees still checked out on that branch (typically your project-root checkout). ")}<code>Stash + fast-forward</code>{t("settings.merge.snapshotsRealLocalEditsAsAPatchAgainst", " snapshots real local edits as a patch against the previous tip, snaps the worktree to the new tip, then reapplies the patch \u2014 untracked files that collide with newly-tracked paths are left in a temp dir for manual recovery. ")}<code>Fast-forward only</code>{t("settings.merge.snapsCleanlyWhenTheWorktreeHasNoEdits", " snaps cleanly when the worktree has no edits and skips otherwise. ")}<code>Off</code>{t("settings.merge.isTheLegacyBehavior", " is the legacy behavior: ")}<code>git status</code>{t("settings.merge.inYourProjectRootWillShowTheNew", " in your project root will show the new commits inverted as &quot;staged changes&quot; until you pull manually. Only applies to direct merges. ")}</SettingsHelpTip>
-            </div>
-            <select id="mergeAdvanceAutoSync" className="select" value={form.mergeAdvanceAutoSync ?? "stash-and-ff"} onChange={(e) => setForm((f) => ({
-                ...f,
-                mergeAdvanceAutoSync: e.target.value as "off" | "ff-only" | "stash-and-ff",
-            }))} data-testid="merge-advance-auto-sync-select">
-              <option value="stash-and-ff">{t("settings.merge.stashFastForwardDefaultPreserveLocalEdits", "Stash + fast-forward (default) \u2014 preserve local edits")}</option>
-              <option value="ff-only">{t("settings.merge.fastForwardOnlySkipDirtyWorktrees", "Fast-forward only \u2014 skip dirty worktrees")}</option>
-              <option value="off">{t("settings.merge.offLeaveTheProjectRootStaleLegacyBehavior", "Off \u2014 leave the project root stale (legacy behavior)")}</option>
-            </select>
-          </div>
         </>)}
       {/*
         FNXC:SourceControl 2026-07-15-20:30:

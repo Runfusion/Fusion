@@ -70,7 +70,7 @@ async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
 }
 
 describe("reliability interaction: integration-worktree-state telemetry", () => {
-  it.skipIf(!hasGit || !hasPg)("captures dirty user checkout while successful reuse merge leaves user files untouched", async () => {
+  it.skipIf(!hasGit || !hasPg)("refuses the landing when the user checkout stages a revert of the incoming work", async () => {
     const { fixture } = await setupReuseTask("FN-5351-RI-STATE-1", "main");
     try {
       const { rootDir, store, task } = fixture;
@@ -80,9 +80,12 @@ describe("reliability interaction: integration-worktree-state telemetry", () => 
 
       const trackedBefore = readFileSync(join(rootDir, "README.md"), "utf-8");
       const untrackedBefore = readFileSync(join(rootDir, "UNTRACKED.txt"), "utf-8");
-      const result = await aiMergeTask(store, rootDir, task.id);
-      expect(result.merged).toBe(true);
-      expect((await store.getTask(task.id))?.column).toBe("done");
+      const mainBefore = git(rootDir, "git rev-parse refs/heads/main");
+
+      // An index that disagrees with HEAD is a staged revert of whatever lands, so the guard
+      // refuses BEFORE the ref moves instead of landing the work and letting this checkout
+      // report it back as reverted (STAS-233 forensics, STAS-238 user report).
+      await expect(aiMergeTask(store, rootDir, task.id)).rejects.toThrow(/landing refused:/);
 
       const audits = await store.getRunAuditEventsAsync({ taskId: task.id });
       const state = audits.find((event) => event.mutationType === "merge:integration-worktree-state");
@@ -92,11 +95,16 @@ describe("reliability interaction: integration-worktree-state telemetry", () => 
         userCheckout: expect.objectContaining({ dirty: true }),
       });
       const advance = audits.find((event) => event.mutationType === "merge:integration-ref-advance");
-      expect(advance?.metadata).toMatchObject({ refName: "refs/heads/main", succeeded: true });
+      expect(advance?.metadata).toMatchObject({ refName: "refs/heads/main", succeeded: false });
+      expect(JSON.stringify(advance?.metadata)).toContain("landing refused:");
 
+      // Nothing landed and the checkout is exactly as the user left it — files AND index.
+      expect(git(rootDir, "git rev-parse refs/heads/main")).toBe(mainBefore);
+      expect(git(rootDir, "git status --porcelain").split("\n")).toContain("M  README.md");
       expect(readFileSync(join(rootDir, "README.md"), "utf-8")).toBe(trackedBefore);
       expect(readFileSync(join(rootDir, "UNTRACKED.txt"), "utf-8")).toBe(untrackedBefore);
       expect(existsSync(join(rootDir, "UNTRACKED.txt"))).toBe(true);
+      expect((await store.getTask(task.id))?.column).not.toBe("done");
     } finally {
       await fixture.cleanup();
     }

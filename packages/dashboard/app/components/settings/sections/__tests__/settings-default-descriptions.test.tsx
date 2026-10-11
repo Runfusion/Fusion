@@ -248,7 +248,6 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   integrationBranch: "merge.theCanonicalBranchFusionMergesTasksIntoAnd",
   directMergeCommitStrategy: "merge.alwaysSquashDirectMerges",
   mergeIntegrationWorktree: "merge.reuseTaskWorktreeDefault",
-  mergeAdvanceAutoSync: "merge.stashFastForwardDefaultPreserveLocalEdits",
   githubAuthMode: "merge.gitHubCLIGhAuth",
   githubAuthToken: "merge.githubAuthTokenHint",
   includeTaskIdInCommit: "merge.includeTaskIdInCommitDefault",

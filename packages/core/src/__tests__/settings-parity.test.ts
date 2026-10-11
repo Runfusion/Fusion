@@ -336,9 +336,15 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("directMergeCommitStrategy")).toBe(false);
   });
 
-  it("defaults mergeAdvanceAutoSync to stash-and-ff and keeps it project-scoped", () => {
-    expect(DEFAULT_PROJECT_SETTINGS.mergeAdvanceAutoSync).toBe("stash-and-ff");
-    expect(isProjectSettingsKey("mergeAdvanceAutoSync")).toBe(true);
+  it("keeps mergeAdvanceAutoSync out of the schema so landing has one refresh codepath", () => {
+    /*
+    STAS-292 deleted the post-advance auto-sync hook: landing refreshes the worktree that owns
+    the branch inside the landing itself, or refuses. A setting that re-armed a second refresh
+    path after the ref had already moved would resurrect the rewound-index bug (STAS-233/238).
+    */
+    expect(DEFAULT_PROJECT_SETTINGS).not.toHaveProperty("mergeAdvanceAutoSync");
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("mergeAdvanceAutoSync");
+    expect(isProjectSettingsKey("mergeAdvanceAutoSync")).toBe(false);
     expect(isGlobalSettingsKey("mergeAdvanceAutoSync")).toBe(false);
   });
 

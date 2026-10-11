@@ -106,7 +106,7 @@ describe("FN-6257 AI-merge cleanup ENOENT idempotency (real git)", () => {
       const confirmedLandEvent = (
         event.mutationType === "merge:integration-ref-advance" && event.metadata?.succeeded === true
       ) || (
-        event.mutationType === "merge:ai-local-sync" && ["ff", "skipped-other-branch", "stash-ff-restore", "stash-ff-airesolved", "stash-ff-conflict"].includes(String(event.metadata?.outcome ?? ""))
+        event.mutationType === "merge:ai-local-sync" && ["refreshed-worktree", "no-checkout-advance", "stash-ff-restore", "stash-ff-airesolved", "stash-ff-conflict"].includes(String(event.metadata?.outcome ?? ""))
       );
       if (confirmedLandEvent && observedMergeRoot && !removedAfterConfirmedLand) {
         removedAfterConfirmedLand = true;

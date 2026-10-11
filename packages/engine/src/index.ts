@@ -445,6 +445,10 @@ export type { HumanMergeBarrierDeps, HumanMergeBarrierOutcome, HumanMergeCreateP
 export type { HumanMergeActionCapability, HumanMergeDecisionPoint, HumanMergeDecisionPointDeps } from "./merge/human-merge-approval.js";
 export { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 export { runAiMerge } from "./merge/merger-ai.js";
+// STAS-292: the shared guarded ref lane. Recovery callers outside the merger (the CLI's
+// PR-head rollback) rewind a branch by name through here so ref, index and files of the
+// owning checkout move together and every reflog entry names its author.
+export { rewindBranchRef } from "./merge/merger-ref-update-advance.js";
 // FNXC:Workspace 2026-06-22-14:10 (Phase D review G): canonical landed predicate now lives in its
 // own dependency-free module (self-healing ↔ merger-ai cycle dissolved). Public export preserved.
 export { isRepoLanded } from "./merge/workspace-land-predicate.js";
@@ -562,14 +566,6 @@ export {
   type SmartPullAuditEvent,
   type SmartPullAuditEmitter,
 } from "./merge/smart-pull.js";
-export {
-  syncWorktreeToHead,
-  type SyncWorktreeInput,
-  type SyncWorktreeResult,
-  type SyncMode,
-  type WorktreeSyncAuditEvent,
-  type WorktreeSyncAuditEmitter,
-} from "./worktree/worktree-ref-sync.js";
 export {
   generateSyntheticRunId,
 } from "./util/run-audit.js";

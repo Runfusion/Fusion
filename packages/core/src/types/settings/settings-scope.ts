@@ -17,7 +17,6 @@ import type {
 import type {
   AutoRecoverySettings,
   DirectMergeCommitStrategy,
-  MergeAdvanceAutoSyncMode,
   MergeAuditAutoRecoveryMode,
   MergeConflictStrategy,
   MergeIntegrationWorktreeMode,
@@ -1432,21 +1431,6 @@ export interface ProjectSettings {
    *  - "cwd-main": legacy alias for "cwd-integration-branch" (normalized at read time)
    *  Auto-merge only; manual/direct merge entrypoints outside auto-merge are unchanged. */
   mergeIntegrationWorktree?: MergeIntegrationWorktreeMode;
-  /** After the merger advances the integration branch ref, what to do in *other*
-   *  worktrees that have the same branch checked out (typically the user's
-   *  project-root checkout that sat at the previous tip).
-   *  - "off": do nothing; the user must `git pull` (or click the Merge Advance
-   *    Notice banner's Pull button) to bring their checkout forward.
-   *  - "ff-only": fast-forward the other worktree only when its index and
-   *    working tree are clean. Dirty worktrees are left alone and the banner
-   *    still surfaces for manual handling.
-   *  - "stash-and-ff" (default): run the Smart Pull pipeline
-   *    (stash → fast-forward → pop) so local edits survive across the
-   *    auto-sync. Pop conflicts surface as `merge:auto-sync` audit events with
-   *    `outcome: "stash-pop-conflict"` and are forwarded to the dashboard's
-   *    existing stash-conflict modal.
-   *  Only applies to direct merges (`mergeStrategy === "direct"`). */
-  mergeAdvanceAutoSync?: MergeAdvanceAutoSyncMode;
   /** Explicit integration branch name (e.g. `main`, `master`, `trunk`, `develop`).
    *  Resolution order: `integrationBranch` → `baseBranch` → `origin/HEAD` → `main`.
    *  This value is used as the `projectDefaultBranch` input to `resolveTaskMergeTarget`. */

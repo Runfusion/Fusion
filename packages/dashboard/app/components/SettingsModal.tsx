@@ -6,7 +6,6 @@ import {
   getErrorMessage,
   resolveGitlabConfig,
   normalizeMergeIntegrationWorktreeMode,
-  normalizeMergeAdvanceAutoSyncMode,
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, UiStyle, ModelPreset } from "@fusion/core";
 import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
@@ -1004,7 +1003,6 @@ export function SettingsModal({
     executorEscalationModelId: "",
     executorEscalationNodeId: "",
     mergeIntegrationWorktree: "reuse-task-worktree",
-    mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
     showWorktreeGrouping: false,
     showCostBadgeOnCards: false,
@@ -1618,7 +1616,6 @@ export function SettingsModal({
           */
           githubLinkImportedIssuesToTracking: s.githubLinkImportedIssuesToTracking === true,
           mergeIntegrationWorktree: normalizeMergeIntegrationWorktreeMode(s.mergeIntegrationWorktree),
-          mergeAdvanceAutoSync: normalizeMergeAdvanceAutoSyncMode(s.mergeAdvanceAutoSync),
           maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(s),
           executorToolFailureRetryCount: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryCount, 2),
           executorToolFailureRetryBackoffMs: resolveNonNegativeExecutorToolFailureSetting(s.executorToolFailureRetryBackoffMs, 2000),
@@ -1664,9 +1661,6 @@ export function SettingsModal({
             mergeIntegrationWorktree: scoped.project.mergeIntegrationWorktree === undefined
               ? undefined
               : normalizeMergeIntegrationWorktreeMode(scoped.project.mergeIntegrationWorktree),
-            mergeAdvanceAutoSync: scoped.project.mergeAdvanceAutoSync === undefined
-              ? undefined
-              : normalizeMergeAdvanceAutoSyncMode(scoped.project.mergeAdvanceAutoSync),
           },
         }); // Store initial scoped values for null-as-delete
         if (showLoadingState) {

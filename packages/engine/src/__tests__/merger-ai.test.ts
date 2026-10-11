@@ -1777,9 +1777,14 @@ describe("landSquash (advance + local-checkout sync)", () => {
     const { tipSha, squashSha } = makeDescendantSquash(dir, () => writeFileSync(join(dir, "landed.txt"), "landed\n"));
 
     const res = await landSquash({ projectRootDir: dir, mergeRoot: dir, integrationBranch: "main", tipSha, squashSha, taskId: "FN-1", audit: auditStub() });
-    expect(res).toEqual({ outcome: "advanced", localSync: "ff" });
+    expect(res).toEqual({ outcome: "advanced", localSync: "refreshed-worktree" });
     expect(git(dir, "rev-parse main")).toBe(squashSha);
     expect(existsSync(join(dir, "landed.txt"))).toBe(true);
+    // The landing moved ref, HEAD, index and files as one unit, so the checkout cannot
+    // report the just-landed work back as a staged revert (STAS-233 / STAS-238 class).
+    expect(git(dir, "rev-parse HEAD")).toBe(squashSha);
+    expect(git(dir, "write-tree")).toBe(git(dir, "rev-parse 'HEAD^{tree}'"));
+    expect(git(dir, "status --porcelain")).toBe("");
   });
 
   it("advances the ref but does not touch a checkout on a different branch", async () => {
@@ -1794,7 +1799,7 @@ describe("landSquash (advance + local-checkout sync)", () => {
 
     const res = await landSquash({ projectRootDir: dir, mergeRoot: dir, integrationBranch: "main", tipSha, squashSha, taskId: "FN-1", audit: auditStub() });
     expect(res.outcome).toBe("advanced");
-    expect(res.localSync).toBe("skipped-other-branch");
+    expect(res.localSync).toBe("no-checkout-advance");
     expect(git(dir, "rev-parse main")).toBe(squashSha); // ref advanced via update-ref
     // The user's checkout (somewhere-else) is untouched.
     expect(git(dir, "rev-parse --abbrev-ref HEAD")).toBe("somewhere-else");

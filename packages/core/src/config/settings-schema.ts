@@ -656,7 +656,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   githubNativeAutoMerge: false,
   directMergeCommitStrategy: "always-squash",
   mergeIntegrationWorktree: "reuse-task-worktree",
-  mergeAdvanceAutoSync: "stash-and-ff",
+  /*
+  FNXC:LandingAdvance 2026-10-11-21:58:
+  STAS-292 removed `mergeAdvanceAutoSync`. Landing now refreshes the checkout that owns the integration branch as one operation (`merge --ff-only` in that worktree), or refuses loudly, so there is no separate post-advance auto-sync mode left to configure. The key is absent from the project defaults and therefore from PROJECT_SETTINGS_KEYS. A historical stored value is ignored and never rewritten.
+  */
   integrationBranch: undefined,
   // `requirePrApproval` MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
   pushAfterMerge: false,

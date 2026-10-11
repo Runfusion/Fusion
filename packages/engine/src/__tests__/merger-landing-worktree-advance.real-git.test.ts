@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import {
   advanceIntegrationBranchRef,
+  assertLandingTargetHealthy,
   listIntegrationBranchWorktrees,
+  rewindBranchRef,
   rewriteCheckedOutRefBackwards,
 } from "../merge/merger-ref-update-advance.js";
 
@@ -354,6 +356,54 @@ describe("landing refuses rather than leaving a ref ahead of its checkout", () =
   });
 });
 
+describe("assertLandingTargetHealthy (the pre-flight guard landSquash runs)", () => {
+  it("passes a healthy checkout through and reports its owner", async () => {
+    const fx = setupLandscape();
+    try {
+      await expect(assertLandingTargetHealthy({ rootDir: fx.landing, integrationBranch: "main" })).resolves.toEqual({
+        worktreePath: fx.trunk,
+      });
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+
+  it("refuses a corrupted index naming the same repair, and measures without mutating", async () => {
+    const fx = setupLandscape();
+    try {
+      git(fx.trunk, "git rm --cached tracked.txt");
+      const before = {
+        ref: git(fx.trunk, "git rev-parse refs/heads/main"),
+        index: git(fx.trunk, "git write-tree"),
+        status: git(fx.trunk, "git status --porcelain"),
+      };
+
+      const message = await captureRejection(assertLandingTargetHealthy({ rootDir: fx.landing, integrationBranch: "main" }));
+
+      expect(message).toContain("index does not match HEAD");
+      expect(message).toContain("tracked.txt");
+      expect(message).toContain("git restore --source=HEAD --staged --worktree");
+      // Read-only: a guard that "fixed" the index would be the silent reset this
+      // card exists to remove, so the corrupted state must survive the call.
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(before.ref);
+      expect(git(fx.trunk, "git write-tree")).toBe(before.index);
+      expect(git(fx.trunk, "git status --porcelain")).toBe(before.status);
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+
+  it("says nothing about a branch that is checked out nowhere", async () => {
+    const fx = setupLandscape();
+    try {
+      git(fx.trunk, "git checkout --detach");
+      await expect(assertLandingTargetHealthy({ rootDir: fx.landing, integrationBranch: "main" })).resolves.toEqual({});
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+});
+
 describe("listIntegrationBranchWorktrees", () => {
   it("reports the owning worktree, then nothing once it is detached", async () => {
     const fx = setupLandscape();
@@ -368,6 +418,86 @@ describe("listIntegrationBranchWorktrees", () => {
       expect(
         await listIntegrationBranchWorktrees({ rootDir: fx.landing, integrationBranch: "main" }),
       ).toEqual([]);
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+});
+
+describe("rewindBranchRef (the stas-190 class: a rewind driven from a repo root)", () => {
+  it("follows the branch to the checkout that owns it instead of leaving it behind", async () => {
+    const fx = setupLandscape();
+    try {
+      await runAdvance({
+        rootDir: fx.landing,
+        newSha: fx.newSha,
+        expectedCurrentSha: fx.expectedCurrentSha,
+      });
+
+      // The caller only knows the repo root and the branch, exactly like the
+      // CLI's PR-head rollback. The owner is `trunk`, not the caller's cwd.
+      await rewindBranchRef({
+        rootDir: fx.landing,
+        integrationBranch: "main",
+        targetSha: fx.expectedCurrentSha,
+        expectedCurrentSha: fx.newSha,
+        reason: "fusion pr-head rollback: STAS-292",
+      });
+
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(fx.expectedCurrentSha);
+      expect(git(fx.trunk, "git rev-parse HEAD")).toBe(fx.expectedCurrentSha);
+      // The invariant that the raw `update-ref` violated: the owning checkout's
+      // index and files moved with the ref, so it shows no phantom revert.
+      expect(git(fx.trunk, "git write-tree")).toBe(git(fx.trunk, "git rev-parse HEAD^{tree}"));
+      expect(git(fx.trunk, "git status --porcelain")).toBe("");
+      expect(existsSync(join(fx.trunk, "landed.txt"))).toBe(false);
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+
+  it("names the reflog when the branch is attached to no checkout", async () => {
+    const fx = setupLandscape();
+    try {
+      await runAdvance({
+        rootDir: fx.landing,
+        newSha: fx.newSha,
+        expectedCurrentSha: fx.expectedCurrentSha,
+      });
+      git(fx.trunk, "git checkout --detach");
+
+      await rewindBranchRef({
+        rootDir: fx.landing,
+        integrationBranch: "main",
+        targetSha: fx.expectedCurrentSha,
+        expectedCurrentSha: fx.newSha,
+        reason: "fusion pr-head rollback: STAS-292",
+      });
+
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(fx.expectedCurrentSha);
+      expect(git(fx.trunk, "git log -g refs/heads/main --format=%gs").split("\n")[0]).toContain(
+        "fusion pr-head rollback",
+      );
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+
+  it("refuses a rewind whose CAS fence lost, leaving the ref untouched", async () => {
+    const fx = setupLandscape();
+    try {
+      const message = await captureRejection(
+        rewindBranchRef({
+          rootDir: fx.landing,
+          integrationBranch: "main",
+          targetSha: fx.expectedCurrentSha,
+          expectedCurrentSha: "0000000000000000000000000000000000000000",
+          reason: "fusion pr-head rollback: STAS-292",
+        }),
+      );
+
+      expect(message).toContain("refused");
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(fx.expectedCurrentSha);
     } finally {
       removeTmpDirSync(fx.root);
     }

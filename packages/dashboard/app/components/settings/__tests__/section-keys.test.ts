@@ -140,7 +140,6 @@ describe("settings section-keys registry", () => {
         "includeTaskIdInCommit",
         "integrationBranch",
         "maxAutoMergeRetries",
-        "mergeAdvanceAutoSync",
         "mergeConflictStrategy",
         "mergeIntegrationWorktree",
         "mergeStrategy",
