@@ -27,6 +27,8 @@ combination that hid the last four safeguard regressions. An abstract base keeps
 */
 import { promisify } from "node:util";
 import { exec } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 /* NOTE: `findAlreadyMergedTaskCommit` here is the FREE function from the
    detector module — it shares a name with the protected method below, and inside
    the class body the bare identifier resolves to this import. That collision
@@ -37,7 +39,8 @@ import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./merge/alr
    nor self-healing.ts, so the direction stays one-way. */
 import { resolveTrustedIntegrationRefs } from "./execution/branch-conflicts.js";
 import { createLogger } from "./logger.js";
-import type { Task } from "@fusion/core";
+import { extractEffectiveWriteScopeFromPrompt, requiresContentReviewProof } from "@fusion/core";
+import type { Task, WorkflowStepResult } from "@fusion/core";
 
 const log = createLogger("self-healing");
 /* TYPE-ONLY import: erased at runtime, so it creates no module cycle even though
@@ -54,6 +57,412 @@ export const execAsync = promisify(exec);
  * only its clean numeric exit 1 is absence evidence. Spawn, timeout, signal, and malformed
  * errors are unknown so later sweeps can retry.
  */
+/**
+ * FNXC:AlreadyMergedFalsePositive 2026-10-11-10:21 (RUFU-396):
+ * Declared-File-Scope read for the never-delivered proof.
+ *
+ * The proof compares a card's declared scope against the paths of the base commits stamped with its
+ * id, so the read must be the widest honest reading of "what this card said it would touch". A
+ * FALSE `never-delivered` verdict clears a card's cached worktree/branch metadata, while a FALSE
+ * `delivered` verdict only preserves today's behavior — so every ambiguity in this read is resolved
+ * toward wider scope.
+ *
+ * Why not just the store parser: `extractEffectiveWriteScopeFromPrompt` (what
+ * `store.parseFileScopeFromPrompt` returns) keeps only BACKTICKED tokens from the FIRST
+ * `## File Scope` section — measured, `self-healing-never-delivered-scope.test.ts`. RUFU-391's own
+ * spec lists its scope as bare bullet paths, so the effective set is empty for exactly the card this
+ * recovery exists for. An empty parse is therefore never read as "this card declared no files": the
+ * raw bullet list of every `## File Scope`-prefixed section is unioned in, along with
+ * `sourceMetadata.fileScope` (the board's own list, the same pair `buildWorkflowFailureScopeGuard`
+ * reads). Prose bullets that are not path-shaped are dropped — a prose entry would widen scope
+ * without naming a file, which is the one way this read could produce a false `never-delivered`.
+ */
+const FILE_SCOPE_HEADING = /^##\s+File\s+Scope\b/i;
+const PROMPT_SECTION_HEADING = /^##\s+/;
+
+/** Strip bullet markers, backticks, `<rootDir>`/`./` prefixes and trailing annotations from one scope entry. */
+export function normalizeScopePath(raw: string): string {
+  let entry = raw.trim().replace(/^[-*]\s+/, "").trim();
+  // A backticked token ends the path: `- `x.ts` (the reclaim arm)` names x.ts.
+  const backticked = /^`([^`]+)`/.exec(entry);
+  if (backticked) entry = backticked[1] ?? "";
+  entry = entry.replace(/^<rootDir>\//i, "").replace(/^\.\//, "").trim();
+  // Otherwise the leading non-space run is the path; an inline annotation is prose, not a pattern.
+  entry = entry.split(/\s+/)[0] ?? "";
+  return entry.replace(/[.,:;)]+$/, "");
+}
+
+/** Path-shaped check: a scope entry must name a path or glob, not a sentence. */
+function isPathLikeScope(entry: string): boolean {
+  if (!entry || /\s/.test(entry)) return false;
+  if (entry.startsWith("http://") || entry.startsWith("https://")) return false;
+  // Requires a directory separator or a file extension; also admits a bare glob root like `**\/*.css`.
+  return /[/.*?]/.test(entry) && /[A-Za-z0-9_.*?]/.test(entry);
+}
+
+/** Every list entry under each `## File Scope…` heading of a prompt (first heading AND later ones). */
+function extractFileScopeListEntries(promptContent: string): string[] {
+  const entries: string[] = [];
+  let inScopeSection = false;
+  for (const line of promptContent.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (PROMPT_SECTION_HEADING.test(trimmed)) {
+      inScopeSection = FILE_SCOPE_HEADING.test(trimmed);
+      continue;
+    }
+    if (!inScopeSection || !/^[-*]\s+/.test(trimmed)) continue;
+    entries.push(trimmed);
+  }
+  return entries;
+}
+
+/**
+ * The card's declared write scope, unioned across every honest source. Empty return means
+ * "undeclared", which the proof reads as unknown — never as "nothing was in scope".
+ */
+export function canonicalizeDeclaredFileScope(input: {
+  promptContent?: string | null;
+  sourceMetadataFileScope?: unknown;
+  effectiveWriteScope?: string[];
+}): string[] {
+  const raw: string[] = [
+    // The store's own effective set when the caller resolved it (that is `parseFileScopeFromPrompt`);
+    // otherwise derive it here so the two readers cannot disagree by caller.
+    ...(input.effectiveWriteScope ?? (input.promptContent ? extractEffectiveWriteScopeFromPrompt(input.promptContent) : [])),
+    ...(input.promptContent ? extractFileScopeListEntries(input.promptContent) : []),
+    ...(Array.isArray(input.sourceMetadataFileScope)
+      ? input.sourceMetadataFileScope.filter((entry): entry is string => typeof entry === "string")
+      : []),
+  ];
+  const scoped = raw.map(normalizeScopePath).filter(isPathLikeScope);
+  return Array.from(new Set(scoped)).sort();
+}
+
+/** Structural view of `CommitTaskOwnership` so the readers below stay injectable in tests. */
+export interface CommitOwnershipEvidence {
+  owned: boolean;
+  ownerTaskId?: string;
+  ownerLineageId?: string;
+  rejectionReason?: string;
+}
+
+export type CommitOwnershipReader = (sha: string) => Promise<CommitOwnershipEvidence>;
+export type CommitTouchedPathsReader = (repoDir: string, sha: string) => Promise<string[]>;
+/** Reader for the base branch's stamped commits; injectable so the verdicts are unit-testable. */
+export type BaseStampedCommitShasReader = (input: {
+  repoDir: string;
+  baseBranch: string;
+  taskId: string;
+  lineageId?: string;
+}) => Promise<string[]>;
+
+/** Paths one commit touched; an empty array is a real verdict (a contentless commit), a throw is unknown. */
+export const defaultCommitTouchedPaths: CommitTouchedPathsReader = async (repoDir, sha) => {
+  const { stdout } = await execAsync(`git show --name-only --format= ${shellQuote(sha)}`, {
+    cwd: repoDir,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+};
+
+/** Bound on stamped commits examined per base branch, the same bound class as the ownership grep it replaces. */
+const BASE_STAMP_SCAN_MAX_COUNT = 50;
+
+/** Greps the base branch for commits whose message stamps this task/lineage, returning their shas. */
+export const defaultBaseStampedCommitShas: BaseStampedCommitShasReader = async (input) => {
+  const patterns = input.lineageId
+    ? [`^Fusion-Task-Lineage: ${escapeRegex(input.lineageId)}$`, `^Fusion-Task-Id: ${escapeRegex(input.taskId)}$`]
+    : [`^Fusion-Task-Id: ${escapeRegex(input.taskId)}$`];
+  const shas = new Set<string>();
+  for (const pattern of patterns) {
+    const { stdout } = await execAsync(
+      `git log --grep=${shellQuote(pattern)} -E --max-count=${BASE_STAMP_SCAN_MAX_COUNT} --format=%H ${shellQuote(input.baseBranch)}`,
+      { cwd: input.repoDir, timeout: 30_000, maxBuffer: 1024 * 1024 },
+    );
+    for (const line of stdout.split("\n")) {
+      const sha = line.trim();
+      if (sha) shas.add(sha);
+    }
+  }
+  return [...shas];
+};
+
+export type BaseStampedCommitKind =
+  /** The base carries a stamped commit this card genuinely authored and that changed files. */
+  | "own-landed-commit"
+  /** Stamps exist but none survived re-verification: mis-stamped squash, or a contentless commit. */
+  | "unverified-stamp"
+  /** The base branch carries no stamp for this card at all. */
+  | "none"
+  /** A stamp was found but could not be verified — never laundered into `none`. */
+  | "unknown";
+
+export interface BaseStampedCommitProof {
+  kind: BaseStampedCommitKind;
+  stampedBaseCommitShas: string[];
+  /** Stamped shas re-verified as owned by this card AND content-bearing. */
+  ownLandedCommitShas: string[];
+  unreadableCommitCount: number;
+}
+
+/**
+ * FNXC:AlreadyMergedFalsePositive 2026-10-11-10:21 (RUFU-396):
+ * The verified replacement for `baseHasExplicitTaskOwnership`'s raw grep.
+ *
+ * `git log --grep` proves only that a message contains a trailer. A squash merge stamps EVERY commit
+ * message it concatenated, so a card whose work never landed can end up with another card's commits
+ * stamped with its own id on the base branch — RUFU-391's two commits, whose subject lines describe
+ * review-stall parks and whose declared-scope intersection is empty. Re-verification therefore has to
+ * read the commit itself, not the search index: the ownership trailer must survive the same
+ * `getCommitTaskOwnership` decision the branch tip is judged by, and the commit must be
+ * content-bearing (`git show --name-only` non-empty) — a commit that changed no path delivered
+ * nothing regardless of its trailer.
+ *
+ * A commit-read failure keeps the verdict `unknown`: evidence unavailable is not proof of absence.
+ */
+export async function verifyBaseStampedCommits(input: {
+  repoDir: string;
+  baseBranch: string;
+  taskId: string;
+  lineageId?: string;
+  readCommitTaskOwnership: CommitOwnershipReader;
+  readCommitTouchedPaths?: CommitTouchedPathsReader;
+  readBaseStampedCommitShas?: BaseStampedCommitShasReader;
+}): Promise<BaseStampedCommitProof> {
+  const readTouchedPaths = input.readCommitTouchedPaths ?? defaultCommitTouchedPaths;
+  const readStampedShas = input.readBaseStampedCommitShas ?? defaultBaseStampedCommitShas;
+  let stampedShas: string[];
+  try {
+    stampedShas = await readStampedShas({
+      repoDir: input.repoDir,
+      baseBranch: input.baseBranch,
+      taskId: input.taskId,
+      lineageId: input.lineageId,
+    });
+  } catch (err: unknown) {
+    log.warn(`already-merged base-stamp scan failed for ${input.taskId} on ${input.baseBranch}: ${err instanceof Error ? err.message : String(err)}`);
+    return { kind: "unknown", stampedBaseCommitShas: [], ownLandedCommitShas: [], unreadableCommitCount: 0 };
+  }
+  if (stampedShas.length === 0) {
+    return { kind: "none", stampedBaseCommitShas: [], ownLandedCommitShas: [], unreadableCommitCount: 0 };
+  }
+
+  const ownLandedShas: string[] = [];
+  let unreadable = 0;
+  for (const sha of stampedShas) {
+    try {
+      const ownership = await input.readCommitTaskOwnership(sha);
+      if (!ownership.owned) continue;
+      const touched = await readTouchedPaths(input.repoDir, sha);
+      if (touched.length > 0) ownLandedShas.push(sha);
+    } catch (err: unknown) {
+      unreadable += 1;
+      log.warn(`already-merged base-stamp verification unreadable for ${input.taskId} commit=${sha.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  /*
+   * Every stamp unreadable is unknown, not `unverified-stamp`: the caller withholds the rescue on
+   * unknown, and a transient `git show` failure must not be recorded as "these stamps are fake".
+   */
+  const kind: BaseStampedCommitKind = ownLandedShas.length > 0
+    ? "own-landed-commit"
+    : unreadable > 0 && ownLandedShas.length === 0 && unreadable >= stampedShas.length
+      ? "unknown"
+      : "unverified-stamp";
+  return { kind, stampedBaseCommitShas: stampedShas, ownLandedCommitShas: ownLandedShas, unreadableCommitCount: unreadable };
+}
+
+/**
+ * FNXC:AlreadyMergedFalsePositive 2026-10-11-10:55 (RUFU-396):
+ * Strict declared-scope cover test. Deliberately NOT `matchesScope` from `healing/self-healing-path-utils`:
+ * that matcher is merge-arbitration lenient and treats a SIBLING file in a declared file's directory as a
+ * hit (measured: declared `docs/cli-reference.md` matches `docs/run-audit.md`). For delivery proof that
+ * leniency is exactly wrong — it would read RUFU-391's mis-stamped commits, which touch `docs/run-audit.md`,
+ * as delivery of a card that declared `docs/cli-reference.md`, and the rescue would never fire. Here a
+ * declared path covers only itself, a directory prefix, or a glob it really matches (`**` spans directory
+ * separators, `*` does not).
+ */
+export function scopeCoversPath(filePath: string, declaredScope: string[]): boolean {
+  const path = normalizeScopePath(filePath);
+  if (!path) return false;
+  for (const rawPattern of declaredScope) {
+    const pattern = normalizeScopePath(rawPattern);
+    if (!pattern) continue;
+    if (pattern === path) return true;
+    // Directory entry: `docs/`, `docs/*`, and `docs/**` all cover everything under `docs/`.
+    const directoryPrefix = pattern.replace(/\/(?:\*\*|\*)\/$|\/$/, "");
+    if (directoryPrefix !== pattern && (path.startsWith(`${directoryPrefix}/`))) return true;
+    if (pattern.includes("*") && globScopeToRegExp(pattern).test(path)) return true;
+  }
+  return false;
+}
+
+/** Translate a declared-scope glob into a path regex: `**` crosses separators, `*` and `?` do not. */
+function globScopeToRegExp(pattern: string): RegExp {
+  let source = "^";
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    if (char === "*") {
+      if (pattern[i + 1] === "*") {
+        source += "[\\s\\S]*";
+        i += 1;
+        // `a/**/b` must also match `a/b`, and `[\s\S]*` already spans the separator, so the slash is consumed.
+        if (pattern[i + 1] === "/") i += 1;
+      } else {
+        source += "[^/]*";
+      }
+    } else if (char === "?") {
+      source += "[^/]";
+    } else {
+      source += /[^a-zA-Z0-9_/]/.test(char ?? "") ? `\\${char}` : char;
+    }
+  }
+  return new RegExp(`${source}$`);
+}
+
+export type CardScopeDeliveryVerdict =
+  /** No stamped base commit touches any path this card declared: its own work is absent from the base. */
+  | "never-delivered"
+  /** A stamped base commit touches the declared scope: delivery stands. */
+  | "delivered"
+  /** Undeclared scope or unreadable commit content: the discriminator cannot answer. */
+  | "unknown";
+
+export interface CardScopeNeverDeliveredProof {
+  verdict: CardScopeDeliveryVerdict;
+  /** Declared-scope paths that a stamped base commit touched (empty for `never-delivered`). */
+  matchedScopePaths: string[];
+  scopePathCount: number;
+  examinedCommitCount: number;
+  unreadableCommitCount: number;
+}
+
+/**
+ * FNXC:AlreadyMergedFalsePositive 2026-10-11-10:21 (RUFU-396):
+ * The discriminator between "a squash merge stamped this card's id onto commits that carry someone
+ * else's work" and "this card's commits really did land".
+ *
+ * A card is a promise about files: its `## File Scope` names the paths it intended to change. Those
+ * paths cannot be forged by a concatenating squash, so intersecting them with the paths of the base
+ * commits stamped for this card answers the delivery question directly. RUFU-391: its stamped commits
+ * touch review-stall parks, `pre-merge-gate-reseed.ts`, and the changeset for that work — zero of its
+ * declared CLI/core/dashboard files, and `defaultWorkflowId` is absent from `settings.ts` on main.
+ *
+ * `unknown` (never a rescue) is returned when the scope is undeclared, when there are no stamped
+ * commits to examine, or when any examined commit's content could not be read.
+ */
+export async function proveCardScopeNeverDelivered(input: {
+  repoDir: string;
+  declaredScope: string[];
+  stampedBaseCommitShas: string[];
+  readCommitTouchedPaths?: CommitTouchedPathsReader;
+}): Promise<CardScopeNeverDeliveredProof> {
+  const scopePathCount = input.declaredScope.length;
+  const base: CardScopeNeverDeliveredProof = {
+    verdict: "unknown",
+    matchedScopePaths: [],
+    scopePathCount,
+    examinedCommitCount: input.stampedBaseCommitShas.length,
+    unreadableCommitCount: 0,
+  };
+  if (scopePathCount === 0 || input.stampedBaseCommitShas.length === 0) return base;
+
+  const readTouchedPaths = input.readCommitTouchedPaths ?? defaultCommitTouchedPaths;
+  const matchedScopePaths: string[] = [];
+  let unreadable = 0;
+  for (const sha of input.stampedBaseCommitShas) {
+    let touched: string[];
+    try {
+      touched = await readTouchedPaths(input.repoDir, sha);
+    } catch (err: unknown) {
+      unreadable += 1;
+      log.warn(`already-merged scope proof could not read commit content for ${sha.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    for (const filePath of touched) {
+      if (scopeCoversPath(filePath, input.declaredScope)) matchedScopePaths.push(filePath);
+    }
+  }
+  if (matchedScopePaths.length > 0) {
+    return { ...base, verdict: "delivered", matchedScopePaths: Array.from(new Set(matchedScopePaths)) };
+  }
+  if (unreadable > 0) return { ...base, unreadableCommitCount: unreadable };
+  return { ...base, verdict: "never-delivered" };
+}
+
+export interface BaseDeliveryEvidence {
+  /** The base carries a stamped commit this card authored that changed files. */
+  hasVerifiedOwnLandedCommit: boolean;
+  /** The stamped commits touch none of the card's declared scope: its own work is not in the base. */
+  scopeNeverDelivered: boolean;
+  stampedBaseCommitCount: number;
+  ownLandedCommitCount: number;
+  scopePathCount: number;
+  /** Names why the scope cross-check abstained even though a declared scope existed. */
+  neverDeliveredBlockedBy?: "approved-review-evidence";
+}
+
+/*
+FNXC:AlreadyMergedFalsePositive 2026-10-11-12:55 (RUFU-396):
+An approved content-review row is a second, independent delivery signal: a reviewer read THIS card's
+work and passed it, so a later file-scope mismatch is more likely legitimate scope drift (the board's own
+rules let an executor edit outside the declared scope when a gate demands it) than an undelivered card.
+Recognising it keeps the never-delivered rescue from re-queueing work a human already signed off.
+Deliberately NOT satisfied by an operator bypass, which records that no review happened at all.
+*/
+export function hasApprovedContentReviewEvidence(results?: readonly WorkflowStepResult[]): boolean {
+  return (results ?? []).some((result) => (
+    (result.phase ?? "pre-merge") === "pre-merge"
+      && requiresContentReviewProof(result.workflowStepId, result)
+      && result.status === "passed"
+      && (result.verdict === "APPROVE" || result.verdict === "APPROVE_WITH_NOTES")
+      && result.bypassedBy === undefined));
+}
+
+/**
+ * One call that answers both halves of the delivery question for one base branch, so the reclaim
+ * sweep computes the evidence once and uses the same object to gate `foreignTipRejection` and to
+ * populate the `task:already-merged-never-delivered` audit row.
+ */
+export async function resolveBaseDeliveryEvidence(input: {
+  repoDir: string;
+  baseBranch: string;
+  taskId: string;
+  lineageId?: string;
+  declaredScope: string[];
+  readCommitTaskOwnership: CommitOwnershipReader;
+  readCommitTouchedPaths?: CommitTouchedPathsReader;
+  readBaseStampedCommitShas?: BaseStampedCommitShasReader;
+  /** A reviewer approved this card's content: the scope cross-check must abstain (see `hasApprovedContentReviewEvidence`). */
+  approvedReviewEvidence?: boolean;
+}): Promise<BaseDeliveryEvidence> {
+  const stamped = await verifyBaseStampedCommits(input);
+  if (input.approvedReviewEvidence && input.declaredScope.length > 0) {
+    return {
+      hasVerifiedOwnLandedCommit: stamped.kind === "own-landed-commit",
+      scopeNeverDelivered: false,
+      stampedBaseCommitCount: stamped.stampedBaseCommitShas.length,
+      ownLandedCommitCount: stamped.ownLandedCommitShas.length,
+      scopePathCount: input.declaredScope.length,
+      neverDeliveredBlockedBy: "approved-review-evidence",
+    };
+  }
+  const scopeProof = await proveCardScopeNeverDelivered({
+    repoDir: input.repoDir,
+    declaredScope: input.declaredScope,
+    stampedBaseCommitShas: stamped.stampedBaseCommitShas,
+    readCommitTouchedPaths: input.readCommitTouchedPaths,
+  });
+  return {
+    hasVerifiedOwnLandedCommit: stamped.kind === "own-landed-commit",
+    scopeNeverDelivered: scopeProof.verdict === "never-delivered",
+    stampedBaseCommitCount: stamped.stampedBaseCommitShas.length,
+    ownLandedCommitCount: stamped.ownLandedCommitShas.length,
+    scopePathCount: scopeProof.scopePathCount,
+  };
+}
+
 export function classifyBranchProbeError(error: unknown): "absent" | "unknown" {
   if (
     typeof error === "object" &&
@@ -361,6 +770,12 @@ export abstract class SelfHealingGitEvidence {
     branchTip: string;
     baseBranch: string;
     ownership: Awaited<ReturnType<SelfHealingGitEvidence["readCommitTaskOwnership"]>>;
+    /**
+     * RUFU-396: verified base-delivery evidence for `baseBranch`. Absent (every pre-existing caller)
+     * keeps the raw-grep decision byte-identical; present, it replaces that grep with the verified
+     * reading — see `baseDeliveryEvidence`.
+     */
+    deliveryProof?: BaseDeliveryEvidence | null;
   }): Promise<{ reason: "foreign-task-tip" | "foreign-lineage-tip"; owner?: string } | null> {
     const { taskId, lineageId, branchTip, baseBranch, ownership } = input;
     if (ownership.rejectionReason !== "foreign-task" && ownership.rejectionReason !== "foreign-lineage") return null;
@@ -382,13 +797,91 @@ export abstract class SelfHealingGitEvidence {
     for (const trustedRef of trustedRefs) {
       const hasNoUniqueDiff = await this.branchHasNoUniqueDiff(branchTip, trustedRef).catch(() => false);
       if (!hasNoUniqueDiff) continue;
-      const baseAlreadyHasCurrentTask = await this.baseHasExplicitTaskOwnership(taskId, lineageId, trustedRef).catch(() => false);
+      /*
+      FNXC:AlreadyMergedFalsePositive 2026-10-11-11:20 (RUFU-396):
+      "The base already carries this task's own commit" is the one condition that turns a harmless
+      inherited foreign tip into a real misbinding, so it must be EVIDENCE and not a message grep. A
+      squash merge concatenates commit messages, so a card that never landed can own stamps on the base
+      while every stamped byte of those commits belongs to another card — RUFU-391's two `main` commits
+      carry `Fusion-Task-Id: RUFU-391` with `Fusion-Task-Id: RUFU-388` in their bodies and touch none of
+      its declared files, and the grep read that as delivery, refused the tip forever (`reason=foreign-task-tip`
+      every sweep) and burned the recovery budget to a terminal park.
+
+      With the proof supplied, both halves must hold to count as delivered: an ownership re-verification
+      that survives reading the commit, AND a declared-scope intersection that proves the stamped content
+      is this card's. Either half unknown → treated as NOT delivered here would be too eager, so the
+      unknown case keeps the pre-existing grep verdict for that ref: an unanswerable question must not
+      change the answer.
+      */
+      const baseAlreadyHasCurrentTask = input.deliveryProof && this.baseDeliveryEvidenceIsDecisive(input.deliveryProof)
+        ? input.deliveryProof.hasVerifiedOwnLandedCommit && !input.deliveryProof.scopeNeverDelivered
+        : await this.baseHasExplicitTaskOwnership(taskId, lineageId, trustedRef).catch(() => false);
       if (!baseAlreadyHasCurrentTask) return null;
     }
 
     return ownership.rejectionReason === "foreign-task"
       ? { reason: "foreign-task-tip", owner: ownership.ownerTaskId }
       : { reason: "foreign-lineage-tip", owner: ownership.ownerLineageId };
+  }
+
+  /** True when the evidence answers the delivery question instead of reporting "could not tell". */
+  protected baseDeliveryEvidenceIsDecisive(evidence: BaseDeliveryEvidence): boolean {
+    return evidence.hasVerifiedOwnLandedCommit || evidence.scopeNeverDelivered;
+  }
+
+  /**
+   * The card's declared File Scope, unioned across the board's structured list, the store's effective
+   * write scope, and every `## File Scope` section of its prompt (RUFU-391's scope is bare bullets, which
+   * the store parser alone reports as empty). `effectiveWriteScope` is supplied by callers that can reach
+   * `store.parseFileScopeFromPrompt`; deriving it from the prompt text here keeps the two reads honest when
+   * they cannot. An empty result means UNDECLARED, which the proof treats as unknown.
+   */
+  protected async declaredFileScopeForTask(task: Task, effectiveWriteScope?: string[]): Promise<string[]> {
+    const promptPath = join(this.options.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+    let promptContent: string | null = null;
+    try {
+      promptContent = existsSync(promptPath) ? readFileSync(promptPath, "utf-8") : null;
+    } catch (err: unknown) {
+      log.warn(`already-merged never-delivered proof could not read ${task.id} prompt: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return canonicalizeDeclaredFileScope({
+      promptContent,
+      sourceMetadataFileScope: task.sourceMetadata?.fileScope,
+      effectiveWriteScope,
+    });
+  }
+
+  /**
+   * FNXC:AlreadyMergedFalsePositive 2026-10-11-11:20 (RUFU-396):
+ * Verified delivery evidence for one base branch: stamped-commit ownership re-verification plus the
+   * declared-scope / touched-paths cross-check. Null on any failure — the caller then keeps today's
+   * grep behavior, so a broken read can never rescue a card that really did land.
+   */
+  protected async baseDeliveryEvidence(input: {
+    task: Task;
+    baseBranch: string;
+    declaredScope: string[];
+    readCommitTouchedPaths?: CommitTouchedPathsReader;
+    readBaseStampedCommitShas?: BaseStampedCommitShasReader;
+    approvedReviewEvidence?: boolean;
+  }): Promise<BaseDeliveryEvidence | null> {
+    const { task } = input;
+    try {
+      return await resolveBaseDeliveryEvidence({
+        repoDir: this.options.rootDir,
+        baseBranch: input.baseBranch,
+        taskId: task.id,
+        lineageId: task.lineageId,
+        declaredScope: input.declaredScope,
+        approvedReviewEvidence: input.approvedReviewEvidence ?? hasApprovedContentReviewEvidence(task.workflowStepResults),
+        readCommitTaskOwnership: (sha) => this.readCommitTaskOwnership(sha, task.id, task.lineageId),
+        readCommitTouchedPaths: input.readCommitTouchedPaths,
+        readBaseStampedCommitShas: input.readBaseStampedCommitShas,
+      });
+    } catch (err: unknown) {
+      log.warn(`already-merged never-delivered proof unreadable for ${task.id} on ${input.baseBranch}: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
   }
 
   protected async branchTipForeignOwnership(input: {

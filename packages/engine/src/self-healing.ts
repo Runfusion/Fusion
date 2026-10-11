@@ -5549,12 +5549,42 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             the base already carries this task's own commit (real misbinding); otherwise fall through to the stale-cached
             -metadata reclaim below, which is safe precisely because the branch contains nothing unique to lose.
             */
+            /*
+            FNXC:AlreadyMergedFalsePositive 2026-10-11-11:35 (RUFU-396):
+            A card that never committed its own work inherits the PREVIOUS task's landed tip, and a squash merge
+            can stamp its id onto that commit's message, so "the base mentions this card" is not proof the card
+            landed. `foreignTipRejection` therefore gets verified evidence here rather than only a message grep:
+            the declared File Scope from every source the board keeps (prompt sections, the store's effective set,
+            `sourceMetadata`), plus the touched paths of the base commits stamped for this card. An undeclared
+            scope or unreadable commit returns null/unknown and leaves today's grep verdict in place — this
+            widens the rescue only where the absence of delivery is PROVEN.
+            */
+            let cardEffectiveWriteScope: string[] | undefined;
+            /*
+            FNXC:AlreadyMergedFalsePositive 2026-10-11-12:58 (RUFU-396):
+            Reached behind a capability guard because most engine store fakes omit `parseFileScopeFromPrompt`;
+            a missing seam must read as "the store declared nothing", not as an error that sinkholes the proof.
+            */
+            if (typeof this.store.parseFileScopeFromPrompt === "function") {
+              try {
+                cardEffectiveWriteScope = await this.store.parseFileScopeFromPrompt(task.id);
+              } catch {
+                cardEffectiveWriteScope = undefined;
+              }
+            }
+            const declaredFileScope = await this.declaredFileScopeForTask(task, cardEffectiveWriteScope);
+            const baseDelivery = await this.baseDeliveryEvidence({
+              task,
+              baseBranch: inspection.integrationRef,
+              declaredScope: declaredFileScope,
+            });
             const foreignRejection = await this.foreignTipRejection({
               taskId: task.id,
               lineageId: task.lineageId,
               branchTip: inspection.tipSha,
               baseBranch: inspection.integrationRef,
               ownership,
+              deliveryProof: baseDelivery,
             });
             if (foreignRejection) {
               await this.rejectForeignAlreadyMergedCandidate({
@@ -5568,6 +5598,35 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 countRecoveryBudget: true,
               });
               continue;
+            }
+            if (baseDelivery?.scopeNeverDelivered) {
+              /*
+              FNXC:AlreadyMergedFalsePositive 2026-10-11-11:35 (RUFU-396):
+              The refusal is withheld because the base commits stamped for this card carry other cards'
+              trailers and none of its declared work, so its work never landed. Announce it both where the
+              operator reads (the card's History) and where it is countable (run-audit), then fall through to
+              the stale-cached-metadata ghost reclaim below — the outcome this card has been waiting days for.
+              */
+              await this.store.logEntry(
+                task.id,
+                `[recovery] already-merged never-delivered ${task.id} branch=${task.branch ?? "?"} stampedBase=${baseDelivery.stampedBaseCommitCount} ownLanded=${baseDelivery.ownLandedCommitCount} declaredScopePaths=${baseDelivery.scopePathCount} base=${inspection.integrationRef}: the commits stamped for this card carry other cards' trailers and touch none of its declared files, so its work never landed; reclaiming the stale checkout pointers`,
+              ).catch(() => undefined);
+              await emitBoundedRunAudit(this.store, {
+                taskId: task.id,
+                agentId: "self-healing",
+                runId: generateSyntheticRunId("already-merged-never-delivered", task.id),
+                domain: "database",
+                mutationType: "task:already-merged-never-delivered",
+                target: task.id,
+                metadata: {
+                  branchTip: inspection.tipSha,
+                  baseBranch: inspection.integrationRef,
+                  stampedBaseCommitCount: baseDelivery.stampedBaseCommitCount,
+                  ownLandedCommitCount: baseDelivery.ownLandedCommitCount,
+                  declaredScopePathCount: baseDelivery.scopePathCount,
+                  outcome: "reclaimed",
+                },
+              }, { log });
             }
             /*
             FNXC:BranchBaseIdentity 2026-09-13-02:55:

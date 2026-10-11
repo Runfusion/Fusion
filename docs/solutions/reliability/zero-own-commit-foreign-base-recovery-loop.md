@@ -94,3 +94,43 @@ a blocked peer is operator-recoverable, destroyed work is not.
   `packages/engine/src/__tests__/self-healing-zero-own-commit-foreign-base.real-git.test.ts`
   (origin-clone-diverge-rebase recipe); the loop-bound assertions live in
   `branch-conflict-retry-bound.test.ts`.
+
+## Second failure mode: the base mentions the card, but not because the card landed (RUFU-396)
+
+The refusal above is terminal and budgeted, so a **false** foreign-tip refusal is its own wedge. Measured
+on RUFU-391: `git rev-list --count main..fusion/rufu-391` was `0`, the tip was RUFU-388's landed commit, and
+`main` carried two commits whose messages contain `Fusion-Task-Id: RUFU-391` — written by RUFU-388's
+delivery, not by this card. `baseHasExplicitTaskOwnership` ran `git log --grep="Fusion-Task-Id: <id>"` on the
+base, called that "delivery", and `foreignTipRejection` therefore refused with `reason=foreign-task-tip` on
+every sweep until the bounded budget parked the card `branch-conflict-recovery-exhausted`.
+
+Positive control that keeps the fix honest: RUFU-378's `80a67a940c` is a real landed commit whose trailer,
+body, and touched files (`packages/cli/src/commands/models.ts`) all belong to RUFU-378, and it sits in the
+history of `fusion/rufu-378`, which also has zero unique commits. Both cards present the *same* raw grep
+signal; only the verified evidence separates them.
+
+**The discriminator is declared File Scope, not commit prose.** A stamped base commit counts as delivery
+only when (a) re-reading the commit proves this card's ownership (the merge-side `getCommitTaskOwnership`
+rules, not a substring), (b) it is content-bearing (`git show --name-only` non-empty), and (c) its touched
+paths intersect the card's declared scope — the union of every `## File Scope` prompt list entry, the
+store's effective write scope, and `sourceMetadata.fileScope`. RUFU-391's two stamped commits touch review
+-queue gating and the shared governance docs: none of its three declared paths. Zero intersection proves the
+card's own work is not in the base, so the card is routed to the existing stale-metadata reclaim
+(`stale-cached-metadata-ghost-conflict`), announced by `task:already-merged-never-delivered`, and its
+recovery budget is untouched.
+
+**Traps recorded while implementing it:**
+
+- `extractEffectiveWriteScopeFromPrompt` alone is NOT the declared scope. It reads only the FIRST exact
+  `## File Scope` heading and keeps only backticked entries, so a card that writes bare paths (RUFU-391's
+  second section) yields `[]` — which reads as "nothing was ever promised" and would make every claim match
+  vacuously. Treat an empty effective set as unknown and union the raw prompt entries plus `sourceMetadata`.
+- Do not reuse the merge-arbitration path matcher for delivery proof: its same-directory leniency (any
+  pattern in directory X covers any file in directory X) would make `docs/run-audit.md` cover
+  `docs/cli-reference.md`, which silently denies the rescue forever. `scopeCoversPath` is exact-equality,
+  directory-prefix, and a real `**` translation, with no leniency.
+- Missing or unreadable scope/paths must fail toward the OLD behavior (keep the refusal). The rescue is
+  only ever an addition where absence is proven.
+- An approved content-review row (`reviewKind: "code"` / `code-review`, `status: passed`, an APPROVE verdict,
+  not operator-bypassed) is an independent delivery signal and vetoes the rescue: a scope mismatch after a
+  human sign-off is the scope drift the board's own rules permit, not an undelivered card.
