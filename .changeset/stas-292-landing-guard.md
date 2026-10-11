@@ -1,0 +1,7 @@
+---
+"@runfusion/fusion": minor
+---
+
+summary: A landing now moves an integration branch and its checkout together, or refuses loudly instead of leaving files behind.
+category: breaking
+dev: One guarded advance (`advanceIntegrationBranchRef`) performs every engine ref move that can touch a checked-out branch: it discovers the owning worktree with `git worktree list --porcelain`, fast-forwards that checkout with `git merge --ff-only`, and only uses CAS `update-ref` when the branch is checked out nowhere. Before any move it measures `git write-tree` against `git rev-parse HEAD^{tree}` and fails loud naming the offending paths and both tree OIDs, so a corrupted index can no longer be published as a phantom staged revert (the `stas-190` signature). `rewindBranchRef` gives the recovery lanes — the CLI PR-head rollback and a cross-contamination branch rewrite — the same owner rule. Deleted with no replacement: the post-advance auto-sync hook, `syncWorktreeToHead` (a silent `reset --hard` behind a dirty check), the `skipped-other-branch` and `skipped-dirty-unstashable` outcomes, and the `mergeAdvanceAutoSync` project setting that gated them. Historical stored values for that key are ignored and never rewritten — no migration runs. No engine path resets, stashes, or cleans a user checkout; a repair is the operator's, and the refusal prints it (`git restore --source=HEAD --staged --worktree -- <paths>`).

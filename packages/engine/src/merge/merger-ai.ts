@@ -25,12 +25,10 @@ import { commitIdentityArgs, resolveCommitIdentity } from "../git-identity.js";
  *      with a warning; a BLOCKING (correctness) concern the AI cannot fix
  *      hard-fails (never ships wrong code). No human is required for the
  *      common path.
- *   4. CAS fast-forward of `refs/heads/<integration>` to the squash (retry on a
- *      concurrent advance by rebuilding on the new tip).
- *   5. Sync the user's local checkout to the new tip. Resolved project settings
- *      now default to the legacy dirty-checkout stash → ff → restore path, while
- *      an explicit project opt-out can still fail closed before the branch ref
- *      advances.
+ *   4. Advance `refs/heads/<integration>` to the squash, inside the checkout that
+ *      owns that branch, so its index and files move with it (retry on a
+ *      concurrent advance by rebuilding on the new tip). A checkout whose index
+ *      does not match its HEAD refuses the landing before anything is touched.
  *
  * Pure helpers (prompt builders, verdict parser) are exported for unit testing;
  * the orchestrator accepts injectable agent functions for the same reason.
@@ -583,7 +581,7 @@ interface AgentDeps {
   mergeAgent?: (cwd: string, prompt: string) => Promise<void>;
   /** Run the read-only reviewer agent in `cwd`; returns its raw text. */
   reviewAgent?: (cwd: string, prompt: string) => Promise<string>;
-  /** Run the mutating stash-conflict resolver in `cwd` (local checkout sync). */
+  /** Run the mutating stash-conflict resolver in `cwd` (restoring a stashed checkout). */
   stashResolveAgent?: (cwd: string, prompt: string) => Promise<void>;
 }
 
@@ -750,7 +748,7 @@ export interface LandResult {
   /** "advanced" — the integration ref now points at the squash. "concurrent" —
    *  the target moved under us; the caller should rebuild on the new tip. */
   outcome: "advanced" | "concurrent";
-  /** How the user's local checkout was reconciled (when on the target branch). */
+  /** What happened to the checkout owning the integration branch. */
   localSync: LocalSyncOutcome;
 }
 
@@ -1724,8 +1722,8 @@ export async function runAiMerge(
   if (blocker && isPreMergeStepsNotRunBlocker(blocker)) throw new PreMergeStepsNotRunError(taskId);
   if (blocker) throw new Error(`Cannot merge ${taskId}: ${blocker}`);
   // Honor the task's own target branch when set; otherwise the project default
-  // integration branch. The local checkout is only synced if it is on this same
-  // target branch (see syncLocalCheckout).
+  // integration branch. The landing advances the checkout that owns whichever
+  // branch this resolves to, and refuses rather than advancing past it.
   const projectDefaultBranch = await resolveIntegrationBranch(projectRootDir, settings);
   /*
   FNXC:BranchGroupCompletion 2026-07-04-00:00:

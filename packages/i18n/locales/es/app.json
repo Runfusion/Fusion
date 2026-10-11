@@ -4253,7 +4253,7 @@
     "gitlabResourceAriaLabel": "GitLab resource type",
     "notOnIntegrationBranch": "(no en {{branch}})",
     "failedToFetchGitlab": "Failed to fetch GitLab resources",
-    "autoSyncOffNotRun": "sincronización automática: desactivada / no ejecutada",
+    "advanceMode": "avanzado mediante {{mode}}",
     "createdBranch": "Rama {{name}} creada",
     "advancesHelpItem3": "<c1>pending</c1> + <c2>off / not run</c2> — la sincronización automática está deshabilitada en Configuración; la referencia de la rama se movió pero tu árbol de trabajo no la siguió.",
     "unstagedFiles_other": "",

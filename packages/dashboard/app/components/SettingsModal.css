@@ -1274,7 +1274,6 @@ Basic Settings mode also removes low-frequency controls inside otherwise common 
   .form-group:has(#testMode),
   .form-group:has(#directMergeCommitStrategy),
   .form-group:has(#mergeIntegrationWorktree),
-  .form-group:has(#mergeAdvanceAutoSync),
   .form-group:has(#commitAuthorEnabled),
   .form-group:has(#commitAuthorName),
   .form-group:has(#commitAuthorEmail),

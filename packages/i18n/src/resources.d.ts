@@ -3115,7 +3115,7 @@ export default interface Resources {
       "autoMergeWhenGreen": "Auto-merge when green",
       "autoMergeWillHandle": "Auto-merge will handle this task automatically.",
       "autoMovedToTodo": "Auto-moved to Todo — reviewer feedback ready",
-      "autoSyncOffNotRun": "auto-sync: off / not run",
+      "advanceMode": "advanced via {{mode}}",
       "autoSyncOutcome": "auto-sync: {{outcome}}",
       "awaitingPrChecks": "Waiting for required checks or review feedback before auto-merge.",
       "backToIssuesList": "Back to issues list",

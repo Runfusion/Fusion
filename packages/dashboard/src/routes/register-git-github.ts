@@ -617,6 +617,10 @@ export interface ExtendedGitStatus {
     fromSha: string | null;
     toSha: string;
     advancedAt: string;
+    /** How the ref moved: `merge-ff-only` (a checkout owns it and moved with it),
+     *  `update-ref` (attached to nowhere), or `not-attempted`. Absent on events
+     *  stored before STAS-292. */
+    advanceMode?: string;
     autoSyncOutcome?: string;
     needsAction: boolean;
     resolution: "reachable" | "orphaned" | "subsumed" | "superseded" | "pending";
@@ -822,7 +826,7 @@ export async function collectRecentMergeAdvances(
   const headPatchIds = new Set<string>();
   let headPatchIdsLoaded = false;
   for (const ev of advances) {
-    const md = ev.metadata as { fromSha?: unknown; toSha?: unknown; succeeded?: unknown } | undefined;
+    const md = ev.metadata as { fromSha?: unknown; toSha?: unknown; succeeded?: unknown; advanceMode?: unknown } | undefined;
     if (!md || typeof md !== "object") continue;
     if (typeof md.toSha !== "string") continue;
     if (md.succeeded === false) continue;
@@ -889,6 +893,7 @@ export async function collectRecentMergeAdvances(
       fromSha: typeof md.fromSha === "string" ? md.fromSha : null,
       toSha: md.toSha,
       advancedAt: ev.timestamp,
+      advanceMode: typeof md.advanceMode === "string" ? md.advanceMode : undefined,
       autoSyncOutcome,
       needsAction,
       resolution,

@@ -163,7 +163,11 @@ function describeIndexMismatch(args: {
     + `files: ${files}; `
     + `expected tree (= HEAD): ${mismatch.headTree}; `
     + `actual index tree (write-tree): ${mismatch.indexTree}. `
-    + `Repair the checkout, then re-run the landing: `
+    // The repair command discards, so say so: a rewound index is garbage to be
+    // thrown away, but a genuinely staged edit is somebody's work and belongs in
+    // a commit instead.
+    + `Repair the checkout, then re-run the landing (this DISCARDS the staged content — `
+    + `if any of it is work you wrote, commit it first): `
     + `git restore --source=HEAD --staged --worktree -- ${files}`
   );
 }

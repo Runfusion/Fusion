@@ -4253,7 +4253,7 @@
     "gitlabResourceAriaLabel": "GitLab resource type",
     "notOnIntegrationBranch": "(pas sur {{branch}})",
     "failedToFetchGitlab": "Failed to fetch GitLab resources",
-    "autoSyncOffNotRun": "sync auto : désactivée / non exécutée",
+    "advanceMode": "avancé via {{mode}}",
     "createdBranch": "Branche {{name}} créée",
     "advancesHelpItem3": "<c1>pending</c1> + <c2>off / not run</c2> — la synchronisation automatique est désactivée dans les Paramètres ; la référence de branche a bougé mais votre arbre de travail n'a pas suivi.",
     "unstagedFiles_other": "",

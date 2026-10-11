@@ -504,6 +504,8 @@ export interface GitStatus {
     fromSha: string | null;
     toSha: string;
     advancedAt: string;
+    /** How the ref moved (`merge-ff-only` / `update-ref` / `not-attempted`); absent on pre-STAS-292 events. */
+    advanceMode?: string;
     autoSyncOutcome?: string;
     needsAction: boolean;
     resolution: "reachable" | "orphaned" | "subsumed" | "superseded" | "pending";

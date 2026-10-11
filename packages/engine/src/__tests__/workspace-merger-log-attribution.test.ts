@@ -26,7 +26,7 @@ describe("workspace merger log attribution", () => {
       "[timing] AI merge dependency sync completed: ran; source=inferred; command=pnpm install --frozen-lockfile; duration=9ms",
       "AI merge review (pass 1): approved squash abc12345",
       "AI merge review (pass 2): approved squash abc12345 — confirmation pass",
-      "AI merge: advanced main → abc12345 (local checkout: ff)",
+      "AI merge: advanced main → abc12345 (local checkout: refreshed-worktree)",
     ].map((line) => formatRepositoryMergeLog("repo-a", line));
 
     expect(lines).toHaveLength(6);
@@ -34,7 +34,7 @@ describe("workspace merger log attribution", () => {
   });
 
   it("keeps single-repository lines unprefixed at the caller boundary", () => {
-    const singleRepositoryLine = "AI merge: advanced main → abc12345 (local checkout: ff)";
+    const singleRepositoryLine = "AI merge: advanced main → abc12345 (local checkout: refreshed-worktree)";
     expect(singleRepositoryLine).not.toMatch(/^\[[^\]]+\] /);
   });
 

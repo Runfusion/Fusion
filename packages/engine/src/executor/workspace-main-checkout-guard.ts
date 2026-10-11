@@ -9,9 +9,10 @@
  * Two measured reasons. (1) The very next pipeline stage absorbs a dirty main checkout: workspace
  * lands call the same `landOneRepo`/`landSquash` mechanic as single-repo with `projectRootDir` set
  * to the sub-repo main checkout, so a dirty tree there is stashed (untracked included) -> ff ->
- * restored under `merger.allowDirtyLocalCheckoutSync`, or the ref advances atomically and the tree
- * is left alone when the stash is impossible. Refusing completion for a state the merger is built
- * to handle stops the board for nothing. (2) Attribution had no evidence: a File Scope match was
+ * restored under `merger.allowDirtyLocalCheckoutSync`, or the landing refuses with the ref unmoved
+ * when the stash is impossible (STAS-292: a ref is never advanced past a checkout that cannot
+ * follow it). Refusing completion for a state the merger is built to handle stops the board for
+ * nothing. (2) Attribution had no evidence: a File Scope match was
  * treated as task work with NO timing test, so an operator editing the same feature in the shared
  * checkout was indistinguishable from an agent that skipped its pre-created task worktree — and the
  * refusal named an operator-only remedy, so the card could only loop.

@@ -6293,7 +6293,7 @@
     "headAheadOfOriginIntegration_other": "HEAD has {{count}} commit(s) not on origin/{{branch}}",
     "pushLabel": "Push:",
     "autoMergeWillHandle": "Auto-merge will handle this task automatically.",
-    "autoSyncOffNotRun": "auto-sync: off / not run",
+    "advanceMode": "advanced via {{mode}}",
     "addRemote": "Add Remote",
     "gitlabResourceAriaLabel": "GitLab resource type",
     "commit": "Commit",

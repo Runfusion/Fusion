@@ -179,7 +179,12 @@ export interface MergerSettings {
    *  When true (default for resolved project settings), Fusion restores the legacy
    *  stash → fast-forward → restore behavior when the checked-out integration
    *  worktree is dirty. Set false to explicitly opt out and fail closed before
-   *  unrelated local edits can be reintroduced after landing. */
+   *  unrelated local edits can be reintroduced after landing.
+   *
+   *  This gates unstaged and untracked edits only. A checkout whose index does not
+   *  describe its HEAD always refuses the landing regardless of this setting
+   *  (STAS-292): that shape is the phantom-revert signature, not a local edit to
+   *  preserve, and stashing it is what rebuilt the phantom on every landing. */
   allowDirtyLocalCheckoutSync?: boolean;
 }
 

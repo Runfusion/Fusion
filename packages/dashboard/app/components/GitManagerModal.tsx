@@ -1881,13 +1881,15 @@ function StatusPanel({
                 <code className="gm-hash">{advance.toSha.slice(0, 8)}</code>
                 {" "}
                 <strong>{advance.taskId}</strong>
-                {advance.autoSyncOutcome ? (
+                {advance.advanceMode && (
+                  <span className="gm-status-sub">
+                    {" "}{t("git.advanceMode", "advanced via {{mode}}", { mode: advance.advanceMode })}
+                  </span>
+                )}
+                {/* Only stored pre-STAS-292 events carry an auto-sync outcome; new landings have none. */}
+                {advance.autoSyncOutcome && (
                   <span className="gm-status-sub">
                     {" "}{t("git.autoSyncOutcome", "auto-sync: {{outcome}}", { outcome: advance.autoSyncOutcome })}
-                  </span>
-                ) : (
-                  <span className="gm-status-sub">
-                    {" "}{t("git.autoSyncOffNotRun", "auto-sync: off / not run")}
                   </span>
                 )}
                 <span className="gm-status-sub">

@@ -832,7 +832,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   /**
    * FNXC:Merge 2026-06-26-00:00:
-   * New and unconfigured projects default AI merge to sync a dirty checked-out integration branch, restoring the legacy stash → fast-forward → restore landing behavior. Explicit persisted merger.allowDirtyLocalCheckoutSync values still win, and no existing-project migration stamps this default into storage.
+   * New and unconfigured projects default AI merge to sync a dirty checked-out integration branch, restoring the legacy stash → fast-forward → restore landing behavior for unstaged and untracked edits. Explicit persisted merger.allowDirtyLocalCheckoutSync values still win, and no existing-project migration stamps this default into storage. A checkout whose index disagrees with its HEAD refuses the landing whatever this says (STAS-292).
    */
   merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
   requiredChecks: undefined,

@@ -10,6 +10,7 @@ import {
   rewindBranchRef,
   rewriteCheckedOutRefBackwards,
 } from "../merge/merger-ref-update-advance.js";
+import { autoRecoverCrossContamination } from "../execution/branch-conflicts.js";
 
 // Real-git suite for the STAS-292 landing contract: a landing must move ref,
 // index and working tree as one unit inside the worktree that owns the
@@ -558,6 +559,35 @@ describe("rewriteCheckedOutRefBackwards", () => {
       expect(message).toContain("refused");
       expect(git(fx.trunk, "git rev-parse HEAD")).toBe(fx.newSha);
       expect(existsSync(join(fx.trunk, "local-notes.txt"))).toBe(true);
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+});
+
+// The `stas-190` class: a mover that is not the trunk landing. It rewrote a
+// branch another worktree had checked out, which is exactly how a checkout got
+// left behind its ref without ever entering the landing path.
+describe("a branch rewrite outside the landing lane", () => {
+  it("refuses to rewrite a branch another worktree owns, naming that worktree", async () => {
+    const fx = setupLandscape();
+    try {
+      const message = await captureRejection(
+        autoRecoverCrossContamination({
+          repoDir: fx.landing,
+          branchName: "main",
+          baseSha: fx.expectedCurrentSha,
+          taskId: "STAS-292",
+          shasToDrop: [fx.newSha],
+        }),
+      );
+
+      expect(message).toContain("branch rewrite refused");
+      expect(message).toContain(fx.trunk);
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(fx.expectedCurrentSha);
+      expect(git(fx.landing, "git rev-parse HEAD")).toBe(fx.newSha);
+      expect(git(fx.landing, "git status --porcelain")).toBe("");
+      expect(git(fx.trunk, "git status --porcelain")).toBe("");
     } finally {
       removeTmpDirSync(fx.root);
     }

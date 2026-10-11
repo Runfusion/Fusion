@@ -4253,7 +4253,7 @@
     "gitlabResourceAriaLabel": "GitLab resource type",
     "notOnIntegrationBranch": "（不在 {{branch}} 上）",
     "failedToFetchGitlab": "Failed to fetch GitLab resources",
-    "autoSyncOffNotRun": "自动同步：关闭 / 未运行",
+    "advanceMode": "已通过 {{mode}} 前进",
     "createdBranch": "已创建分支 {{name}}",
     "advancesHelpItem3": "<c1>pending</c1> + <c2>off / not run</c2> — 设置中禁用了自动同步；分支引用已移动，但工作树未跟进。",
     "unstagedFiles_other": "",

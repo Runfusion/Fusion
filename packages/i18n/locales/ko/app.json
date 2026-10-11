@@ -4253,7 +4253,7 @@
     "gitlabResourceAriaLabel": "GitLab resource type",
     "notOnIntegrationBranch": "({{branch}}에 없음)",
     "failedToFetchGitlab": "Failed to fetch GitLab resources",
-    "autoSyncOffNotRun": "자동 동기화: 꺼짐 / 실행 안 됨",
+    "advanceMode": "{{mode}}(으)로 진행됨",
     "createdBranch": "브랜치 {{name}} 생성됨",
     "advancesHelpItem3": "<c1>pending</c1> + <c2>off / not run</c2> — 자동 동기화가 설정에서 비활성화되어 있습니다. 브랜치 ref는 이동했지만 작업 트리가 따라가지 않았습니다.",
     "unstagedFiles_other": "",
