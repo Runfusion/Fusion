@@ -26,8 +26,20 @@ itself FIFO-bounded: coverage for a card last touched `seenIdCapacity` ids ago i
 memory either.
 */
 
-const DEFAULT_MAX_ENTRIES = 500;
-const DEFAULT_MAX_LOGGED_ENTRIES = 25_000;
+/*
+FNXC:TaskCacheMemory 2026-10-11-12:10:
+The first bound was written per store and that was the wrong unit. This host runs 24
+ProjectEngine+TaskStore pairs inside ONE Node process, so 500 rows / 25,000 log entries per store is a
+process-wide allowance of 12,000 rows and 600,000 log entries - MORE than the 2,417-card board and
+above the 415,949 TaskLogEntry objects the heap was already retaining. Measured after that deploy: the
+RSS slope was still +75 MiB/min against a pre-fix ~+90, i.e. the bound was effectively inert. Budgets
+are therefore set in per-store units that sum to a process budget: 50 rows and 2,000 log entries per
+store, ~1,200 rows and ~48,000 entries across 24 stores - about 12% of what was retained. A store's
+own hot working set is well under 50 rows; anything older than that is a cache miss by design, and a
+miss costs a read, not a gigabyte.
+*/
+const DEFAULT_MAX_ENTRIES = 50;
+const DEFAULT_MAX_LOGGED_ENTRIES = 2_000;
 const DEFAULT_SEEN_ID_CAPACITY = 50_000;
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
