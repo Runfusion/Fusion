@@ -9,6 +9,7 @@ import {
   runSuspendedNoticeSignature,
 } from "../executor/run-suspended-notice.js";
 import {
+  clearFinalizationNotice,
   isBoundedFinalizationRefusal,
   noteFinalizationPass,
   resetFinalizationNoticeState,
@@ -33,6 +34,10 @@ Surfaces enumerated and covered here:
   3. The merge-confirmed fast path's two `store.logEntry` calls (project-engine) — the durable
      per-task log that RUFU-452 counts its re-run budget from, which the churn was rotating away.
   4. The bounded/unbounded classification itself: terminal outcomes must NEVER be suppressed.
+  5. RUFU-386 widened the shared instance to a SECOND writer — the `recover-merged-review` self-healing
+     lane. Its own behavior is pinned by `self-healing-merged-review-refusal-bounded.test.ts`; what
+     belongs HERE is the property that only the shared instance can break: two lanes reporting the same
+     card must not read as a transition against each other.
 */
 
 function fakeLogger(): Logger & { lines: Array<{ level: string; message: string }> } {
@@ -277,5 +282,44 @@ describe("RUFU-431 finalization refusal notice", () => {
 
     // A new refusal sentence is a real transition and must reach the durable log again.
     expect(noteFinalizationPass(logger, "FN-REFUSE", "fast-path-outcome", "waiting on dependency FN-1", "blocked", "warn")).toBe(true);
+  });
+
+  /*
+  FNXC:FinalizationRefusalBounded 2026-10-11-05:43 (RUFU-386):
+  One `finalizationNotice` instance now serves two lanes over possibly the SAME card: the merge-confirmed
+  fast path can alternate with the `recover-merged-review` maintenance step while a card sits stranded.
+  If the two shared a key — or if a future edit collapsed the slot dimension — every alternation would
+  read as a state change and the churn would return at double rate, which is the exact failure the slot
+  exists to prevent. The keyspace claim is therefore part of the invariant, not an implementation detail.
+  */
+  it("keeps the fast path and the self-healing lane independent for one card", () => {
+    const logger = fakeLogger();
+    const reason = "required post-merge gate 'post-merge-verification' has not reported";
+
+    // Both lanes report the same card and the same reason: each writes its own first row.
+    expect(noteFinalizationPass(logger, "FN-DUAL", "fast-path-outcome", `blocked|${reason}`, "fp", "warn")).toBe(true);
+    expect(noteFinalizationPass(logger, "FN-DUAL", "self-heal-outcome", `blocked|${reason}`, "sh", "warn")).toBe(true);
+    // And each then suppresses only its own restatement — an interleaved pass is not news.
+    expect(noteFinalizationPass(logger, "FN-DUAL", "fast-path-outcome", `blocked|${reason}`, "fp", "warn")).toBe(false);
+    expect(noteFinalizationPass(logger, "FN-DUAL", "self-heal-outcome", `blocked|${reason}`, "sh", "warn")).toBe(false);
+    expect(logger.lines.filter((l) => l.level === "warn")).toHaveLength(2);
+  });
+
+  /*
+  FNXC:FinalizationRefusalBounded 2026-10-11-05:43 (RUFU-386):
+  `clearFinalizationNotice` enumerates its slots, so a slot added without enumerating it here would be
+  unforgettable — the card's next refusal after a real finalize would be swallowed until the process
+  restarted. This is the ratchet that makes the enumeration in that function checkable.
+  */
+  it("forgets every owned slot for a card, including the self-healing lane's", () => {
+    const logger = fakeLogger();
+    expect(noteFinalizationPass(logger, "FN-CLEAR", "fast-path-outcome", "blocked|a", "fp", "warn")).toBe(true);
+    expect(noteFinalizationPass(logger, "FN-CLEAR", "self-heal-outcome", "resumed|a", "sh")).toBe(true);
+    expect(noteFinalizationPass(logger, "FN-CLEAR", "self-heal-outcome", "resumed|a", "sh")).toBe(false);
+
+    clearFinalizationNotice("FN-CLEAR");
+
+    expect(noteFinalizationPass(logger, "FN-CLEAR", "fast-path-outcome", "blocked|a", "fp", "warn")).toBe(true);
+    expect(noteFinalizationPass(logger, "FN-CLEAR", "self-heal-outcome", "resumed|a", "sh")).toBe(true);
   });
 });

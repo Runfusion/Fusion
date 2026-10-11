@@ -226,6 +226,7 @@ import {
   type VanishedTaskDetectionSummary,
 } from "./notification/vanished-task-detection.js";
 import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./merge/auto-merge-finalization.js";
+import { noteFinalizationPass } from "./merge/finalization-refusal-notice.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { rerouteSingularStaleContentToReview } from "./merge/stale-content-review-reroute.js";
 import {
@@ -16461,12 +16462,38 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
             log: (message) => log.warn(message),
           });
           if (finalization.outcome === "blocked") {
-            await this.store.logEntry(
+            /*
+            FNXC:FinalizationRefusalBounded 2026-10-11-05:43 (RUFU-386):
+            RUFU-431 bounded this sentence on the merge-confirmed fast path only, and this lane kept writing it once
+            per maintenance pass forever. The per-task activity log retains its newest 1,000 entries
+            (`DEFAULT_TASK_ACTIVITY_LOG_ENTRY_LIMIT`), so a card waiting on a post-merge gate that can never report
+            rotated its own planning/review/merge history off the row, and RUFU-452's re-run budget — which counts
+            strikes IN that log — silently read zero. Same rule as the fast path: a restated refusal is a state, so it
+            is recorded on its transition, and the gate owns no lifecycle authority beyond this row.
+
+            The signature is ARM-QUALIFIED, not the reason alone. `resumedPostMergeEvidence` and the refusal sentence
+            are not one signal: a seeded reseed and a plain `not-seeded("finalize-blocked")` refusal carry the SAME
+            reason (`auto-merge-finalization.ts:529`), and a terminal hand-off returns a DIFFERENT reason built by
+            `unreachablePostMergeGateReason` (`:481-500`). Keying on the reason alone would call the seeded→refused
+            transition "no change", so the lane would keep looking like it was making progress after it had stopped.
+            Self-healing takes a single slot because this call site branches — only one arm fires per pass — unlike
+            the fast path's two sequential statements.
+            */
+            const resumed = finalization.resumedPostMergeEvidence === true;
+            const refusalReason = finalization.reason ?? "unknown";
+            const refusalNotice = resumed
+              ? `Auto-recovery resumed graph-owned post-merge verification — ${refusalReason}`
+              : `Auto-recovery skipped: merge confirmed but finalization blocked — ${refusalReason}`;
+            if (noteFinalizationPass(
+              log,
               task.id,
-              finalization.resumedPostMergeEvidence
-                ? `Auto-recovery resumed graph-owned post-merge verification — ${finalization.reason ?? "unknown"}`
-                : `Auto-recovery skipped: merge confirmed but finalization blocked — ${finalization.reason ?? "unknown"}`,
-            );
+              "self-heal-outcome",
+              `${resumed ? "resumed" : "blocked"}|${refusalReason}`,
+              refusalNotice,
+              "warn",
+            )) {
+              await this.store.logEntry(task.id, refusalNotice);
+            }
             continue;
           }
           this.emitTaskMerged(finalization.task, { mergeConfirmed: true });
