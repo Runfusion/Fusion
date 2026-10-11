@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { TaskMoveLanes } from "./workflows/workflow-lifecycle-traits.js";
 import { TaskLaneCache } from "./task-lane-cache.js";
+import { BoundedTaskCache } from "./task-store/bounded-task-cache.js";
 // FNXC:EventDrivenDispatch 2026-09-18-00:40: FN-519 advisory dispatch-wake classification.
 import { classifyDispatchWakeReason, resolveDispatchWakeTaskId } from "./task-store/dispatch-wake.js";
 import { resolveDispatchWakeProjectKey } from "./dispatch-wake.js";
@@ -662,7 +663,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   public watcher: FSWatcher | null = null;
-  public taskCache: Map<string, Task> = new Map();
+  /*
+  FNXC:TaskCacheMemory 2026-10-11-11:40:
+  Bounded, and deliberately still a Map. See task-store/bounded-task-cache.ts for the measurement:
+  64 write seams cached full rows (each carrying up to ~1000 `log` entries) against 2 read seams and
+  no eviction, which is the live set a forced GC could not reclaim on the deployed board.
+  */
+  public taskCache: Map<string, Task> = new BoundedTaskCache();
   /** Per-store, bounded answer cache used only to decorate synchronous task:updated events. */
   public readonly laneCache = new TaskLaneCache();
 

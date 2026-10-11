@@ -647,7 +647,34 @@ export async function emitUsageEventImpl(store: TaskStore, event: UsageEventInpu
     return emitUsageEventAsync(layer.db, layer.projectId ?? "", event);
 }
 
+/*
+FNXC:SteeringCommentRetention 2026-10-11-11:40:
+Two properties of this seam were measured on the deployed board before they were changed here.
+(1) 7,840 of 7,996 steering comments — 98% — are machine text, and one card carried 678 entries
+(130 kB). The writer is the lifecycle planner-oversight handler, which posts its guidance per poll
+per stage; the session-advisor path already passes through `OverseerEmissionGuard`, this one did not,
+so the guard existed and the second writer simply bypassed it. (2) `steering_comments` ships in every
+task list read (only `log` and `search_vector` are projected out), so an unbounded array here is a
+per-read cost on every sweep of every in-process engine, and each write re-seeded the store's task
+cache with that full row.
+Fix: an identical newest entry is not written again (the poll re-raises the same sentence, not a new
+instruction), and the array is bounded to the newest MAX_STEERING_COMMENTS. The executor's injection
+listener consumes recent entries, which a newest-N bound cannot starve.
+*/
+export const MAX_STEERING_COMMENTS = 200;
+
 export async function addSteeringCommentImpl(store: TaskStore, id: string, text: string, author: "user" | "agent" = "user", runContext?: RunMutationContext): Promise<Task> {
+    /*
+    Read OUTSIDE the lock on purpose: `store.addComment` below takes the per-task lock, so holding it
+    across that call would deadlock against it. A racing pair of identical writes costs one duplicate
+    entry, which is what the bound and the newest-N trim are for; a deadlock costs the mutation.
+    */
+    const prior = await store.readTaskJson(store.taskDir(id)).catch(() => null);
+    const priorSteering = prior?.steeringComments ?? [];
+    if (prior && priorSteering.length > 0 && priorSteering[priorSteering.length - 1]?.text === text) {
+      return prior;
+    }
+
     // Write to unified comments (skip refinement — steering is for agent injection, not follow-up tasks)
     const task = await store.addComment(id, text, author, { skipRefinement: true }, runContext);
 
@@ -667,6 +694,9 @@ export async function addSteeringCommentImpl(store: TaskStore, id: string, text:
         currentTask.steeringComments = [];
       }
       currentTask.steeringComments.push(steeringComment);
+      if (currentTask.steeringComments.length > MAX_STEERING_COMMENTS) {
+        currentTask.steeringComments = currentTask.steeringComments.slice(-MAX_STEERING_COMMENTS);
+      }
       currentTask.updatedAt = new Date().toISOString();
 
       await store.atomicWriteTaskJson(dir, currentTask);

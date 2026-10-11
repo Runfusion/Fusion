@@ -5,6 +5,7 @@ import { createLogger } from "../process/logger.js";
 import { recordRunAuditEvent } from "../postgres/data-layer.js";
 import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 import * as schema from "../postgres/schema/index.js";
+import { BoundedTaskCache } from "./bounded-task-cache.js";
 import {
   acknowledgeTaskLifecycleEvent,
   acquireTaskLifecycleLease,
@@ -381,11 +382,24 @@ export class TaskDeletedOutboxConsumer {
       .where(and(eq(schema.project.tasks.projectId, layer.projectId!), isNull(schema.project.tasks.deletedAt)));
     const liveIds = new Set(liveRows.map((row) => row.id));
     let dispatchedCount = 0;
-    for (const task of this.store.taskCache.values()) {
-      if (!liveIds.has(task.id)) {
-        this.store.emitObservedTaskDeleted(task, `reconciliation:${task.id}:${headSeq}`);
-        dispatchedCount++;
-      }
+    /*
+    FNXC:TaskCacheMemory 2026-10-11-11:40:
+    This loop used to iterate `taskCache.values()`, which quietly made an unbounded row cache the
+    INDEX of "ids this store has ever observed". The cache is now size-bounded (a plain row cache for
+    24 in-process stores was the retained live set a forced GC could not free), so the id index comes
+    from `seenIds` and an entry the budget evicted is re-read from the store. A deletion must not be
+    lost because a memory bound reclaimed its copy — that would trade a gigabyte for a silent hole in
+    the exact fallback whose job is catching missed deletions. Only ids that are NOT live are re-read,
+    so the extra reads are bounded by deletions since boot, not by board size.
+    */
+    const cache = this.store.taskCache;
+    const seenIds = cache instanceof BoundedTaskCache ? cache.seenIds : [...cache.keys()];
+    for (const id of seenIds) {
+      if (liveIds.has(id)) continue;
+      const task = await this.readDeletedTask(id);
+      if (!task) continue;
+      this.store.emitObservedTaskDeleted(task, `reconciliation:${id}:${headSeq}`);
+      dispatchedCount++;
     }
     const advanced = await advanceTaskLifecycleConsumerCursor(layer, consumerId, priorSeq, headSeq, lease.fencingToken);
     if (!advanced) return false;
