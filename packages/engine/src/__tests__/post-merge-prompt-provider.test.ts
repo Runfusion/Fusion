@@ -20,6 +20,7 @@ the block to lose the sentence that stops a reviewer demanding shards.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUILTIN_WORKFLOWS,
+  POST_MERGE_CI_REPOSITORY_PLACEHOLDER,
   POST_MERGE_VERIFICATION_PROMPT,
   buildPostMergeVerificationPrompt,
   derivePostMergeEvidenceContract,
@@ -234,7 +235,16 @@ describe("post-merge prompt dispatch seam", () => {
     expect(node.config.prompt).toBe(POST_MERGE_VERIFICATION_PROMPT);
 
     // Facade order is (node, task, settings, columnBinding, graphContext, …): the run context is the FIFTH arg.
-    const result = await (executor as any).runGraphCustomNode(node, { id: "FN-PM-1" }, {}, undefined, params.context ?? undefined);
+    //
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-02:55 (RUFU-375):
+    The board's project settings go to BOTH seams now: the contract read (`readRawProjectSettings`, which picks the
+    reporter platform) and the facade's `settings` argument, which is where production hands the same merged object
+    to the CI-repository guard. Passing `{}` there kept this fixture green only while the built-in prompt named no
+    repository; a post-merge gate that cannot name its CI-evidence repository now refuses before the session, so a
+    fixture that wants its prompt text inspected must state the repository it reads evidence from.
+    */
+    const result = await (executor as any).runGraphCustomNode(node, { id: "FN-PM-1" }, params.settings ?? {}, undefined, params.context ?? undefined);
     expect(result.outcome).toBe("success");
     expect(captured.prompt).toBeTruthy();
     return captured.prompt as string;
@@ -257,7 +267,15 @@ describe("post-merge prompt dispatch seam", () => {
       return "";
     });
 
-    expect(await dispatchedPrompt()).toBe(POST_MERGE_VERIFICATION_PROMPT);
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-02:55 (RUFU-375):
+    This case's subject is unchanged — a board whose remote facts name no reporter keeps GitHub's built-in text
+    rather than acquiring another platform's vocabulary. It now declares `postMergeCiRepo`, because that is what
+    makes the built-in gate runnable at all: the assertion is the built-in text with the token filled in, and the
+    no-origin mock above still proves nothing else was substituted.
+    */
+    expect(await dispatchedPrompt({ settings: { postMergeCiRepo: "runfusion/fusion" } }))
+      .toBe(POST_MERGE_VERIFICATION_PROMPT.replace(POST_MERGE_CI_REPOSITORY_PLACEHOLDER, "runfusion/fusion"));
   });
 
   it("applies the authored kind carried in the optional-group run context", async () => {

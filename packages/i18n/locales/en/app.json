@@ -1629,6 +1629,7 @@
     "cliApprovalRejectHint": "To reject, keep the task paused and do not approve.",
     "summarySeparator": " · ",
     "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonCiRepositoryUnresolved": "the CI evidence repository is not configured for this gate",
     "workflowName": "Workflow",
     "aggregateNoResults": "No results",
     "hideOutput": "Hide output",

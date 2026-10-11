@@ -415,6 +415,15 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   user-editable description field to document.
   */
   executorSessionCaptureIncludeStatus: "schema-only transcript flag (status-entry inclusion); deliberately not rendered as a Settings row",
+  /*
+  FNXC:PostMergeCiRepository 2026-10-11-01:58 (RUFU-375):
+  Schema-only project setting (same treatment as `stashVectorSearch` above): the `owner/repo` slug that names
+  where the built-in post-merge Full Suite gate looks for its CI evidence, read by `resolvePostMergeCiRepository`
+  at gate dispatch. It ships reachable through the project settings file and `PATCH /api/settings`, with the
+  Settings modal control deferred to a follow-up; when that control ships, this entry migrates into
+  SETTING_DESCRIPTION_KEYS — the guard's normal lifecycle.
+  */
+  postMergeCiRepo: "RUFU-375 schema-only CI-evidence repository slug read by the post-merge Full Suite gate; no Settings UI row yet",
   // Moved to workflow settings (U4) — see MOVED_SETTINGS_KEYS in `packages/core/src/config/settings-schema.ts`.
   workflowStepTimeoutMs: "moved to workflow settings (U4)",
   workflowStepScopeEnforcement: "moved to workflow settings (U4)",

@@ -2480,8 +2480,28 @@ export {
   POST_MERGE_EVIDENCE_KINDS,
   describePostMergeEvidenceKinds,
   POST_MERGE_VERIFICATION_PROMPT,
+  POST_MERGE_PUBLISH_TARGETS_RULES,
 } from "./workflows/builtin-post-merge-group.js";
 export type { PostMergeEvidenceKind } from "./workflows/builtin-post-merge-group.js";
+/*
+FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+Gate-lane mirror of the CI-evidence repository rule, for the same reason the block above mirrors the evidence
+kinds: the engine gate lane aliases `@fusion/core` to this file, and `executor/run-graph-custom-node.ts`
+imports these symbols across the package boundary — a missing named export here is a link-time hole in every
+gate fork that loads that module.
+*/
+export {
+  POST_MERGE_CI_REPOSITORY_SETTING_KEY,
+  POST_MERGE_CI_REPOSITORY_PLACEHOLDER,
+  POST_MERGE_CI_REPOSITORY_NOT_RUN_REASON,
+  POST_MERGE_CI_REPOSITORY_REFUSAL_PREFIX,
+  resolvePostMergeCiRepository,
+  resolvePostMergePublishTargetFacts,
+  buildCiRepositoryNotRunOutput,
+  substituteCiRepositoryVariable,
+} from "./workflows/post-merge-ci-repository.js";
+export type { PostMergeCiRepositoryResolution, PostMergeCiRepositorySettings, PostMergePublishTargetFacts } from "./workflows/post-merge-ci-repository.js";
+export type { WorkflowNodeCiRepositoryConfig } from "./workflows/workflow-ir-types.js";
 export {
   derivePostMergeEvidenceContract,
   parseDeclaredPostMergeEvidence,

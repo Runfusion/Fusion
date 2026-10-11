@@ -276,6 +276,77 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(moveTask).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:PostMergeCiRepository 2026-10-11-04:10 (RUFU-375, Code Review finding P0):
+  RUFU-375 makes a new refusal reachable — "CI repository not configured" — and it recorded a `skipped` row that
+  this fence read as a decision the card had already lost: `blocked` is neither re-seedable nor finalizable, so an
+  operator who obeyed the refusal, set the setting, and pressed Retry could not reach the gate again. RUFU-348's
+  twelve waived cards were the same dead-end with a different cause. The pair below is both halves of the fix:
+  an honest not-run carrier is re-seedable through this SAME fence, and an audited waiver is not.
+  */
+  it("resumes a landed card whose post-merge gate refused to run for an honest not-run cause", async () => {
+    const task = baseTask({
+      autoMerge: true, mergeDetails: { mergeConfirmed: true }, enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{
+        workflowStepId: "post-merge-verification",
+        phase: "post-merge",
+        status: "skipped",
+        notRunReason: "ci-repository-unresolved",
+      }],
+    });
+    const { store, moveTask } = storeWithTask(task);
+    const continuations: unknown[] = [];
+    Object.assign(store, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      listWorkflowWorkItemsForTask: vi.fn(async () => continuations),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(async (input) => {
+        if (continuations.length > 0) return { seeded: false, reason: "active-continuation" };
+        continuations.push(input);
+        return { seeded: true, workItemId: "post-merge" };
+      }),
+    });
+    const manager = managerWithStubs(store);
+
+    // Same resumed shape and same bounded attempt the never-written class pins: the operator's Retry now reaches
+    // a gate that can succeed, and the re-run replaces this row instead of stacking a second one.
+    await expect(manager.reconcileLandedReviewTask(task.id, { source: "manual" })).resolves.toEqual({
+      outcome: "resumed", gateId: "post-merge-verification", attempt: 1,
+    });
+    expect(continuations).toHaveLength(1);
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("does not re-run a not-run row an operator already waived", async () => {
+    const task = baseTask({
+      autoMerge: true, mergeDetails: { mergeConfirmed: true }, enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{
+        workflowStepId: "post-merge-verification",
+        phase: "post-merge",
+        status: "skipped",
+        notRunReason: "ci-repository-unresolved",
+        bypassedBy: "dashboard-operator",
+        bypassedAt: "2026-10-11T04:00:00.000Z",
+        bypassReason: "no hosted CI runs on this project",
+      }],
+    });
+    const { store } = storeWithTask(task);
+    Object.assign(store, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(),
+    });
+    const manager = managerWithStubs(store);
+
+    // RUFU-408: the audited waiver IS the evidence, so nothing is owed. This arm answers a card that owes
+    // nothing with `awaiting-finalization` — its sentence for "no gate to hand back" — and the load-bearing
+    // half of this assertion is that no re-seed happens: a human decision is never re-run over.
+    await expect(manager.reconcileLandedReviewTask(task.id, { source: "manual" })).resolves.toEqual({
+      outcome: "ineligible", reason: "awaiting-finalization",
+    });
+    expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
+  });
+
   it("reconciles a present branch after all task-owned content is proven landed", async () => {
     const { store } = storeWithTask(baseTask());
     const manager = managerWithStubs(store, {

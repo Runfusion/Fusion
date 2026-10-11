@@ -1201,6 +1201,7 @@
     "noStepsConfigured": "此任务未配置任何工作流步骤。",
     "executionPhase": "",
     "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonCiRepositoryUnresolved": "the CI evidence repository is not configured for this gate",
     "replyInComments": "",
     "defaultWorkflow": "",
     "plain": "纯文本",

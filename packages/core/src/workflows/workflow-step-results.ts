@@ -1,6 +1,15 @@
 import type { WorkflowReviewFinding, WorkflowReviewFindingResolution, WorkflowReviewFindingSeverity, WorkflowStepResult } from "../types.js";
 
-export const WORKFLOW_STEP_NOT_RUN_REASONS = ["not-configured", "tooling-unavailable", "execution-mode-skip", "repository-context-unresolved"] as const;
+/*
+FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+`ci-repository-unresolved` is a distinct cause from `repository-context-unresolved`: that one means the
+workspace checkout set the gate must read is unresolved, this one means the gate was never told WHICH
+repository holds its CI evidence (project setting `postMergeCiRepo` unset or invalid). Merging them would
+make the operator remedy ambiguous — the first is fixed by workspace configuration, the second by naming a
+repository — and a `skipped` row carrying an honest reason is evidence the gate never fabricated, unlike a
+failed review that consumed the one-shot re-run budget.
+*/
+export const WORKFLOW_STEP_NOT_RUN_REASONS = ["not-configured", "tooling-unavailable", "execution-mode-skip", "repository-context-unresolved", "ci-repository-unresolved"] as const;
 export type WorkflowStepNotRunReason = (typeof WORKFLOW_STEP_NOT_RUN_REASONS)[number];
 
 /** A not-run result is terminal and honest only when its fixed reason accompanies `skipped`. */

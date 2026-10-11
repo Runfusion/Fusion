@@ -181,12 +181,25 @@ disposition for any non-success one, not require the conclusion itself to be gre
 pins the restored contract (`completed conclusion for Pipeline smoke tier`, `explicit evidence-backed
 disposition`, `Do not require unrelated follow-up completion`, and `not.toContain("A successful conclusion")`).
 */
+/*
+FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+The token the CI-evidence repository is substituted into, defined beside the only prompt text that can carry
+it. It is DEFINED here rather than in `post-merge-ci-repository.ts` because importing that module from this
+one would pull `settings-validation.ts` (and through it the `types.ts` barrel, which re-exports workflow
+modules) into a module the IR parser loads; `post-merge-ci-repository.ts` re-exports the token instead, so
+prompt, resolver, and the engine's substitution seam still read one definition. A token that survives into a
+Dispatched session is a leak — that guarantee lives with the substitution seam.
+*/
+export const POST_MERGE_CI_REPOSITORY_PLACEHOLDER = "{{ciRepo}}";
+
 const FULL_SUITE_EVIDENCE_BLOCK = `## Required post-landing Full Suite evidence
 This enabled gate requires post-landing Full Suite evidence. Do NOT approve until its delivery record names all of the following:
 1. The landed SHA and the first Full Suite push-to-main run at or after that SHA, including the run ID and run SHA.
 2. The completed conclusion for Pipeline smoke tier.
 3. The completed conclusion for every Test shard: 1/4, 2/4, 3/4, and 4/4.
 4. All four timing artifacts: test-timings-shard-1, test-timings-shard-2, test-timings-shard-3, and test-timings-shard-4.
+
+Post-merge CI evidence repository: ${POST_MERGE_CI_REPOSITORY_PLACEHOLDER}. Search that repository for the run — not the \`origin\` of your own checkout and not the GitHub tracking-repo default. On a fork-shaped board those name different repositories, and a run found in the wrong one proves nothing about this delivery just as surely as one searched for in the right place and genuinely absent.
 
 Full Suite and Pipeline smoke are non-blocking signals. A failed lane requires an explicit evidence-backed disposition in the delivery record: identify the actual failures from the logs and the post-merge-full-suite-evidence artifact, establish whether this task introduced them, and link the existing or newly created follow-up task for unrelated failures. Never fabricate success, dismiss an unexplained failure as pre-existing, or approve an unresolved regression introduced by this task. Completed red lanes with documented, supported dispositions may receive APPROVE_WITH_NOTES.
 
@@ -251,6 +264,22 @@ const POST_MERGE_VERIFICATION_OUTPUT_RULES = `## Output Requirements
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 
+/*
+FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+The publishing guardrail, appended to EVERY generated post-merge text. Naming a repository whose CI holds the
+delivery record made one ambiguity newly reachable: a reviewer can read "the evidence lives in <canonical
+upstream>" as permission to make the evidence appear there — push the landed branch to `origin`, or open a
+pull request against it. These three rules foreclose that reading.
+
+The section is deliberately free of the `{{ciRepo}}` token and of any repo placeholder: it must not create a
+substitution requirement for the `integration-only`, OneDev, or GitLab contracts, whose boards have no GitHub
+slug to name. The board-specific allowed-target list belongs to the not-run refusal instead.
+*/
+export const POST_MERGE_PUBLISH_TARGETS_RULES = `## Publishing rules
+- This session READS evidence. Do not create a pull request, a review, a comment, or an approval on any hosted platform from here.
+- If a branch must be published at all, publish it only to a publishing remote this repository is configured for (a fork or a peer remote visible in \`git remote -v\`). Never push to the canonical upstream remote (\`origin\`) of a fork-shaped board, and never force-push.
+- The repository named as CI evidence is where the delivery record is READ, not where it is written. Missing evidence is reported as not-run; manufacturing it is not an option.`;
+
 const EVIDENCE_BLOCKS: Record<PostMergeEvidenceKind, string> = {
   "github-actions-full-suite": FULL_SUITE_EVIDENCE_BLOCK,
   "integration-only": INTEGRATION_ONLY_EVIDENCE_BLOCK,
@@ -278,7 +307,9 @@ export function buildPostMergeVerificationPrompt(kind: PostMergeEvidenceKind = "
 
 ${evidence}
 
-${POST_MERGE_VERIFICATION_OUTPUT_RULES}`;
+${POST_MERGE_VERIFICATION_OUTPUT_RULES}
+
+${POST_MERGE_PUBLISH_TARGETS_RULES}`;
 }
 
 /*
@@ -312,6 +343,12 @@ export interface PostMergeOptionalGroupSpec {
    * (the historical contract), so pre-existing built-ins and persisted IRs are unchanged.
    */
   evidence?: PostMergeEvidenceKind;
+  /**
+   * FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375): stamp `requiresCiRepository` on the inner node so
+   * the engine resolves the CI-evidence repository (project setting `postMergeCiRepo`) BEFORE dispatching a
+   * session. Defaults to false, so a spec that does not opt in is byte-identical to before.
+   */
+  requiresCiRepository?: boolean;
 }
 
 /**
@@ -341,6 +378,12 @@ export function postMergeOptionalGroupNode(spec: PostMergeOptionalGroupSpec): Wo
               prompt: spec.prompt,
               toolMode: spec.toolMode ?? "readonly",
               gateMode: spec.gateMode ?? "advisory",
+              /*
+              FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375): authored only when opted in, following the
+              `evidence` key's own precedent, so a group that never asks for CI evidence keeps its exact
+              pre-existing config bytes.
+              */
+              ...(spec.requiresCiRepository === true ? { requiresCiRepository: true } : {}),
             },
           },
         ],
@@ -358,6 +401,14 @@ export function postMergeVerificationOptionalGroupNode(column = "done"): Workflo
     prompt: POST_MERGE_VERIFICATION_PROMPT,
     description: "Verify the integrated result after merge proof before final completion",
     gateMode: "gate",
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+    The gate's GitHub contract asks for a run in one named repository, so it must be told which one. Without
+    the flag the reviewer guesses from its own checkout's `origin`, and on a fork-shaped board that guess is
+    wrong by construction — RUFU-348 measured 12 such refusals across six cards, each needing a named human
+    waiver. With it, an unconfigured board refuses dispatch honestly before a model runs.
+    */
+    requiresCiRepository: true,
     /*
     FNXC:PostMergeFullSuiteEvidence 2026-09-23-05:04:
     Post-merge evidence is a delivery boundary, not an advisory observation. Seed this gate for

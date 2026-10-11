@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 import {
   getPostMergeEvidenceGateStatuses,
   getRequiredPostMergeEvidenceBlocker,
+  getRequiredPostMergeEvidenceDecision,
+  isNotRunPostMergeEvidence,
   resolveRequiredPostMergeGateIds,
 } from "../merge/confirmed-merge-reconciliation.js";
 import { FAST_MODE_BYPASS_ACTOR } from "../workflows/workflow-fast-lane.js";
@@ -363,5 +365,100 @@ describe("post-merge evidence gate states", () => {
     } as never;
 
     expect(getPostMergeEvidenceGateStatuses(task, ir)).toEqual([{ gateId: GATE_ID, state: "not-approved" }]);
+  });
+});
+
+/*
+FNXC:PostMergeCiRepository 2026-10-11-04:00 (RUFU-375, Code Review finding P0):
+A gate that REFUSED TO RUN left a row behind, and that row's `skipped` status made this resolver answer
+`not-approved` — the veto of a verdict it never authored. The veto was then unlift-able by the very operator
+the refusal named: `blocked` reaches neither the re-seed lane nor the finalizer's missing-evidence deferral,
+so Retry could not re-run the gate after the missing `postMergeCiRepo` was finally set. RUFU-348's twelve
+refusals were twelve landed cards in that state. These cases pin the widened reading and, more importantly,
+the carriers that keep it from laundering a real decision into completion.
+*/
+describe("a post-merge row that records an honest not-run cause is judged as an absence", () => {
+  const notRunRow = {
+    workflowStepId: GATE_ID,
+    workflowStepName: GATE_ID,
+    phase: "post-merge",
+    status: "skipped",
+    notRunReason: "ci-repository-unresolved",
+    completedAt: "2026-10-11T00:00:00.000Z",
+  };
+
+  function taskWithRow(row: Record<string, unknown>) {
+    return { ...taskWith([GATE_ID]), workflowStepResults: [row] } as never;
+  }
+
+  it("reports the same state, sentence, and decision as a gate whose row was never written", async () => {
+    const ir = irWithPostMergeGate(true);
+    const refused = taskWithRow(notRunRow);
+    const neverReported = taskWith([GATE_ID]);
+
+    expect(isNotRunPostMergeEvidence(notRunRow as never)).toBe(true);
+    // The claim stated as parity: a refused-to-run gate may never carry a stricter status than one that was
+    // never given the chance, or the operator's remedy stops matching the card's real state.
+    expect(getPostMergeEvidenceGateStatuses(refused, ir))
+      .toEqual(getPostMergeEvidenceGateStatuses(neverReported, ir));
+    expect(getPostMergeEvidenceGateStatuses(refused, ir)).toEqual([{ gateId: GATE_ID, state: "missing" }]);
+    expect(await getRequiredPostMergeEvidenceBlocker(storeFor(ir) as never, refused))
+      .toBe(`required post-merge evidence gate '${GATE_ID}' has not reported`);
+    expect(await getRequiredPostMergeEvidenceDecision(storeFor(ir) as never, refused))
+      .toEqual({ outcome: "resumable", gateId: GATE_ID });
+  });
+
+  it("keeps every carrier that already speaks for the delivery above the not-run reading", async () => {
+    const ir = irWithPostMergeGate(true);
+    const carriers = {
+      // A verdict is a report ABOUT the delivery, whatever else the row says (the pinned RUFU-306 shape).
+      authoredVerdict: { ...notRunRow, verdict: "REVISE" },
+      // RUFU-408: an audited human waiver is satisfied evidence, never re-run over the operator's decision.
+      auditedWaiver: {
+        ...notRunRow,
+        bypassedBy: "dashboard-operator",
+        bypassedAt: "2026-10-11T01:00:00.000Z",
+        bypassReason: "gate cannot run on this project",
+      },
+      // FN-295: an archived remediation carrier is an unconditional veto whose owned remedy is the restore sweep.
+      archivedRemediation: { ...notRunRow, remediationArchivedAt: "2026-10-11T02:00:00Z", remediationArchivedFromStatus: "failed" },
+      // RUFU-408's negative half: automated waiver metadata is not a human decision either.
+      automatedWaiver: {
+        ...notRunRow,
+        bypassedBy: FAST_MODE_BYPASS_ACTOR,
+        bypassedAt: "2026-10-11T01:00:00.000Z",
+        bypassReason: "fast lane",
+      },
+    };
+
+    for (const [name, row] of Object.entries(carriers)) {
+      expect(isNotRunPostMergeEvidence(row as never), name).toBe(false);
+      const statuses = getPostMergeEvidenceGateStatuses(taskWithRow(row), ir);
+      const decision = await getRequiredPostMergeEvidenceDecision(storeFor(ir) as never, taskWithRow(row));
+      if (name === "auditedWaiver") {
+        expect([statuses, decision], name).toEqual([[], { outcome: "finalizable" }]);
+        continue;
+      }
+      expect(statuses, name).toEqual([{ gateId: GATE_ID, state: "not-approved" }]);
+      expect(decision, name).toEqual({ outcome: "blocked", gateId: GATE_ID, reason: "skipped" });
+    }
+  });
+
+  it("stays exempt where the requirement itself is exempt, so a doomed re-seed is never scheduled", async () => {
+    const ir = irWithPostMergeGate(true);
+    const unreportable = derivePostMergeEvidenceContract({
+      declared: { provider: "none" },
+      repo: { factsReadable: true, remoteUrl: "http://192.168.12.60:6610/saneca.git", githubWorkflowFileCount: 0 },
+      observedAt: "2026-10-11T00:00:00.000Z",
+    });
+
+    // The re-seed seam refuses workspace cards by construction (`reason: "workspace"`), so classifying such
+    // a row as `missing` would have it retry forever against a refusal it can never satisfy.
+    expect(getPostMergeEvidenceGateStatuses({
+      ...taskWithRow(notRunRow),
+      workspaceWorktrees: { app: { path: "/repo/.worktrees/app" } },
+    } as never, ir)).toEqual([{ gateId: GATE_ID, state: "not-applicable", notApplicableReason: "delivery-shape" }]);
+    expect(getPostMergeEvidenceGateStatuses(taskWithRow(notRunRow) as never, ir, unreportable))
+      .toEqual([{ gateId: GATE_ID, state: "not-applicable", notApplicableReason: "no-evidence-reporter" }]);
   });
 });

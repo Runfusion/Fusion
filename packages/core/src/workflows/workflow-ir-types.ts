@@ -169,6 +169,23 @@ export interface WorkflowNodeExecutorConfig {
   cliNotify?: Record<string, unknown>;
 }
 
+/**
+ * FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+ * The CI-evidence slice of a workflow node's `config`. Like `WorkflowNodeExecutorConfig`, these ride on the
+ * open `WorkflowIrNode.config` record and are NOT a schema — `config` stays open for forward compatibility.
+ *
+ * `requiresCiRepository` declares that a node reads CI evidence in ONE named repository, so the engine must
+ * resolve that repository (project setting `postMergeCiRepo`, see `resolvePostMergeCiRepository`) BEFORE a
+ * session starts. A flagged node whose dispatched prompt still carries the `{{ciRepo}}` token refuses
+ * dispatch as a not-run `skipped` row rather than sending a reviewer out to guess, because on a fork-shaped
+ * board a guessed repository yields a truthful-but-useless "no run exists here" verdict that spends the
+ * card's one-shot re-run budget and needs a named human waiver to clear.
+ */
+export interface WorkflowNodeCiRepositoryConfig {
+  /** When true, the node cannot run until the CI-evidence repository is configured and valid. */
+  requiresCiRepository?: boolean;
+}
+
 export interface WorkflowIrEdge {
   from: string;
   to: string;

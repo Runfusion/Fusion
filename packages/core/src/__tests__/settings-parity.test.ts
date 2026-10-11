@@ -510,6 +510,19 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("githubTrackingDefaultRepo")).toBe(true);
     expect(isGlobalSettingsKey("githubTrackingDefaultRepo")).toBe(true);
     expect(isGlobalOnlySettingsKey("githubTrackingDefaultRepo")).toBe(false);
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-04:52 (RUFU-375):
+    `postMergeCiRepo` sits in the same github key cluster as `githubTrackingDefaultRepo` but its scope is the
+    opposite: project-only, with no global value to inherit. That narrowing is the requirement, not an accident —
+    the setting names the repository whose CI holds a project's landing evidence, so a global default would let
+    one deployment's fork answer for every other project and silently satisfy the post-merge gate with evidence
+    from the wrong repository. The key is deliberately absent from the both-scopes list above, and its default is
+    `undefined` so an unset value reaches the gate as the honest `not-configured` refusal instead of a guess.
+    */
+    expect(DEFAULT_PROJECT_SETTINGS.postMergeCiRepo).toBeUndefined();
+    expect(isProjectSettingsKey("postMergeCiRepo")).toBe(true);
+    expect(isGlobalSettingsKey("postMergeCiRepo")).toBe(false);
+    expect(GLOBAL_SETTINGS_KEYS as readonly string[]).not.toContain("postMergeCiRepo");
     expect(isGlobalOnlySettingsKey("themeMode")).toBe(true);
   });
 

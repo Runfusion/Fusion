@@ -32,9 +32,18 @@ describe("workflow step not-run classification", () => {
 
   it("recognizes only skipped rows carrying a fixed not-run reason through both core barrels", () => {
     expect(WORKFLOW_STEP_NOT_RUN_REASONS).toContain("repository-context-unresolved");
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+    `ci-repository-unresolved` is a DISTINCT cause from `repository-context-unresolved` because the operator
+    remedies differ — one means the workspace checkout could not be resolved, the other means the gate was never
+    told which repository holds its CI evidence. Both must classify as not-run through both barrels, or a card
+    reads as an executed review that merely never approved.
+    */
+    expect(WORKFLOW_STEP_NOT_RUN_REASONS).toContain("ci-repository-unresolved");
     for (const predicate of [isWorkflowStepNotRun, isWorkflowStepNotRunFromMainBarrel, isWorkflowStepNotRunFromGateBarrel]) {
       expect(predicate(notRun)).toBe(true);
       expect(predicate(makeResult({ status: "skipped", notRunReason: "repository-context-unresolved" }))).toBe(true);
+      expect(predicate(makeResult({ status: "skipped", notRunReason: "ci-repository-unresolved" }))).toBe(true);
       expect(predicate(makeResult({ status: "skipped", bypassedBy: "operator" }))).toBe(false);
       expect(predicate(makeResult({ status: "skipped", remediationArchivedAt: "2026-08-28T00:00:00.000Z" }))).toBe(false);
       expect(predicate(makeResult({ status: "passed", notRunReason: "not-configured" }))).toBe(false);

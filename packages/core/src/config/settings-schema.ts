@@ -919,6 +919,13 @@ export const DEFAULT_PROJECT_SETTINGS = {
   sessionAdvisorEnabledByDefault: false,
   githubLinkImportedIssuesToTracking: false,
   githubTrackingDefaultRepo: undefined,
+  /*
+  FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375): Unset by default on purpose — the post-merge Full
+  Suite gate refuses honestly when this is missing rather than guessing a repository. Declared here because
+  PROJECT_SETTINGS_KEYS derives from these keys: absent means the key is not a project setting and every
+  settings write of it would be rejected.
+  */
+  postMergeCiRepo: undefined,
   reportMode: "draft-review" as const,
   reportModeByAction: undefined,
   // FNXC:ReportPipeline 2026-07-16-20:15: Unset targets preserve action-specific routing.

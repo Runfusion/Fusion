@@ -11372,6 +11372,7 @@ export default interface Resources {
       "needsReview": "Needs follow-up review.",
       "noStepsConfigured": "No workflow steps configured for this task.",
       "noWorkflowAssigned": "No workflow assigned",
+      "notRunReasonCiRepositoryUnresolved": "the CI evidence repository is not configured for this gate",
       "notRunReasonExecutionModeSkip": "fast mode skipped this check",
       "notRunReasonNotConfigured": "no test or build command is configured",
       "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",

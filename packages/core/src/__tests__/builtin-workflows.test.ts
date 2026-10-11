@@ -20,6 +20,7 @@ import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwi
 import { BUILTIN_PR_WORKFLOW_IR } from "../workflows/builtin-pr-workflow-ir.js";
 import { BROWSER_VERIFICATION_GROUP_ID, BROWSER_VERIFICATION_STEP_NODE_ID } from "../workflows/builtin-browser-verification-group.js";
 import { CODE_REVIEW_STEP_NODE_ID, DEFAULT_CODE_REVIEW_MAX_REVISIONS } from "../workflows/builtin-code-review-group.js";
+import { POST_MERGE_CI_REPOSITORY_PLACEHOLDER } from "../workflows/builtin-post-merge-group.js";
 import { PLAN_REVIEW_GROUP_ID, PLAN_REVIEW_STEP_NODE_ID } from "../workflows/builtin-plan-review-group.js";
 import { builtinPromptConfig, BUILTIN_SEAM_PROMPTS } from "../workflows/builtin-workflow-prompts.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../workflows/builtin-workflow-settings.js";
@@ -305,6 +306,20 @@ describe("built-in workflows", () => {
       const template = postMerge?.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
       const postMergeStep = template?.nodes?.[0]?.config;
       expect(postMergeStep?.gateMode, workflow.id).toBe("gate");
+      /*
+      FNXC:PostMergeCiRepository 2026-10-11-02:35 (RUFU-375):
+      The built-in GitHub contract must carry its repository requirement in BOTH forms the runtime reads: the
+      `requiresCiRepository` declaration (author-facing intent, what the IR validator and editor see) and the
+      `{{ciRepo}}` token in the text (what actually triggers substitution and the no-session refusal). A prompt
+      edit that drops the token silently un-wires the gate — the dispatch would then search whatever remote the
+      reviewer happens to have configured, which is the RUFU-348 failure this change removes. The publishing
+      guardrail is pinned here too: naming an evidence repository made "go make the evidence exist upstream"
+      readable as an instruction, and only this section forbids it.
+      */
+      expect(postMergeStep?.requiresCiRepository, workflow.id).toBe(true);
+      expect(postMergeStep?.prompt, workflow.id).toContain(POST_MERGE_CI_REPOSITORY_PLACEHOLDER);
+      expect(postMergeStep?.prompt, workflow.id).toContain("## Publishing rules");
+      expect(postMergeStep?.prompt, workflow.id).toContain("Do not create a pull request");
       expect(postMergeStep?.prompt, workflow.id).toContain("first Full Suite push-to-main run at or after that SHA");
       expect(postMergeStep?.prompt, workflow.id).toContain("completed conclusion for Pipeline smoke tier");
       expect(postMergeStep?.prompt, workflow.id).toContain("explicit evidence-backed disposition");

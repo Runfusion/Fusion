@@ -1201,6 +1201,7 @@
     "noStepsConfigured": "No hay pasos de flujo de trabajo configurados para esta tarea.",
     "executionPhase": "",
     "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonCiRepositoryUnresolved": "the CI evidence repository is not configured for this gate",
     "replyInComments": "",
     "defaultWorkflow": "",
     "plain": "Sin formato",

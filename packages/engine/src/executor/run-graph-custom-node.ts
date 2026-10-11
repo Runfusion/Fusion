@@ -19,7 +19,7 @@ import type {
   WorkflowStep,
   WorkspaceConfig,
 } from "@fusion/core";
-import { applyNonInteractiveGitEnv, isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, requiresContentReviewProof, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
+import { applyNonInteractiveGitEnv, buildCiRepositoryNotRunOutput, isFastExecutionMode, isFastLaneSkippableCustomNode, isLegacyWorkspaceWorktreeLayout, POST_MERGE_CI_REPOSITORY_NOT_RUN_REASON, POST_MERGE_CI_REPOSITORY_PLACEHOLDER, POST_MERGE_CI_REPOSITORY_SETTING_KEY, requiresContentReviewProof, resolveEffectiveAgent, resolvePostMergeCiRepository, resolveWorkspaceTaskWorktreeDir, substituteCiRepositoryVariable, THINKING_LEVELS, WORKFLOW_STEP_NOT_RUN_REASONS } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
@@ -31,6 +31,7 @@ import {
   WORKFLOW_REVIEW_KIND_CONTEXT_KEY,
 } from "../workflows/workflow-graph-executor.js";
 import { materializePostMergePrompt } from "./post-merge-prompt.js";
+import { listConfiguredRemoteNames } from "./post-merge-publish-remotes.js";
 import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
 import {
   FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
@@ -723,6 +724,72 @@ export async function runGraphCustomNode(
       store: deps.store,
       authoredKind: postMergeEvidenceKindOfContext(graphContext),
     });
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+    The gate that names a CI-evidence repository must be told which one BEFORE a session starts. Three
+    ordering facts decide this placement, and each one is load-bearing:
+
+    1. AFTER `materializePostMergePrompt`. That swap fires only on a byte-for-byte match against the untampered
+       built-in text, so substituting the token first would disable platform materialization for every OneDev
+       and GitLab board. Substituting here also means the requirement is read off the text that is ACTUALLY
+       being dispatched: a contract that materialized to `integration-only`, `onedev-pipeline`, or
+       `gitlab-pipeline` carries no token, so those boards keep dispatching exactly as they did — which is what
+       keeps this out of RUFU-430's banned set (no hostname, provider-string, or remote-substring keying).
+    2. BEFORE the overlap-context append, so a `## Overlap wait synchronization` section can neither introduce
+       the token nor be rewritten by the substitution.
+    3. BEFORE any session is created, which is the whole point: RUFU-348 measured 12 of 12 durable post-merge
+       refusals of the class "a run in this repository does not and cannot exist", each costing a named human
+       waiver. A refusal that runs no model and costs no tokens replaces them.
+
+    An unresolved repository is recorded as a `skipped` result carrying its OWN not-run cause, following the
+    `repository-context-unresolved` guard above: never `passed` (that would hand approval semantics, and
+    RUFU-391's re-seed of verdict-less gates, to a review that never happened) and never a `REVISE`, which is
+    a verdict about the delivery. The row and the refusal text state that no run was searched for.
+
+    FNXC:PostMergeCiRepository 2026-10-11-02:20 (RUFU-375):
+    The TRIGGER is the token in the text being dispatched, not the `requiresCiRepository` config flag. The flag
+    is authored intent — it is what makes `postMergeVerificationOptionalGroupNode()` select the parameterized
+    prompt — and an IR can hold the flag while the dispatched text demands no repository at all (a contract
+    materialized to `integration-only`/`onedev-pipeline`/`gitlab-pipeline`, or an edited prompt whose CI section
+    was deleted). Refusing on the flag alone would demand a GitHub `owner/repo` slug from a board that has no
+    GitHub CI, which is the fail-closed-on-the-wrong-question shape RUFU-430 forbids. Reading the token instead
+    also closes the leak in the other direction: any node whose text carries the token gets it filled or
+    refused, so a raw `{{ciRepo}}` can never reach a model.
+    */
+    if (prompt.includes(POST_MERGE_CI_REPOSITORY_PLACEHOLDER)) {
+      const ciRepository = resolvePostMergeCiRepository(settings);
+      if (!ciRepository.resolved) {
+        const output = buildCiRepositoryNotRunOutput(settings, await listConfiguredRemoteNames(deps.rootDir));
+        await deps.store.logEntry(
+          live.id,
+          `Workflow node '${node.id}' did not run: ${output.split("\n")[0]}`,
+          output,
+          deps.getRunContextFor(live.id),
+        );
+        return {
+          outcome: "success",
+          value: POST_MERGE_CI_REPOSITORY_NOT_RUN_REASON,
+          contextPatch: {
+            notRunReason: POST_MERGE_CI_REPOSITORY_NOT_RUN_REASON,
+            output,
+          },
+        };
+      }
+      prompt = substituteCiRepositoryVariable(prompt, ciRepository.repo);
+      /*
+      FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+      The resolved repository is logged because its absence is the one thing that makes a post-merge refusal
+      unreadable after the fact: RUFU-348's twelve refusals could not be told apart from twelve genuine
+      failures without opening each card's session transcript. The setting KEY is named so a reviewer can tell
+      an authored value from a coincidence with the checkout's own remote.
+      */
+      await deps.store.logEntry(
+        live.id,
+        `Workflow node '${node.id}' reads post-merge CI evidence from '${ciRepository.repo}'`,
+        `Resolved from the project setting \`${POST_MERGE_CI_REPOSITORY_SETTING_KEY}\`; publishing targets are unchanged and no pull request will be created.`,
+        deps.getRunContextFor(live.id),
+      );
+    }
     if (overlapResumeContext) {
       prompt = [prompt, "", "## Overlap wait synchronization", overlapResumeContext].join("\n");
     }

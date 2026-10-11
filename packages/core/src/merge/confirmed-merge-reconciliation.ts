@@ -5,6 +5,7 @@ import { authoredPostMergeEvidenceKindOf, postMergeEvidenceDemandsCi, resolvePos
 import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import { BLOCKING_TASK_STATUSES, clearMergeConfirmedTransientStatus } from "./task-merge.js";
 import { isAuditedOperatorBypass } from "./pre-merge-approval.js";
+import { isWorkflowStepNotRun } from "../workflows/workflow-step-results.js";
 import { isPostMergeEvidenceUnreportable, type PostMergeEvidenceContract } from "./post-merge-evidence-contract.js";
 
 export type ConfirmedMergeChecklistReconciliation = {
@@ -97,6 +98,30 @@ export type PostMergeEvidenceNotApplicableReason =
   | "no-evidence-reporter"
   | "verdict-precedes-contract";
 
+/*
+FNXC:PostMergeCiRepository 2026-10-11-03:59 (RUFU-375, Code Review finding P0):
+A `skipped` row carrying an honest `notRunReason` is a gate that REFUSED TO RUN, not a gate that reported.
+Reading it as `not-approved` gave it the merge veto of a verdict it never authored, and the veto was
+permanently unlift-able by the very operator the refusal names: `blocked` reaches neither
+`isPostMergeGateRecoveryDue` nor the finalizer's `state === "missing"` deferral, so `retry`/Retry could not
+re-seed the gate and the card dead-ended after the guard had already told a human to "set the setting, then
+use Retry". Measured shape: RUFU-348's twelve `postMergeCiRepo` refusals each produce exactly this row on a
+card whose merge is already confirmed.
+
+The three exclusions are what keep this from laundering a real decision into completion:
+  - `bypassedBy` — an audited human waiver still resolves through `isAuditedOperatorBypass` one step later
+    (RUFU-408), so a waiver row is never reinterpreted as an absence and re-run over the operator's decision;
+  - `verdict` — a row that both authored a verdict and named a not-run cause is a report, so it keeps the
+    verdict's veto (`skipped` + `verdict: "REVISE"` stays `not-approved`, as the pinned contract demands);
+  - `remediationArchivedAt` — an FN-295 archived carrier is an unconditional veto whose owned remedy is
+    `reconcile-collateral-archived-review-gate` restoring its pre-archive status, not a re-seed.
+Exported rather than inlined so the classifier is one named fact the engine's re-seed lane and the tests can
+cite, instead of a shape each consumer re-derives (RUFU-179's offer == accept lesson).
+*/
+export function isNotRunPostMergeEvidence(result: WorkflowStepResult): boolean {
+  return isWorkflowStepNotRun(result) && !result.verdict && !result.bypassedBy && !result.remediationArchivedAt;
+}
+
 export interface PostMergeEvidenceGateStatus {
   gateId: string;
   state: PostMergeEvidenceGateState;
@@ -163,7 +188,16 @@ export function getPostMergeEvidenceGateStatuses(
     post-merge refusals across the fleet said the repo has no CI pipeline, and every saneca landing cost
     one operator waiver (11 on 2026-09-29 alone) to release a card whose gate could not be rung.
     */
-    if (!result) {
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-03:59 (RUFU-375, Code Review finding P0):
+    An honest not-run carrier is judged by the SAME requirement ladder as a row that was never written, so a
+    gate that refused to run cannot acquire a stricter status than a gate that never got the chance. Keeping
+    it in this ladder rather than returning `missing` directly also preserves RUFU-429/RUFU-430: a workspace
+    lane or a reporter-less board is still `not-applicable` for such a row, which matters because the
+    re-seed seam refuses workspace cards by construction and an unconditional `missing` would have it retry
+    forever against a refusal it can never satisfy.
+    */
+    if (!result || isNotRunPostMergeEvidence(result)) {
       const demandsCi = postMergeEvidenceDemandsCi(evidenceKindByGate.get(gateId) ?? resolvePostMergeEvidenceKind({ authored: undefined, provider: contract?.provider }));
       if (unreportable && demandsCi) {
         return [{ gateId, state: "not-applicable", notApplicableReason: "no-evidence-reporter" }];
@@ -240,7 +274,18 @@ export async function getRequiredPostMergeEvidenceDecision(
     // No status means nothing is owed here: the gate is disabled, already approved, or inapplicable to
     // this delivery shape / reporter set (RUFU-429, RUFU-430).
     if (!status || status.state === "not-applicable") continue;
-    if (results.length === 0) return { outcome: "resumable", gateId };
+    /*
+    FNXC:PostMergeCiRepository 2026-10-11-03:59 (RUFU-375, Code Review finding P0):
+    The STATUS, not the row count, decides whether this gate is owed a run — the two loops asking the same
+    question independently is exactly what this module's own doctrine forbids, and here it is the difference
+    between a recoverable deferral and a permanent park: a not-run carrier HAS a row (so the old row-count
+    test called it a report) while the status reader above already classified it as the absence it is.
+    `state === "missing"` therefore covers both the never-written row and the refused-to-run row, and every
+    downstream arm — the finalizer's `deferredPostMergeEvidence` deferral instead of a fatal block on a
+    published landing, and `isPostMergeGateRecoveryDue` handing the card back to the gate on the next pass —
+    follows without a per-surface edit. The re-seed remains bounded by the engine's per-(task, gate) budget.
+    */
+    if (results.length === 0 || status.state === "missing") return { outcome: "resumable", gateId };
     const [result] = results;
     if (result.status === "pending") return { outcome: "blocked", gateId, reason: "pending" };
     if (result.status === "failed") return { outcome: "blocked", gateId, reason: "failed" };

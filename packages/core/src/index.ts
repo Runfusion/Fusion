@@ -1585,7 +1585,7 @@ export {
   resolveUnprovenReviewApproval,
   COLLATERAL_ARCHIVED_REVIEW_GATE_DIAGNOSTIC,
 } from "./merge/pre-merge-approval.js";
-export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, getPostMergeEvidenceGateStatuses, resolveRequiredPostMergeGateIds, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, getPostMergeEvidenceGateStatuses, isNotRunPostMergeEvidence, resolveRequiredPostMergeGateIds, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation, PostMergeEvidenceGateState, PostMergeEvidenceGateStatus, PostMergeEvidenceNotApplicableReason } from "./merge/confirmed-merge-reconciliation.js";
 /*
 FNXC:PostMergeEvidenceContract 2026-09-30-22:29 (RUFU-430):
@@ -1623,8 +1623,27 @@ export {
   POST_MERGE_EVIDENCE_KINDS,
   describePostMergeEvidenceKinds,
   POST_MERGE_VERIFICATION_PROMPT,
+  POST_MERGE_PUBLISH_TARGETS_RULES,
 } from "./workflows/builtin-post-merge-group.js";
 export type { PostMergeEvidenceKind } from "./workflows/builtin-post-merge-group.js";
+/*
+FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+The CI-evidence repository rule. Exported on both barrels (see index.gate.ts for why the gate lane needs it)
+so the engine reads the rule across the package boundary rather than re-deriving it, and the dashboard can
+name the setting and the not-run cause without duplicating either.
+*/
+export {
+  POST_MERGE_CI_REPOSITORY_SETTING_KEY,
+  POST_MERGE_CI_REPOSITORY_PLACEHOLDER,
+  POST_MERGE_CI_REPOSITORY_NOT_RUN_REASON,
+  POST_MERGE_CI_REPOSITORY_REFUSAL_PREFIX,
+  resolvePostMergeCiRepository,
+  resolvePostMergePublishTargetFacts,
+  buildCiRepositoryNotRunOutput,
+  substituteCiRepositoryVariable,
+} from "./workflows/post-merge-ci-repository.js";
+export type { PostMergeCiRepositoryResolution, PostMergeCiRepositorySettings, PostMergePublishTargetFacts } from "./workflows/post-merge-ci-repository.js";
+export type { WorkflowNodeCiRepositoryConfig } from "./workflows/workflow-ir-types.js";
 export type { PostMergeEvidenceProvider, PostMergeEvidenceSource, PostMergeEvidenceReason, PostMergeEvidenceContract, PostMergeRepoFacts, DeclaredPostMergeEvidence } from "./merge/post-merge-evidence-contract.js";
 export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {

@@ -2182,6 +2182,20 @@ export interface ProjectSettings {
    *  Falls back to global githubTrackingDefaultRepo when unset. */
   githubTrackingDefaultRepo?: string;
   /**
+   * FNXC:PostMergeCiRepository 2026-10-11-00:37 (RUFU-375):
+   * The `owner/repo` slug of the repository whose CI holds the post-landing delivery record the built-in
+   * `Full Suite` post-merge gate reads. This project publishes to a fork and merges into a canonical
+   * upstream, and CI runs only on the canonical repo, so "which repo do I search for the run" is a
+   * deployment fact a card's worktree cannot answer (a landed card's worktree is normally already gone).
+   * Deliberately SEPARATE from `githubTrackingDefaultRepo`: that key is where tracking issues are opened
+   * and this one is where delivery evidence lives — a board may split them again, and reusing one key for
+   * two roles is how a tracking-repo edit silently redirects a gate's evidence search.
+   * No fallback: `origin`, `gh` context, `githubTrackingDefaultRepo` and `merge.pushRemote` are each a
+   * different question than "where does CI run", so an unset value is an honest refusal, never a guess
+   * (see `resolvePostMergeCiRepository`).
+   */
+  postMergeCiRepo?: string;
+  /**
    * FNXC:ReportPipeline 2026-07-16-12:00:
    * In-app reports default to review before egress; operators can opt into
    * direct filing globally or for one of the four guided report actions.

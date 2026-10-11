@@ -25,7 +25,14 @@ Keep this fixed reason tuple local and drift-tested against the Node barrel inst
 core workflow helpers that would pass Vitest and fail the production build.
 */
 
-export const WORKFLOW_STEP_NOT_RUN_REASONS = ["not-configured", "tooling-unavailable", "execution-mode-skip", "repository-context-unresolved"] as const;
+/*
+FNXC:PostMergeCiRepository 2026-10-11-02:35 (RUFU-375):
+`ci-repository-unresolved` is appended in the same change as the core tuple: the drift test
+(`taskProgress.test.ts` asserts `toEqual(CORE_WORKFLOW_STEP_NOT_RUN_REASONS)`) makes a one-sided update red, and a
+reason missing here would render a real not-run gate as a plain `skipped` row — hiding the fact that the post-merge
+Full Suite gate refused because nobody told it which repository runs CI.
+*/
+export const WORKFLOW_STEP_NOT_RUN_REASONS = ["not-configured", "tooling-unavailable", "execution-mode-skip", "repository-context-unresolved", "ci-repository-unresolved"] as const;
 const WORKFLOW_STEP_NOT_RUN_REASON_SET: ReadonlySet<string> = new Set(WORKFLOW_STEP_NOT_RUN_REASONS);
 
 export function isWorkflowStepNotRun(result: WorkflowStepResult): boolean {

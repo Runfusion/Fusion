@@ -1201,6 +1201,7 @@
     "noStepsConfigured": "Nenhuma etapa de fluxo de trabalho configurada para esta tarefa.",
     "executionPhase": "Fase de execução",
     "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonCiRepositoryUnresolved": "the CI evidence repository is not configured for this gate",
     "replyInComments": "Responda nos comentários e remova a pausa da tarefa para continuar.",
     "defaultWorkflow": "Padrão",
     "plain": "Sem formatação",

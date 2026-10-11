@@ -1201,6 +1201,7 @@
     "noStepsConfigured": "이 작업에 구성된 워크플로 단계가 없습니다.",
     "executionPhase": "",
     "notRunReasonRepositoryContextUnresolved": "the workspace repository context could not be resolved",
+    "notRunReasonCiRepositoryUnresolved": "the CI evidence repository is not configured for this gate",
     "replyInComments": "",
     "defaultWorkflow": "",
     "plain": "일반 텍스트",

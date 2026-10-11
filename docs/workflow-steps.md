@@ -474,7 +474,7 @@ Fast creation surfaces submit explicit `enabledWorkflowSteps: []` even before op
 
 Optional quality gates are authored directly in the workflow graph as `optional-group` **nodes**. An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs **once per enabled graph attempt**, and passes through (skips) when disabled. The template contains no internal iteration or rework edges (`validateOptionalGroup` rejects them), but the outer graph may re-enter the group for pre-merge fix/re-review remediation governed by `maxRevisions`.
 
-Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, reviewKind?, blockingSeverity?: "any" | "low" | "medium" | "high" | "critical", maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", template: { nodes, edges } }`.
+Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, reviewKind?, blockingSeverity?: "any" | "low" | "medium" | "high" | "critical", maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", evidence?: { kind?: PostMergeEvidenceKind }, requiresCiRepository?: boolean, template: { nodes, edges } }`.
 
 #### Review blocking severity
 
@@ -493,9 +493,20 @@ A direct top-level `prompt`, `gate`, or `script` review node may declare `config
 
 ### Not-executed checks
 
-A check that never starts is stored as terminal `status: "skipped"` with a fixed `notRunReason`: `not-configured` when no test or build command exists, `tooling-unavailable` when a required tool such as `agent-browser` is unavailable, `execution-mode-skip` when fast mode deliberately omits the check, or `repository-context-unresolved` when a workspace gate cannot resolve its task-owned repository context. Dashboard progress, Workflow results, and agent activity present this state as **Not executed** with its reason, and count it as completed without painting it as passed.
+A check that never starts is stored with `status: "skipped"` and a fixed `notRunReason`: `not-configured` when no test or build command exists, `tooling-unavailable` when a required tool such as `agent-browser` is unavailable, `execution-mode-skip` when fast mode deliberately omits the check, `repository-context-unresolved` when a workspace gate cannot resolve its task-owned repository context, or `ci-repository-unresolved` when a post-merge gate's text names a CI evidence repository (`{{ciRepo}}`) that the project has not configured. Dashboard progress, Workflow results, and agent activity present this state as **Not executed** with its reason, and count it as completed without painting it as passed.
 
-The graph still follows the success edge, so no operator action is required. Recorders deliberately do not write this discriminator for the `plan-review` group: Plan Review satisfaction is fail-closed on skipped rows, and writing one would create a blocking hold rather than an automatic continuation. This exclusion does not allow an unexecuted Plan Review to satisfy merge approval; both plan-domain and code-domain gates still require their existing positive evidence.
+For a check the flow does not still owe, the graph follows the success edge and no operator action is required. Recorders deliberately do not write this discriminator for the `plan-review` group: Plan Review satisfaction is fail-closed on skipped rows, and writing one would create a blocking hold rather than an automatic continuation. This exclusion does not allow an unexecuted Plan Review to satisfy merge approval; both plan-domain and code-domain gates still require their existing positive evidence.
+
+<!--
+FNXC:PostMergeCiRepository 2026-10-11-04:12 (RUFU-375, Code Review finding P0):
+"No operator action required" is true of a not-executed check nothing still owes. It stopped being the whole truth
+for a required POST-merge evidence gate: that row is written by a refusal this build caused, on a card the merge
+seam already confirmed landed, and judging it as a decision the card had lost made the card permanently
+unsatisfiable — RUFU-348 measured twelve such cards waiting until named humans waived them one at a time. The row
+is now judged as the absence it records, which is what makes the refusal's own remedy work.
+-->
+
+**A not-run row on a required post-merge evidence gate is an absence, not a lost decision.** The ladder that judges a gate with no result at all judges it: the card counts as still owed (`missing`), the blocker reads "has not reported" rather than "is not approved", and the bounded post-merge re-seed lane (three attempts, `merge/post-merge-gate-reseed.ts`) may admit it again — so filling in the missing setting and pressing Retry actually moves the card instead of re-recording the same refusal. The exemptions stay exemptions: a workspace-shaped card and a board with no evidence reporter are not applicable, and a not-run row a human already waived (`bypassedBy`) or that a remediation archive left behind (`remediationArchivedAt`) is never re-run over.
 
 Built-in optional gates ship as inlined IR builders, not as a template catalog:
 
@@ -661,6 +672,44 @@ Because the project fact alone would have meant "no post-merge review at all" fo
 - `parseWorkflowIr` validates `evidence.kind` against all four values, so a typo cannot persist as an unrecognisable demand. A stored IR whose inner prompt was generated from the full-suite built-in is accepted as-is (the prompt is materialized at dispatch, not stored); one edited past that is only accepted when it names no GitHub-only artifact or no CI evidence at all, so an authored contract survives.
 - Why this is per-node and not per-project: `builtin:coding` is the default workflow on every board here and ships the gate with `defaultOn: true`, so nobody chose the GitHub contract — and the only workflow-level escape was one with no post-merge group at all, which also drops the integration review (that review found a real broken backup command on VLLM-078 while refusing for want of shard artifacts).
 - The workflow **editor UI** does not yet expose the field; it is authored in the stored IR. Exposing it is a follow-up card.
+
+#### Where the Full Suite record is read from, and what the gate may never do
+
+<!--
+FNXC:PostMergeCiRepository 2026-10-11-03:05 (RUFU-375):
+RUFU-430 answered WHICH evidence the gate demands; this answers WHERE it is read from, which the shipped prompt
+answered by hardcoding one repository's slug. Measured: 10 of 10 post-merge review failures on boards that are not
+runfusion/fusion named a run that does not exist in their repository (FN-9243 … FN-9533), 8 of them on GitHub boards
+of their own, and every one ended in a named human waiver — because the only remedy the card text offered was
+"verify on main", which is true of a repository the card was never about.
+-->
+
+The built-in gate's Full Suite clause reads `{{ciRepo}}`, filled at dispatch from the project setting
+[`postMergeCiRepo`](./settings-reference.md#post-merge-ci-evidence-repository), because a repository **slug** cannot be derived
+from the git `remote` vocabulary the merge seam already speaks — `merge.pushRemote` / `merge.extraRemoteNames` name
+*publish targets* (`origin`, `upstream`), not the hosted-CI project an operator reads. The gate therefore never falls back
+to `origin`: RUFU-430's own non-goal is that Fusion queries **no** CI API, so nothing downstream could correct a wrong
+repository, and a slug guessed from the checkout's default remote would reproduce the defect on a mirrored, forked, or
+multi-remote board while looking authoritative.
+
+- **Unconfigured refuses, honestly and before any session.** The gate records a `skipped` result with
+  `notRunReason: "ci-repository-unresolved"` and text saying the CI evidence repository is **not configured** — never that a
+  run does not exist, which is the sentence that sent ten operators hunting for a pipeline instead of filling in one
+  setting. No model runs, so the refusal costs no tokens, and the operator remedy names the setting key.
+- **The guardrail is authored in the prompt, not implied.** Every generated post-merge text ends with a `## Publishing rules`
+  section: publishing goes to the configured remotes only, and creating or updating a pull/merge request is **forbidden** —
+  publishing and PR creation belong to Fusion's merge seam. RUFU-348 measured `FN-9243` opening and leaving behind a stray PR
+  because the old text only said "do not push again". The section carries no `{{ciRepo}}` token, so an `integration-only`,
+  OneDev, or GitLab contract gains the rule without gaining a substitution requirement.
+- **Refusing is not refusing everything.** The repository parameterization never suppresses the integration review: a board
+  that cannot name its CI repository loses the CI-shaped evidence demand, and `evidence.kind: "integration-only"` remains
+  authored on the node and still owed. A refusal must therefore not delete the card — it is one missing setting, not a
+  gate to waive away.
+- **Which text triggers it.** The trigger is the `{{ciRepo}}` token in the text being dispatched, not the node's
+  `requiresCiRepository` flag: a contract materialized to `integration-only` / `onedev-pipeline` / `gitlab-pipeline` carries
+  no token, so those boards keep dispatching exactly as they did — demanding a GitHub `owner/repo` from a board with no
+  GitHub CI is the fail-closed-on-the-wrong-question shape RUFU-430 forbids. Reading the token also means a raw `{{ciRepo}}`
+  can never reach a model: either it is filled, or the gate refuses.
 
 
 ## Execution Modes

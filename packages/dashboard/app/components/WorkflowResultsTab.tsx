@@ -114,6 +114,13 @@ const NOT_RUN_REASON_LABELS = {
   "tooling-unavailable": ["app:workflow.notRunReasonToolingUnavailable", "a required tool was unavailable"],
   "execution-mode-skip": ["app:workflow.notRunReasonExecutionModeSkip", "fast mode skipped this check"],
   "repository-context-unresolved": ["app:workflow.notRunReasonRepositoryContextUnresolved", "the workspace repository context could not be resolved"],
+  /*
+  FNXC:PostMergeCiRepository 2026-10-11-02:35 (RUFU-375):
+  Copy discipline for this row: it must say the gate was never told where to look, never that a CI run is
+  absent. RUFU-291 measured 10/10 post-merge refusals whose operator-facing sentence claimed a run "does not
+  exist"; the wrong noun sends the operator to hunt for a pipeline instead of filling in one setting.
+  */
+  "ci-repository-unresolved": ["app:workflow.notRunReasonCiRepositoryUnresolved", "the CI evidence repository is not configured for this gate"],
 } as const;
 
 function getStatusLabel(result: WorkflowStepResult, t: ReturnType<typeof useTranslation>["t"]): string {

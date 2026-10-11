@@ -490,6 +490,37 @@ describe("WorkflowResultsTab", () => {
       .toHaveTextContent("Not executed — the workspace repository context could not be resolved");
   });
 
+  /*
+  FNXC:PostMergeCiRepository 2026-10-11-02:40 (RUFU-375):
+  RUFU-375's operator-facing half: when the post-merge Full Suite gate was never told which repository runs CI,
+  the card must say the configuration is missing and must NOT claim a run is absent. The negative assertions are
+  the point of this case — RUFU-291 measured 10/10 post-merge refusals whose wording sent the operator to look
+  for a pipeline that was already running in another repository.
+  */
+  it("labels an unresolved CI evidence repository as not executed without claiming a run is absent", () => {
+    render(
+      <WorkflowResultsTab
+        taskId="FN-001"
+        task={baseTask}
+        settings={mockSettings}
+        results={[{
+          workflowStepId: "post-merge-verification",
+          workflowStepName: "Post-merge Verification",
+          phase: "post-merge",
+          status: "skipped",
+          notRunReason: "ci-repository-unresolved",
+        }]}
+      />,
+    );
+
+    const badge = screen.getByTestId("workflow-result-badge-post-merge-verification");
+    expect(badge).toHaveTextContent("Not executed — the CI evidence repository is not configured for this gate");
+    expect(badge).toHaveClass("workflow-result-badge--not-run");
+    expect(badge).not.toHaveTextContent("does not exist");
+    expect(badge).not.toHaveTextContent("Failed");
+    expect(screen.getByTestId("workflow-results-summary")).toHaveTextContent("1 not executed");
+  });
+
   it("keeps the documentation-delivery name and status badge on the Workflow tab", () => {
     render(
       <WorkflowResultsTab

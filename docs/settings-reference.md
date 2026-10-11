@@ -805,6 +805,7 @@ Default notes:
 | `githubTrackingDedupEnabled` | `boolean` | `true` | When enabled, tracking issue creation searches open and closed repo issues for likely duplicates before opening a new issue (gh CLI search first, with REST search fallback). Set `false` to skip dedup and always create a new issue when tracking is enabled. Dashboard location: **Settings → Project → General → GitHub Tracking**. |
 | `githubAuthMode` | `"gh-cli" \| "token"` | `"gh-cli"` | Project GitHub auth strategy used by tracking lifecycle integration. `"gh-cli"` requires an installed/authenticated `gh` CLI. `"token"` requires a non-empty `githubAuthToken` (or `GITHUB_TOKEN` env fallback). Tracking lifecycle auth is strict per selected mode (no cross-fallback). |
 | `githubAuthToken` | `string` | `undefined` | Optional project PAT used when `githubAuthMode` is `"token"` (takes precedence over server startup token for tracking flows). |
+| `postMergeCiRepo` | `string` | `undefined` (unset) | The `owner/repo` whose hosted CI publishes the delivery record the **post-merge verification gate** reads (see [Post-merge CI evidence repository](#post-merge-ci-evidence-repository)). Unset means the gate does not run. Not a publish target, not a tracking default, not a credential. |
 
 GitLab enablement defaults effectively to on when `gitlabEnabled` is unset, so existing installations keep GitLab behavior until an operator turns the integration off. Project `gitlabEnabled` overrides global `gitlabEnabled`; if both are unset, GitLab API operations are active subject to token/URL validation. Disabling GitLab skips or rejects outbound network-backed operations but does not delete `gitlabInstanceUrl`, `gitlabApiBaseUrl`, `gitlabAuthToken`, or `gitlabAuthTokenType`; re-enabling resumes with the saved configuration. The Settings UI keeps these controls behind GitLab Configuration / GitLab Authentication disclosures, with the enable toggle in each disclosure header.
 
@@ -833,6 +834,35 @@ The built-in `post-merge-verification` gate demands a post-landing CI delivery r
 - **GitLab needs no new setting.** The GitLab reporter is derived from the existing `gitlabInstanceUrl` / `gitlabApiBaseUrl` / `gitlabAuthToken` config already documented above: a self-managed instance is derived for free; `gitlab.com` requires the GitLab integration to be enabled, because a bare `github.com`-shaped remote is not proof of a GitLab project. A GitLab reporter is never derived from the remote alone (an `https://gitlab…` remote with the integration disabled or no URL configured stays `non-github-remote`).
 - **OneDev has no other settings surface**, so `baseUrl` is the only way to give it a reporter — there is no OneDev instance config elsewhere in Settings to reuse.
 - **Non-goal:** declaring a reporter does not make Fusion query that CI. It only selects which platform's own delivery page the reviewer reads; there is no HTTP client, polling, or retry. Exposing this declaration in the Settings UI / workflow editor is tracked separately (RUFU-456); today it is authored as a raw project setting.
+
+### Post-merge CI evidence repository
+
+<!--
+FNXC:PostMergeCiRepository 2026-10-11-03:05 (RUFU-375):
+Where the built-in post-merge gate reads its Full Suite record used to be a repository slug baked into the prompt.
+Measured: 10 of 10 post-merge review failures on boards that are not runfusion/fusion named a run that does not
+exist in their repository, 8 of them on GitHub boards of their own, every one closed by a named human waiver. The
+slug cannot be derived from the git `remote` vocabulary the merge seam uses (`merge.pushRemote` /
+`merge.extraRemoteNames` name publish targets, not a hosted-CI project), which is why this is its own setting and
+why there is no `origin` fallback.
+-->
+
+| Setting | Type | Default | Behavior |
+| --- | --- | --- | --- |
+| `postMergeCiRepo` | `string` | `undefined` (unset — the gate does not run) | The `owner/repo` whose hosted CI publishes the delivery record the post-merge verification gate reads. The value passes `validateGithubRepoSlug` — the same validator `githubRepository` uses — so a URL, a path with a `.git` suffix, or a nested path is not a repository this gate will accept. |
+
+- **A malformed value is treated as no answer, never as a guess.** The validator runs where the gate reads the setting, so a
+  misspelling refuses the gate with its own cause — the refusal names that the setting carries a value that is not an
+  `owner/repo` slug and that nothing was searched for instead — rather than falling back to a remote, which would let a typo
+  silently point the reviewer at the wrong repository.
+
+- **Scope is exactly one thing:** where the post-merge gate reads CI evidence. It is **not** a publish target — publishing stays driven by the git remotes the project declares, which name remotes rather than a hosted-CI project — and it is **not** the tracking-issue default (`githubRepository`), nor an origin fallback, nor a credential. The gate is forbidden from creating or updating a pull/merge request: publishing and PR creation belong to Fusion's merge seam. Where the gate refuses for a missing repository, its message separates the remotes the project **declares** as publishing targets from the ones that merely **exist** in the checkout, because a remote existing is not authorization to publish there.
+- **Unset refuses honestly instead of guessing.** The gate records **Not executed — the CI evidence repository is not configured** (`notRunReason: "ci-repository-unresolved"`) and starts no session, so it costs no tokens. It deliberately does not say a run does not exist: that phrasing is what previously sent operators hunting for a pipeline on a board whose only problem was one empty field. The remedy it names is this setting.
+  <!-- FNXC:PostMergeCiRepository 2026-10-11-04:12 (RUFU-375, Code Review finding P0): a named remedy has to move the card. -->
+  That remedy works: the refusal is judged as evidence that never arrived, not as a review the card lost, so setting this key and using **Retry** (or the bounded automatic re-seed, three attempts) re-runs the gate against the repository you just named. A refusal a human already waived with the audited bypass is honored and never re-run over.
+- **Boards with no GitHub CI need nothing.** The `{{ciRepo}}` placeholder exists only in the GitHub-shaped Full Suite text, so a project whose evidence contract resolves to OneDev, GitLab, `integration-only`, or `none` never consults this setting and its gate behavior is unchanged.
+- **No Settings row yet**, and that is deliberate rather than unfinished: this task shipped no UI surface, so the setting is authored as raw project settings — the same route `postMergeEvidence` takes today (see [Post-merge CI evidence declaration](#post-merge-ci-evidence-declaration)).
+- **A custom prompt that names the placeholder gets it filled too.** The substitution runs on whatever text is about to be dispatched, so an operator-authored prompt carrying `{{ciRepo}}` is resolved from this setting; if the setting is unset, that gate refuses the same way rather than handing a model a literal `{{ciRepo}}`.
 
 | `autoCreatePr` | `boolean` | `false` | Auto-create PRs for completed tasks. |
 | `autoBackupEnabled` | `boolean` | `false` | Enable scheduled shared-database backups. |
