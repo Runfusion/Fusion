@@ -1431,6 +1431,16 @@ structure guard in `packages/cli/src/__tests__/extension-agent-class-boot-budget
 sentence's stage list against the occurrence order of the four registry reads inside `getStore`, so
 reordering either side turns a test red. Renaming a stage in the doc fails that guard too, because it
 enumerates the four stages by name.
+
+FNXC:TaskStoreBootDeadline 2026-10-11-04:41 (RUFU-392):
+The bullet's closing clause was falsified by the same code it documented: it claimed that only a root
+still inside a boot budget joins the one shared in-flight boot, naming a figure `getStore` does not have.
+There is no budget-conditioned join in the seam — `storeBootInflight.get(projectRoot) ??
+startStoreBoot(projectRoot)` is reached unconditionally once the cache read and the failure cooldown
+pass, and `EXTENSION_STORE_BOOT_TIMEOUT_MS` (30 000 ms) bounds only the awaited race, never the join.
+RUFU-388's doc-parity guard could not see this because it compares the four stage names and their order,
+not the prose of the bullet around them. Rewritten to sit on the shipped lines; the surrounding bullets
+were already true and stay byte-identical.
 -->
 Every extension tool resolves its store through one `getStore(projectRoot)` seam, so the boot cost
 and its deadline are shared by all of them rather than paid per surface:
@@ -1439,8 +1449,9 @@ and its deadline are shared by all of them rather than paid per surface:
   store injected by the host) is returned before the boot deadline wrapper is even constructed, so a
   live store never pays the boot budget. The failure cooldown is consulted before the in-flight map, so
   a root that recently failed is refused immediately by a 5 000 ms cooldown rather than joining a boot
-  the cooldown has already given up on; only a root still inside its 15 000 ms budget joins the one
-  shared in-flight boot for that path.
+  the cooldown has already given up on. Once the cache and the cooldown both pass, joining that path's
+  one shared in-flight boot is unconditional; the 30 000 ms store-boot budget bounds only how long a
+  caller waits on the boot it joined, never whether the join happens.
 - **Two distinct rejection shapes.** A budget that expires while nothing has failed yet produces
   `fn extension TaskStore boot timed out after <N>ms`; a root already inside the backoff produces
   `fn extension TaskStore boot recently failed (cooldown <N>ms): <cause>` and returns at once. The

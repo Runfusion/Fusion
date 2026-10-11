@@ -371,8 +371,18 @@ because the machine never persists them: the runtime that hosts the extension fo
 promised a durable engine-side record, which is the false contract that cost that search its entire
 attempt. The architecture doc already states the opposite invariant ("process-local console output, not
 telemetry"). These are code-construct scans, not prose checks: the emission seam must stay exactly one
-`console.warn` of the `[taskstore-boot]` line with no durable sink reachable from it, and the
-falsified persisted-record claim must not come back.
+`console.warn` of the `[taskstore-boot]` line with no durable sink reachable from it.
+
+FNXC:TestsAssertBehavior 2026-10-11-04:41 (RUFU-392):
+This file used to carry a second arm beside the guard below — two `expect(extensionSource).not.toMatch(...)`
+ratchets matching two sentence fragments of the `reportStoreBoot` JSDoc prose. That made comment wording a
+test subject, which AGENTS.md ("Tests Assert Behavior, Never Source Text Or Comments") forbids: the cheapest
+way to satisfy such an assertion is to re-add a sentence to shipped source for no reason but the assertion,
+and the automated checker only flags `FNXC:` stamps inside matchers, so lint could not catch it. Both
+ratchets are deleted, and this note deliberately describes them instead of quoting them — reproducing the
+fragments here would leave this file grepping as a consumer of wording again, which is the defect class.
+The console-only invariant the RUFU-377 search needed is covered honestly by the structural guard below — a
+durable sink reachable from `reportStoreBoot` fails it — and review enforces the prose half of that rule.
 */
 describe("reportStoreBoot's sink is console-only (RUFU-388)", () => {
   const extensionSource = readRepoFile("packages/cli/src/extension.ts");
@@ -385,12 +395,6 @@ describe("reportStoreBoot's sink is console-only (RUFU-388)", () => {
     expect(body).toContain("[taskstore-boot] ");
     // A persisted sink reachable from here would contradict the invariant the comment now states.
     expect(body).not.toMatch(/recordRunAudit|emitBoundedRunAudit|appendFile|createWriteStream/);
-  });
-
-  it("carries no claim that the boot line survives as a durable record", () => {
-    // Ratchet against re-authoring the RUFU-377-falsified contract, in either wording it shipped in.
-    expect(extensionSource).not.toMatch(/land(?:s)? in the engine log/);
-    expect(extensionSource).not.toMatch(/record a future stall is diagnosed from/);
   });
 });
 
