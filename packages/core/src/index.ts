@@ -837,6 +837,8 @@ export {
   detectWorkflowDrift,
   type WorkflowIrPin,
   type WorkflowDriftReason,
+  EpochedWorkflowIrCache,
+  EpochedWorkflowSelectionCache,
   type WorkflowIrResolverStore,
   type WorkflowSelectionCache,
   type WorkflowSelectionReadTally,

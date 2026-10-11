@@ -674,6 +674,31 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public readonly laneCache = new TaskLaneCache();
 
   /*
+  FNXC:WorkflowBatchCacheEpoch 2026-10-11-19:12 (RUFU-584, operator directive to eliminate the leak):
+  A workflow pass cache has always been scoped to one resolver call or one sweep, because nothing
+  invalidated it - safety came purely from short lifetime. That lifetime is the leak: self-healing
+  allocated 14 separate per-sweep IR/selection caches, so a card visited by 14 sweeps in one maintenance
+  batch cost 14 selection reads and 14 definition reads, and each queued read pinned its caller's
+  materialized task batch on a 3-lane pool per store (DEFAULT_POOL_MAX). Sharing one cache across a
+  batch is only safe if a write can make it stale, so the store carries two monotonic in-process
+  counters bumped at every public workflow selection and definition write seam. Counters are
+  deliberately not persisted: they exist to make an in-process cache safe to share, and a restart starts
+  every cache empty. Over-bumping costs a re-read; under-bumping would serve a stale workflow, so every
+  public write path bumps unconditionally instead of guessing which writes "matter".
+  */
+  private workflowSelectionEpochValue = 0;
+  private workflowDefinitionEpochValue = 0;
+
+  /** Monotonic in-process counter; any workflow selection write advances it. */
+  workflowSelectionEpoch(): number { return this.workflowSelectionEpochValue; }
+  /** Monotonic in-process counter; any workflow definition write advances it. */
+  workflowDefinitionEpoch(): number { return this.workflowDefinitionEpochValue; }
+  /** Selection write seams call this; a shared pass cache must not survive one. */
+  bumpWorkflowSelectionEpoch(): void { this.workflowSelectionEpochValue++; }
+  /** Definition write seams call this. */
+  bumpWorkflowDefinitionEpoch(): void { this.workflowDefinitionEpochValue++; }
+
+  /*
   FNXC:EventDrivenDispatch 2026-09-18-00:40:
   FN-519 — the advisory dispatch-wake signal for this store, when a consumer installed one.
 
@@ -4255,7 +4280,9 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     return assertWorkflowIrTraitsValidImpl(this, ir);
   }
   async createWorkflowDefinition( input: WorkflowDefinitionInput, ): Promise<WorkflowDefinition> {
-    return createWorkflowDefinitionImpl(this, input);
+    const out = await createWorkflowDefinitionImpl(this, input);
+    this.bumpWorkflowDefinitionEpoch();
+    return out;
   }
 
 /** only workflows or only fragments; omit it to get the full merged set. */
@@ -4278,10 +4305,13 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     return getWorkflowDefinitionImpl(this, id);
   }
   async updateWorkflowDefinition( id: string, updates: WorkflowDefinitionUpdate, ): Promise<WorkflowDefinition> {
-    return updateWorkflowDefinitionImpl(this, id, updates);
+    const out = await updateWorkflowDefinitionImpl(this, id, updates);
+    this.bumpWorkflowDefinitionEpoch();
+    return out;
   }
   async deleteWorkflowDefinition(id: string): Promise<void> {
-    return deleteWorkflowDefinitionImpl(this, id);
+    await deleteWorkflowDefinitionImpl(this, id);
+    this.bumpWorkflowDefinitionEpoch();
   }
 
   // ── U5: workflow lifecycle reconciliation (switch / edit / delete) ──────────
@@ -4452,34 +4482,45 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   3-argument public signature won in a non-conflicted region while the Impl kept the 5-argument form,
   which typechecked as "Expected 3 arguments, but got 4". */
   public async writeTaskWorkflowSelection(taskId: string, workflowId: string, stepIds: string[], options?: { taskUpdatedAt?: string }): Promise<void> {
-    return writeTaskWorkflowSelectionImpl(this, taskId, workflowId, stepIds, options);
+    await writeTaskWorkflowSelectionImpl(this, taskId, workflowId, stepIds, options);
+    this.bumpWorkflowSelectionEpoch();
   }
 
   /** Delete the WorkflowStep rows previously materialized for a task's selection
    *  and remove the selection record. Best-effort; safe to call when unset. */
   public async removeMaterializedSelection(taskId: string): Promise<void> {
-    return removeMaterializedSelectionImpl(this, taskId);
+    await removeMaterializedSelectionImpl(this, taskId);
+    this.bumpWorkflowSelectionEpoch();
   }
   public purgeTaskWorkflowSelectionRows(taskId: string): void {
-    return purgeTaskWorkflowSelectionRowsImpl(this, taskId);
+    purgeTaskWorkflowSelectionRowsImpl(this, taskId);
+    this.bumpWorkflowSelectionEpoch();
   }
   public cleanupOrphanedMaterializedSteps(stepIds: string[] | undefined): Promise<void> {
     return cleanupOrphanedMaterializedStepsImpl(this, stepIds);
   }
   public async materializeWorkflowSteps( workflowId: string, inputs: import("./types.js").WorkflowStepInput[], ): Promise<string[]> {
-    return materializeWorkflowStepsImpl(this, workflowId, inputs);
+    const out = await materializeWorkflowStepsImpl(this, workflowId, inputs);
+    this.bumpWorkflowSelectionEpoch();
+    return out;
   }
 
   /** Resolve the project-default workflow into materialized step ids, or null
    *  when no default is set / it is missing / it does not compile. */
   public async materializeDefaultWorkflowSteps(): Promise<{ workflowId: string; stepIds: string[]; entryColumnId?: string } | undefined> {
-    return materializeDefaultWorkflowStepsImpl(this);
+    const out = await materializeDefaultWorkflowStepsImpl(this);
+    this.bumpWorkflowSelectionEpoch();
+    return out;
   }
   public async materializeExplicitWorkflowSteps( workflowId: string, ): Promise<{ workflowId: string; stepIds: string[]; entryColumnId?: string }> {
-    return materializeExplicitWorkflowStepsImpl(this, workflowId);
+    const out = await materializeExplicitWorkflowStepsImpl(this, workflowId);
+    this.bumpWorkflowSelectionEpoch();
+    return out;
   }
   async selectTaskWorkflow(taskId: string, workflowId: string): Promise<string[]> {
-    return selectTaskWorkflowImpl(this, taskId, workflowId);
+    const out = await selectTaskWorkflowImpl(this, taskId, workflowId);
+    this.bumpWorkflowSelectionEpoch();
+    return out;
   }
   public async reconcileTaskCustomFieldsForSchema( taskId: string, oldFieldDefs: WorkflowFieldDefinition[], newFieldDefs: WorkflowFieldDefinition[], dropOrphans = false, ): Promise<void> {
     return reconcileTaskCustomFieldsForSchemaImpl(this, taskId, oldFieldDefs, newFieldDefs, dropOrphans);
@@ -4490,10 +4531,13 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     enabledWorkflowSteps: string[];
     reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
   }> {
-    return selectTaskWorkflowAndReconcileImpl(this, taskId, workflowId);
+    const out = await selectTaskWorkflowAndReconcileImpl(this, taskId, workflowId);
+    this.bumpWorkflowSelectionEpoch();
+    return out;
   }
   async clearTaskWorkflowSelection(taskId: string): Promise<void> {
-    return clearTaskWorkflowSelectionImpl(this, taskId);
+    await clearTaskWorkflowSelectionImpl(this, taskId);
+    this.bumpWorkflowSelectionEpoch();
   }
   async close(): Promise<void> {
     this.intakeOwnerAgentStore?.close();

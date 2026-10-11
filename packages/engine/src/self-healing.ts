@@ -1,4 +1,5 @@
 import { resumeMissingPostMergeGate } from "./merge/post-merge-gate-reseed.js";
+import { EpochedWorkflowIrCache, EpochedWorkflowSelectionCache } from "@fusion/core";
 /**
  * SelfHealingManager — enables unattended multi-day/week operation by
  * providing automatic recovery from common failure modes.
@@ -1288,6 +1289,45 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   // ── Per-task deadlock recovery cooldown ─────────────────────────────
   private deadlockRecoveryCooldown: Map<string, number> = new Map();
+
+  /*
+  FNXC:WorkflowBatchCacheEpoch 2026-10-11-19:22 (RUFU-584, operator directive to eliminate the leak):
+  This class allocated 15 separate IR/selection caches - one per sweep (leaseRole @6713 and @8057,
+  depSatisfaction @6921, noOp @11858, perTask @12167, mergeable @12756, failedStep @13287, inReviewStall
+  @14250, interrupted @14909, deadlock @16634, orphan @16918, alreadyMerged @17130, handoffLimbo @17731,
+  queuedAgent @19422, missingWorktree @20194). A card inspected by 15 sweeps in one pass therefore cost
+  15 workflow-selection reads and 15 definition reads on a pool of 3 lanes per store (DEFAULT_POOL_MAX),
+  and every queued read pinned its caller's already-materialized task batch - the retained-heap shape the
+  heap graph named (suspended async frames holding Task batches).
+  One pair now serves the whole pass. Correctness does NOT come from the pass boundary: the caches are
+  epoch-guarded, so any workflow selection or definition write discards them mid-pass. The boundary
+  exists only to bound cache memory, which is why the reset sits at the head of a pass, not after it.
+  */
+  private batchIrCacheValue: EpochedWorkflowIrCache | null = null;
+  private batchSelectionCacheValue: EpochedWorkflowSelectionCache | null = null;
+
+  /** The pass's shared IR cache. Epoch-guarded against definition writes, size-capped at access. */
+  batchWorkflowIrCache(): EpochedWorkflowIrCache {
+    if (!this.batchIrCacheValue || this.batchIrCacheValue.size >= 4096) {
+      this.batchIrCacheValue = new EpochedWorkflowIrCache(() => this.store.workflowDefinitionEpoch());
+    }
+    return this.batchIrCacheValue;
+  }
+
+  /** The pass's shared selection cache, epoch-guarded against selection writes. */
+  batchWorkflowSelectionCache(): EpochedWorkflowSelectionCache {
+    if (!this.batchSelectionCacheValue || this.batchSelectionCacheValue.size >= 4096) {
+      this.batchSelectionCacheValue = new EpochedWorkflowSelectionCache(() => this.store.workflowSelectionEpoch());
+    }
+    return this.batchSelectionCacheValue;
+  }
+
+  /** Drop the pass's caches so a long-lived manager cannot accumulate board-sized maps. */
+  beginWorkflowCacheBatch(): void {
+    this.batchIrCacheValue = null;
+    this.batchSelectionCacheValue = null;
+  }
+
   private mergeStarvationDrops: Map<string, number> = new Map();
   private readonly absentBranchUnprovenAuditKeys = new Set<string>();
   /*
@@ -2392,6 +2432,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * stale in-progress/planning tasks that no longer have a live worker.
    */
   async runStartupRecovery(): Promise<void> {
+    this.beginWorkflowCacheBatch();
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) {
       log.debug(
@@ -3421,6 +3462,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async runMaintenance(): Promise<void> {
+    this.beginWorkflowCacheBatch();
     if (this.maintenanceRunning) {
       log.debug("Maintenance cycle skipped — previous cycle still running");
       return;
@@ -6710,7 +6752,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const taskById = new Map(allTasks.map((t) => [t.id, t]));
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
-      const leaseRoleIrCache = new Map<string, WorkflowIr>();
+      const leaseRoleIrCache = this.batchWorkflowIrCache();
       const leaseRolesByTaskId = new Map<string, FileScopeLeaseTaskRoles>();
       const resolveLeaseRolesFor = async (leaseTask: Task): Promise<FileScopeLeaseTaskRoles> => {
         const cached = leaseRolesByTaskId.get(leaseTask.id);
@@ -6918,7 +6960,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!dependentById.has(entry.id)) dependentById.set(entry.id, entry);
       }
       /* One IR cache for the whole reconcile, so a board spanning three workflows reads three IRs, not one per dependency row. */
-      const depSatisfactionIrCache = new Map<string, WorkflowIr>();
+      const depSatisfactionIrCache = this.batchWorkflowIrCache();
       const dependents = [...dependentById.values()].filter(
         (t) => t.blockedBy === taskId || t.overlapBlockedBy === taskId,
       );
@@ -8054,7 +8096,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
-      const leaseRoleIrCache = new Map<string, WorkflowIr>();
+      const leaseRoleIrCache = this.batchWorkflowIrCache();
       const leaseRolesByTaskId = new Map<string, FileScopeLeaseTaskRoles>();
       const resolveLeaseRolesFor = async (leaseTask: Task): Promise<FileScopeLeaseTaskRoles> => {
         const cached = leaseRolesByTaskId.get(leaseTask.id);
@@ -11855,7 +11897,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         for (const task of await this.store.listTasks({ column, slim: true })) noOpById.set(task.id, task);
       }
       const tasks = [...noOpById.values()];
-      const noOpIrCache = new Map<string, WorkflowIr>();
+      const noOpIrCache = this.batchWorkflowIrCache();
       const unresolvedNoOpCards: string[] = [];
       const noOpLanesByTask = new Map<string, ReadonlySet<string>>();
       for (const task of tasks) {
@@ -12164,7 +12206,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
         (task.modifiedFiles?.length ?? 0) > 0,
       );
-      const perTaskIrCache = new Map<string, WorkflowIr>();
+      const perTaskIrCache = this.batchWorkflowIrCache();
       const candidates: Task[] = [];
       /* Cards whose own workflow could not be resolved. Collected so an unrepairable backlog is
          reportable rather than silent — see the provenance note in the loop. */
@@ -12753,7 +12795,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         for (const task of await this.store.listTasks({ column, slim: true })) mergeableById.set(task.id, task);
       }
       const tasks = [...mergeableById.values()];
-      const mergeableIrCache = new Map<string, WorkflowIr>();
+      const mergeableIrCache = this.batchWorkflowIrCache();
       const unresolvedMergeableCards: string[] = [];
       /*
       Returns the card's OWN review lanes, so one resolution feeds BOTH consumers below — the lane test
@@ -13284,7 +13326,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         for (const task of await this.store.listTasks({ column, slim: true })) failedStepById.set(task.id, task);
       }
       const tasks = [...failedStepById.values()];
-      const failedStepIrCache = new Map<string, WorkflowIr>();
+      const failedStepIrCache = this.batchWorkflowIrCache();
       const unresolvedFailedStepCards: string[] = [];
       /* One resolution per card, feeding BOTH the lane test and the blocker below. */
       const ownReviewLanesForFailedStep = async (task: Task): Promise<ReadonlySet<string>> => {
@@ -14247,7 +14289,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       // A healthy board pays nothing further: no nameable card and no stored claim left to clear.
       if (nameable.length === 0 && storedClaimsOutsideVocabulary.length === 0) return retracted;
 
-      const selectionCache: WorkflowSelectionCache = new Map();
+      const selectionCache: WorkflowSelectionCache = this.batchWorkflowSelectionCache();
       /*
       The probe's base is the integration branch, with `main` as the fallback — and the fallback is
       taken LOCALLY rather than by letting the read fail the pass. A host where one git read fails still
@@ -14906,7 +14948,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       for (const column of interruptedReviewColumns) {
         for (const task of await this.store.listTasks({ column, slim: true })) interruptedById.set(task.id, task);
       }
-      const interruptedIrCache = new Map<string, WorkflowIr>();
+      const interruptedIrCache = this.batchWorkflowIrCache();
       const unresolvedInterruptedCards: string[] = [];
       const inOwnReviewLaneForInterrupted = async (task: Task): Promise<boolean> => {
         const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, interruptedIrCache)
@@ -16631,7 +16673,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       for (const column of reviewColumnsForDeadlock) {
         for (const task of await this.store.listTasks({ column, slim: true })) inReviewById.set(task.id, task);
       }
-      const deadlockIrCache = new Map<string, WorkflowIr>();
+      const deadlockIrCache = this.batchWorkflowIrCache();
       const unresolvedDeadlockCards: string[] = [];
       const inOwnReviewLaneForDeadlock = async (task: Task): Promise<boolean> => {
         const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, deadlockIrCache)
@@ -16915,7 +16957,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         for (const task of await this.store.listTasks({ column, slim: true })) orphanById.set(task.id, task);
       }
       const tasks = [...orphanById.values()];
-      const orphanIrCache = new Map<string, WorkflowIr>();
+      const orphanIrCache = this.batchWorkflowIrCache();
       const unresolvedOrphanCards: string[] = [];
       const orphanLanesByTask = new Map<string, ReadonlySet<string>>();
       for (const task of tasks) {
@@ -17127,7 +17169,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       for (const column of reviewColumns) {
         for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
       }
-      const reviewIrCache = new Map<string, WorkflowIr>();
+      const reviewIrCache = this.batchWorkflowIrCache();
       /* Cards whose own workflow could not be resolved — reported below rather than silently dropped. */
       const unresolvedReviewCards: string[] = [];
       /*
@@ -17728,7 +17770,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       for (const task of await this.store.listTasks({ column, slim: false })) limboById.set(task.id, task);
     }
     const tasks = [...limboById.values()];
-    const limboIrCache = new Map<string, WorkflowIr>();
+    const limboIrCache = this.batchWorkflowIrCache();
     const unresolvedLimboCards: string[] = [];
     const ownLimboReviewLanes = async (task: Task): Promise<ReadonlySet<string>> => {
       const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, limboIrCache)
@@ -19419,7 +19461,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const taskIsLive = (taskId: string) => executingTaskLock.has(taskId)
       || activeSessionRegistry.pathsForTask(taskId).length > 0
       || this.options.isTaskActive?.(taskId) === true;
-    const irCache = new Map<string, WorkflowIr>();
+    const irCache = this.batchWorkflowIrCache();
 
     const agents = await agentStore.listAgents({ includeEphemeral: false });
     const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
@@ -20191,7 +20233,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       before the read, so the wiring here matters for boards whose review lane IS `in-review` under a renamed
       workflow (the common partial-rename case) and for the merge-active variant.
       */
-      const recoveryIrCache = new Map<string, WorkflowIr>();
+      const recoveryIrCache = this.batchWorkflowIrCache();
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the ARITY trap, same seam):
       These classifiers take a MEMBERSHIP set, and `resolveTaskLifecycleColumns().review` is the FIRST

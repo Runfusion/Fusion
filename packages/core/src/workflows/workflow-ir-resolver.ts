@@ -103,6 +103,73 @@ export type WorkflowSelection = { workflowId: string; stepIds: string[] };
 /** A caller-owned cache that is valid only for one resolver pass. */
 export type WorkflowSelectionCache = Map<string, WorkflowSelection | undefined>;
 
+/*
+FNXC:WorkflowBatchCacheEpoch 2026-10-11-19:16 (RUFU-584):
+A pass cache used to be safe only because it was short-lived. These two classes make a LONG-lived,
+batch-shared cache safe: each carries the store epoch it was filled under and discards every entry the
+moment the store reports a workflow selection or definition write. Sharing across sweeps therefore
+cannot serve a workflow that changed mid-batch, which is the property that lets self-healing collapse
+14 per-sweep caches into one per-batch pair.
+Over-clearing is free (the next read repopulates); serving a stale IR is not, so the check runs on read
+AND on write, and any epoch movement clears the whole object rather than invalidating per task - a
+selection write changes which workflow a card belongs to, which can affect other cards' aggregates too.
+*/
+export class EpochedWorkflowSelectionCache
+  extends Map<string, WorkflowSelection | undefined>
+  implements WorkflowSelectionCache {
+  private epoch: number;
+  constructor(private readonly currentEpoch: () => number, initialEpoch = currentEpoch()) {
+    super();
+    this.epoch = initialEpoch;
+  }
+  private syncEpoch(): void {
+    const now = this.currentEpoch();
+    if (now !== this.epoch) {
+      this.clear();
+      this.epoch = now;
+    }
+  }
+  override get size(): number { this.syncEpoch(); return super.size; }
+  override has(key: string): boolean { this.syncEpoch(); return super.has(key); }
+  override get(key: string): WorkflowSelection | undefined { this.syncEpoch(); return super.get(key); }
+  override set(key: string, value: WorkflowSelection | undefined): this { this.syncEpoch(); return super.set(key, value); }
+  /* Iteration is a read too: a stale entry reached through forEach or size would be served as fresh,
+     so those sync as well. `entries`/`keys`/`values` are deliberately not overridden - nothing reads
+     these caches that way, and delegating to the inherited methods still routes through the synced
+     `size`/`forEach` paths for anything that does. */
+  override forEach(cb: (value: WorkflowSelection | undefined, key: string, map: Map<string, WorkflowSelection | undefined>) => void, thisArg?: unknown): void {
+    this.syncEpoch();
+    super.forEach(cb as (value: WorkflowSelection | undefined, key: string, map: Map<string, WorkflowSelection | undefined>) => void, thisArg);
+  }
+  /** Epoch this cache is currently valid under; tests assert invalidation without touching internals. */
+  validUnderEpoch(): number { return this.epoch; }
+}
+
+/** Definition-epoch counterpart, keyed by the resolver's `workflowId\u0000projectId` cache key. */
+export class EpochedWorkflowIrCache extends Map<string, WorkflowIr> {
+  private epoch: number;
+  constructor(private readonly currentEpoch: () => number, initialEpoch = currentEpoch()) {
+    super();
+    this.epoch = initialEpoch;
+  }
+  private syncEpoch(): void {
+    const now = this.currentEpoch();
+    if (now !== this.epoch) {
+      this.clear();
+      this.epoch = now;
+    }
+  }
+  override get size(): number { this.syncEpoch(); return super.size; }
+  override has(key: string): boolean { this.syncEpoch(); return super.has(key); }
+  override get(key: string): WorkflowIr | undefined { this.syncEpoch(); return super.get(key); }
+  override set(key: string, value: WorkflowIr): this { this.syncEpoch(); return super.set(key, value); }
+  override forEach(cb: (value: WorkflowIr, key: string, map: Map<string, WorkflowIr>) => void, thisArg?: unknown): void {
+    this.syncEpoch();
+    super.forEach(cb, thisArg);
+  }
+  validUnderEpoch(): number { return this.epoch; }
+}
+
 /** Selection database work performed by one multi-row hydration pass. */
 export type WorkflowSelectionReadTally = { batched: number; singles: number };
 
