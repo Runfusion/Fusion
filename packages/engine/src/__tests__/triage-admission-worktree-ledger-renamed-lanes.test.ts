@@ -74,6 +74,14 @@ function createStore(
     }),
     updateTask: vi.fn().mockResolvedValue(undefined),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:ConcurrencyAdmission 2026-10-11-01:13 (RUFU-382):
+    RUFU-382 routes the capacity mirror through the durable once-seam whenever a store exposes one, so an
+    absence guard watching only `logEntry` would now pass vacuously. This fake records the surface the real
+    store exposes (episode key plus window, fulfilled true on append) so the paired guard can watch BOTH
+    seams, and it is what turns this suite's negative assertion back into a falsifiable one.
+    */
+    logEntryOnce: vi.fn(async (_taskId: string, _input: unknown) => true),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn(),
     createTask: vi.fn(),
@@ -196,9 +204,29 @@ describe("planning admission's worktree ledger on a renamed board", () => {
 
     expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(0);
     expect(specifyTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WAITING" }));
+    /*
+    FNXC:ConcurrencyAdmission 2026-10-11-01:57 (RUFU-382):
+    Neither card-side seam may announce a capacity stall here. Two weaknesses had made this guard decorative:
+    (1) the mirror now travels through the durable once-seam whenever a store exposes one, so a `logEntry`-only
+    watch cannot see the write at all; (2) the old matcher demanded the literal "maxWorktrees capacity exhausted",
+    a string this surface can never produce — the gate term is the constant `maxConcurrent` at the mirror site
+    since the two-gate discriminator collapsed. Matching the shared "capacity exhausted" stem on BOTH seams is
+    what keeps the FN-282 inverse falsifiable.
+
+    Measured at this commit by injecting a wrong throttle (re-coupling planning admission to `maxWorktrees`):
+    the `logEntry`-only assertion stayed green while the once-seam assertion fired on the real action
+    "queued — maxConcurrent capacity exhausted: used=1/20; gate=maxConcurrent; holders=FN-LIVE", and on the
+    correct code both guards pass. The injection was only visible to these guards after this test's earlier
+    sibling assertions were removed — those fail first and abort the case, so they (not this belt) are what
+    originally caught the coupling; this guard is what still catches it if the siblings are ever refactored.
+    */
     expect(store.logEntry).not.toHaveBeenCalledWith(
       "FN-WAITING",
-      expect.stringContaining("maxWorktrees capacity exhausted"),
+      expect.stringContaining("capacity exhausted"),
+    );
+    expect(store.logEntryOnce).not.toHaveBeenCalledWith(
+      "FN-WAITING",
+      expect.objectContaining({ action: expect.stringContaining("capacity exhausted") }),
     );
   });
 

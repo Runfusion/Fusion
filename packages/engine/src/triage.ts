@@ -22,6 +22,10 @@ import {
   /* FNXC:PlanningAdmissionStall 2026-09-25-18:20 (RUFU-273): the episode writers, shared with the
   reconciliation sweep so one rule decides what a sustained planning stall looks like on the row. */
   PLAN_ADMISSION_STALL_METADATA_KEY,
+  /* FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382): the same refresh floor the episode uses now bounds
+  the card's capacity mirror too, so one stalled card contributes one History row per floor rather than one per
+  15 s poll — the card-side row is deduped by the store, not by an in-memory counter this lane could lose. */
+  PLAN_ADMISSION_STALL_REFRESH_FLOOR_MS,
   planAdmissionStallWrite,
   readPlanAdmissionStallEpisode,
   buildTriageMemoryInstructions,
@@ -665,6 +669,12 @@ export class TriageProcessor {
    * Signature of the last emitted `task:plan-admission-throttled` event, so a steady stall records
    * one row instead of one per poll. `null` means "not currently throttled" — the next throttle,
    * even with identical numbers, is a NEW stall and is emitted again.
+   *
+   * FNXC:ConcurrencyAdmission 2026-10-11-01:13 (RUFU-382):
+   * The signature records a PROVEN emission, not a started one: it is assigned only after the
+   * central run-audit row and EVERY named eligible card's mirrored History line are landed, so a
+   * stalled write leaves it unset and the next poll re-announces. Silencing a stall the card never
+   * received is what made the public board's 45 central rows unexplainable from any card.
    */
   private lastPlanThrottleSignature: string | null = null;
   /** Active agent sessions per task, used to terminate on pause. */
@@ -2758,6 +2768,30 @@ export class TriageProcessor {
           FN-8600 retry guarantee this branch exists for. `absent` (a store with no audit sink) is
           treated as recorded because there is nothing to retry there.
           */
+          /*
+          FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+          The same "only on a write that landed" rule now governs the CARD-side half of this emission,
+          and the marker moved to the END of the chain for that reason.
+
+          Original symptom (RUFU-365 audit of the public board, 2026-09-28): 45 central
+          `task:plan-admission-throttled` rows over six hours while the cards those rows NAMED carried
+          nothing — the 03:00–16:00Z window recorded ZERO mirrored History lines (the sole surviving
+          mirrored line, 18:45:47Z, sits outside the audited window, so a card-side line has never been
+          soundly observed). Cause: the marker was assigned before `Promise.all` on the mirrors was even
+          started, so a mirror that never landed still silenced every later attempt, and its rejection
+          reached only an unpersisted `planLog.warn` — while the central row made the stall look reported.
+
+          Accepted cost, stated deliberately: a mirror that keeps failing now repeats the CENTRAL row once
+          per poll. That is write amplification bounded by the failure, the same shape as the audit-write
+          retry FN-8600 already accepted above, and it is cheaper than silently dropping the operator-facing
+          explanation. The card itself is protected from that amplification by the dedupe key below, so a
+          retry never costs a card a second History row.
+
+          Landing rule for the once-seam: any FULFILLED call proves the card's History is settled. `false`
+          means the store deduped it inside the window (a duplicate is settled, not failed) and a throw is
+          the only unproven outcome — proven against the real advisory-locked transaction in
+          `packages/core/src/__tests__/postgres/task-log-dedupe.pg.test.ts`.
+          */
           void (throttleAuditor.databaseWithOutcome ?? throttleAuditor.database)({
             type: "task:plan-admission-throttled",
             target: eligibleIds[0] ?? this.rootDir,
@@ -2772,9 +2806,62 @@ export class TriageProcessor {
               processingTaskIds: processingIds,
             },
           })
-            .then((result: unknown) => {
+            .then(async (result: unknown) => {
               const outcome = (result as { outcome?: string } | undefined)?.outcome;
               if (outcome !== "recorded" && outcome !== "absent") return;
+              /*
+              FNXC:ConcurrencyAdmission 2026-08-08-04:27:
+              Triage used to emit capacity only to synthetic run-audit rows, leaving the task's
+              shared board/API log silent. Mirror genuine live-cap exhaustion onto each queued
+              candidate without awaiting it in the poll; the signature prevents poll spam.
+
+              FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+              The mirror prefers `logEntryOnce` over `logEntry` for two reasons. First, the durable deduped
+              row is what the operator actually needs, and the store — not an in-memory counter this lane can
+              lose across a restart — is the only thing that can bound it to one row per episode window; the
+              window reuses RUFU-273's refresh floor so a card's History and its stall chip age at one rate.
+              Second, `logEntry` carries an unconditional `task:updated` emit for a row it may not have
+              written, so on this poll cadence it would broadcast a refresh every 15 s per throttled card for
+              no new information. `logEntryOnceImpl` writes durably without that emit; the card's visible
+              refresh in the same poll is carried by the RUFU-273 episode write above, which goes through
+              `updateTask` and does emit `task:updated` on the polls where it writes.
+
+              The once-seam is reached duck-typed with a runtime function check, as `project-engine.ts`,
+              `execution/hold-release.ts`, and `task-execution-boundary.ts` already do for the same method:
+              a store without it is a reachable shape, not a type error. Measured at this commit, 387 files
+              under `packages/engine/src/__tests__` carry a TaskStore-shaped fixture and only 5 declare
+              `logEntryOnce`, so the fallback is the common path, not the exotic one. A store without the
+              once-seam keeps the legacy seam, but inside this same proof path — the fallback's promise is
+              joined here too (`logEntry` returns `Promise<Task>`, which `allSettled` can wait for), so an
+              unproven fallback write cannot commit the marker either.
+              */
+              const mirrorCapacityReason = (taskId: string): Promise<unknown> => {
+                const logOnce = (this.store as Partial<TaskStore>).logEntryOnce;
+                if (typeof logOnce === "function") {
+                  return logOnce.call(this.store, taskId, {
+                    action: capacityReason,
+                    dedupeKey: `plan-admission-throttled:${throttleSignature}`,
+                    windowMs: PLAN_ADMISSION_STALL_REFRESH_FLOOR_MS,
+                  });
+                }
+                return this.store.logEntry(taskId, capacityReason);
+              };
+              /*
+              `allSettled`, not `all`: one card's refused write must not cancel its siblings' mirrors, and
+              the marker belongs to the whole named set — so it waits for every one of them to be proven.
+              */
+              const settled = await Promise.allSettled(eligibleIds.map((taskId) => mirrorCapacityReason(taskId)));
+              const unproven = settled.filter((entry): entry is PromiseRejectedResult => entry.status === "rejected");
+              if (unproven.length > 0) {
+                planLog.warn(
+                  `Failed to write planning capacity reason for ${unproven.length}/${eligibleIds.length} ` +
+                  `queued card(s) [${eligibleIds.join(", ")}]: ` +
+                  `${unproven[0]!.reason instanceof Error ? unproven[0]!.reason.message : String(unproven[0]!.reason)}`,
+                );
+                // Deliberately NOT swallowed and NOT marked: the next poll re-announces, as FN-8600 does
+                // for a failed audit write. `lastPlanThrottleSignature` stays exactly where it was.
+                return;
+              }
               /*
               FNXC:ConcurrencyAdmission 2026-07-26-10:45:
               Mark the stall as recorded ONLY once the write lands. Setting the marker up front meant
@@ -2782,21 +2869,13 @@ export class TriageProcessor {
               event is meant to explain -- was swallowed for the whole stall with no retry, leaving
               the incident as unanswerable as before the event existed. On failure the marker stays
               put so the next poll retries.
+
+              RUFU-382 extends "the write" to both writes: the central row AND every named card's mirror.
               */
               this.lastPlanThrottleSignature = throttleSignature;
-              /*
-              FNXC:ConcurrencyAdmission 2026-08-08-04:27:
-              Triage used to emit capacity only to synthetic run-audit rows, leaving the task's
-              shared board/API log silent. Mirror genuine live-cap exhaustion onto each queued
-              candidate without awaiting it in the poll; the signature prevents poll spam.
-              */
-              void Promise.all(eligibleIds.map((taskId) => this.store.logEntry(taskId, capacityReason)))
-                .catch((logErr: unknown) => {
-                  planLog.warn(`Failed to write planning capacity reason: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
-                });
             })
-            .catch((auditErr: unknown) => {
-              planLog.warn(`Failed to write plan-admission-throttled run-audit event: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+            .catch((err: unknown) => {
+              planLog.warn(`Failed to write plan-admission-throttled run-audit event: ${err instanceof Error ? err.message : String(err)}`);
             });
         }
       } else {

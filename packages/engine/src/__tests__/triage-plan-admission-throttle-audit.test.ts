@@ -16,6 +16,21 @@ required a manual DB forensics pass that still could not separate "host semaphor
 Invariant under test: whenever planning admission is withheld while eligible work exists, the
 binding gate is recorded durably in run-audit with ids/counts only — and a sustained stall records
 ONE row rather than one per poll, so the signal stays readable.
+
+/*
+FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+The FN-8600 half of that invariant was tested; its card-side mirror was not, and that untested half is
+what broke (RUFU-365 audit, public board, 2026-09-28): 45 central rows in six hours while the named
+cards' History showed NOTHING — the 03:00–16:00Z window carried ZERO mirrored lines (the sole surviving
+line, 18:45:47Z, sits outside the audited window, so a card-side line has never been soundly observed).
+The dedupe marker committed BEFORE the mirror was even started, so a mirror that never landed still
+silenced every later attempt, and its rejection reached only `planLog.warn` — persisted nowhere.
+
+The invariant the cases below add is therefore about PROVENANCE, not ordering prose: the signature that
+silences the retry is committed only after every eligible card's explanatory mirror is proven landed, a
+fulfilled `logEntryOnce` counts as landed whether it appended or deduped (only a throw is a failure), and
+the poll still never awaits any of it. Write amplification stays bounded by the card's own dedupe key, so
+the accepted cost of a retry is one visible central row — never a second History row on the card.
 */
 
 vi.mock("../reviewer.js", () => ({ reviewStep: vi.fn() }));
@@ -56,6 +71,32 @@ interface RecordedEvent { type: string; target: string; metadata?: Record<string
 
 /** One captured `updateTask` call, narrowed to what the planning-stall episode tests assert. */
 interface RecordedPatch { taskId: string; patch: Record<string, unknown> | undefined }
+
+/** What the engine hands the card-side once-seam. */
+interface MirrorInput { action: string; outcome?: string; dedupeKey: string; windowMs: number }
+/** One mirror the fixture actually APPENDED (a deduped or failed call appends nothing). */
+interface RecordedMirror extends MirrorInput { taskId: string; at: string }
+
+/*
+The poll's writes are deliberately detached, so every case here needs the same two-flush settle: one
+macrotask drains the audit sink's microtask chain and the `allSettled` mirror join that follows it.
+*/
+async function settleDetachedWrites(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Attempts the poll made against the card-side once-seam (attempts, not appends). */
+function onceSeamCalls(store: TaskStore): Array<{ taskId: string } & MirrorInput> {
+  const seam = (store as unknown as { logEntryOnce?: { mock?: { calls: Array<[string, MirrorInput]> } } }).logEntryOnce;
+  return (seam?.mock?.calls ?? []).map(([taskId, input]) => ({ taskId, ...input }));
+}
+
+/** Attempts the poll made against the legacy non-deduped seam — the fallback path only. */
+function legacySeamCalls(store: TaskStore): Array<{ taskId: string; action: string }> {
+  const seam = (store as unknown as { logEntry: { mock?: { calls: Array<[string, string]> } } }).logEntry;
+  return (seam?.mock?.calls ?? []).map(([taskId, action]) => ({ taskId, action }));
+}
 
 /*
 FNXC:PlanningAdmissionStall 2026-09-25-18:20 (RUFU-273):
@@ -118,6 +159,7 @@ function createStore(
   recorded: RecordedEvent[],
   settings: Partial<Settings> = {},
   patches?: RecordedPatch[],
+  mirrors?: RecordedMirror[],
 ): TaskStore {
   // The running claimant is added here so every case exhausts the one project slot.
   tasks = [runningTask("FN-RUNNING"), ...tasks];
@@ -147,6 +189,23 @@ function createStore(
       return target ?? null;
     }),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+    Mirrors the real once-seam (`logEntryOnceImpl`): a same-key call inside the window appends nothing
+    and still FULFILLS, only a real write appends. A fixture that always appended would make "the marker
+    commits on a proven mirror" indistinguishable from "the marker commits on a duplicate that landed
+    nothing", and the FN-8600 one-row-per-stall guarantee would be asserted against a store that does
+    not dedupe.
+    */
+    logEntryOnce: vi.fn(async (id: string, input: MirrorInput) => {
+      const sink = mirrors ?? [];
+      const duplicate = sink.some((entry) => entry.taskId === id
+        && entry.dedupeKey === input.dedupeKey
+        && Date.now() - Date.parse(entry.at) < input.windowMs);
+      if (duplicate) return false;
+      sink.push({ taskId: id, at: new Date().toISOString(), ...input });
+      return true;
+    }),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn(),
     createTask: vi.fn(),
@@ -186,9 +245,23 @@ async function pollWithExhaustedProjectCapacity(store: TaskStore): Promise<Triag
   // than starting the interval timer, which would make them time-dependent.
   (processor as unknown as { running: boolean }).running = true;
   await (processor as unknown as { poll: () => Promise<void> }).poll();
-  // The audit write is fire-and-forget, so let its microtask settle before asserting.
-  await new Promise((resolve) => setImmediate(resolve));
+  // The audit write and the card mirrors are fire-and-forget, so let them settle before asserting.
+  await settleDetachedWrites();
   return processor;
+}
+
+/** Drives `passes` polls of the same steady stall, settling the detached writes after each one. */
+async function pollRepeatedly(processor: TriageProcessor, passes: number): Promise<void> {
+  const poll = (processor as unknown as { poll: () => Promise<void> }).poll.bind(processor);
+  for (let pass = 0; pass < passes; pass++) {
+    await poll();
+    await settleDetachedWrites();
+  }
+}
+
+/** The central row count the throttle signature has produced so far. */
+function centralRows(recorded: RecordedEvent[]): number {
+  return recorded.filter((event) => event.type === "task:plan-admission-throttled").length;
 }
 
 describe("plan admission throttle run-audit (FN-8600)", () => {
@@ -217,16 +290,197 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
 
   it("emits one row for a sustained stall instead of one per poll", async () => {
     
-    const store = createStore([eligibleTodoTask("FN-8600")], recorded);
+    const mirrors: RecordedMirror[] = [];
+    const store = createStore([eligibleTodoTask("FN-8600")], recorded, {}, undefined, mirrors);
     const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", {});
     (processor as unknown as { running: boolean }).running = true;
     const poll = (processor as unknown as { poll: () => Promise<void> }).poll.bind(processor);
     await poll();
     await poll();
     await poll();
-    await new Promise((resolve) => setImmediate(resolve));
+    await settleDetachedWrites();
 
-    expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(1);
+    expect(centralRows(recorded)).toBe(1);
+    /*
+    FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+    The card-side half of the same guarantee. Counting only the central row let the mirror be attempted
+    three times while the row was written once — the asymmetry RUFU-382 removes. A sustained stall now
+    collapses on BOTH surfaces, which also proves the marker did commit (an unproven mirror would keep
+    re-attempting on every poll).
+    */
+    expect(onceSeamCalls(store)).toHaveLength(1);
+    expect(mirrors).toHaveLength(1);
+  });
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+  Original symptom (RUFU-365 audit of the public board, 2026-09-28): 45 central `task:plan-admission-throttled`
+  rows over six hours while the cards the rows NAMED carried nothing — the 03:00–16:00Z window recorded
+  ZERO card-side mirrors, and the only surviving mirrored line (18:45:47Z) sits outside the audited window,
+  so the card-side line has never been soundly observed. Cause: the marker that silences every later
+  attempt was set before the mirror was even started, and the mirror's rejection reached only an unpersisted
+  `planLog.warn`.
+
+  Exact reproduction: capacity exhausted with eligible cards waiting, the central write succeeding, and the
+  card mirror failing. Assertion it is gone: when the central row is proven, every refused card is handed its
+  own explanatory row — and a mirror that does not land is retried instead of being silenced by a marker that
+  was set on an unproven write.
+
+  Substring assertions only: RUFU-380 widens `formatAdmissionCapacityQueuedReason` with a project clause, so
+  a full-sentence equality here would fail for someone else's accepted change.
+  */
+  it("mirrors the capacity sentence onto every refused card once the central row is proven", async () => {
+    const mirrors: RecordedMirror[] = [];
+    const store = createStore(
+      [eligibleTodoTask("FN-382-A"), eligibleTodoTask("FN-382-B"), eligibleTodoTask("FN-382-C")],
+      recorded, {}, undefined, mirrors,
+    );
+    await pollWithExhaustedProjectCapacity(store);
+
+    expect(centralRows(recorded)).toBe(1);
+    const calls = onceSeamCalls(store);
+    // ONE mirror per CARD — a key that fanned out per signature-token would show up as more than three calls.
+    expect(calls).toHaveLength(3);
+    expect(calls.map((call) => call.taskId).sort()).toEqual(["FN-382-A", "FN-382-B", "FN-382-C"]);
+    for (const call of calls) {
+      expect(call.action).toContain("capacity exhausted");
+      /*
+      The key is the SAME for every card in one stall episode, which is what lets the next poll re-run
+      the emission without duplicating a History row, and it carries the signature rather than a per-poll
+      nonce so the store's own window can dedupe it.
+      */
+      expect(call.dedupeKey.startsWith("plan-admission-throttled:")).toBe(true);
+      expect(call.windowMs).toBe(PLAN_ADMISSION_STALL_REFRESH_FLOOR_MS);
+    }
+    expect(new Set(calls.map((call) => call.dedupeKey))).toHaveLength(1);
+    expect(mirrors).toHaveLength(3);
+    // The refresh-emitting legacy seam is not the mirror's route when the once-seam exists.
+    expect(legacySeamCalls(store)).toEqual([]);
+  });
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+  The generalized FN-8600 rule: "mark the stall as recorded ONLY once the write lands" now covers the
+  card-side write too. Accepted cost, stated explicitly: while a mirror keeps failing the central row
+  repeats per poll — write amplification bounded by the failure, the same shape as the accepted audit-write
+  retry two cases below, and the price of not silently dropping the operator-facing explanation.
+  The card is protected from that amplification by its own dedupe key, so the retry NEVER costs the card a
+  second History row.
+  */
+  it("retries the whole emission on the next poll when the card mirror fails, without double-rowing the card", async () => {
+    const mirrors: RecordedMirror[] = [];
+    const store = createStore([eligibleTodoTask("FN-382-RETRY")], recorded, {}, undefined, mirrors);
+    const landingSeam = (store as unknown as { logEntryOnce: (id: string, input: MirrorInput) => Promise<boolean> }).logEntryOnce;
+    let attempts = 0;
+    (store as unknown as { logEntryOnce: unknown }).logEntryOnce = vi.fn(async (id: string, input: MirrorInput) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("task row contended");
+      return landingSeam(id, input);
+    });
+    const processor = new TriageProcessor(store, "/tmp/rufu-382-throttle-root", {});
+    (processor as unknown as { running: boolean }).running = true;
+
+    await pollRepeatedly(processor, 1);
+    // The central row landed, so under the pre-RUFU-382 order this is where the stall went silent forever.
+    expect(centralRows(recorded)).toBe(1);
+    expect(onceSeamCalls(store)).toHaveLength(1);
+    expect(mirrors).toEqual([]);
+
+    await pollRepeatedly(processor, 1);
+    // No silent drop: the unproven mirror left the marker alone, so the stall re-announces itself.
+    expect(centralRows(recorded)).toBe(2);
+    expect(onceSeamCalls(store)).toHaveLength(2);
+    // …and the card was appended to exactly once, because the retry is dedupe-keyed, not row-counted.
+    expect(mirrors).toHaveLength(1);
+
+    // Marker finally committed on the proven pass: a third poll adds nothing anywhere.
+    await pollRepeatedly(processor, 1);
+    expect(centralRows(recorded)).toBe(2);
+    expect(onceSeamCalls(store)).toHaveLength(2);
+    expect(mirrors).toHaveLength(1);
+  });
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+  Partial failure is the case a `Promise.all`-style "did anything throw" check gets wrong in the other
+  direction: one card's mirror must not cancel its siblings', and one landed sibling must not stand in for
+  the card that was NOT written — the marker belongs to the whole named set, so it commits only when every
+  card in that set is proven.
+  */
+  it("keeps writing the healthy card's mirror and re-attempts the failing one until the whole set is proven", async () => {
+    const mirrors: RecordedMirror[] = [];
+    const store = createStore([eligibleTodoTask("FN-382-BROKEN"), eligibleTodoTask("FN-382-HEALTHY")], recorded, {}, undefined, mirrors);
+    const landingSeam = (store as unknown as { logEntryOnce: (id: string, input: MirrorInput) => Promise<boolean> }).logEntryOnce;
+    const brokenAttempts: string[] = [];
+    (store as unknown as { logEntryOnce: unknown }).logEntryOnce = vi.fn(async (id: string, input: MirrorInput) => {
+      if (id === "FN-382-BROKEN") {
+        brokenAttempts.push(id);
+        if (brokenAttempts.length < 3) throw new Error("task row contended");
+      }
+      return landingSeam(id, input);
+    });
+    const processor = new TriageProcessor(store, "/tmp/rufu-382-throttle-root", {});
+    (processor as unknown as { running: boolean }).running = true;
+
+    await pollRepeatedly(processor, 2);
+
+    // Sibling isolation: the healthy card got its row on the first pass and was deduped on the second.
+    expect(mirrors.filter((m) => m.taskId === "FN-382-HEALTHY")).toHaveLength(1);
+    // The failing card has nothing durable to show for it, so the set is unproven and the stall stays loud.
+    expect(mirrors.filter((m) => m.taskId === "FN-382-BROKEN")).toEqual([]);
+    expect(centralRows(recorded)).toBe(2);
+    expect(onceSeamCalls(store)).toHaveLength(4);
+
+    await pollRepeatedly(processor, 1);
+    // Third pass lands the last card, so the whole named set is proven from here on.
+    expect(mirrors).toHaveLength(2);
+    expect(onceSeamCalls(store)).toHaveLength(6);
+    /*
+    The accepted cost, measured rather than described: the third pass still repeats the CENTRAL row, because
+    at the moment it emitted, its named set was still unproven. Amplification is bounded by the failure — one
+    extra row per poll a mirror is refused — and stops the moment the mirror lands, which the fourth pass proves.
+    */
+    expect(centralRows(recorded)).toBe(3);
+
+    await pollRepeatedly(processor, 1);
+    expect(centralRows(recorded)).toBe(3);
+    expect(onceSeamCalls(store)).toHaveLength(6);
+    expect(mirrors).toHaveLength(2);
+  });
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-10-11-00:37 (RUFU-382):
+  Duck-typed access is required, not stylistic: 170 of the 185 TaskStore literals in `__tests__` declare no
+  `logEntryOnce`, and the type has 71 implementations (7 production), so a store without the once-seam is a
+  reachable shape. The fallback keeps `logEntry` — but inside the SAME proof path, so a fallback that rejects
+  still cannot commit the marker. `logEntry` returns `Promise<Task>`, which allSettled can join.
+  */
+  it("falls back to the legacy seam for a store without the once-seam, and still refuses an unproven marker", async () => {
+    const store = createStore([eligibleTodoTask("FN-382-LEGACY")], recorded);
+    (store as unknown as { logEntryOnce?: unknown }).logEntryOnce = undefined;
+    const logWrite = (store as unknown as { logEntry: (id: string, action: string) => Promise<unknown> }).logEntry;
+    let attempts = 0;
+    (store as unknown as { logEntry: unknown }).logEntry = vi.fn(async (id: string, action: string) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("task row contended");
+      return logWrite(id, action);
+    });
+    const processor = new TriageProcessor(store, "/tmp/rufu-382-throttle-root", {});
+    (processor as unknown as { running: boolean }).running = true;
+
+    await pollRepeatedly(processor, 1);
+    expect(centralRows(recorded)).toBe(1);
+    expect(legacySeamCalls(store)).toHaveLength(1);
+
+    // Rejected fallback write → marker unproven → the stall re-announces and the mirror is retried.
+    await pollRepeatedly(processor, 1);
+    expect(centralRows(recorded)).toBe(2);
+    expect(legacySeamCalls(store)).toHaveLength(2);
+
+    // Proven fallback write → settled.
+    await pollRepeatedly(processor, 1);
+    expect(centralRows(recorded)).toBe(2);
+    expect(legacySeamCalls(store)).toHaveLength(2);
   });
 
   /*

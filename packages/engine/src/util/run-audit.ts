@@ -611,6 +611,17 @@ export type DatabaseMutationType =
    * processingCount, processingTaskIds, semaphoreActiveCount?, semaphoreLimit?,
    * semaphoreAvailableCount?, semaphoreWaitingCount? } — ids/counts/outcomes only.
    * Deduped on the gate signature, so a sustained stall emits one row, not one per poll.
+   *
+   * FNXC:ConcurrencyAdmission 2026-10-11-02:05 (RUFU-382):
+   * The dedupe marker now proves an EMISSION, not just this row. It is assigned only after this event
+   * lands AND every named eligible card carries its mirrored History line (written through
+   * `logEntryOnce`, deduped per signature over RUFU-273's refresh floor), so a stalled write leaves the
+   * marker unset and the next poll re-announces. Consequence, accepted deliberately: a card mirror that
+   * keeps failing repeats this CENTRAL row once per poll — write amplification bounded by the failure, the
+   * same shape as the audit-retry cost FN-8600 already accepted, and the cards themselves cannot be
+   * spammed because their mirror is deduped by the store. Before this, the marker was assigned before the
+   * mirrors were even started, so a card could carry nothing while the central row made the stall look
+   * reported (RUFU-365: 45 rows over six hours, zero mirrored lines).
    */
   | "task:plan-admission-throttled"
   /*
