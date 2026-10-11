@@ -42,6 +42,19 @@ const DEFAULT_MAX_ENTRIES = 50;
 const DEFAULT_MAX_LOGGED_ENTRIES = 2_000;
 const DEFAULT_SEEN_ID_CAPACITY = 50_000;
 
+/*
+FNXC:TaskCacheMemory 2026-10-11-16:20 (operator suggestion):
+A size budget alone only evicts under pressure, so a cold row cached during a burst sits in the heap
+for the rest of the process life even though nothing has read it for hours - which is the shape the
+~2 h cycle actually has (a burst of sweeps, then a long idle tail). Idle expiry drops those rows on
+touch or on an opportunistic sweep. This is NOT a GC substitute: what a GC cannot free is what some
+live reference still reaches, and idle-TTL only helps exactly where application code is that
+reference. The measured 5.3 GiB that survived a forced GC therefore still needs its holder named;
+this bound covers the part where the holder is this cache.
+*/
+const DEFAULT_IDLE_TTL_MS = 10 * 60_000;
+const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
+
 function readPositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -51,14 +64,22 @@ export interface BoundedTaskCacheOptions {
   maxEntries?: number;
   maxLoggedEntries?: number;
   seenIdCapacity?: number;
+  /** A cached row idle longer than this is dropped on the next touch or sweep. */
+  idleTtlMs?: number;
+  /** Minimum spacing between opportunistic sweeps (no timer is owned by this class). */
+  sweepIntervalMs?: number;
+  /** Injectable clock, so expiry is testable without fake timers. */
+  now?: () => number;
 }
 
 /** Environment overrides exist so an operator can retune without a rebuild; defaults are the measured ones. */
-function resolveOptions(): Required<BoundedTaskCacheOptions> {
+function resolveOptions(): Omit<Required<BoundedTaskCacheOptions>, "now"> {
   return {
     maxEntries: readPositiveInt(process.env.FUSION_TASK_CACHE_MAX_ENTRIES, DEFAULT_MAX_ENTRIES),
     maxLoggedEntries: readPositiveInt(process.env.FUSION_TASK_CACHE_MAX_LOGGED, DEFAULT_MAX_LOGGED_ENTRIES),
     seenIdCapacity: readPositiveInt(process.env.FUSION_TASK_CACHE_SEEN_IDS, DEFAULT_SEEN_ID_CAPACITY),
+    idleTtlMs: readPositiveInt(process.env.FUSION_TASK_CACHE_IDLE_TTL_MS, DEFAULT_IDLE_TTL_MS),
+    sweepIntervalMs: readPositiveInt(process.env.FUSION_TASK_CACHE_SWEEP_MS, DEFAULT_SWEEP_INTERVAL_MS),
   };
 }
 
@@ -76,10 +97,18 @@ export class BoundedTaskCache extends Map<string, Task> {
   private readonly maxLoggedEntriesValue: number;
   private readonly seenIdCapacityValue: number;
   private loggedEntries = 0;
+  private readonly lastAccess = new Map<string, number>();
+  private readonly idleTtlMsValue: number;
+  private readonly sweepIntervalMsValue: number;
+  private readonly nowFn: () => number;
+  private lastSweepAt = 0;
 
   constructor(options: BoundedTaskCacheOptions = {}) {
     const resolved = { ...resolveOptions(), ...stripUndefined(options) };
     super();
+    this.idleTtlMsValue = resolved.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
+    this.sweepIntervalMsValue = resolved.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS;
+    this.nowFn = options.now ?? Date.now;
     this.maxEntriesValue = resolved.maxEntries;
     this.maxLoggedEntriesValue = resolved.maxLoggedEntries;
     this.seenIdCapacityValue = resolved.seenIdCapacity;
@@ -92,31 +121,41 @@ export class BoundedTaskCache extends Map<string, Task> {
 
   override set(id: string, task: Task): this {
     if (!task) {
+      this.lastAccess.delete(id);
       super.delete(id);
       return this;
     }
+    const now = this.nowFn();
+    this.sweepExpired(now);
     this.rememberId(id);
     const previous = super.get(id);
     if (previous) this.loggedEntries -= logEntryCount(previous);
     super.delete(id);
     super.set(id, task);
     this.loggedEntries += logEntryCount(task);
+    this.lastAccess.set(id, now);
     this.evictUntilWithinBudget(id);
     return this;
   }
 
   override get(id: string): Task | undefined {
     const task = super.get(id);
+    if (task !== undefined && this.isExpired(id, this.nowFn())) {
+      this.delete(id);
+      return undefined;
+    }
     if (task !== undefined) {
       // Recency bookkeeping only: delete+set on the SAME object, so the in-place mutator at
       // task-artifacts-ops.ts keeps writing to the instance it holds.
       super.delete(id);
       super.set(id, task);
+      this.lastAccess.set(id, this.nowFn());
     }
     return task;
   }
 
   override delete(id: string): boolean {
+    this.lastAccess.delete(id);
     const existing = super.get(id);
     if (existing) this.loggedEntries -= logEntryCount(existing);
     // seenIds deliberately keeps the id: that is the point of the index.
@@ -131,7 +170,32 @@ export class BoundedTaskCache extends Map<string, Task> {
    */
   override clear(): void {
     super.clear();
+    this.lastAccess.clear();
     this.loggedEntries = 0;
+  }
+
+  /** Entries dropped by idle expiry, for the test and any future diagnostic. */
+  expiredRowCount = 0;
+
+  private isExpired(id: string, now: number): boolean {
+    const touched = this.lastAccess.get(id);
+    return touched !== undefined && now - touched > this.idleTtlMsValue;
+  }
+
+  /**
+   * Opportunistic sweep, driven by write traffic rather than a timer: this class is constructed per
+   * store (24 of them on a busy host) and owning a timer per store would need lifecycle plumbing at
+   * every stop path, and a forgotten one is a leak in the thing meant to prevent leaks.
+   */
+  private sweepExpired(now: number): void {
+    if (now - this.lastSweepAt < this.sweepIntervalMsValue) return;
+    this.lastSweepAt = now;
+    for (const id of [...this.keys()]) {
+      if (this.isExpired(id, now)) {
+        this.delete(id);
+        this.expiredRowCount++;
+      }
+    }
   }
 
   private rememberId(id: string): void {

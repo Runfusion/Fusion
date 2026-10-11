@@ -77,6 +77,35 @@ describe("BoundedTaskCache", () => {
     expect(cache.seenIds).toEqual(["A", "B"]);
   });
 
+  it("drops a row that has been idle past the TTL on the next write sweep", () => {
+    let clock = 0;
+    const cache = new BoundedTaskCache({
+      maxEntries: 100, maxLoggedEntries: 100_000, idleTtlMs: 10_000, sweepIntervalMs: 100, now: () => clock,
+    });
+    cache.set("COLD", taskWithLog("COLD", 10));
+    cache.set("WARM", taskWithLog("WARM", 10));
+    clock = 5_000;
+    expect(cache.get("WARM")).toBeDefined();   // within TTL, refreshes recency
+    clock = 12_000;
+    // COLD has been idle 12 s (past the 10 s TTL); WARM has been idle 7 s and must stay.
+    cache.set("NEW", taskWithLog("NEW", 10));
+    expect(cache.get("COLD")).toBeUndefined();
+    expect(cache.get("WARM")).toBeDefined();
+    expect(cache.get("NEW")).toBeDefined();
+    expect(cache.expiredRowCount).toBe(1);
+    // Budget accounting must follow the expired row out, or later sets evict for nothing.
+    expect(cache.heldLoggedEntries).toBe(20);
+  });
+
+  it("expires an untouched row on read instead of returning stale data", () => {
+    let clock = 0;
+    const cache = new BoundedTaskCache({ maxEntries: 10, maxLoggedEntries: 100_000, idleTtlMs: 500, now: () => clock });
+    cache.set("A", taskWithLog("A", 3));
+    clock = 600;
+    expect(cache.get("A")).toBeUndefined();
+    expect(cache.heldLoggedEntries).toBe(0);
+  });
+
   it("bounds the id index itself, dropping the coldest ids first", () => {
     const cache = new BoundedTaskCache({ maxEntries: 100, maxLoggedEntries: 100_000, seenIdCapacity: 2 });
     for (const id of ["A", "B", "C"]) cache.set(id, taskWithLog(id, 1));
