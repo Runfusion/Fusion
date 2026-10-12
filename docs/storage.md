@@ -14,6 +14,11 @@ See the [2026-07-14 PostgreSQL runtime cutover review](./postgres-migration-revi
 
 ## Embedded PostgreSQL startup resources
 
+### Linux bundled ICU compatibility repair (FN-9528)
+
+- Before local PostgreSQL starts, Fusion restores missing bundled ICU 60 SONAME links only when their exact bundled 60.2 targets are present: `libicui18n.so.60`, `libicuuc.so.60`, and `libicudata.so.60` link to their corresponding `.so.60.2` files.
+- This repair is limited to Fusion's embedded PostgreSQL `native/lib` payload. Fusion does not use, downgrade, or modify the host system ICU; a loader failure after the repair retains PostgreSQL's actual diagnostic for investigation.
+
 ### Windows owned-cluster recovery (FN-8522)
 
 - Windows readiness uses bounded TCP probes. Runner-log reads are diagnostic open/read/close snapshots only; Fusion keeps no persistent runner-log handle, so PostgreSQL can retain its own `pg_ctl` log without a Fusion-induced sharing-violation retry.

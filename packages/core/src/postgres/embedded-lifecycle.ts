@@ -578,6 +578,9 @@ export function materializeEmbeddedPostgresRuntimeBinaries(
     existsSync(join(destRoot, "lib", "postgresql")) &&
     verifyEmbeddedPostgresPayloadInventory(nativeRoot, destRoot).acceptable
   ) {
+    // Old materializations can have a valid payload marker yet predate a
+    // compatibility-link repair; normalize before reusing them.
+    normalizeBundledEmbeddedPostgresCompatibilityLinks(destRoot);
     clearEmbeddedPayloadIntegrityFailureForRoot(destRoot);
     return destRoot;
   }
@@ -614,8 +617,8 @@ export function materializeEmbeddedPostgresRuntimeBinaries(
       }
     }
   }
-  // Re-apply macOS ABI compatibility links against the materialized lib dir.
-  normalizeMacosEmbeddedPostgresDylibSymlinks(destRoot);
+  // Re-apply platform ABI compatibility links against the materialized lib dir.
+  normalizeBundledEmbeddedPostgresCompatibilityLinks(destRoot);
   const verification = verifyEmbeddedPostgresPayloadInventory(nativeRoot, destRoot);
   if (!verification.acceptable) {
     try {
@@ -1003,6 +1006,12 @@ export interface EmbeddedDylibNormalization {
   readonly created: boolean;
 }
 
+export interface EmbeddedLinuxIcuNormalization {
+  readonly expected: string;
+  readonly target: string;
+  readonly created: boolean;
+}
+
 /*
 FNXC:PostgresEmbedded 2026-07-22-14:34:
 The bundled libicui18n.68.2.dylib records libicuuc.68.dylib as its loader
@@ -1073,6 +1082,47 @@ export function normalizeMacosEmbeddedPostgresDylibSymlinks(
   return results;
 }
 
+/*
+FNXC:PostgresEmbedded 2026-10-12-16:35:
+Script-disabled and Homebrew Linux installations can retain Fusion's bundled
+ICU 60.2 payload while omitting the SONAME links that its PostgreSQL binary
+loads. Restore only the exact relative aliases from that bundled ABI before
+startup; system ICU libraries and versions are never consulted.
+*/
+const LINUX_EMBEDDED_ICU_SONAME_SYMLINKS = [
+  { expected: "libicui18n.so.60", target: "libicui18n.so.60.2" },
+  { expected: "libicuuc.so.60", target: "libicuuc.so.60.2" },
+  { expected: "libicudata.so.60", target: "libicudata.so.60.2" },
+] as const;
+
+/** Restores missing Linux ICU 60 SONAME aliases from the bundled native payload. */
+export function normalizeLinuxEmbeddedPostgresIcuSonameSymlinks(
+  nativeRoot: string,
+): EmbeddedLinuxIcuNormalization[] {
+  const libDir = join(nativeRoot, "lib");
+  if (!existsSync(libDir)) return [];
+
+  const results: EmbeddedLinuxIcuNormalization[] = [];
+  for (const spec of LINUX_EMBEDDED_ICU_SONAME_SYMLINKS) {
+    const expectedPath = join(libDir, spec.expected);
+    if (existsSync(expectedPath) || !existsSync(join(libDir, spec.target))) continue;
+    try {
+      // Replace only a dangling link. Existing regular files and valid links
+      // are authoritative and must not be overwritten by this best-effort repair.
+      const existing = lstatSync(expectedPath, { throwIfNoEntry: false });
+      if (existing?.isSymbolicLink()) unlinkSync(expectedPath);
+      else if (existing) continue;
+      symlinkSync(spec.target, expectedPath);
+    } catch {
+      // Preserve the loader's native diagnostic when package storage is read-only
+      // or has an unexpected filesystem layout.
+      continue;
+    }
+    results.push({ expected: spec.expected, target: spec.target, created: true });
+  }
+  return results;
+}
+
 function findPnpmVirtualStore(start: string): string | null {
   let current = start;
   for (let depth = 0; depth < 12; depth += 1) {
@@ -1134,9 +1184,21 @@ function resolveGenericEmbeddedPostgresNativeRoot(): string | null {
   }
 }
 
+let embeddedPostgresNativeRootForTests: string | null = null;
+
+/** Test-only native-root seam for lifecycle preflight ordering coverage. */
+export function __setEmbeddedPostgresNativeRootForTests(value: string | null): void {
+  embeddedPostgresNativeRootForTests = value;
+}
+
 function resolveMacosEmbeddedPostgresNativeRoot(): string | null {
   if (process.platform !== "darwin") return null;
-  return resolveGenericEmbeddedPostgresNativeRoot();
+  return embeddedPostgresNativeRootForTests ?? resolveGenericEmbeddedPostgresNativeRoot();
+}
+
+function resolveLinuxEmbeddedPostgresNativeRoot(): string | null {
+  if (process.platform !== "linux" && !embeddedPostgresNativeRootForTests) return null;
+  return embeddedPostgresNativeRootForTests ?? resolveGenericEmbeddedPostgresNativeRoot();
 }
 
 /**
@@ -1172,6 +1234,20 @@ function normalizeBundledMacosDylibs(onLog: (message: string) => void): void {
   for (const link of created) {
     onLog(`embedded postgres: repaired macOS dylib link ${link.expected} -> ${link.target}`);
   }
+}
+
+function normalizeBundledLinuxIcuSonames(onLog: (message: string) => void): void {
+  const nativeRoot = resolveLinuxEmbeddedPostgresNativeRoot();
+  if (!nativeRoot) return;
+  const created = normalizeLinuxEmbeddedPostgresIcuSonameSymlinks(nativeRoot);
+  for (const link of created) {
+    onLog(`embedded postgres: repaired Linux ICU link ${link.expected} -> ${link.target}`);
+  }
+}
+
+function normalizeBundledEmbeddedPostgresCompatibilityLinks(nativeRoot: string): void {
+  if (process.platform === "darwin") normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot);
+  if (process.platform === "linux") normalizeLinuxEmbeddedPostgresIcuSonameSymlinks(nativeRoot);
 }
 
 /**
@@ -1693,6 +1769,7 @@ export class EmbeddedPostgresLifecycle {
     const alreadyInitialized = isDataDirInitialized(this.options.dataDir);
 
     normalizeBundledMacosDylibs(this.options.onLog);
+    normalizeBundledLinuxIcuSonames(this.options.onLog);
 
     const pg = new (getEmbeddedPostgresCtor())({
       databaseDir: this.options.dataDir,

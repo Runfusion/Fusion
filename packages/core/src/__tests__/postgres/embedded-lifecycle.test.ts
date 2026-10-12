@@ -45,8 +45,10 @@ import {
   isWindowsElevatedAdmin,
   readPidFromPostmasterPid,
   normalizeMacosEmbeddedPostgresDylibSymlinks,
+  normalizeLinuxEmbeddedPostgresIcuSonameSymlinks,
   readPortFromPostmasterPid,
   __setEmbeddedPostgresCtorForTests,
+  __setEmbeddedPostgresNativeRootForTests,
   __setWindowsElevatedAdminForTests,
   __setWindowsEmbeddedPostgresNativeRootForTests,
   __setWindowsLauncherForTests,
@@ -80,6 +82,7 @@ const tracked: Array<{
 
 afterEach(async () => {
   __setEmbeddedPostgresCtorForTests(null);
+  __setEmbeddedPostgresNativeRootForTests(null);
   __setWindowsElevatedAdminForTests(null);
   __setWindowsEmbeddedPostgresNativeRootForTests(null);
   __setWindowsLauncherForTests(null);
@@ -620,6 +623,87 @@ describe("embedded-lifecycle: materialize runtime binaries (update-safe marker)"
     } finally {
       rmSync(nativeRoot, { recursive: true, force: true });
       rmSync(destRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("embedded-lifecycle: Linux ICU SONAME compatibility links", () => {
+  const linuxIcuLinks = [
+    ["libicui18n.so.60", "libicui18n.so.60.2"],
+    ["libicuuc.so.60", "libicuuc.so.60.2"],
+    ["libicudata.so.60", "libicudata.so.60.2"],
+  ] as const;
+
+  it("repairs the reported missing bundled ICU 60 aliases with relative links", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-linux-icu-"));
+    try {
+      const libDir = join(nativeRoot, "lib");
+      mkdirSync(libDir, { recursive: true });
+      for (const [, target] of linuxIcuLinks) writeFileSync(join(libDir, target), "bundled");
+
+      expect(normalizeLinuxEmbeddedPostgresIcuSonameSymlinks(nativeRoot)).toEqual(
+        linuxIcuLinks.map(([expected, target]) => ({ expected, target, created: true })),
+      );
+      for (const [expected, target] of linuxIcuLinks) {
+        expect(readlinkSync(join(libDir, expected))).toBe(target);
+      }
+      expect(normalizeLinuxEmbeddedPostgresIcuSonameSymlinks(nativeRoot)).toEqual([]);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves valid files and links while repairing only dangling aliases with bundled sources", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-linux-icu-"));
+    try {
+      const libDir = join(nativeRoot, "lib");
+      mkdirSync(libDir, { recursive: true });
+      writeFileSync(join(libDir, "libicui18n.so.60.2"), "bundled");
+      writeFileSync(join(libDir, "libicuuc.so.60.2"), "bundled");
+      symlinkSync("missing.so", join(libDir, "libicui18n.so.60"));
+      symlinkSync("libicuuc.so.60.2", join(libDir, "libicuuc.so.60"));
+      writeFileSync(join(libDir, "libicudata.so.60"), "operator-file");
+
+      expect(normalizeLinuxEmbeddedPostgresIcuSonameSymlinks(nativeRoot)).toEqual([
+        { expected: "libicui18n.so.60", target: "libicui18n.so.60.2", created: true },
+      ]);
+      expect(readlinkSync(join(libDir, "libicui18n.so.60"))).toBe("libicui18n.so.60.2");
+      expect(readlinkSync(join(libDir, "libicuuc.so.60"))).toBe("libicuuc.so.60.2");
+      expect(readFileSync(join(libDir, "libicudata.so.60"), "utf8")).toBe("operator-file");
+      expect(existsSync(join(libDir, "libicudata.so.60.2"))).toBe(false);
+      expect(normalizeLinuxEmbeddedPostgresIcuSonameSymlinks(join(nativeRoot, "missing"))).toEqual([]);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs Linux aliases before the production lifecycle constructs embedded-postgres", async () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-linux-lifecycle-"));
+    const dataDir = makeDataDir();
+    const sentinel = new Error("stop after preflight");
+    try {
+      const libDir = join(nativeRoot, "lib");
+      mkdirSync(libDir, { recursive: true });
+      for (const [, target] of linuxIcuLinks) writeFileSync(join(libDir, target), "bundled");
+      __setEmbeddedPostgresNativeRootForTests(nativeRoot);
+
+      class PreflightCheckingEmbeddedPostgres {
+        constructor() {
+          for (const [expected, target] of linuxIcuLinks) {
+            expect(readlinkSync(join(libDir, expected))).toBe(target);
+          }
+        }
+        initialise = vi.fn(async () => {});
+        start = vi.fn(async () => { throw sentinel; });
+        stop = vi.fn(async () => {});
+      }
+      __setEmbeddedPostgresCtorForTests(PreflightCheckingEmbeddedPostgres as never);
+
+      const lifecycle = new EmbeddedPostgresLifecycle({ ...baseOptions(dataDir), startTimeoutMs: 0 });
+      await expect(lifecycle.start()).rejects.toBe(sentinel);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 });
