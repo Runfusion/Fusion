@@ -654,15 +654,17 @@ export interface ListTasksOptions {
   deriving caller can ask for a `log`-free row and still get byte-identical badges — proven by
   `__tests__/postgres/task-log-projections.pg.test.ts`.
 
-  `slim` alone still does NOT drop the column while deriving: engine sweeps call `listTasks({slim:true})`
-  with derivation left on and read `log` MARKERS out of the rows they get back, so flipping `slim`
-  would prune a column a shared loader's consumers still read. Only an explicit `excludeLog` does that,
-  per call site, which keeps every existing caller's SQL shape untouched.
+  `slim` now implies this, and the old reason for refusing it was false. This option used to say that engine
+  `slim` sweeps read `log` MARKERS out of the rows they get back — but the slim finalize in `listTasksImpl`
+  assigns `task.log = []` on BOTH slim paths (derive-off through `effectiveExcludeLog`, derive-on in the slim
+  strip), so no slim consumer could ever have observed a log entry. The gate only guaranteed that every slim
+  board scan shipped and JSON-parsed up to ~1000 entries / 3.9 MB per card and threw it away: the `DataRow` +
+  `fromJson` mass a production sampling heap profile measured at ~925 MiB of still-live allocations per 180 s
+  window (RUFU-615).
 
-  This is still deliberately NOT `slim: true`: `slim` bundles three unrelated contracts, and the one
-  that matters here is `finalizeSlimListTask`, which re-parses PROMPT.md for EVERY task whose persisted
-  `steps` is empty — an unbounded per-pass file read whose cost is only knowable from a live census.
-  A consumer that wants badges and no log wants `excludeLog`, not `slim`.
+  `slim` still carries a second, unrelated cost this option does not touch: `finalizeSlimListTask` re-parses
+  PROMPT.md for EVERY task whose persisted `steps` is empty — an unbounded per-pass file read whose cost is
+  only knowable from a live census. A caller that wants neither may pass `excludeLog` explicitly.
   */
   excludeLog?: boolean;
 }
@@ -917,11 +919,17 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     derivation input only because the five log-derived signals were computed here; they now read
     `timing_total_ms` + `log_recent`, so an explicit `excludeLog: true` reaches the SELECT even while
     deriving and the badges stay byte-identical (proven in
-    `__tests__/postgres/task-log-projections.pg.test.ts`). `slim` alone still cannot drop the column
-    while deriving: the engine's `slim` sweeps read `task.log` MARKERS out of the rows they get back, and
-    no shared loader may lose `log` — only a caller that asked per call site does.
+    `__tests__/postgres/task-log-projections.pg.test.ts`).
+
+    FNXC:ListTasksExcludeLog 2026-10-12-16:50 (RUFU-615 tranche 5):
+    The `slim` veto is GONE, because it guarded a column nothing could read. The sentence it replaced claimed
+    slim sweeps need `log` MARKERS from their rows, which this function's own slim strip (`task.log = []` on
+    the derive-on path as well) makes impossible. The three log-derived signals on the derive-on slim path
+    (`detectStalledReview`, `getInReviewStalledSignal`, `timedExecutionMs`) run BEFORE that strip and already
+    fall back to `timing_total_ms` + `log_recent` — the same route an explicit `excludeLog: true` caller has
+    taken since RUFU-615 — so omitting the column is row-shape-neutral and removes the parse cost instead.
     */
-    const effectiveExcludeLog = options?.excludeLog === true || (!deriveUiSignals && slim);
+    const effectiveExcludeLog = options?.excludeLog === true || slim;
     const filteredRows = await readLiveTaskRows(layer, {
       ...(effectiveExcludeLog ? { excludeLog: true } : {}),
       includeDeleted: options?.includeDeleted,
