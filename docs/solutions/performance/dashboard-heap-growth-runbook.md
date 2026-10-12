@@ -114,13 +114,15 @@ chat):
 1. **Sample every 60 s** for as long as you can afford (≥ 4 h catches the observed growth shape; a full
    day catches slow ones). Keep the timestamp.
 
+   Sample to disk-backed storage. On a host where `/tmp` is a tmpfs (`df -h /tmp`), the soak log is pinned RAM in exactly the investigation where RAM is the subject — the Schindler production host is that shape, with `/tmp` a 63 GiB tmpfs already holding 13 GiB.
+
    ```bash
-   mkdir -p /tmp/fn-soak
+   mkdir -p ~/fusion-diagnostics
    while :; do
      ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
      curl -fsS http://127.0.0.1:4040/metrics \
        | grep -E '^fusion_retention_(tracked_bytes|heap_used_bytes|coverage_ratio|residual_bytes|source_bytes|source_entries|source_ceiling|probe_failures)' \
-       | sed "s|^|$ts |" >> /tmp/fn-soak/soak.log
+       | sed "s|^|$ts |" >> ~/fusion-diagnostics/fn-soak.log
      sleep 60
    done
    ```
@@ -156,14 +158,37 @@ as an entry in the inventory so the next reader inherits the conclusion.
 ## Decision table
 
 Always start by attributing: read `topk` of `fusion_retention_source_bytes` (or `sort_desc` in your
-query tool, or `grep source_bytes /tmp/fn-soak/soak.log | sort -k3 -t= -n -r | head`) before touching code.
+query tool, or `grep source_bytes ~/fusion-diagnostics/fn-soak.log | sort -k3 -t= -n -r | head`) before touching code.
 
 | Observation | Next step | Evidence that ends the hunt |
 | --- | --- | --- |
 | A `source_bytes{source="X"}` ramps monotonically and `source_ceiling{source="X"}` is high relative to per-entry size | Fix **that** cache: lower or right-size its ceiling, and check whether per-entry bytes (not entry count) is the real weight — a diff entry holds one whole patch per changed file | `source_bytes` plateaus below the ceiling under the same traffic; the source is listed in `scripts/lib/retention-inventory.mjs` as `census-registered` |
 | A source sits at its ceiling persistently and the pressure warning fires with `source-at-ceiling` | Two honest options: the ceiling is wrong for real traffic (raise it *with* an entry-size budget), or entries are not expiring (read its `expired_entries` — high means the reclaim path is broken, which is the RUFU-257 bug class) | `expired_entries` near 0 with a plateau, and a regression test that drives 1 000 distinct keys and asserts entries ≤ ceiling |
 | `source_entries` ramps while `source_bytes` stays flat | You are counting identities, not holding values — check the source's value shape; often the map is a set of ids pointing at something held elsewhere (listeners, sockets, sessions) | The owning structure gets its own census row so the bytes land somewhere |
-| `coverage_ratio` near 0 and `heap_used_bytes` climbing, no source ramping | The growth is **outside** the census. Capture two heap snapshots ~30 min apart — over the inspector (`--inspect` + DevTools → Memory), or `node --heapsnapshot-signal=SIGUSR2` with `kill -USR2 <pid>` — and diff them by **retained size**, then register the winner with the census so it is attributed next time | The dominating constructor in the diff is a module-scope collection you can register; the guard then refuses it if anyone un-bounds it |
+| `coverage_ratio` near 0 and `heap_used_bytes` climbing, no source ramping | The growth is **outside** the census. Attribute it with the **sampling heap profiler** (`HeapProfiler.startSampling` → ~10 min → `getSamplingProfile`, self-size per stack, near-zero overhead) — a full snapshot is only diffable once the live set is small, and on a host whose watchdog kills on RSS it cannot be taken at all (see below). Register the winner with the census so it is attributed next time | The dominating constructor in the profile is a module-scope collection you can register; the guard then refuses it if anyone un-bounds it |
+
+### A full heap snapshot cannot be taken on an RSS-capped host
+
+<!-- FNXC:HeapSnapshotFeasibility 2026-10-12-20:17:
+RUFU-615 measured why the snapshot step of this table silently never produces evidence on the
+Schindler production host. V8 serializes a snapshot in memory before writing it, so generation
+RSS is roughly live set + serialized snapshot ≈ 2x the live set. With a ~10 GiB live set the
+process crossed the watchdog's 16 GiB RSS kill ~70 s into `kill -USR2 <pid>` and was restarted
+with `health=000 rss=19572440`, leaving the file it had opened at 0 bytes. Six independent
+`Heap.*.heapsnapshot` files in that deploy worktree are 0 bytes, which is this mechanism, not
+operator error. The heap ceiling is not the constraint here: the RSS kill and host availability
+are, so raising `--max-old-space-size` cannot make a snapshot feasible. The sampling profiler is
+the discovery tool; a snapshot is a post-fix verification tool, usable only once the live set is
+small enough that 2x it fits under the kill. -->
+
+V8 builds the snapshot **in memory before the first byte is written**, so taking one temporarily costs about `2 × live set` of RSS. On any host whose availability is enforced below that (a watchdog RSS kill, a container memory limit, or simply free RAM), the capture is killed mid-write and leaves a **0-byte** file — the death looks like a health failure, not a failed diagnostic.
+
+Two consequences:
+
+- **Use the sampling profiler for discovery.** `HeapProfiler.startSampling` with `getSamplingProfile` after ~10 min reports self-size by stack at negligible memory cost, and it is what produced this repo's only measured allocation number (`~925 MiB of still-live allocations per 180 s window`, cited in `packages/core/src/task-store/reads.ts`).
+- **Reserve snapshots for verification.** Once a fix has brought the live set down so that twice it fits under the kill, a before/after pair becomes feasible and is the strongest evidence that the retained set actually shrank.
+
+Before spending the outage, do the arithmetic: `2 × current heap_used` versus (RSS kill − current RSS). On the 2026-10-12 attempt that was `~20 GiB` needed against `~4,3 GiB` of headroom.
 | `heap_used_bytes` flat but RSS climbs | Off-heap retention: `Buffer`s, `Uint8Array`s, libuv handles, child-process pipes (terminal output is the known dashboard example — `terminal_output_buffers` is registered precisely for this) | RSS flattens once the owning buffer is bounded |
 | `probe_failures > 0` | An attribution hole, not a memory bug: one source's probe throws so its bytes fall into the residual. Read the census warning naming the failing source and fix the probe | `probe_failures` back to 0 and the source's bytes reappear |
 | Nothing grows at all, but the operator got a pressure warning | The warning line names its own reason: `retention pressure (heap-ratio):` means heap used reached 75 % of the V8 ceiling even though nothing is ramping — the process is near its limit for another reason (a very large board, big store reads, a legitimately big working set). `retention pressure (source-at-ceiling):` names the source instead. Both are warnings only: nothing is dropped, restarted, or resized to produce them | The warning stops firing after the load that caused it goes away |
