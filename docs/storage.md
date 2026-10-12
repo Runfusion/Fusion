@@ -530,7 +530,7 @@ FN-509 removed task priority levels. An ordinary queue is strictly arrival-order
 
 `project.tasks.log` was 31.4 MB of the 73.6 MB of live-row bytes measured over 2 417 live rows (42.7 %), and every board refresh selected it because five UI figures were computed **from** it at read time. The fix is not a read-side projection: locating a `[timing]` entry or the maximum timestamp needs per-row `jsonb` expansion, and any per-row touch of `log` decompresses the whole column. A SQL-side derivation was prototyped, proven equivalent over 482 709 log entries, and rejected at 4.5–11.5 s of PostgreSQL CPU per full-board read against a 0.2–0.35 s no-`log` baseline.
 
-**The two columns.** Migration `0092_rufu_615_task_log_projections.sql` adds:
+**The two columns.** Migration `0091_rufu_615_task_log_projections.sql` adds:
 
 | Column | Type | Answers |
 |---|---|---|

@@ -1,4 +1,3 @@
--- FNXC:MigrationVersionCollision 2026-10-01-15:26: upstream released this as 0086, the slot this line had already given its STAS-205 review-lane ledger. Two migrations cannot share one `fusion_schema_migrations.version`: the ledger moved to 0088 and this file is re-issued at 0089. The DDL is idempotent, so a database that ever recorded upstream's 0086 re-applies it harmlessly here.
 -- FN-9429: authoritative receipt for automatic stale code-review callback waivers.
 CREATE TABLE IF NOT EXISTS project.stale_review_callback_waiver_receipts (
   project_id text NOT NULL DEFAULT current_setting('fusion.project_id', true),

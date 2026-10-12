@@ -260,7 +260,7 @@ describe("schema-applier: immutable migration identities", () => {
       Upstream ships pull-request readiness as migration 0087. This fork already owns 0087 for
       OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION and 0088 for REVIEW_LANE_LEDGER_VERSION, and every
       production database has recorded 0087/0088/0089 against THOSE meanings, so the incoming slot is
-      renumbered to 0090 (file 0090_fn_9439_pull_request_readiness.sql) - the same convention that
+      renumbered to 0090 (file 0087_fn_9439_pull_request_readiness.sql) - the same convention that
       renumbered upstream's 0086_fn_9429 onto 0089. The ordering invariants are asserted as `>=` /
       `>` rather than a second exact equality on SCHEMA_BASELINE_VERSION: a constant may carry exactly
       one ceiling equality, or the two sides of a merge silently contradict each other and only a
@@ -273,7 +273,7 @@ describe("schema-applier: immutable migration identities", () => {
     /*
     FNXC:MigrationVersionCollision 2026-10-08-13:26 (merge origin/main, upstream FN-9512):
     Upstream ships the recovery-disposition column as 0088 — the identity this fork already recorded for its
-    review-lane ledger — so the incoming migration re-issues at 0091 (file 0091_fn_9512_recovery_disposition.sql),
+    review-lane ledger — so the incoming migration re-issues at 0091 (file 0088_fn_9512_recovery_disposition.sql),
     the same convention that moved FN-9429's receipts to 0089 and FN-9439's readiness to 0090. Exact equality on the
     new identity; the ceiling keeps its single `>=` so the two sides of a merge cannot contradict each other.
     */
@@ -979,7 +979,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     Upstream's workflow-identity/approval/pause migrations add two tables over the 120 that already
     counted the review-lane ledger table; the merged fresh-baseline total is 122.
 
-    FNXC:MigrationIdentity 2026-10-04-11:59: upstream's `0089_fn_9429` receipt table adds one more, so the
+    FNXC:MigrationIdentity 2026-10-04-11:59: upstream's `0086_fn_9429` receipt table adds one more, so the
     fresh-baseline project count is 123.
     */
     expect(bySchema.project).toBe(123);    /*
