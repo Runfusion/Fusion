@@ -14,7 +14,7 @@ import remarkGfm from "remark-gfm";
 import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import type { Agent, AgentLogEntry, Settings, Task, TaskDetail, WorkflowDefinition, WorkflowStep, WorkflowStepResult, ResolvedWorkflowOptionalStep } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
-import { approveTaskWorkflowCli, fetchBoardWorkflows, fetchWorkflow, fetchWorkflows, fetchWorkflowSteps, fetchTaskWorkflow, fetchWorkflowOptionalSteps, selectTaskWorkflow, submitTaskWorkflowInput } from "../api";
+import { approveTaskWorkflowCli, fetchBoardWorkflows, fetchWorkflow, fetchWorkflowAdmission, fetchWorkflows, fetchWorkflowSteps, fetchTaskWorkflow, fetchWorkflowOptionalSteps, selectTaskWorkflow, submitTaskWorkflowInput, type WorkflowAdmission } from "../api";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { phaseBadge } from "./workflow-phase-badge";
 import { useAgentLogs } from "../hooks/useAgentLogs";
@@ -177,7 +177,17 @@ function getWorkflowName(
 function getAggregateWorkflowResult(
   results: WorkflowStepResult[],
   t: ReturnType<typeof useTranslation>["t"],
+  admission?: WorkflowAdmission | null,
 ): { label: string; badgeClass: string; testId: string } {
+  if (!admission || admission.resolution === "read-failed") {
+    return { label: t("app:workflow.aggregateAdmissionBlocked", "Requires review"), badgeClass: "workflow-result-badge--failed", testId: "admission-blocked" };
+  }
+  if (admission.requiredGateIds.length) {
+    if (admission.allApproved) {
+      return { label: t("app:workflow.aggregateAllPassed", "All passed"), badgeClass: "workflow-result-badge--passed", testId: "passed" };
+    }
+    return { label: t("app:workflow.aggregateAdmissionBlocked", "Requires review"), badgeClass: "workflow-result-badge--failed", testId: "admission-blocked" };
+  }
   if (results.some((result) => result.status === "failed")) {
     return { label: t("app:workflow.statusFailed", "Failed"), badgeClass: "workflow-result-badge--failed", testId: "failed" };
   }
@@ -418,6 +428,7 @@ export function WorkflowResultsTab({
   const [workflowGraphCache, setWorkflowGraphCache] = useState<Record<string, WorkflowDefinition>>({});
   const [workflowGraphLoading, setWorkflowGraphLoading] = useState(false);
   const [modelSettingsExpanded, setModelSettingsExpanded] = useState(false);
+  const [workflowAdmission, setWorkflowAdmission] = useState<WorkflowAdmission | null>(null);
 
   // Reset the paused-action UI whenever the blocked node/task changes, so a new
   // awaiting-user-input / awaiting-cli-approval pause starts with fresh controls
@@ -734,6 +745,17 @@ export function WorkflowResultsTab({
 
   const hasResults = results.length > 0;
   const hasConfiguredSteps = effectiveEnabledStepIds.length > 0;
+  /*
+  FNXC:PreMergeAdmission 2026-10-12-18:35:
+  Merge admission is authoritative only for the workflow selection it resolved. Refetch whenever the
+  displayed selection changes so a prior workflow's approval cannot survive a selector or live update
+  that adds a required gate.
+  */
+  const workflowAdmissionSelectionKey = useMemo(() => JSON.stringify({
+    workflowId: effectiveWorkflowId,
+    enabledWorkflowSteps: enabledWorkflowSteps ?? selectedWorkflowStepIds ?? null,
+    hasExplicitWorkflowStepSelection: enabledWorkflowSteps !== undefined || selectedWorkflowStepIds !== undefined,
+  }), [effectiveWorkflowId, enabledWorkflowSteps, selectedWorkflowStepIds]);
 
   useEffect(() => {
     if (!canEdit) {
@@ -760,9 +782,18 @@ export function WorkflowResultsTab({
     });
   }, [effectiveEnabledStepIds, workflowStepLookup, t]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setWorkflowAdmission(null);
+    void fetchWorkflowAdmission(taskId, projectId)
+      .then((admission) => { if (!cancelled) setWorkflowAdmission(admission); })
+      .catch(() => { if (!cancelled) setWorkflowAdmission(null); });
+    return () => { cancelled = true; };
+  }, [taskId, projectId, results, workflowAdmissionSelectionKey]);
+
   const workflowName = useMemo(() => getWorkflowName(effectiveWorkflowId, workflowDefinitions, t), [effectiveWorkflowId, workflowDefinitions, t]);
   const executionPhase = useMemo(() => getExecutionPhase(task, taskStatus, taskPausedReason, results, t, columnFlags), [task, taskStatus, taskPausedReason, results, t, columnFlags]);
-  const aggregateResult = useMemo(() => getAggregateWorkflowResult(results, t), [results, t]);
+  const aggregateResult = useMemo(() => getAggregateWorkflowResult(results, t, workflowAdmission), [results, t, workflowAdmission]);
   const completedStepCount = useMemo(() => results.filter((result) => ["passed", "skipped", "failed", "advisory_failure"].includes(result.status)).length, [results]);
   const graphWorkflow = graphCacheKey ? workflowGraphCache[graphCacheKey] : undefined;
   const graphFlow = useMemo(() => (graphWorkflow ? irToFlow(graphWorkflow) : null), [graphWorkflow]);
@@ -921,6 +952,20 @@ export function WorkflowResultsTab({
         <div className="workflow-results-summary-bar" data-testid="workflow-results-summary">
           {summaryParts.join(t("app:workflow.summarySeparator", " · "))}
         </div>
+        {(!workflowAdmission || workflowAdmission.resolution === "read-failed") && (
+          <div className="workflow-admission-diagnostics" data-testid="workflow-admission-diagnostics">
+            <p>{t("app:workflow.admissionUnavailable", "Workflow admission is unavailable; gate results cannot yet count.")}</p>
+          </div>
+        )}
+        {workflowAdmission && workflowAdmission.resolution !== "read-failed" && !workflowAdmission.allApproved && workflowAdmission.gates.some((gate) => gate.state !== "approved") && (
+          <div className="workflow-admission-diagnostics" data-testid="workflow-admission-diagnostics">
+            {workflowAdmission.gates.filter((gate) => gate.state !== "approved").map((gate) => (
+              <p key={gate.workflowStepId}>
+                {t("app:workflow.admissionGateBlocked", "Gate {{gate}} cannot count: {{reason}}", { gate: gate.workflowStepId, reason: gate.state })}
+              </p>
+            ))}
+          </div>
+        )}
         {advisoryFailures.length > 0 && (
           <div className="workflow-polish-notes" data-testid="workflow-polish-notes">
             <h4>{t("app:workflow.polishNotes", "Polish notes")}</h4>

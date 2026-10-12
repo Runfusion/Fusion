@@ -1415,6 +1415,7 @@ export { describeMergeContentShape } from "./merge/merge-content-descriptor.js";
 export type { MergeContentDescriptor } from "./merge/merge-content-descriptor.js";
 export {
   AUTOMATED_BYPASS_ACTORS,
+  evaluatePreMergeAdmissionDecision,
   evaluatePreMergeApprovals,
   isAuditedOperatorBypass,
   requiresContentReviewProof,
@@ -1423,7 +1424,7 @@ export {
 export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { RequiredPostMergeEvidenceDecision } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
-export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
+export type { PreMergeAdmissionDecision, PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {
   isBranchGroupMemberLanded,
   isBranchGroupComplete,

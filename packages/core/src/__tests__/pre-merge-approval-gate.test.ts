@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getTaskMergeBlocker } from "../merge/task-merge.js";
-import { evaluatePreMergeApprovals, hasValidStaleReviewCallbackWaiver, resolveUnprovenReviewApproval } from "../merge/pre-merge-approval.js";
+import { evaluatePreMergeAdmissionDecision, evaluatePreMergeApprovals, hasValidStaleReviewCallbackWaiver, resolveUnprovenReviewApproval } from "../merge/pre-merge-approval.js";
 
 const base = {
   column: "in-review", paused: false, steps: [], repositoryScope: undefined,
@@ -65,6 +65,33 @@ describe("positive pre-merge approval gate", () => {
   it("blocks the FN-175 result-wipe shape", () => {
     expect(getTaskMergeBlocker({ ...base, workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan", status: "passed" }] }, { requiredPreMergeStepIds: required }))
       .toBe("task has enabled pre-merge workflow steps that never ran");
+  });
+
+  it("reports the same durable retry carrier that merge admission uses", () => {
+    const task = {
+      ...base,
+      workflowStepResults: [{
+        workflowStepId: "code-review", workflowStepName: "Code", status: "passed" as const,
+        verdict: "APPROVE" as const, reviewKind: "code" as const, reviewInputFingerprint: "current",
+        completedAt: "2026-10-12T17:00:00.000Z",
+        priorAttempts: [{ workflowStepId: "code-review", workflowStepName: "Code", status: "failed" as const, reviewKind: "code" as const }],
+      }],
+    };
+    const decision = evaluatePreMergeAdmissionDecision(task, {
+      requiredPreMergeStepIds: required,
+      mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } },
+    });
+
+    expect(decision).toMatchObject({ allApproved: true, gates: [{ workflowStepId: "code-review", state: "approved", selectedResult: { status: "passed", verdict: "APPROVE", reviewInputFingerprint: "current" } }] });
+    expect(getTaskMergeBlocker(task, { requiredPreMergeStepIds: required, mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } } })).toBeUndefined();
+  });
+
+  it("reports a present invalid carrier instead of calling it absent", () => {
+    const task = { ...base, workflowStepResults: [{ workflowStepId: "code-review", workflowStepName: "Code", status: "passed" as const, reviewKind: "code" as const, completedAt: "2026-10-12T17:00:00.000Z" }] };
+    const decision = evaluatePreMergeAdmissionDecision(task, { requiredPreMergeStepIds: required, mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } } });
+
+    expect(decision).toMatchObject({ allApproved: false, gates: [{ workflowStepId: "code-review", state: "not-approved", selectedResult: { status: "passed" } }] });
+    expect(getTaskMergeBlocker(task, { requiredPreMergeStepIds: required, mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } } })).toContain("gate 'code-review'");
   });
 
   it("rejects a passed Code Review that has no reviewer verdict", () => {

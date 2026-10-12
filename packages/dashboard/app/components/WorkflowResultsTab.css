@@ -557,6 +557,15 @@ for ineligible results.
   padding-inline-start: var(--space-lg);
 }
 
+.workflow-admission-diagnostics {
+  margin: var(--space-2) 0;
+  color: var(--color-error);
+}
+
+.workflow-admission-diagnostics p {
+  margin: 0;
+}
+
 .workflow-results-summary-bar {
   display: flex;
   align-items: center;
