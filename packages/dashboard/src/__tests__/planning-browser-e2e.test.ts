@@ -60,6 +60,13 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
   let server: ViteDevServer;
   let browser: Browser;
   let baseUrl: string;
+  const pages = new Set<Page>();
+
+  async function openPage(viewport: { width: number; height: number }): Promise<Page> {
+    const page = await browser.newPage({ viewport });
+    pages.add(page);
+    return page;
+  }
 
   beforeAll(async () => {
     /*
@@ -87,16 +94,16 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await browser?.close();
     /*
-    FNXC:PlanningModeBrowserE2E 2026-07-23-09:05:
-    Bound watcher shutdown prevents a native fsevents close callback from holding this mandatory
-    browser lane open after the fixture listener is gone, while still releasing it before Vitest exits.
+    FNXC:PlanningModeBrowserE2E 2026-10-12-17:57:
+    FN-9534 requires deterministic ownership teardown after any browser assertion fails. Close every
+    page before Chromium, then release the Vite watcher, websocket, HTTP listener, and plugin
+    container in dependency order. Do not race watcher closure against a timer: the race leaves a
+    live timeout handle and turns a clean UI run into an intermittent suite-cleanup failure.
     */
-    await Promise.race([
-      server.watcher.close(),
-      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
-    ]);
+    await Promise.all([...pages].map((page) => page.close()));
+    await browser?.close();
+    await server.watcher.close();
     server.ws.close();
     server.httpServer?.closeAllConnections?.();
     await new Promise<void>((resolve, reject) => server.httpServer?.close((error) => error ? reject(error) : resolve()));
@@ -104,7 +111,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
   }, 10_000);
 
   it("starts with one question and regenerates the visible plan before the next question", async () => {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const page = await openPage({ width: 1440, height: 900 });
     page.on("console", (event) => console.log(`[planning-browser-e2e] ${event.text?.() ?? ""}`));
     page.on("pageerror", (event) => console.error(`[planning-browser-e2e] ${event.message ?? ""}`));
     await page.goto(`${baseUrl}app/planning-browser-e2e-fixture.html?reset=1`);
@@ -124,7 +131,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
   }, 30_000);
 
   async function verifyResponsiveWorkspace(viewport: { width: number; height: number }, mobile: boolean, presentation: "embedded" | "modal" = "embedded"): Promise<void> {
-    const page = await browser.newPage({ viewport });
+    const page = await openPage(viewport);
     await page.goto(`${baseUrl}app/planning-browser-e2e-fixture.html?surface=plan-review&presentation=${presentation}&reset=1`);
     if (mobile) await page.getByRole("tab", { name: "Plan preview" }).click();
     await expectVisible(page.locator("[data-testid='planning-plan-markdown'] h1"));
@@ -231,7 +238,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
     that desktop used to render was removed. `compact` (<=1024) still selects the pinned composer.
     */
     const { compact } = options;
-    const page = await browser.newPage({ viewport });
+    const page = await openPage(viewport);
     await page.goto(`${baseUrl}app/planning-browser-e2e-fixture.html?surface=plan-review&presentation=${presentation}&reset=1`);
     if (viewport.width <= 768) await page.getByRole("tab", { name: "Plan preview" }).click();
     await expectVisible(page.locator("[data-testid='planning-plan-markdown'] h1"));
