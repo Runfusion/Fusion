@@ -27,6 +27,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { SCHEMA_BASELINE_VERSION } from "../postgres/schema-applier.js";
+import * as schemaApplier from "../postgres/schema-applier.js";
 
 const applierSource = readFileSync(
   fileURLToPath(new URL("../postgres/schema-applier.ts", import.meta.url)),
@@ -52,6 +53,87 @@ describe("schema-applier: migration wiring integrity", () => {
     // constant. A file present on disk but absent from the source is unwired.
     const unwired = migrationFiles.filter((f) => !applierSource.includes(f));
     expect(unwired).toEqual([]);
+  });
+
+  /*
+  FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615):
+  The bookkeeping identity is a BARE NUMBER (`fusion_schema_migrations.version`, and the skip test is
+  `applied.includes(version)`), so three things must agree on every migration: the number in the .sql
+  basename, the marker written for it, and — across the fork line — which migration owns that number at all.
+  The two scans above catch an unwired file and a stale ceiling; neither could catch the drift this encodes.
+  Measured before the restack: files at 0086/0087/0088 were upstream's, while the markers written for them
+  were 0089/0090/0091, because this line resolved every upstream collision by renumbering the INCOMING file
+  instead of moving its own. Every production database therefore recorded 0087/0088/0089 for the fork's
+  migrations, and the files that legitimately own those slots were skipped there permanently — silently, with
+  green lint, typecheck, build and gate. A number may name exactly one migration per database; these two
+  scans are what keep that true from now on.
+  */
+  const pathConstToFile = new Map<string, string>();
+  // Path constants are named `*_MIGRATION_PATH`; three early ones omit `MIGRATION`, so the scan keys on
+  // `_PATH` and on the join shape rather than on the name — a missed constant would hide a migration.
+  for (const match of applierSource.matchAll(
+    /const ([A-Z0-9_]+_PATH) = join\(\s*MIGRATIONS_DIR,\s*"([^"]+)"\s*,?\s*\)/g,
+  )) {
+    pathConstToFile.set(match[1]!, match[2]!);
+  }
+
+  /** Each `readFile(X_MIGRATION_PATH)` immediately followed by the marker its block records. */
+  const recordedMarkers: Array<{ file: string; markerConst: string; marker: string }> = [];
+  for (const match of applierSource.matchAll(
+    /readFile\(([A-Z0-9_]+_PATH)[^)]*\)[\s\S]{0,80}?sql\.raw\([A-Za-z]+\)\)[\s\S]{0,240}?VALUES \(\$\{([A-Z0-9_]+)\}\)/g,
+  )) {
+    const file = pathConstToFile.get(match[1]!);
+    if (!file) continue; // A path constant built outside the `join(MIGRATIONS_DIR, ...)` shape; nothing to pair.
+    const markerConst = match[2]!;
+    const marker = (schemaApplier as Record<string, unknown>)[markerConst];
+    if (typeof marker !== "string") {
+      recordedMarkers.push({ file, markerConst, marker: `<unresolved:${markerConst}>` });
+      continue;
+    }
+    recordedMarkers.push({ file, markerConst, marker });
+  }
+
+  it("records every wired migration under the number its own file carries", () => {
+    // Coverage doubles as liveness: the 0000 baseline is recorded as the ceiling rather than as 0000, and
+    // every other numeric migration is written by an apply block that pairs `readFile(X_MIGRATION_PATH)` with
+    // its marker. If the idiom is ever refactored away, the pairing stops matching, files fall into
+    // `uncovered`, and this fails — it cannot go vacuously clean.
+    const covered = new Set(recordedMarkers.map(({ file }) => file));
+    const uncovered = migrationFiles.filter((f) => !/^0000_/.test(f) && !covered.has(f));
+    expect(uncovered).toEqual([]);
+    const mismatches = recordedMarkers
+      .filter(({ file }) => /^\d{4}_/.test(file))
+      .filter(({ file, marker }) => file.slice(0, 4) !== marker)
+      .map(({ file, markerConst, marker }) => `${file} recorded as ${marker} (${markerConst})`);
+    expect(mismatches).toEqual([]);
+  });
+
+  it("never lets one migration number name two migrations", () => {
+    const byMarker = new Map<string, string[]>();
+    for (const { file, marker } of recordedMarkers) {
+      if (!/^\d{4}_/.test(file)) continue; // `local_repair_*` is intentionally outside the numeric namespace.
+      byMarker.set(marker, [...(byMarker.get(marker) ?? []), file]);
+    }
+    const collisions = [...byMarker.entries()]
+      .filter(([, files]) => files.length > 1)
+      .map(([marker, files]) => `${marker}: ${files.join(", ")}`);
+    expect(collisions).toEqual([]);
+
+    // The same rule across every exported identity, not just wired pairs: two constants holding one number is
+    // how upstream FN-9429's receipts and this fork's ledger came to share a slot. The ceiling is the one
+    // documented alias — it equals the highest migration by the scan above.
+    const exportedVersions = Object.entries(schemaApplier)
+      .filter(([, value]) => typeof value === "string" && /^\d{4}$/.test(value as string))
+      .map(([name, value]) => [name, value as string] as const);
+    const seen = new Map<string, string[]>();
+    for (const [name, value] of exportedVersions) {
+      seen.set(value, [...(seen.get(value) ?? []), name]);
+    }
+    const aliased = [...seen.entries()].filter(([, names]) => names.length > 1);
+    for (const [value, names] of aliased) {
+      expect(names, `${value} is held by more than one exported identity`).toContain("SCHEMA_BASELINE_VERSION");
+      expect(names.length, `${value} is held by more than the ceiling alias`).toBe(2);
+    }
   });
 });
 

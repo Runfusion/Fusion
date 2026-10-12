@@ -80,7 +80,7 @@ const pgTest = pgDescribe;
 
 /** The shipped migration file, so the bench backfills with the statement an upgrade actually runs. */
 const TASK_LOG_PROJECTIONS_MIGRATION = fileURLToPath(new URL(
-  "../../postgres/migrations/0091_rufu_615_task_log_projections.sql", import.meta.url,
+  "../../postgres/migrations/0092_rufu_615_task_log_projections.sql", import.meta.url,
 ));
 
 pgTest("benchmarks every read shape the callers can ask for", () => {

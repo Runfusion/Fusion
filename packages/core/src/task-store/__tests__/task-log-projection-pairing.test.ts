@@ -135,7 +135,7 @@ describe("the log write seam always writes its projections", () => {
 
   it("ships the SQL counterpart the backfill and the equivalence proof both depend on", () => {
     const migration = readFileSync(
-      join(PACKAGE_ROOT, "postgres/migrations/0091_rufu_615_task_log_projections.sql"),
+      join(PACKAGE_ROOT, "postgres/migrations/0092_rufu_615_task_log_projections.sql"),
       "utf8",
     );
     expect(migration).toContain("project.fusion_task_log_projections");

@@ -225,60 +225,49 @@ describe("schema-applier: immutable migration identities", () => {
     */
     expect(TASK_HUMAN_MERGE_APPROVAL_VERSION).toBe("0083");
     /*
-    FNXC:ReviewLaneDispatch 2026-09-18-13:40 (sync wave): the main-local ledger renumbered 0082 -> 0084
-    (upstream took 0082/0083) and is now the ceiling.
-
-    FNXC:MergeRebuild0919 2026-09-19-21:45: canonical owns 0084 (its overlap renumber) and 0085 (its
-    drop-excluded-feature schema), and this line does NOT apply either, so the ledger renumbered again to
-    0086 — the released 0074-0083 identities above stay pinned exactly as they are.
+    FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): the identities below are the restacked ones, and the
+    rule that produced them is the opposite of the one the earlier notes in this block recorded. When upstream
+    releases a migration into a slot this fork holds, this fork adopts UPSTREAM's number for upstream's file
+    and moves ITS OWN file to a free later slot. The old convention (renumber the incoming upstream file,
+    keep ours) is what corrupted the ledger: `fusion_schema_migrations.version` is a bare number, so every
+    production database kept `0087`/`0088`/`0089` meaning the fork's migrations while the bundled files at
+    those numbers were upstream's, and the skip test is `applied.includes(version)` — a silent, permanent skip.
+    Every pinned identity below is now the number the bundled file carries.
     */
+    expect(REVIEW_LANE_LEDGER_VERSION).toBe("0091");
+    /* FNXC:OverlapWait 2026-09-21-10:10: the owner-FK repair (ON UPDATE CASCADE DEFERRABLE for our 0075) moved to the fork's tail. */
+    expect(OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION).toBe("0090");
     /*
-    FNXC:MigrationIdentity 2026-10-04-11:59: merge `19814793f4` (layer origin/main 007ec83a9d) landed upstream
-    filenames 0088/0089 and renumbered this fork's review-lane ledger 0086 -> 0088 in `schema-applier.ts`, but
-    left this assertion on the old identity. The constant is what `fusion_schema_migrations` gates on, so the
-    test was pinning an identity the shipped code no longer uses.
+    FNXC:MigrationRestack 2026-10-12-18:24: upstream's own numbers, adopted verbatim. They sort BELOW our
+    tail by construction, which is the shape the restack guarantees: upstream owns its released slots, our SQL
+    sits after the highest upstream slot, so the next upstream release can never collide with ours.
     */
-    expect(REVIEW_LANE_LEDGER_VERSION).toBe("0088");
-    /* FNXC:OverlapWait 2026-09-21-10:10: 0087 repairs this line's 0075 owner FK to ON UPDATE CASCADE DEFERRABLE (upstream b1db055c27). */
-    expect(OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION).toBe("0087");
+    expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0086");
     /*
-    FNXC:MigrationIdentity 2026-10-04-11:59: upstream's stale-receipt-rekey repair is identity 0089 and is now
-    the schema baseline. Both 0088 and 0089 are written entirely with `IF NOT EXISTS`, so a database that
-    stamped an earlier identity for the ledger re-runs them harmlessly instead of silently skipping a schema
-    change — which is what makes renumbering a published identity survivable here.
-    */
-    expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0089");
-    /*
-    FNXC:TaskLogProjections 2026-10-10-19:55 (RUFU-615): 0092 (task-log projections) is the new ceiling.
-    Kept as the single ceiling equality this file allows; an incoming upstream 0092 renumbers onto 0093
-    by the convention documented just below rather than by editing this line twice.
+    FNXC:TaskLogProjections 2026-10-10-19:55 (RUFU-615): 0092 (task-log projections) is the ceiling.
+    Kept as the single ceiling equality this file allows; migration-wiring-integrity.test.ts asserts the same
+    value equals the highest bundled file without a PostgreSQL run.
     */
     expect(SCHEMA_BASELINE_VERSION).toBe("0092");
 
       /*
-      FNXC:MigrationVersionCollision 2026-10-05-09:43 (merge origin/main, upstream FN-9439):
-      Upstream ships pull-request readiness as migration 0087. This fork already owns 0087 for
-      OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION and 0088 for REVIEW_LANE_LEDGER_VERSION, and every
-      production database has recorded 0087/0088/0089 against THOSE meanings, so the incoming slot is
-      renumbered to 0090 (file 0087_fn_9439_pull_request_readiness.sql) - the same convention that
-      renumbered upstream's 0086_fn_9429 onto 0089. The ordering invariants are asserted as `>=` /
-      `>` rather than a second exact equality on SCHEMA_BASELINE_VERSION: a constant may carry exactly
-      one ceiling equality, or the two sides of a merge silently contradict each other and only a
-      PostgreSQL run can see it (schema-applier.test.ts is PG-only).
+      FNXC:MigrationRestack 2026-10-12-18:24: readiness keeps upstream's 0087 and the receipts keep 0086, so
+      the ordering invariant below now reads the OTHER way from the one it replaced — upstream's markers are
+      lower than ours, not re-issued above them. Still asserted as `>=` so a future ceiling bump cannot
+      contradict this line (a constant may carry exactly one ceiling equality).
       */
 
-      expect(PULL_REQUEST_READINESS_VERSION).toBe("0090");
+      expect(PULL_REQUEST_READINESS_VERSION).toBe("0087");
       expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION));
       expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(PULL_REQUEST_READINESS_VERSION));
     /*
-    FNXC:MigrationVersionCollision 2026-10-08-13:26 (merge origin/main, upstream FN-9512):
-    Upstream ships the recovery-disposition column as 0088 — the identity this fork already recorded for its
-    review-lane ledger — so the incoming migration re-issues at 0091 (file 0088_fn_9512_recovery_disposition.sql),
-    the same convention that moved FN-9429's receipts to 0089 and FN-9439's readiness to 0090. Exact equality on the
-    new identity; the ceiling keeps its single `>=` so the two sides of a merge cannot contradict each other.
+    FNXC:MigrationRestack 2026-10-12-18:24: FN-9512's column is upstream's 0088; this fork's ledger and
+    owner-FK repair (0091, 0090) now sort after it. The marker/file pairing itself is asserted without a
+    database in migration-wiring-integrity.test.ts, so a marker that disagrees with its own filename fails the
+    merge gate rather than skipping a migration in production.
     */
-    expect(RECOVERY_DISPOSITION_VERSION).toBe("0091");
-    expect(Number(RECOVERY_DISPOSITION_VERSION)).toBeGreaterThan(Number(PULL_REQUEST_READINESS_VERSION));
+    expect(RECOVERY_DISPOSITION_VERSION).toBe("0088");
+    expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(RECOVERY_DISPOSITION_VERSION));
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(RECOVERY_DISPOSITION_VERSION));
   });
 
@@ -2290,20 +2279,21 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
-      OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
-      REVIEW_LANE_LEDGER_VERSION,
       /*
-      FNXC:MigrationVersionCollision 2026-10-05-11:29:
-      This constant carries upstream's 0086 but is re-issued locally at 0089 (0086-0088 are already
-      taken on this line), so its ledger position must follow its VALUE: `ORDER BY version` is TEXT,
-      so it belongs between REVIEW_LANE_LEDGER_VERSION (0088) and PULL_REQUEST_READINESS_VERSION
-      (0090). Keeping the position it inherited from the upstream hunk is what made this fixture
-      disagree after the 2026-10-05 merge.
+      FNXC:MigrationRestack 2026-10-12-18:24:
+      The ledger position follows each marker's VALUE, because `ORDER BY version` is TEXT — that part of the
+      note this replaces still holds. What changed is WHICH values those are: upstream's receipts/readiness/
+      disposition now keep their released 0086/0087/0088 and this fork's owner-FK repair and review-lane ledger
+      move to 0090/0091 behind them. 0089 is a deliberate gap (upstream took it for FN-9529 and this line does
+      not implement that), and a gap in the ledger is expected here exactly as upstream itself ships no file
+      between 0073 and 0084.
       */
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
-    RECOVERY_DISPOSITION_VERSION,
-    TASK_LOG_PROJECTIONS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
+      OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
+      TASK_LOG_PROJECTIONS_VERSION,
       /* FNXC:MigrationCollisionRepair 2026-10-05-11:29: this fork records the non-numeric repair
       identity and ORDER BY version is TEXT, so it sorts after every numeric slot. Keep it last. */
       MIXED_0065_REPAIR_VERSION,
@@ -2628,12 +2618,14 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
-      OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
-      REVIEW_LANE_LEDGER_VERSION,
+      /* FNXC:MigrationRestack 2026-10-12-18:24: upstream's released slots, then this fork's own tail. ORDER BY
+      version is TEXT, so the literal must follow the markers' VALUES, not the order the files were merged in. */
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
-    RECOVERY_DISPOSITION_VERSION,
-    TASK_LOG_PROJECTIONS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
+      OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
+      TASK_LOG_PROJECTIONS_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);
@@ -2773,12 +2765,14 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_PAUSE_ACCOUNTING_VERSION,
       "0082",
       "0083",
-      OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
-      REVIEW_LANE_LEDGER_VERSION,
+      /* FNXC:MigrationRestack 2026-10-12-18:24: upstream's released slots, then this fork's own tail. ORDER BY
+      version is TEXT, so the literal must follow the markers' VALUES, not the order the files were merged in. */
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
-    RECOVERY_DISPOSITION_VERSION,
-    TASK_LOG_PROJECTIONS_VERSION,
+      RECOVERY_DISPOSITION_VERSION,
+      OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
+      REVIEW_LANE_LEDGER_VERSION,
+      TASK_LOG_PROJECTIONS_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);
@@ -3323,31 +3317,31 @@ void beforeAll;
 const roadmapPluginInitHook = roadmapPluginSchemaInit;
 
 /*
-FNXC:MigrationVersionCollision 2026-10-05-11:29:
-The deploy question this renumbering raises cannot be answered by a fresh-apply test: on an empty
-database nothing is missing, so applying 0090 proves only that the file runs. Every applied FORK
-database is in a different shape - it recorded 0086-0089 against THIS line's meanings (0087 overlap-
-owner FK repair, 0088 review-lane ledger, 0089 the re-issued FN-9429 receipts) and has never seen
-slot 0090. So the fixture reproduces that shape deliberately: fully apply, then rewind to the last
-slot a fork database recorded by deleting the 0090 marker AND dropping the columns the step owns.
-The assertions are the deploy contract: the next open must apply exactly once, land both columns,
-record exactly one marker, and then be a no-op - drift-free by construction.
+FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615):
+The deploy question the restack raises cannot be answered by a fresh-apply test: on an empty database every
+slot is free, so applying 0087 proves only that the file runs. A FORK database is in the hazardous shape
+instead — it recorded 0087 for this line's overlap-owner FK repair before the restack gave that slot back to
+upstream's FN-9439 readiness migration. A marker-only skip test would read that recorded slot as "readiness
+already applied" and leave the columns uncreated forever, with no error anywhere; the only symptom is every
+PR reader querying columns that do not exist. So the fixture reproduces the hazard deliberately: fully apply,
+then keep the 0087 marker in place and drop the columns the step owns. The deploy contract is that the live
+probe — not the marker — decides: the next open re-applies the idempotent DDL, lands both columns, records no
+second marker, and then settles to a no-op.
 */
-describe("schema-applier: upgrade from a fork database recorded at 0089 (production shape)", () => {
+describe("schema-applier: upgrade from a fork database whose 0087 slot predates the restack (production shape)", () => {
   let ctx: TestContext | null = null;
   afterEach(async () => {
     await teardownDb(ctx);
     ctx = null;
   });
 
-  it("applies exactly 0090 once, lands the readiness columns, then settles", async () => {
+  it("re-applies readiness behind a foreign marker, lands the columns, then settles", async () => {
     ctx = await setupFreshDb();
     await applySchemaBaseline(ctx.db, { pluginHooks: [] });
 
     await ctx.db.execute(sql.raw(`
       ALTER TABLE project.pull_requests DROP COLUMN IF EXISTS readiness;
       ALTER TABLE project.pull_requests DROP COLUMN IF EXISTS readiness_provider;
-      DELETE FROM public.fusion_schema_migrations WHERE version = '0090';
     `));
     const markerColumn = async () => ((await ctx!.db.execute(sql`
       SELECT count(*)::int AS count FROM public.fusion_schema_migrations WHERE version = ${PULL_REQUEST_READINESS_VERSION}
@@ -3359,7 +3353,8 @@ describe("schema-applier: upgrade from a fork database recorded at 0089 (product
       ORDER BY column_name
     `)) as unknown as Array<{ column_name: string }>).map((r) => r.column_name);
 
-    expect(await markerColumn()).toBe(0);
+    // The recorded slot stays deliberately in place: the marker is present, the schema it claims is not.
+    expect(await markerColumn()).toBe(1);
     expect(await columnNames()).toEqual([]);
 
     const upgraded = await applySchemaBaseline(ctx.db, { pluginHooks: [] });
@@ -3370,5 +3365,24 @@ describe("schema-applier: upgrade from a fork database recorded at 0089 (product
     const settled = await applySchemaBaseline(ctx.db, { pluginHooks: [] });
     expect(settled.applied).toBe(false);
     expect(await markerColumn()).toBe(1);
+  });
+
+  /*
+  FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): the shape every database this line has actually deployed
+  is the benign one — the slot is recorded and the DDL is present, because the migration ran under its
+  re-issued number. Asserting the no-op here is what keeps "re-adoption is DDL-safe on applied forks" from
+  being a claim only readable in a comment.
+  */
+  it("is a plain no-op where the slot is recorded and the columns already exist", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    const present = (await ctx.db.execute(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'project' AND table_name = 'pull_requests'
+        AND column_name IN ('readiness', 'readiness_provider')
+      ORDER BY column_name
+    `)) as unknown as Array<{ column_name: string }>;
+    expect(present.map((r) => r.column_name)).toEqual(["readiness", "readiness_provider"]);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
 });

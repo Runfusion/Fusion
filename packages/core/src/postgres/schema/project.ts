@@ -609,7 +609,7 @@ export const legacyTaskReviewerRuns = projectSchema.table("task_reviewer_runs", 
   both invalidated_at IS NULL AND completed_at IS NULL, mirroring the sweep classifier's own live
   definition. The earlier draft keyed on the reviewer agent and dropped completed_at, so a completed
   (e.g. dispatch-failed) attempt held the slot forever and the sweep's retry could never open a new
-  row. `migrations/0090_stas_205_review_lane_ledger.sql` is the source of truth; the drift probe in
+  row. `migrations/0091_stas_205_review_lane_ledger.sql` is the source of truth; the drift probe in
   schema-applier.ts is definition-aware so installs with the old definition re-converge.
   */
   uniqueIndex("task_reviewer_runs_live_unique")

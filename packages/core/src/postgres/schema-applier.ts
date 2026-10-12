@@ -103,12 +103,16 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:TaskPauseAccounting 2026-09-16-06:16: the ceiling includes FN-457's paused-time columns, so timing readers never query a tasks table that lacks them. */
 /* FNXC:ReviewLaneDispatch 2026-09-16-18:30 (merge origin/main): the ceiling includes the renumbered ledger migration. The stale-binary guard compares the DB's highest marker against Number(SCHEMA_BASELINE_VERSION), so a bundled migration ABOVE the ceiling would make the ledger's self-marked version look like a newer Fusion's write and every boot after it would raise StaleBinarySchemaError.
 FNXC:ReviewLaneDispatch 2026-09-18-13:40 (sync the FN-511..526 wave): upstream released FN-509 queue order as 0082 and human merge approval as 0083 while the main-local ledger held 0082 — the ledger renumbered to 0084 (same renumbering as open PR #3619's branch) and the ceiling follows. */
-/* FNXC:MigrationVersionCollision 2026-10-01-15:26: upstream FN-9429 claimed 0086, the slot this line had already given its review-lane ledger, so one marker named two migrations. The ledger is re-issued at 0088 and FN-9429's receipts at 0089; the ceiling tracks the highest file so no boot can call a migration it just applied a newer Fusion's write. */
+/* FNXC:MigrationVersionCollision 2026-10-01-15:26: upstream FN-9429 claimed 0086, the slot this line had already given its review-lane ledger, so one marker named two migrations. The ledger is re-issued at 0088 and FN-9429's receipts at 0089; the ceiling tracks the highest file so no boot can call a migration it just applied a newer Fusion's write. */ /* Superseded by FNXC:MigrationRestack 2026-10-12-18:24: receipts keep upstream's 0086 and the ledger moved to 0091. Kept because it records which meaning applied databases hold in each slot. */
 /* FNXC:MigrationVersionCollision 2026-10-05-08:52 (merge origin/main): upstream FN-9439 shipped PR readiness as 0087, the slot this line already gave its overlap-owner FK repair, so the incoming migration re-issues at 0090 — the same rule that moved FN-9429's receipts to 0089 — and the ceiling follows the highest bundled file. */
-/* FNXC:MigrationVersionCollision 2026-10-08-13:06 (merge origin/main): upstream FN-9512 shipped the recovery-disposition column as 0088, the slot this line already gave its review-lane ledger, so the incoming migration re-issues at 0091 and the ceiling tracks the highest bundled file. A DB that ran an upstream build carries marker 0088 for the OTHER meaning — that ambiguity is why the slots are never reused, and it is the reason the ceiling must never sit below the highest file. */
+/* FNXC:MigrationVersionCollision 2026-10-08-13:06 (merge origin/main): upstream FN-9512 shipped the recovery-disposition column as 0088, the slot this line already gave its review-lane ledger, so the incoming migration re-issues at 0091 and the ceiling tracks the highest bundled file. A DB that ran an upstream build carries marker 0088 for the OTHER meaning — that ambiguity is why the slots are never reused, and it is the reason the ceiling must never sit below the highest file. */ /* Superseded by FNXC:MigrationRestack 2026-10-12-18:24: FN-9512 keeps its own 0088 here; it is this fork's ledger that moved (0091). */
 /* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): the ceiling includes the derived task-log projection
  * columns, so neither an upgraded nor a freshly-opened database can be told it carries a newer Fusion's
- * write. */
+ * write.
+FNXC:MigrationRestack 2026-10-12-18:24: the ceiling still equals the highest bundled file (0092), but the
+ * tail is now ours (0090 owner-FK repair, 0091 review-lane ledger, 0092 task-log projections) with 0089
+ * left free for upstream's FN-9529. Contiguity is not a requirement — upstream itself ships no file between
+ * 0073 and 0084 — a number naming two migrations is the only illegal shape. */
 export const SCHEMA_BASELINE_VERSION = "0092";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
@@ -306,9 +310,20 @@ export const OVERLAP_REVALIDATION_DRAIN_VERSION = "0078";
 /* FNXC:ReviewLaneDispatch 2026-09-15-00:24 (STAS-205 landing onto main): renumbered 0077 -> 0079 -> 0082: upstream released its own 0079/0080/0081 in the 2026-09-16 merge, so the ledger takes the next free slot; the bookkeeping-string rationale below still holds. Bookkeeping keys on the version STRING, so a branch claiming a slot main already recorded (0077 = the overlap repair phase) would make `applied.includes(...)` report the ledger as applied, the SQL would never run, and the sweep would lose its one-live-attempt-per-card enforcement silently. The deploy line owns released 0077-0078. */
 /* FNXC:OverlapWait 2026-09-21-09:55: this line's original 0075 owner FK is not ON UPDATE CASCADE /
 DEFERRABLE; project-partition promotion refuses it, so applied databases get upstream b1db055c27's
-repair as an additive migration. Fresh databases get the hardened FK inline in 0075. */
-export const OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION = "0087";
-export const REVIEW_LANE_LEDGER_VERSION = "0088";
+repair as an additive migration. Fresh databases get the hardened FK inline in 0075.
+
+FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): the repair moved from 0087 to the free tail (0090).
+The rule that put it at 0087 was wrong in the only direction that matters: when upstream released a
+migration into a slot this line already held, this line re-issued UPSTREAM's file at a later number and
+kept its own file on the upstream slot. `fusion_schema_migrations.version` is a BARE NUMBER and
+`applied.includes(version)` is the only skip test, so a number can carry exactly one meaning per database —
+renumbering the incoming file means the slot it vacated still names the OLD migration in every applied
+database, and the file that now legitimately owns the slot is skipped there forever. Upstream numbers are
+now adopted verbatim and OUR migrations move to the tail, which is also what makes a database written by
+an upstream build and one written by ours converge on the same number set. */
+export const OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION = "0090";
+/** FNXC:MigrationRestack 2026-10-12-18:24: the ledger keeps its own SQL and moves to the tail; 0088 is upstream FN-9512's marker now. */
+export const REVIEW_LANE_LEDGER_VERSION = "0091";
 /** FNXC:WorkflowIdentity 2026-09-14-19:06: upgraded projects converge the temporary Coding (Ideas) v2 identity without losing conflicting settings or prompts. */
 export const WORKFLOW_IDENTITY_AND_MODEL_LANES_VERSION = "0079";
 /** FNXC:HumanPlanApproval 2026-09-15-06:24: upgraded projects need the per-card human plan decision column before any release gate evaluates it. */
@@ -319,30 +334,34 @@ export const TASK_PAUSE_ACCOUNTING_VERSION = "0081";
 export const TASK_QUEUE_ORDER_VERSION = "0082";
 /** FNXC:HumanMergeApproval 2026-09-17-18:09: upgraded projects need the per-card delivery lock column before any merge door evaluates it. */
 export const TASK_HUMAN_MERGE_APPROVAL_VERSION = "0083";
-/** FNXC:MigrationVersionCollision 2026-10-01-15:26: upstream FN-9429 released these receipts as 0086, already held here by the review-lane ledger, so both were re-issued (ledger 0088, receipts 0089). One marker must name exactly one migration. */
-export const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION = "0089";
 /*
-FNXC:MigrationVersionCollision 2026-10-05-08:52 (merge origin/main):
-Upstream FN-9439 released PR readiness at 0087. Here 0087 is the overlap-owner FK repair and 0088/0089 are
-already taken, so the migration re-issues locally at 0090 and the file is renamed to match — a released
-upstream number is never reused on this line. The re-issue is drift-free by construction: no applied fork
-database has ever recorded 0090, so the step runs exactly once and no existing marker changes meaning.
-Re-numbering OURS instead would have made every recorded 0087 name a different migration than the one that
-wrote it, which is the failure the 0065 collision repair exists to undo.
-*/
+FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615):
+These three markers now equal the numbers upstream released them at (FN-9429 0086, FN-9439 0087,
+FN-9512 0088) and the bundled .sql files are upstream's, byte for byte. The earlier
+`FNXC:MigrationVersionCollision` notes on this block re-issued upstream's files at 0089/0090/0091 to dodge
+local collisions; that dodge is what this block removes — see the rationale at
+OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION. The re-adoption is DDL-safe on every database this line has
+deployed: each of the three migrations already ran there (under the re-issued number), so the slot the
+fork now frees up for the upstream meaning needs no repair, and each step keeps a live-schema probe
+alongside the marker check, so a database that recorded a slot without its DDL still converges.
+ */
+/** FN-9429: durable receipts for a stale review-callback waiver. */
+export const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION = "0086";
 /** FN-9439: provider-neutral current-head readiness snapshot columns. */
-export const PULL_REQUEST_READINESS_VERSION = "0090";
+export const PULL_REQUEST_READINESS_VERSION = "0087";
 /**
  * FN-9512: privacy-safe route code for a recovery owner that has reseeded work.
- * FNXC:MigrationVersionCollision 2026-10-08-13:06: upstream released this as 0088; this line owns 0088
- * (review-lane ledger), so the column's marker is re-issued at 0091. The marker value and the .sql basename
+ * FNXC:MigrationRestack 2026-10-12-18:24: upstream's own number. The marker value and the .sql basename
  * must stay equal — migration-wiring-integrity.test.ts requires every `^\d{4}_` file to be named in this source.
  */
-export const RECOVERY_DISPOSITION_VERSION = "0091";
+export const RECOVERY_DISPOSITION_VERSION = "0088";
 /**
  * RUFU-615: `tasks.timing_total_ms` + `tasks.log_recent` and their one-time backfill. The marker value
  * and the .sql basename stay equal, and the file is registered below rather than left to a scan — an
  * unwired `.sql` in `migrations/` silently never runs.
+ * FNXC:MigrationRestack 2026-10-12-18:24: 0092 again, now because upstream took 0089 (FN-9529 file-scope
+ * lease release) and our tail moved one slot up behind it. 0089 stays a gap on this line: we do not
+ * implement FN-9529, and an unshipped gap is harmless while a reused number is fatal.
  */
 export const TASK_LOG_PROJECTIONS_VERSION = "0092";
 
@@ -639,21 +658,32 @@ const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0075_fn_332_overl
 const OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0077_fn_332_overlap_wait_repair_required_phase.sql");
 const WHITEBOARDS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0076_fn_333_whiteboards.sql");
 const OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH = join(MIGRATIONS_DIR, "0078_fn_375_overlap_revalidation_drain.sql");
-const REVIEW_LANE_LEDGER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0090_stas_205_review_lane_ledger.sql");
-const OVERLAP_OWNER_FK_REPAIR_MIGRATION_PATH = join(MIGRATIONS_DIR, "0089_fn_332_overlap_owner_fk_repair.sql");
+const REVIEW_LANE_LEDGER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0091_stas_205_review_lane_ledger.sql");
+const OVERLAP_OWNER_FK_REPAIR_MIGRATION_PATH = join(MIGRATIONS_DIR, "0090_fn_332_overlap_owner_fk_repair.sql");
 const WORKFLOW_IDENTITY_AND_MODEL_LANES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0079_fn_393_workflow_identity_and_project_model_lanes.sql");
 const TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0080_fn_408_task_human_plan_approval.sql");
 const TASK_PAUSE_ACCOUNTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0081_fn_457_task_pause_accounting.sql");
 const TASK_QUEUE_ORDER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0082_fn_509_task_queue_order.sql");
 const TASK_HUMAN_MERGE_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0083_fn_514_task_human_merge_approval.sql");
-/* FNXC:MigrationVersionCollision 2026-10-01-15:26: FN-9429 re-issued at 0089 (upstream shipped it as 0086; see STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION). */
+/* FNXC:MigrationRestack 2026-10-12-18:24: upstream's file at upstream's number — see STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION. */
 const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0086_fn_9429_stale_review_callback_waiver_receipts.sql");
-/* FNXC:MigrationVersionCollision 2026-10-05-08:52: upstream shipped this as `0087_fn_9439_pull_request_readiness.sql`; renamed locally so the file prefix matches the re-issued 0090 version. */
+/* FNXC:MigrationRestack 2026-10-12-18:24: upstream's file at upstream's number — see PULL_REQUEST_READINESS_VERSION. */
 const PULL_REQUEST_READINESS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_fn_9439_pull_request_readiness.sql");
-/* FNXC:MigrationVersionCollision 2026-10-08-13:06: upstream shipped this as `0088_fn_9512_recovery_disposition.sql`; renamed locally so the file prefix matches the re-issued 0091 version. */
+/* FNXC:MigrationRestack 2026-10-12-18:24: upstream's file at upstream's number — see RECOVERY_DISPOSITION_VERSION. */
 const RECOVERY_DISPOSITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0088_fn_9512_recovery_disposition.sql");
+/*
+FNXC:ForkedProductLine 2026-10-12-18:24 (RUFU-615): upstream's 0084 and 0085 are deliberately NOT bundled.
+0084_fn_332_overlap_sync re-ships this line's own 0075 (+0077) overlap-wait schema under a later number; we
+already carry it, hardened inline with the ON UPDATE CASCADE / DEFERRABLE owner FK that upstream repaired
+separately. 0085_drop_excluded_upstream_feature_schema is upstream's feature-reduced-fork cleanup: it moves
+project.notes and the whiteboard tables into a `deprecated_excluded_features` schema and DROPS five task
+columns (human_plan_approval, human_merge_approval, queue_boost, cumulative_paused_ms, paused_started_at)
+from project.tasks — every one of which this fork implements (0074, 0076, 0079-0083) and serves, so running
+it would delete live schema behind our own read path. Slots a fork does not implement stay unbundled rather
+than bundled-unwired, because the wiring-integrity guard exists precisely to make an unwired file a failure.
+*/
 /* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): explicit registration; see TASK_LOG_PROJECTIONS_VERSION. */
-const TASK_LOG_PROJECTIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0091_rufu_615_task_log_projections.sql");
+const TASK_LOG_PROJECTIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0092_rufu_615_task_log_projections.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -2026,17 +2056,48 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
     /*
-    FNXC:PullRequestReadiness 2026-10-04-23:13 (upstream FN-9439, re-issued locally at 0090):
+    FNXC:PullRequestReadiness 2026-10-04-23:13 (upstream FN-9439):
     Upgraded stores must materialize SHA-fenced readiness evidence before PR readers use it. The DDL is
     additive and idempotent (`ADD COLUMN IF NOT EXISTS`), so a re-run after a partial apply is safe.
+
+    FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): the step now carries a live-column probe like the
+    receipt table above it. Before the restack this migration was bundled at 0090 and 0087 was this line's
+    owner-FK repair, so any database this fork deployed recorded 0087 for a DIFFERENT migration. A marker-only
+    `applied.includes("0087")` test therefore reports the upstream migration as applied on exactly those
+    databases, and the only symptom is every PR reader querying columns that were never created — a silent
+    skip, the class of bug the restack exists to remove. The probe makes the marker's meaning provable from
+    the live schema: absence of the column behind an existing anchor re-applies the idempotent DDL.
+    `information_schema.columns` is queried by string, never as `project.pull_requests`, so the statement
+    stays analysis-safe on a database with no product relations (see the absent-relation invariant in
+    migration-wiring-integrity.test.ts).
     */
-    if (!pullRequestReadinessAlreadyApplied) {
+    const pullRequestReadinessMissing = ((await tx.execute(sql`
+      SELECT (
+        to_regclass('project.pull_requests') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'project' AND table_name = 'pull_requests' AND column_name = 'readiness'
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? false;
+    if (!pullRequestReadinessAlreadyApplied || pullRequestReadinessMissing) {
       const migrationSql = await readFile(PULL_REQUEST_READINESS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${PULL_REQUEST_READINESS_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
-    if (!recoveryDispositionAlreadyApplied) {
+    /* FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): live-column probe for the same reason as PR readiness —
+       this fork recorded 0088 for its review-lane ledger before the restack gave the slot back to FN-9512. */
+    const recoveryDispositionMissing = ((await tx.execute(sql`
+      SELECT (
+        to_regclass('project.tasks') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'recovery_disposition'
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? false;
+    if (!recoveryDispositionAlreadyApplied || recoveryDispositionMissing) {
       const migrationSql = await readFile(RECOVERY_DISPOSITION_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${RECOVERY_DISPOSITION_VERSION}) ON CONFLICT (version) DO NOTHING`);
@@ -2049,8 +2110,22 @@ export async function applySchemaBaseline(
     cost of seconds is acceptable here, a per-read cost is what the rejected prototype proved it is not.
     The DDL is `ADD COLUMN IF NOT EXISTS` and the backfill only picks rows whose derived columns are
     still NULL, so a re-run after a partial apply is safe and idempotent.
+
+    FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): the projection step keeps the same live-column probe as
+    the two migrations above it. A database that recorded this slot under another migration would otherwise
+    hand the slim read path a `log_recent` column that does not exist, and the slim paths now omit the log
+    column outright, so the failure surfaces as empty History rather than a missing column.
     */
-    if (!taskLogProjectionsAlreadyApplied) {
+    const taskLogProjectionsMissing = ((await tx.execute(sql`
+      SELECT (
+        to_regclass('project.tasks') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'log_recent'
+        )
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? false;
+    if (!taskLogProjectionsAlreadyApplied || taskLogProjectionsMissing) {
       const migrationSql = await readFile(TASK_LOG_PROJECTIONS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_LOG_PROJECTIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);

@@ -43,7 +43,7 @@ const SLOTS_WE_CARRY = [
   "0079_fn_393_workflow_identity_and_project_model_lanes.sql",
   "0080_fn_408_task_human_plan_approval.sql",
   "0083_fn_514_task_human_merge_approval.sql",
-  "0090_stas_205_review_lane_ledger.sql",
+  "0091_stas_205_review_lane_ledger.sql",
 ] as const;
 
 describe("docs/fork-extensions.md", () => {
