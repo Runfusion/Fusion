@@ -72,7 +72,10 @@ export async function findActiveWorktreeOwner(
     }
   }
   try {
-    const tasks = await store.listTasks({ slim: true, includeArchived: false });
+    // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): worktree-ownership asks who else holds
+    // this worktree path; `slim` alone still paid the whole board's log hydration. One parsed board measured
+    // ~0.58 GiB for 2,417 rows (RUFU-627), so every unneeded log column is a retention driver.
+    const tasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (executor):
     "Who else is actively working in this worktree?" is the WIP role, not the id. NOT the query-filter

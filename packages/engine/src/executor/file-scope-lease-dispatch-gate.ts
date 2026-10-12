@@ -92,7 +92,10 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
   */
   if (settings.groupOverlappingFiles !== true || taskHoldsUnmergedCheckout(task)) return false;
 
-  const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
+  // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): reads column/paths/role only; `slim`
+  // alone still hydrates every card's full log, which is the board-scan retention driver. See
+  // dependency-dispatch-gate.ts for the measured rationale.
+  const tasks = await deps.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
   const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
   const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
   const candidateScope = normalizeOverlapScopeForTask(liveTask, filterPathsByIgnoreList(

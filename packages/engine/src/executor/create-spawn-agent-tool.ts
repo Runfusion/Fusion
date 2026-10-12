@@ -139,7 +139,8 @@ export function createSpawnAgentTool(
         */
         const spawnClaimed = await computeTopLevelConcurrencyClaimedFromStore({
           store: deps.store,
-          tasks: await deps.store.listTasks({ slim: true, includeArchived: false }),
+          // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): `slim: true` does not drop the log column while deriving, and this consumer never reads log markers -- see dependency-dispatch-gate.ts for the measured rationale.
+          tasks: await deps.store.listTasks({ slim: true, includeArchived: false, excludeLog: true }),
         });
         const spawnCap = resolveEffectiveConcurrency(settings).maxConcurrent;
         const liveChildren = deps.getTotalSpawnedCount();
@@ -189,7 +190,8 @@ export function createSpawnAgentTool(
         {
           const spawnMaxWorktrees = resolveEffectiveConcurrency(settings).worktreeLimit;
           if (spawnMaxWorktrees !== null) {
-            const spawnTasks = await deps.store.listTasks({ slim: true, includeArchived: false });
+            // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): `slim: true` does not drop the log column while deriving, and this consumer never reads log markers -- see dependency-dispatch-gate.ts for the measured rationale.
+            const spawnTasks = await deps.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
             /*
             FNXC:WorkflowResolvedColumns 2026-08-01-03:05:
             TERMINAL IS A ROLE, NOT A NAME — same conversion as the planning-admission ledger this

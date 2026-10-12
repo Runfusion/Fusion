@@ -346,7 +346,8 @@ Resolved per CANDIDATE task (each may run its own workflow), one IR cache for th
 the tasks that actually share the worktree path — the common case resolves nothing at all.
 */
 async function findOtherWorktreeUser(store: TaskStore, worktreePath: string, excludeTaskId: string): Promise<string | null> {
-  const tasks = await store.listTasks({ slim: true, includeArchived: false } as never);
+  // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): `slim: true` does not drop the log column while deriving, and this consumer never reads log markers -- see dependency-dispatch-gate.ts for the measured rationale.
+  const tasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true } as never);
   const irCache = new Map<string, WorkflowIr>();
   for (const task of tasks) {
     if (task.id === excludeTaskId) continue;

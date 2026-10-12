@@ -288,7 +288,8 @@ ${summary}
 Please review the PR comments and address any remaining issues.`;
 
     try {
-      const openTasks = await this.store.listTasks({ slim: true }).catch(() => []);
+      // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): `slim: true` does not drop the log column while deriving, and this consumer never reads log markers -- see dependency-dispatch-gate.ts for the measured rationale.
+      const openTasks = await this.store.listTasks({ slim: true, excludeLog: true }).catch(() => []);
       /* Cheap identity filters first; only real candidates pay a workflow resolution. */
       const candidates = openTasks.filter(
         (task) =>

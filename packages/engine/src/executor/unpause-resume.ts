@@ -74,7 +74,8 @@ export async function dispatchUnpauseResume(
     review and terminal lanes have the same scheduling meaning as the main scheduler.
     */
     if (task.dependencies?.length) {
-      const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
+      // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): `slim: true` does not drop the log column while deriving, and this consumer never reads log markers -- see dependency-dispatch-gate.ts for the measured rationale.
+      const tasks = await deps.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
       const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
       const dependencyIds = new Set(liveTask.dependencies);
       const satisfactionColumnsByTaskId = await resolveDependencySatisfactionColumns(

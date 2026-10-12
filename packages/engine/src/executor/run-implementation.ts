@@ -800,7 +800,8 @@ export async function runImplementation(
       await deps.transitionReviewAddressing(task.id, ["queued"], "in-progress");
       reviewAddressingActivated = true;
       // Check dependencies
-      const allTasks = await deps.store.listTasks({ slim: true, includeArchived: false });
+      // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): `slim: true` does not drop the log column while deriving, and this consumer never reads log markers -- see dependency-dispatch-gate.ts for the measured rationale.
+      const allTasks = await deps.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (batch-engine — dependency satisfaction, per DEPENDENCY):
       Resolved from each DEPENDENCY's own workflow, not this task's: dependencies routinely span workflows,

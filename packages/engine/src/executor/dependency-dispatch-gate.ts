@@ -27,7 +27,16 @@ export async function blockOuterDispatchWhenDependenciesUnmet(
   }
 
   const settings = await deps.store.getSettings();
-  const tasks = await deps.store.listTasks({ includeArchived: false, slim: true });
+  /*
+  FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3):
+  `slim: true` does NOT drop the `log` column while deriving (see `ListTasksOptions.excludeLog`), so this
+  dispatch-gate read was hydrating every card's full log array — up to ~1000 entries / 3.9 MB per card — on
+  every dependency check, for a gate that reads dependencies, column and status only. A live 180 s sampling
+  heap profile on production attributed 925 MiB of still-live allocations to `listTasksImpl -> rowToTask`
+  (62% of the window's live bytes), which is the same path RUFU-627 measured at +33 MiB/min of forced-GC
+  floor. Only callers that scan log MARKERS may hydrate log; this one passes `excludeLog` explicitly.
+  */
+  const tasks = await deps.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
   const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
   const dependencyIds = new Set(liveTask.dependencies);
   /*
