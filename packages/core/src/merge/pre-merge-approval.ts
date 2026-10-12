@@ -5,18 +5,22 @@ import { deriveStaleReviewCallbackAttemptId, isWorkflowStepNotRun } from "../wor
 import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
 
 export type PreMergeApprovalState = "approved" | "missing" | "not-approved" | "stale-content" | "unprovable-content";
-/** One gate's canonical admission result. `selectedResult` is always the durable top-level
- * carrier; priorAttempts are history and can never reopen a merge door. */
+
+/** Compact compatibility projection consumed by merge and recovery callers. */
 export type PreMergeApproval = {
   workflowStepId: string;
   state: PreMergeApprovalState;
   repositories?: string[];
+};
+
+/** Detailed gate diagnostic reserved for the canonical admission decision. */
+export type PreMergeAdmissionGate = PreMergeApproval & {
   selectedResult?: Pick<WorkflowStepResult, "workflowStepId" | "status" | "verdict" | "reviewInputFingerprint" | "startedAt" | "completedAt" | "supersededAt" | "remediationArchivedAt">;
 };
 
 /** Shared, renderable merge-admission projection for every required pre-merge gate. */
 export type PreMergeAdmissionDecision = {
-  gates: PreMergeApproval[];
+  gates: PreMergeAdmissionGate[];
   allApproved: boolean;
 };
 
@@ -145,10 +149,12 @@ export function resolveUnprovenReviewApproval(
 }
 
 /*
-FNXC:PreMergeAdmission 2026-10-12-17:55:
+FNXC:PreMergeAdmission 2026-10-12-19:48:
 Merge admission and Workflow Results must select the same durable top-level result for each required
-pre-merge gate. Prior attempts are audit history only: allowing them to reopen approval after a retry,
-reset, or workflow revision would let stale review evidence authorize current content.
+pre-merge gate. The compact approval projection remains the compatibility contract for merge and
+recovery callers; only the canonical decision carries the selected-row diagnostic. Prior attempts are
+audit history only: allowing them to reopen approval after a retry, reset, or workflow revision would
+let stale review evidence authorize current content.
 */
 export function evaluatePreMergeApprovals(
   task: Pick<Task, "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "id">>,
@@ -166,7 +172,7 @@ export function evaluatePreMergeApprovals(
 ): PreMergeApproval[] {
   const required = options.requiredPreMergeStepIds;
   if (!required?.size) return [];
-  return evaluatePreMergeAdmissionDecision(task, options).gates;
+  return evaluatePreMergeAdmissionDecision(task, options).gates.map(({ selectedResult: _selectedResult, ...gate }) => gate);
 }
 
 export function evaluatePreMergeAdmissionDecision(

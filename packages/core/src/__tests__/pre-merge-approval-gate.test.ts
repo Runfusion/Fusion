@@ -83,6 +83,10 @@ describe("positive pre-merge approval gate", () => {
     });
 
     expect(decision).toMatchObject({ allApproved: true, gates: [{ workflowStepId: "code-review", state: "approved", selectedResult: { status: "passed", verdict: "APPROVE", reviewInputFingerprint: "current" } }] });
+    expect(evaluatePreMergeApprovals(task, {
+      requiredPreMergeStepIds: required,
+      mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } },
+    })).toEqual([{ workflowStepId: "code-review", state: "approved" }]);
     expect(getTaskMergeBlocker(task, { requiredPreMergeStepIds: required, mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "current" } } })).toBeUndefined();
   });
 
