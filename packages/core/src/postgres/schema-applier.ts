@@ -639,21 +639,21 @@ const OVERLAP_WAIT_SYNC_MIGRATION_PATH = join(MIGRATIONS_DIR, "0075_fn_332_overl
 const OVERLAP_WAIT_REPAIR_REQUIRED_PHASE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0077_fn_332_overlap_wait_repair_required_phase.sql");
 const WHITEBOARDS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0076_fn_333_whiteboards.sql");
 const OVERLAP_REVALIDATION_DRAIN_MIGRATION_PATH = join(MIGRATIONS_DIR, "0078_fn_375_overlap_revalidation_drain.sql");
-const REVIEW_LANE_LEDGER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0088_stas_205_review_lane_ledger.sql");
-const OVERLAP_OWNER_FK_REPAIR_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_fn_332_overlap_owner_fk_repair.sql");
+const REVIEW_LANE_LEDGER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0090_stas_205_review_lane_ledger.sql");
+const OVERLAP_OWNER_FK_REPAIR_MIGRATION_PATH = join(MIGRATIONS_DIR, "0089_fn_332_overlap_owner_fk_repair.sql");
 const WORKFLOW_IDENTITY_AND_MODEL_LANES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0079_fn_393_workflow_identity_and_project_model_lanes.sql");
 const TASK_HUMAN_PLAN_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0080_fn_408_task_human_plan_approval.sql");
 const TASK_PAUSE_ACCOUNTING_MIGRATION_PATH = join(MIGRATIONS_DIR, "0081_fn_457_task_pause_accounting.sql");
 const TASK_QUEUE_ORDER_MIGRATION_PATH = join(MIGRATIONS_DIR, "0082_fn_509_task_queue_order.sql");
 const TASK_HUMAN_MERGE_APPROVAL_MIGRATION_PATH = join(MIGRATIONS_DIR, "0083_fn_514_task_human_merge_approval.sql");
 /* FNXC:MigrationVersionCollision 2026-10-01-15:26: FN-9429 re-issued at 0089 (upstream shipped it as 0086; see STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION). */
-const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0089_fn_9429_stale_review_callback_waiver_receipts.sql");
+const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0086_fn_9429_stale_review_callback_waiver_receipts.sql");
 /* FNXC:MigrationVersionCollision 2026-10-05-08:52: upstream shipped this as `0087_fn_9439_pull_request_readiness.sql`; renamed locally so the file prefix matches the re-issued 0090 version. */
-const PULL_REQUEST_READINESS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0090_fn_9439_pull_request_readiness.sql");
+const PULL_REQUEST_READINESS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_fn_9439_pull_request_readiness.sql");
 /* FNXC:MigrationVersionCollision 2026-10-08-13:06: upstream shipped this as `0088_fn_9512_recovery_disposition.sql`; renamed locally so the file prefix matches the re-issued 0091 version. */
-const RECOVERY_DISPOSITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0091_fn_9512_recovery_disposition.sql");
+const RECOVERY_DISPOSITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0088_fn_9512_recovery_disposition.sql");
 /* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): explicit registration; see TASK_LOG_PROJECTIONS_VERSION. */
-const TASK_LOG_PROJECTIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0092_rufu_615_task_log_projections.sql");
+const TASK_LOG_PROJECTIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0091_rufu_615_task_log_projections.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so

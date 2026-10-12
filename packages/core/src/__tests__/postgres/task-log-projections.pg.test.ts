@@ -44,7 +44,7 @@ const pgTest = pgDescribe;
 
 /** The shipped migration file, so the backfill test executes the real statement. */
 const TASK_LOG_PROJECTIONS_MIGRATION = fileURLToPath(new URL(
-  "../../postgres/migrations/0092_rufu_615_task_log_projections.sql", import.meta.url,
+  "../../postgres/migrations/0091_rufu_615_task_log_projections.sql", import.meta.url,
 ));
 
 const MINUTE = 60_000;
