@@ -293,16 +293,14 @@ export const prRouteCommandRunner = {
   tryRun: tryRunPrShellCommand,
 };
 
-async function resolvePrBaseRef(repoRoot: string, baseBranch: string): Promise<string> {
+/*
+FNXC:PrBaseSelection 2026-10-12-15:33:
+Direct merges with pushAfterMerge disabled can intentionally leave local integration history ahead of origin.
+Refresh and prefer the remote-tracking ref so unpublished local commits never contaminate a PR merge base.
+*/
+export async function resolvePrBaseRef(repoRoot: string, baseBranch: string): Promise<string> {
   const safeBase = ensureSafeGitRef(baseBranch, "base branch");
-  const localCheck = await prRouteCommandRunner.tryRun(
-    `git rev-parse --verify ${shellQuote(safeBase)}`,
-    repoRoot,
-    PR_PREFLIGHT_TIMEOUT_MS,
-  );
-  if (localCheck.ok) {
-    return safeBase;
-  }
+  const remoteRef = `origin/${safeBase}`;
 
   await prRouteCommandRunner.tryRun(
     `git fetch origin ${shellQuote(safeBase)} --no-tags`,
@@ -310,13 +308,32 @@ async function resolvePrBaseRef(repoRoot: string, baseBranch: string): Promise<s
     PR_PREFLIGHT_TIMEOUT_MS,
   );
 
-  const remoteRef = `origin/${safeBase}`;
   const remoteCheck = await prRouteCommandRunner.tryRun(
     `git rev-parse --verify ${shellQuote(remoteRef)}`,
     repoRoot,
     PR_PREFLIGHT_TIMEOUT_MS,
   );
-  return remoteCheck.ok ? remoteRef : safeBase;
+  const localCheck = await prRouteCommandRunner.tryRun(
+    `git rev-parse --verify ${shellQuote(safeBase)}`,
+    repoRoot,
+    PR_PREFLIGHT_TIMEOUT_MS,
+  );
+
+  if (remoteCheck.ok) {
+    if (localCheck.ok && localCheck.stdout !== remoteCheck.stdout) {
+      severityAuditLog.warn(
+        `[pr-base-ref] base=${safeBase} localSha=${localCheck.stdout} remoteSha=${remoteCheck.stdout} selected=${remoteRef}`,
+      );
+    }
+    return remoteRef;
+  }
+
+  if (localCheck.ok) {
+    return safeBase;
+  }
+
+  // The caller retains its existing base-branch fallback when neither ref verifies.
+  return safeBase;
 }
 
 async function resolveDefaultPrBaseBranch(task: Task, repoRoot: string): Promise<string> {
@@ -409,7 +426,7 @@ function parsePreflightChangedFiles(numstatOutput: string, nameStatusOutput: str
   return results;
 }
 
-async function computePrPreflight(task: Task, repoRoot: string, requestedBase?: string): Promise<PrPreflightResponse> {
+export async function computePrPreflight(task: Task, repoRoot: string, requestedBase?: string): Promise<PrPreflightResponse> {
   const defaultBaseBranch = requestedBase?.trim()
     ? ensureSafeGitRef(requestedBase, "base branch")
     : await resolveDefaultPrBaseBranch(task, repoRoot);
