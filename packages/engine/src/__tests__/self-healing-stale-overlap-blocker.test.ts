@@ -53,6 +53,16 @@ function createStore(tasksInput: Task[], settingsOverrides: Partial<Settings> = 
   });
   const logEntry = vi.fn(async () => undefined);
   const store = {
+    /*
+    FNXC:WorkflowBatchCacheEpoch 2026-10-12-23:00 (RUFU-584 fixture repair):
+    RUFU-584 replaced this manager's 15 per-sweep IR caches with one epoch-guarded pair, and
+    `batchWorkflowIrCache()` now calls `this.store.workflowDefinitionEpoch()` UNGUARDED. This fake was
+    written before that, so every sweep reached it as `TypeError: ... is not a function`, the sweep threw
+    before its first decision, and 18 assertions here failed on `expected '' to contain ...` — a fixture
+    gap, not a product bug. A constant epoch is the honest fake: this file never writes a workflow
+    definition, so a cache that never invalidates is exactly what the store would report.
+    */
+    workflowDefinitionEpoch: () => 0,
     getSettings: vi.fn(async () => settings),
     listTasks: vi.fn(async (options?: { column?: Task["column"]; includeArchived?: boolean }) => {
       const all = [...tasks.values()].filter((task) => !task.deletedAt);

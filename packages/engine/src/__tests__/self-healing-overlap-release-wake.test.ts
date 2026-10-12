@@ -53,6 +53,10 @@ function makeStore(tasksInput: Task[], settingsOverrides: Partial<Settings> = {}
   const emitter = new EventEmitter();
   const settings: Settings = { globalPause: false, enginePaused: false, ...settingsOverrides } as Settings;
   const store = Object.assign(emitter, {
+    /* FNXC:WorkflowBatchCacheEpoch 2026-10-12-23:00 (RUFU-584 fixture repair): same gap as
+       `self-healing-stale-overlap-blocker.test.ts` — the shared IR cache now reads the definition epoch
+       unguarded, so an absent method threw the sweep out before its first decision. See that note. */
+    workflowDefinitionEpoch: () => 0,
     getSettings: vi.fn(async () => settings),
     listTasks: vi.fn(async (opts?: { column?: Task["column"]; includeArchived?: boolean }) => {
       const all = [...tasks.values()];
