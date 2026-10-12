@@ -163,7 +163,7 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
   "task:reclaim-phantom-executor-binding":
     "Self-healing proves an in-memory executor-active binding is stale and requeues the task.",
   "task:reconcile-orphaned-pending-step-results":
-    "Self-healing rewrites orphaned 'pending' workflow-step results (no live session) to 'failed'.",
+    "Self-healing rewrites orphaned 'pending' workflow-step results (no live session) to 'failed', and owns the card lifecycle with a card-level failure status when the card sits in a hold lane.",
   "task:stale-review-callback-waived":
     "Self-healing records a receipt-backed waiver for an eligible stale code-review callback.",
   "task:reconcile-unproven-review-approval":

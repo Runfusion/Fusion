@@ -891,7 +891,13 @@ export type DatabaseMutationType =
   sentence, the reviewer's output, and any error text never enter run-audit.
   */
   | "task:reconcile-stranded-reviewer-runs"
-    | "task:reconcile-orphaned-pending-step-results"
+  /**
+   * Rewrites orphaned `pending` step results to `failed`. Metadata is ids/counts/outcomes-only:
+   * { taskId, column, orphanedCount, resultCount, lifecycleStatus, needsOperatorBypass }.
+   * `lifecycleStatus` (STAS-299) is the status the card ends the sweep with — `failed` only where a
+   * hold-lane card was stamped, otherwise the status it already reported, or null.
+   */
+  | "task:reconcile-orphaned-pending-step-results"
   /** Receipt-backed automatic waiver of an orphaned required singular code-review callback. */
   | "task:stale-review-callback-waived"
   /**

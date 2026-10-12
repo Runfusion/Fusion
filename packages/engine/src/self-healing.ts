@@ -11282,6 +11282,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       /* Resolved once per sweep, outside the paging loop, so a large board still pays one resolve. */
       const orphanedPendingWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      /*
+      FNXC:OrphanedPendingSteps 2026-10-07 (STAS-299):
+      The hold-lane set for the lifecycle write below. Resolved by trait role and asked as SET
+      MEMBERSHIP, because `todo` is only this board's current name for the lane.
+      */
+      const orphanedPendingHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
       const pageSize = 500;
       let offset = 0;
       let recovered = 0;
@@ -11451,8 +11457,32 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           );
           if (orphanedCount === 0) continue;
 
+          /*
+          FNXC:OrphanedPendingSteps 2026-10-07 (STAS-299, from the STAS-281 stall):
+          Failing the row closes the merge door but owns nothing else. On a plan-in-place board the
+          card then sat in its hold lane with `status:null`: the graph will not re-dispatch a failed
+          gate, the scheduler does not re-plan a card whose gate row already exists, and every retry
+          surface admits only a card-level failure — so one dead review session stranded the card
+          with no recovery owner for 2.2 days. Owning the lifecycle here means a card-level
+          `status:"failed"` + `error`, written in the SAME patch as the row rewrite.
+
+          It is not a move. On this board failure is a status, not a lane — `COLUMNS` and
+          `VALID_TRANSITIONS` declare no `failed` entry — so a lane change would be an invention.
+
+          Scoped to the trait-resolved hold set and only when the card carries no status yet: a
+          review-lane card is already owned by the in-review no-verdict recovery route, a
+          complete-lane card is done, and a card that already reports a failure keeps its own reason.
+          */
+          const needsFailureStatus = !fresh.status && orphanedPendingHoldColumns.has(fresh.column);
+          const selfHealedFailure = needsFailureStatus
+            ? `${orphanedCount} workflow step result(s) had no live session or lease and were marked failed by self-healing (FN-8492). The card stays in its lane; retry it to re-run the step.`
+            : undefined;
+
           try {
-            await this.store.updateTask(task.id, { workflowStepResults: results });
+            await this.store.updateTask(task.id, {
+              workflowStepResults: results,
+              ...(needsFailureStatus ? { status: "failed", error: selfHealedFailure } : {}),
+            });
             // Counted on the successful mutation; a failed audit emit below must not
             // understate how many tasks were actually recovered.
             recovered += 1;
@@ -11489,6 +11519,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 column: task.column,
                 orphanedCount,
                 resultCount: results.length,
+                /* Which lifecycle status the card ends the sweep with — `failed` only for the
+                   hold-lane write above, otherwise whatever status it already reported. */
+                lifecycleStatus: needsFailureStatus ? "failed" : (fresh.status ?? null),
                 needsOperatorBypass: settings ? !allowsAutoMergeProcessing(fresh, settings) : undefined,
               },
             });
