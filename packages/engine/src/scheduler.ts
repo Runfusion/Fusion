@@ -160,6 +160,7 @@ function computeAutoClaimFingerprint(task: Task): string {
     task.assignedAgentId ?? "",
     task.checkedOutBy ?? "",
     task.deletedAt ?? "",
+    task.overlapBlockedBy ?? "",
     dependencies,
     sortAt,
   ].join("|");
@@ -1137,6 +1138,11 @@ export class Scheduler {
   private readonly symbolLockRenewalLog = createRepeatSuppressedLog();
   /** Tracks per-task candidacy fingerprints for task:updated auto-claim invalidation gating. */
   private lastAutoClaimFingerprint = new Map<string, string>();
+  /** Tracks observed overlap blockers so only their removal can trigger an event-driven reevaluation. */
+  private overlapBlockedTaskIds = new Set<string>();
+  /** Startup hydration is awaited by clear events so a persisted blocker survives a scheduler restart. */
+  private overlapBlockerHydration: Promise<void> = Promise.resolve();
+  private overlapBlockerHydrationGeneration = 0;
   /** Tracks recent engine-sourced in-progress → todo requeues to prevent immediate re-dispatch races. */
   private recentEngineTodoRequeues = new Map<string, string>();
   private readonly staleTaskReporter: StaleTaskReporter;
@@ -1547,15 +1553,38 @@ export class Scheduler {
         this.failedTaskIds.delete(task.id);
       }
 
-      /*
-      FNXC:FileScopeRecovery 2026-10-12-15:34:
-      A committed speculative-lease release clears only the follower marker; it never
-      grants execution. Re-run ordinary scheduling promptly when that now-unblocked,
-      unpaused row is published so dependency, capacity, workflow, and dispatch gates
-      remain the sole admission authority instead of waiting for the next poll.
-      */
-      if (!task.overlapBlockedBy && !task.paused && !task.userPaused && !task.status) {
-        void this.schedule();
+      if (task.overlapBlockedBy) {
+        this.overlapBlockedTaskIds.add(task.id);
+      } else {
+        /*
+        FNXC:FileScopeRecovery 2026-10-12-18:53:
+        A lease-release receipt is only an overlap-blocker transition, never an execution
+        grant. Await startup hydration before testing that transition so a persisted blocker
+        cleared after restart wakes once through normal parked-lane admission. An unpause,
+        planning completion, or approval release retains its existing edge-triggered wake.
+        */
+        void (async () => {
+          await this.overlapBlockerHydration;
+          const overlapBlockerWasCleared = this.overlapBlockedTaskIds.delete(task.id);
+          const overlapWakeAlreadyOwned = this.pausedTaskIds.has(task.id)
+            || this.planningTaskIds.has(task.id)
+            || this.approvalHeldTaskIds.has(task.id);
+          if (!overlapBlockerWasCleared || overlapWakeAlreadyOwned) return;
+
+          const overlapParked = await resolveTaskParkedColumns(this.store, task.id, updatedSelectionCache);
+          if (
+            this.running
+            && !task.status
+            && !task.paused
+            && !task.userPaused
+            && overlapParked.wake.has(task.column)
+          ) {
+            schedulerLog.log(`Task ${task.id} overlap blocker cleared — triggering scheduling`);
+            void this.schedule();
+          }
+        })().catch((error) => {
+          schedulerLog.warn(`Failed to resolve overlap-release task parked columns for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        });
       }
 
       // Track pause state transitions for event-driven scheduling on unpause.
@@ -1688,6 +1717,7 @@ export class Scheduler {
 
     this.store.on("task:deleted", (task) => {
       this.lastAutoClaimFingerprint.delete(task.id);
+      this.overlapBlockedTaskIds.delete(task.id);
       this.options.snapshotManager?.invalidate("task:deleted");
       this.pausedTaskIds.delete(task.id);
       // FNXC:CodingIdeasWorkflow 2026-07-25-13:10: drop planning tracking with the other per-task
@@ -1886,6 +1916,25 @@ export class Scheduler {
     if (this.running) return;
     this.running = true;
 
+    /*
+    FNXC:FileScopeRecovery 2026-10-12-19:09:
+    A scheduler restart loses event-local blocker history while durable tasks can still carry an
+    overlapBlockedBy receipt. Hydrate that narrow history before later update events so clearing a
+    persisted blocker retains its one prompt, normal-admission reevaluation instead of waiting for
+    the poll backstop.
+    */
+    const hydrationGeneration = ++this.overlapBlockerHydrationGeneration;
+    this.overlapBlockerHydration = this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true })
+      .then((tasks) => {
+        if (hydrationGeneration !== this.overlapBlockerHydrationGeneration) return;
+        for (const task of tasks) {
+          if (task.overlapBlockedBy) this.overlapBlockedTaskIds.add(task.id);
+        }
+      })
+      .catch((error) => {
+        schedulerLog.warn(`Failed to hydrate overlap-blocker scheduling state: ${error instanceof Error ? error.message : String(error)}`);
+      });
+
     const interval = this.options.pollIntervalMs ?? 15_000;
     this.activePollMs = interval;
     this.pollInterval = setInterval(() => this.schedule(), interval);
@@ -1933,6 +1982,9 @@ export class Scheduler {
     this.wasPermanentAgentUnavailable.clear();
     this.wasDispatchQueuedReasonLogged.clear();
     this.symbolLockRenewalLog.reset();
+    this.overlapBlockedTaskIds.clear();
+    this.overlapBlockerHydrationGeneration += 1;
+    this.overlapBlockerHydration = Promise.resolve();
     schedulerLog.log("Stopped");
   }
 

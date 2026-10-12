@@ -100,6 +100,7 @@ describe("Scheduler auto-claim snapshot invalidation", () => {
     ["assignedAgentId", { assignedAgentId: "agent-1" }],
     ["checkedOutBy", { checkedOutBy: "agent-2" }],
     ["deletedAt", { deletedAt: "2026-01-02T00:00:00.000Z" }],
+    ["overlapBlockedBy", { overlapBlockedBy: "FN-2" }],
     ["dependencies", { dependencies: ["FN-2"] }],
     ["columnMovedAt", { columnMovedAt: "2026-01-03T00:00:00.000Z" }],
   ])("invalidates when %s changes", (_field, mutation) => {
@@ -127,6 +128,43 @@ describe("Scheduler auto-claim snapshot invalidation", () => {
     await flushAsyncHandlers();
 
     expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("wakes once when an observed overlap blocker clears for a runnable parked task", async () => {
+    const invalidate = vi.fn();
+    const { store, emit } = createStore();
+    const scheduler = new Scheduler(store, { snapshotManager: { invalidate } as any });
+    const schedule = vi.spyOn(scheduler, "schedule").mockResolvedValue(undefined);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    emit("task:updated", createTask({ overlapBlockedBy: "FN-HOLDER", status: "queued" }));
+    emit("task:updated", createTask({ overlapBlockedBy: null, status: null }));
+    emit("task:updated", createTask({ overlapBlockedBy: null, status: null, updatedAt: "2026-01-01T00:00:01.000Z" }));
+
+    await flushAsyncHandlers();
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenNthCalledWith(1, "task:updated");
+    expect(invalidate).toHaveBeenNthCalledWith(2, "task:updated");
+  });
+
+  it("hydrates a persisted overlap blocker on restart before its receipt clears", async () => {
+    const persistedBlockedTask = createTask({ overlapBlockedBy: "FN-HOLDER", status: "queued" });
+    const { store, emit } = createStore();
+    vi.mocked(store.listTasks).mockResolvedValue([persistedBlockedTask] as never);
+    const scheduler = new Scheduler(store, {});
+    const schedule = vi.spyOn(scheduler, "schedule").mockResolvedValue(undefined);
+
+    scheduler.start();
+    await flushAsyncHandlers();
+    schedule.mockClear();
+
+    emit("task:updated", createTask({ overlapBlockedBy: null, status: null }));
+    await flushAsyncHandlers();
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+    scheduler.stop();
   });
 
   it("invalidates on first-sighting task:updated with no stored fingerprint", () => {
