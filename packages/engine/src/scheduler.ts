@@ -2213,7 +2213,8 @@ export class Scheduler {
     distinct workflow. Fail-soft: an unresolvable workflow falls back to the legacy literal via
     `isReviewColumnRole`'s documented no-metadata behaviour rather than dropping the watcher.
     */
-    void this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true })
+    // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+    void this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true, excludeLog: true })
       .then(async (tasks) => {
         const repo = getCurrentRepo(this.store.getRootDir());
         if (!repo) return;

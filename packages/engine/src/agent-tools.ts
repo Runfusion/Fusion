@@ -1329,7 +1329,8 @@ async function findDefinedFeatureBootstrapDuplicate(
   sourceParentTaskId: string | undefined,
 ): Promise<Task | undefined> {
   if (!sourceAgentId && !sourceParentTaskId) return undefined;
-  const candidates = await store.listTasks({ slim: true, includeArchived: false, includeDeleted: true });
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  const candidates = await store.listTasks({ slim: true, includeArchived: false, includeDeleted: true, excludeLog: true });
   const byId = new Map(candidates.map((task) => [task.id, task]));
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
@@ -1892,7 +1893,7 @@ export function createTaskListTool(store: TaskStore): ToolDefinition {
       "and dependencies for each. Use to discover work and check for duplicates.",
     parameters: taskListParams,
     execute: async () => {
-      const tasks = await store.listTasks({ slim: true, includeArchived: false });
+      const tasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       const isTerminal = await resolveTerminalColumnsForTasks(store, tasks);
       const active = tasks.filter((task) => !isTerminal(task));
       const lines = active.map(formatTaskSummaryLine);

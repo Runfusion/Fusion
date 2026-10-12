@@ -3939,7 +3939,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const stuckWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       const stuckById = new Map<string, Task>();
       for (const column of stuckWipColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) stuckById.set(task.id, task);
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): every log-consuming sweep in this
+  // file re-hydrates through getTask first (`loadRevisionAttemptSource`, `hydratedRevisionTaskById`, the
+  // `durable?.log` preference), so a list row may be log-free; see the 8095-8522 consumer-range audit.
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) stuckById.set(task.id, task);
       }
       const tasks = [...stuckById.values()];
       /*
@@ -4055,7 +4058,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       resolves three times regardless of card count. `includeArchived: false`
       keeps archived rows out, which the old column filter did implicitly.
       */
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const completedNonColumnCandidates = tasks.filter((task) => {
@@ -4350,7 +4353,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       IR cache below bounds to one resolution per workflow rather than per task.
       */
       const tasks = await this.filterByPreWipRole(
-        await this.store.listTasks({ slim: true, includeArchived: false }),
+        await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true }),
         ["intake"],
         new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
       );
@@ -4530,7 +4533,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const staleMergeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const staleMergeById = new Map<string, Task>();
       for (const column of staleMergeReviewColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) staleMergeById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) staleMergeById.set(entry.id, entry);
       }
       const tasks = [...staleMergeById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -4803,7 +4806,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   async reclaimPrConflicts(): Promise<number> {
-    const tasks = await this.store.listTasks({ slim: true });
+    const tasks = await this.store.listTasks({ slim: true, excludeLog: true });
     const candidates = tasks.filter((task) => {
       const prList = task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
       return prList.some((pr) => pr.mergeable === "conflicting");
@@ -4899,7 +4902,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const prConflictWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       const prConflictById = new Map<string, Task>();
       for (const column of prConflictWipColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) prConflictById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) prConflictById.set(entry.id, entry);
       }
       const inProgressCandidates = [...prConflictById.values()];
       const inProgressByWorktree = new Map<string, string>();
@@ -5290,7 +5293,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const readBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
         const byId = new Map<string, Task>();
         for (const column of columns) {
-          for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
+          for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) byId.set(task.id, task);
         }
         return [...byId.values()];
       };
@@ -6337,7 +6340,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   */
   private async isCandidateWorktreeLive(candidatePath: string, settings: Settings): Promise<boolean> {
     try {
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true, excludeLog: true });
       let canonicalCandidate = resolve(candidatePath);
       try { canonicalCandidate = realpathSync(canonicalCandidate); } catch {}
       const scanRoots = resolveWorktreesDirScanRoots(this.options.rootDir, settings);
@@ -6511,7 +6514,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         .filter(Boolean);
       if (branches.length === 0) return 0;
 
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       const taskById = new Map(tasks.map((task) => [task.id.toUpperCase(), task]));
 
       let reclaimed = 0;
@@ -6749,7 +6752,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const task = await this.store.getTask(taskId);
       await this.reconcileTaskWorktreeMetadata({ includeTaskIds: new Set([taskId]) });
-      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       const taskById = new Map(allTasks.map((t) => [t.id, t]));
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
@@ -6931,7 +6934,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const readDependentBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
         const byId = new Map<string, Task>();
         for (const column of columns) {
-          for (const entry of await this.store.listTasks({ column, slim: true })) byId.set(entry.id, entry);
+          for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) byId.set(entry.id, entry);
         }
         return [...byId.values()];
       };
@@ -7295,7 +7298,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return result;
 
-      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       const tasks = allTasks.filter((task) => rebindReviewColumns.has(task.column));
       const fusionRefOutput = await execAsync("git for-each-ref --format='%(refname:short)' refs/heads/fusion/", {
         cwd: this.options.rootDir,
@@ -7522,7 +7525,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
-      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       const branchMap = await getRegisteredWorktreeBranchMap(this.options.rootDir);
       // FN-5256: macOS git surfaces realpath-normalized worktree paths (/private/var/...)
       // while task.worktree may be persisted as the symlinked path. Compare on realpath
@@ -7681,7 +7684,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       return { count: 0, reboundedIds: [] };
     }
 
-    const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+    const tasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
     const followersByHolder = new Map<string, number>();
     for (const task of tasks) {
       if (typeof task.blockedBy !== "string" || task.blockedBy.trim().length === 0) continue;
@@ -7775,7 +7778,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const windowMs = Number(settings.boardStallSweepWindowMs ?? 2 * 60 * 60_000);
     const growthThreshold = Number(settings.boardStallBlockedGrowthThreshold ?? 3);
     const now = Date.now();
-    const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+    const allTasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
     const blockedDepth = this.countBlockedDepth(allTasks);
 
     if (!this.boardStallWindow || now - this.boardStallWindow.windowStartMs >= windowMs) {
@@ -8780,7 +8783,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     let tasks: Task[] = [];
     try {
-      tasks = await this.store.listTasks({ includeArchived: false, slim: true });
+      tasks = await this.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(`reconcileDependencyBlockingLeases: failed to list tasks: ${errorMessage}`);
@@ -8980,7 +8983,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     let tasks: Task[] = [];
     try {
-      tasks = await this.store.listTasks({ includeArchived: false, slim: true });
+      tasks = await this.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(`reconcileCompletedBlockedTasks: failed to list tasks: ${errorMessage}`);
@@ -9074,7 +9077,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     let tasks: Task[] = [];
     try {
-      tasks = await this.store.listTasks({ includeArchived: false, slim: true });
+      tasks = await this.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(`reconcileInReviewUnmetDependencies: failed to list tasks: ${errorMessage}`);
@@ -9228,7 +9231,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     each candidate remains isolated and a known read-only log refusal cannot starve later repairs.
     */
     let repaired = 0;
-    const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+    const tasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
     for (const snapshot of tasks) {
       if (snapshot.deletedAt) continue;
       if (!snapshot.dependencies.length || snapshot.userPaused || snapshot.paused || snapshot.autoMerge === false) continue;
@@ -9319,7 +9322,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     for (const column of targetColumns) {
       let tasks: Task[] = [];
       try {
-        tasks = await this.store.listTasks({ column, slim: true });
+        tasks = await this.store.listTasks({ column, slim: true, excludeLog: true });
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         log.warn(`reconcileSelfDefeatingDependencies: failed to list ${column} tasks: ${errorMessage}`);
@@ -9376,7 +9379,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     let tasks: Task[] = [];
 
     try {
-      tasks = await this.store.listTasks({ includeArchived: false, slim: true });
+      tasks = await this.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(`reconcileDependencyCycles: failed to list tasks: ${errorMessage}`);
@@ -9529,7 +9532,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const terminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
       const terminalById = new Map<string, Task>();
       for (const column of terminalColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) terminalById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) terminalById.set(task.id, task);
       }
       const candidates = [...terminalById.values()].filter((task) => {
         const s = task.status;
@@ -9589,7 +9592,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const service = getActiveNotificationService();
       const windowMs = service?.getWedgeNotificationSettleMs() ?? 300_000;
       const now = Date.now();
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500, excludeLog: true });
       let processed = 0;
       for (const task of tasks.filter((candidate) => {
         const since = candidate.wedgeNotification?.pending?.since;
@@ -9639,7 +9642,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async reconcileReviewStallWedgeNotifications(): Promise<number> {
     try {
       const now = Date.now();
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500, excludeLog: true });
       const candidates = tasks.filter((candidate) => {
         const code = candidate.stallReason?.code;
         return code === "merge-blocker" || code === "pre-merge-gate-pending" || code === "held-human-review";
@@ -9744,7 +9747,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async reconcileStaleDuplicateDecisionPause(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500, excludeLog: true });
       const candidates = tasks.filter((task) =>
         task.paused === true
         && task.userPaused !== true
@@ -9897,7 +9900,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       };
 
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
         for (const task of tasks) {
           // Page-cheap pre-filter of the hold shape (either arm of isTaskBlockedOnApproval);
           // the full candidacy is re-derived from a fresh read — the page can be stale.
@@ -10060,7 +10063,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let deferred = 0;
 
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
         for (const task of tasks) {
           // Page-cheap pre-filter of the park shape; candidacy is re-derived from a fresh read.
           if (task.paused !== true || task.pausedReason !== IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON) continue;
@@ -10207,7 +10210,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let adopted = 0;
 
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
         for (const task of tasks) {
           // An operator park is authoritative; adoption must not reach through it.
           if (task.userPaused === true) continue;
@@ -10318,7 +10321,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let rehomed = 0;
 
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
         for (const task of tasks) {
           if (task.userPaused === true) continue;
           let ir;
@@ -11161,7 +11164,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       let detected = 0;
       const seen = new Set<string>();
 
@@ -11261,7 +11264,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       };
 
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset });
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
         for (const task of tasks) {
           // An operator park is authoritative; this sweep must not reach through it.
           if (task.userPaused === true) continue;
@@ -11598,7 +11601,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     const candidates = new Map<string, Task>();
     for (const column of reviewColumns) {
-      for (const task of await this.store.listTasks({ column, slim: true })) candidates.set(task.id, task);
+      for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) candidates.set(task.id, task);
     }
     const isSessionLive = (taskId: string): boolean => activeSessionRegistry.pathsForTask(taskId)
       .some((path) => activeSessionRegistry.isPathActive(path))
@@ -11659,7 +11662,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const candidates = new Map<string, Task>();
       for (const column of reviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) candidates.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) candidates.set(task.id, task);
       }
       const settings = await this.store.getSettings().catch(() => undefined);
       let repairedTasks = 0;
@@ -11777,7 +11780,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const candidates = new Map<string, Task>();
       for (const column of reviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) candidates.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) candidates.set(task.id, task);
       }
       let repairedTasks = 0;
       const isSessionLive = (taskId: string): boolean => {
@@ -11906,7 +11909,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const noOpReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const noOpById = new Map<string, Task>();
       for (const column of noOpReviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) noOpById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) noOpById.set(task.id, task);
       }
       const tasks = [...noOpById.values()];
       const noOpIrCache = this.batchWorkflowIrCache();
@@ -12212,7 +12215,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const completeColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
       const byId = new Map<string, Task>();
       for (const column of completeColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) byId.set(task.id, task);
       }
       const shortlist = [...byId.values()].filter((task) =>
         (!task.mergeDetails?.commitSha || task.mergeDetails.commitSha.trim().length === 0) &&
@@ -12804,7 +12807,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const mergeableReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const mergeableById = new Map<string, Task>();
       for (const column of mergeableReviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) mergeableById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) mergeableById.set(task.id, task);
       }
       const tasks = [...mergeableById.values()];
       const mergeableIrCache = this.batchWorkflowIrCache();
@@ -13335,7 +13338,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const failedStepReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const failedStepById = new Map<string, Task>();
       for (const column of failedStepReviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) failedStepById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) failedStepById.set(task.id, task);
       }
       const tasks = [...failedStepById.values()];
       const failedStepIrCache = this.batchWorkflowIrCache();
@@ -14775,7 +14778,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const transientReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const transientById = new Map<string, Task>();
       for (const column of transientReviewColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) transientById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) transientById.set(entry.id, entry);
       }
       const slim = [...transientById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -14958,7 +14961,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const interruptedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const interruptedById = new Map<string, Task>();
       for (const column of interruptedReviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) interruptedById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) interruptedById.set(task.id, task);
       }
       const interruptedIrCache = this.batchWorkflowIrCache();
       const unresolvedInterruptedCards: string[] = [];
@@ -15172,7 +15175,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const wsPartialColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const wsPartialById = new Map<string, Task>();
       for (const column of wsPartialColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) wsPartialById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) wsPartialById.set(entry.id, entry);
       }
       const tasks = [...wsPartialById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -15649,7 +15652,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
    * A live executor or an explicit user pause remains a hard no-touch guard.
    */
   async clearOrphanedSessionContentionHolds(): Promise<number> {
-    const tasks = await this.store.listTasks({ slim: true });
+    const tasks = await this.store.listTasks({ slim: true, excludeLog: true });
     let cleared = 0;
     for (const snapshot of tasks) {
       if (snapshot.status !== "contention-hold") continue;
@@ -15820,7 +15823,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         this.store,
         ["intake", "hold", "countsTowardWip", ...REVIEW_ROLES, "complete"],
       );
-      const parked = await this.store.listTasks({ slim: true });
+      const parked = await this.store.listTasks({ slim: true, excludeLog: true });
       const candidates = parked.filter((task) => {
         if (!task.worktree || task.deletedAt) return false;
         // Execution evidence — the worktree may hold real work; only the merge/archive lifecycle owns it.
@@ -15951,11 +15954,11 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       if (settings.globalPause || settings.enginePaused) return 0;
       const now = Date.now();
       // One forensic read includes deleted and live rows: live claimants must veto destructive cleanup.
-      const allRows = await this.store.listTasks({ slim: true, includeDeleted: true });
+      const allRows = await this.store.listTasks({ slim: true, includeDeleted: true, excludeLog: true });
       const completeColumns = new Set(await resolveProjectColumnsForRoles(this.store, ["complete"]));
       // Preserve resolved-column semantics for stores whose forensic list is filter-blind or omits lanes.
       for (const column of completeColumns) {
-        for (const row of await this.store.listTasks({ column, slim: true })) {
+        for (const row of await this.store.listTasks({ column, slim: true, excludeLog: true })) {
           if (!allRows.some((known) => known.id === row.id)) allRows.push(row);
         }
       }
@@ -16205,7 +16208,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const doneMetaColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
       const doneMetaById = new Map<string, Task>();
       for (const column of doneMetaColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) doneMetaById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) doneMetaById.set(entry.id, entry);
       }
       const tasks = [...doneMetaById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -16488,7 +16491,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const readMergedBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
         const byId = new Map<string, Task>();
         for (const column of columns) {
-          for (const entry of await this.store.listTasks({ column, slim: true })) byId.set(entry.id, entry);
+          for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) byId.set(entry.id, entry);
         }
         return [...byId.values()];
       };
@@ -16711,7 +16714,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const reviewColumnsForDeadlock = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const inReviewById = new Map<string, Task>();
       for (const column of reviewColumnsForDeadlock) {
-        for (const task of await this.store.listTasks({ column, slim: true })) inReviewById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) inReviewById.set(task.id, task);
       }
       const deadlockIrCache = this.batchWorkflowIrCache();
       const unresolvedDeadlockCards: string[] = [];
@@ -16735,7 +16738,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       );
       const dependentsById = new Map<string, Task>();
       for (const column of dependentSourceColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) dependentsById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) dependentsById.set(task.id, task);
       }
       const dependentSources = [...dependentsById.values()];
 
@@ -16994,7 +16997,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const orphanReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const orphanById = new Map<string, Task>();
       for (const column of orphanReviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) orphanById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) orphanById.set(task.id, task);
       }
       const tasks = [...orphanById.values()];
       const orphanIrCache = this.batchWorkflowIrCache();
@@ -17207,7 +17210,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const byId = new Map<string, Task>();
       for (const column of reviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: true })) byId.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) byId.set(task.id, task);
       }
       const reviewIrCache = this.batchWorkflowIrCache();
       /* Cards whose own workflow could not be resolved — reported below rather than silently dropped. */
@@ -18186,7 +18189,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const misboundColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const misboundById = new Map<string, Task>();
       for (const column of misboundColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) misboundById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) misboundById.set(entry.id, entry);
       }
       const tasks = [...misboundById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -18376,7 +18379,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const readContaminationBucket = async (columns: ReadonlySet<string>): Promise<Task[]> => {
         const byId = new Map<string, Task>();
         for (const column of columns) {
-          for (const entry of await this.store.listTasks({ column, slim: true })) byId.set(entry.id, entry);
+          for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) byId.set(entry.id, entry);
         }
         return [...byId.values()];
       };
@@ -18571,7 +18574,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const misclassifiedColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const misclassifiedById = new Map<string, Task>();
       for (const column of misclassifiedColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) misclassifiedById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) misclassifiedById.set(entry.id, entry);
       }
       const tasks = [...misclassifiedById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -18657,7 +18660,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ slim: true });
+      const tasks = await this.store.listTasks({ slim: true, excludeLog: true });
 
       /*
       FNXC:WorkflowResolvedColumns 2026-07-31-14:20 (fleet):
@@ -18877,10 +18880,10 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const noCommitsColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const noCommitsById = new Map<string, Task>();
       for (const column of noCommitsColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) noCommitsById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) noCommitsById.set(entry.id, entry);
       }
       const inReviewTasks = [...noCommitsById.values()];
-      const allTasks = await this.store.listTasks({ slim: true });
+      const allTasks = await this.store.listTasks({ slim: true, excludeLog: true });
       const failedTasks = allTasks.filter((task) => task.status === "failed");
       const candidateMap = new Map<string, Task>();
       for (const task of [...inReviewTasks, ...failedTasks]) {
@@ -19062,7 +19065,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const orphanWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       const orphanExecById = new Map<string, Task>();
       for (const column of orphanWipColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) orphanExecById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) orphanExecById.set(entry.id, entry);
       }
       const tasks = [...orphanExecById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -19166,7 +19169,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const reattachWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       const reattachById = new Map<string, Task>();
       for (const column of reattachWipColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) reattachById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) reattachById.set(entry.id, entry);
       }
       const tasks = [...reattachById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -19504,7 +19507,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
 
     const agents = await agentStore.listAgents({ includeEphemeral: false });
     const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-    const tasks = await this.store.listTasks({ slim: true });
+    const tasks = await this.store.listTasks({ slim: true, excludeLog: true });
     const now = Date.now();
     let recovered = 0;
 
@@ -20256,7 +20259,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const missingWtColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const missingWtById = new Map<string, Task>();
       for (const column of missingWtColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) missingWtById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) missingWtById.set(entry.id, entry);
       }
       const tasks = [...missingWtById.values()];
       /*
@@ -20433,7 +20436,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const partialColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const partialById = new Map<string, Task>();
       for (const column of partialColumns) {
-        for (const entry of await this.store.listTasks({ column, slim: true })) partialById.set(entry.id, entry);
+        for (const entry of await this.store.listTasks({ column, slim: true, excludeLog: true })) partialById.set(entry.id, entry);
       }
       const tasks = [...partialById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
@@ -20643,7 +20646,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       */
       const preWipCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
       const tasks = await this.filterByPreWipRole(
-        await this.store.listTasks({ slim: true, includeArchived: false }),
+        await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true }),
         ["intake"],
         preWipCache,
       );
@@ -20725,7 +20728,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         return 0;
       }
 
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500, excludeLog: true });
       // FNXC:WorkflowColumns 2026-07-29-09:30 (Phase B): intake-or-hold role.
       const candidates = await this.filterByPreWipRole(
         tasks,
@@ -20932,7 +20935,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     let failedAttempts = 0;
     try {
       const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
       for (const task of tasks) {
         try {
           // Defense-in-depth for legacy/custom stores; archive snapshots require
@@ -21026,7 +21029,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       // column filter is a role filter, and the list query carried the literal too.
       const preWipCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
       const tasks = await this.filterByPreWipRole(
-        await this.store.listTasks({ slim: true, includeArchived: false }),
+        await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true }),
         ["intake"],
         preWipCache,
       );

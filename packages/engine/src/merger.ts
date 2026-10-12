@@ -4943,7 +4943,8 @@ export async function findWorktreeUser(
   worktreePath: string,
   excludeTaskId: string,
 ): Promise<string | null> {
-  const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  const tasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
   /*
   FNXC:WorkflowLifecycleColumns 2026-08-02-10:55 (fleet: merger.ts):
   The worktree-conflict scan asks "is another UNFINISHED task holding this worktree?". Resolved per task, but

@@ -121,7 +121,8 @@ export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput)
   write the same comparison while LOOKING like it consulted the trait registry — and it ignored a
   correct helper sitting three lines above the import. Replaced before commit.
   */
-  const allLiveTasks = await store.listTasks({ slim: true, includeArchived: false });
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  const allLiveTasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P2):
   ONE IR read per WORKFLOW, not per card. This loop runs over every live task on the board, so
@@ -235,7 +236,7 @@ async function findOpenEvalFollowUpTaskId(
   parentTaskId: string,
   suggestionId: string,
 ): Promise<string | undefined> {
-  const tasks = await store.listTasks({ slim: true }).catch(() => []);
+  const tasks = await store.listTasks({ slim: true, excludeLog: true }).catch(() => []);
   /*
   Cheap identity filters FIRST, so only genuine candidates for this parent+suggestion pay a workflow
   resolution — usually zero or one card rather than the whole board.

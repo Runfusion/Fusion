@@ -117,7 +117,8 @@ export async function evaluateScopeAutoWiden(params: EvaluateScopeAutoWidenParam
   const taskToken = toTaskToken(task.id || taskId);
 
   const allTasks = typeof store.listTasks === "function"
-    ? await store.listTasks({ slim: true, includeArchived: false })
+    // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+    ? await store.listTasks({ slim: true, includeArchived: false, excludeLog: true })
     : [];
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-12:55 (batch-engine tail):

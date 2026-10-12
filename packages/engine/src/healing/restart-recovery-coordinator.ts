@@ -202,7 +202,8 @@ export class RestartRecoveryCoordinator {
     const wipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
     const byId = new Map<string, Task>();
     for (const column of wipColumns) {
-      for (const task of await this.store.listTasks({ slim: true, column })) byId.set(task.id, task);
+      // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+      for (const task of await this.store.listTasks({ slim: true, column, excludeLog: true })) byId.set(task.id, task);
     }
     const candidates = [...byId.values()].filter((task) => !task.paused);
 

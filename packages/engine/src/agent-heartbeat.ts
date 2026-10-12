@@ -908,7 +908,8 @@ export async function heartbeatPlanningLaneAcquisitionSkip(
   if (task.dependencies.length === 0) {
     return task.overlapBlockedBy ? [task.overlapBlockedBy] : null;
   }
-  const tasks = await taskStore.listTasks({ includeArchived: false, slim: true }).catch(() => null);
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  const tasks = await taskStore.listTasks({ includeArchived: false, slim: true, excludeLog: true }).catch(() => null);
   if (!tasks) return null;
   const unmet = getUnmetSchedulingDependencies(task, tasks);
   if (unmet.length > 0) return unmet;

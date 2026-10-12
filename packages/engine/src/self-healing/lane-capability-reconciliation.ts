@@ -78,7 +78,8 @@ export async function reconcileLaneCapabilityMisbinds(
   let suppressedCandidateCount = 0;
   const repairs: { taskId: string; fromAgentId: string | null; toAgentId: string | null }[] = [];
 
-  for (const slim of await store.listTasks({ includeArchived: false, slim: true })) {
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  for (const slim of await store.listTasks({ includeArchived: false, slim: true, excludeLog: true })) {
     // Prescreen on the slim row; every guard is re-evaluated on the authoritative re-read.
     if (slim.deletedAt || !slim.assignedAgentId) continue;
     if (slim.paused || slim.userPaused || slim.pausedByAgentId) continue;

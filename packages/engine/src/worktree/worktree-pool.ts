@@ -549,7 +549,8 @@ export async function scanIdleWorktrees(
   const registeredDirs = dirs.filter((dir) => registeredWorktrees.has(resolve(dir)));
 
   // Find worktree paths assigned to non-done tasks (active worktrees)
-  const tasks = await store.listTasks({ slim: true, includeArchived: false, startupMemo: true });
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  const tasks = await store.listTasks({ slim: true, includeArchived: false, startupMemo: true, excludeLog: true });
   const activeWorktrees = new Set<string>();
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-14:05 (batch-engine tail):
@@ -880,7 +881,7 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
 
   if (allBranches.length === 0) return [];
 
-  const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  const tasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
   A branch is active unless the merger owns the card. The old hardcoded test missed renamed review or Complete columns, so a card there was not recognised as

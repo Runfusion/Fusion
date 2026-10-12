@@ -50,7 +50,8 @@ export async function proveTaskWorktreeRebind(input: {
         if (await realpath(entry.path).catch(() => entry.path) === canonical) refuse();
       }
     }
-    for (const other of await store.listTasks({ slim: true, includeArchived: false })) {
+    // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+    for (const other of await store.listTasks({ slim: true, includeArchived: false, excludeLog: true })) {
       if (other.id === task.id) continue;
       const assignments = [
         { branch: other.branch, worktreePath: other.worktree },

@@ -36,10 +36,11 @@ const CONVERTED_FILES = [
 ];
 
 /**
- * Measured 2026-10-12 by this census: 88 engine call sites still scan the board with a hydrated log array.
+ * Measured 2026-10-12 by this census: tranche 3 took 8 sites and tranche 4 took 87 more (every scan in
+ * self-healing.ts plus 16 files with no non-logger `.log` token), leaving this many.
  * Lower this as tranches land; raising it requires naming the new site in the tranche note above.
  */
-const MAX_UNCONVERTED_SLIM_SCANS = 88;
+const MAX_UNCONVERTED_SLIM_SCANS = 2;
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {

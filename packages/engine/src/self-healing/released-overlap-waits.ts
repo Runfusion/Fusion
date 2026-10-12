@@ -18,7 +18,8 @@ export async function reconcileReleasedOverlapWaits(
   const settings = await store.getSettings();
   if (settings.globalPause || settings.enginePaused) return 0;
   let count = 0;
-  for (const task of await store.listTasks({ includeArchived: false, slim: true })) {
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  for (const task of await store.listTasks({ includeArchived: false, slim: true, excludeLog: true })) {
     if (task.deletedAt || (!task.overlapBlockedBy && !task.blockedBy && !isRecoverableOverlapWaitFailure(task.error))) continue;
     try {
       const lanes = await resolveTaskLifecycleColumns(store, task.id);

@@ -163,7 +163,8 @@ export async function resolveFreshAutoClaimCandidates(
 
   /* FNXC:ListTasksDeriveOptOut 2026-10-09-20:25: derive:false for the reason documented on
      * AutoClaimSnapshotManager.rebuild — this path decides candidacy from stored state only. */
-  const allTasks = await taskStore.listTasks({ slim: true, derive: false });
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  const allTasks = await taskStore.listTasks({ slim: true, derive: false, excludeLog: true });
   const tasksById = new Map(allTasks.map((task) => [task.id, task]));
   const rolesByTask = await resolveAutoClaimLifecycleRoles(taskStore, allTasks);
   const resolvedAt = now();
@@ -244,7 +245,7 @@ export class AutoClaimSnapshotManager {
     are still resolved by `resolveAutoClaimLifecycleRoles`, which owns its own IR cache and is
     unaffected by what the list pass prefetches.
     */
-    const allTasks = await this.taskStore.listTasks({ slim: true, derive: false });
+    const allTasks = await this.taskStore.listTasks({ slim: true, derive: false, excludeLog: true });
     const tasksById = new Map(allTasks.map((candidate) => [candidate.id, candidate]));
     const rolesByTask = await resolveAutoClaimLifecycleRoles(this.taskStore, allTasks);
     const now = this.now();

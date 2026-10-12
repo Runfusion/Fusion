@@ -26,7 +26,8 @@ export async function listWipLaneTasks(store: TaskStore): Promise<Task[]> {
   const columns = await resolveProjectColumnsForRoles(store, ["countsTowardWip"]);
   const byId = new Map<string, Task>();
   for (const column of columns) {
-    for (const task of await store.listTasks({ slim: true, column })) byId.set(task.id, task as Task);
+    // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+    for (const task of await store.listTasks({ slim: true, column, excludeLog: true })) byId.set(task.id, task as Task);
   }
   return [...byId.values()];
 }

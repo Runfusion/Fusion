@@ -113,7 +113,8 @@ export class UsageLimitPauser {
     */
     this.options.credentialRotator?.clearCooldowns(providerId);
     // FNXC:ArchitectureHotPath 2026-07-22-17:20: listTasks() must be explicit about payload shape (architecture-hot-paths contract). Recovery only reads scalar pause fields, so request slim rows to avoid loading heavy log/steps/comments for every task.
-    const tasks = await this.store.listTasks({ slim: true });
+    // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+    const tasks = await this.store.listTasks({ slim: true, excludeLog: true });
     const recoverableTasks = tasks.filter((task) =>
       task.paused === true
       && task.userPaused !== true
@@ -235,7 +236,7 @@ export class UsageLimitPauser {
     const [settings, tasks] = await Promise.all([
       this.store.getSettings(),
       // FNXC:ArchitectureHotPath 2026-07-22-17:20: slim payload — this scan only reads column/pause/model-provider scalars, never heavy detail fields.
-      this.store.listTasks({ slim: true }),
+      this.store.listTasks({ slim: true, excludeLog: true }),
     ]);
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-29-20:50 (P0 audit, PR #2572 review — greptile):

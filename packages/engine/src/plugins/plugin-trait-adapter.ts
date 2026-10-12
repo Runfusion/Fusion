@@ -221,7 +221,8 @@ export async function findLivePluginTraitDependents(params: {
   if (traitSet.size === 0) return [];
 
   const dependents: PluginTraitDependent[] = [];
-  const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+  const tasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
   for (const task of tasks) {
     const ir = await resolveTaskWorkflowIr(task.id);
     if (!ir) continue;

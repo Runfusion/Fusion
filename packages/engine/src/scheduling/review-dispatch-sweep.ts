@@ -528,7 +528,8 @@ export class ReviewDispatchSweep {
     edit here starts reading a derived badge, `derive` has to come back — and the read should
     move to the detail fetch instead of the 15 s sweep.
     */
-    const tasks = await this.options.store.listTasks({ slim: true, derive: false, includeArchived: false });
+    // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
+    const tasks = await this.options.store.listTasks({ slim: true, derive: false, includeArchived: false, excludeLog: true });
     const candidates: ReviewDispatchCandidate[] = [];
     for (const task of tasks) {
       // Paused cards stay candidates: the classifier buckets them as excluded-paused (E2), so a
