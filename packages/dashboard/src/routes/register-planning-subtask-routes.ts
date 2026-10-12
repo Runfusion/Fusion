@@ -10,7 +10,7 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
-import { normalizePlanningSuggestedDependencies, normalizePlanningSummaryPayload } from "../planning.js";
+import { normalizePlanningSummaryPayload, resolvePlanningSuggestedDependencies } from "../planning.js";
 import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
 import { PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "../issue-image-markup.js";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
@@ -65,9 +65,13 @@ function rethrowPlanningWorkflowCreateError(
   const isWorkflowClientError =
     /^Workflow '.*' not found$/.test(message)
     || /is a fragment and cannot be selected/.test(message);
+  const missingDependencyId = /^Dependency task (.+) not found$/.exec(message)?.[1];
 
   if (isWorkflowClientError) {
     throw new ApiError(400, message);
+  }
+  if (missingDependencyId) {
+    throw new ApiError(400, `Suggested dependency ${missingDependencyId} is no longer available. Remove it and try again.`);
   }
 
   rethrowAsApiError(err, fallbackMessage);
@@ -1074,7 +1078,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         ? await resolvePlanningGithubTrackingDecision(scopedStore, projectSettings, { owner: sourceContext.sourceIssue.repository.split("/")[0], repo: sourceContext.sourceIssue.repository.split("/")[1], issueNumber: sourceContext.sourceIssue.issueNumber, url: sourceContext.sourceIssue.url ?? "" })
         : undefined;
       // Create the task. Provenance is truthful even when a live importer suppresses tracking.
-      const dependencies = normalizePlanningSuggestedDependencies(summary.suggestedDependencies);
+      const dependencies = await resolvePlanningSuggestedDependencies(
+        scopedStore,
+        summary.suggestedDependencies,
+        (dependencyId) => planningLogger.warn("Planning create-task dropped missing suggested dependency", {
+          sessionId,
+          dependencyId,
+          operation: "planning-create-task",
+        }),
+      );
       const task = await scopedStore.createTask({
         title: summary.title,
         description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,

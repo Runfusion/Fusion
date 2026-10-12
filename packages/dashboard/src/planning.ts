@@ -26,6 +26,7 @@ import type {
 } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
+  isTaskNotFoundError,
   TASK_PRIORITIES,
   THINKING_LEVELS,
   formatPlanningPlanMd,
@@ -731,6 +732,37 @@ export function normalizePlanningSuggestedDependencies(value: unknown): string[]
     normalized.push(dependencyId);
   }
   return normalized;
+}
+
+/*
+FNXC:PlanningDependencies 2026-10-12-15:00:
+Suggested dependencies are advisory model/session input, so canonical syntax alone is insufficient.
+Resolve IDs through the scoped store before creation. Archived entries remain readable through `getTask`
+for inspection but are not live dependency targets; drop them with typed misses while preserving unexpected
+lookup failures and the core store's transactional dependency integrity check.
+*/
+export async function resolvePlanningSuggestedDependencies(
+  store: Pick<TaskStore, "getTask">,
+  value: unknown,
+  onMissingDependency?: (dependencyId: string) => void,
+): Promise<string[]> {
+  const resolved: string[] = [];
+  for (const dependencyId of normalizePlanningSuggestedDependencies(value)) {
+    try {
+      const task = await store.getTask(dependencyId);
+      if (task.archivedAt) {
+        onMissingDependency?.(dependencyId);
+        continue;
+      }
+      resolved.push(dependencyId);
+    } catch (error) {
+      if (!isTaskNotFoundError(error)) {
+        throw error;
+      }
+      onMissingDependency?.(dependencyId);
+    }
+  }
+  return resolved;
 }
 
 /*
@@ -4504,7 +4536,15 @@ export async function createTaskFromPlanSession(
     const trackingDecision = sourceContext
       ? await (await import("./github-tracking.js")).resolvePlanningGithubTrackingDecision(store, await store.getSettings(), { owner: sourceContext.sourceIssue.repository.split("/")[0], repo: sourceContext.sourceIssue.repository.split("/")[1], issueNumber: sourceContext.sourceIssue.issueNumber, url: sourceContext.sourceIssue.url ?? "" })
       : undefined;
-    const dependencies = normalizePlanningSuggestedDependencies(summary.suggestedDependencies);
+    const dependencies = await resolvePlanningSuggestedDependencies(
+      store,
+      summary.suggestedDependencies,
+      (dependencyId) => diagnostics.warn("Planning create-task dropped missing suggested dependency", {
+        sessionId,
+        dependencyId,
+        operation: "create-task-session",
+      }),
+    );
     const task = await store.createTask({
       title: summary.title,
       description: sourceContext ? (await import("./github.js")).appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,

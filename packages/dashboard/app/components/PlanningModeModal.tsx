@@ -4736,6 +4736,10 @@ export function SummaryView({
   const [selectedDependencies, setSelectedDependencies] = useState<string[]>(
     summary.suggestedDependencies
   );
+  const selectedDependencyKey = summary.suggestedDependencies.join("\u0000");
+  useEffect(() => {
+    setSelectedDependencies(summary.suggestedDependencies);
+  }, [selectedDependencyKey]);
   const { ref: descriptionAutosizeRef } = useAutosizeTextarea({
     value: summary.description,
     minHeight: isExpanded ? 200 : 120,
@@ -4765,6 +4769,13 @@ export function SummaryView({
     setSelectedDependencies(newDeps);
     onSummaryChange({ ...summary, suggestedDependencies: newDeps });
   };
+  /*
+  FNXC:PlanningDependencies 2026-10-12-15:00:
+  Persisted plans may retain advisory IDs that are no longer available in this project. Render each
+  stale selection with a removal control so a reopened or retried Planning Mode session cannot trap
+  an operator behind an invisible dependency value.
+  */
+  const staleDependencies = selectedDependencies.filter((dependencyId) => !tasks.some((task) => task.id === dependencyId));
 
   return (
     <div className="planning-summary">
@@ -4922,27 +4933,47 @@ export function SummaryView({
             </div>
           </div>
 
-          {tasks.length > 0 && (
+          {(tasks.length > 0 || staleDependencies.length > 0) && (
             <div className="form-group">
               <label>{t("planning.suggestedDependencies", "Suggested Dependencies")}</label>
-              <div className="planning-deps-list">
-                {tasks.map((task) => (
-                  <label
-                    key={task.id}
-                    className={`planning-dep-chip ${selectedDependencies.includes(task.id) ? "selected" : ""}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedDependencies.includes(task.id)}
-                      onChange={() => handleDependencyToggle(task.id)}
-                    />
-                    <span className="planning-dep-id">{task.id}</span>
-                    <span className="planning-dep-title">
-                      {task.title || task.description.slice(0, 30)}
-                    </span>
-                  </label>
-                ))}
-              </div>
+              {staleDependencies.length > 0 && (
+                <div className="planning-deps-list" aria-label={t("planning.staleSuggestedDependencies", "Unavailable suggested dependencies")}>
+                  {staleDependencies.map((dependencyId) => (
+                    <div key={dependencyId} className="planning-dep-chip selected">
+                      <span className="planning-dep-id">{dependencyId}</span>
+                      <button
+                        type="button"
+                        className="btn btn-icon"
+                        aria-label={t("planning.removeSuggestedDependency", "Remove suggested dependency {{dependencyId}}", { dependencyId })}
+                        onClick={() => handleDependencyToggle(dependencyId)}
+                        disabled={isLoading}
+                      >
+                        <X />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {tasks.length > 0 && (
+                <div className="planning-deps-list">
+                  {tasks.map((task) => (
+                    <label
+                      key={task.id}
+                      className={`planning-dep-chip ${selectedDependencies.includes(task.id) ? "selected" : ""}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedDependencies.includes(task.id)}
+                        onChange={() => handleDependencyToggle(task.id)}
+                      />
+                      <span className="planning-dep-id">{task.id}</span>
+                      <span className="planning-dep-title">
+                        {task.title || task.description.slice(0, 30)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
