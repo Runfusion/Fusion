@@ -75,3 +75,5 @@ The version constant is the *only* gate on whether later migration blocks execut
 - **Always add a seed-at-previous-version migration test** alongside any new migration — fresh-DB tests structurally cannot catch a skipped-on-upgrade migration.
 - **Treat hard-coded version assertions as a smell.** Many tests asserting `toBe(<oldVersion>)` will need updating on a bump; if updating them feels like whack-a-mole, that is the signal an invariant test should own the number instead.
 - **When adding a column, update every declared-schema mirror** (compat fingerprint maps, schema snapshots) in the same change — a migration that adds a column the canonical schema map omits is a second, quieter drift.
+- **PostgreSQL readers:** the same class appears there in a worse form, because the bookkeeping identity is a bare number and a fork shares the number space with upstream. See
+  [`postgres-migration-number-is-the-identity.md`](postgres-migration-number-is-the-identity.md).
