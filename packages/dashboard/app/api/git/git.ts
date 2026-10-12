@@ -149,6 +149,9 @@ export interface PrMetadataResponse {
   title: string;
   body: string;
   templateUsed: boolean;
+  fallback: boolean;
+  fallbackReason: "timeout" | "parse-validation" | null;
+  timedOut: boolean;
 }
 
 export interface PrPreflightCommit {

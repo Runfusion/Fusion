@@ -25,10 +25,15 @@ export const PR_METADATA_SYSTEM_PROMPT = [
   "Ground every field in the commit log and diff stat first, then use the task title, task description, and task prompt only as supporting context.",
 ].join("\n");
 
+export type PrMetadataFallbackReason = "timeout" | "parse-validation";
+
 export interface GeneratedPrMetadata {
   title: string;
   body: string;
   templateUsed: boolean;
+  fallback: boolean;
+  fallbackReason: PrMetadataFallbackReason | null;
+  timedOut: boolean;
 }
 
 interface AiMetadataResult {
@@ -39,7 +44,10 @@ interface AiMetadataResult {
   linkedTask: string;
 }
 
-export function buildFallbackPrMetadata(task: Task): GeneratedPrMetadata {
+export function buildFallbackPrMetadata(
+  task: Task,
+  fallbackReason: PrMetadataFallbackReason = "parse-validation",
+): GeneratedPrMetadata {
   return {
     title: task.title ?? task.id,
     body: [
@@ -60,6 +68,9 @@ export function buildFallbackPrMetadata(task: Task): GeneratedPrMetadata {
       `Closes ${task.id}`,
     ].join("\n"),
     templateUsed: false,
+    fallback: true,
+    fallbackReason,
+    timedOut: fallbackReason === "timeout",
   };
 }
 
@@ -251,14 +262,17 @@ export async function generatePrMetadata(input: {
   timeoutMs?: number;
 }): Promise<GeneratedPrMetadata> {
   const { task, repoRoot, settings, store, signal, timeoutMs = PR_METADATA_TIMEOUT_MS } = input;
-  const fallback = buildFallbackPrMetadata(task);
   const controller = new AbortController();
+  let timedOut = false;
   const abortFromCaller = () => controller.abort(signal?.reason instanceof Error ? signal.reason : createAbortError());
   /*
   FNXC:PrMetadataGeneration 2026-06-23-00:00:
   The Create PR dialog must receive usable title/body metadata within its UX budget even when git, template reads, provider startup, prompt streaming, or disposal misbehaves. Race every awaited operation against one shared abort signal so provider/session hangs degrade to deterministic fallback content instead of leaving the modal spinner pending indefinitely.
   */
-  const timeoutId = setTimeout(() => controller.abort(createAbortError()), timeoutMs);
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createAbortError());
+  }, timeoutMs);
   const combinedSignal = controller.signal;
   const callerSignalWasActive = Boolean(signal && !signal.aborted);
 
@@ -374,7 +388,7 @@ export async function generatePrMetadata(input: {
 
     const parsed = parseAiResult(aiText);
     if (!parsed) {
-      return fallback;
+      return buildFallbackPrMetadata(task, "parse-validation");
     }
 
     const completedTemplate = templateExists ? fillTemplate(template, parsed, task.id) : null;
@@ -382,10 +396,13 @@ export async function generatePrMetadata(input: {
       title: parsed.title,
       body: completedTemplate ?? buildBody(parsed, task.id),
       templateUsed: completedTemplate !== null,
+      fallback: false,
+      fallbackReason: null,
+      timedOut: false,
     };
   } catch (error) {
-    if (isAbortLikeError(error)) {
-      return fallback;
+    if (isAbortLikeError(error) && timedOut) {
+      return buildFallbackPrMetadata(task, "timeout");
     }
     throw error;
   } finally {

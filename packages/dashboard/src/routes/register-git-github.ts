@@ -58,7 +58,7 @@ import { GitLabDeleteCloseService } from "../gitlab-delete-close.js";
 import { KnowledgeIndexRefreshService } from "../knowledge-index-refresh.js";
 import { githubRateLimiter } from "../github-poll.js";
 import * as projectStoreResolver from "../project-store-resolver.js";
-import { buildFallbackPrMetadata, generatePrMetadata } from "../pr-metadata-generator.js";
+import { generatePrMetadata } from "../pr-metadata-generator.js";
 import { resolvePrConflicts } from "../pr-conflict-resolver.js";
 import {
   classifyWebhookEvent,
@@ -76,7 +76,6 @@ const execAsync = promisify(execCb);
 const PR_ROUTE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 const PR_PREFLIGHT_TIMEOUT_MS = 15_000;
 const PR_OPTIONS_TIMEOUT_MS = 10_000;
-const PR_METADATA_ROUTE_TIMEOUT_MS = 25_000;
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 export const GITHUB_TRACKING_RECONCILE_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -5769,7 +5768,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   /**
    * POST /api/tasks/:id/pr/generate-metadata
    * Generate AI PR title/body metadata for the Create PR dialog.
-   * Returns: { title, body, templateUsed }
+   * Returns: { title, body, templateUsed, fallback, fallbackReason, timedOut }
    */
   router.post("/tasks/:id/pr/generate-metadata", async (req, res) => {
     const controller = new AbortController();
@@ -5792,39 +5791,38 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
       const settings = await scopedStore.getSettings();
+      const startedAt = Date.now();
       /*
-      FNXC:PrMetadataGeneration 2026-06-23-00:00:
-      The dashboard route owns a shorter Create PR dialog budget than the reusable generator default. If a mocked or broken generator ignores aborts and never settles, return deterministic fallback metadata before the modal crosses the 30s UX threshold; do not treat the timeout abort as a disconnected-client signal.
+      FNXC:PrMetadataFallbackObservability 2026-10-12-15:09:
+      The route shares the generator's bounded deadline so fixed setup work cannot consume a
+      second, shorter timer and replace a still-running valid result. Returned fallbacks expose
+      only fixed outcome codes and elapsed time; diagnostics never include prompts, model output,
+      credentials, git evidence, or task prose.
       */
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const generatorPromise = generatePrMetadata({
+      const metadata = await generatePrMetadata({
         task,
         repoRoot: scopedStore.getRootDir(),
         settings,
         store: scopedStore,
         signal: controller.signal,
-        timeoutMs: PR_METADATA_ROUTE_TIMEOUT_MS,
       });
-      void generatorPromise.catch(() => undefined);
-      const timeoutFallbackPromise = new Promise<Awaited<ReturnType<typeof generatePrMetadata>>>((resolve) => {
-        timeoutId = setTimeout(() => {
-          abortRequest();
-          resolve(buildFallbackPrMetadata(task));
-        }, PR_METADATA_ROUTE_TIMEOUT_MS);
-      });
-      let metadata: Awaited<ReturnType<typeof generatePrMetadata>>;
-      try {
-        metadata = await Promise.race([generatorPromise, timeoutFallbackPromise]);
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-      if (res.writableEnded || res.writableFinished || res.destroyed) {
+      if (res.writableEnded || res.writableFinished || res.destroyed || controller.signal.aborted) {
         return;
+      }
+      if (metadata.fallback) {
+        try {
+          severityAuditLog.warn(
+            `[pr-metadata] taskId=${task.id} fallbackReason=${metadata.fallbackReason} timedOut=${metadata.timedOut} elapsedMs=${Date.now() - startedAt}`,
+          );
+        } catch {
+          // Diagnostics are best effort and must not alter the PR metadata response.
+        }
       }
       res.json(metadata);
     } catch (err: unknown) {
+      if (controller.signal.aborted || res.writableEnded || res.writableFinished || res.destroyed) {
+        return;
+      }
       if (err instanceof ApiError) {
         throw err;
       }

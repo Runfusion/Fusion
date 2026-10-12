@@ -30,7 +30,7 @@ vi.mock("@fusion/engine", () => ({
 }));
 
 import { createFnAgent } from "@fusion/engine";
-import { generatePrMetadata, PR_METADATA_SYSTEM_PROMPT } from "../pr-metadata-generator.js";
+import { generatePrMetadata, PR_METADATA_SYSTEM_PROMPT, PR_METADATA_TIMEOUT_MS } from "../pr-metadata-generator.js";
 
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -81,6 +81,7 @@ describe("generatePrMetadata", () => {
     repoRoot = mkdtempSync(join(tmpdir(), "pr-metadata-"));
     mkdirSync(join(repoRoot, ".fusion", "tasks", "FN-4991"), { recursive: true });
     writeFileSync(join(repoRoot, ".fusion", "tasks", "FN-4991", "PROMPT.md"), "# Prompt");
+    promptMock.mockReset();
     promptMock.mockResolvedValue(undefined);
     disposeMock.mockReset();
     vi.mocked(createFnAgent).mockImplementation(async ({ onText }: { onText?: (t: string) => void }) => {
@@ -134,6 +135,7 @@ describe("generatePrMetadata", () => {
     expect(result.body).toContain("## Testing");
     expect(result.body).toContain("## Linked Task");
     expect(result.templateUsed).toBe(false);
+    expect(result).toMatchObject({ fallback: false, fallbackReason: null, timedOut: false });
     expect(promptMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
@@ -387,11 +389,69 @@ describe("generatePrMetadata", () => {
       title: "Route contracts",
       body: expect.stringContaining("Closes FN-4991"),
       templateUsed: false,
+      fallback: true,
+      fallbackReason: "parse-validation",
+      timedOut: false,
     });
     expectFallbackBody(result.body);
   });
 
-  it("returns fallback when createFnAgent times out before a session exists", async () => {
+  it("marks missing required model fields as a parse-validation fallback", async () => {
+    vi.mocked(createFnAgent).mockImplementationOnce(async ({ onText }: { onText?: (text: string) => void }) => {
+      onText?.(JSON.stringify({
+        title: "fix: incomplete metadata",
+        summary: "The model omitted testing evidence.",
+        changes: "- Preserve validation.",
+        linkedTask: "FN-4991",
+      }));
+      return { session: { prompt: promptMock, dispose: disposeMock } } as never;
+    });
+
+    const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
+
+    expect(result).toMatchObject({ fallback: true, fallbackReason: "parse-validation", timedOut: false });
+    expectFallbackBody(result.body);
+  });
+
+  it("keeps a populated generation alive beyond 25 seconds until the shared budget", async () => {
+    vi.useFakeTimers();
+    let emit: ((text: string) => void) | undefined;
+    let resolvePrompt: (() => void) | undefined;
+    promptMock.mockImplementation(() => new Promise<void>((resolve) => {
+      resolvePrompt = resolve;
+    }));
+    vi.mocked(createFnAgent).mockImplementationOnce(async ({ onText }: { onText?: (text: string) => void }) => {
+      emit = onText;
+      return { session: { prompt: promptMock, dispose: disposeMock } } as never;
+    });
+
+    const resultPromise = generatePrMetadata({
+      task: createTask({ description: "A populated task remains eligible after route-sized delay." }),
+      repoRoot,
+      settings: {} as never,
+      timeoutMs: PR_METADATA_TIMEOUT_MS,
+    });
+
+    await vi.waitFor(() => expect(emit).toBeTypeOf("function"));
+    await vi.advanceTimersByTimeAsync(25_001);
+    emit?.(JSON.stringify({
+      title: "fix: preserve metadata generation",
+      summary: "The generator finished after the former route deadline.",
+      changes: "- Preserve the shared budget.",
+      testing: "- Focused regression test.",
+      linkedTask: "FN-4991",
+    }));
+    resolvePrompt?.();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      title: "fix: preserve metadata generation",
+      fallback: false,
+      fallbackReason: null,
+      timedOut: false,
+    });
+  });
+
+  it("returns timeout provenance when createFnAgent exceeds the shared budget", async () => {
     vi.useFakeTimers();
     vi.mocked(createFnAgent).mockImplementationOnce(() => new Promise(() => undefined) as never);
 
@@ -408,6 +468,9 @@ describe("generatePrMetadata", () => {
       title: "Route contracts",
       body: expect.stringContaining("Closes FN-4991"),
       templateUsed: false,
+      fallback: true,
+      fallbackReason: "timeout",
+      timedOut: true,
     });
     const result = await resultPromise;
     expectFallbackBody(result.body);
@@ -415,7 +478,7 @@ describe("generatePrMetadata", () => {
     expect(disposeMock).not.toHaveBeenCalled();
   });
 
-  it("returns fallback when prompt times out", async () => {
+  it("returns timeout provenance when prompt exceeds the shared budget", async () => {
     vi.useFakeTimers();
     promptMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -432,32 +495,30 @@ describe("generatePrMetadata", () => {
       title: "Route contracts",
       body: expect.stringContaining("Closes FN-4991"),
       templateUsed: false,
+      fallback: true,
+      fallbackReason: "timeout",
+      timedOut: true,
     });
     const result = await resultPromise;
     expectFallbackBody(result.body);
   });
 
-  it("returns fallback immediately when caller signal is already aborted", async () => {
+  it("fences an already-aborted caller without creating fallback metadata", async () => {
     const controller = new AbortController();
     controller.abort();
 
-    const result = await generatePrMetadata({
+    await expect(generatePrMetadata({
       task: createTask(),
       repoRoot,
       settings: {} as never,
       signal: controller.signal,
-    });
+    })).rejects.toMatchObject({ name: "AbortError" });
 
-    expect(result).toEqual({
-      title: "Route contracts",
-      body: expect.stringContaining("Closes FN-4991"),
-      templateUsed: false,
-    });
     expect(createFnAgent).not.toHaveBeenCalled();
     expect(promptMock).not.toHaveBeenCalled();
   });
 
-  it("returns fallback when caller aborts mid-generation", async () => {
+  it("fences a caller abort during generation without converting it to a timeout", async () => {
     const controller = new AbortController();
     vi.mocked(createFnAgent).mockImplementationOnce(() => new Promise(() => undefined) as never);
 
@@ -470,12 +531,6 @@ describe("generatePrMetadata", () => {
 
     controller.abort();
 
-    await expect(resultPromise).resolves.toEqual({
-      title: "Route contracts",
-      body: expect.stringContaining("Closes FN-4991"),
-      templateUsed: false,
-    });
-    const result = await resultPromise;
-    expectFallbackBody(result.body);
+    await expect(resultPromise).rejects.toMatchObject({ name: "AbortError" });
   });
 });
