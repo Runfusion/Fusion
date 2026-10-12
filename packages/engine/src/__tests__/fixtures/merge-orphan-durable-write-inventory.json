@@ -10697,6 +10697,46 @@
       "followUpTaskId": "none:out-of-frontier"
     },
     {
+      "callSiteId": "packages/engine/src/scheduler.ts::invalidateMismatchedFileScopeLeaseRelease::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(current) => current.fileScopeLeaseRelease?.revision === receipt.revision && current.fileScopeLeaseRelease.scopeFingerpr)",
+      "file": "packages/engine/src/scheduler.ts",
+      "enclosingSymbolPath": "invalidateMismatchedFileScopeLeaseRelease",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 724,
+      "owningEntryPoint": "other",
+      "reachableDataStates": [
+        "scheduler-owned receipt clearing outside the orphan-merge frontier"
+      ],
+      "axis1": "out-of-frontier",
+      "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo; this scheduler receipt-clearing write is reached only by scheduler or outer-dispatch admission.",
+      "axis2Provisional": "out-of-frontier",
+      "axis2Final": "out-of-frontier",
+      "observedInSuite": "out-of-frontier",
+      "executionProof": "none:out-of-frontier",
+      "followUpTaskId": "none:out-of-frontier"
+    },
+    {
+      "callSiteId": "packages/engine/src/scheduler.ts::revalidateFileScopeLeaseReleases>revalidated::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(current) => current.fileScopeLeaseRelease?.revision === task.fileScopeLeaseRelease?.revision ? { fileScopeLeaseRelease:)",
+      "file": "packages/engine/src/scheduler.ts",
+      "enclosingSymbolPath": "revalidateFileScopeLeaseReleases>revalidated",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 737,
+      "owningEntryPoint": "other",
+      "reachableDataStates": [
+        "scheduler-owned receipt clearing outside the orphan-merge frontier"
+      ],
+      "axis1": "out-of-frontier",
+      "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo; this scheduler receipt-clearing write is reached only by scheduler or outer-dispatch admission.",
+      "axis2Provisional": "out-of-frontier",
+      "axis2Final": "out-of-frontier",
+      "observedInSuite": "out-of-frontier",
+      "executionProof": "none:out-of-frontier",
+      "followUpTaskId": "none:out-of-frontier"
+    },
+    {
       "callSiteId": "packages/engine/src/self-healing.ts::recoverApprovedStrandedAiMergeCommit>finalized::finalizeProvenAutoMergeTask::#1",
       "callSiteFingerprint": "finalizeProvenAutoMergeTask({store,taskId,?,audit,auditAgentId,auditPhase,source,rootDir,log})",
       "file": "packages/engine/src/self-healing.ts",
