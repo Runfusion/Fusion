@@ -4029,7 +4029,9 @@ export function TaskDetailContent({
         setFullDetail((prev) => prev ? ({ ...prev, ...updatedTask } as TaskDetail) : updatedTask);
         onTaskUpdated?.(updatedTask);
       }
-      addToast(result.message, "success");
+      /* FNXC:FileScopeRecovery 2026-10-12-17:32: Clear can safely refuse without throwing; retain its
+         actionable reason and do not represent an unreleased file claim as a successful recovery. */
+      addToast(result.message, result.repaired ? "success" : "warning");
     } catch (err) {
       if (activeTaskIdRef.current !== requestTaskId) {
         return;

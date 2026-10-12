@@ -1324,6 +1324,18 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.approvedPlanFingerprint = undefined;
       }
 
+      /*
+      FNXC:FileScopeRecovery 2026-10-12-15:34:
+      A speculative file-scope release is valid only for the paused, no-checkout planning
+      snapshot that Clear inspected. Any resume, scope edit, checkout mutation, or execution
+      transition invalidates the receipt before this durable task write can expose new work.
+      */
+      if (task.fileScopeLeaseRelease && (
+        updates.prompt !== undefined || updates.worktree !== undefined || updates.workspaceWorktrees !== undefined
+        || updates.checkoutLeaseEpoch !== undefined || updates.checkedOutBy !== undefined || updates.sessionFile !== undefined
+        || updates.paused === false || updates.status !== undefined || updates.executionStartedAt !== undefined
+      )) task.fileScopeLeaseRelease = undefined;
+
       // When runContext is provided, record audit event atomically with task mutation
       const planningInvalidation = dependenciesChanged
         ? {expectedCurrentDependencies: previousDependencies ?? []}

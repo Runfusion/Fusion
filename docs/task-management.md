@@ -663,6 +663,12 @@ Behavior:
 - The selected workflow and refinement seed prompt are persisted with the child so normal planning and approval processing can continue from the returned column.
 - Refinement tasks inherit the source task's GitHub tracking state (unlinked sources opt out; linked sources inherit `enabled` and optional `repoOverride`, but never copy the source issue link).
 
+## File-scope overlap recovery
+
+When **Clear** is available for a file-scope overlap, Fusion can safely release a paused planning-only holder without resetting its plan, reviews, or task history. The release is durable and identity-fenced to the holder's lineage, declared scope, and clean no-checkout state, so a restart reaches the same scheduling decision.
+
+Clear refuses active, resumed, dirty, committed, or uninspectable work with an actionable message. A successful release only re-evaluates the waiting task through normal dependency, pause, capacity, workflow, and dispatch gates; it never force-starts work. Reset remains destructive recovery for real work and invalidates any prior safe-release receipt.
+
 ## Archive and Restore
 
 ### Archive behavior

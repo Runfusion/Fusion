@@ -26,6 +26,7 @@ export interface TaskRow {
   worktree: string | null;
   blockedBy: string | null;
   overlapBlockedBy: string | null;
+  fileScopeLeaseRelease: string | null;
   queuedLogEpisodeSignature: string | null;
   paused: number | null;
   pausedReason: string | null;
@@ -239,7 +240,7 @@ export const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
   "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos",
   "issueInfo", "githubTracking", "gitlabTracking", "mergeDetails", "workspaceWorktrees", "repositoryScope", "externalBlock", "planningFailure", "enabledWorkflowSteps",
   "modifiedFiles", "declaredSymbols", "scopeAutoWiden", "sourceMetadata", "tokenUsagePerModel",
-  "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification", "recommendations",
+  "tokenBudgetOverride", "columnDwellMs", "workflowTransitionNotification", "recommendations", "fileScopeLeaseRelease",
 ]);
 
 export function defineTaskColumn(
@@ -274,6 +275,8 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("worktree", (task) => task.worktree ?? null),
   defineTaskColumn("blockedBy", (task) => task.blockedBy ?? null),
   defineTaskColumn("overlapBlockedBy", (task) => task.overlapBlockedBy ?? null),
+  defineTaskColumn("fileScopeLeaseRelease", (task) => toJsonNullable(task.fileScopeLeaseRelease)),
+
   defineTaskColumn("queuedLogEpisodeSignature", (task) => task.queuedLogEpisodeSignature ?? null),
   defineTaskColumn("paused", (task) => task.paused ? 1 : 0),
   defineTaskColumn("pausedReason", (task) => task.pausedReason ?? null),

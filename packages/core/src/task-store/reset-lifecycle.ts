@@ -74,6 +74,7 @@ export function buildResetTask(
     baseCommitSha: undefined,
     blockedBy: undefined,
     overlapBlockedBy: undefined,
+    fileScopeLeaseRelease: undefined,
     queuedLogEpisodeSignature: undefined,
     paused: false,
     userPaused: false,
