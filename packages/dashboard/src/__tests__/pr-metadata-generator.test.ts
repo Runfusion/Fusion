@@ -424,6 +424,30 @@ describe("generatePrMetadata", () => {
     }
   });
 
+  it("recovers prose-wrapped metadata after an unsupported fenced code sample", async () => {
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(`\`\`\`typescript\nconst example = true;\n\`\`\`\n\nHere is the requested metadata:\n${JSON.stringify(RECOVERABLE_METADATA)}\n\nUse it for the PR.`);
+
+      const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
+
+      expect(result).toEqual({
+        title: RECOVERABLE_METADATA.title,
+        body: expect.stringContaining(RECOVERABLE_METADATA.summary),
+        templateUsed: false,
+        fallback: false,
+        fallbackReason: null,
+        timedOut: false,
+      });
+      expect(result.body).toContain(RECOVERABLE_METADATA.changes);
+      expect(result.body).toContain(RECOVERABLE_METADATA.testing);
+      expect(result.body.match(/Closes FN-4991/g)).toHaveLength(1);
+      expect(warningSpy).not.toHaveBeenCalled();
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
   it("falls back deterministically and emits one bounded warning for invalid output", async () => {
     const aiText = "x".repeat(600);
     const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -483,6 +507,52 @@ describe("generatePrMetadata", () => {
       const warningMetadata = warningSpy.mock.calls[0]?.[1] as { sample: string };
       expect(warningMetadata.sample).not.toBe(aiText);
       expect(warningMetadata.sample).toMatch(/…$/);
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it("keeps complete metadata inside an unsupported fence on the fallback path", async () => {
+    const aiText = `\`\`\`typescript\n${JSON.stringify(RECOVERABLE_METADATA)}\n\`\`\``;
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(aiText);
+
+      const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
+
+      expect(result).toMatchObject({
+        title: "Route contracts",
+        fallback: true,
+        fallbackReason: "parse-validation",
+        timedOut: false,
+      });
+      expectFallbackBody(result.body);
+      expect(warningSpy).toHaveBeenCalledTimes(1);
+      expect(warningSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+        taskId: "FN-4991",
+        reason: "invalid-json",
+      }));
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it("keeps indented complete metadata inside an unsupported fence on the fallback path", async () => {
+    const aiText = `  \`\`\`typescript\n${JSON.stringify(RECOVERABLE_METADATA)}\n  \`\`\``;
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(aiText);
+
+      const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
+
+      expect(result).toMatchObject({
+        title: "Route contracts",
+        fallback: true,
+        fallbackReason: "parse-validation",
+        timedOut: false,
+      });
+      expectFallbackBody(result.body);
+      expect(warningSpy).toHaveBeenCalledTimes(1);
     } finally {
       warningSpy.mockRestore();
     }

@@ -108,22 +108,32 @@ function parseAiMetadataCandidate(candidate: string): AiMetadataParseResult {
 }
 
 /*
-FNXC:PrMetadataGeneration 2026-10-12-15:02:
+FNXC:PrMetadataGeneration 2026-10-12-16:42:
 Models commonly wrap an otherwise valid PR metadata object in a JSON/plain fence or introductory prose.
-Try the raw response first, then only JSON/plain fence payloads, then its outer object; every candidate must still satisfy the full schema.
+Try the raw response first, then only JSON/plain fence payloads, then outer objects from raw segments outside every fence; every candidate must still satisfy the full schema.
 */
 function parseAiResult(raw: string): AiMetadataParseResult {
   const candidates = [raw];
-  const fencePattern = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```/gim;
-  for (const match of raw.matchAll(fencePattern)) {
+  const supportedFencePattern = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```/gim;
+  for (const match of raw.matchAll(supportedFencePattern)) {
     candidates.push(match[1]);
   }
 
-  const firstObject = raw.indexOf("{");
-  const lastObject = raw.lastIndexOf("}");
-  const hasCodeFence = raw.includes("```");
-  if (!hasCodeFence && firstObject >= 0 && lastObject > firstObject) {
-    candidates.push(raw.slice(firstObject, lastObject + 1));
+  const rawSegments: string[] = [];
+  const allFencePattern = /^[ \t]*```[^\r\n]*\r?\n[\s\S]*?\r?\n?[ \t]*```/gm;
+  let segmentStart = 0;
+  for (const match of raw.matchAll(allFencePattern)) {
+    rawSegments.push(raw.slice(segmentStart, match.index));
+    segmentStart = match.index + match[0].length;
+  }
+  rawSegments.push(raw.slice(segmentStart));
+
+  for (const segment of rawSegments) {
+    const firstObject = segment.indexOf("{");
+    const lastObject = segment.lastIndexOf("}");
+    if (firstObject >= 0 && lastObject > firstObject) {
+      candidates.push(segment.slice(firstObject, lastObject + 1));
+    }
   }
 
   let reason: AiMetadataParseResult["reason"] = "invalid-json";
