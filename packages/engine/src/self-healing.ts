@@ -8092,7 +8092,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return 0;
       }
 
-      const allTasks = await this.store.listTasks({ includeArchived: false });
+      /*
+      FNXC:AdmissionClaimReadLogFree 2026-10-12-09:43 (memory: the read behind the supervised restarts):
+      The file-scope lease / overlap reconciliation pass reads the whole live board and is provably
+      marker-free, which is the bar `excludeLog` sets for itself (RUFU-615 keeps the column opt-in precisely
+      because sweeps that pattern-match log MARKERS must keep it). Proof, per consumer rather than per
+      helper: the 8095-8522 consumer range contains zero `task.log` reads, and every callee that receives a
+      Task object was body-scanned for reads — `resolveFileScopeLeaseTaskRoles` (403-424), `canClearObservedOverlap`
+      (8171-8522), `recordOverlapRelease` (6970-7203) all zero; `updateTask`, `logEntry` and
+      `transitionQueuedEpisode` are store seams that take an id. Remaining reads are persisted fields
+      (`fileScope`, `overlapBlockedBy`, `dependencies`, `sourceMetadata`). `log` is 42.7% of live-row bytes.
+      */
+      const allTasks = await this.store.listTasks({ includeArchived: false, excludeLog: true });
       const taskById = new Map(allTasks.map((task) => [task.id, task]));
 
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];

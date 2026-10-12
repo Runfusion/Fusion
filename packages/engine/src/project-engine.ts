@@ -6818,7 +6818,9 @@ export class ProjectEngine {
   `pollPlannerOverseer` reads id, column, status, prInfo, reviewState, paused, pausedReason,
   workflowTransitionNotification, updatedAt, columnMovedAt, plannerOversightLevel (its
   `resolveTaskColumnFlags` is typed `Pick<Task, "id" | "column">` and `OverseerTaskRef` is a Pick of
-  persisted fields); `clearStaleMergingStatuses` reads id and status; the merge-enqueue feeds go
+  persisted fields); `clearStaleMergingStatuses` reads id and status — and since
+  FNXC:ManualMergeDeadlock no longer shares this helper at all, because it must see EVERY live lane rather
+  than the review roles; the merge-enqueue feeds go
   through `enqueueEligibleInReviewTasks`, which reads id, paused, column, status, error, steps,
   workflowStepResults, enabledWorkflowSteps, mergeRetries, mergeDetails, updatedAt, repositoryScope,
   branchContext, autoMerge, autoMergeProvenance and log. Review/WIP lanes are always resolved by id
@@ -6852,19 +6854,36 @@ export class ProjectEngine {
   }
 
   private async clearStaleMergingStatuses(store: TaskStore): Promise<Task[]> {
-    const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
     // No merge is actually running at startup, so any task still marked
     // as merging is a leftover from a previous engine lifecycle.
     const staleStatuses = new Set(["merging", "merging-pr"]);
-    for (const t of tasks) {
+    /*
+    FNXC:ManualMergeDeadlock 2026-10-12-09:43 (operator-authorized, found while auditing what the restarts stranded):
+    This clear used to read the review-role lanes only, and that lane restriction was never part of the
+    invariant it states above: if NO merge is running at startup, a `merging` / `merging-pr` row is a crash
+    leftover WHEREVER it sits. Measured cost of the restriction: `ALFA-007` reached `done` still carrying
+    `status: "merging"` and went uncleared for 33 days, through four engine restarts, because a `done` lane
+    card is not in `REVIEW_ROLES`. `getTaskMergeBlocker` treats that status as merge-active and
+    `isMergePending` refuses finalization on it, so the same leftover on a card that stayed in a review lane
+    would have blocked its manual merge forever with no auto-recovery path.
+
+    Read shape follows every other startup read (see `FNXC:EngineStartupReadBudget`): `derive: false` +
+    `excludeLog: true`, because this consumer reads `id` and `status` only. It therefore no longer goes
+    through `listTasksInLaneRoles`, which deliberately stays log-bearing for the merge-buffer lane-role
+    consumer that pattern-matches log CONTENT.
+    */
+    const staleRows = await store.listTasks({ derive: false, excludeLog: true });
+    const cleared: Task[] = [];
+    for (const t of staleRows) {
       if (t.status && staleStatuses.has(t.status)) {
         runtimeLog.log(`Startup sweep: clearing stale '${t.status}' status on ${t.id}`);
         await store.updateTask(t.id, { status: null });
         // Update in-memory object so canMergeTask sees the cleared status
         (t as any).status = null;
+        cleared.push(t);
       }
     }
-    return tasks as Task[];
+    return cleared;
   }
 
   /**
