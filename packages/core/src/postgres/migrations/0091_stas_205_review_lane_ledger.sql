@@ -57,5 +57,11 @@ ALTER TABLE project.task_lifecycle_events
 -- on changed lines (false positive on drizzle's bound-parameter tags), and a
 -- self-marking migration is atomic with the DDL: if any statement above fails,
 -- the marker rolls back with it and the block re-applies on the next boot.
-INSERT INTO public.fusion_schema_migrations (version) VALUES ('0088')
+-- FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): the marker INSERT is 0091, this file's own number. The
+-- slot is no longer "free" in either lineage — 0086/0087/0088 are upstream's released receipts/readiness/
+-- disposition migrations now — so a self-marker that names someone else's slot is the exact silent-skip bug:
+-- it would tell a database that FN-9512's column migration had run when only this ledger had. The marker a
+-- migration writes must equal its own basename prefix; migration-wiring-integrity.test.ts enforces that here
+-- too, not only for the applier's parameterized inserts.
+INSERT INTO public.fusion_schema_migrations (version) VALUES ('0091')
   ON CONFLICT (version) DO NOTHING;

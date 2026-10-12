@@ -108,6 +108,37 @@ describe("schema-applier: migration wiring integrity", () => {
     expect(mismatches).toEqual([]);
   });
 
+  /*
+  FNXC:MigrationRestack 2026-10-12-18:24 (RUFU-615): the same identity rule applies to a marker a migration
+  writes for ITSELF. Most blocks are marked by the applier's parameterized INSERT, but a migration may
+  self-mark inside its own transaction (the review-lane ledger does, so the marker rolls back with the DDL).
+  Measured at the restack: that file had been renumbered twice by comment archaeology while its own literal
+  still recorded the slot from its first move, so the ledger stamped 0088 — which after the restack is
+  upstream FN-9512's disposition migration. A re-apply of the ledger's drift probe would then have told a
+  database that a column migration had run when only the ledger had, and no read path reports that.
+  */
+  it("lets a self-marking migration write only its own number", () => {
+    const offenders: string[] = [];
+    let literalsSeen = 0;
+    for (const file of migrationFiles) {
+      const sql = readFileSync(`${migrationsDir}/${file}`, "utf8");
+      for (const match of sql.matchAll(
+        /INSERT INTO\s+(?:public\.)?fusion_schema_migrations\s*\(version\)\s*\n?\s*VALUES\s*\('([^']+)'\)/gi,
+      )) {
+        literalsSeen += 1;
+        const written = match[1]!;
+        // A non-numeric literal is a deliberate product row (e.g. the legacy-adoption-drained marker), not a
+        // self-marker, and the stale-binary guard ignores non-numeric rows by contract.
+        if (!/^\d{4}$/.test(written)) continue;
+        if (written !== file.slice(0, 4)) offenders.push(`${file} records ${written}`);
+      }
+    }
+    // Liveness: two migrations self-mark today (0032's drained marker and the review-lane ledger). If the
+    // scan ever stops matching the statement shape at all, it would otherwise report a clean repository.
+    expect(literalsSeen).toBeGreaterThanOrEqual(2);
+    expect(offenders).toEqual([]);
+  });
+
   it("never lets one migration number name two migrations", () => {
     const byMarker = new Map<string, string[]>();
     for (const { file, marker } of recordedMarkers) {
