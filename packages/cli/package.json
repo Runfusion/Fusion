@@ -67,8 +67,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.24.0",
-    "@earendil-works/pi-ai": "1.0.2",
-    "@earendil-works/pi-coding-agent": "1.0.2",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
     "agent-browser": "0.26.0",
     "claude-code-cli-acp": "0.1.1",
     "dockerode": "^5.0.1",

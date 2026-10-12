@@ -56,11 +56,11 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   }
 
   // FNXC:DesktopPackaging 2026-10-04-07:28: Keep the published pair aligned with the complete
-  // 1.0.2 desktop closure; standalone npm installs do not consume the workspace lockfile.
+  // 1.1.0 desktop closure; standalone npm installs do not consume the workspace lockfile.
   for (const dependencyName of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"]) {
     expect(dependencies, `${label}: ${dependencyName} must remain a required runtime dependency`).toHaveProperty(
       dependencyName,
-      "1.0.2",
+      "1.1.0",
     );
     expect(dependencies[dependencyName], `${label}: ${dependencyName} must be a clean exact semver`).toMatch(
       EXACT_SEMVER,

@@ -145,6 +145,19 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     cacheWritePer1M: 2.5,
     source: "platform.claude.com/docs/en/about-claude/pricing",
   },
+  /*
+   * FNXC:ModelCatalog 2026-10-12-15:26:
+   * Pi 1.1.0 publishes Haiku 5.5 with a lower default price and a distinct above-100k tier.
+   * Keep the accounting rate explicit because model catalog ownership does not price stored usage.
+   */
+  "anthropic:claude-haiku-5-5": {
+    inputPer1M: 0.1,
+    outputPer1M: 0.5,
+    cacheReadPer1M: 0.01,
+    cacheWritePer1M: 0.125,
+    tiers: [{ inputTokensAbove: 100_000, inputPer1M: 0.5, outputPer1M: 2.5, cacheReadPer1M: 0.05, cacheWritePer1M: 0.625 }],
+    source: "github.com/earendil-works/pi/providers/data/anthropic.json",
+  },
   "anthropic:claude-opus-4-8": {
     inputPer1M: 5,
     outputPer1M: 25,

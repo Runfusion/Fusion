@@ -49,6 +49,7 @@ describe("model-pricing", () => {
   it.each([
     ["claude-opus-5-5", 10.1],
     ["claude-sonnet-5-5", 5.1],
+    ["claude-haiku-5-5", 1.275],
   ])("prices %s across input, output, cache-read, and cache-write tokens", (model, expectedUsd) => {
     const usage = {
       inputTokens: 1_000_000,
@@ -64,6 +65,14 @@ describe("model-pricing", () => {
     expect(explicit).toMatchObject({ unavailable: false, stale: false });
     expect(explicit.usd).toBeCloseTo(expectedUsd, 6);
     expect(bare.usd).toBeCloseTo(expectedUsd, 6);
+  });
+
+  it("uses Haiku 5.5's exact above-100k tier boundary", () => {
+    const below = costFor({ ...ZERO, inputTokens: 100_000 }, { provider: "anthropic", model: "claude-haiku-5-5" });
+    const aboveBoundary = costFor({ ...ZERO, inputTokens: 100_001 }, { provider: "anthropic", model: "claude-haiku-5-5" });
+
+    expect(below.usd).toBeCloseTo(0.01, 8);
+    expect(aboveBoundary.usd).toBeCloseTo(0.0500005, 8);
   });
 
   it("prices Claude Fable 5.1 instead of reporting it as unavailable", () => {

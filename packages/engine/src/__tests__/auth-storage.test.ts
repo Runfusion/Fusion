@@ -493,6 +493,85 @@ describe("createFusionAuthStorage", () => {
       ]));
     });
 
+    it("retains populated Anthropic catalog rows when empty, aborted, or stale publications arrive", async () => {
+      const authStorage = createFusionAuthStorage();
+      const registry = await createFusionModelRegistry(authStorage, homeDir);
+      const models = getBuiltinModels("anthropic").filter((model) => [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+      ].includes(model.id));
+      const store = (registry.modelRuntime as unknown as {
+        models: { modelsStore: { read: (providerId: string) => Promise<unknown>; write: (providerId: string, entry: unknown, options?: { signal?: AbortSignal }) => Promise<void> } };
+      }).models.modelsStore;
+
+      expect(models.map((model) => model.id).sort()).toEqual([
+        "claude-haiku-5-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+      ]);
+
+      // A populated current generation replaces the persisted empty result left by an earlier check.
+      await store.write("anthropic", { models: [], checkedAt: 10 });
+      await store.write("anthropic", { models, checkedAt: 20 });
+      expect(await store.read("anthropic")).toMatchObject({
+        checkedAt: 20,
+        models: expect.arrayContaining(models.map(({ id }) => expect.objectContaining({ id }))),
+      });
+
+      // Empty, cancelled, and older completions cannot erase or roll back the usable file-backed row.
+      await store.write("anthropic", { models: [], checkedAt: 30 });
+      const aborted = new AbortController();
+      aborted.abort();
+      await expect(store.write("anthropic", { models: [], checkedAt: 40 }, { signal: aborted.signal })).rejects.toThrow();
+      await store.write("anthropic", { models: [], checkedAt: 15 });
+      await expect(store.read("anthropic")).resolves.toMatchObject({
+        checkedAt: 20,
+        models: expect.arrayContaining(models.map(({ id }) => expect.objectContaining({ id }))),
+      });
+
+      // A rejected provider refresh has no publication to persist, so the retained file stays usable.
+      await expect(Promise.reject(new Error("catalog request failed"))).rejects.toThrow("catalog request failed");
+      await expect(store.read("anthropic")).resolves.toMatchObject({
+        checkedAt: 20,
+        models: expect.arrayContaining(models.map(({ id }) => expect.objectContaining({ id }))),
+      });
+    });
+
+    it("serializes independent runtime catalog writers so a late empty publication retains populated rows", async () => {
+      const firstRuntime = await createFusionModelRegistry(createFusionAuthStorage(), homeDir);
+      const secondRuntime = await createFusionModelRegistry(createFusionAuthStorage(), homeDir);
+      const models = getBuiltinModels("anthropic").filter((model) => [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+      ].includes(model.id));
+      const getStore = (registry: typeof firstRuntime) => (registry.modelRuntime as unknown as {
+        models: { modelsStore: { read: (providerId: string) => Promise<unknown>; write: (providerId: string, entry: unknown) => Promise<void> } };
+      }).models.modelsStore;
+      const firstStore = getStore(firstRuntime);
+      const secondStore = getStore(secondRuntime);
+
+      await firstStore.write("anthropic", { models: [], checkedAt: 10 });
+      await firstStore.write("anthropic", { models, checkedAt: 20 });
+
+      /*
+       * FNXC:ModelRegistry 2026-10-12-16:15:
+       * Separate ModelRuntime instances model CLI/dashboard processes sharing Pi's file store.
+       * The later empty completion must evaluate the populated entry under the file lock.
+       */
+      await secondStore.write("anthropic", { models: [], checkedAt: 30 });
+
+      await expect(firstStore.read("anthropic")).resolves.toMatchObject({
+        checkedAt: 20,
+        models: expect.arrayContaining(models.map(({ id }) => expect.objectContaining({ id }))),
+      });
+      await expect(secondStore.read("anthropic")).resolves.toMatchObject({
+        checkedAt: 20,
+        models: expect.arrayContaining(models.map(({ id }) => expect.objectContaining({ id }))),
+      });
+    });
+
     it("routes Meta OAuth-only ModelRuntime reads and refresh writes through meta-subscription", async () => {
       writeFusionAuth(homeDir, {
         "meta-subscription": {
