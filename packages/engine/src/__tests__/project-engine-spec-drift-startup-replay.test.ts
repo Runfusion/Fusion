@@ -73,7 +73,13 @@ describe("ProjectEngine spec-drift startup replay", () => {
     mocks.enqueued = [];
     await engine.start();
 
-    expect(store.listTasks).toHaveBeenCalledWith({ slim: true });
+    /*
+    FNXC:AdmissionClaimReadLogFree 2026-10-12-08:12:
+    The replay read's option shape is the contract: live-only (no `includeArchived`), and now explicitly
+    id-only — `derive: false` + `excludeLog: true` — because the loop body enqueues `task.id` and nothing
+    else. Restoring `{ slim: true }` here would put the 125 MB `log` parse back on every supervised restart.
+    */
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: true, derive: false, excludeLog: true });
     expect(mocks.enqueued).toContain("FN-live");
     expect(mocks.enqueued).not.toContain("FN-archived");
 

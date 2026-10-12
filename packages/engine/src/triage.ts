@@ -2895,7 +2895,20 @@ export class TriageProcessor {
         const getFreshClaimSnapshot = () => freshClaimSnapshot ??= (async () => {
           // Full rows are required here: a pending optional workflow-step lease can be the task's
           // only live-agent signal, and slim rows intentionally omit workflowStepResults.
-          const fresh = await this.store.listTasks({ slim: false, includeArchived: false });
+          /*
+          FNXC:AdmissionClaimReadLogFree 2026-10-12-07:58 (memory: the read behind the supervised restarts):
+          `excludeLog: true` is load-bearing, not cosmetic. This is the capacity-claim snapshot of a poll
+          that ticks every 10 s, and `slim: false` meant the SELECT carried `log`: 2 417 rows whose stored
+          `log` totals 125 MB on the live board, parsed by `rowToTask` into ~496 000 entry objects and then
+          discarded — this consumer reads `id`, `status` and `workflowStepResults` and nothing else, and
+          `live-agent-count.ts` (the predicate it feeds) contains ZERO `task.log` reads.
+
+          Why not `slim: true`: slim omits `workflowStepResults`, which is the ONLY live-agent signal for a
+          card whose ordinary status is null, and it re-syncs `steps` from PROMPT.md. Why dropping the column
+          is safe at all: the five log-derived board figures are read from `timing_total_ms` + `log_recent`
+          (RUFU-615), so `excludeLog` cannot blank a badge even with derivation on.
+          */
+          const fresh = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
           let pending = 0;
           for (const id of this.processing) {
             const row = fresh.find((task) => task.id === id);
@@ -2989,7 +3002,9 @@ export class TriageProcessor {
     if (task.sourceType !== "github_import") return false;
     try {
       const nowMs = Date.now();
-      const listed = await this.store.listTasks({ slim: false, includeArchived: false });
+      // Both near-duplicate comparators in this file map identity/title/description/column/createdAt only
+      // (RUFU-615's projection contract is why `excludeLog` costs no signal). See FNXC:AdmissionClaimReadLogFree.
+      const listed = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
       const isTerminalCandidate = await resolveTerminalColumnsForTasks(this.store, listed);
       const candidates = listed
         .filter((candidate) => candidate.id !== task.id)
@@ -6041,7 +6056,9 @@ export class TriageProcessor {
           }
 
           const nowMs = Date.now();
-          const listed = await this.store.listTasks({ slim: false, includeArchived: false });
+          // Log-free on purpose: the FN-5152 candidate shape is identity/title/description/column/createdAt/
+          // fileScope. See FNXC:AdmissionClaimReadLogFree on this file's claim read.
+          const listed = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
           /* FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-engine tail): a FINISHED card passed this
              dedup filter on a renamed board, so completed work was offered as a duplicate candidate. */
           const isTerminalCandidate = await resolveTerminalColumnsForTasks(this.store, listed);

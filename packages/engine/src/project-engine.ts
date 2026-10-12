@@ -1495,7 +1495,14 @@ export class ProjectEngine {
     replaying them consumes planning-lock sessions during restart; unarchive emits
     task:updated, so a returning card still enters through the subscriptions above.
     */
-    for (const task of await store.listTasks({ slim: true })) {
+    /*
+    FNXC:AdmissionClaimReadLogFree 2026-10-12-08:05 (memory: the read behind the supervised restarts):
+    Startup replay enqueues task IDS only, but `slim` with derivation left on still SELECTs `log` — so the
+    boot path paid a full 125 MB / ~496 000-entry parse of a column it never reads, on a path that runs on
+    every supervised restart. Derivation is off and the column is dropped, which is exactly what a
+    id-only consumer should ask for.
+    */
+    for (const task of await store.listTasks({ slim: true, derive: false, excludeLog: true })) {
       this.specDriftReconciler.enqueue(task.id);
     }
     const cwd = this.config.workingDirectory;
@@ -5026,7 +5033,15 @@ export class ProjectEngine {
             const getMergeClaimSnapshot = () => mergeClaimSnapshot ??= (async () => {
               // Full rows preserve pending optional workflow-step leases, which may be the only
               // live-agent signal for a task while its ordinary status is null.
-              const tasks = await store.listTasks({ slim: false, includeArchived: false });
+              /*
+              FNXC:AdmissionClaimReadLogFree 2026-10-12-07:58 (memory: the read behind the supervised restarts):
+              The merge lane shared the triage poll's shape: a `slim: false` board read whose only consumer is
+              `persistedTopLevelAgentTaskIdsFromStore`, i.e. `id`/`status`/`workflowStepResults`. `log` was
+              therefore SELECTed (125 MB across 2 417 live rows), parsed by `rowToTask`, and thrown away. The
+              predicate chain in `@fusion/core/agents/live-agent-count.ts` contains no `task.log` read, so the
+              claim count cannot depend on the column; see the matching block in `triage.ts`.
+              */
+              const tasks = await store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
               const ids = await persistedTopLevelAgentTaskIdsFromStore(store, tasks);
               return { count: ids.length, ids };
             })();

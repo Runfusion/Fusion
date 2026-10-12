@@ -3111,7 +3111,9 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     engine.enqueueMerge("FN-MERGE-WAITING");
 
     await vi.waitFor(() => {
-      expect(mockStore.store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+      // The merge claim snapshot reads full rows (pending optional-step leases) but NOT the `log` column:
+      // its consumer is `persistedTopLevelAgentTaskIdsFromStore`, which reads id/status/workflowStepResults.
+      expect(mockStore.store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false, excludeLog: true });
     });
     expect(mocks.runAiMerge).not.toHaveBeenCalled();
     expect(mockStore.store.listTasks.mock.calls.filter(([options]) => options?.slim === false)).toHaveLength(1);

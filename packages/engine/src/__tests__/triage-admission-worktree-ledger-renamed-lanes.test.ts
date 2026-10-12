@@ -248,7 +248,8 @@ describe("planning admission's worktree ledger on a renamed board", () => {
 
     const specifyTask = await pollOnce(store);
 
-    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    // Full rows (workflow-step leases), log column dropped: see FNXC:AdmissionClaimReadLogFree in triage.ts.
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false, excludeLog: true });
     expect(specifyTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WAITING" }));
   });
 });

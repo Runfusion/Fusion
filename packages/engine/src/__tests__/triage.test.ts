@@ -8045,6 +8045,101 @@ A loader test proves the data can be read; only these prove the data reaches the
 survives the dependency-rewriting finalizer. Both were live failure modes: a context block assembled
 and never passed, and a dependency edge deleted by `parseDependenciesFromPrompt` replacing the list.
 */
+/*
+FNXC:AdmissionClaimReadLogFree 2026-10-12-08:05 (memory: the read behind the supervised restarts):
+The triage poll's capacity-claim snapshot ticks every 10 s and previously read the board with `slim: false`
+AND the `log` column, i.e. 2 417 rows / 125 MB of stored `log` parsed by `rowToTask` on every poll and then
+discarded, because its consumer (`persistedTopLevelAgentTaskIdsFromStore` → `live-agent-count.ts`) reads
+`id`, `status` and `workflowStepResults` only. This pins both halves of the invariant: the read asks for
+log-free rows, and the admission verdict does not move when log content moves.
+*/
+describe("capacity claim snapshot reads the board without the log column", () => {
+  const claimRootDir = "/fake/root";
+
+  const repeatedSelfRepairLog = Array.from({ length: 300 }, (_, i) => ({
+    timestamp: new Date(Date.UTC(2026, 9, 11, 1, 0, i)).toISOString(),
+    action: `Lifecycle recovery retained in 'in-progress' — self-healing-stranded-recovery has no backward-move authority`,
+    outcome: `attempt ${i}`,
+  }));
+
+  async function runPollWith(log: Task["log"]) {
+    const tasksById = new Map<string, Task>();
+    for (const task of [
+      createTriageTask({ id: "FN-CLAIM-TODO", column: "todo", log }),
+    ]) {
+      tasksById.set(task.id, { ...task, attachments: [], comments: [] });
+    }
+    const listTasks = vi.fn().mockImplementation(async () => [...tasksById.values()]);
+    const store = createMockStore({
+      listTasks,
+      getTask: vi.fn().mockImplementation(async (id: string) => tasksById.get(id) ?? null),
+      updateTask: vi.fn().mockImplementation(async (id: string, patch: Partial<Task>) => {
+        const live = tasksById.get(id);
+        if (live) tasksById.set(id, { ...live, ...patch } as Task);
+      }),
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 10,
+        pollIntervalMs: 10_000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+      } as unknown as Settings),
+    });
+    const processor = new TriageProcessor(store, claimRootDir);
+    (processor as unknown as { running: boolean }).running = true;
+    await (processor as unknown as { poll: () => Promise<void> }).poll();
+    (processor as unknown as { stop?: () => void }).stop?.();
+    return { listTasks, processor };
+  }
+
+  it("passes excludeLog on every full-row board read it performs", async () => {
+    const { promptWithFallback } = await import("../pi.js");
+    mockCreateFnAgent.mockClear();
+    mockCreateFnAgent.mockResolvedValue({
+      session: {
+        state: {},
+        sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    });
+    (promptWithFallback as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const { listTasks } = await runPollWith([]);
+    const fullRowReads = listTasks.mock.calls
+      .map(([options]) => options as { slim?: boolean; excludeLog?: boolean } | undefined)
+      .filter((options) => options?.slim === false);
+
+    // Non-vacuous: a poll that never reaches the claim snapshot would pass the assertion below by silence.
+    expect(fullRowReads.length).toBeGreaterThan(0);
+    for (const options of fullRowReads) {
+      expect(options.excludeLog).toBe(true);
+    }
+  });
+
+  it("reaches the same admission verdict whether or not the rows carry log content", async () => {
+    const { promptWithFallback } = await import("../pi.js");
+    (promptWithFallback as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    mockCreateFnAgent.mockResolvedValue({
+      session: {
+        state: {},
+        sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    });
+
+    mockCreateFnAgent.mockClear();
+    await runPollWith([]);
+    const withoutLog = mockCreateFnAgent.mock.calls.map(([options]) => (options as { taskId: string }).taskId).sort();
+
+    mockCreateFnAgent.mockClear();
+    await runPollWith(repeatedSelfRepairLog as Task["log"]);
+    const withLog = mockCreateFnAgent.mock.calls.map(([options]) => (options as { taskId: string }).taskId).sort();
+
+    expect(withLog).toEqual(withoutLog);
+  });
+});
+
 describe("FN-513 follow-up context reaches the real planning session", () => {
   const FOLLOW_UP_MARKER = { followUp: { version: 1 } };
 
