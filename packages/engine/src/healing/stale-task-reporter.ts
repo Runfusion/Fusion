@@ -62,6 +62,16 @@ export class StaleTaskReporter {
     const listByColumns = async (columns: ReadonlySet<string>): Promise<Task[]> => {
       const byId = new Map<string, Task>();
       for (const column of columns) {
+        /*
+        FNXC:AdmissionClaimReadLogFree 2026-10-12-08:32 (REJECTED here, recorded so nobody re-tries it):
+        This sweep looks like a log-free consumer — `task-age-staleness.ts` has zero `task.log` reads — and
+        `excludeLog: true` was tried and reverted. `reportStaleTasks` itself pattern-matches the log at
+        STALE_LOG_RE (see the `[...(task.log ?? [])].reverse().find(...)` below), so dropping the column
+        would have silently suppressed staleness notices, and the sweep's own tests could not catch it:
+        their mock store returns rows regardless of the options it is passed. This is the call-site class
+        RUFU-615's `excludeLog` doc warns about — the column is opt-in per call site precisely because a
+        caller must prove it never reads markers, not merely that its helpers do not.
+        */
         for (const task of await this.store.listTasks({ column, slim: false })) byId.set(task.id, task);
       }
       return [...byId.values()];
