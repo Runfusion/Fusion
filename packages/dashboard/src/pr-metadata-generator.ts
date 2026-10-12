@@ -3,10 +3,11 @@ import { exec as execCb } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { GlobalSettings, ProjectSettings, Settings, Task, TaskStore } from "@fusion/core";
-import { isValidTaskBranchName, resolveTaskPrHeadBranch, resolveTitleSummarizerSettingsModel } from "@fusion/core";
+import { createLogger, isValidTaskBranchName, resolveTaskPrHeadBranch, resolveTitleSummarizerSettingsModel } from "@fusion/core";
 import { createFnAgent, resolveMcpServersForStore } from "@fusion/engine";
 
 const execAsync = promisify(execCb);
+const prMetadataLog = createLogger("pr-metadata-generator");
 export const PR_METADATA_TIMEOUT_MS = 60_000;
 
 /*
@@ -78,21 +79,69 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function parseAiResult(raw: string): AiMetadataResult | null {
+interface AiMetadataParseResult {
+  result: AiMetadataResult | null;
+  reason: "invalid-json" | "missing-required-fields";
+}
+
+function parseAiMetadataCandidate(candidate: string): AiMetadataParseResult {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as Partial<AiMetadataResult>;
-    const title = asString(parsed.title);
-    const summary = asString(parsed.summary);
-    const changes = asString(parsed.changes);
-    const testing = asString(parsed.testing);
-    const linkedTask = asString(parsed.linkedTask);
-    if (!title || !summary || !changes || !testing) {
-      return null;
-    }
-    return { title, summary, changes, testing, linkedTask };
+    parsed = JSON.parse(candidate);
   } catch {
-    return null;
+    return { result: null, reason: "invalid-json" };
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { result: null, reason: "missing-required-fields" };
+  }
+
+  const fields = parsed as Partial<AiMetadataResult>;
+  const title = asString(fields.title);
+  const summary = asString(fields.summary);
+  const changes = asString(fields.changes);
+  const testing = asString(fields.testing);
+  const linkedTask = asString(fields.linkedTask);
+  if (!title || !summary || !changes || !testing) {
+    return { result: null, reason: "missing-required-fields" };
+  }
+  return { result: { title, summary, changes, testing, linkedTask }, reason: "invalid-json" };
+}
+
+/*
+FNXC:PrMetadataGeneration 2026-10-12-15:02:
+Models commonly wrap an otherwise valid PR metadata object in a JSON/plain fence or introductory prose.
+Try the raw response first, then only JSON/plain fence payloads, then its outer object; every candidate must still satisfy the full schema.
+*/
+function parseAiResult(raw: string): AiMetadataParseResult {
+  const candidates = [raw];
+  const fencePattern = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```/gim;
+  for (const match of raw.matchAll(fencePattern)) {
+    candidates.push(match[1]);
+  }
+
+  const firstObject = raw.indexOf("{");
+  const lastObject = raw.lastIndexOf("}");
+  const hasCodeFence = raw.includes("```");
+  if (!hasCodeFence && firstObject >= 0 && lastObject > firstObject) {
+    candidates.push(raw.slice(firstObject, lastObject + 1));
+  }
+
+  let reason: AiMetadataParseResult["reason"] = "invalid-json";
+  for (const candidate of candidates) {
+    const parsed = parseAiMetadataCandidate(candidate);
+    if (parsed.result) {
+      return parsed;
+    }
+    if (parsed.reason === "missing-required-fields") {
+      reason = parsed.reason;
+    }
+  }
+  return { result: null, reason };
+}
+
+function truncatedDiagnosticSample(raw: string): string {
+  const maxLength = 500;
+  return `${raw.slice(0, Math.min(maxLength, Math.max(0, raw.length - 1)))}…`;
 }
 
 /*
@@ -387,14 +436,20 @@ export async function generatePrMetadata(input: {
     }
 
     const parsed = parseAiResult(aiText);
-    if (!parsed) {
+    if (!parsed.result) {
+      prMetadataLog.warn("Falling back after AI PR metadata response could not be validated", {
+        taskId: task.id,
+        responseLength: aiText.length,
+        sample: truncatedDiagnosticSample(aiText),
+        reason: parsed.reason,
+      });
       return buildFallbackPrMetadata(task, "parse-validation");
     }
 
-    const completedTemplate = templateExists ? fillTemplate(template, parsed, task.id) : null;
+    const completedTemplate = templateExists ? fillTemplate(template, parsed.result, task.id) : null;
     return {
-      title: parsed.title,
-      body: completedTemplate ?? buildBody(parsed, task.id),
+      title: parsed.result.title,
+      body: completedTemplate ?? buildBody(parsed.result, task.id),
       templateUsed: completedTemplate !== null,
       fallback: false,
       fallbackReason: null,

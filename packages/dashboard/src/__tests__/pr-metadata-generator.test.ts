@@ -72,6 +72,21 @@ function capturedSystemPrompt(): string {
   return call?.systemPrompt ?? "";
 }
 
+const RECOVERABLE_METADATA = {
+  title: "fix: retain generated metadata",
+  summary: "Retain complete model metadata when formatting adds harmless wrappers.",
+  changes: "- Recover validated metadata from supported response wrappers",
+  testing: "- pnpm --filter @fusion/dashboard exec vitest run src/__tests__/pr-metadata-generator.test.ts",
+  linkedTask: "FN-4991",
+};
+
+function streamAiText(aiText: string): void {
+  vi.mocked(createFnAgent).mockImplementation(async ({ onText }: { onText?: (t: string) => void }) => {
+    onText?.(aiText);
+    return { session: { prompt: promptMock, dispose: disposeMock } } as never;
+  });
+}
+
 const BASE_PR_METADATA_SYSTEM_PROMPT = PR_METADATA_SYSTEM_PROMPT;
 
 describe("generatePrMetadata", () => {
@@ -365,35 +380,128 @@ describe("generatePrMetadata", () => {
     expect(result.body).toContain("## Linked Task");
   });
 
-  it("falls back deterministically when model output is invalid json", async () => {
-    vi.mocked(createFnAgent).mockImplementation(async ({ onText }: { onText?: (t: string) => void }) => {
-      onText?.("not json");
-      return {
-        session: {
-          prompt: promptMock,
-          dispose: disposeMock,
-        },
-      } as never;
-    });
+  it.each([
+    ["direct JSON", JSON.stringify(RECOVERABLE_METADATA)],
+    ["a json fence", `\`\`\`json\n${JSON.stringify(RECOVERABLE_METADATA, null, 2)}\n\`\`\``],
+    ["an unlabeled fence", `\`\`\`\n${JSON.stringify(RECOVERABLE_METADATA, null, 2)}\n\`\`\``],
+    ["prose surrounding an outer JSON object", `Here is the requested metadata:\n${JSON.stringify(RECOVERABLE_METADATA)}\nUse it for the PR.`],
+  ])("retains validated metadata from %s without a fallback warning", async (_shape, aiText) => {
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(aiText);
 
-    const result = await generatePrMetadata({
-      task: createTask(),
-      repoRoot,
-      settings: {
-        titleSummarizerProvider: "anthropic",
-        titleSummarizerModelId: "claude-haiku",
-      } as never,
-    });
+      const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
 
-    expect(result).toEqual({
-      title: "Route contracts",
-      body: expect.stringContaining("Closes FN-4991"),
-      templateUsed: false,
-      fallback: true,
-      fallbackReason: "parse-validation",
-      timedOut: false,
-    });
-    expectFallbackBody(result.body);
+      expect(result).toEqual({
+        title: RECOVERABLE_METADATA.title,
+        body: expect.stringContaining(RECOVERABLE_METADATA.summary),
+        templateUsed: false,
+        fallback: false,
+        fallbackReason: null,
+        timedOut: false,
+      });
+      expect(result.body).toContain(RECOVERABLE_METADATA.changes);
+      expect(result.body).toContain(RECOVERABLE_METADATA.testing);
+      expect(result.body.match(/Closes FN-4991/g)).toHaveLength(1);
+      expect(warningSpy).not.toHaveBeenCalled();
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it("considers later supported fences after an invalid fenced candidate", async () => {
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(`\`\`\`json\nnot json\n\`\`\`\n\n\`\`\`\n${JSON.stringify(RECOVERABLE_METADATA)}\n\`\`\``);
+
+      const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
+
+      expect(result.title).toBe(RECOVERABLE_METADATA.title);
+      expect(result.body).toContain(RECOVERABLE_METADATA.summary);
+      expect(warningSpy).not.toHaveBeenCalled();
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it("falls back deterministically and emits one bounded warning for invalid output", async () => {
+    const aiText = "x".repeat(600);
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(aiText);
+
+      const result = await generatePrMetadata({
+        task: createTask(),
+        repoRoot,
+        settings: {
+          titleSummarizerProvider: "anthropic",
+          titleSummarizerModelId: "claude-haiku",
+        } as never,
+      });
+
+      expect(result).toEqual({
+        title: "Route contracts",
+        body: expect.stringContaining("Closes FN-4991"),
+        templateUsed: false,
+        fallback: true,
+        fallbackReason: "parse-validation",
+        timedOut: false,
+      });
+      expectFallbackBody(result.body);
+      expect(warningSpy).toHaveBeenCalledTimes(1);
+      expect(warningSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Falling back after AI PR metadata response could not be validated"),
+        expect.objectContaining({
+          taskId: "FN-4991",
+          responseLength: aiText.length,
+          sample: `${"x".repeat(500)}…`,
+          reason: "invalid-json",
+        }),
+      );
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it("keeps incomplete or unsupported fenced output on the fallback path", async () => {
+    const aiText = `\`\`\`typescript\n${JSON.stringify({ title: "not accepted" })}\n\`\`\``;
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(aiText);
+
+      const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
+
+      expect(result.title).toBe("Route contracts");
+      expectFallbackBody(result.body);
+      expect(warningSpy).toHaveBeenCalledTimes(1);
+      expect(warningSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+        taskId: "FN-4991",
+        responseLength: expect.any(Number),
+        sample: expect.stringContaining("typescript"),
+        reason: "invalid-json",
+      }));
+      const warningMetadata = warningSpy.mock.calls[0]?.[1] as { sample: string };
+      expect(warningMetadata.sample).not.toBe(aiText);
+      expect(warningMetadata.sample).toMatch(/…$/);
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it("reports schema validation failures without relaxing required fields", async () => {
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      streamAiText(JSON.stringify({ title: "valid title", summary: "valid summary", changes: "- change" }));
+
+      const result = await generatePrMetadata({ task: createTask(), repoRoot, settings: {} as never });
+
+      expect(result.title).toBe("Route contracts");
+      expectFallbackBody(result.body);
+      expect(warningSpy).toHaveBeenCalledTimes(1);
+      expect(warningSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ reason: "missing-required-fields" }));
+    } finally {
+      warningSpy.mockRestore();
+    }
   });
 
   it("marks missing required model fields as a parse-validation fallback", async () => {
