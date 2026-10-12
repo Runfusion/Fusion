@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createFusionAuthStorage, createFusionCredentialStore, createFusionModelRegistry, getFusionAuthPath } from "../auth/auth-storage.js";
 
 function encodeBase64Url(value: string): string {
@@ -472,6 +473,17 @@ describe("createFusionAuthStorage", () => {
       const credentialStore = createFusionCredentialStore(authStorage);
 
       expect(await credentialStore.read("anthropic")).toBeUndefined();
+    });
+
+    it("allows registry construction when a Pi-compatible runtime omits private models-store internals", async () => {
+      const refresh = vi.fn(async () => undefined);
+      const skeletalRuntime = { getAuth: async () => ({ auth: { headers: {} } }), refresh };
+      vi.spyOn(ModelRuntime, "create").mockResolvedValue(skeletalRuntime as never);
+
+      const registry = await createFusionModelRegistry(createFusionAuthStorage(), homeDir);
+
+      expect(registry.modelRuntime).toBe(skeletalRuntime);
+      expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
     });
 
     it("exposes Pi-owned Anthropic catalog rows without Fusion provider registration", async () => {

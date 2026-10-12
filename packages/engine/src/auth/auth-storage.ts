@@ -946,16 +946,25 @@ class RetainingModelsStore implements ModelsStore {
 }
 
 type RuntimeModelsInternals = {
-  models: { modelsStore: ModelsStore };
+  models?: { modelsStore?: ModelsStore };
 };
 
 function installRetainingModelsStore(modelRuntime: ModelRuntime, modelsPath: string): void {
   const internals = modelRuntime as unknown as RuntimeModelsInternals;
-  if (!internals.models?.modelsStore) {
-    throw new Error("Pi ModelRuntime did not expose its models store");
+  const modelsStore = internals.models?.modelsStore;
+
+  /*
+   * FNXC:ModelRegistry 2026-10-12-17:11:
+   * Some Pi-compatible adapters deliberately expose only the public runtime API. Catalog retention
+   * is an optional decoration over Pi's undocumented store internals, so store-less adapters must
+   * remain usable while real runtimes retain the file-locked publication protection.
+   */
+  if (!modelsStore || modelsStore instanceof RetainingModelsStore) {
+    return;
   }
-  internals.models.modelsStore = new RetainingModelsStore(
-    internals.models.modelsStore,
+
+  internals.models!.modelsStore = new RetainingModelsStore(
+    modelsStore,
     join(dirname(modelsPath), "models-store.json"),
   );
 }

@@ -2,8 +2,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ChatManager, __resetChatState, __setCreateResolvedAgentSession } from "../../../dashboard/src/chat.js";
 import { createFnAgent } from "../../../engine/src/pi.js";
 
-const { createAgentSessionMock, findModelMock } = vi.hoisted(() => ({
+const { createAgentSessionMock, createModelRuntimeMock, findModelMock } = vi.hoisted(() => ({
   createAgentSessionMock: vi.fn(),
+  /*
+   * FNXC:CliTests 2026-10-12-17:11:
+   * Keep this adapter intentionally store-less to exercise the shared runtime compatibility boundary.
+   */
+  createModelRuntimeMock: vi.fn(async () => ({ getAuth: async () => ({ auth: { headers: {} } }), refresh: async () => {} })),
   findModelMock: vi.fn((provider: string, id: string) => ({ provider, id })),
 }));
 
@@ -25,13 +30,14 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   discoverAndLoadExtensions: vi.fn(async () => ({ runtime: { pendingProviderRegistrations: [] }, errors: [] })),
   getAgentDir: () => "/mock-agent-dir",
   LegacyCredentialStorage: { create: () => ({ setFallbackResolver: vi.fn(), getApiKey: vi.fn(), get: vi.fn(), set: vi.fn(), has: vi.fn(), hasAuth: vi.fn(), getAll: vi.fn(() => ({})), list: vi.fn(), logout: vi.fn(), remove: vi.fn(), reload: vi.fn() }) },
-  ModelRuntime: { create: async () => ({ getAuth: async () => ({ auth: { headers: {} } }), refresh: async () => {} }) },
+  ModelRuntime: { create: createModelRuntimeMock },
   ModelRegistry: class { static create() { return new this(); } find(provider: string, id: string) { return findModelMock(provider, id); } getAll() { return []; } registerProvider() {} async refresh() {} async getApiKeyAndHeaders() { return { ok: true }; } },
   SettingsManager: { create: () => ({}), inMemory: () => ({}) },
 }));
 
 afterEach(() => {
   createAgentSessionMock.mockReset();
+  createModelRuntimeMock.mockClear();
   findModelMock.mockClear();
   __resetChatState();
 });
@@ -77,7 +83,8 @@ it("routes a CLI pi mock through dashboard chat and engine source", async () => 
   };
 
   const manager = new ChatManager(chatStore as any, process.cwd(), agentStore as any);
-  await manager.sendMessage("mock-scope", "exercise the engine session factory");
+  await expect(manager.sendMessage("mock-scope", "exercise the engine session factory")).resolves.toBeUndefined();
 
+  expect(createModelRuntimeMock).toHaveBeenCalledOnce();
   expect(createAgentSessionMock).toHaveBeenCalledOnce();
 });
