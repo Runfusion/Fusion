@@ -475,6 +475,30 @@ describe("createFusionAuthStorage", () => {
       expect(await credentialStore.read("anthropic")).toBeUndefined();
     });
 
+    it("installs catalog retention before awaiting the offline runtime refresh", async () => {
+      const events: string[] = [];
+      const sourceStore = {};
+      const models = {
+        get modelsStore() {
+          return sourceStore;
+        },
+        set modelsStore(_value: unknown) {
+          events.push("retaining-store-installed");
+        },
+      };
+      const refresh = vi.fn(async () => {
+        events.push("offline-refresh");
+      });
+      const runtime = { getAuth: async () => ({ auth: { headers: {} } }), models, refresh };
+      const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue(runtime as never);
+
+      await createFusionModelRegistry(createFusionAuthStorage(), homeDir);
+
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ refreshOnCreate: false }));
+      expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+      expect(events).toEqual(["retaining-store-installed", "offline-refresh"]);
+    });
+
     it("allows registry construction when a Pi-compatible runtime omits private models-store internals", async () => {
       const refresh = vi.fn(async () => undefined);
       const skeletalRuntime = { getAuth: async () => ({ auth: { headers: {} } }), refresh };
@@ -483,6 +507,20 @@ describe("createFusionAuthStorage", () => {
       const registry = await createFusionModelRegistry(createFusionAuthStorage(), homeDir);
 
       expect(registry.modelRuntime).toBe(skeletalRuntime);
+      expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+    });
+
+    it("propagates an offline runtime refresh rejection", async () => {
+      const refreshFailure = new Error("offline catalog refresh failed");
+      const refresh = vi.fn(async () => {
+        throw refreshFailure;
+      });
+      vi.spyOn(ModelRuntime, "create").mockResolvedValue({
+        getAuth: async () => ({ auth: { headers: {} } }),
+        refresh,
+      } as never);
+
+      await expect(createFusionModelRegistry(createFusionAuthStorage(), homeDir)).rejects.toBe(refreshFailure);
       expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
     });
 
