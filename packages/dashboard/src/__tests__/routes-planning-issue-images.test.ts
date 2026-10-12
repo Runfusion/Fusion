@@ -7,7 +7,19 @@ import { request as performRequest } from "../test-request.js";
 
 const sessions = new Map<string, any>();
 
+const { resolvePlanningSuggestedDependencies } = vi.hoisted(() => ({
+  resolvePlanningSuggestedDependencies: vi.fn(async () => [] as string[]),
+}));
+
 vi.mock("../planning.js", () => ({
+  /*
+  FNXC:PlanningRouteTests 2026-10-12-16:38:
+  The create-task registrar statically imports the advisory dependency resolver. This complete
+  planning-module fixture must preserve that asynchronous contract so empty suggestions reach
+  the image-import assertions without bypassing production stale-dependency recovery.
+  */
+  resolvePlanningSuggestedDependencies,
+
   getSession: (id: string) => sessions.get(id),
   getSummary: (id: string) => sessions.get(id)?.summary,
   updatePlanningCreateClaim: vi.fn(async () => undefined),
@@ -63,6 +75,7 @@ function session(overrides: Record<string, unknown> = {}) {
 function createHarness() {
   const addAttachment = vi.fn(async () => undefined);
   const logEntry = vi.fn(async () => undefined);
+  const getTask = vi.fn(async () => undefined);
   const createTask = vi.fn(async (input: Record<string, unknown>) => ({ ...input, id: "FN-IMAGE-1" }));
   const store = {
     createTask,
@@ -73,7 +86,7 @@ function createHarness() {
     getRootDir: vi.fn(() => "/tmp/planning-images"),
     getGlobalSettingsStore: vi.fn(() => ({ getSettings: vi.fn(async () => ({})) })),
     listTasks: vi.fn(async () => []),
-    getTask: vi.fn(async () => undefined),
+    getTask,
   } as unknown as TaskStore;
   const warn = vi.fn();
   const app = express();
@@ -87,12 +100,13 @@ function createHarness() {
   app.use((error: { statusCode?: number; message?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(error.statusCode ?? 500).json({ error: error.message });
   });
-  return { app, addAttachment, logEntry, warn };
+  return { app, addAttachment, getTask, logEntry, store, warn };
 }
 
 describe("planning create-task GitHub image attachments", () => {
   beforeEach(() => {
     sessions.clear();
+    resolvePlanningSuggestedDependencies.mockClear();
     vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(new Uint8Array([1, 2, 3]), {
       status: 200,
       headers: { "content-type": "image/png" },
@@ -102,12 +116,14 @@ describe("planning create-task GitHub image attachments", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("attaches captured issue and comment images without reading GitHub again", async () => {
-    const { app, addAttachment, logEntry } = createHarness();
+    const { app, addAttachment, getTask, logEntry, store } = createHarness();
     sessions.set("images", session({ sourceIssue: sourceIssue({ imageUrls: [imageUrl("body"), imageUrl("comment")] }) }));
 
     const response = await performRequest(app, "POST", "/planning/create-task", JSON.stringify({ sessionId: "images" }), { "content-type": "application/json" });
 
     expect(response.status, JSON.stringify(response.body)).toBe(201);
+    expect(resolvePlanningSuggestedDependencies).toHaveBeenCalledWith(store, [], expect.any(Function));
+    expect(getTask).not.toHaveBeenCalled();
     expect(addAttachment).toHaveBeenCalledTimes(2);
     expect(logEntry).toHaveBeenCalledWith("FN-IMAGE-1", "Imported 2 image attachments from GitHub issue", "https://github.com/owner/repo/issues/42");
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -115,13 +131,15 @@ describe("planning create-task GitHub image attachments", () => {
   });
 
   it("keeps a created task when image download fails and warns for recorded partial capture", async () => {
-    const { app, addAttachment, logEntry, warn } = createHarness();
+    const { app, addAttachment, getTask, logEntry, store, warn } = createHarness();
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("download failed"); }));
     sessions.set("partial", session({ sourceIssue: sourceIssue({ imageUrls: [imageUrl("body")], commentsUnavailable: true, droppedBodyCount: 2 }) }));
 
     const response = await performRequest(app, "POST", "/planning/create-task", JSON.stringify({ sessionId: "partial" }), { "content-type": "application/json" });
 
     expect(response.status, JSON.stringify(response.body)).toBe(201);
+    expect(resolvePlanningSuggestedDependencies).toHaveBeenCalledWith(store, [], expect.any(Function));
+    expect(getTask).not.toHaveBeenCalled();
     expect(addAttachment).not.toHaveBeenCalled();
     expect(logEntry).not.toHaveBeenCalledWith("FN-IMAGE-1", expect.stringContaining("image attachment"), expect.anything());
     expect(warn).toHaveBeenCalledWith("Planning GitHub image capture was partial", expect.objectContaining({ commentsUnavailable: true, droppedBodyCount: 2 }));
