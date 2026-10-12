@@ -1179,7 +1179,16 @@ export async function autoRecoverCrossContamination(
     }
 
     const newTip = await revParse(repoDir, "HEAD");
-    await runGit(repoDir, `git update-ref ${quoteShellArg(`refs/heads/${branchName}`)} ${quoteShellArg(newTip)} ${quoteShellArg(originalTip)}`);
+    /*
+    FNXC:LandingAdvance 2026-10-12-01:22 (STAS-292):
+    The rewrite names itself in the reflog. A message-less `update-ref` is the forensic hole
+    this card exists to close — `reflog show refs/heads/main` on a trunk that had been landed
+    by the old path carried empty subjects, so an incident could not be dated or attributed
+    (STAS-233, re-measured at Step 0). `--create-reflog` so the trail exists even for a branch
+    that never had one.
+    */
+    const rewriteMessage = `branch rewrite: ${taskId} ${newTip} (dropped ${dropSet.size} foreign commit(s))`;
+    await runGit(repoDir, `git update-ref --create-reflog -m ${quoteShellArg(rewriteMessage)} ${quoteShellArg(`refs/heads/${branchName}`)} ${quoteShellArg(newTip)} ${quoteShellArg(originalTip)}`);
     await runGit(repoDir, `git checkout ${quoteShellArg(branchName)}`);
   } catch (error) {
     await runGit(repoDir, `git cherry-pick --abort`).catch(() => undefined);

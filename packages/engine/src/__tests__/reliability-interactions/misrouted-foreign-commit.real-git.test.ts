@@ -61,6 +61,14 @@ describe("reliability interaction: misrouted foreign commit recovery (real git)"
 
       const history = git(dir, "git log --format=%s fusion/fn-1000");
       expect(history).not.toContain("foreign changeset only");
+
+      /*
+      The rewrite has to be auditable afterwards: a message-less ref write is what made
+      trunk reflogs unreadable for forensics (STAS-233, re-measured in STAS-292 Step 0), so
+      every engine ref move names itself.
+      */
+      const reflog = git(dir, "git reflog show fusion/fn-1000 --format=%gs");
+      expect(reflog).toContain("branch rewrite: FN-1000");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
