@@ -10703,7 +10703,7 @@
       "enclosingSymbolPath": "invalidateMismatchedFileScopeLeaseRelease",
       "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 724,
+      "lineHint": 725,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "scheduler-owned receipt clearing outside the orphan-merge frontier"
@@ -10723,7 +10723,7 @@
       "enclosingSymbolPath": "revalidateFileScopeLeaseReleases>revalidated",
       "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 737,
+      "lineHint": 738,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "scheduler-owned receipt clearing outside the orphan-merge frontier"
