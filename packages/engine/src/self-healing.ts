@@ -15878,6 +15878,14 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       includeDeleted: true,
       includeArchived: true,
       startupMemo: false,
+      /*
+      FNXC:AdmissionClaimReadLogFree 2026-10-12-09:21 (memory: the read behind the supervised restarts):
+      This forensic pass exists to hand rows to `cleanupDeletedTaskWorktrees`, and that module contains zero
+      `task.log` reads — it needs persisted worktree paths and ids. Without `excludeLog` this is a full-board
+      (plus tombstones) SELECT of the heaviest column on the board, parsed on a pass that runs at startup and
+      on demand, which is why it is called out individually rather than swept into the other conversions.
+      */
+      excludeLog: true,
     });
     const deletedTasks = allTasks.filter((task) => task.deletedAt && (!options.includeTaskIds || options.includeTaskIds.has(task.id)));
     let removed = 0;

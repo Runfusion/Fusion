@@ -83,9 +83,17 @@ export class BacklogPressureReporter {
       ]);
       const dependencyFinishedColumns = new Set(dependencyCompleteColumns);
       const listByColumns = async (columns: ReadonlySet<string>, slim: boolean): Promise<Task[]> => {
+        /*
+        FNXC:AdmissionClaimReadLogFree 2026-10-12-09:21 (memory: the read behind the supervised restarts):
+        This reporter reads a full board plus per-lane rows on every cycle and never touches `task.log` —
+        the file contains zero log reads, including inside `isRunnableCandidate`, so the heaviest column on
+        the board (42.7% of live-row bytes) was SELECTed, parsed and dropped per cycle. `excludeLog` is
+        badge-safe while derivation stays on because the five log-derived figures come from
+        `timing_total_ms` + `log_recent` (RUFU-615).
+        */
         const byId = new Map<string, Task>();
         for (const column of columns) {
-          for (const task of await this.store.listTasks({ column, slim })) byId.set(task.id, task);
+          for (const task of await this.store.listTasks({ column, slim, excludeLog: true })) byId.set(task.id, task);
         }
         return [...byId.values()];
       };
@@ -103,7 +111,7 @@ export class BacklogPressureReporter {
 
       const [todoFull, allTasks] = await Promise.all([
         listByColumns(holdColumns, false),
-        this.store.listTasks({ slim: true, includeArchived: false }),
+        this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true }),
       ]);
       const byId = new Map(allTasks.map((task) => [task.id, task]));
       const candidates = todoFull

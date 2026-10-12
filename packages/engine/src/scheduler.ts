@@ -1358,11 +1358,22 @@ export class Scheduler {
             */
             const dependencyWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
             const dependentsById = new Map<string, Task>();
-            for (const dependent of await this.store.listTasks({ column: resolvedParked.hold, slim: true })) {
+            /*
+            FNXC:AdmissionClaimReadLogFree 2026-10-12-09:21 (memory: the read behind the supervised restarts):
+            Both dependent-reconciliation reads in this file (here and the deleted-blocker sibling below) now
+            pass `excludeLog`. Proof standard applied per call site, because RUFU-615 keeps `excludeLog`
+            opt-in for exactly the sweeps that pattern-match log MARKERS: these loops read only
+            `dependent.dependencies` / `blockedBy` / `id`, re-fetch each blocker with `getTask`, and their
+            callees — `resolveDependencySatisfactionColumns`, `getUnmetSchedulingDependencies` (both in this
+            file, zero `task.log` reads) and `clearBlockedStatusOnly` (typed `Pick<Task, "status">`) — never
+            touch the column. `log` is the heaviest column on the board (42.7% of live-row bytes), so a
+            lane read that does not need it should not SELECT it.
+            */
+            for (const dependent of await this.store.listTasks({ column: resolvedParked.hold, slim: true, excludeLog: true })) {
               dependentsById.set(dependent.id, dependent);
             }
             for (const column of dependencyWipColumns) {
-              for (const dependent of await this.store.listTasks({ column, slim: true })) {
+              for (const dependent of await this.store.listTasks({ column, slim: true, excludeLog: true })) {
                 dependentsById.set(dependent.id, dependent);
               }
             }
@@ -1672,10 +1683,10 @@ export class Scheduler {
           catch.
           */
           const deletedWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
-          const todoTasks = await this.store.listTasks({ column: deletedParked.hold, slim: true });
+          const todoTasks = await this.store.listTasks({ column: deletedParked.hold, slim: true, excludeLog: true });
           const inProgressById = new Map<string, Task>();
           for (const column of deletedWipColumns) {
-            for (const task of await this.store.listTasks({ column, slim: true })) inProgressById.set(task.id, task);
+            for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) inProgressById.set(task.id, task);
           }
           const inProgressTasks = [...inProgressById.values()];
           const dependents = [...todoTasks, ...inProgressTasks];
