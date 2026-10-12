@@ -2,7 +2,7 @@
 
 ## Settings changes in the Activity Log
 
-Changed project or global settings produce a `settings:updated` Activity Log entry, except engine-owned churn (`engineLastActiveAt`, `engineActiveSinceMs`, `postgresMigrationInboxMessageSentAt`, and `secretsSyncPassphraseConfigured`). Secret-bearing values are redacted or summarized. Workflow setting values, including `requirePrApproval`, never appear in this payload; use the configuration revision history for those changes. See [Who changed this setting, and when](#who-changed-this-setting-and-when-configuration-audit-trails) for both audit mechanisms and their query contracts.
+Changed project or global settings produce a `settings:updated` Activity Log entry, except engine-owned churn (`engineLastActiveAt`, `engineActiveSinceMs`, `postgresMigrationInboxMessageSentAt`, and `secretsSyncPassphraseConfigured`) and dashboard restore state (`dashboardCurrentProjectIdByNode`). The dashboard field remains live global state so a browser can restore its last project, but it is not operator configuration and therefore creates neither a settings activity row nor a configuration revision snapshot. Secret-bearing values are redacted or summarized. Workflow setting values, including `requirePrApproval`, never appear in this payload; use the configuration revision history for those changes. See [Who changed this setting, and when](#who-changed-this-setting-and-when-configuration-audit-trails) for both audit mechanisms and their query contracts.
 
 ## Who changed this setting, and when (configuration audit trails)
 
@@ -26,7 +26,7 @@ Fusion provides two complementary audit surfaces: append-only configuration revi
 
 - **Attribution:** revision `changedBy` records the actor supplied to the settings mutation. Older investigations may encounter historical `{ kind: "human", id: "local-user" }` records, but current settings-operation defaults use the system actor when a caller supplies none; treat historical attribution according to the stored record.
 - **Revision history:** the API is paginated rather than capped to one unpageable 100-row window. Request later pages with `offset`; concurrent appends can make offset pages overlap, so preserve revision IDs when collecting an incident timeline.
-- **Activity coverage:** the former four-key Activity Log allowlist is removed. All changed project/global settings are recorded except the four churn or secret-configuration exclusions above; values for sensitive keys are redacted. Workflow settings remain outside the `settings:updated` payload.
+- **Activity coverage:** the former allowlist is removed. All changed project/global settings are recorded except the churn, secret-configuration, and dashboard restore-state exclusions above; values for sensitive keys are redacted. Workflow settings remain outside the `settings:updated` payload.
 
 ## Debug-level diagnostics (`FUSION_DEBUG`)
 

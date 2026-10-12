@@ -12,6 +12,7 @@ export const SETTINGS_ACTIVITY_EXCLUDED_KEYS: ReadonlySet<string> = new Set([
   "engineActiveSinceMs",
   "postgresMigrationInboxMessageSentAt",
   "secretsSyncPassphraseConfigured",
+  "dashboardCurrentProjectIdByNode",
 ]);
 
 const MAX_LISTED_CHANGES = 8;
@@ -19,13 +20,12 @@ const MAX_METADATA_CHANGES = 50;
 const SENSITIVE_KEY_PATTERN = /token|secret|passphrase|password|apikey|credential/i;
 
 /*
-FNXC:SettingsAuditTrail 2026-08-09-02:05:
-FN-8853 removes the four-key allowlist after an incident where the Activity Log answered
-"never changed" for autoMerge. packages/engine/src/scheduler.ts:2061 writes its heartbeat
-on every poll, so engine-owned churn is excluded instead of abandoning generic coverage.
-Values are redacted or summarized to keep secrets and large configuration out of the user-visible
-log. Workflow settings such as requirePrApproval are MOVED_SETTINGS_KEYS and never occur in this
-payload, so they remain outside this activity surface.
+FNXC:SettingsAuditTrail 2026-10-12-15:03:
+FN-8853 removes the allowlist after an incident where the Activity Log answered "never changed"
+for autoMerge. Engine-owned churn, secret configuration state, and dashboard project-selection
+restore state are excluded instead of abandoning generic coverage. Values are redacted or summarized
+for the user-visible log; workflow settings such as requirePrApproval are MOVED_SETTINGS_KEYS and
+never occur in this payload, so they remain outside this activity surface.
 */
 export function isSensitiveSettingsKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERN.test(key);

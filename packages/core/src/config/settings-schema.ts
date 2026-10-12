@@ -1050,10 +1050,15 @@ export function isProjectSettingsKey(key: string): key is keyof ProjectSettings 
 }
 
 /*
-FNXC:ConfigVersioning 2026-08-09-04:09:
-`engineLastActiveAt` is liveness bookkeeping written every pollIntervalMs tick. Versioning it evicted real settings changes from the audit window within about 25 minutes, so project revision payloads omit these keys and restores overlay their live values.
+FNXC:ConfigVersioning 2026-10-12-15:03:
+`engineLastActiveAt` is liveness bookkeeping written every pollIntervalMs tick, while
+`dashboardCurrentProjectIdByNode` is browser restore state. Neither is operator configuration,
+so settings revisions omit them; project rollback continues to overlay its live liveness values.
 */
-export const NON_VERSIONED_SETTINGS_KEYS = Object.freeze(["engineLastActiveAt"] as const);
+export const NON_VERSIONED_SETTINGS_KEYS = Object.freeze([
+  "engineLastActiveAt",
+  "dashboardCurrentProjectIdByNode",
+] as const);
 
 export function isNonVersionedSettingsKey(key: string): key is (typeof NON_VERSIONED_SETTINGS_KEYS)[number] {
   return (NON_VERSIONED_SETTINGS_KEYS as readonly string[]).includes(key);

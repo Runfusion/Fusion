@@ -45,14 +45,19 @@ export function createConfigurationRevision(input: {
   rollbackToRevisionId?: string;
   createdAt?: string;
 }): ConfigurationRevision | null {
-  const projectSettings = input.configKind === "project-settings";
+  const settingsRevision = input.configKind === "project-settings" || input.configKind === "global-settings";
   const strip = (value: unknown) => value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !isNonVersionedSettingsKey(key)))
     : value;
-  const before = projectSettings ? strip(input.before) : input.before;
-  const after = projectSettings ? strip(input.after) : input.after;
-  const diffs = diffConfigurationSnapshots(input.before, input.after)
-    .filter((diff) => !projectSettings || !isNonVersionedSettingsKey(diff.field));
+  /*
+  FNXC:ConfigVersioning 2026-10-12-15:03:
+  Dashboard selection is persisted live for restore, but it is UI state rather than auditable
+  configuration. Filter every settings-scope snapshot before diffing so global writes cannot
+  create immutable full-settings payloads; non-settings configuration remains verbatim.
+  */
+  const before = settingsRevision ? strip(input.before) : input.before;
+  const after = settingsRevision ? strip(input.after) : input.after;
+  const diffs = diffConfigurationSnapshots(before, after);
   if (diffs.length === 0) return null;
   return {
     id: randomUUID(),

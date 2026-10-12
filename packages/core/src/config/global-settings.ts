@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, realpathSync, renameSync } from "node:fs";
 import type { ConfigChangedBy, ConfigKind, ConfigurationRevision, ConfigurationTarget, GlobalSettings } from "../types.js";
 import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "../types.js";
-import { sanitizeCliAgentsSettings } from "./settings-schema.js";
+import { mergeRestoredProjectSettings, sanitizeCliAgentsSettings } from "./settings-schema.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { GLOBAL_CONFIGURATION_OWNER_ID, appendGlobalConfigurationRevision, createConfigurationRevision, getGlobalConfigurationRevision, listGlobalConfigurationRevisions } from "../async-stores/async-configuration-revision-store.js";
 
@@ -396,7 +396,12 @@ export class GlobalSettingsStore {
         throw new Error(`Global configuration revision ${revisionId} was not found`);
       }
       const current = await this.readRawForUpdate();
-      const restored = target.before as Record<string, unknown>;
+      /*
+      FNXC:ConfigVersioning 2026-10-12-15:33:
+      Global revision snapshots exclude dashboard restore state. Preserve the live value while
+      restoring an operator-settings snapshot so rollback cannot erase a browser's selection.
+      */
+      const restored = mergeRestoredProjectSettings(target.before as Record<string, unknown>, current);
       const rollback = createConfigurationRevision({
         projectId: GLOBAL_CONFIGURATION_OWNER_ID,
         ownerScope: "global",

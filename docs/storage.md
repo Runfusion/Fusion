@@ -824,6 +824,16 @@ Configuration changes are immutable `project.configuration_revisions` snapshots.
 
 User-global `~/.fusion/settings.json` history uses the reserved `__fusion_global_configuration__` owner identity rather than the project that initiated the write. Filesystem writes are serialized and stage a durable revision-intent file before replacing settings; a later mutation reconciles an interrupted intent by completing its journal append or restoring the old snapshot. When its revision append fails, the store restores the pre-write raw settings file before rejecting. `TaskStore.rollbackConfiguration()` exactly restores project/global/workflow snapshots; `RoutineStore` and `AutomationStore` expose the same rollback action for their stable-ID resources. Each rollback includes deletion/recreation semantics and appends exactly one forward revision marked `source: "rollback"`, rather than modifying history.
 
+### Dashboard project-selection restore state (FN-9526)
+
+`dashboardCurrentProjectIdByNode` is persisted in global settings so a dashboard can restore the last project selected for its node. It is browser UI state, not operator configuration: it is excluded from immutable global-settings revision snapshots and diffs and from `settings:updated` Activity Log rows. Operator-configurable global settings retain their normal revision and Activity Log history; a mixed update records only the operator-visible setting change.
+
+#### Historical selection-history remediation
+
+Affected installations retain their existing history until an operator chooses to remediate it. Before any cleanup, take and verify a PostgreSQL backup, schedule a maintenance window, and measure the exact candidate set using structured records: identify `global-settings` revisions whose `diffs` array contains exactly one change with field `dashboardCurrentProjectIdByNode`, and Activity Log `settings:updated` rows whose structured metadata names only that key. Review representative rows and counts before deleting only those exact UI-state-only records. Do not use broad text matching that could remove a mixed operator-setting update.
+
+Deleting rows does not immediately return disk space to the operating system. After validation, an operator must make the PostgreSQL vacuum and space-reclamation decision appropriate for their availability and backup requirements; Fusion never runs a destructive cleanup or `VACUUM FULL` automatically. `operationalLogRetentionDays` is project-scoped and does not safely govern the reserved global configuration owner, so it does not prune global configuration revisions. A general global-history retention or size-cap policy requires separate lifecycle, concurrency, recovery, and audit-retention design.
+
 Direct chat tags are stored in the project PostgreSQL schema as `chat_tags` and `chat_session_tags`. Tags are normalized and project-scoped; assignment cleanup does not delete chat sessions.
 
 ## Task deletion lifecycle outbox
