@@ -72,7 +72,7 @@ Planner oversight (FN-7508 → FN-7583) is fully documented in Settings Referenc
 | [Dashboard Real-Time](./dashboard-realtime.md) | Canonical event-stream architecture contract (shared `/api/events` bus + dedicated stream boundaries), with project/node scoping, reconnect/cleanup behavior, and realtime pitfalls |
 | [Agent Activity Contract](./agent-activity-contract.md) | Canonical wire, cursor, and retention contract for the project-scoped `GET /api/agent-activity` durable activity-history API |
 | [Storage](./storage.md) | PostgreSQL runtime storage, archive, migration compatibility, and file-backed payloads |
-| [Memory Backend Integration](./memory-backend-integration.md) | Stash memory backend persistence: session capture, per-chat transcript backfill, and opt-in vector search |
+| [Memory Backend Integration](./memory-backend-integration.md) | Stash memory backend persistence: session capture, per-chat transcript backfill, opt-in vector search, and how to tell Fusion's backend apart from a third-party pi memory plugin |
 | [DAG Architecture Deliverables](./dag/) | Milestone A DAG architecture documents plus Milestone B prototype scaffold docs (schema migration plan, DagCoordinator design, implementation checklist) |
 | [Dev Server Module Audit](./dev-server-modules.md) | Analysis of parallel dashboard dev-server module families, production wiring, and consolidation guidance |
 | [Shared Cluster Protocol](./shared-mesh-protocol.md) | Shared PostgreSQL multi-node contract: claims/leases, membership, auth, and retired multi-leader mesh replication |

@@ -12,6 +12,13 @@ There is intentionally **no** TencentDB backend in this build. The backend enum 
 resolves `stash` (or the default `qmd` no-op); a TencentDB backend type, URL setting, or
 integration doc does not exist.
 
+<!-- FNXC:MemoryBackendIntegration 2026-10-12-03:46:
+RUFU-461 arrived describing a `memctx_save` tool that kept rewriting one note file as a Stash/Fusion bug.
+`memctx_save` is neither: it belongs to the third-party `weauratech/pi-memctx` pi extension, and Stash is an
+event store with no note files at all. An operator debugging "a memory save rewrote my note" needs to know
+which store they are in before reading code, so the boundary between Fusion's memory backends and third-party
+pi memory plugins is documented as a section rather than left to be discovered. -->
+
 ---
 
 ## 1. The Stash server
@@ -163,3 +170,56 @@ In addition to chat transcripts, Fusion emits a `task_completion` memory event (
 `fusion-task-<taskId>`) when a task completes, so a task's finishing state is recorded in the
 operator's memory. Like chat capture, this is completion-gated (at most once per task),
 best-effort, and non-blocking.
+
+---
+
+## 7. What is *not* a Fusion memory backend
+
+A memory-shaped symptom in an operator's editor is not automatically Fusion's. Fusion's only wired
+memory backend is Stash (§1), and Stash stores **events** (`event_type` / `agent_name` / `session_id`)
+against a session — it has no note files, no note bodies, and no save tool an agent can call by name.
+
+Third-party pi extensions can ship their own local memory store alongside Fusion. `weauratech/pi-memctx`
+is one: it writes Markdown notes into a local *pack* (`00-system/`, `20-context/`, `40-actions/`,
+`50-decisions/`, `60-observations/`, `70-runbooks/`) and exposes a `memctx_save` tool. When triaging a
+report about a memory save, identify the writer first — the tool name and the response text decide which
+codebase owns the bug:
+
+| observation | owner |
+| --- | --- |
+| `POST /api/v1/me/sessions/events/batch` payload, `/sessions/<id>` GUI rows, HTTP `422` on a missing `event_type` | Fusion → Stash (this document) |
+| a `memctx_save` call, an `Updated existing note: <rel>` response, `## Update (…)` blocks inside a `.md` note | the pi memory plugin, not Fusion and not Stash |
+
+### The note-size ceiling is the store's, not a policy knob
+
+Fusion caps a stored note body at **1 MiB**: `NOTE_CONTENT_MAX_LENGTH` in
+`packages/core/src/notes/note-types.ts`, enforced in PostgreSQL by the CHECK constraint
+`notes_content_length <= 1048576`. Any memory integration that stores a *note-shaped* body faces the same
+boundary, whichever store it writes through.
+
+That ceiling is why a memory plugin must be note-granular rather than append-oriented. A save path that
+rewrites an existing note on every similar save grows one file without bound; the file eventually crosses
+the cap of whatever holds it, and the memory system then fails **on the memory it is supposed to protect** —
+a repeatedly-saved topic becomes the one thing that can no longer be saved, and truncating the oversized
+body in response destroys the history it is storing. The contract that keeps a pack healthy:
+
+- **one memory is one new note** — a colliding filename gets a `-2`/`-3` name, never a merge;
+- **similarity is reported, not merged** — the response names the closest existing note so linking stays
+  deliberate;
+- **an oversized new note is refused**, with its byte size, and nothing partial is written;
+- **an oversized note already on disk is an operator repair** — a plugin reports it and leaves the file
+  byte-identical rather than hand-splitting, trimming, or growing it.
+
+### RUFU-461 (worked example)
+
+The reported symptom — `memctx_save` responding `Updated existing note` and rewriting a 1.3 MB blob — was
+traced to `weauratech/pi-memctx@main`, where save-target selection was a fuzzy term-overlap match
+(`findSimilarNote`) whose result was appended to under `## Update (<timestamp>)`, and where every turn with
+several saves appended a further `## Related learned memories` section to each note. Two unbounded writers,
+one file, one refusal.
+
+Nothing on the Fusion or Stash side needed changing: the fix belongs to the upstream plugin, and it shipped
+as a `git format-patch` artifact on card RUFU-461 (`git am` applies it; no push, fork, or PR was performed
+from a Fusion task session). Fusion's own note store keeps its 1 MiB cap and its refusal semantics
+unchanged. If an integration needs to *split* content, splitting stays a deliberate, human-visible act on
+the pack — not something the save path does silently to make a write fit.
