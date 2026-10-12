@@ -193,7 +193,15 @@ export class GitHubTrackingReconciler {
   }
 
   async reconcileSourceIssues(store: TaskStore): Promise<{ scanned: number; closed: number; skipped: number; errors: number }> {
-    const listedTasks = await store.listTasks({ slim: false, includeArchived: false });
+    /*
+    FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
+    attributed 1,187 MiB of one 10-minute window to `listTasksImpl -> rowToTask -> fromJson` - the whole-project
+    list hydrated per pass, where `project.tasks.log` averages 56 KB per card (146 MiB stored). This consumer
+    keys on ids/claim ids only and has zero `task.log` reads, so `excludeLog` removes the decode without
+    changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
+    `log_recent` for the log-derived signals.
+    */
+    const listedTasks = await store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
     const allTasks = Array.isArray(listedTasks) ? listedTasks : [];
     const lifecycleByTaskId = await resolveLifecycleByTaskId(store, allTasks, new Map<string, WorkflowIr>(), {
       match: (task, lifecycle) => task.sourceIssue?.provider === "github"
@@ -277,7 +285,7 @@ export class GitHubTrackingReconciler {
     store: TaskStore,
     options?: { offset?: number; limit?: number },
   ): Promise<{ scanned: number; filled: number; skipped: number; errors: number; hasMore: boolean }> {
-    const listedTasks = await store.listTasks({ slim: false, includeArchived: false });
+    const listedTasks = await store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
     const offset = Number.isInteger(options?.offset) && (options?.offset ?? 0) > 0 ? options?.offset ?? 0 : 0;
     const limit = Number.isInteger(options?.limit) && (options?.limit ?? RECONCILE_SCAN_LIMIT) >= 0
       ? Math.min(options?.limit ?? RECONCILE_SCAN_LIMIT, RECONCILE_SCAN_LIMIT)

@@ -188,7 +188,7 @@ describe("GitHubTrackingReconciler", () => {
 
       const result = await new GitHubTrackingReconciler().reconcileSourceIssues(store);
 
-      expect((store.listTasks as any)).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+      expect((store.listTasks as any)).toHaveBeenCalledWith({ slim: false, includeArchived: false, excludeLog: true });
       expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 1, "closed", "completed");
       expect(mockSetIssueState).toHaveBeenCalledTimes(1);
       expect(result).toMatchObject({ scanned: 1, closed: 1, skipped: 0, errors: 0 });

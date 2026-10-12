@@ -831,7 +831,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false, excludeLog: true });
     expect(store.moveTaskIf).toHaveBeenCalledWith(
       ready.id,
       "in-progress",
@@ -866,7 +866,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false, excludeLog: true });
     expect(onSchedule).toHaveBeenCalledOnce();
     expect(ready.column).toBe("in-progress");
   });
@@ -886,7 +886,7 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false, excludeLog: true });
     expect(store.moveTaskIf).toHaveBeenCalledWith(
       ready.id,
       "in-progress",

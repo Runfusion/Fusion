@@ -3535,7 +3535,15 @@ export class Scheduler {
             canonical predicate. Reservations bridge both persistence transfers without making
             checkout-free planners appear in the worktree holder set.
             */
-            const liveTasks = await this.store.listTasks({ slim: false, includeArchived: false });
+                          /*
+              FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
+              attributed 1,187 MiB of one 10-minute window to `listTasksImpl -> rowToTask -> fromJson` - the whole-project
+              list hydrated per pass, where `project.tasks.log` averages 56 KB per card (146 MiB stored). This consumer
+              keys on ids/claim ids only and has zero `task.log` reads, so `excludeLog` removes the decode without
+              changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
+              `log_recent` for the log-derived signals.
+              */
+              const liveTasks = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
             const [agentIds, worktreeIds] = await Promise.all([
               persistedTopLevelAgentTaskIdsFromStore(this.store, liveTasks),
               /* RUFU-200: same proof as the reservation above, so the serialized final-claim

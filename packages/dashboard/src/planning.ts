@@ -4521,7 +4521,15 @@ export async function createTaskFromPlanSession(
   let claimEpoch = session.taskCreationEpoch ?? 0;
   const currentProposalClaimId = () => planningProposalClaimId(sessionId, claimEpoch);
   const findCreatedTask = async (): Promise<Task | undefined> =>
-    (await store.listTasks({ includeArchived: false })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
+  /*
+  FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
+  attributed 1,187 MiB of one 10-minute window to `listTasksImpl -> rowToTask -> fromJson` - the whole-project
+  list hydrated per pass, where `project.tasks.log` averages 56 KB per card (146 MiB stored). This consumer
+  keys on ids/claim ids only and has zero `task.log` reads, so `excludeLog` removes the decode without
+  changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
+  `log_recent` for the log-derived signals.
+  */
+    (await store.listTasks({ includeArchived: false, excludeLog: true })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
   const markSessionComplete = async (): Promise<void> => {
     const current = await getSession(sessionId);
     if (current && !current.validated) {
@@ -4545,7 +4553,7 @@ export async function createTaskFromPlanSession(
   failing closed so we never fork on a hiccup.
   */
   const clearStaleLinkedTask = async (staleTaskId: string): Promise<boolean> => {
-    const allTasks = await store.listTasks({ includeArchived: false }).catch(() => null);
+    const allTasks = await store.listTasks({ includeArchived: false, excludeLog: true }).catch(() => null);
     if (allTasks === null || allTasks.some((candidate) => candidate.id === staleTaskId)) return false;
     diagnostics.warn("Planning session linked task no longer exists; advancing creation epoch", {
       sessionId,

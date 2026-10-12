@@ -176,7 +176,15 @@ function liveIssueHolders(tasks: Task[], taskId: string, issue: { owner: string;
 export async function resolvePlanningGithubTrackingDecision(store: TaskStore, projectSettings: ProjectSettings, sourceIssueInput: { owner: string; repo: string; issueNumber: number; url: string }): Promise<{ githubTracking?: { enabled: true }; suppressedByTaskId?: string }> {
   const issue = { owner: sourceIssueInput.owner, repo: sourceIssueInput.repo, number: sourceIssueInput.issueNumber };
   return withSourceIssueLock(store, issue, async () => {
-    const tasks = await store.listTasks({ slim: false, includeArchived: false });
+    /*
+    FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
+    attributed 1,187 MiB of one 10-minute window to `listTasksImpl -> rowToTask -> fromJson` - the whole-project
+    list hydrated per pass, where `project.tasks.log` averages 56 KB per card (146 MiB stored). This consumer
+    keys on ids/claim ids only and has zero `task.log` reads, so `excludeLog` removes the decode without
+    changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
+    `log_recent` for the log-derived signals.
+    */
+    const tasks = await store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
     const holder = liveIssueHolders(tasks, "", { ...issue, url: sourceIssueInput.url })[0];
     if (holder) return { suppressedByTaskId: holder.id };
     return (await resolveImportedIssueGithubTracking(store, projectSettings)) ? { githubTracking: { enabled: true } } : {};
@@ -190,7 +198,7 @@ export async function adoptGithubSourceIssueExclusively(store: TaskStore, taskId
     return { adopted: true };
   }
   return withSourceIssueLock(store, issue, async () => {
-    const all = await store.listTasks({ slim: false, includeArchived: false });
+    const all = await store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
     const linked = all.filter((task) => task.id !== taskId && task.githubTracking?.issue
       && task.githubTracking.issue.owner.toLowerCase() === issue.owner.toLowerCase()
       && task.githubTracking.issue.repo.toLowerCase() === issue.repo.toLowerCase()
@@ -222,7 +230,7 @@ export async function adoptGithubSourceIssueExclusively(store: TaskStore, taskId
       return { adopted: false, holderTaskId: winner.id };
     }
     await store.linkGithubIssue(taskId, { owner: issue.owner, repo: issue.repo, number: issue.number, url: issue.url, createdAt: new Date().toISOString() });
-    const after = await store.listTasks({ slim: false, includeArchived: false });
+    const after = await store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
     const linkedAfter = after.filter((task) => task.githubTracking?.issue && task.githubTracking.issue.owner.toLowerCase() === issue.owner.toLowerCase() && task.githubTracking.issue.repo.toLowerCase() === issue.repo.toLowerCase() && task.githubTracking.issue.number === issue.number).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     if (linkedAfter[0]?.id !== taskId) {
       await store.unlinkGithubIssue(taskId);

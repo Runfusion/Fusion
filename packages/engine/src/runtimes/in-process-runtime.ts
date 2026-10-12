@@ -886,7 +886,15 @@ export async function admitPlanningContinuation(input: {
     resumes a task whose retained checkout is already counted by the holder predicate or enters a
     checkout-free plan-lane node. Full rows preserve pending workflow-step leases for the agent gate.
     */
-    const tasks = await input.store.listTasks({ slim: false, includeArchived: false });
+        /*
+    FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
+    attributed 1,187 MiB of one 10-minute window to `listTasksImpl -> rowToTask -> fromJson` - the whole-project
+    list hydrated per pass, where `project.tasks.log` averages 56 KB per card (146 MiB stored). This consumer
+    keys on ids/claim ids only and has zero `task.log` reads, so `excludeLog` removes the decode without
+    changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
+    `log_recent` for the log-derived signals.
+    */
+    const tasks = await input.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
     const ids = await persistedTopLevelAgentTaskIdsFromStore(input.store, tasks);
     return { count: ids.length, ids };
   };
