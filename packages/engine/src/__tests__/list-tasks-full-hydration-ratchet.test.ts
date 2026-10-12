@@ -48,15 +48,21 @@ const ZERO_TOLERANCE_FILES = [
 ];
 
 /**
- * Measured full-hydration call sites per file on 2026-10-12 (tranche 6). Each entry is a decision that was
- * read, not a count that was accepted blindly:
+ * Measured full-hydration call sites per file, last lowered 2026-10-12 (tranche 7).
+ * Each entry is a decision that was read, not a count that was accepted blindly:
+ * - `self-healing.ts` holds 3, all of them marker consumers: `openSurfacingCycle` feeds
+ *   `alreadySurfaced()` in `surfacing-sweeps.ts` (newest entry matching the spec's own `logPrefix`),
+ *   and `recoverPostDoneNonContinuableWedge` / `recoverCompletionHandoffLimbo` both key their premise on
+ *   a `Task marked done by agent` entry. The `log_recent` envelope answers neither: it carries the
+ *   in-review-stall trailing run and the two stalled-review match arrays, not surfacing or done markers.
+ *   Tranche 7 dropped the other five (the hold/wip/review blockedBy union, three paged planning-lane
+ *   scans, and the review-stall candidate read) — each carries a site comment naming its proof.
  * - `stale-task-reporter.ts` reads `[...(task.log ?? [])].reverse().find(STALE_LOG_RE)`, so the column is load-bearing.
- * - `self-healing.ts` sites include the log-marker consumers around `detectStalledReview` / done-marker scans.
  * - `project-engine.ts` is a `derive: false` consumer reviewed at tranche 6 and still short of a proof.
  * - the `register-*` route files are request-scoped handlers, several already bounded by a column or limit.
  */
 const RECORDED_FULL_SITES: Record<string, number> = {
-  "packages/engine/src/self-healing.ts": 8,
+  "packages/engine/src/self-healing.ts": 3,
   "packages/engine/src/healing/stale-task-reporter.ts": 1,
   "packages/engine/src/project-engine.ts": 1,
   "packages/dashboard/src/routes/register-git-github.ts": 2,

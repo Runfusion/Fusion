@@ -8042,9 +8042,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const blockedHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
       const blockedWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       const blockedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      /*
+      FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7):
+      This read feeds ONLY the bucket classification below (`task.column`) and the consumer range
+      8095-8522, which `FNXC:AdmissionClaimReadLogFree` two blocks down already body-scanned for
+      `task.log` reads and found none — the same proof covers both reads because they hand the SAME
+      Task objects to the same callees. Blocked-by reconciliation persists `dependencies`, `fileScope`
+      and `overlapBlockedBy`; none of them is a log marker. Widen only with a marker consumer in hand:
+      `excludeLog` makes `task.log` `[]`, which silently un-marks every `entry.action` match.
+      */
       const blockedCandidates = new Map<string, Task>();
       for (const column of new Set([...blockedHoldColumns, ...blockedWipColumns, ...blockedReviewColumns])) {
-        for (const task of await this.store.listTasks({ column })) blockedCandidates.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, excludeLog: true })) blockedCandidates.set(task.id, task);
       }
       /* Per-card classification: a card the union pulled in must land in the bucket ITS workflow says. */
       const todoTasks: Task[] = [];
@@ -10451,7 +10460,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         };
       };
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset });
+        /*
+        FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7):
+        `reconcileStrandedHoldContinuations` reads `id`, `column`, `status`, `paused`,
+        `workflowStepResults` and `sourceMetadata` off these rows and re-reads the live row itself
+        under the shared task advisory lock; nothing here pattern-matches a log marker, so the column
+        is 100 % waste. It was not small waste: `project.tasks.log` measured 56,295 B average over
+        2,733 live cards (146 MiB stored) on the board this leak was diagnosed on, so a 500-row page
+        decoded up to ~28 MiB of JSON the sweep threw away.
+        */
+        const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset, excludeLog: true });
         for (const snapshot of tasks) {
           try {
             const initial = await evaluate(snapshot.id);
@@ -10535,7 +10553,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let offset = 0;
       let repaired = 0;
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset });
+        /*
+        FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7):
+        `reconcilePrincipalHeldPlanningContinuations` decides from `column`, `status`, `paused`,
+        `userPaused`, `autoMerge` and the workflow work-item rows, and re-reads each candidate with
+        `getTask` before writing. No `task.log` read exists in the method, so the whole-page decode
+        was pure heap churn (see the sibling note in `reconcileStrandedHoldContinuations`).
+        */
+        const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset, excludeLog: true });
         for (const snapshot of tasks) {
           try {
             // FNXC:PrincipalHeldPlanning 2026-08-10-08:35: `slim:false` already carries pause/status/column, so
@@ -10668,7 +10693,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let offset = 0;
       let repaired = 0;
       for (;;) {
-        const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset });
+        /*
+        FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7):
+        `reconcilePlanningFenceParks` reads its whole verdict out of `status` + `error` +
+        `planningFailure` (`getPlanningFencePark` takes `Pick<Task, "status" | "error" | "planningFailure">`),
+        plus `column`/`paused`/`autoMerge` for the guards, and re-proves the fence under the planning
+        lifecycle lock. Zero `task.log` reads in the method — the paged scan now asks for 0 % of the
+        column instead of 100 % of it.
+        */
+        const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset, excludeLog: true });
         for (const snapshot of tasks) {
           try {
             const snapshotPark = getPlanningFencePark(snapshot);
@@ -13800,9 +13833,22 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       decay class this program has already had to correct twice.
       */
       const stallReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      /*
+      FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7):
+      The two log reads in this method BOTH run on a row the store re-fetched, not on these rows:
+      `applyInReviewStallObservationFencedImpl` does `readTaskRowInTransaction` + `rowToTask` and hands
+      that fresh `live` to the compute callback, and `countRecentIdenticalStallEntries` / the
+      `previous`-entry lookup are called with it. Every predicate that DOES see these rows is
+      log-free by its own signature — `allowsAutoMergeProcessing` is
+      `Pick<Task, "autoMerge" | "prInfo" | "prInfos">`, `getInReviewStallReason` picks
+      column/paused/status/error/steps/workflowStepResults/worktree/mergeDetails/mergeRetries/updatedAt,
+      `hasUserAutoMergeHold` picks autoMerge provenance, and `resolvePreMergeGateForTask` takes
+      `FastLaneTask` (executionMode + humanPlanApproval). So this candidate read can drop the column
+      while the fenced disposal still sees the full history it must not act without.
+      */
       const stallCandidatesById = new Map<string, Task>();
       for (const column of stallReviewColumns) {
-        for (const task of await this.store.listTasks({ column, slim: false })) stallCandidatesById.set(task.id, task);
+        for (const task of await this.store.listTasks({ column, slim: false, excludeLog: true })) stallCandidatesById.set(task.id, task);
       }
       const tasks = [...stallCandidatesById.values()];
       /*
@@ -14072,6 +14118,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     if (settings.globalPause || settings.enginePaused) return null;
     return {
       settings,
+      /*
+      FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7): DELIBERATELY FULL — read this
+      before adding `excludeLog: true` here. `runSurfacingSweep`'s at-most-once guard,
+      `alreadySurfaced()` in `surfacing-sweeps.ts`, finds the newest entry whose `action` starts with
+      this spec's own `logPrefix` and compares its code, so it needs the raw entries. The write-time
+      `log_recent` envelope cannot answer it: it carries the in-review-stall trailing run
+      (`tailCode`/`tailReason`/`tailAt`) and the two stalled-review match arrays, not the three
+      surfacing prefixes. Dropping the column here would not error, it would make `alreadySurfaced`
+      return false forever and re-report every stale card on every maintenance batch — a diagnostic
+      that fires per poll is the failure mode the guard exists to prevent. The bounded fix is to widen
+      the envelope (TS writer + `project.fusion_task_log_projections()` in migration 0092, held equal
+      by `task-log-projections.pg.test.ts`), not to strip the read.
+      */
       tasks: await this.store.listTasks({ slim: false }),
       irCache: new Map(),
       cycleStartMs: Date.now(),
@@ -17496,6 +17555,12 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       */
       const wedgeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const wedgeById = new Map<string, Task>();
+      /*
+      FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7): DELIBERATELY FULL. The sweep's
+      premise is a `Task marked done by agent` entry in the card's own log, and
+      `hasDoneMarkerInLastActivityBurst` walks the raw entries below; `log_recent` carries no such
+      marker. Same reasoning at `recoverCompletionHandoffLimbo`.
+      */
       for (const column of wedgeReviewColumns) {
         for (const task of await this.store.listTasks({ column, slim: false })) wedgeById.set(task.id, task);
       }
@@ -17808,6 +17873,9 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     */
     const limboReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     const limboById = new Map<string, Task>();
+    /* FNXC:BoardReadExcludeLog 2026-10-12-22:48 (RUFU-615 tranche 7): DELIBERATELY FULL — the
+       completion-handoff premise is a `Task marked done by agent` log entry; see the matching note in
+       `recoverPostDoneNonContinuableWedge`. */
     for (const column of limboReviewColumns) {
       for (const task of await this.store.listTasks({ column, slim: false })) limboById.set(task.id, task);
     }
