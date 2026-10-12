@@ -4327,7 +4327,7 @@ export async function pushAfterMergeToRemote(input: {
       allowNonFastForward: true,
     });
     if (!adv.advanced) {
-      await log(`Push after merge: pushed rebased result to ${remote}/${targetBranch}, but ${integrationBranch} moved concurrently — local ref left as-is (${adv.reason}); the next merge's push will reconcile`);
+      await log(`Push after merge: pushed rebased result to ${remote}/${targetBranch}, but local ${integrationBranch} was not advanced (${adv.reason}: ${adv.diagnostic}) — local ref left as-is; the next merge's push will reconcile`);
       return { pushed: true, remote, targetBranch, refAdvanced: false, rebasedSha };
     }
     return { pushed: true, remote, targetBranch, refAdvanced: true, rebasedSha };

@@ -302,36 +302,6 @@ describe("landing refuses rather than leaving a ref ahead of its checkout", () =
     }
   });
 
-  it("refuses a non-fast-forward move of a checked-out branch", async () => {
-    const fx = setupLandscape();
-    try {
-      const sibling = join(fx.root, "sibling");
-      git(fx.trunk, "git checkout --detach");
-      git(fx.trunk, `git worktree add ${JSON.stringify(sibling)} main`);
-      writeFileSync(join(sibling, "sibling.txt"), "sibling\n");
-      git(sibling, "git add sibling.txt");
-      git(sibling, "git commit -m sibling");
-      const siblingSha = git(sibling, "git rev-parse HEAD");
-
-      // The push-after-merge lane asks for a non-fast-forward move. With the
-      // branch checked out, that is only achievable by rewriting a user's
-      // checkout, so it has to fail loud instead.
-      const message = await captureRejection(
-        runAdvance({
-          rootDir: fx.landing,
-          newSha: fx.newSha,
-          expectedCurrentSha: siblingSha,
-          allowNonFastForward: true,
-        }),
-      );
-
-      expect(message).toContain("landing refused:");
-      expect(git(sibling, "git rev-parse HEAD")).toBe(siblingSha);
-      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(siblingSha);
-    } finally {
-      removeTmpDirSync(fx.root);
-    }
-  });
 
   it("refuses when two worktrees claim the integration branch", async () => {
     const fx = setupLandscape();
@@ -351,6 +321,143 @@ describe("landing refuses rather than leaving a ref ahead of its checkout", () =
       expect(message).toContain("landing refused:");
       expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(fx.expectedCurrentSha);
       expect(git(second, "git rev-parse HEAD")).toBe(fx.expectedCurrentSha);
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+});
+
+/**
+ * Landscape for the push-after-merge contract. `trunk` sits on `main` at a landed
+ * squash; `clean-room` is the divergence rebase — the same change replayed on top of
+ * a commit the local tip has never seen. The rebased sha therefore does NOT descend
+ * from the local tip, which is what makes the push path the one caller allowed to ask
+ * for a non-fast-forward move.
+ */
+function setupRebasedLandscape(): {
+  root: string;
+  trunk: string;
+  cleanRoom: string;
+  localTip: string;
+  rebasedSha: string;
+} {
+  const root = mkdtempSync(join(tmpdir(), "fusion-test-landing-rebase-"));
+  trackedTmpDirs.add(root);
+  const trunk = join(root, "trunk");
+  const cleanRoom = join(root, "clean-room");
+  execSync(`git init -b main "${trunk}"`, { stdio: "pipe" });
+  git(trunk, "git config user.name tester");
+  git(trunk, "git config user.email tester@example.com");
+  writeFileSync(join(trunk, "tracked.txt"), "one\n");
+  git(trunk, "git add tracked.txt");
+  git(trunk, "git commit -m init");
+  const baseSha = git(trunk, "git rev-parse HEAD");
+
+  writeFileSync(join(trunk, "landed.txt"), "landed\n");
+  git(trunk, "git add landed.txt");
+  git(trunk, "git commit -m 'FN-1: squash'");
+  const localTip = git(trunk, "git rev-parse main");
+
+  git(trunk, `git worktree add -b upstream ${JSON.stringify(cleanRoom)} ${baseSha}`);
+  git(cleanRoom, "git config user.name tester");
+  git(cleanRoom, "git config user.email tester@example.com");
+  writeFileSync(join(cleanRoom, "remote.txt"), "remote\n");
+  git(cleanRoom, "git add remote.txt");
+  git(cleanRoom, "git commit -m 'remote: remote.txt'");
+  git(cleanRoom, `git cherry-pick ${localTip}`);
+
+  return { root, trunk, cleanRoom, localTip, rebasedSha: git(cleanRoom, "git rev-parse HEAD") };
+}
+
+describe("the non-fast-forward lane the push-after-merge rebase opts into", () => {
+  it("moves a checked-out branch, its index and its files to the rebased tip", async () => {
+    const fx = setupRebasedLandscape();
+    const audit = makeQuietAudit();
+    try {
+      // Documents the fixture shape this lane exists for: the rebased sha must not
+      // descend from the tip the local ref is on.
+      expect(() => git(fx.trunk, `git merge-base --is-ancestor ${fx.localTip} ${fx.rebasedSha}`)).toThrow();
+
+      const { result } = await runAdvance({
+        rootDir: fx.trunk,
+        newSha: fx.rebasedSha,
+        expectedCurrentSha: fx.localTip,
+        allowNonFastForward: true,
+        audit,
+      });
+
+      expect(result.advanced).toBe(true);
+      expect(git(fx.trunk, "git rev-parse HEAD")).toBe(fx.rebasedSha);
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(fx.rebasedSha);
+      expect(git(fx.trunk, "git write-tree")).toBe(git(fx.trunk, "git rev-parse HEAD^{tree}"));
+      expect(git(fx.trunk, "git status --porcelain")).toBe("");
+      expect(existsSync(join(fx.trunk, "remote.txt"))).toBe(true);
+      expect(existsSync(join(fx.trunk, "landed.txt"))).toBe(true);
+      const reflogSubject = git(fx.trunk, "git log -g refs/heads/main --format=%gs").split("\n")[0];
+      expect(reflogSubject).toContain("fusion landing");
+      expect(reflogSubject).toContain("non-fast-forward rebase");
+      expect(audit.events.at(-1)?.metadata?.advanceMode).toBe("update-ref");
+      expect(audit.events.at(-1)?.metadata?.worktreePath).toBe(fx.trunk);
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+
+  it("refuses to overwrite a dirty checkout on this lane, reporting it with nothing moved", async () => {
+    const fx = setupRebasedLandscape();
+    const audit = makeQuietAudit();
+    try {
+      writeFileSync(join(fx.trunk, "tracked.txt"), "one\nlocal edit\n");
+
+      const { result } = await runAdvance({
+        rootDir: fx.trunk,
+        newSha: fx.rebasedSha,
+        expectedCurrentSha: fx.localTip,
+        allowNonFastForward: true,
+        audit,
+      });
+
+      expect(result).toEqual({
+        advanced: false,
+        reason: "owned-checkout-refused",
+        diagnostic: expect.stringContaining("carries uncommitted work"),
+        observedCurrentSha: fx.localTip,
+      });
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(fx.localTip);
+      expect(readFileSync(join(fx.trunk, "tracked.txt"), "utf-8")).toBe("one\nlocal edit\n");
+      expect(existsSync(join(fx.trunk, "remote.txt"))).toBe(false);
+      expect(audit.events.at(-1)?.metadata?.succeeded).toBe(false);
+    } finally {
+      removeTmpDirSync(fx.root);
+    }
+  });
+
+  it("cannot drop a newer commit someone else landed while the push was in flight", async () => {
+    const fx = setupLandscape();
+    try {
+      const sibling = join(fx.root, "sibling");
+      git(fx.trunk, "git checkout --detach");
+      git(fx.trunk, `git worktree add ${JSON.stringify(sibling)} main`);
+      writeFileSync(join(sibling, "sibling.txt"), "sibling\n");
+      git(sibling, "git add sibling.txt");
+      git(sibling, "git commit -m sibling");
+      const siblingSha = git(sibling, "git rev-parse HEAD");
+
+      // The push path fences with the tip it landed, not with whatever the branch
+      // moved to afterwards. A third-party commit therefore loses the fence, and the
+      // rewrite never runs — that commit's content stays reachable and its checkout
+      // is untouched.
+      const { result } = await runAdvance({
+        rootDir: fx.landing,
+        newSha: fx.newSha,
+        expectedCurrentSha: fx.expectedCurrentSha,
+        allowNonFastForward: true,
+      });
+
+      expect(result).toMatchObject({ advanced: false, reason: "concurrent-advance" });
+      expect(git(sibling, "git rev-parse HEAD")).toBe(siblingSha);
+      expect(git(fx.trunk, "git rev-parse refs/heads/main")).toBe(siblingSha);
+      expect(existsSync(join(sibling, "sibling.txt"))).toBe(true);
     } finally {
       removeTmpDirSync(fx.root);
     }

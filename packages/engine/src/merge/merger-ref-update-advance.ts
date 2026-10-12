@@ -409,8 +409,11 @@ export async function advanceIntegrationBranchRef(args: {
   the resulting sha can never descend from the old local tip — a non-fast-forward ref move
   is inherent to rebase, not an orphaning bug (the rewritten commits carry the same diffs,
   and the old tip stays reachable via the reflog). The CAS old-value check still guards
-  against concurrent movement. Merge landings must NEVER set this. A branch that IS
-  checked out somewhere still refuses: only the owning checkout could express that move.
+  against concurrent movement. Merge landings must NEVER set this. When the branch IS
+  checked out, the owning checkout expresses the move — ref, index and files together via
+  the rewrite lane below — and a checkout carrying uncommitted work refuses rather than
+  being reset. That refusal comes back as `advanced: false`, not a throw, because a caller
+  that set this flag has already completed the action the advance merely mirrors locally.
   */
   allowNonFastForward?: boolean;
 }): Promise<
@@ -423,7 +426,7 @@ export async function advanceIntegrationBranchRef(args: {
   }
   | {
     advanced: false;
-    reason: "concurrent-advance" | "ref-update-refused" | "missing-current-sha" | "non-fast-forward-advance";
+    reason: "concurrent-advance" | "ref-update-refused" | "missing-current-sha" | "non-fast-forward-advance" | "owned-checkout-refused";
     diagnostic: string;
     observedCurrentSha?: string;
   }
@@ -531,35 +534,45 @@ export async function advanceIntegrationBranchRef(args: {
     };
   }
 
-  // Fast-forward-only invariant: the new sha must descend from the current
-  // tip. CAS alone (old-value match) lets a sibling commit overwrite the ref
-  // and orphan the prior tip — the exact shape that left an FN-trailered
-  // squash reachable only from a feature branch when a subsequent merger
-  // built its squash off a stale base. Reject non-FF advances unless the
-  // caller explicitly opted in (push-after-merge divergence rebase — see the
-  // allowNonFastForward doc above).
-  if (newSha !== expectedCurrentSha && args.allowNonFastForward !== true) {
+  /*
+  Fast-forward-only invariant: the new sha must descend from the current
+  tip. CAS alone (old-value match) lets a sibling commit overwrite the ref
+  and orphan the prior tip — the exact shape that left an FN-trailered
+  squash reachable only from a feature branch when a subsequent merger
+  built its squash off a stale base. Reject non-FF advances unless the
+  caller explicitly opted in (push-after-merge divergence rebase — see the
+  allowNonFastForward doc above).
+
+  The question is asked once and remembered: the answer also picks the lane below,
+  where a fast-forward is a merge inside the owning checkout and anything else is a
+  guarded rewrite of it.
+  */
+  let isFastForward = true;
+  if (newSha !== expectedCurrentSha) {
     try {
       await testHooks.runGit(
         ["merge-base", "--is-ancestor", expectedCurrentSha, newSha],
         rootDir,
       );
     } catch (_error: unknown) {
-      const diagnostic = `newSha ${newSha} is not a descendant of ${expectedCurrentSha} on ${ref}`;
-      await emitRefAdvance({
-        succeeded: false,
-        fromSha: expectedCurrentSha,
-        toSha: newSha,
-        advanceMode: "not-attempted",
-        error: `non-fast-forward-advance: ${diagnostic}`,
-      });
-      return {
-        advanced: false,
-        reason: "non-fast-forward-advance",
-        diagnostic,
-        observedCurrentSha,
-      };
+      isFastForward = false;
     }
+  }
+  if (!isFastForward && args.allowNonFastForward !== true) {
+    const diagnostic = `newSha ${newSha} is not a descendant of ${expectedCurrentSha} on ${ref}`;
+    await emitRefAdvance({
+      succeeded: false,
+      fromSha: expectedCurrentSha,
+      toSha: newSha,
+      advanceMode: "not-attempted",
+      error: `non-fast-forward-advance: ${diagnostic}`,
+    });
+    return {
+      advanced: false,
+      reason: "non-fast-forward-advance",
+      diagnostic,
+      observedCurrentSha,
+    };
   }
 
   const owner = await resolveLandingOwner({
@@ -570,6 +583,60 @@ export async function advanceIntegrationBranchRef(args: {
 
   if (owner) {
     const worktreePath = owner.path;
+
+    /*
+    FNXC:LandingAdvance 2026-10-12-00:43 (STAS-292):
+    A non-fast-forward move of a branch that IS checked out is not expressible as a
+    merge — git refuses it — and the pre-STAS-292 answer was a message-less CAS
+    `update-ref` that left that checkout's index and files behind the ref. The one
+    caller allowed here is the push-after-merge rebase, and it gets the same lane as
+    every other checked-out move: prove the checkout clean, write the ref with a named
+    reflog entry, then load the new tree into the index and the files.
+
+    A refusal here is reported instead of thrown because this advance is advisory: the
+    caller's push already reached the remote, and its own `!advanced` branch logs
+    "local ref left as-is, the next merge's push will reconcile". Anything that is not
+    a refusal (a broken git, an unreadable repo) still propagates.
+    */
+    if (!isFastForward) {
+      try {
+        await rewriteCheckedOutRefBackwards({
+          worktreePath,
+          integrationBranch,
+          targetSha: newSha,
+          expectedCurrentSha,
+          reason: `fusion landing: ${taskId} ${newSha} (non-fast-forward rebase)`,
+        });
+      } catch (error: unknown) {
+        if (!(error instanceof IntegrationLandingRefusedError)) {
+          throw error;
+        }
+        await emitRefAdvance({
+          succeeded: false,
+          fromSha: expectedCurrentSha,
+          toSha: newSha,
+          advanceMode: "update-ref",
+          error: error.message,
+          worktreePath,
+        });
+        return {
+          advanced: false,
+          reason: "owned-checkout-refused",
+          diagnostic: error.message,
+          observedCurrentSha,
+        };
+      }
+
+      await emitRefAdvance({
+        succeeded: true,
+        fromSha: expectedCurrentSha,
+        toSha: newSha,
+        advanceMode: "update-ref",
+        worktreePath,
+      });
+      return { advanced: true, previousSha: expectedCurrentSha, newSha, advanceMode: "update-ref", worktreePath };
+    }
+
     try {
       await assertOwnerIndexMatchesHead(worktreePath, `before the landing of ${taskId}`);
     } catch (error: unknown) {
