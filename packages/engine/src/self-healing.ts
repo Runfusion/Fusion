@@ -12854,10 +12854,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       ]) {
         if (!mergedCandidateById.has(task.id)) mergedCandidateById.set(task.id, task);
       }
+      /*
+      FNXC:PostMergeCloseout 2026-10-12-15:10:
+      Auto-merge authorization decides whether this sweep may land work, not whether it may
+      close out an already durable landing. Proven manual landings still pass through the existing
+      graph-owned post-merge gate; its pause, lease, session, active-work, and evidence fences remain
+      authoritative, while unmerged manual holds never enter this recovery path.
+      */
       const mergedButNotDone = [...mergedCandidateById.values()].filter((t) =>
-        !t.deletedAt &&
-        allowsAutoMergeProcessing(t, settings) &&
-        t.mergeDetails?.mergeConfirmed === true,
+        !t.deletedAt && !t.paused && !t.userPaused && t.mergeDetails?.mergeConfirmed === true,
       );
 
       if (mergedButNotDone.length === 0) return 0;
@@ -14271,12 +14276,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const graceMs = (settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS) * PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER;
     const leaseAge = task.checkoutLeaseRenewedAt ? Date.now() - Date.parse(task.checkoutLeaseRenewedAt) : Number.POSITIVE_INFINITY;
     if (task.checkoutRunId && Number.isFinite(leaseAge) && leaseAge >= 0 && leaseAge < graceMs) return { outcome: "ineligible", reason: "checkout-leased" };
-    if ((options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) || task.autoMerge === false) return { outcome: "ineligible", reason: "auto-merge-off" };
+    if (options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) return { outcome: "ineligible", reason: "auto-merge-off" };
     if (task.mergeDetails?.mergeConfirmed) {
       /*
       FNXC:PostMergeRecovery 2026-10-01-06:36:
       Manual reconciliation reports the graph-owned recovery truth: it may resume only absent required
-      evidence after the same pause, hold, liveness, lease, and auto-merge fences as every other owner.
+      evidence after the same pause, hold, liveness, and lease fences as every other owner. A durable
+      landing is closeout work, so auto-merge authorization no longer suppresses its existing gate.
       */
       const decision = await getRequiredPostMergeEvidenceDecision(this.store, task);
       if (isPostMergeGateRecoveryDue(task, decision)

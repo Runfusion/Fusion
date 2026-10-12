@@ -53,9 +53,18 @@ function storeWithTask(task: Task, settings: Partial<Settings> = {}) {
   const store = Object.assign(new EventEmitter(), {
     getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, ...settings } as Settings)),
     getTask: vi.fn(async (id: string) => tasks.get(id)),
+    listTasks: vi.fn(async (filter?: { column?: string }) =>
+      [...tasks.values()].filter((task) => !filter?.column || task.column === filter.column)),
     updateTask,
     updateTaskAtomic,
     moveTask,
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (task: Task) => boolean | Promise<boolean>) => {
+      const current = tasks.get(id)!;
+      if (!await predicate(current)) return { moved: false, task: current };
+      const next = { ...current, column } as Task;
+      tasks.set(id, next);
+      return { moved: true, task: next };
+    }),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
   }) as unknown as TaskStore & EventEmitter;
@@ -115,9 +124,9 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(updateTaskAtomic).not.toHaveBeenCalled();
   });
 
-  it("resumes an absent confirmed-merge gate once without moving or remerging", async () => {
+  it("resumes an absent confirmed-merge gate after manual landing without moving or remerging", async () => {
     const task = baseTask({
-      id: "FN-9368", updatedAt: "2026-10-01T06:36:00.000Z", autoMerge: true,
+      id: "FN-9368", updatedAt: "2026-10-01T06:36:00.000Z", autoMerge: false,
       mergeDetails: { mergeConfirmed: true, commitSha: "280fa38" },
       enabledWorkflowSteps: ["post-merge-verification"], workflowStepResults: [],
     });
@@ -144,6 +153,66 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(continuations).toHaveLength(1);
     expect(continuations[0]).toMatchObject({ nodeId: "post-merge-verification", sourceColumn: "in-review", targetColumn: "in-review" });
     expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it("sweep resumes a proven manual landing once and finalizes only after durable post-merge approval", async () => {
+    const task = baseTask({
+      id: "FN-9520", autoMerge: false,
+      mergeDetails: { mergeConfirmed: true, commitSha: "landed9520" },
+      enabledWorkflowSteps: ["post-merge-verification"], workflowStepResults: [],
+    });
+    const { store, tasks, moveTask } = storeWithTask(task);
+    const continuations: unknown[] = [];
+    Object.assign(store, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      listWorkflowWorkItemsForTask: vi.fn(async () => continuations),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(async (input) => {
+        if (continuations.length > 0) return { seeded: false, reason: "active-continuation" };
+        continuations.push(input);
+        return { seeded: true, workItemId: "post-merge" };
+      }),
+    });
+    const manager = managerWithStubs(store);
+    Object.assign(manager, {
+      isCommitReachableFromBranch: vi.fn(async () => true),
+      resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main" })),
+    });
+
+    await expect(manager.recoverMergedReviewTasks()).resolves.toBe(0);
+    expect(continuations).toHaveLength(1);
+    expect(continuations[0]).toMatchObject({ nodeId: "post-merge-verification", sourceColumn: "in-review", targetColumn: "in-review" });
+    expect(moveTask).not.toHaveBeenCalled();
+
+    tasks.set(task.id, {
+      ...tasks.get(task.id)!,
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    });
+    continuations.length = 0;
+
+    await expect(manager.recoverMergedReviewTasks()).resolves.toBe(1);
+    expect(tasks.get(task.id)).toMatchObject({ column: "done", autoMerge: false });
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["paused", "user-paused"] as const)("sweep leaves a paused proven manual landing untouched (%s)", async (pauseKind) => {
+    const task = baseTask({
+      id: `FN-9520-${pauseKind}`,
+      autoMerge: false,
+      ...(pauseKind === "paused" ? { paused: true } : { userPaused: true }),
+      mergeDetails: { mergeConfirmed: true, commitSha: "landed9520" },
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    });
+    const { store, tasks } = storeWithTask(task);
+    const manager = managerWithStubs(store);
+    Object.assign(manager, {
+      isCommitReachableFromBranch: vi.fn(async () => true),
+      resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main" })),
+    });
+
+    await expect(manager.recoverMergedReviewTasks()).resolves.toBe(0);
+    expect(tasks.get(task.id)).toMatchObject({ column: "in-review", autoMerge: false });
   });
 
   it.each(["pending", "skipped"] as const)("leaves confirmed %s post-merge evidence blocked", async (status) => {

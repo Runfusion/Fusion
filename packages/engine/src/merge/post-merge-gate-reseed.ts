@@ -1,5 +1,4 @@
 import {
-  allowsAutoMergeProcessing,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computeWorkflowIrPin,
   getPostMergeFinalizeBlocker,
@@ -82,10 +81,15 @@ export async function resumeMissingPostMergeGate(
   if (typeof store.seedWorkspaceCodeReviewContinuationIfIdle !== "function") return { outcome: "not-resumable" };
   let task: Task = await store.getTask(taskId);
   const settings = await store.getSettings();
+  /*
+  FNXC:PostMergeCloseout 2026-10-12-14:59:
+  Auto-merge authorization controls whether Fusion may land work; it must not suppress the
+  graph-owned verification of a landing already proven durable. This recovery seeds only the
+  existing post-merge evidence node and retains pause, ownership, proof, and result-state fences.
+  */
   if (!task.mergeDetails?.mergeConfirmed || !task.updatedAt
-    || task.paused || task.userPaused || task.deletedAt || task.autoMerge === false
+    || task.paused || task.userPaused || task.deletedAt
     || settings.globalPause || settings.enginePaused
-    || !allowsAutoMergeProcessing(task, settings)
     || getPostMergeFinalizeBlocker(task)
     || hasFreshCheckoutLease(task, settings)
     || isTaskExecutionLive(task.id, { activeSessionRegistry, executingTaskLock })) return { outcome: "not-resumable" };
@@ -99,7 +103,7 @@ export async function resumeMissingPostMergeGate(
       if (live.updatedAt !== snapshot.updatedAt || live.column !== snapshot.column
         || live.status !== snapshot.status || live.error !== snapshot.error
         || live.paused || live.userPaused || live.deletedAt
-        || !live.mergeDetails?.mergeConfirmed || live.autoMerge === false
+        || !live.mergeDetails?.mergeConfirmed
         || hasFreshCheckoutLease(live, settings)
         || isTaskExecutionLive(live.id, { activeSessionRegistry, executingTaskLock })) return null;
       const items = await store.listWorkflowWorkItemsForTask(task.id);
