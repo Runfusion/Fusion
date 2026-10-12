@@ -108,19 +108,31 @@ describe("reliability interaction: contamination auto-recovery precedence", () =
     expect(destructive.action).toBe("pause");
   });
 
-  it("retry budget exhaustion pauses on subsequent event", () => {
+  it("retry budget exhaustion escalates without issuing another contamination retry", async () => {
+    const database = vi.fn(async () => {});
+    const issueRetry = vi.fn();
     const dispatcher = new AutoRecoveryDispatcher({
       taskStore: {} as never,
-      auditEmitter: { database: vi.fn(async () => {}), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
-      handlers: { issueRetry: vi.fn() },
+      auditEmitter: { database, git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() },
+      handlers: { issueRetry },
     });
 
-    const second = dispatcher.classify({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination" }, {
+    const second = await dispatcher.dispatch({ class: "branch-cross-contamination", taskId: "FN-1", pausedReason: "branch-cross-contamination" }, {
       task: { ...baseTask, recoveryRetryCount: 1 } as Task,
       retryCount: 1,
       settings: { mode: "programmatic", maxRetries: 1 },
     });
 
-    expect(second.action).toBe("pause");
+    expect(second).toMatchObject({
+      action: "escalate",
+      recoveryDisposition: "escalate",
+      rationale: "retry-budget-exhausted",
+    });
+    expect(issueRetry).not.toHaveBeenCalled();
+    expect(database).toHaveBeenCalledWith(expect.objectContaining({
+      type: "auto-recovery:retry-budget-escalated",
+      target: "FN-1",
+      metadata: expect.objectContaining({ rationale: "retry-budget-exhausted", maxRetries: 1 }),
+    }));
   });
 });

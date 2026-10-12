@@ -141,10 +141,17 @@ describe("triage planning lifecycle lock transport failures (FN-8911)", () => {
     mockPromptWithFallback.mockResolvedValueOnce(undefined);
     await new TriageProcessor(fixture.store, root).specifyTask(fixture.task());
 
-    expect(fixture.task().status).toBe("failed");
-    expect(fixture.task().error).toContain("Planning lifecycle lock transport failure recorded at");
-    expect(fixture.task().error).not.toContain("did not update the authoritative PROMPT.md");
-    expect(fixture.task().planningFailure?.lifecycleLockTransport).toBeUndefined();
+    expect(fixture.task()).toMatchObject({
+      status: "needs-replan",
+      error: null,
+      recoveryRetryCount: null,
+      nextRecoveryAt: null,
+      recoveryDisposition: "escalated-reseed",
+      planningFailure: null,
+      customFields: { unrelated: "preserve-me" },
+    });
+    expect(fixture.logs.at(-1)).toContain("Planning lifecycle lock transport failure recorded at");
+    expect(fixture.logs.at(-1)).not.toContain("did not update the authoritative PROMPT.md");
   });
 
   it("keeps the ordinary unchanged-PROMPT verdict when no persisted transport marker exists", async () => {
