@@ -272,7 +272,7 @@ The agent identity that actually runs a piece of work after column-agent precede
 A non-ephemeral agent row operators create and keep (CEO, specialists, column agents). Permanent agents wake on heartbeats, hold standing instructions (`instructionsText` / `instructionsPath` / `soul`), and coordinate work. Ephemeral task workers are created for a lane and deleted when the session ends.
 
 ### Heartbeat run
-A short permanent-agent wake: timer, assignment, message, or on-demand. The run loads identity + Wake Delta + procedure, takes **one** coordination action, and exits via `fn_heartbeat_done`. Task-body coding runs on the **executor** path, not the default heartbeat.
+A short permanent-agent wake: timer, assignment, message, or on-demand. The run loads identity + Wake Delta + procedure, takes **one** coordination action, and exits **terminally** via `fn_heartbeat_done` — that call ends the wake, and a repeat inside the same run records nothing. Task-body coding runs on the **executor** path, not the default heartbeat.
 
 ### Heartbeat procedure
 Per-tick ordered checklist text (built-in strict/lite/off templates or a per-agent `HEARTBEAT.md` at `heartbeatProcedurePath`). Task-scoped custom files replace the built-in procedure; no-task runs always use the ambient built-in so task-only tools are never promised. System-prompt **Critical Rules** still apply even when a custom procedure is loaded.

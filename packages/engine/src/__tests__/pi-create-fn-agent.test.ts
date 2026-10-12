@@ -1172,6 +1172,58 @@ describe("wrapToolsWithPermanentAgentGating", () => {
     expect(findPendingApprovalRequest).not.toHaveBeenCalled();
   });
 
+  it("keeps fn_heartbeat_done's termination hint through every wrapper that can touch it", async () => {
+    /*
+    FNXC:HeartbeatDoneTermination 2026-10-12-10:44:
+    RUFU-355: `terminate` is the only thing that ends a heartbeat run once `fn_heartbeat_done` answers,
+    so any wrapper that rebuilt the result by field list would silently restore the repeat loop RUFU-354
+    observed (eight dones in 361 s). The tool is gate-bypassed, is neither a filesystem nor a bash tool,
+    and the output-budget wrapper rebuilds with a spread — this pins the whole chain, not just one link.
+    */
+    const execute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "Heartbeat complete. Summary: reviewed inbox" }],
+      details: {},
+      terminate: true,
+    });
+    const tool = { name: "fn_heartbeat_done", label: "Heartbeat Done", description: "", parameters: {}, execute };
+    const blockAll = {
+      git_write: "block",
+      file_write_delete: "block",
+      command_execution: "block",
+      network_api: "block",
+      task_agent_mutation: "block",
+    } as const;
+    const { wrapToolsWithActionGate, wrapToolsWithBoundary, wrapToolsWithBashContainment, wrapToolsWithOutputBudget, wrapToolsWithPermanentAgentGating, wrapToolsWithRtkRewrite } =
+      await import("../pi.js");
+
+    const wrapped = [
+      (tools: any[]) => wrapToolsWithPermanentAgentGating(tools, {
+        permissionPolicy: { presetId: "locked-down", rules: { ...blockAll } },
+        createApprovalRequest: vi.fn(),
+        findPendingApprovalRequest: vi.fn(),
+      } as any),
+      (tools: any[]) => wrapToolsWithActionGate(tools, {
+        agentId: "agent-1",
+        agentName: "Agent",
+        isEphemeral: false,
+        taskId: "FN-1",
+        permissionPolicy: { presetId: "locked-down", rules: { ...blockAll } },
+        createApprovalRequest: vi.fn(),
+        findApprovalByDedupeKey: vi.fn(),
+        pauseForApproval: vi.fn(),
+      } as any),
+      (tools: any[]) => wrapToolsWithBoundary(tools, "/project/.worktrees/fn-1", "/project"),
+      (tools: any[]) => wrapToolsWithBashContainment(tools),
+      (tools: any[]) => wrapToolsWithRtkRewrite(tools, { mode: "off" }),
+      (tools: any[]) => wrapToolsWithOutputBudget(tools, { maxChars: 4000 }),
+    ].reduce((tools, wrap) => wrap(tools), [tool as any]);
+
+    const result: any = await wrapped[0].execute("t1", {});
+    expect(result.terminate).toBe(true);
+    expect(result.content[0].text).toBe("Heartbeat complete. Summary: reviewed inbox");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it.each<[
     "locked-down" | "approval-required",
     Record<string, "block" | "require-approval">,

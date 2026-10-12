@@ -9,7 +9,7 @@ Operator and implementer playbooks for durable (permanent) agent heartbeats. Hea
 1. Wake (timer / assignment / message / on-demand)
 2. Identity + Wake Delta + procedure
 3. **One** concrete coordination action
-4. Disposition + `fn_heartbeat_done`
+4. Disposition + `fn_heartbeat_done` (terminal: it ends this wake)
 
 Do **not** implement code, run tests, or commit from a default strict heartbeat.
 
@@ -63,6 +63,7 @@ fn_heartbeat_done summary: "No new inbox or wake delta; no open coordination lev
 | Retry checkout on conflict | Exit / other work |
 | Pause task on failure | Log + create/delegate follow-up |
 | Duplicate `fn_task_create` without scan | Scan open tasks first |
+| Batch `fn_heartbeat_done` with another tool, or call it again after it answered | Call it alone in its batch; one done per wake |
 | Self-only “please review” with no real review path | Explicit reviewer / `in-review` handoff |
 
 ## Related

@@ -4285,6 +4285,149 @@ describe("executeHeartbeat", () => {
     });
   });
 
+  describe("fn_heartbeat_done termination", () => {
+    /*
+    FNXC:HeartbeatDoneTermination 2026-10-12-10:44:
+    RUFU-354's `engineer` lane called `fn_heartbeat_done` eight times inside 361 s, twice in a row
+    2.603 s apart with no tool call between them, because a done result told pi nothing about ending
+    the run and the model simply kept going, overwriting the run summary with the last call. These pins
+    hold the three properties that make done terminal: the first call keeps its exact result text, every
+    call carries pi's batch-termination hint, and a repeat records nothing.
+
+    The helper mirrors `@earendil-works/pi-agent-core`'s documented rule — a finalized tool batch ends
+    the agent run only when EVERY finalized result in that batch sets the hint — so the batched-with-
+    another-tool case is asserted as NOT terminating (the known boundary) instead of wished away.
+    */
+    function piBatchTerminates(results: Array<{ terminate?: boolean }>): boolean {
+      return results.length > 0 && results.every((result) => result.terminate === true);
+    }
+
+    /** `completeRun` writes the terminal run row through `saveRun`, so this counts completions. */
+    function completedRunCount(store: AgentStore): number {
+      return vi
+        .mocked(store.saveRun)
+        .mock.calls.filter(([run]) => (run as { status?: string }).status === "completed").length;
+    }
+
+    function captureDoneTool() {
+      const mockSession = createMockAgentSession();
+      const captured: { tool?: any } = {};
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        // fn_heartbeat_done is last in the customTools array.
+        captured.tool = opts.customTools[opts.customTools.length - 1];
+        return { session: mockSession as any };
+      });
+      return { mockSession, captured };
+    }
+
+    it("ends the run on the first call while keeping the model-facing text unchanged", async () => {
+      const store = createStoreWithAgentForExec();
+      const { mockSession, captured } = captureDoneTool();
+      let firstResult: any;
+      mockSession.prompt = vi.fn().mockImplementation(async () => {
+        firstResult = await captured.tool.execute("call-1", { summary: "Reviewed inbox, nothing to do" });
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const run = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect(firstResult.content[0].text).toBe("Heartbeat complete. Summary: Reviewed inbox, nothing to do");
+      expect(firstResult.terminate).toBe(true);
+      expect(piBatchTerminates([firstResult])).toBe(true);
+      expect((run.resultJson as any).summary).toBe("Reviewed inbox, nothing to do");
+      expect(completedRunCount(store)).toBe(1);
+    });
+
+    it("answers a repeated done as a terminal no-op and keeps the first summary", async () => {
+      const store = createStoreWithAgentForExec();
+      const { mockSession, captured } = captureDoneTool();
+      let results: any[] = [];
+      mockSession.prompt = vi.fn().mockImplementation(async () => {
+        // The RUFU-354 shape: done again seconds later, still inside the same prompt loop.
+        results = [
+          await captured.tool.execute("call-1", { summary: "first done" }),
+          await captured.tool.execute("call-2", { summary: "repeat that must not win" }),
+          await captured.tool.execute("call-3", {}),
+        ];
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const run = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect(results[0].content[0].text).toBe("Heartbeat complete. Summary: first done");
+      expect(results[1].content[0].text).toBe(
+        "Heartbeat already complete for this run. Nothing further was recorded; this turn is ending.",
+      );
+      expect(results[2].content[0].text).toBe(results[1].content[0].text);
+      expect(results.map((result) => result.terminate)).toEqual([true, true, true]);
+      expect(results[1].details).toEqual({ repeated: true });
+      // The repeat neither re-stamps the summary nor adds a completion for the same wake.
+      expect((run.resultJson as any).summary).toBe("first done");
+      expect(completedRunCount(store)).toBe(1);
+    });
+
+    it("keeps a summary-free no-op heartbeat valid and terminal", async () => {
+      const store = createStoreWithAgentForExec();
+      const { mockSession, captured } = captureDoneTool();
+      let result: any;
+      mockSession.prompt = vi.fn().mockImplementation(async () => {
+        result = await captured.tool.execute("call-1", {});
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const run = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect(result.content[0].text).toBe("Heartbeat complete.");
+      expect(result.terminate).toBe(true);
+      expect((run.resultJson as any).summary).toBeUndefined();
+      expect(completedRunCount(store)).toBe(1);
+    });
+
+    it("gives every later wake its own first done instead of a stale no-op", async () => {
+      const store = createStoreWithAgentForExec();
+      const { mockSession, captured } = captureDoneTool();
+      const texts: string[] = [];
+      const summaries = ["wake one", "wake two"];
+      let wake = 0;
+      mockSession.prompt = vi.fn().mockImplementation(async () => {
+        const summary = summaries[wake];
+        const result = await captured.tool.execute(`call-${wake + 1}`, { summary });
+        texts.push(result.content[0].text);
+        wake += 1;
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const first = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+      const second = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      // Termination state is per run: a new wake must never be answered "already complete".
+      expect(texts).toEqual([
+        "Heartbeat complete. Summary: wake one",
+        "Heartbeat complete. Summary: wake two",
+      ]);
+      expect((first.resultJson as any).summary).toBe("wake one");
+      expect((second.resultJson as any).summary).toBe("wake two");
+      expect(completedRunCount(store)).toBe(2);
+    });
+
+    it("documents the batch boundary: done bundled with a non-terminating tool does not end the batch", async () => {
+      const store = createStoreWithAgentForExec();
+      const { mockSession, captured } = captureDoneTool();
+      let doneResult: any;
+      mockSession.prompt = vi.fn().mockImplementation(async () => {
+        doneResult = await captured.tool.execute("call-1", { summary: "bundled" });
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      // A stand-in for any other finalized tool result in the same batch: same pi shape, no hint.
+      const otherToolResult = { content: [{ type: "text" as const, text: "tool output" }], details: {} };
+      expect(piBatchTerminates([doneResult, otherToolResult])).toBe(false);
+      expect(piBatchTerminates([doneResult])).toBe(true);
+    });
+  });
+
   describe("fn_task_create tool", () => {
     /*
     FNXC:EngineTests 2026-09-20-05:15:

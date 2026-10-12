@@ -1034,7 +1034,7 @@ Heartbeat runs are composed from multiple prompt layers so each wake has full id
    - No-task runs use the ambient/no-task heartbeat system prompt (tool-aligned: no task-scoped tools).
 2. **Workspace tool mode**
    - Heartbeat sessions are created with coding-capable workspace tools (`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`) inside worktree boundary guards.
-   - Heartbeat behavior still stays lightweight: one concrete action per run, then `fn_heartbeat_done`.
+   - Heartbeat behavior still stays lightweight: one concrete action per run, then `fn_heartbeat_done`, which terminates the run.
    - Engine-owned heartbeat tools are layered on top for both task-scoped and no-task runs. Permanent/custom agents get the safe coordination/work-discovery surface (task creation/delegation, agent config/provisioning, artifacts, memory, messaging, goals/evaluations/identity/reflection, workflow discovery, bounded research, and `fn_ask_question`), while task-only tools such as `fn_task_log`, `fn_task_logs_read`, and task documents stay limited to task-scoped runs (`fn_task_logs_read` is task-scoped to *register* — a no-task heartbeat gets no log reader — but once registered it may *read* a named card's log via `task_id`/`id`).
 2. **Agent identity and instructions bundle**
    - Inline instructions (`instructionsText`)
@@ -1145,9 +1145,22 @@ Expected behavior for both manual and automatic triggers:
 - Process wake delta first (including message/comment wakes)
 - Re-evaluate assignment state
 - Take exactly one concrete next action
-- Finish with `fn_heartbeat_done`
+- Finish with `fn_heartbeat_done` (terminal for that wake — see Heartbeat Completion Is Terminal)
 
 Messages remain an important input signal, but they do not replace the heartbeat procedure.
+
+### Heartbeat Completion Is Terminal
+
+`fn_heartbeat_done` ends the wake. Its result carries the runtime's batch-termination hint, so once the model calls it the session stops requesting further turns instead of continuing the loop, and one wake yields exactly one completed heartbeat run. The first call records the wake's disposition (`heartbeatSummary`, tool-call count, session stats, token accumulation, message read-state) and answers `Heartbeat complete.` — with `Summary: …` appended when a summary was given.
+
+A second call inside the same wake is a terminal **no-op**: it records nothing, answers `Heartbeat already complete for this run. Nothing further was recorded; this turn is ending.`, and cannot overwrite the disposition the first call wrote. Termination state is per run, so every later wake gets a normal first completion.
+
+Two boundaries matter for anything else wired to this:
+
+- **Batch rule.** The runtime ends the run only when *every* finalized tool result in that batch signals termination. `fn_heartbeat_done` bundled with another tool in one batch therefore does not end that batch — the next, un-bundled call will. That is why the tool description says to call it alone in its batch.
+- **No scheduler backoff is involved.** This is in-session termination only; the next-wake math is untouched, so a new message or comment wake still dispatches immediately.
+
+RUFU-354 is the motivating incident: one lane called `fn_heartbeat_done` eight times inside 361 s — twice in a row 2.603 s apart with no tool call between them — because a done result was only text, the model kept going, and the last call's summary overwrote the run's disposition.
 
 ### Heartbeat/Executor Separation (Current Behavior)
 

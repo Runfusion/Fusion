@@ -3171,6 +3171,21 @@ export class HeartbeatMonitor {
         let heartbeatSummary: string | undefined;
         let stdoutExcerpt = "";
 
+        /*
+        FNXC:HeartbeatDoneTermination 2026-10-12-10:44:
+        RUFU-355: `fn_heartbeat_done` used to be a plain recorder that returned a sentence, so pi's turn
+        loop handed the model another turn after it had already declared the heartbeat finished. On
+        RUFU-354's `engineer` lane the tool was called eight times inside 361 s, twice in a row 2.603 s
+        apart with no tool call between them, and every repeat re-stamped `heartbeatSummary` and re-ran
+        the read-marker bookkeeping while the tool stream continued seamlessly across each boundary.
+        Done is now terminal for the heartbeat run: the first call claims the run's summary and keeps its
+        exact result text, and every call returns pi's `AgentToolResult.terminate` hint so the tool batch
+        ends the agent run rather than continuing it. A repeat records nothing — the first summary wins,
+        and the single `completeRun("completed")` reached after the awaited prompt stays the run's only
+        completion, so one wake still produces exactly one completed heartbeat run.
+        */
+        let heartbeatDoneRecorded = false;
+
         const appendStdoutExcerpt = (delta: string): void => {
           if (stdoutExcerpt.length >= STDOUT_EXCERPT_LIMIT) {
             return;
@@ -3183,9 +3198,29 @@ export class HeartbeatMonitor {
         const heartbeatDoneTool: ToolDefinition = {
           name: "fn_heartbeat_done",
           label: "Heartbeat Done",
-          description: "Signal that the heartbeat execution is complete. Call when finished.",
+          description: "Signal that the heartbeat execution is complete. Call when finished, as the only tool call in its batch: it ends this heartbeat run.",
           parameters: heartbeatDoneParams,
           execute: async (_id: string, params: Static<typeof heartbeatDoneParams>) => {
+            /*
+            FNXC:HeartbeatDoneTermination 2026-10-12-10:44:
+            Repeat calls answer as a distinct terminal no-op instead of re-running completion bookkeeping,
+            and still carry the termination hint: pi ends a tool batch only when every finalized result in
+            it sets the hint, so a batch that bundled `fn_heartbeat_done` with another tool continues and
+            the next (repeat) call ends the run on its own. `terminate` survives the whole pi wrapper chain
+            because `fn_heartbeat_done` is in `GATE_BYPASS_TOOL_NAMES` (neither gate re-wraps it) and
+            `wrapToolsWithOutputBudget` rebuilds the result with a spread.
+            */
+            if (heartbeatDoneRecorded) {
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: "Heartbeat already complete for this run. Nothing further was recorded; this turn is ending.",
+                }],
+                details: { repeated: true },
+                terminate: true,
+              };
+            }
+            heartbeatDoneRecorded = true;
             if (params.summary) {
               heartbeatSummary = params.summary;
             }
@@ -3195,6 +3230,7 @@ export class HeartbeatMonitor {
                 text: `Heartbeat complete.${params.summary ? ` Summary: ${params.summary}` : ""}`,
               }],
               details: {},
+              terminate: true,
             };
           },
         };

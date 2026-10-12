@@ -103,7 +103,7 @@ Note: step-session execution (`step-session-executor.ts`) reuses executor coordi
 
 | Tool | Purpose | Parameters |
 |---|---|---|
-| `fn_heartbeat_done` | Signal end of heartbeat run with optional summary | `summary?` (string) |
+| `fn_heartbeat_done` | Signal end of heartbeat run with optional summary. Terminal: it ends this wake, so call it alone in its batch (bundling it with another tool delays termination to the next un-bundled call); a repeat in the same run is a no-op that records nothing | `summary?` (string) |
 
 ## Workflow settings: declarations vs. values
 
