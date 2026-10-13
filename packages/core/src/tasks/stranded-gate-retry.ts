@@ -5,7 +5,6 @@ import { resolveRequiredPreMergeStepIds } from "../merge/required-pre-merge-step
 import { findVerdictLessFailedRequiredGates, isVerdictLessFailedGateRow } from "../merge/pre-merge-approval.js";
 import { workflowDeclaresColumnModel } from "../workflows/workflow-transitions.js";
 import { buildManualRetryResetPatch, type ManualRetryResetPatch } from "./manual-retry-reset.js";
-import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 
 /*
 FNXC:StrandedGateRetry 2026-10-13 (STAS-299, from the STAS-281 stall):
@@ -61,7 +60,6 @@ export type StrandedGateRetryRefusal =
  * and a gate row with an authored REVISE is the remediation lane, never a re-run.
  */
 export type StrandedGateRetryTask = Pick<Task,
-  | "id"
   | "column"
   | "status"
   | "approvedPlanFingerprint"
@@ -96,25 +94,6 @@ export function classifyStrandedGateRetry(input: {
   if (gateStepIds.length === 0) return { kind: "not-stranded", reason: "no-verdict-less-required-gate" };
 
   return { kind: "stranded-gate", gateStepIds };
-}
-
-/**
- * Classify against the card's OWN workflow, resolved from the store it lives in.
- *
- * Retry surfaces hold a TaskStore, not an IR, and each of them resolving the IR themselves is how
- * two surfaces end up classifying the same card against two different boards (FNXC:StateMachine
- * 2026-07-31-20:10 measured a sync resolver answering with the DEFAULT workflow for every
- * PostgreSQL task). One call, one IR source, one answer.
- *
- * An unresolvable workflow classifies as `legacy-board` rather than throwing: the surface then keeps
- * the retry behavior it already had, so the new class can only ever ADD a non-destructive route.
- */
-export async function classifyStrandedGateRetryForTask(
-  store: Parameters<typeof resolveWorkflowIrForTask>[0],
-  task: StrandedGateRetryTask,
-): Promise<StrandedGateRetryClassification> {
-  const ir = await resolveWorkflowIrForTask(store, task.id).catch(() => undefined);
-  return classifyStrandedGateRetry({ task, ir });
 }
 
 /**

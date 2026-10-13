@@ -1418,7 +1418,6 @@ export {
 } from "./tasks/task-column-restart.js";
 export {
   classifyStrandedGateRetry,
-  classifyStrandedGateRetryForTask,
   buildStrandedGateRetryPatch,
 } from "./tasks/stranded-gate-retry.js";
 export type {
