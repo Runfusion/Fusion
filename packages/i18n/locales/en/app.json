@@ -6688,6 +6688,7 @@
       "customNtfyServerURLOptional": "Custom ntfy server URL (optional)",
       "dashboardHostname": "Dashboard Hostname",
       "discord": "Discord",
+      "feishu": "Feishu / Lark",
       "enable": " Enable ",
       "failureNotificationDelayMs": "Failure notification delay (ms)",
       "failureNotificationMode": "Failure notification mode",
