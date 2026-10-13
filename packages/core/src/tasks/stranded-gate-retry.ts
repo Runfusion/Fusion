@@ -1,4 +1,5 @@
-import type { Task, WorkflowIr, WorkflowIrV2 } from "../types.js";
+import type { Task } from "../types.js";
+import type { WorkflowIr, WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 import { resolveColumnFlags } from "../workflows/trait-registry.js";
 import { resolveRequiredPreMergeStepIds } from "../merge/required-pre-merge-steps.js";
 import { findVerdictLessFailedRequiredGates, isVerdictLessFailedGateRow } from "../merge/pre-merge-approval.js";
@@ -35,30 +36,45 @@ function statusIsStranded(status: Task["status"] | undefined | null): boolean {
   return status === undefined || status === null || status === "failed" || status === "stuck-killed";
 }
 
-export interface StrandedGateRetryClassification {
-  kind: "stranded-gate";
-  /** Required pre-merge gates whose latest row failed without ever carrying a verdict. */
-  gateStepIds: string[];
-}
+export type StrandedGateRetryClassification =
+  | { kind: "stranded-gate"; gateStepIds: string[] }
+  | { kind: "not-stranded"; reason: StrandedGateRetryRefusal };
+
+/** Why a card is NOT this retry class — so a retry surface can answer "why not", not just "no". */
+export type StrandedGateRetryRefusal =
+  | "legacy-board"
+  | "unknown-column"
+  | "lane-owns-its-own-recovery"
+  | "status-owned-by-another-lane"
+  | "no-approved-plan"
+  | "no-verdict-less-required-gate";
 
 /**
  * Whether the card is parked by plumbing alone: it dwells in a pre-execution (hold/intake) lane,
  * still holds the plan its reviewer approved, and its only failure evidence is a required gate row
  * that failed with no verdict.
  *
- * Deliberately narrow. A WIP or review card belongs to the execution/merge recovery lanes; a card
- * carrying any other status belongs to the lane that stamped it; and a gate row with an authored
- * REVISE is the remediation lane, never a re-run. Anything failing these checks keeps today's
- * behavior — including a genuine planning/replan card, which stays destructive-restartable.
+ * Deliberately narrow, and each refusal names the leg that failed: a WIP/review/complete card is
+ * owned by the execution, in-review, or merge recovery lanes; a card carrying any other status
+ * belongs to the lane that stamped it (`needs-replan` and friends keep their destructive restart);
+ * and a gate row with an authored REVISE is the remediation lane, never a re-run.
  */
 export function classifyStrandedGateRetry(input: {
-  task: Pick<Task, "column" | "status" | "approvedPlanFingerprint" | "workflowStepResults" | "enabledWorkflowSteps" | "repositoryScope">;
+  task: Pick<Task,
+    | "column"
+    | "status"
+    | "approvedPlanFingerprint"
+    | "workflowStepResults"
+    | "enabledWorkflowSteps"
+    | "repositoryScope"
+    | "executionMode"
+    | "humanPlanApproval">;
   ir: WorkflowIr | undefined;
-}): StrandedGateRetryClassification | null {
+}): StrandedGateRetryClassification {
   const { task, ir } = input;
-  if (!ir || !workflowDeclaresColumnModel(ir)) return null;
+  if (!ir || !workflowDeclaresColumnModel(ir)) return { kind: "not-stranded", reason: "legacy-board" };
   const column = (ir as WorkflowIrV2).columns?.find((entry) => entry.id === task.column);
-  if (!column) return null;
+  if (!column) return { kind: "not-stranded", reason: "unknown-column" };
 
   const flags = resolveColumnFlags(column);
   const isPreExecutionLane = (flags.hold === true || flags.intake === true)
@@ -66,14 +82,14 @@ export function classifyStrandedGateRetry(input: {
     && flags.mergeBlocker !== true
     && flags.humanReview !== true
     && flags.complete !== true;
-  if (!isPreExecutionLane) return null;
+  if (!isPreExecutionLane) return { kind: "not-stranded", reason: "lane-owns-its-own-recovery" };
 
-  if (!statusIsStranded(task.status)) return null;
-  if (!task.approvedPlanFingerprint) return null;
+  if (!statusIsStranded(task.status)) return { kind: "not-stranded", reason: "status-owned-by-another-lane" };
+  if (!task.approvedPlanFingerprint) return { kind: "not-stranded", reason: "no-approved-plan" };
 
   const requiredPreMergeStepIds = resolveRequiredPreMergeStepIds(ir, task.enabledWorkflowSteps, task);
   const gateStepIds = findVerdictLessFailedRequiredGates(task, { requiredPreMergeStepIds });
-  if (gateStepIds.length === 0) return null;
+  if (gateStepIds.length === 0) return { kind: "not-stranded", reason: "no-verdict-less-required-gate" };
 
   return { kind: "stranded-gate", gateStepIds };
 }

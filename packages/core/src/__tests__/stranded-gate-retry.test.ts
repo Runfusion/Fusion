@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Task, WorkflowIrV2 } from "../types.js";
+import type { Task } from "../types.js";
+import type { WorkflowIr, WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 import { buildStrandedGateRetryPatch, classifyStrandedGateRetry } from "../tasks/stranded-gate-retry.js";
 
@@ -42,8 +43,6 @@ function classify(task: Task, ir: WorkflowIr = BUILTIN_CODING_WORKFLOW_IR as unk
   return classifyStrandedGateRetry({ task, ir });
 }
 
-type WorkflowIr = Parameters<typeof classifyStrandedGateRetry>[0]["ir"];
-
 describe("classifyStrandedGateRetry", () => {
   it("names the STAS-281 shape: hold lane + approved plan + verdict-less failed required gate", () => {
     expect(classify(strandedTask())).toEqual({ kind: "stranded-gate", gateStepIds: ["plan-review"] });
@@ -80,7 +79,8 @@ describe("classifyStrandedGateRetry", () => {
     /* WIP/review/complete cards are owned by the execution, in-review and merge recovery lanes;
        re-queueing them from this hatch would fight those owners. */
     for (const column of ["in-progress", "in-review", "done"]) {
-      expect(classify(strandedTask({ column } as Partial<Task>)), column).toBeNull();
+      expect(classify(strandedTask({ column } as Partial<Task>)), column)
+        .toEqual({ kind: "not-stranded", reason: "lane-owns-its-own-recovery" });
     }
   });
 
@@ -88,27 +88,29 @@ describe("classifyStrandedGateRetry", () => {
     const authored = strandedTask({
       workflowStepResults: [{ ...verdictlessPlanGateRow, verdict: "REVISE" as const }],
     } as Partial<Task>);
-    expect(classify(authored)).toBeNull();
+    expect(classify(authored)).toEqual({ kind: "not-stranded", reason: "no-verdict-less-required-gate" });
   });
 
   it("refuses a card whose plan was never approved (the genuine planning/replan shape)", () => {
-    expect(classify(strandedTask({ approvedPlanFingerprint: undefined } as Partial<Task>))).toBeNull();
+    expect(classify(strandedTask({ approvedPlanFingerprint: undefined } as Partial<Task>)))
+      .toEqual({ kind: "not-stranded", reason: "no-approved-plan" });
   });
 
   it("refuses statuses owned by another lane, so the destructive restart stays available", () => {
     for (const status of ["needs-replan", "awaiting-approval", "planning", "merging"]) {
-      expect(classify(strandedTask({ status } as Partial<Task>)), status).toBeNull();
+      expect(classify(strandedTask({ status } as Partial<Task>)), status)
+        .toEqual({ kind: "not-stranded", reason: "status-owned-by-another-lane" });
     }
   });
 
   it("refuses a card whose gate row is not required by its workflow", () => {
     const optedOut = strandedTask({ enabledWorkflowSteps: [] } as Partial<Task>);
-    expect(classify(optedOut)).toBeNull();
+    expect(classify(optedOut)).toEqual({ kind: "not-stranded", reason: "no-verdict-less-required-gate" });
   });
 
   it("refuses a workflow that declares no column model", () => {
     const legacyIr = { version: "v1", nodes: [], edges: [] } as unknown as WorkflowIr;
-    expect(classify(strandedTask(), legacyIr)).toBeNull();
+    expect(classify(strandedTask(), legacyIr)).toEqual({ kind: "not-stranded", reason: "legacy-board" });
   });
 });
 
