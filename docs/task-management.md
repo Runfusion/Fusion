@@ -349,6 +349,18 @@ Fusion task columns use persisted values as the API/filter contract. The visible
    - FNXC:AutoMergeLifecycle 2026-07-07-12:00 (FN-7641): a **proven-merge recovery rehome** is now a recoverable state-machine transition, not a terminal error. `finalizeProvenAutoMergeTask` already verifies `hasDurableMergeProof` + `getTaskHardMergeBlocker` before requesting `done` from a stale legacy column (`todo`/`in-progress`/`triage`) via `store.moveTask(id, "done", { recoveryRehome: true, preserveProgress: true })`; the store now accepts that legacy→legacy recovery rehome (previously rejected as `Invalid transition: 'todo' → 'done'`, stranding a workspace-merge-landed card in `todo` forever — NEXT-010). Only the proven-merge `recoveryRehome` adjacency check is relaxed; the `in-review → done` merge-blocker guard and normal (non-recovery) transitions are unchanged.
    - FNXC:StateMachine 2026-07-07-12:00 (FN-7641): setting a task's `nodeId` override to the workflow's terminal `end` node never silently no-ops. With durable merge proof (`mergeDetails.mergeConfirmed === true`) it finalizes the card to `done` via the same recovery-rehome path above; without proof it returns an explicit, actionable error instead of writing the field and leaving the card unchanged (NEXT-322 / NEXT-375 / NEXT-340 — a human/agent merging the branch tip directly into `main`, out-of-band, then setting `nodeId='end'`, used to leave the card silently stuck in `in-review`). This contract is enforced once in `TaskStore.updateTask` / `node-override-guard.ts` and shared identically by the dashboard PATCH `/api/tasks/:id` route and the CLI `fn_task_update` tool.
 
+#### Self-healing: a dead review gate parks the card in place
+
+When a review session dies without a verdict, self-healing declares its step result orphaned (FN-8492) and rewrites it to `failed`. That rewrite is now also a lifecycle action:
+
+- A card sitting in a **hold-role lane** (resolved by trait, not by the literal `todo`) with no status of its own is stamped `status: "failed"` plus an explanatory `error` in the same write. The card does **not** move — Fusion has no `failed` lane, and a lane move would break the recovery pass itself.
+- Cards in any other lane keep the old rewrite-only behaviour, and a card that already carries a status is left to its existing owner.
+- The park is quiet and owned: the stranded-hold continuation sweep refuses to re-seed the failed gate (`retry-owned`) until something discharges the failure. It never auto-retries a parked card.
+- **The escape hatch is an ordinary retry.** On the dashboard Retry button, `fn task retry`, the extension's `fn_task_retry`, and the engine's chat retry, a card stranded behind a verdict-less failed gate is discharged **in place**: the failed gate row is dropped so Plan/Code Review re-runs, the card returns to normal scheduling, and its approved plan, step list, worktree, and branch are preserved. Retry never deletes an approved specification; destructive re-planning stays reserved for cards that genuinely need a new plan and for explicit actions (`Reset`, `Reject plan`, `Spec revise`, `Spec rebuild`).
+- A transient `TaskStore boot timed out` no longer masquerades as a permission denial: the tool answers with a retryable, typed transient error instead of "failing closed", and the backoff window is preserved.
+
+This closes the STAS-281 dead zone, where a P0 card stood 2.2 days in `todo` with a failed `plan-review` row, a fully pending checklist, no failure status, and no reachable lever for an agent or an operator.
+
 #### Self-healing: stranded-completed-todo recovery
 
 Fusion now enforces a recovery invariant for completed work that is accidentally returned to `todo`:

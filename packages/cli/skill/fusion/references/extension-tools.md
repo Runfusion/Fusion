@@ -89,11 +89,11 @@ Unpause a task — resumes automated agent and scheduler interaction.
 
 ### fn_task_retry
 
-Retry a failed task — clears the error state. Non-review failures move to todo; in-review execution failures move to todo preserving progress; in-review merge failures stay in-place for auto-merge retry.
+Retry a failed task — clears the error state. Non-review failures move to todo; in-review execution failures move to todo preserving progress; in-review merge failures stay in-place for auto-merge retry. Also reaches a card stranded by a dead workflow gate (a required Plan/Code Review row that failed with no verdict while the card sits in a pre-execution lane with an approved plan) and discharges that gate in place — no move, no discarded plan.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string | ✓ | Task ID to retry (e.g. FN-001). Must be in 'failed' state. |
+| `id` | string | ✓ | Task ID to retry (e.g. FN-001). Accepts a 'failed'/'stuck-killed' card, a stalled in-review card, and a pre-execution card parked behind a verdict-less failed gate. |
 
 ### fn_task_bypass_review
 
