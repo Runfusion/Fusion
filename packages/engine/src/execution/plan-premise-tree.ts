@@ -145,6 +145,15 @@ export async function resolveCardGitIdentity(store: TaskStore, task: Task): Prom
   a rung that never got an answer. The ladder may still descend to a rung that does answer, but every
   unanswered probe is recorded so the `unavailable` at the bottom names the failure instead of
   reporting a card with a broken git as a card that has no branch and no base.
+
+  Named fail direction of that descent: when it is an UPPER rung whose probe failed, the verdict is
+  measured at the next rung that answers, so a worktree that cannot answer `rev-parse` is measured at
+  its branch tip. In the usual case the two are the same commit — a branch checked out in a worktree
+  moves with each of the card's commits — but they are not the same object when `task.branch` names a
+  branch other than the one the worktree holds, and an absence measured at the wrong tip could then
+  read as satisfied. Refusing to descend would be the louder change and it would hard-refuse cards
+  that are legitimately measurable from their branch tip, so the descent stays; what this card
+  required is narrower and absolute: a probe that never answered may not be reported as an answer.
   */
   const unanswered: string[] = [];
   const answeredCommit = async (repo: string, ref: string): Promise<string> => {
