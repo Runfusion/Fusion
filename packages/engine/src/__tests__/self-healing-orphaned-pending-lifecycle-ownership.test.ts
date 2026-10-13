@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import {
   BUILTIN_CODING_WORKFLOW_IR,
   classifyStrandedGateRetry,
+  resolveColumnFlags,
   type Settings, type Task, type TaskStore, type WorkflowIr, type WorkflowStepResult } from "@fusion/core";
 
 /*
@@ -61,11 +62,25 @@ function storeFor(tasks: Task[]): TaskStore & EventEmitter {
       return all.slice(options?.offset ?? 0, (options?.offset ?? 0) + (options?.limit ?? all.length));
     }),
     getTask: vi.fn(async (id: string) => tasksById.get(id)),
+    getTaskWorkflowSelection: vi.fn(() => undefined),
     updateTask: vi.fn(async (id: string, patch: Partial<Task>) => {
       const next = { ...tasksById.get(id)!, ...patch } as Task;
       tasksById.set(id, next);
       return next;
     }),
+    updateTaskAtomic: vi.fn(async (id: string, mutate: (current: Task) => Partial<Task> | null) => {
+      const patch = await mutate(tasksById.get(id)!);
+      if (!patch) return tasksById.get(id)!;
+      const next = { ...tasksById.get(id)!, ...patch } as Task;
+      tasksById.set(id, next);
+      return next;
+    }),
+    logEntry: vi.fn(async (id: string, action: string) => {
+      const next = { ...tasksById.get(id)!, log: [...tasksById.get(id)!.log, { action, timestamp: new Date().toISOString() }] } as Task;
+      tasksById.set(id, next);
+      return next;
+    }),
+    moveTask: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
   }) as unknown as TaskStore & EventEmitter;
 }
@@ -79,6 +94,8 @@ function updateSink(store: TaskStore & EventEmitter) {
 }
 
 import { SelfHealingManager } from "../self-healing.js";
+import { evaluateStrandedHoldContinuation } from "../plan-review-continuation.js";
+import { createTaskRetryTool } from "../agent-tools.js";
 import { executingTaskLock } from "../agents/active-session-registry.js";
 
 describe("STAS-299: self-heal owns the card lifecycle after failing an orphaned gate", () => {
@@ -203,5 +220,80 @@ describe("STAS-299: self-heal owns the card lifecycle after failing an orphaned 
     expect((await store.getTask("FN-LIVE"))?.status).toBeUndefined();
     expect((await store.getTask("FN-LIVE"))?.workflowStepResults?.[0]?.status).toBe("pending");
     executingTaskLock._clearForTest();
+  });
+
+  /*
+  FNXC:OrphanedPendingSteps 2026-10-13 (STAS-299 requirements 1-3, measured incident):
+  STAS-281 as the engine actually held it: a P0 card in the hold lane, plan approved and already
+  revised once (`7a73aaff`), 9/9 checklist steps still pending, Plan Review's row orphaned at
+  `pending` with no session and no lease, and nothing dispatching it for 12.5 hours before it became
+  2.2 days. The individual seams are covered above and beside this file; what was never asserted is
+  the CHAIN — that the sweep's own fix hands the card to the retry contract, that the recovery sweep
+  which would otherwise re-run the dead gate keeps off it while parked, and that one ordinary
+  `fn_task_retry` call ends the park without touching the approved plan.
+  */
+  it("carries the incident card from the sweep through the park to the hatch and back to a re-armable gate", async () => {
+    const stalledFor = 12.5 * 60 * 60_000;
+    const stalledAt = new Date(Date.now() - stalledFor).toISOString();
+    const incident = task("STAS-281", {
+      status: undefined,
+      agentId: "agent-9fffa4b1",
+      columnMovedAt: stalledAt,
+      createdAt: stalledAt,
+      updatedAt: stalledAt,
+      steps: Array.from({ length: 9 }, (_unused, index) => ({ name: `Step ${index + 1}`, status: "pending" as const })),
+      currentStep: 0,
+      worktree: "/repo/.fusion/worktrees/stas-281",
+      branch: "fusion/stas-281-plan-review",
+    });
+    const store = storeFor([incident]);
+
+    const holdFlags = resolveColumnFlags((BUILTIN_CODING_WORKFLOW_IR as unknown as WorkflowIr).columns!.find((column) => column.id === "todo")!);
+    const continuationState = (card: Task) => evaluateStrandedHoldContinuation({
+      task: card,
+      columnFlags: holdFlags,
+      ir: BUILTIN_CODING_WORKFLOW_IR as unknown as WorkflowIr,
+      continuations: [],
+      stepResults: card.workflowStepResults,
+      effectiveSettings: { autoMerge: true },
+      enginePaused: false,
+      promptContent: "# Tier B recovery\n\nDischarge the plan-review gate without discarding the approved specification.",
+      live: false,
+      stalenessMs: 600_000,
+      graceMs: 0,
+    });
+
+    // 1. Requirement 1's shape: no live session, no lease — the sweep declares the gate dead.
+    expect(await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileOrphanedPendingStepResults()).toBe(1);
+
+    const parked = (await store.getTask("STAS-281"))!;
+    expect(parked.workflowStepResults?.[0]).toMatchObject({ workflowStepId: "plan-review", status: "failed" });
+    // 2. Requirement 2: the forbidden terminal state is gone — failure became a status, not a lane.
+    expect(parked.status).toBe("failed");
+    expect(parked.error).toContain("FN-8492");
+    expect(parked.column).toBe("todo");
+    expect(parked.steps).toHaveLength(9);
+
+    // 3. The park is owned: the continuation sweep that would re-arm the dead gate names the hatch.
+    expect(continuationState(parked)).toMatchObject({ stranded: false, reason: "retry-owned" });
+
+    // 4. Requirement 3's escape hatch, called the way an in-session agent calls it.
+    const retry = await createTaskRetryTool(store, {}).execute("retry", { id: "STAS-281" }, undefined as never, undefined as never, undefined as never);
+    expect((retry as { isError?: boolean }).isError).not.toBe(true);
+
+    const retried = (await store.getTask("STAS-281"))!;
+    expect(retried.column).toBe("todo");
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(retried.workflowStepResults).toEqual([]);
+    expect(retried.status).toBeFalsy();
+    expect(retried.error).toBeFalsy();
+    // Invariant C: the plan an operator already approved, and the work built on it, survive the retry.
+    expect(retried.approvedPlanFingerprint).toBe("7a73aaff");
+    expect(retried.steps).toHaveLength(9);
+    expect(retried.worktree).toBe("/repo/.fusion/worktrees/stas-281");
+    expect(retried.branch).toBe("fusion/stas-281-plan-review");
+
+    // 5. The other direction of ownership: with the failure discharged, the gate is re-armable again.
+    expect(continuationState(retried)).toMatchObject({ stranded: true, reason: "ready" });
   });
 });
