@@ -94,6 +94,7 @@ import {
   createMilestone,
   getMilestone,
   listMilestones,
+  rollupFeatureCountsBySlice,
   listAllMilestones,
   updateMilestone,
   deleteMilestone,
@@ -112,6 +113,7 @@ import {
   listFeatures,
   listFeaturesForMilestone,
   listFeaturesForMission,
+  featureTaskRefs,
   listAllFeatures,
   updateFeature,
   deleteFeature,
@@ -383,7 +385,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (missions.length === 0) return [];
     const allMilestones = await listAllMilestones(this.db);
     const allSlices = await listAllSlices(this.db);
-    const allFeatures = await listAllFeatures(this.db);
+    const featureCounts = await rollupFeatureCountsBySlice(this.db);
     const goalCountByMission = await countGoalsByMission(this.db);
     const eventCountByMission = await countEventsByMission(this.db);
 
@@ -392,12 +394,6 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       const list = slicesByMilestone.get(slice.milestoneId) ?? [];
       list.push(slice);
       slicesByMilestone.set(slice.milestoneId, list);
-    }
-    const featuresBySlice = new Map<string, MissionFeature[]>();
-    for (const feature of allFeatures) {
-      const list = featuresBySlice.get(feature.sliceId) ?? [];
-      list.push(feature);
-      featuresBySlice.set(feature.sliceId, list);
     }
     const milestonesByMission = new Map<string, Milestone[]>();
     for (const milestone of allMilestones) {
@@ -414,9 +410,10 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       let completedFeatures = 0;
       for (const milestone of milestones) {
         for (const slice of slicesByMilestone.get(milestone.id) ?? []) {
-          const features = featuresBySlice.get(slice.id) ?? [];
-          totalFeatures += features.length;
-          completedFeatures += features.filter((f) => f.status === "done").length;
+          const counts = featureCounts.get(slice.id);
+          if (!counts) continue;
+          totalFeatures += counts.total;
+          completedFeatures += counts.done;
         }
       }
       const linkedGoalCount = goalCountByMission.get(mission.id) ?? 0;
@@ -436,7 +433,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (missions.length === 0) return new Map();
     const allMilestones = await listAllMilestones(this.db);
     const allSlices = await listAllSlices(this.db);
-    const allFeatures = await listAllFeatures(this.db);
+    const featureCounts = await rollupFeatureCountsBySlice(this.db);
     const failedTaskIds = await listFailedTaskIds(this.db);
     const errorEvents = await listErrorEventsForHealth(this.db);
     const lastErrorByMission = new Map<string, { timestamp: string; description: string }>();
@@ -458,11 +455,16 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       list.push(s);
       slicesByMilestone.set(s.milestoneId, list);
     }
-    const featuresBySlice = new Map<string, MissionFeature[]>();
-    for (const f of allFeatures) {
-      const list = featuresBySlice.get(f.sliceId) ?? [];
-      list.push(f);
-      featuresBySlice.set(f.sliceId, list);
+    /*
+    FNXC:MissionFeatureRollup 2026-10-13-16:43 (RUFU-615):
+    Failure is still decided by membership in `failedTaskIds`; only the iteration source changed —
+    from every column of every feature to the `(sliceId, taskId)` pairs of features that carry a task.
+    */
+    const failedBySlice = new Map<string, number>();
+    for (const ref of await featureTaskRefs(this.db)) {
+      if (ref.taskId && failedTaskIds.has(ref.taskId)) {
+        failedBySlice.set(ref.sliceId, (failedBySlice.get(ref.sliceId) ?? 0) + 1);
+      }
     }
 
     const result = new Map<string, MissionHealth>();
@@ -487,16 +489,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
             currentSliceId = slice.id;
             currentMilestoneId ??= milestone.id;
           }
-          for (const feature of featuresBySlice.get(slice.id) ?? []) {
-            totalFeatures++;
-            totalTasks += 1;
-            if (feature.status === "done") {
-              tasksCompleted += 1;
-              completedFeatures++;
-            }
-            if (feature.status === "triaged" || feature.status === "in-progress") tasksInFlight += 1;
-            if (feature.taskId && failedTaskIds.has(feature.taskId)) tasksFailed++;
+          const counts = featureCounts.get(slice.id);
+          if (counts) {
+            totalFeatures += counts.total;
+            totalTasks += counts.total;
+            tasksCompleted += counts.done;
+            completedFeatures += counts.done;
+            tasksInFlight += counts.inFlight;
           }
+          tasksFailed += failedBySlice.get(slice.id) ?? 0;
         }
       }
 

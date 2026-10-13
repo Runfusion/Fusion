@@ -943,11 +943,16 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     ).all() as unknown as SliceRow[];
     const allSlices = sliceRows.map((row) => this.rowToSlice(row));
 
-    // 4. Batch query all features
-    const featureRows = this.db.prepare(
-      "SELECT * FROM mission_features ORDER BY createdAt ASC"
-    ).all() as unknown as FeatureRow[];
-    const allFeatures = featureRows.map((row) => this.rowToFeature(row));
+    // 4. Rollup feature counts per slice (see the FNXC note in listMissionsHealth).
+    const featureCountRows = this.db.prepare(`
+      SELECT sliceId,
+             COUNT(*) AS total,
+             SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done
+      FROM mission_features GROUP BY sliceId
+    `).all() as Array<{ sliceId: string; total?: number | bigint; done?: number | bigint }>;
+    const featureCounts = new Map(
+      featureCountRows.map((row) => [row.sliceId, { total: Number(row.total ?? 0), done: Number(row.done ?? 0) }]),
+    );
 
     // 5. Batch query linked goal counts
     const linkedGoalRows = this.db.prepare(
@@ -973,13 +978,6 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       slicesByMilestoneId.set(slice.milestoneId, list);
     }
 
-    const featuresBySliceId = new Map<string, MissionFeature[]>();
-    for (const feature of allFeatures) {
-      const list = featuresBySliceId.get(feature.sliceId) || [];
-      list.push(feature);
-      featuresBySliceId.set(feature.sliceId, list);
-    }
-
     // 8. Group milestones by missionId
     const milestonesByMissionId = new Map<string, Milestone[]>();
     for (const milestone of allMilestones) {
@@ -1000,9 +998,10 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       for (const milestone of milestones) {
         const slices = slicesByMilestoneId.get(milestone.id) || [];
         for (const slice of slices) {
-          const features = featuresBySliceId.get(slice.id) || [];
-          totalFeatures += features.length;
-          completedFeatures += features.filter((f) => f.status === "done").length;
+          const counts = featureCounts.get(slice.id);
+          if (!counts) continue;
+          totalFeatures += counts.total;
+          completedFeatures += counts.done;
         }
       }
 
@@ -1055,17 +1054,52 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     ).all() as unknown as SliceRow[];
     const allSlices = sliceRows.map((row) => this.rowToSlice(row));
 
-    // 3. Batch query all features
-    const featureRows = this.db.prepare(
-      "SELECT * FROM mission_features ORDER BY createdAt ASC"
-    ).all() as unknown as FeatureRow[];
-    const allFeatures = featureRows.map((row) => this.rowToFeature(row));
+    /*
+    FNXC:MissionFeatureRollup 2026-10-13-16:43 (RUFU-615):
+    Health and summaries used to `SELECT *` across every `mission_features` row and group the array in
+    JS. Measured on the production board that is 114 full-table passes / 25 194 materialised rows per
+    120 s at 2 526 B average row width, while neither consumer reads `description`,
+    `acceptanceCriteria` or `specAlignment` — the columns that make the row wide. Both rollups now ask
+    SQL for per-slice counts. Mirrored in `AsyncMissionStore.listMissionsHealth` with the same status
+    buckets, so the two store implementations cannot disagree about a mission's progress.
+    */
+    // 3. Rollup feature counts per slice.
+    const featureCountRows = this.db.prepare(`
+      SELECT sliceId,
+             COUNT(*) AS total,
+             SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
+             SUM(CASE WHEN status IN ('triaged', 'in-progress') THEN 1 ELSE 0 END) AS inFlight
+      FROM mission_features GROUP BY sliceId
+    `).all() as Array<{ sliceId: string; total?: number | bigint; done?: number | bigint; inFlight?: number | bigint }>;
+    const featureCounts = new Map(
+      featureCountRows.map((row) => [row.sliceId, {
+        total: Number(row.total ?? 0),
+        done: Number(row.done ?? 0),
+        inFlight: Number(row.inFlight ?? 0),
+      }]),
+    );
 
     // 4. Batch query all failed task IDs
     const failedTaskRows = this.db.prepare(
       "SELECT id FROM tasks WHERE status = 'failed' AND \"deletedAt\" IS NULL"
     ).all() as Array<{ id: string }>;
     const failedTaskIds = new Set(failedTaskRows.map((row) => row.id));
+
+    /*
+    FNXC:MissionFeatureRollup 2026-10-13-16:43 (RUFU-615):
+    Failure stays a membership decision against `failedTaskIds`; only the iteration source changed —
+    the `(sliceId, taskId)` pairs of features that carry a task, instead of every column of every
+    feature. Keeping the membership in JS is what makes this equivalent to the previous loop.
+    */
+    const failedTaskRefRows = this.db.prepare(
+      "SELECT sliceId, taskId FROM mission_features WHERE taskId IS NOT NULL"
+    ).all() as Array<{ sliceId: string; taskId: string }>;
+    const failedBySlice = new Map<string, number>();
+    for (const ref of failedTaskRefRows) {
+      if (failedTaskIds.has(ref.taskId)) {
+        failedBySlice.set(ref.sliceId, (failedBySlice.get(ref.sliceId) || 0) + 1);
+      }
+    }
 
     // 5. Batch query last error event per mission
     const lastErrorRows = this.db.prepare(`
@@ -1095,13 +1129,6 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       const list = slicesByMilestoneId.get(slice.milestoneId) || [];
       list.push(slice);
       slicesByMilestoneId.set(slice.milestoneId, list);
-    }
-
-    const featuresBySliceId = new Map<string, MissionFeature[]>();
-    for (const feature of allFeatures) {
-      const list = featuresBySliceId.get(feature.sliceId) || [];
-      list.push(feature);
-      featuresBySliceId.set(feature.sliceId, list);
     }
 
     // 7. Compute health for each mission
@@ -1137,21 +1164,15 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
             currentMilestoneId ??= milestone.id;
           }
 
-          const features = featuresBySliceId.get(slice.id) || [];
-          for (const feature of features) {
-            totalFeatures++;
-            totalTasks += 1;
-            if (feature.status === "done") {
-              tasksCompleted += 1;
-              completedFeatures++;
-            }
-            if (feature.status === "triaged" || feature.status === "in-progress") {
-              tasksInFlight += 1;
-            }
-            if (feature.taskId && failedTaskIds.has(feature.taskId)) {
-              tasksFailed++;
-            }
+          const counts = featureCounts.get(slice.id);
+          if (counts) {
+            totalFeatures += counts.total;
+            totalTasks += counts.total;
+            tasksCompleted += counts.done;
+            completedFeatures += counts.done;
+            tasksInFlight += counts.inFlight;
           }
+          tasksFailed += failedBySlice.get(slice.id) || 0;
         }
       }
 

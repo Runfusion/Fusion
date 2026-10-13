@@ -42,7 +42,7 @@
  *   These helpers are the production MissionStore persistence path and program
  *   against AsyncDataLayer rather than a synchronous SQLite database.
  */
-import { and, asc, desc, eq, inArray, ne, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, ne, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import { normalizeMissionAssertionOrigin, normalizeMissionAssertionScope, normalizeMissionAssertionType } from "../missions/mission-types.js";
@@ -1076,6 +1076,54 @@ export async function listAllFeatures(handle: QueryHandle): Promise<MissionFeatu
     .where(missionProjectScope(schema.project.missionFeatures.projectId))
     .orderBy(asc(schema.project.missionFeatures.createdAt));
   return rows.map((row) => rowToFeature(row as FeatureRow));
+}
+
+/*
+FNXC:MissionFeatureRollup 2026-10-13-16:43 (RUFU-615):
+Per-slice feature counts for the two rollup consumers, `listMissionsWithSummaries` and
+`listMissionsHealth`. Both called `listAllFeatures`, which selects every feature column of every
+slice and then groups the array in JS. Measured on the production board: 114 full-table passes and
+25 194 materialised rows per 120 s (~210 rows/s of JS object churn) at 2 526 B average row width,
+while neither consumer reads `description`, `acceptanceCriteria` or `specAlignment` — the columns
+that make the row wide. Reading a whole table to produce a `COUNT(*) GROUP BY` is the same
+read-amplification shape that `tasks.log` carried.
+
+`tasksFailed` is deliberately NOT aggregated here. Health decides failure by set membership against
+`listFailedTaskIds`; pushing that join into SQL would let this line and the SQLite line disagree
+about which features count as failed. `featureTaskRefs` carries only the two columns membership
+needs, still restricted to rows that have a task, so membership semantics are unchanged.
+
+Callers: `AsyncMissionStore.listMissionsWithSummaries` / `.listMissionsHealth`, mirrored in
+`MissionStore` so the SQLite and PostgreSQL rollups cannot drift.
+*/
+export async function rollupFeatureCountsBySlice(
+  handle: QueryHandle,
+): Promise<Map<string, { total: number; done: number; inFlight: number }>> {
+  const f = schema.project.missionFeatures;
+  const rows = await handle
+    .select({
+      sliceId: f.sliceId,
+      total: sql<number>`count(*)::int`,
+      done: sql<number>`sum(case when ${f.status} = 'done' then 1 else 0 end)::int`,
+      inFlight: sql<number>`sum(case when ${f.status} in ('triaged', 'in-progress') then 1 else 0 end)::int`,
+    })
+    .from(f)
+    .where(missionProjectScope(f.projectId))
+    .groupBy(f.sliceId);
+  return new Map(rows.map((row) => [row.sliceId, { total: row.total, done: row.done, inFlight: row.inFlight }]));
+}
+
+/**
+ * Narrow `(sliceId, taskId)` pairs for features that carry a task. See rollupFeatureCountsBySlice.
+ * `taskId` stays `string | null` in the type even though the WHERE clause excludes NULL: Drizzle does
+ * not narrow from `isNotNull`, and lying here would let a caller skip the null check it still needs.
+ */
+export async function featureTaskRefs(handle: QueryHandle): Promise<Array<{ sliceId: string; taskId: string | null }>> {
+  const f = schema.project.missionFeatures;
+  return handle
+    .select({ sliceId: f.sliceId, taskId: f.taskId })
+    .from(f)
+    .where(and(missionProjectScope(f.projectId), isNotNull(f.taskId)));
 }
 
 /**
