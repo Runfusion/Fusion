@@ -76,9 +76,46 @@ describe("agent usage telemetry lane seam", () => {
       sessionSpy.mockRestore();
     }
 
-    expect(emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "session_start", category: "agent-session", agentId: "durable-agent", taskId: null, meta: expect.objectContaining({ lane: "heartbeat", ephemeral: false, runId: "run-1" }) }));
-    expect(emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "tool_call", agentId: "durable-agent", taskId: null, toolName: "Read" }));
-    expect(emitUsageEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "tool_result", agentId: "durable-agent", taskId: null, toolName: "Read" }));
+    const events = emitUsageEvent.mock.calls.map(([event]) => event);
+    expect(events).toHaveLength(3);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "session_start", category: "agent-session", agentId: "durable-agent", taskId: null, meta: expect.objectContaining({ lane: "heartbeat", ephemeral: false, runId: "run-1" }) }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "tool_call", agentId: "durable-agent", taskId: null, toolName: "Read" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "tool_result", agentId: "durable-agent", taskId: null, toolName: "Read" }));
     expect(taskStore.appendAgentLog).not.toHaveBeenCalled();
+  });
+
+  it("fences setup callbacks after the heartbeat tool-call budget is exhausted", async () => {
+    const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
+    let persistedRun: any = { id: "run-budget", agentId: "durable-agent", status: "active", startedAt: new Date().toISOString() };
+    const heartbeatStore = {
+      startHeartbeatRun: vi.fn().mockResolvedValue(persistedRun),
+      getRunDetail: vi.fn().mockImplementation(async () => persistedRun),
+      saveRun: vi.fn().mockImplementation(async (run: any) => { persistedRun = run; }),
+      updateAgentState: vi.fn(), updateAgent: vi.fn(), endHeartbeatRun: vi.fn(),
+      assignTask: vi.fn(), getBudgetStatus: vi.fn().mockResolvedValue({ isOverBudget: false, isOverThreshold: false, usagePercent: 0 }),
+      getCachedAgent: vi.fn().mockReturnValue(null), getLastBlockedState: vi.fn(), setLastBlockedState: vi.fn(), clearLastBlockedState: vi.fn(),
+      appendRunLog: vi.fn().mockResolvedValue(undefined), getAgentsByReportsTo: vi.fn().mockResolvedValue([]), recordHeartbeat: vi.fn(),
+      getAgent: vi.fn().mockResolvedValue({ id: "durable-agent", name: "Durable", role: "executor", state: "active", createdAt: "", updatedAt: "", metadata: {}, soul: "patrol" }),
+    };
+    const taskStore = { getSettings: vi.fn().mockResolvedValue({}), emitUsageEvent, appendAgentLog: vi.fn(), listTasks: vi.fn().mockResolvedValue([]), selectNextTaskForAgent: vi.fn().mockResolvedValue(null) } as unknown as TaskStore;
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const sessionSpy = vi.spyOn(sessionHelpers, "createResolvedAgentSession").mockImplementation(async (options: any) => {
+      for (let index = 0; index < 102; index++) {
+        options.onToolEnd(`Read-${index}`, false, "done");
+      }
+      return { session: { prompt, dispose: vi.fn(), subscribe: vi.fn() } } as any;
+    });
+    let result: unknown;
+    try {
+      result = await new HeartbeatMonitor({ store: heartbeatStore as any, taskStore, rootDir: "/repo" }).executeHeartbeat({ agentId: "durable-agent", source: "on_demand" });
+    } finally {
+      sessionSpy.mockRestore();
+    }
+
+    const kinds = emitUsageEvent.mock.calls.map(([event]) => event.kind);
+    expect(kinds.filter((kind) => kind === "tool_result")).toHaveLength(100);
+    expect(kinds).toContain("session_start");
+    expect(prompt).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "terminated", resultJson: { reason: "heartbeat_progress_budget_exhausted" } });
   });
 });

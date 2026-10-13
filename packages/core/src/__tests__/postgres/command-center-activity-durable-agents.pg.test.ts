@@ -129,14 +129,18 @@ pgDescribe("durable agent Activity analytics", () => {
     expect(activity.sessions).toBeGreaterThan(0);
     expect(activity.activeAgents).toBe(1);
     const rows = await layer.db.execute(sql`
-      SELECT kind, agent_id, task_id, category FROM project.usage_events
+      SELECT kind, agent_id, task_id, tool_name, category, meta FROM project.usage_events
       WHERE project_id = ${projectId} ORDER BY kind
     `);
-    expect(rows).toEqual([
-      { kind: "session_start", agent_id: "durable-e2e", task_id: null, category: "agent-session" },
-      { kind: "tool_call", agent_id: "durable-e2e", task_id: null, category: "read" },
-      { kind: "tool_result", agent_id: "durable-e2e", task_id: null, category: "read" },
-    ].sort((left, right) => left.kind.localeCompare(right.kind)));
+    const sessionRows = rows.filter((row) => row.kind === "session_start");
+    const toolRows = rows.filter((row) => row.kind !== "session_start");
+    expect(sessionRows).toEqual([
+      expect.objectContaining({ agent_id: "durable-e2e", task_id: null, tool_name: null, category: "agent-session", meta: expect.objectContaining({ lane: "heartbeat", ephemeral: false, runId: "durable-e2e-run" }) }),
+    ]);
+    expect(toolRows).toEqual([
+      { kind: "tool_call", agent_id: "durable-e2e", task_id: null, tool_name: "Read", category: "read", meta: null },
+      { kind: "tool_result", agent_id: "durable-e2e", task_id: null, tool_name: "Read", category: "read", meta: { durationMs: 0 } },
+    ]);
   });
 
   it("sums CLI and agent sessions, honors the range, and isolates the bound project", async () => {
