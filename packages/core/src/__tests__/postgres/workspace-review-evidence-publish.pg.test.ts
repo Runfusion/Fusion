@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Task } from "../../types.js";
-import { evaluatePreMergeApprovals } from "../../merge/pre-merge-approval.js";
+import { evaluatePreMergeAdmissionDecision, evaluatePreMergeApprovals } from "../../merge/pre-merge-approval.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,
@@ -53,29 +53,36 @@ pgTest("workspace Code Review evidence publication (PostgreSQL)", () => {
     expect(projected.repositoryScope?.reviewEvidence).toEqual(evidence);
     expect(projected.modifiedFiles).toEqual(modifiedFiles);
 
-    const approval = evaluatePreMergeApprovals({
+    const approvalSubject = {
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
-        phase: "pre-merge",
-        reviewKind: "code",
-        status: "passed",
-        verdict: "APPROVE",
+        phase: "pre-merge" as const,
+        reviewKind: "code" as const,
+        status: "passed" as const,
+        verdict: "APPROVE" as const,
         repositoryScopeRevision: scopeRevision,
       }],
       repositoryScope: reread.repositoryScope,
-    }, {
+    };
+    const approvalOptions = {
       requiredPreMergeStepIds: new Set(["code-review"]),
       mergeContent: {
-        kind: "workspace",
+        kind: "workspace" as const,
         repositories: {
-          state: "captured",
+          state: "captured" as const,
           fingerprints: { "repo-a": "fingerprint-a", "repo-b": "fingerprint-b" },
           inScopeModified: ["repo-a", "repo-b"],
         },
       },
-    });
+    };
+    const approval = evaluatePreMergeApprovals(approvalSubject, approvalOptions);
     expect(approval).toEqual([{ workflowStepId: "code-review", state: "approved" }]);
+    expect(evaluatePreMergeAdmissionDecision(approvalSubject, approvalOptions).gates[0]).toMatchObject({
+      workflowStepId: "code-review",
+      state: "approved",
+      selectedResult: { workflowStepId: "code-review", status: "passed", verdict: "APPROVE" },
+    });
 
     const missing = evaluatePreMergeApprovals({
       workflowStepResults: [{

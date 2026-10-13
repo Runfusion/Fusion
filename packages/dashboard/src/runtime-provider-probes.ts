@@ -114,7 +114,14 @@ export async function probeClaudeCliProvider(opts?: { binaryPath?: string }): Pr
   return probeClaudeBinary(opts);
 }
 
-export async function discoverClaudeCliModels(opts?: { binaryPath?: string; timeoutMs?: number }) {
+export type ClaudeModelDiscoveryResult = {
+  models: Array<{ id: string; label?: string; reasoning?: boolean; contextWindow?: number }>;
+  source: string;
+  fallbackUsed: boolean;
+  reason?: string;
+};
+
+export async function discoverClaudeCliModels(opts?: { binaryPath?: string; timeoutMs?: number }): Promise<ClaudeModelDiscoveryResult> {
   return discoverClaudeProviderModels(opts);
 }
 

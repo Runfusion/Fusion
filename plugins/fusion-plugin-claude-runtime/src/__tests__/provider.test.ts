@@ -4,7 +4,7 @@ import { probeClaudeBinary } from "../probe.js";
 import { discoverClaudeProviderModels } from "../provider.js";
 import { createEventBridge } from "../acp/event-bridge.js";
 describe("discoverClaudeProviderModels", () => {
- it("returns qualified provider-safe Claude ids when bridge is available", async () => { vi.mocked(probeClaudeBinary).mockResolvedValue({ available:true, probeDurationMs:1 }); const result=await discoverClaudeProviderModels(); expect(result.models.map((m)=>m.id)).toContain("claude-sonnet-4-20250514"); expect(result.fallbackUsed).toBe(false); });
+ it("projects each current Pi Anthropic model when the bridge is available", async () => { vi.mocked(probeClaudeBinary).mockResolvedValue({ available:true, probeDurationMs:1 }); const result=await discoverClaudeProviderModels(); for (const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) expect(result.models.filter((model) => model.id === id)).toHaveLength(1); expect(result.models.find((model) => model.id === "claude-haiku-5-5")).toMatchObject({ label: "Claude Haiku 5.5", reasoning: true, contextWindow: 1_000_000 }); expect(result.fallbackUsed).toBe(false); });
  it("degrades to empty fallback when the bridge is unavailable", async () => { vi.mocked(probeClaudeBinary).mockResolvedValue({ available:false, reason:"missing", probeDurationMs:1 }); await expect(discoverClaudeProviderModels()).resolves.toMatchObject({models:[],fallbackUsed:true,reason:"missing"}); });
 });
 

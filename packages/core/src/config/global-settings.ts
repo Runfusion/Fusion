@@ -19,7 +19,7 @@ import { mkdir, readFile, writeFile, rename, chmod, unlink } from "node:fs/promi
 import { existsSync, mkdirSync, realpathSync, renameSync } from "node:fs";
 import type { ConfigChangedBy, ConfigKind, ConfigurationRevision, ConfigurationTarget, GlobalSettings } from "../types.js";
 import { COLOR_THEMES, CONFIG_CHANGED_BY_SYSTEM, DEFAULT_GLOBAL_SETTINGS, DEFAULT_UI_STYLE, isUiStyle } from "../types.js";
-import { normalizeChatSnippets, sanitizeCliAgentsSettings } from "./settings-schema.js";
+import { mergeRestoredProjectSettings, normalizeChatSnippets, sanitizeCliAgentsSettings } from "./settings-schema.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { GLOBAL_CONFIGURATION_OWNER_ID, appendGlobalConfigurationRevision, createConfigurationRevision, getGlobalConfigurationRevision, listGlobalConfigurationRevisions } from "../async-stores/async-configuration-revision-store.js";
 
@@ -421,7 +421,15 @@ export class GlobalSettingsStore {
         throw new Error(`Global configuration revision ${revisionId} was not found`);
       }
       const current = await this.readRawForUpdate();
-      const restored = normalizeGlobalSettings(target.before as Record<string, unknown>);
+      /*
+      FNXC:ConfigVersioning 2026-10-12-15:33:
+      Global revision snapshots exclude dashboard restore state. Preserve the live value while
+      restoring an operator-settings snapshot so rollback cannot erase a browser's selection.
+      The preserved value then passes through normalizeGlobalSettings, which is this fork's
+      single schema-normalization pass for every settings writer; skipping it would let a
+      snapshot rollback persist a shape no other writer can produce.
+      */
+      const restored = normalizeGlobalSettings(mergeRestoredProjectSettings(target.before as Record<string, unknown>, current));
       const rollback = createConfigurationRevision({
         projectId: GLOBAL_CONFIGURATION_OWNER_ID,
         ownerScope: "global",

@@ -3,10 +3,11 @@ import { exec as execCb } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { GlobalSettings, ProjectSettings, Settings, Task, TaskStore } from "@fusion/core";
-import { isValidTaskBranchName, resolveTaskPrHeadBranch, resolveTitleSummarizerSettingsModel } from "@fusion/core";
+import { createLogger, isValidTaskBranchName, resolveTaskPrHeadBranch, resolveTitleSummarizerSettingsModel } from "@fusion/core";
 import { createFnAgent, resolveMcpServersForStore } from "@fusion/engine";
 
 const execAsync = promisify(execCb);
+const prMetadataLog = createLogger("pr-metadata-generator");
 export const PR_METADATA_TIMEOUT_MS = 60_000;
 
 /*
@@ -25,10 +26,15 @@ export const PR_METADATA_SYSTEM_PROMPT = [
   "Ground every field in the commit log and diff stat first, then use the task title, task description, and task prompt only as supporting context.",
 ].join("\n");
 
+export type PrMetadataFallbackReason = "timeout" | "parse-validation";
+
 export interface GeneratedPrMetadata {
   title: string;
   body: string;
   templateUsed: boolean;
+  fallback: boolean;
+  fallbackReason: PrMetadataFallbackReason | null;
+  timedOut: boolean;
 }
 
 interface AiMetadataResult {
@@ -39,7 +45,10 @@ interface AiMetadataResult {
   linkedTask: string;
 }
 
-export function buildFallbackPrMetadata(task: Task): GeneratedPrMetadata {
+export function buildFallbackPrMetadata(
+  task: Task,
+  fallbackReason: PrMetadataFallbackReason = "parse-validation",
+): GeneratedPrMetadata {
   return {
     title: task.title ?? task.id,
     body: [
@@ -60,6 +69,9 @@ export function buildFallbackPrMetadata(task: Task): GeneratedPrMetadata {
       `Closes ${task.id}`,
     ].join("\n"),
     templateUsed: false,
+    fallback: true,
+    fallbackReason,
+    timedOut: fallbackReason === "timeout",
   };
 }
 
@@ -67,21 +79,79 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function parseAiResult(raw: string): AiMetadataResult | null {
+interface AiMetadataParseResult {
+  result: AiMetadataResult | null;
+  reason: "invalid-json" | "missing-required-fields";
+}
+
+function parseAiMetadataCandidate(candidate: string): AiMetadataParseResult {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as Partial<AiMetadataResult>;
-    const title = asString(parsed.title);
-    const summary = asString(parsed.summary);
-    const changes = asString(parsed.changes);
-    const testing = asString(parsed.testing);
-    const linkedTask = asString(parsed.linkedTask);
-    if (!title || !summary || !changes || !testing) {
-      return null;
-    }
-    return { title, summary, changes, testing, linkedTask };
+    parsed = JSON.parse(candidate);
   } catch {
-    return null;
+    return { result: null, reason: "invalid-json" };
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { result: null, reason: "missing-required-fields" };
+  }
+
+  const fields = parsed as Partial<AiMetadataResult>;
+  const title = asString(fields.title);
+  const summary = asString(fields.summary);
+  const changes = asString(fields.changes);
+  const testing = asString(fields.testing);
+  const linkedTask = asString(fields.linkedTask);
+  if (!title || !summary || !changes || !testing) {
+    return { result: null, reason: "missing-required-fields" };
+  }
+  return { result: { title, summary, changes, testing, linkedTask }, reason: "invalid-json" };
+}
+
+/*
+FNXC:PrMetadataGeneration 2026-10-12-16:42:
+Models commonly wrap an otherwise valid PR metadata object in a JSON/plain fence or introductory prose.
+Try the raw response first, then only JSON/plain fence payloads, then outer objects from raw segments outside every fence; every candidate must still satisfy the full schema.
+*/
+function parseAiResult(raw: string): AiMetadataParseResult {
+  const candidates = [raw];
+  const supportedFencePattern = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```/gim;
+  for (const match of raw.matchAll(supportedFencePattern)) {
+    candidates.push(match[1]);
+  }
+
+  const rawSegments: string[] = [];
+  const allFencePattern = /^[ \t]*```[^\r\n]*\r?\n[\s\S]*?\r?\n?[ \t]*```/gm;
+  let segmentStart = 0;
+  for (const match of raw.matchAll(allFencePattern)) {
+    rawSegments.push(raw.slice(segmentStart, match.index));
+    segmentStart = match.index + match[0].length;
+  }
+  rawSegments.push(raw.slice(segmentStart));
+
+  for (const segment of rawSegments) {
+    const firstObject = segment.indexOf("{");
+    const lastObject = segment.lastIndexOf("}");
+    if (firstObject >= 0 && lastObject > firstObject) {
+      candidates.push(segment.slice(firstObject, lastObject + 1));
+    }
+  }
+
+  let reason: AiMetadataParseResult["reason"] = "invalid-json";
+  for (const candidate of candidates) {
+    const parsed = parseAiMetadataCandidate(candidate);
+    if (parsed.result) {
+      return parsed;
+    }
+    if (parsed.reason === "missing-required-fields") {
+      reason = parsed.reason;
+    }
+  }
+  return { result: null, reason };
+}
+
+function truncatedDiagnosticSample(raw: string): string {
+  const maxLength = 500;
+  return `${raw.slice(0, Math.min(maxLength, Math.max(0, raw.length - 1)))}…`;
 }
 
 /*
@@ -251,14 +321,17 @@ export async function generatePrMetadata(input: {
   timeoutMs?: number;
 }): Promise<GeneratedPrMetadata> {
   const { task, repoRoot, settings, store, signal, timeoutMs = PR_METADATA_TIMEOUT_MS } = input;
-  const fallback = buildFallbackPrMetadata(task);
   const controller = new AbortController();
+  let timedOut = false;
   const abortFromCaller = () => controller.abort(signal?.reason instanceof Error ? signal.reason : createAbortError());
   /*
   FNXC:PrMetadataGeneration 2026-06-23-00:00:
   The Create PR dialog must receive usable title/body metadata within its UX budget even when git, template reads, provider startup, prompt streaming, or disposal misbehaves. Race every awaited operation against one shared abort signal so provider/session hangs degrade to deterministic fallback content instead of leaving the modal spinner pending indefinitely.
   */
-  const timeoutId = setTimeout(() => controller.abort(createAbortError()), timeoutMs);
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort(createAbortError());
+  }, timeoutMs);
   const combinedSignal = controller.signal;
   const callerSignalWasActive = Boolean(signal && !signal.aborted);
 
@@ -373,19 +446,28 @@ export async function generatePrMetadata(input: {
     }
 
     const parsed = parseAiResult(aiText);
-    if (!parsed) {
-      return fallback;
+    if (!parsed.result) {
+      prMetadataLog.warn("Falling back after AI PR metadata response could not be validated", {
+        taskId: task.id,
+        responseLength: aiText.length,
+        sample: truncatedDiagnosticSample(aiText),
+        reason: parsed.reason,
+      });
+      return buildFallbackPrMetadata(task, "parse-validation");
     }
 
-    const completedTemplate = templateExists ? fillTemplate(template, parsed, task.id) : null;
+    const completedTemplate = templateExists ? fillTemplate(template, parsed.result, task.id) : null;
     return {
-      title: parsed.title,
-      body: completedTemplate ?? buildBody(parsed, task.id),
+      title: parsed.result.title,
+      body: completedTemplate ?? buildBody(parsed.result, task.id),
       templateUsed: completedTemplate !== null,
+      fallback: false,
+      fallbackReason: null,
+      timedOut: false,
     };
   } catch (error) {
-    if (isAbortLikeError(error)) {
-      return fallback;
+    if (isAbortLikeError(error) && timedOut) {
+      return buildFallbackPrMetadata(task, "timeout");
     }
     throw error;
   } finally {

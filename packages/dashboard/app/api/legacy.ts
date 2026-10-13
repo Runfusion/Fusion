@@ -726,6 +726,8 @@ export type {
  * FNXC:CodeOrganization 2026-07-19-12:00:
  * Preserve legacy `scheduling` imports while implementations live in scheduling.ts.
  */
+export type { WorkflowAdmission } from "./system/scheduling.js";
+
 export {
   clearActivityLog,
   createAutomation,
@@ -738,6 +740,7 @@ export {
   fetchRoutine,
   fetchRoutineRuns,
   fetchRoutines,
+  fetchWorkflowAdmission,
   fetchWorkflowResults,
   fetchWorkflowSteps,
   reorderAutomationSteps,

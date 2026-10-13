@@ -7,7 +7,7 @@ import {
   type TaskStore,
   type ThinkingLevel,
 } from "@fusion/core";
-import { normalizePlanningSuggestedDependencies, normalizePlanningSummaryPayload } from "../planning.js";
+import { normalizePlanningSummaryPayload, resolvePlanningSuggestedDependencies } from "../planning.js";
 import { extractIssueImageUrls, githubImagePolicy, importIssueImagesFromUrls } from "../issue-image-attachments.js";
 import { PER_BODY_MAX_CHARS, TRANSPORT_MAX_CHARS } from "../issue-image-markup.js";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
@@ -68,9 +68,13 @@ function rethrowPlanningWorkflowCreateError(
   const isWorkflowClientError =
     /^Workflow '.*' not found$/.test(message)
     || /is a fragment and cannot be selected/.test(message);
+  const missingDependencyId = /^Dependency task (.+) not found$/.exec(message)?.[1];
 
   if (isWorkflowClientError) {
     throw new ApiError(400, message);
+  }
+  if (missingDependencyId) {
+    throw new ApiError(400, `Suggested dependency ${missingDependencyId} is no longer available. Remove it and try again.`);
   }
 
   rethrowAsApiError(err, fallbackMessage);
@@ -1077,15 +1081,16 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         : undefined;
       // Create the task. Provenance is truthful even when a live importer suppresses tracking.
       /*
-      FNXC:PlanningDependencyNormalization 2026-10-08-04:28 (RUFU-319):
-      FN-9412 (2e18a2cc8c) normalized this route's dependencies too, and the `origin-sync 2026-10-05` merge
-      (9ecab8cae6) kept the fork's pre-FN-9412 line here (`^1` passes the raw `summary.suggestedDependencies`,
-      `^2` passes `dependencies`) while carrying the normalizer call on both sides. Passing the raw list
-      bypasses the only guard that drops non-canonical suggestions, so a prose or malformed entry could
-      reach `Task.dependencies` — the `FNXC:TaskQueueOrder 2026-09-17-12:07` note below promises a legacy
-      level is DROPPED here, and that promise is delivered by this normalizer alone.
-      */
-      const dependencies = normalizePlanningSuggestedDependencies(summary.suggestedDependencies);
+      FNXC:PlanningDependencyNormalization 2026-10-08-04:28 (RUFU-319):*/
+      const dependencies = await resolvePlanningSuggestedDependencies(
+        scopedStore,
+        summary.suggestedDependencies,
+        (dependencyId) => planningLogger.warn("Planning create-task dropped missing suggested dependency", {
+          sessionId,
+          dependencyId,
+          operation: "planning-create-task",
+        }),
+      );
       const task = await scopedStore.createTask({
         title: summary.title,
         description: sourceContext ? appendSourceIssueBlock(planMd, sourceContext.markdown, sourceContext.sourceIssue.url ?? "") : planMd,

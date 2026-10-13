@@ -194,6 +194,14 @@ describe("scheduler event handlers under a renamed hold column", () => {
       await flushAsyncHandlers();
       expect(schedule).not.toHaveBeenCalled();
     });
+
+    it("does NOT wake when an overlap blocker clears in a wip column", async () => {
+      const { emit, schedule } = createScheduler();
+      await emit("task:updated", task({ column: "building", overlapBlockedBy: "FN-HOLDER", status: "queued" }));
+      await emit("task:updated", task({ column: "building", overlapBlockedBy: null, status: null }));
+      await flushAsyncHandlers();
+      expect(schedule).not.toHaveBeenCalled();
+    });
   });
 
   describe("dependency unblocking (failure mode is a card that waits forever)", () => {

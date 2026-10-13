@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Task } from "../types.js";
 import { compareTasksByQueueOrder } from "./task-queue-order.js";
 
@@ -31,6 +32,15 @@ export type CheckoutEmptinessProofMap = ReadonlyMap<string, CheckoutEmptinessVer
 export interface FileScopeLeaseClassification {
   kind: FileScopeLeaseKind;
   waivedForTaskIds: readonly string[];
+}
+
+/**
+ * FNXC:FileScopeRecovery 2026-10-12-17:09:
+ * A release receipt binds its follower waiver to the normalized holder scope, so every
+ * admission surface can reject a receipt after the declaration changes out-of-band.
+ */
+export function fileScopeLeaseScopeFingerprint(scope: readonly string[]): string {
+  return createHash("sha256").update(scope.join("\n")).digest("hex");
 }
 
 /*

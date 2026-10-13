@@ -90,7 +90,7 @@
     "loadContentError": "Error al cargar el contenido de la habilidad",
     "allSkillsSelected": "Todas las habilidades seleccionadas",
     "discoveredSection": "Habilidades descubiertas",
-    "installsCount": "{{count}} instalaciones",
+    "installsCount": "{{value}} instalaciones",
     "backToSkillMd": "Back to SKILL.md",
     "noMatchingDiscovered": "Ninguna habilidad descubierta coincide con su búsqueda.",
     "toggleFailed": "Error al cambiar la habilidad: {{message}}",
@@ -4667,7 +4667,8 @@
     "deleteBranchTitle": "Eliminar rama",
     "stagedFiles_one": "",
     "openSource": "Open source",
-    "behindUpstream_other": ""
+    "behindUpstream_other": "",
+    "autoSyncOffNotRun": "sincronización automática: desactivada / no ejecutada"
   },
   "stall": {
     "dependency-block": {
@@ -11692,7 +11693,16 @@
       "legacy2": "",
       "requiredChecksHelp": "",
       "gitLabTokenType": "GitLab token type",
-      "includeTaskIdInCommitDefault": ""
+      "includeTaskIdInCommitDefault": "",
+      "afterFusionAdvancesTheIntegrationBranchRefThe": "",
+      "autoSyncProjectCheckoutAfterMerge": "",
+      "fastForwardOnlySkipDirtyWorktrees": "",
+      "inYourProjectRootWillShowTheNew": "",
+      "isTheLegacyBehavior": "",
+      "offLeaveTheProjectRootStaleLegacyBehavior": "",
+      "snapsCleanlyWhenTheWorktreeHasNoEdits": "",
+      "snapshotsRealLocalEditsAsAPatchAgainst": "",
+      "stashFastForwardDefaultPreserveLocalEdits": ""
     },
     "help": {
       "show": "Show help"

@@ -66,8 +66,10 @@ import {
   resolveEngineIncarnationId,
   resolveEngineNodeId,
   type WorkspaceLeaseHandle,
+  type PreMergeAdmissionDecision,
   getTaskMergeBlocker,
   isUncommittedWorkHold,
+  evaluatePreMergeAdmissionDecision,
   resolvePreMergeGateForTask,
   buildManualRetryResetPatch,
   getRequiredPostMergeEvidenceDecision,
@@ -3328,6 +3330,53 @@ export class ProjectEngine {
   proof as direct merge doors. Capture is asynchronous because workspace evidence
   probes each repository; a failure becomes an unprovable descriptor and defers.
   */
+  /**
+   * FNXC:PreMergeAdmission 2026-10-12-18:20:
+   * Dashboard Workflow Results and every merge door must evaluate the same current content proof.
+   * Keep descriptor capture and stale-callback waiver resolution in this engine-owned boundary so a
+   * displayed approval cannot silently omit the fingerprint evidence that closes merge admission.
+   */
+  async getPreMergeAdmissionDecision(taskId: string): Promise<{
+    gate: { requiredPreMergeStepIds: ReadonlySet<string>; resolution: string };
+    decision: PreMergeAdmissionDecision;
+  }> {
+    const store = this.runtime.getTaskStore();
+    const task = await store.getTask(taskId);
+    const settings = await store.getSettings();
+    const admission = await this.resolvePreMergeAdmissionDecision(store, task, settings);
+    return {
+      gate: {
+        requiredPreMergeStepIds: admission.gate.requiredPreMergeStepIds,
+        resolution: admission.gate.resolution,
+      },
+      decision: admission.decision,
+    };
+  }
+
+  private async resolvePreMergeAdmissionDecision(store: TaskStore, task: Task, settings: Settings) {
+    const gate = await resolvePreMergeGateForTask(store, task.id, task.enabledWorkflowSteps, task);
+    const mergeContent = await captureMergeContentDescriptor(task, {
+      workspaceRootDir: this.config.workingDirectory,
+      settings,
+    });
+    const staleReviewCallbackWaiver = {
+      projectId: store.getProjectId() ?? "",
+      effectiveAutoMerge: allowsAutoMergeProcessing(task, settings) && resolveEffectiveAutoMerge(task, settings),
+      hasOpenFindings: task.workflowStepResults?.some((result) => result.findings?.some(isOpenWorkflowReviewFinding)) === true,
+      receipts: await store.getStaleReviewCallbackWaiverReceipts(task.id),
+    };
+    return {
+      gate,
+      mergeContent,
+      staleReviewCallbackWaiver,
+      decision: evaluatePreMergeAdmissionDecision(task, {
+        requiredPreMergeStepIds: gate.requiredPreMergeStepIds,
+        mergeContent,
+        staleReviewCallbackWaiver,
+      }),
+    };
+  }
+
   private async resolveMergeGateBlocker(store: TaskStore, task: Task, settings: Settings): Promise<string | undefined> {
     /*
     FNXC:PostMergeEvidenceHold 2026-10-03-23:32:
@@ -3384,30 +3433,21 @@ export class ProjectEngine {
     }
     const injected = this.options.getTaskMergeBlocker?.(task);
     if (injected || !Array.isArray(task.steps)) return injected ?? undefined;
-    let mergeGate;
+    let admission;
     try {
-      mergeGate = await resolvePreMergeGateForTask(store, task.id, task.enabledWorkflowSteps, task);
+      admission = await this.resolvePreMergeAdmissionDecision(store, task, settings);
     } catch {
       return "merge gate could not resolve the task workflow";
     }
+    const { gate: mergeGate, mergeContent, staleReviewCallbackWaiver } = admission;
     if (mergeGate.provenance === "default" && !mergeGate.selectionAbsent) {
       return "merge gate could not resolve the task workflow";
     }
-    const mergeContent = await captureMergeContentDescriptor(task, {
-      workspaceRootDir: this.config.workingDirectory,
-      settings,
-    });
-    const receipts = await store.getStaleReviewCallbackWaiverReceipts(task.id);
     const blocker = getTaskMergeBlocker(task, {
       reviewColumns: mergeGate.reviewColumns.size > 0 ? mergeGate.reviewColumns : new Set(["in-review"]),
       requiredPreMergeStepIds: mergeGate.requiredPreMergeStepIds,
       mergeContent,
-      staleReviewCallbackWaiver: {
-        projectId: store.getProjectId() ?? "",
-        effectiveAutoMerge: allowsAutoMergeProcessing(task, settings) && resolveEffectiveAutoMerge(task, settings),
-        hasOpenFindings: task.workflowStepResults?.some((result) => result.findings?.some(isOpenWorkflowReviewFinding)) === true,
-        receipts,
-      },
+      staleReviewCallbackWaiver,
     });
     /*
     FNXC:SyncMerge0924 2026-09-24-06:55 (merge origin/main 67c7d80531 → main):

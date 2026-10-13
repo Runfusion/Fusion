@@ -480,6 +480,7 @@ export interface RepairOverlapBlockerResult {
   reason: string;
   message: string;
   task?: Task;
+  releaseReceiptCommitted?: boolean;
 }
 
 export function repairOverlapBlocker(

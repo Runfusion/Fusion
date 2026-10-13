@@ -22,6 +22,7 @@ const findMock = vi.fn();
 const getAllMock = vi.fn(() => [] as any[]);
 const registerProviderMock = vi.fn();
 const refreshMock = vi.fn();
+const modelRuntimeRefreshMock = vi.fn(async () => undefined);
 const settingsManagerInMemoryMock = vi.fn(() => ({ kind: "settings-manager" }));
 const setFallbackResolverMock = vi.fn();
 const reloadMock = vi.fn(async () => {});
@@ -123,7 +124,10 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   Without this export the layers wiring suite fails every createFnAgent path.
   */
   ModelRuntime: {
-    create: async () => ({ getAuth: async () => ({ auth: { headers: {} as Record<string, string> } }) }),
+    create: async () => ({
+      getAuth: async () => ({ auth: { headers: {} as Record<string, string> } }),
+      refresh: modelRuntimeRefreshMock,
+    }),
   },
   ModelRegistry: class {
     static create(..._args: unknown[]) {
@@ -154,6 +158,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 describe("createFnAgent prompt layer wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    modelRuntimeRefreshMock.mockResolvedValue(undefined);
     capturedResourceLoaderOptions = null;
     execSyncMock.mockReturnValue("");
     spawnSyncMock.mockReturnValue({ status: 1, stdout: "" });
@@ -235,6 +240,7 @@ describe("createFnAgent prompt layer wiring", () => {
       systemPrompt: "system",
     })).resolves.toBeDefined();
 
+    expect(modelRuntimeRefreshMock).toHaveBeenCalledWith({ allowNetwork: false });
     expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({ cwd }));
   });
 
@@ -300,6 +306,7 @@ describe("createFnAgent prompt layer wiring", () => {
 describe("createFnAgent deterministic tool ordering", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    modelRuntimeRefreshMock.mockResolvedValue(undefined);
     capturedResourceLoaderOptions = null;
     execSyncMock.mockReturnValue("");
     existsSyncMock.mockReturnValue(false);

@@ -249,6 +249,102 @@ describe("SettingsModal", () => {
       expect(document.querySelector('[data-settings-key="fastCheapModelId"]')).toBeInTheDocument();
     });
 
+    it("persists each global lane thinking level through autosave and reopen readback", async () => {
+      const laneThinkingKeys = [
+        ["execution", "Execution Model", "executionGlobalThinkingLevel"],
+        ["planning", "Planning Model", "planningGlobalThinkingLevel"],
+        ["validator", "Reviewer Model", "validatorGlobalThinkingLevel"],
+        ["summarization", "Title and Git Commit Message Summarization Model", "titleSummarizerGlobalThinkingLevel"],
+      ] as const;
+      const initialGlobal = {
+        ...defaultSettings,
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+        planningGlobalProvider: "anthropic",
+        planningGlobalModelId: "claude-sonnet-4-5",
+        validatorGlobalProvider: "anthropic",
+        validatorGlobalModelId: "claude-sonnet-4-5",
+        titleSummarizerGlobalProvider: "anthropic",
+        titleSummarizerGlobalModelId: "claude-sonnet-4-5",
+      };
+      const persistedThinkingLevels = Object.fromEntries(laneThinkingKeys.map(([, , key]) => [key, "high"]));
+
+      mockFetchModels.mockResolvedValue({ models: MODEL_FIXTURE, favoriteProviders: [], favoriteModels: [] });
+      mockFetchSettings.mockResolvedValue(initialGlobal);
+      mockFetchSettingsByScope.mockResolvedValue({ global: initialGlobal, project: {} });
+      renderModal({ initialSection: "global-models" });
+      await waitForSettingsModalReady();
+
+      vi.useFakeTimers();
+      for (const [laneId, label] of laneThinkingKeys) {
+        const lane = screen.getByLabelText(label).closest(".form-group");
+        expect(lane).toBeTruthy();
+        fireEvent.click(within(lane as HTMLElement).getByLabelText(label));
+        fireEvent.change(document.getElementById(`global-${laneId}-model-thinking-level`) as HTMLSelectElement, { target: { value: "high" } });
+      }
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining(persistedThinkingLevels));
+      for (const [, , key] of laneThinkingKeys) {
+        for (const [projectPatch] of mockUpdateSettings.mock.calls as [Record<string, unknown>][]) {
+          expect(projectPatch).not.toHaveProperty(key);
+        }
+      }
+
+      const savedGlobal = { ...initialGlobal, ...persistedThinkingLevels };
+      cleanup();
+      mockFetchSettings.mockResolvedValue(savedGlobal);
+      mockFetchSettingsByScope.mockResolvedValue({ global: savedGlobal, project: {} });
+      renderModal({ initialSection: "global-models" });
+      await waitForSettingsModalReady();
+
+      for (const [laneId, label] of laneThinkingKeys) {
+        const lane = screen.getByLabelText(label).closest(".form-group");
+        fireEvent.click(within(lane as HTMLElement).getByLabelText(label));
+        expect(document.getElementById(`global-${laneId}-model-thinking-level`)).toHaveValue("high");
+      }
+    });
+
+    it("clears a saved global lane thinking override through autosave and reopen readback", async () => {
+      const seededGlobal = {
+        ...defaultSettings,
+        defaultThinkingLevel: "low",
+        executionGlobalProvider: "anthropic",
+        executionGlobalModelId: "claude-sonnet-4-5",
+        executionGlobalThinkingLevel: "medium",
+      };
+
+      mockFetchModels.mockResolvedValue({ models: MODEL_FIXTURE, favoriteProviders: [], favoriteModels: [] });
+      mockFetchSettings.mockResolvedValue(seededGlobal);
+      mockFetchSettingsByScope.mockResolvedValue({ global: seededGlobal, project: {} });
+      renderModal({ initialSection: "global-models" });
+      await waitForSettingsModalReady();
+
+      const executorLane = screen.getByLabelText("Execution Model").closest(".form-group");
+      vi.useFakeTimers();
+      fireEvent.click(within(executorLane as HTMLElement).getByLabelText("Execution Model"));
+      fireEvent.change(document.getElementById("global-execution-model-thinking-level") as HTMLSelectElement, { target: { value: "" } });
+      await flushSettingsAutoSave();
+      vi.useRealTimers();
+
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ executionGlobalThinkingLevel: null }));
+      for (const [projectPatch] of mockUpdateSettings.mock.calls as [Record<string, unknown>][]) {
+        expect(projectPatch).not.toHaveProperty("executionGlobalThinkingLevel");
+      }
+
+      const clearedGlobal = { ...seededGlobal, executionGlobalThinkingLevel: undefined };
+      cleanup();
+      mockFetchSettings.mockResolvedValue(clearedGlobal);
+      mockFetchSettingsByScope.mockResolvedValue({ global: clearedGlobal, project: {} });
+      renderModal({ initialSection: "global-models" });
+      await waitForSettingsModalReady();
+
+      const reopenedExecutorLane = screen.getByLabelText("Execution Model").closest(".form-group");
+      fireEvent.click(within(reopenedExecutorLane as HTMLElement).getByLabelText("Execution Model"));
+      expect(document.getElementById("global-execution-model-thinking-level")).toHaveValue("");
+    });
+
     it("saves opencode-go startup model sync toggle in global settings", async () => {
       mockFetchModels.mockResolvedValue({
         models: MODEL_FIXTURE,

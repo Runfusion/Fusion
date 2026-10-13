@@ -3,8 +3,9 @@ import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACT
 import { createAgentSession, ModelRegistry, ModelRuntime, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
-const { resourceLoaderOptions } = vi.hoisted(() => ({
+const { resourceLoaderOptions, modelRuntimeRefreshMock } = vi.hoisted(() => ({
   resourceLoaderOptions: { current: undefined as Record<string, unknown> | undefined },
+  modelRuntimeRefreshMock: vi.fn(async () => undefined),
 }));
 
 // Mock skill resolver functions - define inside factory to avoid hoisting issues
@@ -81,7 +82,10 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   },
   getAgentDir: vi.fn(() => "/test/agent-dir"),
   ModelRuntime: {
-    create: vi.fn(async () => ({ getAuth: vi.fn(async () => undefined) })),
+    create: vi.fn(async () => ({
+      getAuth: vi.fn(async () => undefined),
+      refresh: modelRuntimeRefreshMock,
+    })),
   },
   ModelRegistry: vi.fn().mockImplementation(function () {
     return {
@@ -654,6 +658,8 @@ describe("createFnAgent skills parameter", () => {
       filterActive: true,
     });
     resourceLoaderOptions.current = undefined;
+    modelRuntimeRefreshMock.mockReset();
+    modelRuntimeRefreshMock.mockResolvedValue(undefined);
     mockCreateSkillsOverride.mockReturnValue(() => ({
       skills: [],
       diagnostics: [],
@@ -682,6 +688,9 @@ describe("createFnAgent skills parameter", () => {
       }),
     };
     vi.mocked(ModelRegistry).mockImplementationOnce(function () { return registry as any; } as any);
+    modelRuntimeRefreshMock.mockImplementation(async () => {
+      models = [{ provider: "xai", id: "grok-refreshed", name: "Refreshed Pi Grok", reasoning: true }];
+    });
 
     await createPiAgentSessionRaw({
       cwd: "/test/project",
@@ -693,6 +702,7 @@ describe("createFnAgent skills parameter", () => {
     const grokRegistrations = registerProvider.mock.calls
       .filter(([provider]) => provider === "grok-cli")
       .map(([, config]) => config as { models: Array<{ id: string; name: string; reasoning?: boolean }> });
+    expect(modelRuntimeRefreshMock).toHaveBeenCalledWith({ allowNetwork: false });
     expect(grokRegistrations).not.toHaveLength(0);
     expect(grokRegistrations).toEqual(expect.arrayContaining([
       expect.objectContaining({ models: [expect.objectContaining({ id: "grok-refreshed", name: "Refreshed Pi Grok", reasoning: true })] }),

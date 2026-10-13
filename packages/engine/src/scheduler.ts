@@ -6,6 +6,7 @@ import {
   compareTasksByQueueOrder,
   fileScopeLeaseBlocksCandidate,
   isSharedBarrelOnlyMatch,
+  fileScopeLeaseScopeFingerprint,
   normalizeOverlapScopeForTask,
   taskHoldsUnmergedCheckout,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
@@ -177,6 +178,7 @@ function computeAutoClaimFingerprint(task: Task): string {
     task.assignedAgentId ?? "",
     task.checkedOutBy ?? "",
     task.deletedAt ?? "",
+    task.overlapBlockedBy ?? "",
     dependencies,
     sortAt,
   ].join("|");
@@ -605,6 +607,8 @@ export interface FileScopeLeaseOptions {
    * Absent ⇒ today's behavior: a retained checkout is a holder.
    */
   checkoutEmptiness?: CheckoutEmptinessProofMap;
+  /** Normalized holder File Scope fingerprint when evaluating a release receipt. */
+  scopeFingerprint?: string;
 }
 
 /*
@@ -647,6 +651,26 @@ export function classifyFileScopeLease(
     return { kind: "none", waivedForTaskIds: [] };
   }
 
+  /*
+  FNXC:FileScopeRecovery 2026-10-12-16:07:
+  A Clear receipt is a narrow follower waiver, not a lane bypass. Its normalized
+  declared-scope fingerprint is mandatory at every admission surface, so an out-of-band
+  PROMPT.md scope change fails closed rather than preserving a stale waiver.
+  */
+  const receipt = task.fileScopeLeaseRelease;
+  const receiptMatchesCurrentSafetyBasis = receipt?.holderId === task.id
+    && receipt.holderLineageId === task.lineageId
+    && receipt.scopeFingerprint === options?.scopeFingerprint
+    && (task.paused || task.userPaused)
+    && !task.checkedOutBy
+    && !task.sessionFile
+    && receipt.checkoutEpoch === task.checkoutLeaseEpoch
+    && ((receipt.checkoutIdentity === "no-checkout" && !taskHoldsUnmergedCheckout(task))
+      || (receipt.checkoutIdentity === "clean-checkout" && taskHoldsUnmergedCheckout(task)));
+  const releasedFollowerIds = receiptMatchesCurrentSafetyBasis
+    ? receipt!.releasedFollowerIds
+    : [];
+
   if (isWipColumn) {
     return {
       kind: "active",
@@ -656,7 +680,7 @@ export function classifyFileScopeLease(
       remains visible to unrelated overlapping work, so resolving one dependency cannot reopen an
       unrelated file collision.
       */
-      waivedForTaskIds: getUnmetSchedulingDependencies(task, tasks, options?.schedulingDependencyOptions),
+      waivedForTaskIds: [...getUnmetSchedulingDependencies(task, tasks, options?.schedulingDependencyOptions), ...releasedFollowerIds],
     };
   }
 
@@ -664,7 +688,7 @@ export function classifyFileScopeLease(
     if (options?.mergeRequestContractShadowEnabled === true && options.handoffAccepted === true) {
       return { kind: "none", waivedForTaskIds: [] };
     }
-    return { kind: taskHoldsUnmergedCheckout(task) ? "active" : "none", waivedForTaskIds: [] };
+    return { kind: taskHoldsUnmergedCheckout(task) ? "active" : "none", waivedForTaskIds: releasedFollowerIds };
   }
 
   // A dormant checkout preserves work, but cannot win admission while its owner is
@@ -685,13 +709,84 @@ export function classifyFileScopeLease(
   */
   return {
     kind: taskHoldsUnmergedCheckout(task, options?.checkoutEmptiness) ? "dormant" : "none",
-    waivedForTaskIds: [],
+    waivedForTaskIds: releasedFollowerIds,
   };
 }
 
 /**
  * Compatibility wrapper retained for callers that only need to know whether a task holds any lease.
  */
+/*
+FNXC:FileScopeRecovery 2026-10-12-16:23:
+A clean-checkout receipt is only proof at the instant Clear inspected it. Scheduler and
+outer-dispatch admission must re-inspect every retained checkout after a restart so external
+edits or commits cannot continue waiving a holder whose durable epoch did not change.
+*/
+function quoteFileScopeLeaseGitPath(path: string): string {
+  return `'${path.replaceAll("'", "'\\\"'\\\"'")}'`;
+}
+
+async function retainedCheckoutRemainsClean(store: TaskStore, task: Task): Promise<boolean> {
+  if (!task.baseCommitSha) return false;
+  const checkoutPaths = [
+    ...(task.worktree ? [task.worktree] : []),
+    ...Object.values(task.workspaceWorktrees ?? {}).flatMap((entry) => entry?.worktreePath ? [entry.worktreePath] : []),
+  ];
+  if (checkoutPaths.length === 0) return false;
+  return (await Promise.all([...new Set(checkoutPaths)].map(async (path) => {
+    const status = await store.runGitCommand(
+      `git -C ${quoteFileScopeLeaseGitPath(path)} status --porcelain --untracked-files=all`,
+      5_000,
+    );
+    if (status.exitCode !== 0 || status.timedOut || status.bufferExceeded || status.stdout.trim()) return false;
+    const commits = await store.runGitCommand(
+      `git -C ${quoteFileScopeLeaseGitPath(path)} rev-list --count ${task.baseCommitSha}..HEAD`,
+      5_000,
+    );
+    return commits.exitCode === 0 && !commits.timedOut && !commits.bufferExceeded && commits.stdout.trim() === "0";
+  }))).every(Boolean);
+}
+
+/**
+ * Recheck durable clean-checkout waivers before a scheduler-owned admission decision.
+ * A failed inspection clears only the receipt behind its revision fence and always returns
+ * a local no-waiver snapshot, even when a concurrent writer has already changed the row.
+ */
+export async function invalidateMismatchedFileScopeLeaseRelease(
+  store: TaskStore,
+  task: Task,
+  scopeFingerprint: string | undefined,
+): Promise<Task> {
+  const receipt = task.fileScopeLeaseRelease;
+  if (!receipt || receipt.scopeFingerprint === scopeFingerprint) return task;
+  /*
+  FNXC:FileScopeRecovery 2026-10-12-17:09:
+  A scope mismatch is not a display-only disagreement: clear the receipt behind its
+  revision fence so scheduler, outer dispatch, and a later restart all reacquire the claim.
+  */
+  await store.updateTaskAtomic(task.id, (current) =>
+    current.fileScopeLeaseRelease?.revision === receipt.revision
+      && current.fileScopeLeaseRelease.scopeFingerprint === receipt.scopeFingerprint
+      ? { fileScopeLeaseRelease: undefined }
+      : null,
+  );
+  return { ...task, fileScopeLeaseRelease: undefined };
+}
+
+export async function revalidateFileScopeLeaseReleases(store: TaskStore, tasks: Task[]): Promise<Task[]> {
+  const revalidated = await Promise.all(tasks.map(async (task) => {
+    if (task.fileScopeLeaseRelease?.checkoutIdentity !== "clean-checkout") return task;
+    if (await retainedCheckoutRemainsClean(store, task)) return task;
+    await store.updateTaskAtomic(task.id, (current) =>
+      current.fileScopeLeaseRelease?.revision === task.fileScopeLeaseRelease?.revision
+        ? { fileScopeLeaseRelease: undefined }
+        : null,
+    );
+    return { ...task, fileScopeLeaseRelease: undefined };
+  }));
+  return revalidated;
+}
+
 export function shouldHoldActiveFileScopeLease(
   task: Task,
   tasks: Task[],
@@ -1081,6 +1176,11 @@ export class Scheduler {
   private readonly symbolLockRenewalLog = createRepeatSuppressedLog();
   /** Tracks per-task candidacy fingerprints for task:updated auto-claim invalidation gating. */
   private lastAutoClaimFingerprint = new Map<string, string>();
+  /** Tracks observed overlap blockers so only their removal can trigger an event-driven reevaluation. */
+  private overlapBlockedTaskIds = new Set<string>();
+  /** Startup hydration is awaited by clear events so a persisted blocker survives a scheduler restart. */
+  private overlapBlockerHydration: Promise<void> = Promise.resolve();
+  private overlapBlockerHydrationGeneration = 0;
   /** Tracks recent engine-sourced in-progress → todo requeues to prevent immediate re-dispatch races. */
   private recentEngineTodoRequeues = new Map<string, string>();
   private readonly staleTaskReporter: StaleTaskReporter;
@@ -1515,6 +1615,40 @@ export class Scheduler {
         this.failedTaskIds.delete(task.id);
       }
 
+      if (task.overlapBlockedBy) {
+        this.overlapBlockedTaskIds.add(task.id);
+      } else {
+        /*
+        FNXC:FileScopeRecovery 2026-10-12-18:53:
+        A lease-release receipt is only an overlap-blocker transition, never an execution
+        grant. Await startup hydration before testing that transition so a persisted blocker
+        cleared after restart wakes once through normal parked-lane admission. An unpause,
+        planning completion, or approval release retains its existing edge-triggered wake.
+        */
+        void (async () => {
+          await this.overlapBlockerHydration;
+          const overlapBlockerWasCleared = this.overlapBlockedTaskIds.delete(task.id);
+          const overlapWakeAlreadyOwned = this.pausedTaskIds.has(task.id)
+            || this.planningTaskIds.has(task.id)
+            || this.approvalHeldTaskIds.has(task.id);
+          if (!overlapBlockerWasCleared || overlapWakeAlreadyOwned) return;
+
+          const overlapParked = await resolveTaskParkedColumns(this.store, task.id, updatedSelectionCache);
+          if (
+            this.running
+            && !task.status
+            && !task.paused
+            && !task.userPaused
+            && overlapParked.wake.has(task.column)
+          ) {
+            schedulerLog.log(`Task ${task.id} overlap blocker cleared — triggering scheduling`);
+            void this.schedule();
+          }
+        })().catch((error) => {
+          schedulerLog.warn(`Failed to resolve overlap-release task parked columns for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+
       // Track pause state transitions for event-driven scheduling on unpause.
       // When a previously-paused task is unpaused in a schedulable column,
       // trigger a scheduling pass immediately instead of waiting for the next
@@ -1645,6 +1779,7 @@ export class Scheduler {
 
     this.store.on("task:deleted", (task) => {
       this.lastAutoClaimFingerprint.delete(task.id);
+      this.overlapBlockedTaskIds.delete(task.id);
       this.options.snapshotManager?.invalidate("task:deleted");
       // RUFU-487 step 1: the deleted card's checkouts are gone or freed; no verdict may outlive them.
       invalidateEmptinessProofsForTask(this.store.getRootDir(), task);
@@ -1845,6 +1980,25 @@ export class Scheduler {
     if (this.running) return;
     this.running = true;
 
+    /*
+    FNXC:FileScopeRecovery 2026-10-12-19:09:
+    A scheduler restart loses event-local blocker history while durable tasks can still carry an
+    overlapBlockedBy receipt. Hydrate that narrow history before later update events so clearing a
+    persisted blocker retains its one prompt, normal-admission reevaluation instead of waiting for
+    the poll backstop.
+    */
+    const hydrationGeneration = ++this.overlapBlockerHydrationGeneration;
+    this.overlapBlockerHydration = this.store.listTasks({ slim: true, includeArchived: false, startupMemo: true })
+      .then((tasks) => {
+        if (hydrationGeneration !== this.overlapBlockerHydrationGeneration) return;
+        for (const task of tasks) {
+          if (task.overlapBlockedBy) this.overlapBlockedTaskIds.add(task.id);
+        }
+      })
+      .catch((error) => {
+        schedulerLog.warn(`Failed to hydrate overlap-blocker scheduling state: ${error instanceof Error ? error.message : String(error)}`);
+      });
+
     const interval = this.options.pollIntervalMs ?? 15_000;
     this.activePollMs = interval;
     this.pollInterval = setInterval(() => this.schedule(), interval);
@@ -1893,6 +2047,9 @@ export class Scheduler {
     this.wasPermanentAgentUnavailable.clear();
     this.wasDispatchQueuedReasonLogged.clear();
     this.symbolLockRenewalLog.reset();
+    this.overlapBlockedTaskIds.clear();
+    this.overlapBlockerHydrationGeneration += 1;
+    this.overlapBlockerHydration = Promise.resolve();
     schedulerLog.log("Stopped");
   }
 
@@ -2450,6 +2607,8 @@ export class Scheduler {
         // FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the post-sweep re-read keeps the SAME
         // read shape as the pass above, so the two comparisons see the same fields.
         tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false, excludeLog: true });
+        tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false, excludeLog: true });
+        tasks = await revalidateFileScopeLeaseReleases(this.store, tasks);
         settings = await this.store.getSettings();
         await this.emitHighOverlapFanoutWarnings(tasks);
 
@@ -2828,7 +2987,14 @@ export class Scheduler {
       });
 
       if (settings.groupOverlappingFiles) {
-        for (const task of tasks) {
+        for (let task of tasks) {
+          // Receipt holders parse before classification so a changed declared scope fails closed.
+          const receiptScope = task.fileScopeLeaseRelease ? await getFilteredFileScope(task) : undefined;
+          task = await invalidateMismatchedFileScopeLeaseRelease(
+            this.store,
+            task,
+            receiptScope ? fileScopeLeaseScopeFingerprint(receiptScope) : undefined,
+          );
           const classification = classifyFileScopeLease(task, tasks, {
             mergeRequestContractShadowEnabled: mergeShadowEnabled,
             handoffAccepted: reviewHandoffMarkerMap.get(task.id) ?? false,
@@ -2839,10 +3005,11 @@ export class Scheduler {
             isWipColumn: isWipColumnTask(task),
             isReviewColumn: isReviewColumnTask(task),
             isTerminalColumn: isTerminalColumnTask(task),
+            scopeFingerprint: receiptScope ? fileScopeLeaseScopeFingerprint(receiptScope) : undefined,
           });
-          // Classification intentionally precedes prompt parsing: idle backlog cards do not own a lease.
+          // Classification intentionally precedes prompt parsing for non-receipt holders: idle backlog cards do not own a lease.
           if (classification.kind === "none") continue;
-          const filteredScope = await getFilteredFileScope(task);
+          const filteredScope = receiptScope ?? await getFilteredFileScope(task);
           if (isCoordinationOnlyTask(task, filteredScope) || filteredScope.length === 0) continue;
 
           leaseWaiverIds.set(task.id, classification.waivedForTaskIds);

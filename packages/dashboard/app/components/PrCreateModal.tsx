@@ -43,7 +43,6 @@ type PreflightCheck = {
   warning?: boolean;
 };
 
-const PR_METADATA_TIMEOUT_MS = 15000;
 const PR_CREATE_BODY_PREVIEW_STORAGE_KEY = "fn-pr-create-body-preview";
 
 /*
@@ -114,23 +113,9 @@ function writeBooleanPref(key: string, value: boolean): void {
 }
 
 /*
-FNXC:PrCreateModal 2026-06-27-23:48:
-AI PR metadata generation must never leave the Create PR dialog in a permanent loading state. Bound the call to the same 15s budget as PR view fetches, then route timeout failures through the existing metadata error/manual-body fallback path so users can recover manually.
+FNXC:PrCreateModal 2026-10-12-15:02:
+The metadata route owns both its timeout and its usable fallback response. Do not impose a client deadline: aborting early cancels the route before it can return either generated or fallback content.
 */
-async function withPrMetadataTimeout<T>(promise: Promise<T>): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<T>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error("Timed out generating PR metadata")), PR_METADATA_TIMEOUT_MS);
-  });
-
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
 
 /*
 FNXC:PrCreateModal 2026-06-23-00:00:
@@ -319,7 +304,7 @@ export function PrCreateModal({
       setUserEditedBody(false);
     }
     try {
-      const metadata = await withPrMetadataTimeout(generatePrMetadata(taskId, projectId));
+      const metadata = await generatePrMetadata(taskId, projectId);
       if (requestId !== requestSeqRef.current.metadata) {
         return;
       }
@@ -533,7 +518,7 @@ export function PrCreateModal({
     setMetadataLoading(true);
     setMetadataError(null);
     try {
-      const metadata = await withPrMetadataTimeout(generatePrMetadata(taskId, projectId));
+      const metadata = await generatePrMetadata(taskId, projectId);
       if (requestId !== requestSeqRef.current.metadata) {
         return;
       }

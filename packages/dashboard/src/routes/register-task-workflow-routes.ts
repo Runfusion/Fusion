@@ -5300,6 +5300,35 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   });
 
   /**
+   * GET /api/tasks/:id/workflow-admission
+   * Returns the same current required-gate decision used by merge admission.
+   */
+  router.get("/tasks/:id/workflow-admission", async (req, res) => {
+    try {
+      const { store: scopedStore, engine } = await getProjectContext(req);
+      await scopedStore.getTask(req.params.id);
+      if (!engine) {
+        res.json({ allApproved: false, gates: [], requiredGateIds: [], resolution: "read-failed" });
+        return;
+      }
+      try {
+        const admission = await engine.getPreMergeAdmissionDecision(req.params.id);
+        res.json({
+          ...admission.decision,
+          requiredGateIds: [...admission.gate.requiredPreMergeStepIds],
+          resolution: admission.gate.resolution,
+        });
+      } catch {
+        res.json({ allApproved: false, gates: [], requiredGateIds: [], resolution: "read-failed" });
+      }
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isTaskLookupMiss(err)) throw notFound(`Task ${req.params.id} not found`);
+      rethrowAsApiError(err, "Internal server error");
+    }
+  });
+
+  /**
    * GET /api/tasks/:id/runtime-fallback
    * Return the most recent "session:runtime-resolved" run-audit event for
    * this task, normalized for the runtime-fallback badge/toast affordance.

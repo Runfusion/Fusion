@@ -90,7 +90,7 @@
     "loadContentError": "스킬 콘텐츠 로드 실패",
     "allSkillsSelected": "모든 스킬 선택됨",
     "discoveredSection": "검색된 스킬",
-    "installsCount": "{{count}}회 설치",
+    "installsCount": "{{value}}회 설치",
     "backToSkillMd": "Back to SKILL.md",
     "noMatchingDiscovered": "검색어와 일치하는 검색된 스킬이 없습니다.",
     "toggleFailed": "스킬 전환 실패: {{message}}",
@@ -4667,7 +4667,8 @@
     "deleteBranchTitle": "브랜치 삭제",
     "stagedFiles_one": "",
     "openSource": "Open source",
-    "behindUpstream_other": ""
+    "behindUpstream_other": "",
+    "autoSyncOffNotRun": "자동 동기화: 꺼짐 / 실행 안 됨"
   },
   "stall": {
     "dependency-block": {
@@ -11692,7 +11693,16 @@
       "legacy2": "",
       "requiredChecksHelp": "",
       "gitLabTokenType": "GitLab token type",
-      "includeTaskIdInCommitDefault": ""
+      "includeTaskIdInCommitDefault": "",
+      "afterFusionAdvancesTheIntegrationBranchRefThe": "",
+      "autoSyncProjectCheckoutAfterMerge": "",
+      "fastForwardOnlySkipDirtyWorktrees": "",
+      "inYourProjectRootWillShowTheNew": "",
+      "isTheLegacyBehavior": "",
+      "offLeaveTheProjectRootStaleLegacyBehavior": "",
+      "snapsCleanlyWhenTheWorktreeHasNoEdits": "",
+      "snapshotsRealLocalEditsAsAPatchAgainst": "",
+      "stashFastForwardDefaultPreserveLocalEdits": ""
     },
     "help": {
       "show": "Show help"

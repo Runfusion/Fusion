@@ -38,6 +38,9 @@ FN-9397 reconciles the closure after triage imports the graph executor for held-
 
 FNXC:MergeReliability 2026-10-01-22:44:
 FN-9446 reconciles the finalization-owned post-merge gate reseed. Its continuation insert is guarded by the captured task update timestamp and workflow selection, and merge finalization wraps the reseed in its finalization fence; its subsequent log follows only that accepted claim. The two call sites are therefore checkpoint-covered, not pending or an invented out-of-frontier exclusion.
+
+FNXC:MergeReliability 2026-10-12-18:51:
+FN-9538 classifies scheduler receipt-clearing writes discovered through the merger import closure as out-of-frontier. They preserve their scheduler and outer-dispatch revision fences, but no call edge from a merge entry point lets an orphan merge body reach them.
 -->
 
 <!--
@@ -45,7 +48,7 @@ FNXC:MergeReliability 2026-09-25-10:56:
 The structural reconciler owns module and call-site discovery, while reviewers own lifecycle verdicts. A newly derived writer receives a deterministic pending classification; a new merger call edge to an existing entry requires reviewers to revisit its out-of-frontier verdict rather than treating closure membership as proof.
 -->
 
-The manifest is final and keyed by AST-derived call-site id and argument-shape fingerprint. It contains 426 derived call sites across the 337-module pinned closure: 361 scanned-but-off-path rows are explicitly `out-of-frontier`, including the 22 graph-execution, admission, and IR-pin writes exposed by the held-planning import path. Of the 65 frontier rows, 52 are `already-fenced`, 8 are `benign-unfenced`, and 5 remain `unresolved`. This includes the transient-status leaf, locally fence-wrapped workspace-finalization logs, and the checkpointed post-merge gate reseed. Unresolved direct-body surfaces remain explicitly unresolved because the real exported body cannot yet isolate every call site without test-only production exports. Each `must-be-fenced` or unresolved surface needs the follow-up below.
+The manifest is final and keyed by AST-derived call-site id and argument-shape fingerprint. It contains 432 derived call sites across the 338-module pinned closure (measured 2026-10-13 on the post-sync tree): 369 scanned-but-off-path rows are explicitly `out-of-frontier`, including the graph-execution, admission, and IR-pin writes exposed by the held-planning import path. Of the 63 frontier rows, 50 are `already-fenced`, 8 are `benign-unfenced`, and 5 remain `unresolved`. This includes the transient-status leaf, locally fence-wrapped workspace-finalization logs, and the checkpointed post-merge gate reseed. Unresolved direct-body surfaces remain explicitly unresolved because the real exported body cannot yet isolate every call site without test-only production exports. Each `must-be-fenced` or unresolved surface needs the follow-up below. The immutable hosted failure and the scheduler-entry source attribution are recorded separately in [FN-9537's disposition](../test-failures/fn-9537-orphan-durable-write-inventory-disposition.md); that evidence does not make closure membership a merge-body call edge.
 
 | call site | writer | Axis 1 | final | Layer B evidence | proof | follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -93,7 +96,7 @@ The complete machine-readable table is `packages/engine/src/__tests__/fixtures/m
 
 ## Out-of-frontier rows
 
-The import closure intentionally includes modules pulled in by the legacy `aiMergeTask` pipeline and other independently owned engine subsystems. Their durable calls are retained in the manifest ratchet, but they have no call edge from `runAiMerge`, `landWorkspaceTask`, or `landOneRepo`; they are classified with the required `out-of-frontier` five-tuple rather than invented as unresolved orphan writes. This currently accounts for 306 entries as measured 2026-10-02, including all `packages/engine/src/merger.ts` legacy-pipeline writes, the `refreshReusedWorktreeBase>persistBaseSha` update, workspace base-refresh persistence and skipped-refresh logging, and the 22 `executeWorkflowGraph`/admission/IR-pin rows exposed by the triage held-planning import. The remaining 92 entries are the direct merger-body modules (`merger-ai.ts`, `auto-merge-finalization.ts`, `post-merge-gate-reseed.ts`, and the `createRunAuditor` surface); each remains in the frontier and is separately classified in the manifest.
+The import closure intentionally includes modules pulled in by the legacy `aiMergeTask` pipeline and other independently owned engine subsystems. Their durable calls are retained in the manifest ratchet, but they have no call edge from `runAiMerge`, `landWorkspaceTask`, or `landOneRepo`; they are classified with the required `out-of-frontier` five-tuple rather than invented as unresolved orphan writes. This accounts for 369 entries as measured 2026-10-13 on the post-sync tree, including all `packages/engine/src/merger.ts` legacy-pipeline writes, the `refreshReusedWorktreeBase>persistBaseSha` update, workspace base-refresh persistence and skipped-refresh logging, the two scheduler receipt-clearing `updateTaskAtomic` writes, and the `executeWorkflowGraph`/admission/IR-pin rows exposed by the triage held-planning import. The remaining 63 frontier rows include the 56 direct merger-body modules (`merger-ai.ts`, `auto-merge-finalization.ts`, `post-merge-gate-reseed.ts`, and the `createRunAuditor` surface); each remains in the frontier and is separately classified in the manifest.
 
 ## Characterization and competing generations
 

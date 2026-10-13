@@ -21,6 +21,7 @@ import {
   PLANNING_DEEPEN_CHECKPOINT_ID,
   PLANNING_DEEPEN_CHECKPOINT_QUESTION,
   PLANNING_DEEPEN_PROCEED_OPTION_ID,
+  TaskNotFoundError,
 } from "@fusion/core";
 import type { TaskStore, TaskAttachment, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult, ChatSession, ChatMessage } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
@@ -223,7 +224,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     // FNXC:PostgresCutover 2026-07-05-16:50: routes borrow the AsyncDataLayer
     // from the scoped store; null = legacy mode for this mock.
     getAsyncLayer: vi.fn().mockReturnValue(null),
-    getTask: vi.fn(),
+    getTask: vi.fn(async (id: string) => ({ id })),
     listTasks: vi.fn().mockResolvedValue([]),
     searchTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
@@ -2616,6 +2617,41 @@ describe("Planning Mode Routes", () => {
         expect(replay.status).toBe(200);
         expect(replay.body).toMatchObject({ alreadyCreated: true, task: { id: "FN-9412" } });
         expect(store.createTask).toHaveBeenCalledTimes(1);
+      });
+
+      it("drops typed missing suggestions but maps a transaction-time dependency race to 400", async () => {
+        const summary = {
+          title: "Recover advisory dependencies",
+          description: "Keep only live dependencies.",
+          suggestedDependencies: ["FN-100", "FN-404"],
+          keyDeliverables: ["Create task"],
+        };
+        (store.getTask as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+          if (id === "FN-100") return { id };
+          throw new TaskNotFoundError(id);
+        });
+        (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: "FN-LIVE",
+          title: summary.title,
+          description: summary.description,
+          column: "triage",
+          dependencies: ["FN-100"],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+        (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({});
+        (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+        const start = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Recover dependencies" }), { "Content-Type": "application/json" });
+        const created = await REQUEST(buildApp(), "POST", "/api/planning/create-task", JSON.stringify({ sessionId: start.body.sessionId, summary }), { "Content-Type": "application/json" });
+        expect(created.status, JSON.stringify(created.body)).toBe(201);
+        expect((store.createTask as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toMatchObject({ dependencies: ["FN-100"] });
+
+        (store.createTask as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Dependency task FN-100 not found"));
+        const raceStart = await REQUEST(buildApp(), "POST", "/api/planning/start", JSON.stringify({ initialPlan: "Race dependency deletion" }), { "Content-Type": "application/json" });
+        const raced = await REQUEST(buildApp(), "POST", "/api/planning/create-task", JSON.stringify({ sessionId: raceStart.body.sessionId, summary: { ...summary, title: "Race dependency deletion", suggestedDependencies: ["FN-100"] } }), { "Content-Type": "application/json" });
+        expect(raced.status).toBe(400);
+        expect(raced.body.message ?? raced.body.error).toContain("FN-100");
       });
 
       it.each([

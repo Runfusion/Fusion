@@ -2,7 +2,7 @@ import { isBranchGroupMemberLanded } from "../branch/branch-group-completion.js"
 import { taskHasManualOpenPullRequest } from "../tasks/task-helpers.js";
 import type { BranchGroup, Settings, Task, WorkflowStepResult } from "../types.js";
 import type { MergeContentDescriptor } from "./merge-content-descriptor.js";
-import { evaluatePreMergeApprovals } from "./pre-merge-approval.js";
+import { evaluatePreMergeAdmissionDecision, evaluatePreMergeApprovals } from "./pre-merge-approval.js";
 /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's per-card delivery lock is a merge-door predicate like every other gate. */
 import { getHumanMergeApprovalBlocker, type HumanMergeApprovalEvidence } from "./human-merge-approval.js";
 import { isArchivedRemediationCarrier } from "../workflows/workflow-step-results.js";
@@ -784,7 +784,7 @@ export function getTaskMergeBlocker(
   results exit through a fresh gate run (or the audited FN-7720 bypass); stale and
   unprovable diff evidence exit through a review over current content.
   */
-  const approval = evaluatePreMergeApprovals(task, options).find((candidate) => candidate.state !== "approved");
+  const approval = evaluatePreMergeAdmissionDecision(task, options).gates.find((candidate) => candidate.state !== "approved");
   if (approval?.state === "missing") return PRE_MERGE_STEPS_NOT_RUN_BLOCKER;
   /*
   FNXC:PreMergeApproval 2026-09-05-23:08:

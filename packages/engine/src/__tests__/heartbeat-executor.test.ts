@@ -84,6 +84,7 @@ describe("executeHeartbeat", () => {
   function createMockAgentSession() {
     return {
       prompt: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn(),
       subscribe: vi.fn(),
       model: { provider: "mock", id: "mock-model" },
@@ -1055,6 +1056,32 @@ describe("executeHeartbeat", () => {
       expect(result.resultJson).toEqual({ reason: "invalid_state", state: "error" });
       expect(mockedCreateFnAgent).not.toHaveBeenCalled();
       expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "active");
+    });
+
+    it("keeps a pause intent when normal completion races session disposal", async () => {
+      const store = createStoreWithAgentForExec({ state: "active" });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const run = await monitor.startRun("agent-001", { source: "on_demand" });
+      let releaseDispose: (() => void) | undefined;
+      const disposalStarted = new Promise<void>((resolve) => {
+        monitor.trackAgent("agent-001", {
+          dispose: () => new Promise<void>((release) => {
+            releaseDispose = release;
+            resolve();
+          }),
+        }, run.id);
+      });
+
+      const pausing = monitor.pauseAgent("agent-001", { stopActiveRun: true });
+      await disposalStarted;
+      await monitor.completeRun("agent-001", run.id, { status: "completed" });
+      releaseDispose?.();
+      await pausing;
+
+      const terminal = await store.getRunDetail("agent-001", run.id);
+      expect(terminal?.status).toBe("terminated");
+      expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "paused");
+      expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "active");
     });
 
     it("keeps terminated as a run status while pausing the agent", async () => {
@@ -4180,6 +4207,134 @@ describe("executeHeartbeat", () => {
       );
     });
 
+    it("does not admit a provider prompt when pause wins before session tracking", async () => {
+      const store = createStoreWithAgentForExec();
+      const appendAgentLog = vi.fn().mockResolvedValue(undefined);
+      let releaseSettings: (() => void) | undefined;
+      let signalSettingsRead: (() => void) | undefined;
+      const settingsRead = new Promise<void>((resolve) => { signalSettingsRead = resolve; });
+      const getSettings = vi.fn()
+        .mockImplementationOnce(async () => {
+          signalSettingsRead?.();
+          await new Promise<void>((release) => { releaseSettings = release; });
+          return {};
+        })
+        .mockResolvedValue({});
+      mockTaskStore = createMockTaskStore({ appendAgentLog, getSettings });
+      const activeRun = {
+        id: "run-001",
+        agentId: "agent-001",
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+        status: "active" as const,
+      };
+      let persistedRun: AgentHeartbeatRun | undefined;
+      (store.getActiveHeartbeatRun as ReturnType<typeof vi.fn>).mockResolvedValue(activeRun);
+      (store.saveRun as ReturnType<typeof vi.fn>).mockImplementation(async (run: AgentHeartbeatRun) => {
+        persistedRun = run;
+      });
+      (store.getRunDetail as ReturnType<typeof vi.fn>).mockImplementation(async () => persistedRun);
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const execution = monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+      await settingsRead;
+      monitor.start();
+
+      // Model the persisted-state writer used by an offline CLI/another process:
+      // it emits the owner monitor's update event rather than calling pauseAgent.
+      (monitor as any).agentUpdatedListener({ ...mockAgent, state: "paused" });
+      await vi.waitFor(async () => {
+        expect((await store.getRunDetail("agent-001", "run-001"))?.status).toBe("terminated");
+      });
+      releaseSettings?.();
+      const result = await execution;
+      monitor.stop();
+
+      expect(result.status).toBe("terminated");
+      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      expect(appendAgentLog).not.toHaveBeenCalled();
+    });
+
+    it("fences late session callbacks after an operator stop terminalizes the run", async () => {
+      const store = createStoreWithAgentForExec();
+      const appendAgentLog = vi.fn().mockResolvedValue(undefined);
+      mockTaskStore = createMockTaskStore({ appendAgentLog });
+      const mockSession = createMockAgentSession();
+      let onText: ((delta: string) => void) | undefined;
+      let onToolStart: ((name: string, args?: Record<string, unknown>) => void) | undefined;
+      let onToolEnd: ((name: string, isError: boolean, result?: unknown) => void) | undefined;
+      let releasePrompt: (() => void) | undefined;
+      const promptStarted = new Promise<void>((resolve) => {
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          resolve();
+          await new Promise<void>((release) => { releasePrompt = release; });
+        });
+      });
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        onText = opts.onText;
+        onToolStart = opts.onToolStart;
+        onToolEnd = opts.onToolEnd;
+        return { session: mockSession as any };
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const execution = monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+      await promptStarted;
+
+      await monitor.stopRun("agent-001", { preservePausedState: true });
+      const terminal = await store.getRunDetail("agent-001", "run-001");
+      expect(terminal?.status).toBe("terminated");
+
+      onText?.("late provider text");
+      onToolStart?.("late-tool", {});
+      onToolEnd?.("late-tool", false, "late result");
+      releasePrompt?.();
+      await execution;
+
+      expect(appendAgentLog).not.toHaveBeenCalled();
+      expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "active");
+    });
+
+    it("waits for the owned session abort before terminalizing an operator stop", async () => {
+      const store = createStoreWithAgentForExec();
+      const mockSession = createMockAgentSession();
+      let releasePrompt: (() => void) | undefined;
+      let resolveAbort: (() => void) | undefined;
+      const promptStarted = new Promise<void>((resolve) => {
+        mockSession.prompt = vi.fn().mockImplementation(async () => {
+          resolve();
+          await new Promise<void>((release) => { releasePrompt = release; });
+        });
+      });
+      const abortStarted = new Promise<void>((resolve) => {
+        mockSession.abort = vi.fn().mockImplementation(() => new Promise<void>((release) => {
+          resolve();
+          resolveAbort = release;
+        }));
+      });
+      mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const execution = monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+      await promptStarted;
+
+      let stopSettled = false;
+      const stop = monitor.stopRun("agent-001", { preservePausedState: true }).then(() => { stopSettled = true; });
+      await abortStarted;
+
+      expect(stopSettled).toBe(false);
+      expect((await store.getRunDetail("agent-001", "run-001"))?.status).not.toBe("terminated");
+      expect(mockSession.dispose).not.toHaveBeenCalled();
+
+      resolveAbort?.();
+      await stop;
+
+      expect(mockSession.dispose).toHaveBeenCalledTimes(1);
+      expect((await store.getRunDetail("agent-001", "run-001"))?.status).toBe("terminated");
+      releasePrompt?.();
+      await execution;
+    });
+
     it("records agent logs, context taskId, and stdoutExcerpt for successful runs", async () => {
       const store = createStoreWithAgentForExec();
       const appendAgentLog = vi.fn().mockResolvedValue(undefined);
@@ -4261,9 +4416,32 @@ describe("executeHeartbeat", () => {
 
       expect(run.resultJson).toBeDefined();
       expect((run.resultJson as any).summary).toBe("Checked task, all good");
+      expect(mockSession.abort).toHaveBeenCalledTimes(1);
     });
 
-    it("works without summary in fn_heartbeat_done", async () => {
+    it("latches the first completion in a mixed tool batch", async () => {
+      const store = createStoreWithAgentForExec();
+      let capturedDoneTool: any;
+      const mockSession = createMockAgentSession();
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        capturedDoneTool = opts.customTools[opts.customTools.length - 1];
+        return { session: mockSession as any };
+      });
+      mockSession.prompt = vi.fn().mockImplementation(async () => {
+        const first = await capturedDoneTool.execute("call-1", { summary: "first summary" });
+        const second = await capturedDoneTool.execute("call-2", { summary: "late summary" });
+        expect(first.terminate).toBe(true);
+        expect(second.terminate).toBe(true);
+      });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const run = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect((run.resultJson as any).summary).toBe("first summary");
+      expect(mockSession.abort).toHaveBeenCalledTimes(1);
+    });
+
+    it("works without summary in fn_heartbeat_done",  async () => {
       const store = createStoreWithAgentForExec();
       let capturedDoneTool: any;
       const mockSession = createMockAgentSession();

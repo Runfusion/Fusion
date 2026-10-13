@@ -60,6 +60,23 @@ export function useCurrentProject(
     writeCache(SWR_CACHE_KEYS.CURRENT_PROJECT_ID, projectId ?? "");
   }, []);
 
+  /*
+  FNXC:DashboardProjectSelection 2026-10-12-15:03:
+  Project-list polling creates fresh arrays, so re-persist only a changed node selection.
+  The global value remains restore state, but routine poll reconciliation must not create
+  settings mutations that contend across tabs or inflate durable audit history.
+  */
+  const persistGlobalProjectSelection = useCallback(async (projectId: string): Promise<void> => {
+    const currentCache = settingsCacheRef.current ?? {};
+    if (currentCache[nodeKey] === projectId) return;
+
+    const newCache = { ...currentCache, [nodeKey]: projectId };
+    settingsCacheRef.current = newCache;
+    await updateGlobalSettings({ dashboardCurrentProjectIdByNode: newCache }).catch(() => {
+      // Non-critical - persistence failed.
+    });
+  }, [nodeKey]);
+
   const pickFallbackProject = useCallback((projects: ProjectInfo[]): ProjectInfo | null => {
     return projects.find((p) => p.status === "active") || projects[0] || null;
   }, []);
@@ -154,12 +171,7 @@ export function useCurrentProject(
                   autoDefaultCountRef.current = 0;
                   setCurrentProjectState(parsed);
                   persistCurrentProjectId(parsed.id);
-                  settingsCacheRef.current = { ...settingsCacheRef.current, [nodeKey]: parsed.id };
-                  await updateGlobalSettings({
-                    dashboardCurrentProjectIdByNode: settingsCacheRef.current,
-                  }).catch(() => {
-                    // Non-critical - migration failed, but we have the data in memory.
-                  });
+                  await persistGlobalProjectSelection(parsed.id);
                 }
               }
             }
@@ -183,7 +195,7 @@ export function useCurrentProject(
     return () => {
       cancelled = true;
     };
-  }, [availableProjects, cachedProjectId, nodeKey, persistCurrentProjectId, projectsLoading, urlProjectId]);
+  }, [availableProjects, cachedProjectId, nodeKey, persistCurrentProjectId, persistGlobalProjectSelection, projectsLoading, urlProjectId]);
 
   useEffect(() => {
     absentCountRef.current = 0;
@@ -216,11 +228,7 @@ export function useCurrentProject(
         return;
       }
 
-      const newCache = { ...settingsCacheRef.current, [nodeKey]: currentProject.id };
-      settingsCacheRef.current = newCache;
-      updateGlobalSettings({ dashboardCurrentProjectIdByNode: newCache }).catch(() => {
-        // Non-critical - persistence failed.
-      });
+      void persistGlobalProjectSelection(currentProject.id);
       persistCurrentProjectId(currentProject.id);
     } else {
       absentCountRef.current = 0;
@@ -255,6 +263,7 @@ export function useCurrentProject(
     persistCurrentProjectId,
     pickFallbackProject,
     setListDrivenSelection,
+    persistGlobalProjectSelection,
   ]);
 
   const setCurrentProject = useCallback(
@@ -266,14 +275,10 @@ export function useCurrentProject(
       persistCurrentProjectId(project?.id ?? null);
 
       if (project) {
-        const newCache = { ...settingsCacheRef.current, [nodeKey]: project.id };
-        settingsCacheRef.current = newCache;
-        updateGlobalSettings({ dashboardCurrentProjectIdByNode: newCache }).catch(() => {
-          // Non-critical - persistence failed.
-        });
+        void persistGlobalProjectSelection(project.id);
       }
     },
-    [nodeKey, persistCurrentProjectId],
+    [persistCurrentProjectId, persistGlobalProjectSelection],
   );
 
   const clearCurrentProject = useCallback(() => {

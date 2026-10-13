@@ -282,4 +282,33 @@ describe("Planning Mode initiating prompt history", () => {
     await user.click(screen.getByRole("button", { name: "Show user Q&A" }));
     expect(screen.queryByTestId("planning-summary-initial-prompt")).toBeNull();
   });
+
+  it("renders and removes a stale suggested dependency outside the task picker", async () => {
+    const user = userEvent.setup();
+    const onSummaryChange = vi.fn();
+    render(<SummaryView
+      projectId="project-1"
+      summary={{ ...mockSummary, suggestedDependencies: ["FN-404", mockTasks[0]!.id] }}
+      historyEntries={[]}
+      onSummaryChange={onSummaryChange}
+      tasks={mockTasks}
+      branchMode="project-default"
+      branchName=""
+      baseBranch="main"
+      onBranchModeChange={vi.fn()}
+      onBranchNameChange={vi.fn()}
+      onBaseBranchChange={vi.fn()}
+      onCreateTask={vi.fn()}
+      isCreatingTask={false}
+      isRefiningSummary={false}
+    />);
+
+    const remove = screen.getByRole("button", { name: "Remove suggested dependency FN-404" });
+    await user.click(remove);
+
+    expect(onSummaryChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      suggestedDependencies: [mockTasks[0]!.id],
+    }));
+    expect(screen.queryByRole("button", { name: "Remove suggested dependency FN-404" })).toBeNull();
+  });
 });

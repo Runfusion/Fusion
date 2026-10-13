@@ -90,7 +90,7 @@
     "loadContentError": "Falha ao carregar o conteúdo da habilidade",
     "allSkillsSelected": "Todas as habilidades selecionadas",
     "discoveredSection": "Habilidades descobertas",
-    "installsCount": "{{count}} instalações",
+    "installsCount": "{{value}} instalações",
     "backToSkillMd": "Back to SKILL.md",
     "noMatchingDiscovered": "Nenhuma habilidade descoberta corresponde à sua busca.",
     "toggleFailed": "Falha ao alternar habilidade: {{message}}",
@@ -4667,7 +4667,8 @@
     "deleteBranchTitle": "Excluir branch",
     "stagedFiles_one": "{{count}} arquivo preparado",
     "openSource": "Open source",
-    "behindUpstream_other": "{{count}} commits atrás do upstream"
+    "behindUpstream_other": "{{count}} commits atrás do upstream",
+    "autoSyncOffNotRun": "sincronização automática: desativada / não executada"
   },
   "stall": {
     "dependency-block": {
@@ -11692,7 +11693,16 @@
       "legacy2": "Legado ",
       "requiredChecksHelp": "Sem padrão — não definido. Nomes de verificações separados por vírgulas correspondem exatamente aos do GitHub (diferenciam maiúsculas de minúsculas). Deixar isto vazio usa apenas as verificações de status obrigatórias do GitHub; uma verificação nomeada que nunca informa bloqueia o merge.",
       "gitLabTokenType": "GitLab token type",
-      "includeTaskIdInCommitDefault": "). Padrão: ativado."
+      "includeTaskIdInCommitDefault": "). Padrão: ativado.",
+      "afterFusionAdvancesTheIntegrationBranchRefThe": " Depois que o Fusion avança a referência da branch de integração, o merger pode sincronizar automaticamente outras worktrees que ainda estejam com essa branch aberta (normalmente o checkout na raiz do projeto). ",
+      "autoSyncProjectCheckoutAfterMerge": "Sincronizar automaticamente o checkout do projeto após o merge",
+      "fastForwardOnlySkipDirtyWorktrees": "Somente fast-forward — ignora worktrees com alterações pendentes",
+      "inYourProjectRootWillShowTheNew": " na raiz do projeto vai mostrar os novos commits invertidos como &quot;alterações preparadas&quot; até você fazer pull manualmente. Aplica-se apenas a merges diretos. ",
+      "isTheLegacyBehavior": " é o comportamento legado: ",
+      "offLeaveTheProjectRootStaleLegacyBehavior": "Desativado — deixa a raiz do projeto desatualizada (comportamento legado)",
+      "snapsCleanlyWhenTheWorktreeHasNoEdits": " avança de forma limpa quando a worktree não tem alterações, e é ignorado nos demais casos. ",
+      "snapshotsRealLocalEditsAsAPatchAgainst": " captura as alterações locais reais como um patch em relação à ponta anterior, avança a worktree para a nova ponta e então reaplica o patch — arquivos não rastreados que colidem com caminhos recém-rastreados ficam em um diretório temporário para recuperação manual. ",
+      "stashFastForwardDefaultPreserveLocalEdits": "Stash + fast-forward (padrão) — preserva alterações locais"
     },
     "help": {
       "show": "Show help"

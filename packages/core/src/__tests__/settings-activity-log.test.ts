@@ -110,16 +110,24 @@ describe("settings:updated activity listener", () => {
     expect(listener.rows[0].details).toContain(summarizeSettingsValue(key, after));
   });
 
-  it("omits churn, retains real settings in mixed updates, and ignores rollback no-ops", () => {
+  it("omits churn and dashboard restore state while retaining real settings in mixed updates", () => {
     const listener = wireSettingsListener();
     listener.emit({ engineLastActiveAt: "after" }, { engineLastActiveAt: "before" });
     listener.emit({ engineActiveSinceMs: 2 }, { engineActiveSinceMs: 1 });
-    listener.emit({ engineLastActiveAt: "after", autoMerge: false }, { engineLastActiveAt: "before", autoMerge: true });
+    listener.emit(
+      { dashboardCurrentProjectIdByNode: { local: "project-b" } },
+      { dashboardCurrentProjectIdByNode: { local: "project-a" } },
+    );
+    listener.emit(
+      { dashboardCurrentProjectIdByNode: { local: "project-b" }, autoMerge: false },
+      { dashboardCurrentProjectIdByNode: { local: "project-a" }, autoMerge: true },
+    );
     listener.emit({ modelPresets: [{ id: "default" }] }, { modelPresets: [{ id: "default" }] });
 
     expect(listener.rows).toHaveLength(1);
     expect(listener.rows[0].details).toContain("autoMerge");
     expect(listener.rows[0].details).not.toContain("engineLastActiveAt");
+    expect(listener.rows[0].details).not.toContain("dashboardCurrentProjectIdByNode");
   });
 
   it("never records secret values in details or metadata", () => {

@@ -46,6 +46,17 @@ const mockModels = [
     contextWindow: 200000,
     maxTokens: 16384,
   },
+  ...["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"].map((id) => ({
+    id,
+    name: id,
+    api: "anthropic",
+    provider: "anthropic",
+    reasoning: true,
+    input: "text",
+    cost: { input: 1, output: 1, cacheRead: 0.1, cacheWrite: 1.25 },
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+  })),
 ];
 
 const { MockAssistantMessageEventStream } = vi.hoisted(() => {
@@ -129,8 +140,9 @@ describe("provider registration (default export)", () => {
     mod.default(mockPi);
 
     const models = registerProvider.mock.calls[0][1].models;
-    expect(models.filter((model: { id: string }) => model.id === "claude-opus-5-5")).toHaveLength(0);
-    expect(models.filter((model: { id: string }) => model.id === "claude-sonnet-5-5")).toHaveLength(0);
+    for (const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      expect(models.filter((model: { id: string }) => model.id === id)).toHaveLength(1);
+    }
   });
 
   it("projects a controlled Pi catalog exactly once and retains all projected fields", async () => {
@@ -166,6 +178,7 @@ describe("provider registration (default export)", () => {
     }]);
     expect(config.models.filter((model: { id: string }) => model.id === "claude-opus-5-5")).toHaveLength(1);
     expect(config.models.filter((model: { id: string }) => model.id === "claude-sonnet-5-5")).toHaveLength(0);
+    expect(config.models.filter((model: { id: string }) => model.id === "claude-haiku-5-5")).toHaveLength(0);
     expect(config.streamSimple).toEqual(expect.any(Function));
   });
 });

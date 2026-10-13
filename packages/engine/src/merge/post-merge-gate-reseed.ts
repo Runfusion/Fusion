@@ -375,13 +375,20 @@ async function runPostMergeGateResume(
   if (
     task.userPaused
     || task.deletedAt
-    || task.autoMerge === false
     || (task.paused === true && task.pausedReason !== IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON)
   ) {
     return { outcome: "not-seeded", reason: "operator-held" };
   }
 
   const settings = await store.getSettings();
+  /*
+  FNXC:PostMergeCloseout 2026-10-13-07:51 (merge origin/main):
+  Auto-merge authorization decides whether Fusion may LAND work, not whether the graph-owned verification
+  of a landing already proven durable may run — so no per-card `autoMerge` veto is consulted here, and
+  `operator-held` names pause/deletion only. Project auto-merge Off and an open manual PR stay fenced below
+  through `allowsAutoMergeProcessing`, because under that setting the lane is human-owned end to end. The
+  refusal taxonomy (RUFU-370) still names every withheld arm, so a withheld seeding remains observable.
+  */
   if (settings.globalPause || settings.enginePaused || !allowsAutoMergeProcessing(task, settings)) {
     return { outcome: "not-seeded", reason: "engine-paused" };
   }
@@ -418,7 +425,7 @@ async function runPostMergeGateResume(
       if (live.updatedAt !== snapshot.updatedAt || live.column !== snapshot.column
         || live.status !== snapshot.status || live.error !== snapshot.error
         || live.paused || live.userPaused || live.deletedAt
-        || !live.mergeDetails?.mergeConfirmed || live.autoMerge === false
+        || !live.mergeDetails?.mergeConfirmed
         || hasFreshCheckoutLease(live, settings)
         || isTaskExecutionLive(live.id, { activeSessionRegistry, executingTaskLock })) return null;
       const items = await store.listWorkflowWorkItemsForTask(task.id);

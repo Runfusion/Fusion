@@ -98,6 +98,12 @@ import {
 const MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES = 3;
 
 /*
+FNXC:HeartbeatTerminalBoundary 2026-10-13-02:14:
+A heartbeat completion is a user-visible terminal boundary, not a suggestion for the provider. Pi only honors a tool batch's terminate hint when every result opts in, so the monitor owns a completion latch and aborts the session after the completion tool settles. This prevents mixed batches or a non-cooperative provider from buying another turn after fn_heartbeat_done.
+*/
+const MAX_HEARTBEAT_TOOL_CALLS = 100;
+
+/*
 FNXC:HeartbeatRecovery 2026-07-11-00:00:
 FN-7835 requires durable heartbeat-managed agents in error state to retry on their next heartbeat instead of staying stranded. Recovery is intentionally bounded by a consecutive-attempt budget so persistent failures park the agent instead of forming an infinite retry loop.
 
@@ -374,17 +380,33 @@ export interface ResumeAgentOptions {
 
 /** Session interface for disposing agent resources */
 export interface AgentSession {
-  /** Dispose the agent session (stop execution, cleanup resources) */
-  dispose(): void;
+  /** Dispose the agent session (stop execution, cleanup resources). */
+  dispose(): void | Promise<void>;
+  /** Await provider-loop quiescence before terminal heartbeat persistence when supported. */
+  abort?(): void | Promise<void>;
 }
 
 /** In-memory tracking data for a monitored agent */
+interface PendingHeartbeatRun {
+  runId: string;
+  /** Set synchronously by stopRun before any persistence await. */
+  cancellationRequested: boolean;
+}
+
 interface TrackedAgent {
   agentId: string;
   session: AgentSession;
   /** Cancels retry backoff when this tracked heartbeat is stopped or untracked. */
   abortController?: AbortController;
   runId: string;
+  /*
+  FNXC:HeartbeatTerminalBoundary 2026-10-13-02:40:
+  An operator pause must synchronously close the run's event boundary before
+  disposal awaits. Late provider callbacks must not append activity after the
+  operator has requested cancellation or normal completion has persisted.
+  */
+  eventFenceClosed: boolean;
+  cancellationRequested: boolean;
   lastSeen: number; // timestamp from Date.now()
   missedHeartbeatReported: boolean;
   /** Session ID before this execution started */
@@ -943,9 +965,17 @@ export class HeartbeatMonitor {
   private secretsStore?: Pick<import("@fusion/core").SecretsStore, "listEnvExportable">;
 
   private trackedAgents: Map<string, TrackedAgent> = new Map();
+  /*
+  FNXC:HeartbeatPreTrackCancellation 2026-10-13-03:07:
+  A pause can arrive after durable run creation but before session tracking.
+  Retain a run-owned cancellation fence across that setup interval so a
+  persisted terminal row cannot be followed by a new provider prompt.
+  */
+  private pendingHeartbeatRuns: Map<string, PendingHeartbeatRun> = new Map();
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private agentUpdatedListener?: (agent: Agent) => void;
   /**
    * FNXC:AgentHeartbeat 2026-07-16-12:00:
    * FN-8184 keeps the last settings-derived multiplier warm for synchronous
@@ -1407,6 +1437,21 @@ export class HeartbeatMonitor {
     if (this.isRunning) return;
 
     this.isRunning = true;
+    /*
+    FNXC:HeartbeatTerminalBoundary 2026-10-13-02:14:
+    CLI and extension processes can only persist a pause intent. The runtime
+    that owns a live session consumes its project-scoped AgentStore update and
+    performs cancellation; a row mutation must never impersonate cancellation.
+    */
+    this.agentUpdatedListener = (agent) => {
+      // A run can be between startRun and trackAgent while session setup awaits.
+      // Its pending fence is also monitor-owned and must consume a persisted pause.
+      if (agent.state === "paused" && (this.trackedAgents.has(agent.id) || this.pendingHeartbeatRuns.has(agent.id))) {
+        void this.stopRun(agent.id, { preservePausedState: true });
+      }
+    };
+    const eventStore = this.store as AgentStore & { on?: (event: string, listener: (agent: Agent) => void) => void };
+    eventStore.on?.("agent:updated", this.agentUpdatedListener);
     if (this.messageStore) {
       this.messageStore.setMessageToAgentHook(this.handleMessageToAgent.bind(this));
     }
@@ -1598,6 +1643,11 @@ export class HeartbeatMonitor {
     if (this.messageStore) {
       this.messageStore.setMessageToAgentHook(() => {});
     }
+    if (this.agentUpdatedListener) {
+      const eventStore = this.store as AgentStore & { off?: (event: string, listener: (agent: Agent) => void) => void };
+      eventStore.off?.("agent:updated", this.agentUpdatedListener);
+      this.agentUpdatedListener = undefined;
+    }
     if (!this.isRunning) return;
 
     this.isRunning = false;
@@ -1641,6 +1691,8 @@ export class HeartbeatMonitor {
       session,
       abortController,
       runId,
+      eventFenceClosed: false,
+      cancellationRequested: false,
       lastSeen: Date.now(),
       missedHeartbeatReported: false,
       sessionIdBefore,
@@ -1670,6 +1722,7 @@ export class HeartbeatMonitor {
           // Because withAgentStartLock serializes runs per agent, the finally runs after each
           // run completes but before the next concurrent call's callback starts.
           this.clearRunState(agentId);
+          this.pendingHeartbeatRuns.delete(agentId);
         }
       },
       async (err) => {
@@ -1677,6 +1730,7 @@ export class HeartbeatMonitor {
           throw err;
         } finally {
           this.clearRunState(agentId);
+          this.pendingHeartbeatRuns.delete(agentId);
         }
       },
     );
@@ -1726,6 +1780,9 @@ export class HeartbeatMonitor {
     }
 
     const run = await this.store.startHeartbeatRun(agentId);
+    // Install the fence before the next await: AgentStore update events may
+    // request a stop while startRun is still enriching the durable row.
+    this.pendingHeartbeatRuns.set(agentId, { runId: run.id, cancellationRequested: false });
 
     // Enrich with execution context
     const enrichedRun: AgentHeartbeatRun = {
@@ -1738,6 +1795,20 @@ export class HeartbeatMonitor {
 
     // Save rich run data
     await this.store.saveRun(enrichedRun);
+
+    // A cross-process pause can terminate this record while the enrichment
+    // write above is in flight. Do not revive that explicit operator intent.
+    const pendingRun = this.pendingHeartbeatRuns.get(agentId);
+    const persistedRun = await this.store.getRunDetail(agentId, run.id);
+    if (pendingRun?.runId === run.id && (
+      pendingRun.cancellationRequested
+      || persistedRun?.status === "completed"
+      || persistedRun?.status === "failed"
+      || persistedRun?.status === "terminated"
+    )) {
+      pendingRun.cancellationRequested = true;
+      return enrichedRun;
+    }
 
     // Transition agent to running state
     try {
@@ -1777,11 +1848,28 @@ export class HeartbeatMonitor {
       skipStateTransition?: boolean;
     }
   ): Promise<void> {
+    const tracked = this.trackedAgents.get(agentId);
+    const ownsTrackedRun = tracked?.runId === runId;
+    // Close the callback boundary before any persistence await. A provider may
+    // settle concurrently with this terminal transition.
+    if (ownsTrackedRun && tracked) {
+      tracked.eventFenceClosed = true;
+    }
+    if (ownsTrackedRun && tracked?.cancellationRequested) {
+      result = {
+        ...result,
+        status: "terminated",
+        stderrExcerpt: result.stderrExcerpt ?? "Run stopped by user",
+      };
+    }
+
     // Load and update the run
     const run = await this.store.getRunDetail(agentId, runId);
     if (!run) return;
+    // A late prompt can settle after stopRun has persisted a terminal boundary.
+    // Never let its normal completion path overwrite that operator-visible result.
+    if (run.status === "completed" || run.status === "failed" || run.status === "terminated") return;
 
-    const tracked = this.trackedAgents.get(agentId);
     let completionResult = result;
 
     // Merge accumulated task creations into resultJson
@@ -2088,15 +2176,37 @@ export class HeartbeatMonitor {
    *
    * No-op when no active run exists.
    */
-  async stopRun(agentId: string): Promise<void> {
+  async stopRun(agentId: string, options: { preservePausedState?: boolean } = {}): Promise<void> {
+    const { preservePausedState = false } = options;
     const tracked = this.trackedAgents.get(agentId);
+    const pendingRun = this.pendingHeartbeatRuns.get(agentId);
+    // Set this synchronously, before reading persistence. executeHeartbeat can
+    // be between setup awaits and must observe the operator stop immediately.
+    if (pendingRun) {
+      pendingRun.cancellationRequested = true;
+    }
 
     if (tracked) {
       heartbeatLog.log(`Stopping tracked run ${tracked.runId} for ${agentId}`);
 
+      // Fence callbacks synchronously: session disposal is asynchronous and a
+      // non-cooperative provider can otherwise emit after pause was requested.
+      tracked.cancellationRequested = true;
+      tracked.eventFenceClosed = true;
       tracked.abortController?.abort();
+      /*
+      FNXC:HeartbeatStopSettlement 2026-10-13-02:58:
+      An operator-visible terminal run must follow the owned provider loop reaching
+      its abort boundary. Pi dispose initiates abort synchronously but does not wait
+      for idle, so await the optional session abort before cleanup and persistence.
+      */
       try {
-        tracked.session.dispose();
+        await Promise.resolve(tracked.session.abort?.());
+      } catch (error) {
+        heartbeatLog.warn(`Failed to abort tracked session while stopping run for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      try {
+        await Promise.resolve(tracked.session.dispose());
       } catch (error) {
         heartbeatLog.warn(`Failed to dispose tracked session while stopping run for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -2108,10 +2218,12 @@ export class HeartbeatMonitor {
         stderrExcerpt: "Run stopped by user",
       });
 
-      try {
-        await this.store.updateAgentState(agentId, "active");
-      } catch (stopStateErr) {
-        heartbeatLog.warn(`Agent ${agentId} updateAgentState(active) failed during stop: ${stopStateErr instanceof Error ? stopStateErr.message : String(stopStateErr)}`);
+      if (!preservePausedState) {
+        try {
+          await this.store.updateAgentState(agentId, "active");
+        } catch (stopStateErr) {
+          heartbeatLog.warn(`Agent ${agentId} updateAgentState(active) failed during stop: ${stopStateErr instanceof Error ? stopStateErr.message : String(stopStateErr)}`);
+        }
       }
 
       this.clearRunState(agentId);
@@ -2138,10 +2250,12 @@ export class HeartbeatMonitor {
 
     await this.store.endHeartbeatRun(activeRun.id, "terminated");
 
-    try {
-      await this.store.updateAgentState(agentId, "active");
-    } catch (stopPersistErr) {
-      heartbeatLog.warn(`Agent ${agentId} updateAgentState(active) failed during persisted-run stop: ${stopPersistErr instanceof Error ? stopPersistErr.message : String(stopPersistErr)}`);
+    if (!preservePausedState) {
+      try {
+        await this.store.updateAgentState(agentId, "active");
+      } catch (stopPersistErr) {
+        heartbeatLog.warn(`Agent ${agentId} updateAgentState(active) failed during persisted-run stop: ${stopPersistErr instanceof Error ? stopPersistErr.message : String(stopPersistErr)}`);
+      }
     }
 
     this.clearRunState(agentId);
@@ -2158,7 +2272,7 @@ export class HeartbeatMonitor {
 
     if (stopActiveRun) {
       try {
-        await this.stopRun(agentId);
+        await this.stopRun(agentId, { preservePausedState: true });
       } catch (error) {
         heartbeatLog.warn(`pauseAgent(${agentId}) stopRun failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -2539,6 +2653,15 @@ export class HeartbeatMonitor {
         triggerDetail,
         contextSnapshot: Object.keys(runContextSnapshot).length > 0 ? runContextSnapshot : undefined,
       });
+      const isRunCancellationRequested = (): boolean => {
+        const pending = this.pendingHeartbeatRuns.get(agentId);
+        return pending?.runId === run.id && pending.cancellationRequested;
+      };
+      // startRun can observe a stop while its own durable enrichment is in
+      // flight. Return its terminal row before performing any setup or prompt.
+      if (isRunCancellationRequested()) {
+        return (await this.store.getRunDetail(agentId, run.id))!;
+      }
 
       // Hand the opened run's identity to any wake that deduped against this goal.
       this.settleWakeGoalClaim(agentId, run);
@@ -3170,6 +3293,9 @@ export class HeartbeatMonitor {
         let outputLength = 0;
         let toolCallCount = 0;
         let heartbeatSummary: string | undefined;
+        let heartbeatCompletionLatched = false;
+        let heartbeatProgressBudgetExhausted = false;
+        let heartbeatSession: { abort?: () => void | Promise<void> } | undefined;
         let stdoutExcerpt = "";
 
         /*
@@ -3186,7 +3312,21 @@ export class HeartbeatMonitor {
         completion, so one wake still produces exactly one completed heartbeat run.
         */
         let heartbeatDoneRecorded = false;
-
+        const acceptsRunEvent = (): boolean => {
+          const tracked = this.trackedAgents.get(agentId);
+          return tracked?.runId === run.id
+            && !tracked.eventFenceClosed
+            && !tracked.cancellationRequested
+            && !heartbeatCompletionLatched
+            && !heartbeatProgressBudgetExhausted;
+        };
+        const stopHeartbeatSession = (): void => {
+          // AgentSession.abort is the supported Pi cancellation entry point. It is
+          // intentionally best effort: completeRun still fences any late settlement.
+          void Promise.resolve(heartbeatSession?.abort?.()).catch((error: unknown) => {
+            heartbeatLog.warn(`Failed to abort completed heartbeat ${agentId}/${run.id}: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        };
         const appendStdoutExcerpt = (delta: string): void => {
           if (stdoutExcerpt.length >= STDOUT_EXCERPT_LIMIT) {
             return;
@@ -3222,8 +3362,20 @@ export class HeartbeatMonitor {
               };
             }
             heartbeatDoneRecorded = true;
-            if (params.summary) {
-              heartbeatSummary = params.summary;
+            
+            /*
+            FNXC:HeartbeatTerminalBoundaries 2026-10-13-07:18 (merge origin/main):
+            Upstream FN-9544 latches completion and aborts the session; the RUFU-355 guard above keeps
+            `fn_heartbeat_done` a one-record call. The latch keeps the run-level boundary, and the
+            params.summary guard is RETAINED: upstream's shape assigns `heartbeatSummary = undefined`
+            over a summary a mixed batch had already recorded.
+            */
+            if (!heartbeatCompletionLatched) {
+              heartbeatCompletionLatched = true;
+              if (params.summary) {
+                heartbeatSummary = params.summary;
+              }
+              stopHeartbeatSession();
             }
             return {
               content: [{
@@ -3231,6 +3383,13 @@ export class HeartbeatMonitor {
                 text: `Heartbeat complete.${params.summary ? ` Summary: ${params.summary}` : ""}`,
               }],
               details: {},
+              /*
+              FNXC:HeartbeatTerminalBoundaries 2026-10-13-07:18 (merge origin/main):
+              One `terminate` serving both reasons: RUFU-355 ends the batch whose tool declared the
+              heartbeat done, FN-9544 ends ordinary single-tool batches at the completion boundary.
+              The latch/abort above additionally protects mixed batches, whose aggregate result cannot
+              terminate.
+              */
               terminate: true,
             };
           },
@@ -3834,6 +3993,11 @@ export class HeartbeatMonitor {
           heartbeatLog.warn(`Heartbeat MCP resolution for ${agentId} produced ${heartbeatMcp.errors.length} error(s); forwarding ${heartbeatMcp.servers.length} server(s)`);
         }
 
+        // Do not admit a provider session after a pause won the pre-track race.
+        if (isRunCancellationRequested()) {
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
+
         // Create agent session
         const heartbeatRetryAbortController = new AbortController();
         let { session } = await createResolvedAgentSession({
@@ -3857,18 +4021,25 @@ export class HeartbeatMonitor {
           settings: heartbeatModelSettings,
           mcpServers: heartbeatMcp.servers,
           onText: (delta) => {
+            if (!acceptsRunEvent()) return;
             outputLength += delta.length;
             appendStdoutExcerpt(delta);
             agentLogger?.onText(delta);
           },
           onThinking: (delta) => {
-            agentLogger?.onThinking(delta);
+            if (acceptsRunEvent()) agentLogger?.onThinking(delta);
           },
           onToolStart: (name, args) => {
-            agentLogger?.onToolStart(name, args);
+            if (acceptsRunEvent()) agentLogger?.onToolStart(name, args);
           },
           onToolEnd: (name, isError, result) => {
+            if (!acceptsRunEvent()) return;
             toolCallCount++;
+            if (toolCallCount > MAX_HEARTBEAT_TOOL_CALLS) {
+              heartbeatProgressBudgetExhausted = true;
+              stopHeartbeatSession();
+              return;
+            }
             agentLogger?.onToolEnd(name, isError, result);
           },
           // FNXC:PluginSkills 2026-07-12-00:00: Heartbeat sessions forward plugin skill body dirs with waking-agent requested names so durable agents can use plugin-provided guidance.
@@ -3877,6 +4048,13 @@ export class HeartbeatMonitor {
           actionGateContext: this.buildActionGateContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
           permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
         });
+        heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
+        // A pause can land during asynchronous session construction. Dispose
+        // without tracking and never dispatch its first provider turn.
+        if (isRunCancellationRequested()) {
+          await Promise.resolve(session.dispose());
+          return (await this.store.getRunDetail(agentId, run.id))!;
+        }
         emitAgentSessionStart({
           store: taskStore,
           agentId,
@@ -3900,7 +4078,10 @@ export class HeartbeatMonitor {
         // Track for monitoring
         this.trackAgent(
           agentId,
-          { dispose: () => session.dispose() },
+          {
+            dispose: () => session.dispose(),
+            abort: () => (session as unknown as { abort?: () => void | Promise<void> }).abort?.(),
+          },
           run.id,
           undefined,
           heartbeatRetryAbortController,
@@ -4427,6 +4608,10 @@ export class HeartbeatMonitor {
           session is then resolved for the offered instance rather than mutating credentials
           on the live session.
           */
+          if (isRunCancellationRequested()) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
+          
           await dispatchHeartbeatTransportWithOverlapAck({
             store: taskStore,
             taskId,
@@ -4474,16 +4659,22 @@ export class HeartbeatMonitor {
                   fallbackModelId: heartbeatSessionModels.fallbackModelId,
                   fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, heartbeatModelSettings), runAuditor: audit, settings: heartbeatModelSettings,
                   mcpServers: heartbeatMcp.servers,
-                  onText: (delta) => { outputLength += delta.length; appendStdoutExcerpt(delta); agentLogger?.onText(delta); },
-                  onThinking: (delta) => agentLogger?.onThinking(delta),
-                  onToolStart: (name, args) => agentLogger?.onToolStart(name, args),
-                  onToolEnd: (name, isError, result) => { toolCallCount++; agentLogger?.onToolEnd(name, isError, result); },
+                  onText: (delta) => { if (acceptsRunEvent()) { outputLength += delta.length; appendStdoutExcerpt(delta); agentLogger?.onText(delta); } },
+                  onThinking: (delta) => { if (acceptsRunEvent()) agentLogger?.onThinking(delta); },
+                  onToolStart: (name, args) => { if (acceptsRunEvent()) agentLogger?.onToolStart(name, args); },
+                  onToolEnd: (name, isError, result) => {
+                    if (!acceptsRunEvent()) return;
+                    toolCallCount++;
+                    if (toolCallCount > MAX_HEARTBEAT_TOOL_CALLS) { heartbeatProgressBudgetExhausted = true; stopHeartbeatSession(); return; }
+                    agentLogger?.onToolEnd(name, isError, result);
+                  },
                   ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
                   ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
                   actionGateContext: this.buildActionGateContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
                   permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
                 });
                 session = created.session;
+                heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
                 /*
                 FNXC:CommandCenterActivity 2026-08-09-15:06:
                 Credential rotation constructs a replacement AgentSession, so it owns a new
@@ -4558,6 +4749,7 @@ export class HeartbeatMonitor {
           const completionResultJson: Record<string, unknown> = {
             summary: heartbeatSummary,
             toolCallCount,
+            ...(heartbeatProgressBudgetExhausted ? { reason: "heartbeat_progress_budget_exhausted", limit: MAX_HEARTBEAT_TOOL_CALLS } : {}),
           };
           if (isNoTaskRun) {
             // Identity agents without tasks get a special reason for observability
@@ -4569,8 +4761,9 @@ export class HeartbeatMonitor {
           }
 
           await this.completeRun(agentId, run.id, {
-            status: "completed",
+            status: heartbeatProgressBudgetExhausted ? "terminated" : "completed",
             usageJson: { inputTokens: usageInput, outputTokens: usageOutput, cachedTokens: usageCached, cacheWriteTokens: usageCacheWrite },
+            ...(heartbeatProgressBudgetExhausted ? { stderrExcerpt: "Heartbeat progress budget exhausted" } : {}),
             resultJson: completionResultJson,
             stdoutExcerpt: stdoutExcerpt || undefined,
           });

@@ -42,7 +42,7 @@ const LEDGER: LedgerRow[] = [
   // FNXC:MemoryMcpCoverage 2026-08-23-19:48: memory-semantics runs a readonly model session on `input.taskStore` (typed TaskStore, root-capable), so it is an A lane like every other store-backed resolver call.
   ["packages/engine/src/memory/memory-semantics.ts",57,"A","input.taskStore","TaskStore","memory semantics TaskStore"],
   ["packages/dashboard/src/chat.ts",3350,"A","this.taskStore","TaskStore","chat scoped TaskStore"],
-  ["packages/dashboard/src/planning.ts",129,"A","store","TaskStore","planning TaskStore"],
+  ["packages/dashboard/src/planning.ts",130,"A","store","TaskStore","planning TaskStore"],
   ["packages/dashboard/src/milestone-slice-interview.ts",839,"A","store","TaskStore","milestone TaskStore"],
   ["packages/dashboard/src/mission-interview.ts",951,"A","store","TaskStore","mission interview TaskStore"],
   ["packages/dashboard/src/agent-generation.ts",509,"A","store ?? {}","TaskStore","optional store resolves as TaskStore when present"],
@@ -52,7 +52,7 @@ const LEDGER: LedgerRow[] = [
   ["packages/dashboard/src/ai-refine.ts",422,"B","store ?? {}",undefined,"pre-existing no-store degrade"],
   ["packages/dashboard/src/ai-translate.ts",342,"B","store ?? {}",undefined,"pre-existing no-store degrade"],
   ["packages/dashboard/src/agent-onboarding.ts",358,"B","store ?? {}",undefined,"pre-existing no-store degrade"],
-  ["packages/dashboard/src/pr-metadata-generator.ts",325,"B","store ?? {}",undefined,"pre-existing no-store degrade"],
+  ["packages/dashboard/src/pr-metadata-generator.ts",398,"B","store ?? {}",undefined,"pre-existing no-store degrade"],
   ["packages/dashboard/src/insights-routes.ts",187,"B","params.taskStore ?? {}",undefined,"pre-existing no-store degrade"],
   ["packages/engine/src/agent-heartbeat.ts",195,"C","taskStore","nullable-root","undefined or empty root omits only built-in"],
   ["packages/cli/src/commands/mcp.ts",136,"D","builtIns",undefined,"CLI list direct resolver",true],

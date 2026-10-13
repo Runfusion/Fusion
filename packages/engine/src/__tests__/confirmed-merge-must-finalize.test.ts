@@ -242,6 +242,25 @@ describe("missing post-merge continuation recovery", () => {
     return { task, store, items };
   }
 
+  it("resumes required closeout after manual landing without re-admitting merge", async () => {
+    const { task, store, items } = recoveryFixture();
+    task.autoMerge = false;
+    store.getSettings = vi.fn(async () => ({ autoMerge: false }));
+
+    const result = await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+
+    expect(result).toMatchObject({ outcome: "blocked", deferredPostMergeEvidence: true, resumedPostMergeEvidence: true });
+    expect(task.column).toBe("in-review");
+    expect(task.mergeDetails?.mergeConfirmed).toBe(true);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      nodeId: "post-merge-verification",
+      sourceColumn: "in-review",
+      targetColumn: "in-review",
+    });
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("does not seed after the owning merge aborts during the idle-work read", async () => {
     const { task, store } = recoveryFixture();
     const controller = new AbortController();
@@ -485,7 +504,7 @@ describe("missing post-merge continuation recovery", () => {
   });
 
   it.each([
-    { paused: true }, { userPaused: true }, { autoMerge: false },
+    { paused: true }, { userPaused: true },
     { mergeDetails: undefined }, { deletedAt: "2026-10-01T04:43:00.000Z" },
   ])("preserves an ineligible task %j", async (patch) => {
     const { task, store } = recoveryFixture();

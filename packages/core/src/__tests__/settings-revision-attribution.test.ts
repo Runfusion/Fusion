@@ -134,6 +134,63 @@ pgDescribe("settings revision attribution", () => {
     expect(directGlobal.defaultModelId).toBe("direct-attribution-model");
   });
 
+  it("persists dashboard selection live without global revision or activity history", async () => {
+    const store = h.store();
+    const uiState = { local: "fn-9526-project-a" };
+    const modelId = "fn-9526-auditable-global-model";
+
+    await store.updateGlobalSettings({ dashboardCurrentProjectIdByNode: uiState });
+    await store.updateGlobalSettings({
+      dashboardCurrentProjectIdByNode: { local: "fn-9526-project-b" },
+      defaultModelId: modelId,
+    });
+
+    const uiRevisions = await h.adminDb().execute(sql`
+      SELECT id
+      FROM project.configuration_revisions
+      WHERE config_kind = 'global-settings'
+        AND diffs @> ${JSON.stringify([{ field: "dashboardCurrentProjectIdByNode" }])}::jsonb
+    `) as Array<{ id: string }>;
+    expect(uiRevisions).toEqual([]);
+
+    const uiActivity = await h.adminDb().execute(sql`
+      SELECT id
+      FROM project.activity_log
+      WHERE type = 'settings:updated'
+        AND metadata -> 'changedKeys' @> ${JSON.stringify(["dashboardCurrentProjectIdByNode"])}::jsonb
+    `) as Array<{ id: string }>;
+    expect(uiActivity).toEqual([]);
+
+    const revisions = await h.adminDb().execute(sql`
+      SELECT id, "before", "after", diffs
+      FROM project.configuration_revisions
+      WHERE config_kind = 'global-settings'
+        AND "after" ->> 'defaultModelId' = ${modelId}
+    `) as Array<{ id: string; before: Record<string, unknown>; after: Record<string, unknown>; diffs: Array<{ field: string }> }>;
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).toMatchObject({
+      diffs: [{ field: "defaultModelId" }],
+      after: { defaultModelId: modelId },
+    });
+    expect(revisions[0]?.before).not.toHaveProperty("dashboardCurrentProjectIdByNode");
+    expect(revisions[0]?.after).not.toHaveProperty("dashboardCurrentProjectIdByNode");
+
+    await store.globalSettingsStore.rollbackConfiguration(revisions[0]!.id);
+    expect((await store.globalSettingsStore.getSettings()).dashboardCurrentProjectIdByNode).toEqual({ local: "fn-9526-project-b" });
+
+    const activity = await h.adminDb().execute(sql`
+      SELECT details, metadata
+      FROM project.activity_log
+      WHERE type = 'settings:updated'
+        AND details LIKE ${`%${modelId}%`}
+    `) as Array<{ details: string; metadata: Record<string, unknown> }>;
+    expect(activity).toHaveLength(1);
+    expect(activity[0]?.details).toContain("defaultModelId");
+    expect(activity[0]?.details).not.toContain("dashboardCurrentProjectIdByNode");
+    expect(activity[0]?.metadata.changedKeys).toContain("defaultModelId");
+    expect(activity[0]?.metadata.changedKeys).not.toContain("dashboardCurrentProjectIdByNode");
+  });
+
   it("round-trips every explicit provenance variant through committed JSONB revisions", async () => {
     const store = h.store();
     const actors: ConfigChangedBy[] = [

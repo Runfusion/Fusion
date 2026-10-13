@@ -245,6 +245,49 @@ describe("useCurrentProject", () => {
     expect(fetchGlobalSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("does not persist a saved local selection across fresh poll arrays", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      dashboardCurrentProjectIdByNode: { local: "proj_1" },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ projects }) => useCurrentProject(projects),
+      { initialProps: { projects: cloneProjects() } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.currentProject?.id).toBe("proj_1");
+    });
+
+    for (let poll = 0; poll < 4; poll += 1) {
+      rerender({ projects: cloneProjects() });
+    }
+
+    expect(result.current.currentProject?.id).toBe("proj_1");
+    expect(updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it("persists a named-node manual switch once after matching hydration", async () => {
+    (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      dashboardCurrentProjectIdByNode: { "node-456": "proj_1" },
+    });
+
+    const { result } = renderHook(() => useCurrentProject(cloneProjects(), { nodeId: "node-456" }));
+
+    await waitFor(() => {
+      expect(result.current.currentProject?.id).toBe("proj_1");
+    });
+
+    act(() => {
+      result.current.setCurrentProject(mockProjects[1]);
+    });
+
+    expect(updateGlobalSettings).toHaveBeenCalledTimes(1);
+    expect(updateGlobalSettings).toHaveBeenCalledWith({
+      dashboardCurrentProjectIdByNode: { "node-456": "proj_2" },
+    });
+  });
+
   it("keeps explicit clear through poll rerenders without rehydrating", async () => {
     (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       dashboardCurrentProjectIdByNode: { local: "proj_1" },

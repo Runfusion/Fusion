@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { fileScopeLeaseBlocksCandidate, type CheckoutEmptinessVerdict, type Task } from "@fusion/core";
-import { classifyFileScopeLease, shouldHoldActiveFileScopeLease } from "../scheduler.js";
+import { fileScopeLeaseBlocksCandidate, fileScopeLeaseScopeFingerprint, type CheckoutEmptinessVerdict, type Task } from "@fusion/core";
+import { classifyFileScopeLease, revalidateFileScopeLeaseReleases, shouldHoldActiveFileScopeLease } from "../scheduler.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -72,6 +72,97 @@ describe("classifyFileScopeLease", () => {
   it("keeps WIP work active despite failure and before worktree acquisition", () => {
     expect(classifyFileScopeLease(makeTask({ column: "in-progress", worktree: "/wt/a", status: "failed" }), [])).toMatchObject({ kind: "active" });
     expect(classifyFileScopeLease(makeTask({ column: "in-progress", paused: true }), [])).toMatchObject({ kind: "active" });
+  });
+
+  it("waives only the receipt's follower while a paused planning-only holder remains unchanged", () => {
+    const scopeFingerprint = fileScopeLeaseScopeFingerprint(["docs/shared.md"]);
+    const holder = makeTask({
+      id: "FN-HOLDER", lineageId: "lineage-a", column: "in-progress", paused: true,
+      fileScopeLeaseRelease: {
+        holderId: "FN-HOLDER", holderLineageId: "lineage-a", scopeFingerprint,
+        releasedFollowerIds: ["FN-FOLLOWER"], checkoutIdentity: "no-checkout", inspectedAt: "2026-01-01T00:00:00.000Z", revision: 1,
+      },
+    });
+    const classification = classifyFileScopeLease(holder, [holder], { scopeFingerprint });
+    expect(fileScopeLeaseBlocksCandidate(holder, makeTask({ id: "FN-FOLLOWER" }), classification)).toBe(false);
+    expect(fileScopeLeaseBlocksCandidate(holder, makeTask({ id: "FN-OTHER" }), classification)).toBe(true);
+    expect(classifyFileScopeLease({ ...holder, paused: false }, [holder], { scopeFingerprint }).waivedForTaskIds).toEqual([]);
+  });
+
+  it("reacquires a released holder claim when its declared scope fingerprint changes", () => {
+    const holder = makeTask({
+      id: "FN-HOLDER", lineageId: "lineage-a", column: "in-progress", paused: true,
+      fileScopeLeaseRelease: {
+        holderId: "FN-HOLDER", holderLineageId: "lineage-a", scopeFingerprint: fileScopeLeaseScopeFingerprint(["docs/old.md"]),
+        releasedFollowerIds: ["FN-FOLLOWER"], checkoutIdentity: "no-checkout", inspectedAt: "2026-01-01T00:00:00.000Z", revision: 1,
+      },
+    });
+
+    const classification = classifyFileScopeLease(holder, [holder], {
+      scopeFingerprint: fileScopeLeaseScopeFingerprint(["docs/current.md"]),
+    });
+
+    expect(fileScopeLeaseBlocksCandidate(holder, makeTask({ id: "FN-FOLLOWER" }), classification)).toBe(true);
+    expect(classification.waivedForTaskIds).toEqual([]);
+  });
+
+  it("removes a clean-checkout waiver when restart inspection finds uncommitted work", async () => {
+    const holder = makeTask({
+      id: "FN-HOLDER", lineageId: "lineage-a", column: "in-progress", paused: true,
+      worktree: "/wt/holder", baseCommitSha: "base",
+      fileScopeLeaseRelease: {
+        holderId: "FN-HOLDER", holderLineageId: "lineage-a", scopeFingerprint: fileScopeLeaseScopeFingerprint(["docs/shared.md"]),
+        releasedFollowerIds: ["FN-FOLLOWER"], checkoutIdentity: "clean-checkout", checkoutEpoch: 1,
+        inspectedAt: "2026-01-01T00:00:00.000Z", revision: 1,
+      },
+    });
+    const updates: unknown[] = [];
+    const store = {
+      runGitCommand: async () => ({ exitCode: 0, timedOut: false, bufferExceeded: false, stdout: " M docs/index.md" }),
+      updateTaskAtomic: async (_id: string, update: (current: Task) => Partial<Task> | null) => {
+        const patch = update(holder);
+        updates.push(patch);
+        return patch ? { ...holder, ...patch } : undefined;
+      },
+    } as unknown as import("@fusion/core").TaskStore;
+
+    const [revalidated] = await revalidateFileScopeLeaseReleases(store, [holder]);
+
+    expect(revalidated.fileScopeLeaseRelease).toBeUndefined();
+    expect(updates).toEqual([{ fileScopeLeaseRelease: undefined }]);
+    expect(classifyFileScopeLease(revalidated, [revalidated]).waivedForTaskIds).toEqual([]);
+  });
+
+  it("keeps a clean-checkout waiver only after every workspace checkout is re-inspected", async () => {
+    const holder = makeTask({
+      id: "FN-HOLDER", lineageId: "lineage-a", column: "in-progress", paused: true, baseCommitSha: "base", checkoutLeaseEpoch: 1,
+      workspaceWorktrees: { one: { worktreePath: "/wt/one" }, two: { worktreePath: "/wt/two" } } as Task["workspaceWorktrees"],
+      fileScopeLeaseRelease: {
+        holderId: "FN-HOLDER", holderLineageId: "lineage-a", scopeFingerprint: fileScopeLeaseScopeFingerprint(["docs/shared.md"]),
+        releasedFollowerIds: ["FN-FOLLOWER"], checkoutIdentity: "clean-checkout", checkoutEpoch: 1,
+        inspectedAt: "2026-01-01T00:00:00.000Z", revision: 1,
+      },
+    });
+    let inspectionCount = 0;
+    const store = {
+      runGitCommand: async (command: string) => {
+        inspectionCount += 1;
+        return {
+          exitCode: 0,
+          timedOut: false,
+          bufferExceeded: false,
+          stdout: command.includes("rev-list") ? "0" : "",
+        };
+      },
+      updateTaskAtomic: async () => { throw new Error("clean receipt must not be invalidated"); },
+    } as unknown as import("@fusion/core").TaskStore;
+
+    const [revalidated] = await revalidateFileScopeLeaseReleases(store, [holder]);
+
+    expect(inspectionCount).toBe(4);
+    expect(classifyFileScopeLease(revalidated, [revalidated], {
+      scopeFingerprint: fileScopeLeaseScopeFingerprint(["docs/shared.md"]),
+    }).waivedForTaskIds).toEqual(["FN-FOLLOWER"]);
   });
 
   it("waives a WIP lease only for the holder's unmet scheduling dependencies", () => {

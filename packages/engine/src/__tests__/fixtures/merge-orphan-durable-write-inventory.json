@@ -7182,7 +7182,7 @@
       "enclosingSymbolPath": "resumeMissingPostMergeGate",
       "writer": "store.logEntry",
       "ordinal": 1,
-      "lineHint": 146,
+      "lineHint": 150,
       "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
       "reachableDataStates": [
         "Confirmed merge awaiting required post-merge evidence; legacy recovery-owned failure cleanup and missing/rejected gate continuation reseeding."
@@ -7202,7 +7202,7 @@
       "enclosingSymbolPath": "resumeMissingPostMergeGate>seeded",
       "writer": "store.seedWorkspaceCodeReviewContinuationIfIdle",
       "ordinal": 1,
-      "lineHint": 131,
+      "lineHint": 135,
       "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
       "reachableDataStates": [
         "Confirmed merge awaiting required post-merge evidence; legacy recovery-owned failure cleanup and missing/rejected gate continuation reseeding."
@@ -7222,7 +7222,7 @@
       "enclosingSymbolPath": "resumeMissingPostMergeGate>updated",
       "writer": "store.updateTaskAtomic",
       "ordinal": 1,
-      "lineHint": 98,
+      "lineHint": 102,
       "owningEntryPoint": "runAiMerge>finalizeTask>finalizeProvenAutoMergeTask",
       "reachableDataStates": [
         "Confirmed merge awaiting required post-merge evidence; legacy recovery-owned failure cleanup and missing/rejected gate continuation reseeding."
@@ -10778,13 +10778,53 @@
       "followUpTaskId": "none:out-of-frontier"
     },
     {
+      "callSiteId": "packages/engine/src/scheduler.ts::invalidateMismatchedFileScopeLeaseRelease::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(current) => current.fileScopeLeaseRelease?.revision === receipt.revision && current.fileScopeLeaseRelease.scopeFingerpr)",
+      "file": "packages/engine/src/scheduler.ts",
+      "enclosingSymbolPath": "invalidateMismatchedFileScopeLeaseRelease",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 725,
+      "owningEntryPoint": "other",
+      "reachableDataStates": [
+        "scheduler-owned receipt clearing outside the orphan-merge frontier"
+      ],
+      "axis1": "out-of-frontier",
+      "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo; this scheduler receipt-clearing write is reached only by scheduler or outer-dispatch admission.",
+      "axis2Provisional": "out-of-frontier",
+      "axis2Final": "out-of-frontier",
+      "observedInSuite": "out-of-frontier",
+      "executionProof": "none:out-of-frontier",
+      "followUpTaskId": "none:out-of-frontier"
+    },
+    {
+      "callSiteId": "packages/engine/src/scheduler.ts::revalidateFileScopeLeaseReleases>revalidated::store.updateTaskAtomic::#1",
+      "callSiteFingerprint": "store.updateTaskAtomic(task.id,(current) => current.fileScopeLeaseRelease?.revision === task.fileScopeLeaseRelease?.revision ? { fileScopeLeaseRelease:)",
+      "file": "packages/engine/src/scheduler.ts",
+      "enclosingSymbolPath": "revalidateFileScopeLeaseReleases>revalidated",
+      "writer": "store.updateTaskAtomic",
+      "ordinal": 1,
+      "lineHint": 738,
+      "owningEntryPoint": "other",
+      "reachableDataStates": [
+        "scheduler-owned receipt clearing outside the orphan-merge frontier"
+      ],
+      "axis1": "out-of-frontier",
+      "axis1Evidence": "No call edge from runAiMerge, landWorkspaceTask, or landOneRepo; this scheduler receipt-clearing write is reached only by scheduler or outer-dispatch admission.",
+      "axis2Provisional": "out-of-frontier",
+      "axis2Final": "out-of-frontier",
+      "observedInSuite": "out-of-frontier",
+      "executionProof": "none:out-of-frontier",
+      "followUpTaskId": "none:out-of-frontier"
+    },
+    {
       "callSiteId": "packages/engine/src/self-healing.ts::recoverApprovedStrandedAiMergeCommit>finalized::finalizeProvenAutoMergeTask::#1",
       "callSiteFingerprint": "finalizeProvenAutoMergeTask({store,taskId,?,audit,auditAgentId,auditPhase,source,rootDir,log})",
       "file": "packages/engine/src/self-healing.ts",
       "enclosingSymbolPath": "recoverApprovedStrandedAiMergeCommit>finalized",
       "writer": "finalizeProvenAutoMergeTask",
       "ordinal": 1,
-      "lineHint": 14047,
+      "lineHint": 14052,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"
@@ -10804,7 +10844,7 @@
       "enclosingSymbolPath": "recoverMergedReviewTasks>finalization",
       "writer": "finalizeProvenAutoMergeTask",
       "ordinal": 1,
-      "lineHint": 12909,
+      "lineHint": 12914,
       "owningEntryPoint": "other",
       "reachableDataStates": [
         "unobservable:closure-wide production fixture pending"

@@ -1325,6 +1325,7 @@ export { describeMergeContentShape } from "./merge/merge-content-descriptor.js";
 export type { MergeContentDescriptor } from "./merge/merge-content-descriptor.js";
 export {
   AUTOMATED_BYPASS_ACTORS,
+  evaluatePreMergeAdmissionDecision,
   evaluatePreMergeApprovals,
   isAuditedOperatorBypass,
   findUnrunRequiredPreMergeStepIds,
@@ -1337,7 +1338,7 @@ export {
 export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { RequiredPostMergeEvidenceDecision } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
-export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
+export type { PreMergeAdmissionDecision, PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {
   isBranchGroupMemberLanded,
   isBranchGroupComplete,
@@ -1947,7 +1948,7 @@ export type {
   FollowUpSourceMarker,
 } from "./tasks/task-follow-up.js";
 
-export { fileScopeLeaseBlocksCandidate, isSharedBarrelExportPath, isSharedBarrelOnlyMatch, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
+export { fileScopeLeaseBlocksCandidate, fileScopeLeaseScopeFingerprint, isSharedBarrelExportPath, isSharedBarrelOnlyMatch, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
 export type { CheckoutEmptinessProofMap, CheckoutEmptinessVerdict, FileScopeLeaseClassification, FileScopeLeaseKind } from "./tasks/file-scope-lease.js";
 
 // ── Mission Hierarchy Types ────────────────────────────────────────────

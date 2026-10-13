@@ -38,16 +38,17 @@ overrides:
   # 1.0.2. Pi coding-agent now requires pi-mcp and pi-codemode; keep every member exact and matched
   # because electron-builder resolves production dependencies without this workspace lockfile and could
   # otherwise split the runtime.
-  '@earendil-works/chord': 1.0.2
-  '@earendil-works/pi-agent-core': 1.0.2
-  '@earendil-works/pi-ai': 1.0.2
-  '@earendil-works/pi-client': 1.0.2
-  '@earendil-works/pi-coding-agent': 1.0.2
-  '@earendil-works/pi-protocol': 1.0.2
-  '@earendil-works/pi-mcp': 1.0.2
-  '@earendil-works/pi-codemode': 1.0.2
-  '@earendil-works/pi-telemetry': 1.0.2
-  '@earendil-works/pi-tui': 1.0.2
+  # FNXC:ModelCatalog 2026-10-12-15:26: FN-9525 advances the complete Pi closure to 1.1.0 so its maintained Anthropic catalog supplies the current Claude 5.5 rows without a Fusion-owned fallback.
+  '@earendil-works/chord': 1.1.0
+  '@earendil-works/pi-agent-core': 1.1.0
+  '@earendil-works/pi-ai': 1.1.0
+  '@earendil-works/pi-client': 1.1.0
+  '@earendil-works/pi-coding-agent': 1.1.0
+  '@earendil-works/pi-protocol': 1.1.0
+  '@earendil-works/pi-mcp': 1.1.0
+  '@earendil-works/pi-codemode': 1.1.0
+  '@earendil-works/pi-telemetry': 1.1.0
+  '@earendil-works/pi-tui': 1.1.0
 # FNXC:DesktopEmbeddedPostgres 2026-07-14-09:30:
 # Desktop release jobs cross-build Intel and ARM64 artifacts on one host. Install
 # optional native payloads for both CPU families on the current OS so each

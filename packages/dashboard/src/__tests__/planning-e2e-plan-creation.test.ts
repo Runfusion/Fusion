@@ -274,6 +274,10 @@ describe("Planning Mode plan creation E2E", () => {
     expect(started.status).toBe(201);
     const session = await getSession(started.body.sessionId);
     expect(session).toBeDefined();
+    (store.getTask as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+      if (id === "KB-42" || id === "ERR-7") return { id };
+      throw new Error(`unexpected dependency lookup: ${id}`);
+    });
     session!.summary = {
       title: "Dependency normalization",
       description: "Create a task without prose dependencies.",

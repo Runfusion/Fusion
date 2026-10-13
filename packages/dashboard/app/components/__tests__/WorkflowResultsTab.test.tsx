@@ -29,6 +29,7 @@ const mockedFetchWorkflowOptionalSteps = vi.spyOn(api, "fetchWorkflowOptionalSte
 const mockedSelectTaskWorkflow = vi.spyOn(api, "selectTaskWorkflow");
 const mockedSubmitTaskWorkflowInput = vi.spyOn(api, "submitTaskWorkflowInput");
 const mockedApproveTaskWorkflowCli = vi.spyOn(api, "approveTaskWorkflowCli");
+const mockedFetchWorkflowAdmission = vi.spyOn(api, "fetchWorkflowAdmission");
 const mockedUseAgentLogs = vi.mocked(useAgentLogs);
 
 function mockWorkflowLiveLogGeometry(container: HTMLDivElement, initialScrollTop = 0) {
@@ -265,6 +266,8 @@ describe("WorkflowResultsTab", () => {
     mockedSubmitTaskWorkflowInput.mockResolvedValue({ ok: true });
     mockedApproveTaskWorkflowCli.mockReset();
     mockedApproveTaskWorkflowCli.mockResolvedValue({ approved: "ok" });
+    mockedFetchWorkflowAdmission.mockReset();
+    mockedFetchWorkflowAdmission.mockResolvedValue({ allApproved: true, requiredGateIds: [], resolution: "selection", gates: [] });
     mockedUseAgentLogs.mockReset();
     mockedUseAgentLogs.mockReturnValue({
       entries: [],
@@ -427,6 +430,68 @@ describe("WorkflowResultsTab", () => {
     expect(screen.getByText("Performance Check")).toBeInTheDocument();
   });
 
+  it("keeps passed raw rows blocked while canonical admission is loading", () => {
+    mockedFetchWorkflowAdmission.mockImplementation(() => new Promise(() => {}));
+    const passed = [{ workflowStepId: "code-review", workflowStepName: "Code review", phase: "pre-merge", status: "passed", verdict: "APPROVE" }] as WorkflowStepResult[];
+
+    render(<WorkflowResultsTab taskId="FN-001" task={baseTask} settings={mockSettings} results={passed} />);
+
+    expect(screen.getByTestId("workflow-aggregate-badge-admission-blocked")).toHaveTextContent("Requires review");
+    expect(screen.getByTestId("workflow-admission-diagnostics")).toHaveTextContent("cannot yet count");
+    expect(screen.queryByText("All passed")).not.toBeInTheDocument();
+  });
+
+  it("keeps passed raw rows blocked when admission cannot resolve the selected workflow", async () => {
+    mockedFetchWorkflowAdmission.mockResolvedValue({ allApproved: false, requiredGateIds: [], resolution: "read-failed", gates: [] });
+    const passed = [{ workflowStepId: "code-review", workflowStepName: "Code review", phase: "pre-merge", status: "passed", verdict: "APPROVE" }] as WorkflowStepResult[];
+
+    render(<WorkflowResultsTab taskId="FN-001" task={baseTask} settings={mockSettings} results={passed} />);
+
+    await waitFor(() => expect(screen.getByTestId("workflow-aggregate-badge-admission-blocked")).toHaveTextContent("Requires review"));
+    expect(screen.getByTestId("workflow-admission-diagnostics")).toHaveTextContent("cannot yet count");
+    expect(screen.queryByText("All passed")).not.toBeInTheDocument();
+  });
+
+  it("invalidates approved admission when a workflow switch adds an absent required gate", async () => {
+    const destinationWorkflow = { ...selectedWorkflow, id: "WF-002", name: "Two-gate Delivery Workflow" };
+    let destinationSelected = false;
+    mockedFetchWorkflowAdmission.mockImplementation(() => Promise.resolve(destinationSelected
+      ? {
+        allApproved: false,
+        requiredGateIds: ["code-review", "browser-verification"],
+        resolution: "selection",
+        gates: [
+          { workflowStepId: "code-review", state: "approved" },
+          { workflowStepId: "browser-verification", state: "missing" },
+        ],
+      }
+      : {
+        allApproved: true,
+        requiredGateIds: ["code-review"],
+        resolution: "selection",
+        gates: [{ workflowStepId: "code-review", state: "approved" }],
+      },
+    ));
+    mockWorkflowsByProject({
+      [workflowRequestKey(undefined)]: [selectedWorkflow, destinationWorkflow],
+    });
+    mockedSelectTaskWorkflow.mockImplementation(async () => {
+      destinationSelected = true;
+      return { workflowId: "WF-002", enabledWorkflowSteps: ["code-review", "browser-verification"] };
+    });
+    const passed = [{ workflowStepId: "code-review", workflowStepName: "Code review", phase: "pre-merge", status: "passed", verdict: "APPROVE" }] as WorkflowStepResult[];
+
+    render(<WorkflowResultsTab taskId="FN-001" task={baseTask} settings={mockSettings} results={passed} canEdit />);
+
+    await waitFor(() => expect(screen.getByTestId("workflow-aggregate-badge-passed")).toHaveTextContent("All passed"));
+    fireEvent.change(await screen.findByLabelText("Custom workflow"), { target: { value: "WF-002" } });
+
+    await waitFor(() => expect(mockedSelectTaskWorkflow).toHaveBeenCalledWith("FN-001", "WF-002", undefined));
+    await waitFor(() => expect(screen.getByTestId("workflow-aggregate-badge-admission-blocked")).toHaveTextContent("Requires review"));
+    expect(screen.getByTestId("workflow-admission-diagnostics")).toHaveTextContent("browser-verification");
+    expect(screen.queryByText("All passed")).not.toBeInTheDocument();
+  });
+
   it("renders workflow state summary with workflow name and aggregate result", async () => {
     render(<WorkflowResultsTab taskId="FN-001" task={baseTask} settings={mockSettings} results={mockResults} />);
 
@@ -466,7 +531,7 @@ describe("WorkflowResultsTab", () => {
     expect(badge).not.toHaveTextContent("Passed");
     expect(screen.getByTestId("workflow-results-summary")).toHaveTextContent("1 not executed");
     expect(screen.getByTestId("workflow-results-summary")).toHaveTextContent("1 skipped");
-    expect(screen.getByTestId("workflow-aggregate-badge-not-run")).toHaveTextContent("Not fully executed");
+    await waitFor(() => expect(screen.getByTestId("workflow-aggregate-badge-not-run")).toHaveTextContent("Not fully executed"));
     expect(screen.queryByText("All passed")).not.toBeInTheDocument();
   });
 

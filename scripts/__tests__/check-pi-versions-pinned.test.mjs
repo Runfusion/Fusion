@@ -9,12 +9,12 @@ import {
 
 /*
 FNXC:DesktopPackaging 2026-10-04-07:28:
-Fixture versions track the workspace's exact matched Pi runtime pin (currently 1.0.2).
+Fixture versions track the workspace's exact matched Pi runtime pin (currently 1.1.0).
 Keep these in sync when advancing overrides/manifests so the policy guard still exercises
 matched-set and range rejection against the live pin surface.
 */
-const PINNED_VERSION = "1.0.2";
-const OTHER_VERSION = "1.0.1";
+const PINNED_VERSION = "1.1.0";
+const OTHER_VERSION = "1.0.2";
 
 const pinnedManifest = {
   dependencies: {

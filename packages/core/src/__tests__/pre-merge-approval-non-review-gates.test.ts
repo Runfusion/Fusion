@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluatePreMergeApprovals } from "../merge/pre-merge-approval.js";
+import { evaluatePreMergeAdmissionDecision, evaluatePreMergeApprovals } from "../merge/pre-merge-approval.js";
 import type { Task, WorkflowStepResult } from "../types.js";
 
 /*
@@ -98,5 +98,13 @@ describe("pre-merge approvals for non-review gates", () => {
     );
 
     expect(approvals[0]).toEqual({ workflowStepId: "verification", state: "approved" });
+    expect(evaluatePreMergeAdmissionDecision(
+      taskWith([gate("verification")]),
+      { requiredPreMergeStepIds: new Set(["verification"]), mergeContent: { kind: "singular", diff: { state: "empty" } } },
+    ).gates[0]).toMatchObject({
+      workflowStepId: "verification",
+      state: "approved",
+      selectedResult: { workflowStepId: "verification", status: "passed" },
+    });
   });
 });

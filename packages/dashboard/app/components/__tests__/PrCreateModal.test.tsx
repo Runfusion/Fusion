@@ -519,30 +519,42 @@ describe("PrCreateModal", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Create PR" })).toBeEnabled());
   });
 
-  it("times out hung metadata generation into the manual fallback state", async () => {
+  it("keeps loading metadata past fifteen seconds and accepts the server response", async () => {
     vi.useFakeTimers();
-    mocks.generatePrMetadata.mockReturnValueOnce(new Promise(() => {}));
+    const metadataDeferred = createDeferred<typeof metadata>();
+    mocks.generatePrMetadata.mockReturnValueOnce(metadataDeferred.promise);
 
     renderModal();
-
-    expect(screen.getByText(/generating ai title/i)).toBeInTheDocument();
-    expect(screen.getByText(/generating ai body/i)).toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(15001);
+    await act(async () => {
+      await Promise.resolve();
     });
+    expectMetadataLoadingAffordance();
+
+    await act(async () => {
+      vi.advanceTimersByTime(15001);
+      await Promise.resolve();
+    });
+
+    expectMetadataLoadingAffordance();
+    expect(screen.queryByText(/timed out generating pr metadata/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/summary unavailable/i)).not.toBeInTheDocument();
+
+    metadataDeferred.resolve(metadata);
     await act(async () => {
       await Promise.resolve();
     });
     vi.useRealTimers();
 
-    expect(await screen.findByText("Timed out generating PR metadata")).toBeInTheDocument();
-    expect(screen.queryByText(/generating ai title/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/generating ai body/i)).not.toBeInTheDocument();
-
-    const bodyInput = screen.getByLabelText(/body/i) as HTMLTextAreaElement;
-    expect(bodyInput.value).toContain("## Summary");
-    expect(bodyInput.value).toContain("Closes FN-4756");
+    const titleInput = screen.getByDisplayValue("AI title");
+    const bodyInput = screen.getByLabelText(/body/i);
+    expect(titleInput).toBeEnabled();
+    expect(bodyInput).toHaveValue(metadata.body);
+    fireEvent.change(titleInput, { target: { value: "Edited PR title" } });
+    fireEvent.change(bodyInput, { target: { value: "Edited PR body" } });
+    expect(titleInput).toHaveValue("Edited PR title");
+    expect(bodyInput).toHaveValue("Edited PR body");
+    expectMetadataLoadingCleared();
+    expect(screen.getByRole("button", { name: "Create PR" })).toBeEnabled();
   });
 
   it("requires a non-empty body before submitting manual PR metadata", async () => {

@@ -23,7 +23,15 @@ import {
   toExecutionModelProviderId,
 } from "@fusion/core";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { AuthInteraction, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import type {
+  AuthInteraction,
+  Credential,
+  CredentialInfo,
+  CredentialStore,
+  ModelsStore,
+  ModelsStoreEntry,
+  ModelsStoreOperationOptions,
+} from "@earendil-works/pi-ai";
 
 type StoredCredential = StoredAuthCredential;
 
@@ -869,16 +877,113 @@ function readModelsJsonApiKeys(home = getHomeDir()): Map<string, string> {
 export type FusionModelRegistry = ModelRegistry & { readonly modelRuntime: ModelRuntime };
 
 /**
+ * FNXC:ModelRegistry 2026-10-12-16:00:
+ * Pi owns catalog generations and cancels superseded publications before they reach its
+ * FileModelsStore. Fusion wraps that real store only to reject an empty successful publication
+ * after Pi has accepted its generation, so a transient empty catalog cannot erase a usable picker.
+ * Fresh non-empty rows still replace seeded empty rows and older persisted timestamps never win.
+ */
+class RetainingModelsStore implements ModelsStore {
+  constructor(
+    private readonly store: ModelsStore,
+    private readonly storePath: string,
+  ) {}
+
+  read(providerId: string, options?: ModelsStoreOperationOptions): Promise<ModelsStoreEntry | undefined> {
+    return this.store.read(providerId, options);
+  }
+
+  async write(providerId: string, entry: ModelsStoreEntry, options?: ModelsStoreOperationOptions): Promise<void> {
+    options?.signal?.throwIfAborted();
+    mkdirSync(dirname(this.storePath), { recursive: true, mode: 0o700 });
+    try {
+      /*
+       * FNXC:ModelRegistry 2026-10-12-16:15:
+       * Exclusive creation prevents a racing first-use host from truncating a catalog another host
+       * has already populated before either process can acquire Pi's file lock.
+       */
+      writeFileSync(this.storePath, "{}", { encoding: "utf-8", mode: 0o600, flag: "wx" });
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+        throw error;
+      }
+    }
+
+    let release: (() => Promise<void>) | undefined;
+    try {
+      release = await lockfile.lock(this.storePath, AUTH_LOCK_OPTIONS);
+      options?.signal?.throwIfAborted();
+      const entries = JSON.parse(readFileSync(this.storePath, "utf-8")) as Record<string, ModelsStoreEntry>;
+      const current = entries[providerId];
+
+      /*
+       * FNXC:ModelRegistry 2026-10-12-16:15:
+       * CLI, daemon, and dashboard runtimes can finish catalog refreshes in separate processes.
+       * Evaluate retention while holding Pi's models-store file lock, so a late empty or stale
+       * publication cannot observe an old row and erase a newer usable catalog after its writer wins.
+       */
+      if (entry.models.length === 0 && (current?.models.length ?? 0) > 0) {
+        return;
+      }
+
+      const incomingTimestamp = Math.max(entry.lastModified ?? 0, entry.checkedAt ?? 0);
+      const currentTimestamp = Math.max(current?.lastModified ?? 0, current?.checkedAt ?? 0);
+      if (incomingTimestamp > 0 && currentTimestamp > incomingTimestamp) {
+        return;
+      }
+
+      entries[providerId] = structuredClone(entry);
+      options?.signal?.throwIfAborted();
+      writeFileSync(this.storePath, JSON.stringify(entries, null, 2), { encoding: "utf-8", mode: 0o600 });
+    } finally {
+      await release?.();
+    }
+  }
+
+  delete(providerId: string, options?: ModelsStoreOperationOptions): Promise<void> {
+    return this.store.delete(providerId, options);
+  }
+}
+
+type RuntimeModelsInternals = {
+  models?: { modelsStore?: ModelsStore };
+};
+
+function installRetainingModelsStore(modelRuntime: ModelRuntime, modelsPath: string): void {
+  const internals = modelRuntime as unknown as RuntimeModelsInternals;
+  const modelsStore = internals.models?.modelsStore;
+
+  /*
+   * FNXC:ModelRegistry 2026-10-12-17:11:
+   * Some Pi-compatible adapters deliberately expose only the public runtime API. Catalog retention
+   * is an optional decoration over Pi's undocumented store internals, so store-less adapters must
+   * remain usable while real runtimes retain the file-locked publication protection.
+   */
+  if (!modelsStore || modelsStore instanceof RetainingModelsStore) {
+    return;
+  }
+
+  internals.models!.modelsStore = new RetainingModelsStore(
+    modelsStore,
+    join(dirname(modelsPath), "models-store.json"),
+  );
+}
+
+/**
  * FNXC:ModelRegistry 2026-07-16-17:20:
  * pi 0.80.8 made model initialization asynchronous and moved auth ownership to
  * ModelRuntime. Keep Fusion's file-backed, locked credential adapter as the runtime
  * CredentialStore so FN-7646's per-provider read-modify-merge guarantee survives.
  */
 export async function createFusionModelRegistry(authStorage: FusionAuthStorage, home?: string, resolvedCredentialInstance?: ProviderInstanceRef): Promise<FusionModelRegistry> {
+  const modelsPath = getModelRegistryModelsPath(home);
   const modelRuntime = await ModelRuntime.create({
     credentials: createFusionCredentialStore(authStorage, resolvedCredentialInstance),
-    modelsPath: getModelRegistryModelsPath(home),
+    modelsPath,
+    refreshOnCreate: false,
   });
+  installRetainingModelsStore(modelRuntime, modelsPath);
+  await modelRuntime.refresh({ allowNetwork: false });
   authStorage.setModelRuntime(modelRuntime);
   return Object.assign(new ModelRegistry(modelRuntime), { modelRuntime });
 }

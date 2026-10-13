@@ -262,7 +262,6 @@ describe("resumeMissingPostMergeGate", () => {
   it("treats every operator hold as absolute, and admits only the stall park it is undoing", async () => {
     const held = [
       task({ userPaused: true } as never),
-      task({ autoMerge: false } as never),
       task({ paused: true, pausedReason: "operator-hold" } as never),
     ];
     for (const card of held) {
@@ -271,6 +270,26 @@ describe("resumeMissingPostMergeGate", () => {
       expect(result.reason).toBe("operator-held");
       expect(calls.seed).toHaveLength(0);
     }
+
+    /*
+    FNXC:PostMergeCloseout 2026-10-13-07:51 (merge origin/main):
+    Both halves of the auto-merge decision are pinned here, because the two signals are different kinds of
+    thing. PROJECT auto-merge Off still holds the whole lane (FN-5147: `in-review` is human-terminal), so the
+    seam must refuse it. A per-card `autoMerge: false` no longer does — that value is often inherited or
+    engine-authored (FN-6444) and the card reaching this seam has a durable landing already proven, so what
+    remains is closeout, not a landing decision. The per-card case used to sit in the absolute-holds list
+    above; asserting it as admitted is what keeps the removal from silently unpinning either side.
+    */
+    const projectOff = fakeStore();
+    (projectOff.store as unknown as { getSettings: () => Promise<Record<string, unknown>> }).getSettings
+      = async () => ({ autoMerge: false });
+    expect((await resumeMissingPostMergeGate(projectOff.store, task(), { source: "self-healing", contract: undefined })).reason)
+      .toBe("engine-paused");
+    expect(projectOff.calls.seed).toHaveLength(0);
+
+    const perCardFalse = fakeStore();
+    expect((await resumeMissingPostMergeGate(perCardFalse.store, task({ autoMerge: false } as never), { source: "self-healing", contract: undefined })).outcome)
+      .not.toBe("operator-held");
 
     const parkedByOurOwnLane = task({ paused: true, pausedReason: IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON } as never);
     const admitted = fakeStore();

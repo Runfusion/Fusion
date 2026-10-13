@@ -19,6 +19,7 @@ import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, 
 import {
   fileScopeLeaseBlocksCandidate,
   isSharedBarrelOnlyMatch,
+    fileScopeLeaseScopeFingerprint,
   normalizeOverlapScopeForTask,
   taskHoldsUnmergedCheckout,
   type FileScopeLeaseKind,
@@ -50,7 +51,8 @@ export type OverlapBlockerRepairReason =
   | "dependency-blocker-remains"
   | "overlap-blocker-changed"
   | "rerouted-to-current-overlap"
-  | "repaired";
+  | "repaired"
+  | "released-speculative-lease";
 
 export interface RepairOverlapBlockerOptions {
   dryRun?: boolean;
@@ -67,6 +69,17 @@ export interface RepairOverlapBlockerResult {
   reason: OverlapBlockerRepairReason;
   message: string;
   task?: Task;
+  releaseReceiptCommitted?: boolean;
+}
+
+/*
+FNXC:FileScopeRecovery 2026-10-12-16:07:
+A retained checkout is not itself evidence of implementation work. Clear may release
+only after bounded status and base-to-HEAD inspection proves every checkout clean;
+any command failure, dirt, or task-attributed commit stays fail-closed.
+*/
+function quoteGitPath(path: string): string {
+  return `'${path.replaceAll("'", "'\\\"'\\\"'")}'`;
 }
 
 /** @internal Extracted modules use this compatibility flag */
@@ -190,7 +203,7 @@ import { supplementTaskHistoryFromEvidence, type SupplementTaskHistoryResult } f
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveLifecycleColumns, resolveReviewColumns, type LifecycleColumns } from "./workflows/workflow-lifecycle-traits.js";
-import { isReviewColumnRole, isWipColumnRole } from "./column-roles.js";
+import { isReviewColumnRole, isTerminalColumnRole, isWipColumnRole } from "./column-roles.js";
 import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
 import {
   appendPatchnodeEntry,
@@ -599,6 +612,26 @@ export function classifyRepairFileScopeLease(
     return taskHoldsUnmergedCheckout(candidate) ? "active" : "none";
   }
   return taskHoldsUnmergedCheckout(candidate) ? "dormant" : "none";
+}
+
+/*
+FNXC:FileScopeRecovery 2026-10-12-16:23:
+Repair must honor the same durable follower waiver as scheduler admission. A stale display marker
+cannot override this identity- and scope-fenced receipt, while any resumed, re-scoped, or changed
+checkout holder immediately regains its normal claim.
+*/
+function repairReceiptWaivesFollower(holder: Task, followerId: string, holderScope: string[]): boolean {
+  const receipt = holder.fileScopeLeaseRelease;
+  return Boolean(receipt?.holderId === holder.id
+    && receipt.holderLineageId === holder.lineageId
+    && receipt.scopeFingerprint === fileScopeLeaseScopeFingerprint(holderScope)
+    && receipt.releasedFollowerIds.includes(followerId)
+    && (holder.paused || holder.userPaused)
+    && !holder.checkedOutBy
+    && !holder.sessionFile
+    && receipt.checkoutEpoch === holder.checkoutLeaseEpoch
+    && ((receipt.checkoutIdentity === "no-checkout" && !taskHoldsUnmergedCheckout(holder))
+      || (receipt.checkoutIdentity === "clean-checkout" && taskHoldsUnmergedCheckout(holder))));
 }
 
 /** Compatibility wrapper retained for callers that only need a boolean lease answer. */
@@ -2330,7 +2363,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; externalBlock?: import("./types.js").Task["externalBlock"] | null; planningFailure?: import("./types.js").Task["planningFailure"] | null; humanPlanApproval?: import("./types.js").Task["humanPlanApproval"] | null; humanMergeApproval?: import("./types.js").Task["humanMergeApproval"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; recoveryDisposition?: import("./types.js").Task["recoveryDisposition"] | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
+updates: { title?: string; description?: string; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; externalBlock?: import("./types.js").Task["externalBlock"] | null; planningFailure?: import("./types.js").Task["planningFailure"] | null; humanPlanApproval?: import("./types.js").Task["humanPlanApproval"] | null; humanMergeApproval?: import("./types.js").Task["humanMergeApproval"] | null; status?: string | null; awaitingApprovalReason?: import("./types.js").Task["awaitingApprovalReason"] | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; fileScopeLeaseRelease?: import("./types.js").Task["fileScopeLeaseRelease"] | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; branchWriteOrigin?: "operator" | "engine"; branchContext?: import("./types.js").TaskBranchContext | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; aiMergeReviewReconciliation?: import("./types.js").Task["aiMergeReviewReconciliation"] | null; log?: import("./types.js").TaskLogEntry[]; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; recoveryDisposition?: import("./types.js").Task["recoveryDisposition"] | null; sessionContentionHoldCount?: number | null; sessionContentionWaitReason?: string | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; reviewConvergenceStage?: number | null; reviewConvergenceEscalationCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; recommendations?: import("./types.js").TaskRecommendation[]; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     /*
     FNXC:SpecLock 2026-08-09-20:34:
@@ -3654,6 +3687,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     const previousOverlapBlockedBy = task.overlapBlockedBy ?? undefined;
+    let releaseReceiptCommitted = false;
+    let rollbackReleasedFollower = async (_waiverConsumed = false): Promise<void> => undefined;
     if (!previousOverlapBlockedBy) {
       return { taskId: id, dryRun, repaired: false, statusCleared: false, reason: "no-overlap-blocker", message: `Task ${id} has no overlap blocker`, task };
     }
@@ -3729,6 +3764,36 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return scope;
     };
 
+    /*
+    FNXC:FileScopeLeaseRelease 2026-10-13-07:18 (merge origin/main):
+    Upstream's dormant-blocker downgrade. A dormant lease held by a card that is itself waiting on an
+    unmet prerequisite cannot keep a follower out of the same files; the prerequisite's own review or
+    terminal lane counts as satisfied, matching the admission rule used everywhere else here. Cached
+    per candidate because the blocker loop and the candidate loop ask for the same cards.
+    */
+    const dependencyReadiness = new Map<string, Promise<boolean>>();
+    const hasUnmetSchedulingDependencies = (candidate: Task): Promise<boolean> => {
+      const cached = dependencyReadiness.get(candidate.id);
+      if (cached) return cached;
+      const resolving = (async () => {
+        for (const dependencyId of candidate.dependencies ?? []) {
+          const dependency = taskById.get(dependencyId);
+          if (!dependency) continue;
+          const { lease } = await repairLanesFor(dependencyId);
+          // Admission accepts a prerequisite in any review or terminal lane of its own workflow.
+          if (lease) {
+            if (lease.terminal?.has(dependency.column) || repairLeaseLaneIncludes(lease.review, dependency.column)) continue;
+          } else if (isTerminalColumnRole(undefined, dependency.column) || isReviewColumnRole(undefined, dependency.column)) {
+            continue;
+          }
+          return true;
+        }
+        return false;
+      })();
+      dependencyReadiness.set(candidate.id, resolving);
+      return resolving;
+    };
+
     const taskScope = await getScope(task.id);
     if (blocker) {
       /*
@@ -3738,23 +3803,98 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       worktree cannot be cleared through the operator repair path before its work lands.
       */
       const blockerLanes = await repairLanesFor(blocker.id);
-      const blockerLeaseKind = classifyRepairFileScopeLease(blocker, blockerLanes.lease);
+      let blockerLeaseKind = classifyRepairFileScopeLease(blocker, blockerLanes.lease);
+      if (blockerLeaseKind === "dormant" && await hasUnmetSchedulingDependencies(blocker)) blockerLeaseKind = "none";
+      const blockerScope = await getScope(blocker.id);
       const blockerHoldsLease = fileScopeLeaseBlocksCandidate(blocker, task, {
         kind: blockerLeaseKind,
-        waivedForTaskIds: [],
+        waivedForTaskIds: repairReceiptWaivesFollower(blocker, task.id, blockerScope) ? [task.id] : [],
       });
-      const blockerScope = await getScope(blocker.id);
       if (blockerHoldsLease && repairScopesOverlap(taskScope, blockerScope)) {
-        return {
-          taskId: id,
-          dryRun,
-          repaired: false,
-          statusCleared: false,
-          previousOverlapBlockedBy,
-          currentOverlapBlockedBy: previousOverlapBlockedBy,
-          reason: "scopes-still-overlap",
-          message: `Task ${id} still overlaps ${previousOverlapBlockedBy}`,
-          task,
+        const pausedWithoutSession = Boolean(blocker.paused || blocker.userPaused)
+          && !blocker.checkedOutBy
+          && !blocker.sessionFile;
+        const checkoutPaths = [
+          ...(blocker.worktree ? [blocker.worktree] : []),
+          ...Object.values(blocker.workspaceWorktrees ?? {}).flatMap((entry) => entry?.worktreePath ? [entry.worktreePath] : []),
+        ];
+        let checkoutIdentity: "no-checkout" | "clean-checkout" = "no-checkout";
+        if (pausedWithoutSession && checkoutPaths.length > 0) {
+          const inspections = await Promise.all(checkoutPaths.map(async (path) => {
+            const status = await this.runGitCommand(`git -C ${quoteGitPath(path)} status --porcelain --untracked-files=all`, 5_000);
+            if (status.exitCode !== 0 || status.timedOut || status.bufferExceeded || status.stdout.trim()) return false;
+            if (!blocker.baseCommitSha) return false;
+            const commits = await this.runGitCommand(`git -C ${quoteGitPath(path)} rev-list --count ${blocker.baseCommitSha}..HEAD`, 5_000);
+            return commits.exitCode === 0 && !commits.timedOut && !commits.bufferExceeded && commits.stdout.trim() === "0";
+          }));
+          if (inspections.every(Boolean)) checkoutIdentity = "clean-checkout";
+        }
+        const safelyInspectable = checkoutPaths.length === 0 || checkoutIdentity === "clean-checkout";
+        if (!pausedWithoutSession || !safelyInspectable) {
+          return {
+            taskId: id,
+            dryRun,
+            repaired: false,
+            statusCleared: false,
+            previousOverlapBlockedBy,
+            currentOverlapBlockedBy: previousOverlapBlockedBy,
+            reason: "scopes-still-overlap",
+            message: `Task ${id} still overlaps ${previousOverlapBlockedBy}; pause it and preserve or land dirty, committed, active, or uninspectable checkout work before clearing`,
+            task,
+          };
+        }
+        if (dryRun) {
+          return { taskId: id, dryRun, repaired: false, statusCleared: false, previousOverlapBlockedBy, reason: "released-speculative-lease", message: `Task ${previousOverlapBlockedBy} has a paused claim with no implementation work that would be safely released`, task };
+        }
+        const releaseBasis = {
+          holderId: blocker.id,
+          ...(blocker.lineageId ? { holderLineageId: blocker.lineageId } : {}),
+          scopeFingerprint: fileScopeLeaseScopeFingerprint(blockerScope),
+          checkoutIdentity,
+          ...(blocker.checkoutLeaseEpoch !== undefined ? { checkoutEpoch: blocker.checkoutLeaseEpoch } : {}),
+        };
+        let committedReceipt: Task["fileScopeLeaseRelease"];
+        let releaseAttemptAddedFollower = false;
+        const releasedHolder = await this.updateTaskAtomic(blocker.id, (current) => {
+          if (current.lineageId !== blocker.lineageId || !(current.paused || current.userPaused) || current.checkedOutBy || current.sessionFile) return null;
+          if (checkoutIdentity === "no-checkout" ? taskHoldsUnmergedCheckout(current) : !taskHoldsUnmergedCheckout(current)) return null;
+          const prior = current.fileScopeLeaseRelease;
+          if (prior && (prior.holderLineageId !== releaseBasis.holderLineageId || prior.scopeFingerprint !== releaseBasis.scopeFingerprint || prior.checkoutIdentity !== releaseBasis.checkoutIdentity || prior.checkoutEpoch !== releaseBasis.checkoutEpoch)) return null;
+          releaseAttemptAddedFollower = !prior?.releasedFollowerIds.includes(task.id);
+          committedReceipt = {
+            ...releaseBasis,
+            releasedFollowerIds: [...new Set([...(prior?.releasedFollowerIds ?? []), task.id])].sort(),
+            inspectedAt: new Date().toISOString(),
+            revision: (prior?.revision ?? 0) + 1,
+          };
+          return { fileScopeLeaseRelease: committedReceipt };
+        });
+        if (!releasedHolder || !committedReceipt || !releasedHolder.fileScopeLeaseRelease?.releasedFollowerIds.includes(task.id)) {
+          return { taskId: id, dryRun, repaired: false, statusCleared: false, previousOverlapBlockedBy, reason: "overlap-blocker-changed", message: `Task ${previousOverlapBlockedBy} changed while its speculative claim was being released`, task };
+        }
+        releaseReceiptCommitted = true;
+        /*
+        FNXC:FileScopeRecovery 2026-10-12-16:55:
+        A Clear that loses its marker CAS after another Clear consumed the same follower waiver
+        must retain its receipt contribution. A named replacement blocker proves this attempt was
+        unconsumed and may retract; an absent marker is the durable consumption fence.
+        */
+        rollbackReleasedFollower = async (waiverConsumed = false) => {
+          if (!releaseAttemptAddedFollower || waiverConsumed) return;
+          await this.updateTaskAtomic(blocker.id, (current) => {
+            const receipt = current.fileScopeLeaseRelease;
+            if (!receipt
+              || receipt.holderLineageId !== releaseBasis.holderLineageId
+              || receipt.scopeFingerprint !== releaseBasis.scopeFingerprint
+              || receipt.checkoutIdentity !== releaseBasis.checkoutIdentity
+              || receipt.checkoutEpoch !== releaseBasis.checkoutEpoch
+              || !receipt.releasedFollowerIds.includes(task.id)) return null;
+            const releasedFollowerIds = receipt.releasedFollowerIds.filter((followerId) => followerId !== task.id);
+            return releasedFollowerIds.length > 0
+              ? { fileScopeLeaseRelease: { ...receipt, releasedFollowerIds, revision: receipt.revision + 1 } }
+              : { fileScopeLeaseRelease: undefined };
+          });
+          releaseReceiptCommitted = false;
         };
       }
     }
@@ -3821,7 +3961,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         }
         return { overlapBlockedBy: currentOverlapBlocker, status: "queued" };
       });
-      if (skipped) return skipped;
+      if (skipped) {
+        await rollbackReleasedFollower(skipped.currentOverlapBlockedBy == null);
+        return skipped;
+      }
       await this.logEntry(id, `Repaired stale overlap blocker: rerouted from ${previousOverlapBlockedBy} to ${currentOverlapBlocker}${options.reason ? ` — ${options.reason}` : ""}`);
       return {
         taskId: id,
@@ -3867,7 +4010,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         ...(currentUnresolvedDeps.length > 0 ? { blockedBy: currentUnresolvedDeps[0] } : {}),
       };
     });
-    if (skipped) return skipped;
+    if (skipped) {
+      await rollbackReleasedFollower(skipped.currentOverlapBlockedBy == null);
+      return skipped;
+    }
     await this.logEntry(
       id,
       `Repaired stale overlap blocker: cleared ${previousOverlapBlockedBy}; statusCleared=${statusCleared}${unresolvedDeps.length > 0 ? `; dependency blocker remains ${unresolvedDeps[0]}` : ""}${options.reason ? ` — ${options.reason}` : ""}`,
@@ -3879,11 +4025,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       repaired: true,
       statusCleared,
       previousOverlapBlockedBy,
-      reason: unresolvedDeps.length > 0 ? "dependency-blocker-remains" : "repaired",
+      reason: unresolvedDeps.length > 0 ? "dependency-blocker-remains" : (releaseReceiptCommitted ? "released-speculative-lease" : "repaired"),
       message: unresolvedDeps.length > 0
         ? `Cleared stale overlap blocker ${previousOverlapBlockedBy}; dependency blocker remains ${unresolvedDeps[0]}`
-        : `Cleared stale overlap blocker ${previousOverlapBlockedBy}`,
+        : releaseReceiptCommitted
+          ? `Released the paused planning-only claim from ${previousOverlapBlockedBy}; queued work will be reconsidered through normal gates`
+          : `Cleared stale overlap blocker ${previousOverlapBlockedBy}`,
       task: repairedTask,
+      releaseReceiptCommitted,
     };
   }
 
@@ -3915,20 +4064,20 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       candidateLanesByTaskId.set(candidate.id, lanes.lifecycle);
       candidateLeaseKinds.set(candidate.id, classifyRepairFileScopeLease(candidate, lanes.lease));
     }
-    const activeCandidates = candidatePool
-      .filter((candidate) => candidateLeaseKinds.get(candidate.id) === "active")
-      .filter((candidate) => fileScopeLeaseBlocksCandidate(candidate, task, {
-        kind: "active",
-        waivedForTaskIds: [],
-      }))
-      .sort((a, b) => a.id.localeCompare(b.id));
-    const dormantCandidates = candidatePool
-      .filter((candidate) => candidateLeaseKinds.get(candidate.id) === "dormant")
-      .filter((candidate) => fileScopeLeaseBlocksCandidate(candidate, task, {
-        kind: "dormant",
-        waivedForTaskIds: [],
-      }))
-      .sort(compareTasksByQueueOrder);
+    const activeCandidates: Task[] = [];
+    const dormantCandidates: Task[] = [];
+    for (const candidate of candidatePool) {
+      const kind = candidateLeaseKinds.get(candidate.id);
+      if (kind !== "active" && kind !== "dormant") continue;
+      const candidateScope = await getScope(candidate.id);
+      if (!fileScopeLeaseBlocksCandidate(candidate, task, {
+        kind,
+        waivedForTaskIds: repairReceiptWaivesFollower(candidate, task.id, candidateScope) ? [task.id] : [],
+      })) continue;
+      (kind === "active" ? activeCandidates : dormantCandidates).push(candidate);
+    }
+    activeCandidates.sort((a, b) => a.id.localeCompare(b.id));
+    dormantCandidates.sort(compareTasksByQueueOrder);
 
     for (const candidate of [...activeCandidates, ...dormantCandidates]) {
       const candidateScope = await getScope(candidate.id);

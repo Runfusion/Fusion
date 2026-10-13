@@ -47,8 +47,13 @@ import { registerApprovalRoutes } from "../../../dashboard/src/routes/register-a
 import { request as requestRoute } from "../../../dashboard/src/test-request.js";
 import { ChatManager, __resetChatState, __setCreateResolvedAgentSession } from "../../../dashboard/src/chat.js";
 
-const { createPiAgentSessionMock, piFindModelMock } = vi.hoisted(() => ({
+const { createPiAgentSessionMock, createPiModelRuntimeMock, piFindModelMock } = vi.hoisted(() => ({
   createPiAgentSessionMock: vi.fn(),
+  /*
+   * FNXC:CliTests 2026-10-12-17:11:
+   * Keep this adapter intentionally store-less: dashboard chat only needs Pi's public runtime API.
+   */
+  createPiModelRuntimeMock: vi.fn(async () => ({ getAuth: async () => ({ auth: { headers: {} } }), refresh: async () => {} })),
   piFindModelMock: vi.fn((provider: string, id: string) => ({ provider, id })),
 }));
 
@@ -70,7 +75,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   DefaultPackageManager: class { async resolve() { return { extensions: [] }; } },
   discoverAndLoadExtensions: vi.fn(async () => ({ runtime: { pendingProviderRegistrations: [] }, errors: [] })),
   getAgentDir: () => "/mock-agent-dir",
-  ModelRuntime: { create: async () => ({ getAuth: async () => ({ auth: { headers: {} } }), refresh: async () => {} }) },
+  ModelRuntime: { create: createPiModelRuntimeMock },
   ModelRegistry: class { static create() { return new this(); } find(provider: string, id: string) { return piFindModelMock(provider, id); } getAll() { return []; } registerProvider() {} async refresh() {} async getApiKeyAndHeaders() { return { ok: true }; } },
   SettingsManager: { create: () => ({}), inMemory: () => ({}) },
 }));
@@ -166,6 +171,7 @@ pgDescribe("extension tool permission gates", () => {
   beforeAll(h.beforeAll);
   beforeEach(async () => {
     await h.beforeEach();
+    createPiModelRuntimeMock.mockClear();
     __clearFusionSessionIdentityRegistryForTests();
   });
   afterEach(async () => {
@@ -741,9 +747,10 @@ pgDescribe("extension tool permission gates", () => {
         secretsStore.createSecret({ scope: "project", key: "DASHBOARD_CHAT_DENY_TOKEN", plaintextValue: "not-in-approval", accessPolicy: "prompt" }),
       ]);
       const manager = new ChatManager(chatStore as any, cwd, agentStore as any, undefined, undefined, undefined, h.store());
-      await manager.sendMessage("chat-secret", "Read the prompt-gated secret");
-      await manager.sendMessage("chat-secret", "Read and deny the prompt-gated secret");
+      await expect(manager.sendMessage("chat-secret", "Read the prompt-gated secret")).resolves.toBeUndefined();
+      await expect(manager.sendMessage("chat-secret", "Read and deny the prompt-gated secret")).resolves.toBeUndefined();
 
+      expect(createPiModelRuntimeMock).toHaveBeenCalledTimes(2);
       expect(createPiAgentSessionMock).toHaveBeenCalledTimes(2);
       const [approvedRequestId, deniedRequestId] = secretResults.map((result) => result.details?.approvalRequestId);
       expect(approvedRequestId).toEqual(expect.any(String));

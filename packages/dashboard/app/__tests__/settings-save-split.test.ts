@@ -880,6 +880,44 @@ describe("splitSettingsSave", () => {
     expect(projectClearResult.projectPatch).toEqual({ titleSummarizerFallbackThinkingLevel: null });
   });
 
+  it.each(["global-models", "project-models"] as const)("routes every global lane thinking change through the global patch from %s", (activeSection) => {
+    for (const key of [
+      "executionGlobalThinkingLevel",
+      "planningGlobalThinkingLevel",
+      "validatorGlobalThinkingLevel",
+      "titleSummarizerGlobalThinkingLevel",
+    ]) {
+      const { globalPatch, projectPatch } = splitSettingsSave({
+        payload: { [key]: "high" },
+        initialValues: {} as never,
+        initialScopedValues: { global: {}, project: {} } as never,
+        activeSection,
+      });
+
+      expect(globalPatch).toEqual({ [key]: "high" });
+      expect(projectPatch).toEqual({});
+    }
+  });
+
+  it.each(["global-models", "project-models"] as const)("serializes every cleared global lane thinking override as null from %s", (activeSection) => {
+    for (const key of [
+      "executionGlobalThinkingLevel",
+      "planningGlobalThinkingLevel",
+      "validatorGlobalThinkingLevel",
+      "titleSummarizerGlobalThinkingLevel",
+    ]) {
+      const { globalPatch, projectPatch } = splitSettingsSave({
+        payload: { [key]: undefined },
+        initialValues: { [key]: "medium" } as never,
+        initialScopedValues: { global: { [key]: "medium" }, project: {} } as never,
+        activeSection,
+      });
+
+      expect(globalPatch).toEqual({ [key]: null });
+      expect(projectPatch).toEqual({});
+    }
+  });
+
   it("emits set and null-cleared merger fallback lane values in the project patch", () => {
     const setResult = splitSettingsSave({
       payload: {

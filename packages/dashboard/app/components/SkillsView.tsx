@@ -31,6 +31,7 @@ function isMarkdownFile(relativePath: string): boolean {
   return MARKDOWN_FILE_EXTENSIONS.has(lower.slice(dot));
 }
 import type { ToastType } from "../hooks/useToast";
+import { useLocaleFormat } from "../i18n/format";
 
 interface SkillsViewProps {
   projectId?: string;
@@ -44,6 +45,7 @@ export interface DiscoveredSkillDisplay extends DiscoveredSkill {
 
 export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
   const { t } = useTranslation("app");
+  const { formatNumber } = useLocaleFormat();
   const [discoveredSkills, setDiscoveredSkills] = useState<DiscoveredSkillDisplay[]>([]);
   const [isLoadingDiscovered, setIsLoadingDiscovered] = useState(true);
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
@@ -690,7 +692,12 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
                     )}
                     {entry.installs !== undefined && (
                       <span className="skills-view-card-installs">
-                        {t("skills.installsCount", "{{value}} installs", { value: entry.installs.toLocaleString() })}
+                        {/*
+                         * FNXC:Skills 2026-10-13-02:17:
+                         * Installation totals are display-only strings, so locale formatting happens before
+                         * interpolation. Every shipped resource must retain the non-plural `value` token.
+                         */}
+                        {t("skills.installsCount", "{{value}} installs", { value: formatNumber(entry.installs) })}
                       </span>
                     )}
                   </div>

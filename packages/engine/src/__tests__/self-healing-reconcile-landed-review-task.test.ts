@@ -54,6 +54,8 @@ function storeWithTask(task: Task, settings: Partial<Settings> = {}) {
   const store = Object.assign(new EventEmitter(), {
     getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, ...settings } as Settings)),
     getTask: vi.fn(async (id: string) => tasks.get(id)),
+    listTasks: vi.fn(async (filter?: { column?: string }) =>
+      [...tasks.values()].filter((task) => !filter?.column || task.column === filter.column)),
     updateTask,
     updateTaskAtomic,
     moveTask,
@@ -69,6 +71,13 @@ function storeWithTask(task: Task, settings: Partial<Settings> = {}) {
       const current = tasks.get(id);
       if (!current) return;
       tasks.set(id, { ...current, log: [...(current.log ?? []), { action }] } as Task);
+    }),
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (task: Task) => boolean | Promise<boolean>) => {
+      const current = tasks.get(id)!;
+      if (!await predicate(current)) return { moved: false, task: current };
+      const next = { ...current, column } as Task;
+      tasks.set(id, next);
+      return { moved: true, task: next };
     }),
     recordRunAuditEvent: vi.fn(async () => undefined),
   }) as unknown as TaskStore & EventEmitter;
@@ -155,9 +164,9 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(updateTaskAtomic).not.toHaveBeenCalled();
   });
 
-  it("resumes an absent confirmed-merge gate once without moving or remerging", async () => {
+  it("resumes an absent confirmed-merge gate after manual landing without moving or remerging", async () => {
     const task = baseTask({
-      id: "FN-9368", updatedAt: "2026-10-01T06:36:00.000Z", autoMerge: true,
+      id: "FN-9368", updatedAt: "2026-10-01T06:36:00.000Z", autoMerge: false,
       mergeDetails: { mergeConfirmed: true, commitSha: "280fa38" },
       enabledWorkflowSteps: ["post-merge-verification"], workflowStepResults: [],
     });
@@ -229,7 +238,65 @@ describe("SelfHealingManager.reconcileLandedReviewTask", () => {
     expect(continuations).toHaveLength(1);
     expect(moveTask).not.toHaveBeenCalled();
   });
+  it("sweep resumes a proven manual landing once and finalizes only after durable post-merge approval", async () => {
+    const task = baseTask({
+      id: "FN-9520", autoMerge: false,
+      mergeDetails: { mergeConfirmed: true, commitSha: "landed9520" },
+      enabledWorkflowSteps: ["post-merge-verification"], workflowStepResults: [],
+    });
+    const { store, tasks, moveTask } = storeWithTask(task);
+    const continuations: unknown[] = [];
+    Object.assign(store, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "builtin:coding", stepIds: ["post-merge-verification"] })),
+      listWorkflowWorkItemsForTask: vi.fn(async () => continuations),
+      seedWorkspaceCodeReviewContinuationIfIdle: vi.fn(async (input) => {
+        if (continuations.length > 0) return { seeded: false, reason: "active-continuation" };
+        continuations.push(input);
+        return { seeded: true, workItemId: "post-merge" };
+      }),
+    });
+    const manager = managerWithStubs(store);
+    Object.assign(manager, {
+      isCommitReachableFromBranch: vi.fn(async () => true),
+      resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main" })),
+    });
 
+    await expect(manager.recoverMergedReviewTasks()).resolves.toBe(0);
+    expect(continuations).toHaveLength(1);
+    expect(continuations[0]).toMatchObject({ nodeId: "post-merge-verification", sourceColumn: "in-review", targetColumn: "in-review" });
+    expect(moveTask).not.toHaveBeenCalled();
+
+    tasks.set(task.id, {
+      ...tasks.get(task.id)!,
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    });
+    continuations.length = 0;
+
+    await expect(manager.recoverMergedReviewTasks()).resolves.toBe(1);
+    expect(tasks.get(task.id)).toMatchObject({ column: "done", autoMerge: false });
+    expect(moveTask).not.toHaveBeenCalled();
+  });
+
+  it.each(["paused", "user-paused"] as const)("sweep leaves a paused proven manual landing untouched (%s)", async (pauseKind) => {
+    const task = baseTask({
+      id: `FN-9520-${pauseKind}`,
+      autoMerge: false,
+      ...(pauseKind === "paused" ? { paused: true } : { userPaused: true }),
+      mergeDetails: { mergeConfirmed: true, commitSha: "landed9520" },
+      enabledWorkflowSteps: ["post-merge-verification"],
+      workflowStepResults: [{ workflowStepId: "post-merge-verification", status: "passed", verdict: "APPROVE" }],
+    });
+    const { store, tasks } = storeWithTask(task);
+    const manager = managerWithStubs(store);
+    Object.assign(manager, {
+      isCommitReachableFromBranch: vi.fn(async () => true),
+      resolveSelfHealingMergeTarget: vi.fn(async () => ({ branch: "main" })),
+    });
+
+    await expect(manager.recoverMergedReviewTasks()).resolves.toBe(0);
+    expect(tasks.get(task.id)).toMatchObject({ column: "in-review", autoMerge: false });
+  });
   it.each(["pending", "skipped"] as const)("leaves confirmed %s post-merge evidence blocked", async (status) => {
     const task = baseTask({
       autoMerge: true, mergeDetails: { mergeConfirmed: true }, enabledWorkflowSteps: ["post-merge-verification"],
@@ -730,11 +797,17 @@ describe("reconcileLandedReviewTask durable refusal marker", () => {
   it.each(["auto-merge-off", "paused", "user-paused"] as const)(
     "names the hold class on a merge-confirmed card: %s",
     async (reason) => {
-      const hold = reason === "auto-merge-off" ? { autoMerge: false }
-        : reason === "paused" ? { paused: true }
-          : { userPaused: true };
+      /*
+      FNXC:PostMergeCloseout 2026-10-13-07:51 (merge origin/main): the auto-merge arm is now stated as the
+      PROJECT setting, which is the signal that means a hold in this fork. A per-card `autoMerge: false` is
+      often inherited or engine-authored (FN-6444) and no longer vetoes closeout of a landing already proven
+      durable, so the card-level fixture would assert a veto the product deliberately removed. The invariant
+      is unchanged: a real auto-merge hold still refuses and still names itself on the card.
+      */
+      const hold = reason === "paused" ? { paused: true } : reason === "user-paused" ? { userPaused: true } : {};
+      const settings = reason === "auto-merge-off" ? { autoMerge: false as const } : {};
       const task = baseTask({ id: `RUFU-306-HOLD-${reason}`, mergeDetails: { mergeConfirmed: true }, ...hold });
-      const { store, tasks } = storeWithTask(task);
+      const { store, tasks } = storeWithTask(task, settings);
       const manager = managerWithStubs(store);
 
       await expect(manager.reconcileLandedReviewTask(task.id, { source: "manual", requireAutoMergeEligible: true }))
@@ -751,11 +824,10 @@ describe("reconcileLandedReviewTask durable refusal marker", () => {
   it.each(["auto-merge-off", "paused", "user-paused"] as const)(
     "keeps the same hold refusal silent on a card that was never merged: %s",
     async (reason) => {
-      const hold = reason === "auto-merge-off" ? { autoMerge: false }
-        : reason === "paused" ? { paused: true }
-          : { userPaused: true };
+      const hold = reason === "paused" ? { paused: true } : reason === "user-paused" ? { userPaused: true } : {};
+      const settings = reason === "auto-merge-off" ? { autoMerge: false as const } : {};
       const task = baseTask({ id: `RUFU-306-UNMERGED-${reason}`, mergeDetails: {}, ...hold });
-      const { store, tasks } = storeWithTask(task);
+      const { store, tasks } = storeWithTask(task, settings);
       const manager = managerWithStubs(store);
 
       await expect(manager.reconcileLandedReviewTask(task.id, { source: "self-healing", requireAutoMergeEligible: true }))
@@ -791,8 +863,9 @@ describe("reconcileLandedReviewTask durable refusal marker", () => {
     });
     const manager = managerWithStubs(store);
 
-    await expect(manager.reconcileLandedReviewTask(task.id, { source: "self-healing", requireAutoMergeEligible: true }))
-      .resolves.toEqual({ outcome: "raced", reason: "post-merge-resume-rerun-budget-exhausted" });
+    const probeResult = await manager.reconcileLandedReviewTask(task.id, { source: "self-healing", requireAutoMergeEligible: true });
+    console.error("PROBE1 " + JSON.stringify(probeResult) + " logTail=" + JSON.stringify((tasks.get(task.id)?.log ?? []).slice(-1)));
+    expect(probeResult).toEqual({ outcome: "raced", reason: "post-merge-resume-rerun-budget-exhausted" });
 
     expect((store as unknown as { seedWorkspaceCodeReviewContinuationIfIdle: ReturnType<typeof vi.fn> })
       .seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();

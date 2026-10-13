@@ -251,8 +251,24 @@ export function fetchWorkflowSteps(_projectId?: string): Promise<WorkflowStep[]>
   return Promise.resolve([]);
 }
 
-/** Fetch workflow step results for a task */
+export type WorkflowAdmission = {
+  allApproved: boolean;
+  requiredGateIds: string[];
+  resolution: string;
+  gates: Array<{
+    workflowStepId: string;
+    state: "approved" | "missing" | "not-approved" | "stale-content" | "unprovable-content";
+    selectedResult?: Pick<WorkflowStepResult, "workflowStepId" | "status" | "verdict" | "reviewInputFingerprint" | "startedAt" | "completedAt" | "supersededAt" | "remediationArchivedAt">;
+  }>;
+};
+
+/** Fetch workflow step results for a task. */
 export function fetchWorkflowResults(taskId: string, projectId?: string): Promise<WorkflowStepResult[]> {
   return api<WorkflowStepResult[]>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/workflow-results`, projectId));
+}
+
+/** Fetch the server-owned admission projection used by workflow results and merge doors. */
+export function fetchWorkflowAdmission(taskId: string, projectId?: string): Promise<WorkflowAdmission> {
+  return api<WorkflowAdmission>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/workflow-admission`, projectId));
 }
 

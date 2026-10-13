@@ -90,7 +90,7 @@
     "loadContentError": "Impossible de charger le contenu de la compétence",
     "allSkillsSelected": "Toutes les compétences sélectionnées",
     "discoveredSection": "Compétences découvertes",
-    "installsCount": "{{count}} installations",
+    "installsCount": "{{value}} installations",
     "backToSkillMd": "Back to SKILL.md",
     "noMatchingDiscovered": "Aucune compétence découverte ne correspond à votre recherche.",
     "toggleFailed": "Impossible de basculer la compétence : {{message}}",
@@ -4667,7 +4667,8 @@
     "deleteBranchTitle": "Supprimer la branche",
     "stagedFiles_one": "",
     "openSource": "Open source",
-    "behindUpstream_other": ""
+    "behindUpstream_other": "",
+    "autoSyncOffNotRun": "sync auto : désactivée / non exécutée"
   },
   "stall": {
     "dependency-block": {
@@ -11692,7 +11693,16 @@
       "legacy2": "",
       "requiredChecksHelp": "",
       "gitLabTokenType": "GitLab token type",
-      "includeTaskIdInCommitDefault": ""
+      "includeTaskIdInCommitDefault": "",
+      "afterFusionAdvancesTheIntegrationBranchRefThe": "",
+      "autoSyncProjectCheckoutAfterMerge": "",
+      "fastForwardOnlySkipDirtyWorktrees": "",
+      "inYourProjectRootWillShowTheNew": "",
+      "isTheLegacyBehavior": "",
+      "offLeaveTheProjectRootStaleLegacyBehavior": "",
+      "snapsCleanlyWhenTheWorktreeHasNoEdits": "",
+      "snapshotsRealLocalEditsAsAPatchAgainst": "",
+      "stashFastForwardDefaultPreserveLocalEdits": ""
     },
     "help": {
       "show": "Show help"

@@ -37,21 +37,21 @@ describe("configuration revision snapshots", () => {
   });
 });
 
-describe("non-versioned project settings", () => {
+describe("non-versioned settings", () => {
   it("omits heartbeat-only and strips heartbeat from mixed project revisions", async () => {
     const { mergeRestoredProjectSettings, NON_VERSIONED_SETTINGS_KEYS, isProjectSettingsKey } = await import("../config/settings-schema.js");
-    expect(NON_VERSIONED_SETTINGS_KEYS.every(isProjectSettingsKey)).toBe(true);
+    expect(NON_VERSIONED_SETTINGS_KEYS.filter(isProjectSettingsKey)).toEqual(["engineLastActiveAt"]);
     expect(createConfigurationRevision({ projectId: "p", ownerScope: "project", configKind: "project-settings", configTarget: { projectId: "p" }, before: { engineLastActiveAt: "old" }, after: { engineLastActiveAt: "new" }, changedBy: { kind: "system", id: "engine" } })).toBeNull();
     const revision = createConfigurationRevision({ projectId: "p", ownerScope: "project", configKind: "project-settings", configTarget: { projectId: "p" }, before: { engineLastActiveAt: "old", autoMerge: false }, after: { engineLastActiveAt: "new", autoMerge: true }, changedBy: { kind: "system", id: "engine" } });
     expect(revision?.diffs).toEqual([{ field: "autoMerge", oldValue: false, newValue: true }]);
     expect(revision?.before).toEqual({ autoMerge: false });
-    const snapshot = { engineLastActiveAt: "stale", autoMerge: false };
-    const live = { engineLastActiveAt: "live", extra: true };
-    expect(mergeRestoredProjectSettings(snapshot, live)).toEqual({ engineLastActiveAt: "live", autoMerge: false });
-    expect(mergeRestoredProjectSettings({ autoMerge: false }, live)).toEqual({ autoMerge: false, engineLastActiveAt: "live" });
-    expect(mergeRestoredProjectSettings({ engineLastActiveAt: "stale", autoMerge: false }, {})).toEqual({ autoMerge: false });
-    expect(snapshot).toEqual({ engineLastActiveAt: "stale", autoMerge: false });
-    expect(live).toEqual({ engineLastActiveAt: "live", extra: true });
+    const snapshot = { engineLastActiveAt: "stale", dashboardCurrentProjectIdByNode: { local: "stale" }, autoMerge: false };
+    const live = { engineLastActiveAt: "live", dashboardCurrentProjectIdByNode: { local: "live" }, extra: true };
+    expect(mergeRestoredProjectSettings(snapshot, live)).toEqual({ engineLastActiveAt: "live", dashboardCurrentProjectIdByNode: { local: "live" }, autoMerge: false });
+    expect(mergeRestoredProjectSettings({ autoMerge: false }, live)).toEqual({ autoMerge: false, engineLastActiveAt: "live", dashboardCurrentProjectIdByNode: { local: "live" } });
+    expect(mergeRestoredProjectSettings({ engineLastActiveAt: "stale", dashboardCurrentProjectIdByNode: { local: "stale" }, autoMerge: false }, {})).toEqual({ autoMerge: false });
+    expect(snapshot).toEqual({ engineLastActiveAt: "stale", dashboardCurrentProjectIdByNode: { local: "stale" }, autoMerge: false });
+    expect(live).toEqual({ engineLastActiveAt: "live", dashboardCurrentProjectIdByNode: { local: "live" }, extra: true });
   });
 
   it("treats an absent or undefined heartbeat as a non-versioned no-op", () => {
@@ -60,8 +60,22 @@ describe("non-versioned project settings", () => {
     expect(createConfigurationRevision({ ...input, before: { engineLastActiveAt: undefined }, after: { engineLastActiveAt: undefined } })).toBeNull();
   });
 
-  it("does not filter a same-named field outside project settings", () => {
-    for (const configKind of ["global-settings", "workflow-settings", "routine", "automation"] as const) {
+  it("omits UI-only global settings and retains only operator settings in mixed revisions", () => {
+    const input = { projectId: "global", ownerScope: "global" as const, configKind: "global-settings" as const, configTarget: { scope: "user-global" }, changedBy: { kind: "system" as const, id: "test" } };
+    expect(createConfigurationRevision({ ...input, before: { dashboardCurrentProjectIdByNode: { local: "one" } }, after: { dashboardCurrentProjectIdByNode: { local: "two" } } })).toBeNull();
+    expect(createConfigurationRevision({
+      ...input,
+      before: { dashboardCurrentProjectIdByNode: { local: "one" }, defaultModelId: "old" },
+      after: { dashboardCurrentProjectIdByNode: { local: "two" }, defaultModelId: "new" },
+    })).toMatchObject({
+      before: { defaultModelId: "old" },
+      after: { defaultModelId: "new" },
+      diffs: [{ field: "defaultModelId", oldValue: "old", newValue: "new" }],
+    });
+  });
+
+  it("keeps non-settings configuration kinds verbatim", () => {
+    for (const configKind of ["workflow-settings", "routine", "automation"] as const) {
       expect(createConfigurationRevision({ projectId: "p", ownerScope: "project", configKind, configTarget: { id: configKind }, before: { engineLastActiveAt: "old" }, after: { engineLastActiveAt: "new" }, changedBy: { kind: "system", id: "test" } })?.diffs)
         .toEqual([{ field: "engineLastActiveAt", oldValue: "old", newValue: "new" }]);
     }

@@ -113,6 +113,15 @@ FNXC:MigrationRestack 2026-10-12-18:24: the ceiling still equals the highest bun
  * tail is now ours (0090 owner-FK repair, 0091 review-lane ledger, 0092 task-log projections) with 0089
  * left free for upstream's FN-9529. Contiguity is not a requirement — upstream itself ships no file between
  * 0073 and 0084 — a number naming two migrations is the only illegal shape. */
+
+/*
+FNXC:MigrationVersionCollision 2026-10-13-07:18 (merge origin/main):
+Upstream FN-9529 shipped `0089_fn_9529_file_scope_lease_release.sql`, the exact slot the RUFU-615
+restack left free. It is now bundled and registered, so 0089 is no longer a gap on this line. The
+ceiling stays 0092 because that is still the highest bundled file — the rule is "highest file",
+not "highest upstream number", and a number naming two migrations remains the only illegal shape.
+*/
+
 export const SCHEMA_BASELINE_VERSION = "0092";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
@@ -364,6 +373,8 @@ export const RECOVERY_DISPOSITION_VERSION = "0088";
  * implement FN-9529, and an unshipped gap is harmless while a reused number is fatal.
  */
 export const TASK_LOG_PROJECTIONS_VERSION = "0092";
+
+export const FILE_SCOPE_LEASE_RELEASE_VERSION = "0089";
 
 /** FNXC:MemoryFocus 2026-08-21-06:10: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060, then 0061, then 0065: the upstream FN-066..FN-101 batch (2026-08-21) owns 0061-0064 (activity-log index, splitting removal, AI-merge review, repository scope). */
 /* FNXC:MemoryFocus 2026-08-23-07:07: renumbered 0065 -> 0066 in the RUFU-160 origin/main merge: origin/main independently shipped 0065 as FN-149's review-convergence migration (v0.77.0-beta.7); keeping both lines' migrations requires the deploy-line file to take the next free sequence. */
@@ -671,6 +682,7 @@ const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR
 const PULL_REQUEST_READINESS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_fn_9439_pull_request_readiness.sql");
 /* FNXC:MigrationRestack 2026-10-12-18:24: upstream's file at upstream's number — see RECOVERY_DISPOSITION_VERSION. */
 const RECOVERY_DISPOSITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0088_fn_9512_recovery_disposition.sql");
+const FILE_SCOPE_LEASE_RELEASE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0089_fn_9529_file_scope_lease_release.sql");
 /*
 FNXC:ForkedProductLine 2026-10-12-18:24 (RUFU-615): upstream's 0084 and 0085 are deliberately NOT bundled.
 0084_fn_332_overlap_sync re-ships this line's own 0075 (+0077) overlap-wait schema under a later number; we
@@ -843,6 +855,7 @@ export async function applySchemaBaseline(
     const staleReviewCallbackWaiverReceiptsAlreadyApplied = applied.includes(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION);
     const pullRequestReadinessAlreadyApplied = applied.includes(PULL_REQUEST_READINESS_VERSION);
     const recoveryDispositionAlreadyApplied = applied.includes(RECOVERY_DISPOSITION_VERSION);
+    const fileScopeLeaseReleaseAlreadyApplied = applied.includes(FILE_SCOPE_LEASE_RELEASE_VERSION);
     const taskLogProjectionsAlreadyApplied = applied.includes(TASK_LOG_PROJECTIONS_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
@@ -2101,6 +2114,15 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(RECOVERY_DISPOSITION_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${RECOVERY_DISPOSITION_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const fileScopeLeaseReleaseExists = ((await tx.execute(sql`
+      SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'file_scope_lease_release') AS present
+    `)) as unknown as Array<{ present: boolean }>)[0]?.present === true;
+    if (!fileScopeLeaseReleaseAlreadyApplied || !fileScopeLeaseReleaseExists) {
+      const migrationSql = await readFile(FILE_SCOPE_LEASE_RELEASE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${FILE_SCOPE_LEASE_RELEASE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     /*

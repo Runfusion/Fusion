@@ -2818,7 +2818,16 @@
       "legacy2": "Legacy ",
       "gitHubAuthentication": "GitHub Authentication",
       "gitLabAuthentication": "GitLab Authentication",
-      "both": " Both "
+      "both": " Both ",
+      "afterFusionAdvancesTheIntegrationBranchRefThe": " After Fusion advances the integration branch ref, the merger can auto-sync other worktrees still checked out on that branch (typically your project-root checkout). ",
+      "autoSyncProjectCheckoutAfterMerge": "Auto-sync project checkout after merge",
+      "fastForwardOnlySkipDirtyWorktrees": "Fast-forward only — skip dirty worktrees",
+      "inYourProjectRootWillShowTheNew": " in your project root will show the new commits inverted as &quot;staged changes&quot; until you pull manually. Only applies to direct merges. ",
+      "isTheLegacyBehavior": " is the legacy behavior: ",
+      "offLeaveTheProjectRootStaleLegacyBehavior": "Off — leave the project root stale (legacy behavior)",
+      "snapsCleanlyWhenTheWorktreeHasNoEdits": " snaps cleanly when the worktree has no edits and skips otherwise. ",
+      "snapshotsRealLocalEditsAsAPatchAgainst": " snapshots real local edits as a patch against the previous tip, snaps the worktree to the new tip, then reapplies the patch — untracked files that collide with newly-tracked paths are left in a temp dir for manual recovery. ",
+      "stashFastForwardDefaultPreserveLocalEdits": "Stash + fast-forward (default) — preserve local edits"
     },
     "appearance": {
       "showCostBadgeOnCardsHelp": "Default: disabled. When enabled, board cards show derived model cost next to execution time; unavailable pricing displays — and tasks without token usage show no badge.",
@@ -6475,7 +6484,8 @@
     "prevPage": "Previous",
     "nothingLoadedYet": "Nothing loaded yet",
     "forceDeleteBranchTitle": "Force Delete Branch",
-    "fetchFailed": "Fetch failed"
+    "fetchFailed": "Fetch failed",
+    "autoSyncOffNotRun": "auto-sync: off / not run"
   },
   "branchGroup": {
     "reviewAdvisory": "Review",
@@ -8614,7 +8624,7 @@
     "viewDetails": "View details for {{name}}",
     "noMatchingDiscovered": "No discovered skills match your search.",
     "snippetsDescription": "Save reusable prompts, then type /name in any chat to insert one without sending it.",
-    "installsCount": "{{count}} installs",
+    "installsCount": "{{value}} installs",
     "selectASkill": "Select a skill to view its details",
     "installSuccess": "Installed {{name}}",
     "snippetsEmptyHint": "Create one here, then type /name in any chat to insert it.",

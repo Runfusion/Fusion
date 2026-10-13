@@ -124,6 +124,35 @@ describe("WorkflowGraphExecutor merge-region collapse", () => {
     expectNoRawMergeRegionVisits(result.visitedNodeIds);
   });
 
+  it("runs a resumed post-merge gate from review without entering complete first", async () => {
+    const preflightNodeIds: string[] = [];
+    const enteredNodeIds: string[] = [];
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: createPrompt() },
+      columnBoundary: {
+        currentColumn: () => "in-review",
+        detectDrift: async () => false,
+        preflightNodeEntry: async (node) => { preflightNodeIds.push(node.id); },
+        onNodeEntry: async (node) => { enteredNodeIds.push(node.id); },
+      },
+    });
+    const reviewTask = {
+      ...task,
+      column: "in-review",
+      enabledWorkflowSteps: ["post-merge-verification"],
+    } as TaskDetail;
+
+    const result = await executor.run(reviewTask, settings, BUILTIN_CODING_WORKFLOW_IR, "post-merge-verification");
+
+    expect(result.outcome).toBe("success");
+    expect(result.visitedNodeIds).toEqual([
+      "post-merge-verification",
+      "post-merge-verification::post-merge-verification-step",
+    ]);
+    expect(preflightNodeIds).toEqual(["post-merge-verification"]);
+    expect(enteredNodeIds).toEqual([]);
+  });
+
   it("routes legacy merge seam failures to a failure terminal without visiting raw merge primitives", async () => {
     const calls: string[] = [];
     const prompt = createPrompt({

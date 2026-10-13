@@ -27,9 +27,12 @@ the operator at a column the board does not have — the phantom-lane bug grepti
 REVERT PROOF, measured: restore the literals and 4 of the 9 cases fail. The default-board cases keep
 passing, so they do not pin the fix on their own.
 */
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "../types.js";
 import { classifyRepairFileScopeLease, holdsRepairFileScopeLease, TaskStore } from "../store.js";
+import { fileScopeLeaseScopeFingerprint } from "../tasks/file-scope-lease.js";
+import { pgRowToTaskRow, rowToTask } from "../task-store/serialization.js";
 
 /** A board whose hold lane is `backlog`, wip `building`, review `signoff`, complete `shipped`. */
 const RENAMED_IR = {
@@ -71,7 +74,13 @@ function card(id: string, column: string, extra: Record<string, unknown> = {}): 
   } as unknown as Task;
 }
 
-function harness(tasks: Task[], ir: unknown, subject: Task, scopes: Record<string, string[]> = {}) {
+function harness(
+  tasks: Task[],
+  ir: unknown,
+  subject: Task,
+  scopes: Record<string, string[]> = {},
+  beforeUpdate?: (taskId: string) => void,
+) {
   const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
   let irReads = 0;
   const updates: Array<Record<string, unknown>> = [];
@@ -80,10 +89,19 @@ function harness(tasks: Task[], ir: unknown, subject: Task, scopes: Record<strin
     listTasks: vi.fn(async () => tasks),
     getSettings: vi.fn(async () => ({ overlapIgnorePaths: [] })),
     parseFileScopeFromPrompt: vi.fn(async (taskId: string) => scopes[taskId] ?? ["src/shared.ts"]),
-    updateTaskAtomic: vi.fn(async (_id: string, mutate: (t: Task) => unknown) => {
-      const patch = mutate(subject);
-      if (patch) updates.push(patch as Record<string, unknown>);
-      return { ...subject, ...(patch as object) };
+    runGitCommand: vi.fn(async (command: string) => ({
+      exitCode: 0, timedOut: false, bufferExceeded: false,
+      stdout: command.includes("rev-list") ? "0\n" : "", stderr: "", signal: null,
+    })),
+    updateTaskAtomic: vi.fn(async (taskId: string, mutate: (t: Task) => unknown) => {
+      beforeUpdate?.(taskId);
+      const current = tasks.find((candidate) => candidate.id === taskId) ?? subject;
+      const patch = mutate(current);
+      if (patch) {
+        updates.push(patch as Record<string, unknown>);
+        Object.assign(current, patch);
+      }
+      return { ...current, ...(patch as object) };
     }),
     getTaskWorkflowSelection: () => (ir ? selection : undefined),
     getTaskWorkflowSelectionAsync: async () => (ir ? selection : undefined),
@@ -105,6 +123,21 @@ function harness(tasks: Task[], ir: unknown, subject: Task, scopes: Record<strin
 
   return { run, updates, irReads: () => irReads };
 }
+
+describe("file-scope release receipt hydration", () => {
+  it("retains a PostgreSQL JSONB receipt through the production row mapper", () => {
+    const receipt = {
+      holderId: "FN-holder", holderLineageId: "lineage-holder", scopeFingerprint: "scope",
+      releasedFollowerIds: ["FN-follower"], checkoutIdentity: "no-checkout" as const,
+      inspectedAt: "2026-10-12T16:07:00.000Z", revision: 1,
+    };
+    const task = rowToTask(pgRowToTaskRow({
+      id: "FN-holder", description: "holder", priority: "normal", column: "todo", status: null,
+      currentStep: 0, fileScopeLeaseRelease: receipt,
+    }, ["fileScopeLeaseRelease"]));
+    expect(task.fileScopeLeaseRelease).toEqual(receipt);
+  });
+});
 
 describe("holdsRepairFileScopeLease resolves the candidate's own lanes", () => {
   it.each(["in-review", "in-progress", "todo", "signoff", "building"])("releases confirmed landing in %s before classifying retained checkouts", (column) => {
@@ -201,6 +234,104 @@ describe("repairOverlapBlocker resolves the board's own lanes", () => {
     const holder = card("FN-1", "backlog", { worktree: "/wt/preserved", dependencies: ["FN-missing"] });
     const { run } = harness([subject, holder], RENAMED_IR, subject);
     await expect(run()).resolves.toMatchObject({ reason: "scopes-still-overlap", repaired: false });
+  });
+
+  it("merges a second follower into a matching durable release receipt", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2", status: "queued" });
+    const holder = card("FN-2", "building", {
+      paused: true, priority: "urgent", lineageId: "lineage-2",
+      fileScopeLeaseRelease: {
+        holderId: "FN-2", holderLineageId: "lineage-2",
+        scopeFingerprint: createHash("sha256").update("src/shared.ts").digest("hex"),
+        releasedFollowerIds: ["FN-old"], checkoutIdentity: "no-checkout",
+        inspectedAt: "2026-10-12T16:07:00.000Z", revision: 1,
+      },
+    });
+    const { run, updates } = harness([subject, holder], RENAMED_IR, subject);
+
+    await expect(run()).resolves.toMatchObject({ repaired: true, releaseReceiptCommitted: true });
+    expect(updates).toContainEqual(expect.objectContaining({
+      fileScopeLeaseRelease: expect.objectContaining({ releasedFollowerIds: ["FN-1", "FN-old"], revision: 2 }),
+    }));
+  });
+
+  it("retracts a just-committed follower waiver when the follower marker loses its CAS", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2", status: "queued" });
+    const holder = card("FN-2", "building", { paused: true, lineageId: "lineage-2" });
+    let holderWasReleased = false;
+    const { run, updates } = harness(
+      [subject, holder, card("FN-other", "shipped")],
+      RENAMED_IR,
+      subject,
+      {},
+      (taskId) => {
+        if (taskId === holder.id) holderWasReleased = true;
+        if (taskId === subject.id && holderWasReleased) subject.overlapBlockedBy = "FN-other";
+      },
+    );
+
+    await expect(run()).resolves.toMatchObject({ repaired: false, reason: "overlap-blocker-changed" });
+    expect(updates).toContainEqual(expect.objectContaining({
+      fileScopeLeaseRelease: expect.objectContaining({ releasedFollowerIds: [subject.id] }),
+    }));
+    expect(updates).toContainEqual({ fileScopeLeaseRelease: undefined });
+  });
+
+  it("does not retract an earlier receipt after a later Clear consumes its follower marker", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2", status: "queued" });
+    const holder = card("FN-2", "building", { paused: true, lineageId: "lineage-2" });
+    let firstClearCommittedReceipt = false;
+    const { run, updates } = harness(
+      [subject, holder],
+      RENAMED_IR,
+      subject,
+      {},
+      (taskId) => {
+        if (taskId === holder.id) firstClearCommittedReceipt = true;
+        // Clear A has inserted the follower into the receipt. Clear B then wins the follower
+        // marker transition before A reaches its own marker CAS.
+        if (taskId === subject.id && firstClearCommittedReceipt) subject.overlapBlockedBy = null;
+      },
+    );
+
+    await expect(run()).resolves.toMatchObject({ repaired: false, reason: "overlap-blocker-changed" });
+    expect(holder.fileScopeLeaseRelease?.releasedFollowerIds).toEqual([subject.id]);
+    expect(updates).not.toContainEqual({ fileScopeLeaseRelease: undefined });
+  });
+
+  it("releases a paused clean checkout after bounded status and commit inspection", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-2", status: "queued" });
+    const holder = card("FN-2", "backlog", {
+      paused: true, priority: "urgent", worktree: "/wt/fn-2", baseCommitSha: "base", lineageId: "lineage-2",
+    });
+    const scopes = { [subject.id]: ["src/shared.ts", "docs/shared.md"], [holder.id]: ["src/shared.ts", "docs/shared.md"] };
+    const { run, updates } = harness([subject, holder], RENAMED_IR, subject, scopes);
+
+    await expect(run()).resolves.toMatchObject({ repaired: true, reason: "released-speculative-lease", releaseReceiptCommitted: true });
+    expect(updates).toContainEqual(expect.objectContaining({
+      fileScopeLeaseRelease: expect.objectContaining({
+        checkoutIdentity: "clean-checkout",
+        releasedFollowerIds: ["FN-1"],
+        scopeFingerprint: fileScopeLeaseScopeFingerprint(scopes[holder.id]),
+      }),
+    }));
+  });
+
+  it("does not reroute a released follower back behind its valid durable receipt holder", async () => {
+    const subject = card("FN-1", "backlog", { overlapBlockedBy: "FN-old", status: "queued" });
+    const releasedHolder = card("FN-2", "building", {
+      paused: true, lineageId: "lineage-2", priority: "urgent",
+      fileScopeLeaseRelease: {
+        holderId: "FN-2", holderLineageId: "lineage-2",
+        scopeFingerprint: createHash("sha256").update("src/shared.ts").digest("hex"),
+        releasedFollowerIds: ["FN-1"], checkoutIdentity: "no-checkout",
+        inspectedAt: "2026-10-12T16:07:00.000Z", revision: 1,
+      },
+    });
+    const { run, updates } = harness([subject, card("FN-old", "shipped"), releasedHolder], RENAMED_IR, subject);
+
+    await expect(run()).resolves.toMatchObject({ repaired: true, reason: "repaired" });
+    expect(updates.at(-1)).toMatchObject({ overlapBlockedBy: null, status: null });
   });
 
   it("accepts a card sitting in a RENAMED hold lane", async () => {

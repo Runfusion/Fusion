@@ -277,6 +277,12 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "openrouterModelSync",
     "openrouterProviderPreferences",
     "orcarouterModelSync",
+    /*
+    FNXC:SettingsThinkingPersistence 2026-10-13-02:13:
+    Every global lane Thinking selector must be owned by both Models section save sets.
+    The shared form can save from either section, so omitting one silently filters its
+    global patch before persistence and makes autosave falsely appear successful.
+    */
     "executionGlobalProvider",
     "executionGlobalModelId",
     "executionGlobalCredentialInstanceId",

@@ -16626,10 +16626,15 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       ]) {
         if (!mergedCandidateById.has(task.id)) mergedCandidateById.set(task.id, task);
       }
+      /*
+      FNXC:PostMergeCloseout 2026-10-12-15:10:
+      Auto-merge authorization decides whether this sweep may land work, not whether it may
+      close out an already durable landing. Proven manual landings still pass through the existing
+      graph-owned post-merge gate; its pause, lease, session, active-work, and evidence fences remain
+      authoritative, while unmerged manual holds never enter this recovery path.
+      */
       const mergedButNotDone = [...mergedCandidateById.values()].filter((t) =>
-        !t.deletedAt &&
-        allowsAutoMergeProcessing(t, settings) &&
-        t.mergeDetails?.mergeConfirmed === true,
+        !t.deletedAt && !t.paused && !t.userPaused && t.mergeDetails?.mergeConfirmed === true,
       );
 
       if (mergedButNotDone.length === 0) return 0;
@@ -18147,14 +18152,26 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const graceMs = (settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS) * PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER;
     const leaseAge = task.checkoutLeaseRenewedAt ? Date.now() - Date.parse(task.checkoutLeaseRenewedAt) : Number.POSITIVE_INFINITY;
     if (task.checkoutRunId && Number.isFinite(leaseAge) && leaseAge >= 0 && leaseAge < graceMs) return { outcome: "ineligible", reason: "checkout-leased" };
-    if ((options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) || task.autoMerge === false) {
+    /*
+    FNXC:PostMergeCloseout 2026-10-13-07:51 (merge origin/main):
+    A per-card `autoMerge === false` no longer vetoes this recovery. Two facts decide it: an `autoMerge:
+    false` value is frequently ENGINE- or inheritance-authored (FN-6444 records inherited/engine-authored
+    false values as exempt, so it is not a reliable operator signal), and a card reaching this line already
+    carries `mergeDetails.mergeConfirmed` — the landing is durable, so what remains is closeout, not a
+    landing decision. The two signals that DO mean a hold stay fenced here: project auto-merge Off (and an
+    open manual PR) through `allowsAutoMergeProcessing`, and pause/hold through the guards above. Upstream
+    reached the same conclusion across FN-9442/FN-9520 and dropped the term; the fork's earlier copy of it
+    arrived with that same upstream lineage rather than as fork policy, so nothing fork-authored is dropped.
+    */
+    if (options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) {
       return await this.refuseMergeConfirmedHold(task, options.source, "auto-merge-off");
     }
     if (task.mergeDetails?.mergeConfirmed) {
       /*
       FNXC:PostMergeRecovery 2026-10-01-06:36:
       Manual reconciliation reports the graph-owned recovery truth: it may resume only absent required
-      evidence after the same pause, hold, liveness, lease, and auto-merge fences as every other owner.
+      evidence after the same pause, hold, liveness, and lease fences as every other owner. A durable
+      landing is closeout work, so auto-merge authorization no longer suppresses its existing gate.
       */
       const contract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
       const decision = await getRequiredPostMergeEvidenceDecision(this.store, task, contract);

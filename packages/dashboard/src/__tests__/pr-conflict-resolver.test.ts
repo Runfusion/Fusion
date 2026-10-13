@@ -19,9 +19,17 @@ vi.mock("@fusion/engine", () => ({
   // FNXC:TestInfrastructure 2026-07-13-11:05: Missing @fusion/engine barrel exports added for mock completeness (check-mock-completeness.mjs gate).
   resolveMcpServersForStore: vi.fn(async () => ({ servers: [] })),
   createResolvedAgentSession: mockCreateResolvedAgentSession,
+  dropAutostashHandle: vi.fn(),
+  generateSyntheticRunId: vi.fn(),
+  getConflictedFiles: vi.fn(),
+  resolveIntegrationRemote: vi.fn(),
+  restoreUnrelatedRootDirChanges: vi.fn(),
+  stashUnrelatedRootDirChanges: vi.fn(),
+  tryFastForwardFromOrigin: vi.fn(),
 }));
 
 import { resolvePrConflicts } from "../pr-conflict-resolver.js";
+import { prRouteCommandRunner, resolvePrBaseRef } from "../routes/register-git-github.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,6 +101,42 @@ describe("resolvePrConflicts", () => {
     expect(mockRunGitCommand).not.toHaveBeenCalledWith(expect.arrayContaining(["commit"]), expect.anything(), expect.anything());
     expect(mockRunGitCommand).not.toHaveBeenCalledWith(expect.arrayContaining(["push"]), expect.anything(), expect.anything());
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Skipped PR conflict-free merge commit", "main already merged into fusion/fn-001");
+  });
+
+  it("merges the remote PR base selected when a local integration branch diverges", async () => {
+    const rootDir = await createRootDir();
+    rootDirs.push(rootDir);
+    const tryRun = vi.spyOn(prRouteCommandRunner, "tryRun")
+      .mockResolvedValueOnce({ ok: true, stdout: "" })
+      .mockResolvedValueOnce({ ok: true, stdout: "041fbd7" })
+      .mockResolvedValueOnce({ ok: true, stdout: "41347f2" });
+    const store = createStore(createTask());
+    mockRunGitCommand
+      .mockResolvedValueOnce("") // worktree add
+      .mockResolvedValueOnce("") // checkout task branch
+      .mockResolvedValueOnce("Already up to date.\n") // merge remote base
+      .mockResolvedValueOnce("") // add -A
+      .mockResolvedValueOnce("") // diff --cached --quiet => empty index
+      .mockResolvedValueOnce(""); // worktree remove
+
+    try {
+      const baseRef = await resolvePrBaseRef(rootDir, "dev");
+      await resolvePrConflicts({ taskId: "FN-001", baseRef, rootDir, store, settings });
+
+      expect(baseRef).toBe("origin/dev");
+      expect(mockRunGitCommand).toHaveBeenCalledWith(
+        ["merge", "--no-commit", "--no-ff", "origin/dev"],
+        expect.stringContaining("conflict-fn-001"),
+        60000,
+      );
+      expect(mockRunGitCommand).not.toHaveBeenCalledWith(
+        ["merge", "--no-commit", "--no-ff", "dev"],
+        expect.anything(),
+        expect.anything(),
+      );
+    } finally {
+      tryRun.mockRestore();
+    }
   });
 
   it("commits and pushes a conflict-free merge when staged changes exist", async () => {

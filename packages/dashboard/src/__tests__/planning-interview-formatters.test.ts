@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePlanningPlanMd, type PlanningQuestion, type PlanningSummary } from "@fusion/core";
+import { parsePlanningPlanMd, TaskNotFoundError, type PlanningQuestion, type PlanningSummary, type TaskStore } from "@fusion/core";
 import {
   formatInitialPlanRequestForAgent,
   formatInitialRunningPlanRequestForAgent,
@@ -7,6 +7,7 @@ import {
   formatPlanningTaskHandoff,
   formatResponseForAgent,
   normalizePlanningSummaryPayload,
+  resolvePlanningSuggestedDependencies,
 } from "../planning";
 
 /*
@@ -55,6 +56,23 @@ describe("normalizePlanningSummaryPayload", () => {
     expect(summary.suggestedDependencies).toEqual(["FN-1", "KB-42", "ERR-7"]);
     expect(summary.keyDeliverables).toEqual(["Ship"]);
     expect(summary).not.toHaveProperty("deepeningThemes");
+  });
+
+  it("resolves canonical suggestions against the scoped store and reports only typed misses", async () => {
+    const dropped: string[] = [];
+    const store = {
+      getTask: async (id: string) => {
+        if (id === "FN-1") return { id };
+        if (id === "FN-404") return { id, archivedAt: "2026-10-12T00:00:00.000Z" };
+        if (id === "KB-42") throw new TaskNotFoundError(id);
+        throw new Error("database unavailable");
+      },
+    } as Pick<TaskStore, "getTask">;
+
+    await expect(resolvePlanningSuggestedDependencies(store, ["FN-1", "KB-42", "FN-404", "FN-1"], (id) => dropped.push(id)))
+      .resolves.toEqual(["FN-1"]);
+    expect(dropped).toEqual(["KB-42", "FN-404"]);
+    await expect(resolvePlanningSuggestedDependencies(store, ["ERR-7"])).rejects.toThrow("database unavailable");
   });
 
   it.each([undefined, null, [], ["", "  ", 7, {}]])("normalizes missing or malformed dependency suggestions to an empty list", (suggestedDependencies) => {

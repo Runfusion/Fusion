@@ -226,6 +226,25 @@ describe("settings section-keys registry", () => {
     }
   });
 
+  it("global-models owns every global lane thinking key exactly once while project-models retains project reset precedence", () => {
+    const globalModels = getSectionKeyEntry("global-models")!;
+    const projectModels = getSectionKeyEntry("project-models")!;
+    const globalLaneThinkingKeys = [
+      "executionGlobalThinkingLevel",
+      "planningGlobalThinkingLevel",
+      "validatorGlobalThinkingLevel",
+      "titleSummarizerGlobalThinkingLevel",
+    ];
+
+    expect(globalModels.scope).toBe("global");
+    expect(projectModels.scope).toBe("project");
+    for (const key of globalLaneThinkingKeys) {
+      expect(globalModels.keys.filter((ownedKey) => ownedKey === key)).toHaveLength(1);
+      expect(isRegistryKeyValidForScope(key, "global")).toBe(true);
+      expect(projectModels.keys).not.toContain(key);
+    }
+  });
+
   it("a representative global section (appearance) maps to its expected owned keys", () => {
     const entry = getSectionKeyEntry("appearance")!;
     expect(entry.scope).toBe("global");

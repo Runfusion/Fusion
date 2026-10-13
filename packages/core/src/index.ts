@@ -1605,6 +1605,7 @@ export { describeMergeContentShape } from "./merge/merge-content-descriptor.js";
 export type { MergeContentDescriptor } from "./merge/merge-content-descriptor.js";
 export {
   AUTOMATED_BYPASS_ACTORS,
+  evaluatePreMergeAdmissionDecision,
   evaluatePreMergeApprovals,
   isAuditedOperatorBypass,
   isVerdictLessFailedGateRow,
@@ -1676,7 +1677,7 @@ export {
 export type { PostMergeCiRepositoryResolution, PostMergeCiRepositorySettings, PostMergePublishTargetFacts } from "./workflows/post-merge-ci-repository.js";
 export type { WorkflowNodeCiRepositoryConfig } from "./workflows/workflow-ir-types.js";
 export type { PostMergeEvidenceProvider, PostMergeEvidenceSource, PostMergeEvidenceReason, PostMergeEvidenceContract, PostMergeRepoFacts, DeclaredPostMergeEvidence } from "./merge/post-merge-evidence-contract.js";
-export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
+export type { PreMergeAdmissionDecision, PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {
   isBranchGroupMemberLanded,
   isBranchGroupComplete,
@@ -2324,7 +2325,7 @@ export {
 } from "./task-store/follow-up-ops.js";
 export type { CreateFollowUpTaskOptions, FollowUpRefusalReason } from "./task-store/follow-up-ops.js";
 
-export { fileScopeLeaseBlocksCandidate, isSharedBarrelExportPath, isSharedBarrelOnlyMatch, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
+export { fileScopeLeaseBlocksCandidate, fileScopeLeaseScopeFingerprint, isSharedBarrelExportPath, isSharedBarrelOnlyMatch, normalizeOverlapScopeForTask, taskHoldsUnmergedCheckout } from "./tasks/file-scope-lease.js";
 export type { CheckoutEmptinessProofMap, CheckoutEmptinessVerdict, FileScopeLeaseClassification, FileScopeLeaseKind } from "./tasks/file-scope-lease.js";
 
 // ── Mission Hierarchy Types ────────────────────────────────────────────

@@ -1173,6 +1173,43 @@ describe("TaskDetailModal", () => {
     });
   });
 
+  it("shows an actionable refusal as a warning and retains Clear", async () => {
+    const addToast = vi.fn();
+    vi.mocked(dashboardApi.repairOverlapBlocker).mockResolvedValueOnce({
+      taskId: "FN-T",
+      dryRun: false,
+      repaired: false,
+      statusCleared: false,
+      previousOverlapBlockedBy: "FN-OVER",
+      currentOverlapBlockedBy: "FN-OVER",
+      reason: "scopes-still-overlap",
+      message: "Task FN-T still overlaps FN-OVER; preserve or land dirty work before clearing",
+      task: makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER", status: "queued" }),
+    });
+
+    render(
+      <TaskDetailModal
+        initialTab="dependencies"
+        task={makeTask({ id: "FN-T", column: "todo", overlapBlockedBy: "FN-OVER", status: "queued" })}
+        onClose={noop}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={addToast}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        "Task FN-T still overlaps FN-OVER; preserve or land dirty work before clearing",
+        "warning",
+      );
+    });
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+  });
+
   it("applies rerouted overlap blocker returned by repair API", async () => {
     vi.mocked(dashboardApi.repairOverlapBlocker).mockResolvedValueOnce({
       taskId: "FN-T",

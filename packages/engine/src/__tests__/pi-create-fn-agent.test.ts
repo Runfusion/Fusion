@@ -3639,7 +3639,7 @@ describe("createFnAgent", () => {
         getAgentDir: () => "/mock-agent-dir",
         // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
         ModelRuntime: {
-          create: async () => ({ getAuth: async () => undefined }),
+          create: async () => ({ getAuth: async () => undefined, refresh: async () => refreshMock() }),
         },
         ModelRegistry: class {
           static create(...args: unknown[]) {
@@ -3730,7 +3730,7 @@ describe("createFnAgent", () => {
         getAgentDir: () => "/mock-agent-dir",
         // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
         ModelRuntime: {
-          create: async () => ({ getAuth: async () => undefined }),
+          create: async () => ({ getAuth: async () => undefined, refresh: async () => refreshMock() }),
         },
         ModelRegistry: class {
           static create(...args: unknown[]) {
@@ -3826,7 +3826,7 @@ describe("createFnAgent", () => {
         getAgentDir: () => "/mock-agent-dir",
         // FNXC:ModelRegistry 2026-07-16-19:05: FN-8142 async ModelRuntime; mock so registry path resolves (see main mock above).
         ModelRuntime: {
-          create: async () => ({ getAuth: async () => undefined }),
+          create: async () => ({ getAuth: async () => undefined, refresh: async () => refreshMock() }),
         },
         ModelRegistry: class {
           static create(...args: unknown[]) {

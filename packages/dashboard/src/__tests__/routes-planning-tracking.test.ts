@@ -31,7 +31,19 @@ type PlanningSession = {
 
 const sessions = new Map<string, PlanningSession>();
 
+const { resolvePlanningSuggestedDependencies } = vi.hoisted(() => ({
+  resolvePlanningSuggestedDependencies: vi.fn(async () => [] as string[]),
+}));
+
 vi.mock("../planning.js", () => ({
+  /*
+  FNXC:PlanningRouteTests 2026-10-12-16:38:
+  The create-task registrar statically imports the advisory dependency resolver. This complete
+  planning-module fixture must preserve that asynchronous contract so empty suggestions reach
+  GitHub tracking dispatch without bypassing production stale-dependency recovery.
+  */
+  resolvePlanningSuggestedDependencies,
+
   getSession: (id: string) => sessions.get(id),
   getSummary: (id: string) => sessions.get(id)?.summary,
   releaseSession: vi.fn(),
@@ -143,9 +155,11 @@ describe("planning routes github tracking background dispatch", () => {
   let planningWarn: ReturnType<typeof vi.fn>;
   let warnSignal: ReturnType<typeof signalOnCall<unknown[], void>>;
   let createTaskMock: ReturnType<typeof vi.fn>;
+  let scopedStore: TaskStore;
 
   beforeEach(() => {
     sessions.clear();
+    resolvePlanningSuggestedDependencies.mockClear();
     warnSignal = signalOnCall<unknown[], void>(() => undefined);
     planningWarn = vi.fn(warnSignal.wrapped);
 
@@ -197,6 +211,7 @@ describe("planning routes github tracking background dispatch", () => {
       linkGithubIssue: vi.fn(async () => undefined),
       recordActivity: vi.fn(async () => undefined),
     } as unknown as TaskStore;
+    scopedStore = store;
     storeRef = store;
 
     registerGithubTrackingHook({ logger: { warn: planningWarn, info: vi.fn() } });
@@ -301,6 +316,7 @@ describe("planning routes github tracking background dispatch", () => {
 
     const response = await responsePromise;
     expect(response.status).toBe(201);
+    expect(resolvePlanningSuggestedDependencies).toHaveBeenCalledWith(scopedStore, [], expect.any(Function));
     await createIssue.calledTimes(1);
     expect(createIssueSpy).toHaveBeenCalledTimes(1);
 
@@ -347,6 +363,7 @@ describe("planning routes github tracking background dispatch", () => {
     );
 
     expect(response.status).toBe(201);
+    expect(resolvePlanningSuggestedDependencies).toHaveBeenCalledWith(scopedStore, [], expect.any(Function));
     expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
       sourceIssue: expect.objectContaining({ provider: "github", repository: "owner/repo", issueNumber: 42 }),
       source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/42", issueNumber: 42 } },
@@ -383,6 +400,7 @@ describe("planning routes github tracking background dispatch", () => {
     );
 
     expect(response.status).toBe(201);
+    expect(resolvePlanningSuggestedDependencies).toHaveBeenCalledWith(scopedStore, [], expect.any(Function));
     await warnSignal.calledMatching(
       (args) => typeof args[0] === "string" && args[0].includes("[github-tracking] Failed to create issue"),
     );
@@ -418,6 +436,7 @@ describe("planning routes github tracking background dispatch", () => {
     );
 
     expect(response.status).toBe(201);
+    expect(resolvePlanningSuggestedDependencies).toHaveBeenCalledWith(scopedStore, [], expect.any(Function));
     await warnSignal.calledMatching(
       (args) => typeof args[0] === "string" && args[0].includes("[github-tracking] Failed to create issue"),
     );

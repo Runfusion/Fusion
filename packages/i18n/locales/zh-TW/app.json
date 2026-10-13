@@ -90,7 +90,7 @@
     "loadContentError": "載入技能內容失敗",
     "allSkillsSelected": "已選擇所有技能",
     "discoveredSection": "已發現的技能",
-    "installsCount": "{{count}} 次安裝",
+    "installsCount": "{{value}} 次安裝",
     "backToSkillMd": "Back to SKILL.md",
     "noMatchingDiscovered": "沒有已發現的技能與您的搜尋相符。",
     "toggleFailed": "切換技能失敗: {{message}}",
@@ -4667,7 +4667,8 @@
     "deleteBranchTitle": "刪除分支",
     "stagedFiles_one": "",
     "openSource": "Open source",
-    "behindUpstream_other": ""
+    "behindUpstream_other": "",
+    "autoSyncOffNotRun": "自動同步：關閉 / 未執行"
   },
   "stall": {
     "dependency-block": {
@@ -11692,7 +11693,16 @@
       "legacy2": "",
       "requiredChecksHelp": "",
       "gitLabTokenType": "GitLab token type",
-      "includeTaskIdInCommitDefault": ""
+      "includeTaskIdInCommitDefault": "",
+      "afterFusionAdvancesTheIntegrationBranchRefThe": "",
+      "autoSyncProjectCheckoutAfterMerge": "",
+      "fastForwardOnlySkipDirtyWorktrees": "",
+      "inYourProjectRootWillShowTheNew": "",
+      "isTheLegacyBehavior": "",
+      "offLeaveTheProjectRootStaleLegacyBehavior": "",
+      "snapsCleanlyWhenTheWorktreeHasNoEdits": "",
+      "snapshotsRealLocalEditsAsAPatchAgainst": "",
+      "stashFastForwardDefaultPreserveLocalEdits": ""
     },
     "help": {
       "show": "Show help"

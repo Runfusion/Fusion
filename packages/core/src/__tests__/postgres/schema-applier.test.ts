@@ -133,6 +133,7 @@ import {
   PULL_REQUEST_READINESS_VERSION,
   RECOVERY_DISPOSITION_VERSION,
   TASK_LOG_PROJECTIONS_VERSION,
+  FILE_SCOPE_LEASE_RELEASE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -269,6 +270,9 @@ describe("schema-applier: immutable migration identities", () => {
     expect(RECOVERY_DISPOSITION_VERSION).toBe("0088");
     expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(RECOVERY_DISPOSITION_VERSION));
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(RECOVERY_DISPOSITION_VERSION));
+    expect(FILE_SCOPE_LEASE_RELEASE_VERSION).toBe("0089");
+    expect(Number(FILE_SCOPE_LEASE_RELEASE_VERSION)).toBeGreaterThan(Number(RECOVERY_DISPOSITION_VERSION));
+    expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(FILE_SCOPE_LEASE_RELEASE_VERSION));
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -2291,6 +2295,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
+FILE_SCOPE_LEASE_RELEASE_VERSION,
       OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
       REVIEW_LANE_LEDGER_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
@@ -2334,6 +2339,31 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       SELECT count(*)::int AS count
       FROM public.fusion_schema_migrations
       WHERE version = ${RECOVERY_DISPOSITION_VERSION}
+    `)) as unknown as Array<{ count: number }>;
+    expect(marker).toEqual([{ count: 1 }]);
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
+  });
+
+  it("repairs a recorded file-scope lease release migration whose column is absent", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+    await ctx.db.execute(sql.raw(`
+      ALTER TABLE project.tasks DROP COLUMN file_scope_lease_release;
+    `));
+
+    expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(true);
+    const columns = (await ctx.db.execute(sql`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'project'
+        AND table_name = 'tasks'
+        AND column_name = 'file_scope_lease_release'
+    `)) as unknown as Array<{ column_name: string; data_type: string }>;
+    expect(columns).toEqual([{ column_name: "file_scope_lease_release", data_type: "jsonb" }]);
+    const marker = (await ctx.db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM public.fusion_schema_migrations
+      WHERE version = ${FILE_SCOPE_LEASE_RELEASE_VERSION}
     `)) as unknown as Array<{ count: number }>;
     expect(marker).toEqual([{ count: 1 }]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
@@ -2623,6 +2653,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
+FILE_SCOPE_LEASE_RELEASE_VERSION,
       OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
       REVIEW_LANE_LEDGER_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
@@ -2770,6 +2801,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION,
       PULL_REQUEST_READINESS_VERSION,
       RECOVERY_DISPOSITION_VERSION,
+FILE_SCOPE_LEASE_RELEASE_VERSION,
       OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
       REVIEW_LANE_LEDGER_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,

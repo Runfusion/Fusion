@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluatePreMergeApprovals } from "../merge/pre-merge-approval.js";
+import { evaluatePreMergeAdmissionDecision, evaluatePreMergeApprovals } from "../merge/pre-merge-approval.js";
 
 const descriptor = {
   kind: "workspace" as const,
@@ -29,51 +29,73 @@ describe("workspace pre-merge approval evidence", () => {
   });
 
   it("accepts workspace Code Review proof from repository evidence without a singular fingerprint", () => {
-    const results = evaluatePreMergeApprovals({
+    const subject = {
       ...task,
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
-        status: "passed",
-        reviewKind: "code",
-        verdict: "APPROVE",
+        status: "passed" as const,
+        reviewKind: "code" as const,
+        verdict: "APPROVE" as const,
         repositoryScopeRevision: 3,
       }],
-    }, { requiredPreMergeStepIds: new Set(["code-review"]), mergeContent: descriptor });
+    };
+    const options = { requiredPreMergeStepIds: new Set(["code-review"]), mergeContent: descriptor };
+    const results = evaluatePreMergeApprovals(subject, options);
     expect(results).toEqual([{ workflowStepId: "code-review", state: "approved" }]);
+    expect(evaluatePreMergeAdmissionDecision(subject, options).gates[0]).toMatchObject({
+      workflowStepId: "code-review",
+      state: "approved",
+      selectedResult: { workflowStepId: "code-review", status: "passed", verdict: "APPROVE" },
+    });
   });
 
   it("does not let an audited bypass waive missing workspace repository evidence", () => {
-    const results = evaluatePreMergeApprovals({
+    const subject = {
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
-        status: "skipped",
-        reviewKind: "code",
+        status: "skipped" as const,
+        reviewKind: "code" as const,
         bypassedBy: "operator-1",
         bypassedAt: "2026-09-01T00:00:00.000Z",
         bypassReason: "Reviewer unavailable",
       }],
       repositoryScope: { ...task.repositoryScope, reviewEvidence: undefined },
-    }, { requiredPreMergeStepIds: new Set(["code-review"]), mergeContent: descriptor });
+    };
+    const options = { requiredPreMergeStepIds: new Set(["code-review"]), mergeContent: descriptor };
+    const results = evaluatePreMergeApprovals(subject, options);
     expect(results).toEqual([{ workflowStepId: "code-review", state: "missing", repositories: ["api", "web"] }]);
+    expect(evaluatePreMergeAdmissionDecision(subject, options).gates[0]).toMatchObject({
+      workflowStepId: "code-review",
+      state: "missing",
+      repositories: ["api", "web"],
+      selectedResult: { workflowStepId: "code-review", status: "skipped" },
+    });
   });
 
   it("keeps singular Code Review approval bound to its workflow-step fingerprint", () => {
-    const results = evaluatePreMergeApprovals({
+    const subject = {
       workflowStepResults: [{
         workflowStepId: "code-review",
         workflowStepName: "Code Review",
-        status: "passed",
-        reviewKind: "code",
-        verdict: "APPROVE",
+        status: "passed" as const,
+        reviewKind: "code" as const,
+        verdict: "APPROVE" as const,
         reviewInputFingerprint: "singular-fingerprint",
       }],
-    }, {
+    };
+    const options = {
       requiredPreMergeStepIds: new Set(["code-review"]),
-      mergeContent: { kind: "singular", diff: { state: "captured", fingerprint: "singular-fingerprint" } },
-    });
+      mergeContent: { kind: "singular" as const, diff: { state: "captured" as const, fingerprint: "singular-fingerprint" } },
+    };
+    const results = evaluatePreMergeApprovals(subject, options);
 
     expect(results).toEqual([{ workflowStepId: "code-review", state: "approved" }]);
+    expect(evaluatePreMergeAdmissionDecision(subject, options).gates[0]).toMatchObject({
+      workflowStepId: "code-review",
+      state: "approved",
+      selectedResult: { workflowStepId: "code-review", status: "passed", reviewInputFingerprint: "singular-fingerprint" },
+    });
   });
 });

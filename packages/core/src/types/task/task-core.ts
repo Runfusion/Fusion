@@ -1245,6 +1245,18 @@ export interface AiMergeReviewReconciliation {
   terminal?: boolean;
 }
 
+export interface FileScopeLeaseReleaseReceipt {
+  holderId: string;
+  holderLineageId?: string;
+  scopeFingerprint: string;
+  releasedFollowerIds: string[];
+  /** `no-checkout` is planning-only; `clean-checkout` has bounded git evidence. */
+  checkoutIdentity: "no-checkout" | "clean-checkout";
+  checkoutEpoch?: number;
+  inspectedAt: string;
+  revision: number;
+}
+
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */
@@ -1362,6 +1374,8 @@ export interface Task {
    *  Cleared when the overlap resolves (the blocker task moves to done or its
    *  scope no longer overlaps). */
   overlapBlockedBy?: string;
+  /** Durable, identity-fenced waiver for a paused planning-only scope claim. */
+  fileScopeLeaseRelease?: FileScopeLeaseReleaseReceipt;
   /**
    * Durable identity of the currently reported dependency/file-scope queue episode.
    * Internal producers use it to make persisted queue activity edge-triggered.

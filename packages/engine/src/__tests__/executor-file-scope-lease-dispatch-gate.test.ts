@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Settings, Task, TaskStore } from "@fusion/core";
+import { fileScopeLeaseScopeFingerprint, type Settings, type Task, type TaskStore } from "@fusion/core";
 import { blockOuterDispatchWhenFileScopeLeaseHeld } from "../executor/file-scope-lease-dispatch-gate.js";
 import { resetCheckoutEmptinessProversForTesting } from "../worktree/checkout-emptiness.js";
 
@@ -65,6 +65,14 @@ function createStore(
       });
       return { appended, task };
     }),
+    updateTaskAtomic: vi.fn(async (taskId: string, update: (task: Task) => Partial<Task> | null) => {
+      const task = tasks.find((candidate) => candidate.id === taskId);
+      if (!task) return undefined;
+      const patch = update(task);
+      if (!patch) return undefined;
+      Object.assign(task, patch);
+      return task;
+    }),
     moveTask: vi.fn(),
     moveTaskIf: vi.fn(),
   } as unknown as TaskStore;
@@ -107,6 +115,34 @@ describe("blockOuterDispatchWhenFileScopeLeaseHeld", () => {
     await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(false);
     expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
     expect(holder.worktree).toBe("/wt/holder");
+  });
+
+  it("reacquires and invalidates a stale scope receipt before outer dispatch", async () => {
+    const holder = makeTask({
+      id: "FN-HOLDER", lineageId: "holder-lineage", column: "in-progress", paused: true,
+      fileScopeLeaseRelease: {
+        holderId: "FN-HOLDER",
+        holderLineageId: "holder-lineage",
+        scopeFingerprint: fileScopeLeaseScopeFingerprint(["docs/old.md"]),
+        releasedFollowerIds: ["FN-CANDIDATE"],
+        checkoutIdentity: "no-checkout",
+        inspectedAt: "2026-01-01T00:00:00.000Z",
+        revision: 4,
+      },
+    });
+    const candidate = makeTask();
+    const store = createStore([holder, candidate], {
+      [holder.id]: ["docs/current.md"],
+      [candidate.id]: ["docs/current.md"],
+    });
+
+    await expect(blockOuterDispatchWhenFileScopeLeaseHeld({ store, getRunContextFor: () => undefined }, candidate)).resolves.toBe(true);
+
+    expect(store.updateTaskAtomic).toHaveBeenCalledWith(holder.id, expect.any(Function));
+    expect(holder.fileScopeLeaseRelease).toBeUndefined();
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(candidate.id, expect.objectContaining({
+      overlapBlockedBy: holder.id,
+    }));
   });
 
   it("holds a fresh dispatch behind an overlapping active lease without moving its column", async () => {

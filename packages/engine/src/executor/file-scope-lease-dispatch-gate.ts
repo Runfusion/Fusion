@@ -12,6 +12,7 @@ retained execution checkout remains a dormant holder, preserving unmerged work a
 import {
   compareTasksByQueueOrder,
   fileScopeLeaseBlocksCandidate,
+  fileScopeLeaseScopeFingerprint,
   normalizeOverlapScopeForTask,
   taskHoldsUnmergedCheckout,
   isReviewColumnRole,
@@ -30,6 +31,8 @@ import {
   isCoordinationOnlyTask,
   pathsOverlap,
   resolveDependencySatisfactionColumns,
+  invalidateMismatchedFileScopeLeaseRelease,
+  revalidateFileScopeLeaseReleases,
 } from "../scheduler.js";
 import { proveDormantCheckoutEmptiness } from "../worktree/checkout-emptiness.js";
 import type { EngineRunContext } from "../util/run-audit.js";
@@ -94,8 +97,12 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
 
   // FNXC:ListTasksExcludeLog 2026-10-12-15:35 (RUFU-615 tranche 3): reads column/paths/role only; `slim`
   // alone still hydrates every card's full log, which is the board-scan retention driver. See
-  // dependency-dispatch-gate.ts for the measured rationale.
-  const tasks = await deps.store.listTasks({ includeArchived: false, slim: true, excludeLog: true });
+  // dependency-dispatch-gate.ts for the measured rationale. The exclusion survives the merge with
+  // upstream's receipt revalidation: that pass re-reads each holder's scope per card, not the log.
+  const tasks = await revalidateFileScopeLeaseReleases(
+    deps.store,
+    await deps.store.listTasks({ includeArchived: false, slim: true, excludeLog: true }),
+  );
   const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
   const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
   const candidateScope = normalizeOverlapScopeForTask(liveTask, filterPathsByIgnoreList(
@@ -151,9 +158,21 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
     settings,
     candidates: dormantProofCandidates,
   });
-
   for (const { holder, roles, handoffAccepted } of roleResolvedHolders) {
-    const classification = classifyFileScopeLease(holder, tasks, {
+    // A receipt changes admission, so resolve its current normalized scope before classification.
+    const holderScope = holder.fileScopeLeaseRelease
+      ? normalizeOverlapScopeForTask(holder, filterPathsByIgnoreList(
+        await deps.store.parseFileScopeFromPrompt(holder.id),
+        overlapIgnorePaths,
+        { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths },
+      ))
+      : undefined;
+    const currentHolder = await invalidateMismatchedFileScopeLeaseRelease(
+      deps.store,
+      holder,
+      holderScope ? fileScopeLeaseScopeFingerprint(holderScope) : undefined,
+    );
+    const classification = classifyFileScopeLease(currentHolder, tasks, {
       mergeRequestContractShadowEnabled: mergeShadowEnabled,
       handoffAccepted,
       schedulingDependencyOptions,
@@ -165,18 +184,19 @@ export async function blockOuterDispatchWhenFileScopeLeaseHeld(
       isWipColumn: roles.isWipColumn,
       isReviewColumn: roles.isReviewColumn,
       isTerminalColumn: roles.isTerminalColumn,
+      scopeFingerprint: holderScope ? fileScopeLeaseScopeFingerprint(holderScope) : undefined,
     });
     if (classification.kind === "none") continue;
-    const holderScope = normalizeOverlapScopeForTask(holder, filterPathsByIgnoreList(
+    const resolvedHolderScope = holderScope ?? normalizeOverlapScopeForTask(holder, filterPathsByIgnoreList(
       await deps.store.parseFileScopeFromPrompt(holder.id),
       overlapIgnorePaths,
       { ignoreHiddenOverlapPaths: settings.ignoreHiddenOverlapPaths },
     ));
-    if (holderScope.length === 0 || isCoordinationOnlyTask(holder, holderScope)) continue;
+    if (resolvedHolderScope.length === 0 || isCoordinationOnlyTask(holder, resolvedHolderScope)) continue;
     holders.push({
-      task: holder,
+      task: currentHolder,
       kind: classification.kind,
-      scope: holderScope,
+      scope: resolvedHolderScope,
       waivedForTaskIds: classification.waivedForTaskIds,
     });
   }
