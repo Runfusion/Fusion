@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Settings, Task, TaskStore, WorkflowStepResult } from "@fusion/core";
+import {
+  BUILTIN_CODING_WORKFLOW_IR,
+  classifyStrandedGateRetry,
+  type Settings, type Task, type TaskStore, type WorkflowIr, type WorkflowStepResult } from "@fusion/core";
 
 /*
 FNXC:OrphanedPendingSteps 2026-10-07 (STAS-299):
@@ -24,6 +27,9 @@ function stepResult(overrides: Partial<WorkflowStepResult> = {}): WorkflowStepRe
     status: "passed",
     workflowStepId: "plan-review",
     workflowStepName: "Plan Review",
+    // The gate row a dispatched Plan Review actually carries; the orphan rewrite preserves it, and it
+    // is what lets the shared classifier recognise the row as a plan-family gate.
+    reviewKind: "plan",
     ...overrides,
   } as WorkflowStepResult;
 }
@@ -66,6 +72,10 @@ function storeFor(tasks: Task[]): TaskStore & EventEmitter {
 
 function auditSink(store: TaskStore & EventEmitter) {
   return store.recordRunAuditEvent as ReturnType<typeof vi.fn>;
+}
+
+function updateSink(store: TaskStore & EventEmitter) {
+  return store.updateTask as unknown as ReturnType<typeof vi.fn>;
 }
 
 import { SelfHealingManager } from "../self-healing.js";
@@ -152,6 +162,35 @@ describe("STAS-299: self-heal owns the card lifecycle after failing an orphaned 
 
     expect((await store.getTask("FN-RENAMED"))?.status).toBe("failed");
     expect((await store.getTask("FN-RENAMED"))?.column).toBe("queue");
+  });
+
+  it("parks once: a second sweep over the already-owned card writes nothing", async () => {
+    const store = storeFor([task("FN-PARKED")]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    expect(await manager.reconcileOrphanedPendingStepResults()).toBe(1);
+    // The rewrite above removed the pending row, so the card is now owned by the retry contract: a
+    // further sweep must neither re-stamp it nor re-audit it.
+    expect(await manager.reconcileOrphanedPendingStepResults()).toBe(0);
+    expect(updateSink(store)).toHaveBeenCalledOnce();
+    expect(auditSink(store)).toHaveBeenCalledOnce();
+  });
+
+  it("leaves no card in the forbidden terminal shape the defect produced", async () => {
+    /*
+    The standing invariant, stated as the classifier the retry surfaces use: after a sweep, a card
+    that still reads as a stranded gate must ALSO carry the failure status that makes it retryable.
+    Before STAS-299 the sweep created the opposite shape by itself — gate failed, checklist pending,
+    no status — and every retry surface then refused the card it had just stranded.
+    */
+    const store = storeFor([task("FN-STANDING")]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    await manager.reconcileOrphanedPendingStepResults();
+
+    const repaired = (await store.getTask("FN-STANDING"))!;
+    expect(classifyStrandedGateRetry({ task: repaired, ir: BUILTIN_CODING_WORKFLOW_IR as unknown as WorkflowIr }))
+      .toEqual({ kind: "stranded-gate", gateStepIds: ["plan-review"] });
+    expect(repaired.status).toBe("failed");
   });
 
   it("never touches a card whose step result is genuinely live", async () => {

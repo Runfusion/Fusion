@@ -536,6 +536,7 @@ export async function reactToSpecificationComplete(
     "awaiting-approval",
     "paused",
     "plan-review-passed",
+    "retry-owned",
   ]);
   const RETRY_DELAYS_MS = [1_000, 5_000];
   for (let attempt = 0; ; attempt++) {

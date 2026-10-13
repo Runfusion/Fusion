@@ -20,6 +20,7 @@ export type StrandedHoldContinuationReason =
   | "not-hold-column" | "fast-lane" | "no-pre-release-review" | "active-continuation"
   | "plan-review-passed" | "seed-prompt" | "prompt-missing" | "triage-owned"
   | "planning-recovery-owned"
+  | "retry-owned"
   | "awaiting-approval"
   | "paused" | "engine-paused" | "live" | "too-fresh" | "auto-merge-off" | "ready";
 
@@ -27,7 +28,7 @@ export type StrandedHoldContinuationReason =
 export type ApprovedPlanReviewHandoffResult = {
   resumed: boolean;
   reason: "seeded" | "not-plan-in-place" | "awaiting-approval" | "paused" | "needs-replan"
-    | "active-continuation" | "plan-review-passed";
+    | "active-continuation" | "plan-review-passed" | "retry-owned";
   workItemId?: string;
 };
 
@@ -51,7 +52,8 @@ export type PlanReviewSeedBailReason =
   | "active-continuation"
   | "plan-review-passed"
   | "awaiting-approval"
-  | "paused";
+  | "paused"
+  | "retry-owned";
 
 export async function seedPreReleasePlanReviewContinuation(
   store: TaskStore,
@@ -85,6 +87,15 @@ export async function seedPreReleasePlanReviewContinuation(
   */
   if (isTaskBlockedOnApproval(task)) return { seeded: false, reason: "awaiting-approval" };
   if (task.paused === true || task.userPaused === true) return { seeded: false, reason: "paused" };
+  /*
+  FNXC:StrandedGateRetry 2026-10-13 (STAS-299):
+  A card-level failure park is the same kind of operator/agent-owned hold as the two above, and this
+  is the same seam: arming a continuation is starting AI work on the card. Self-healing stamps a
+  stranded hold-lane card `failed` precisely so that a HUMAN-SIZED decision owns the next move (any
+  retry surface recognises the status and discharges it non-destructively); silently re-seeding the
+  gate here would auto-retry a park whose whole purpose is to be retried deliberately.
+  */
+  if (task.status === "failed" || task.status === "stuck-killed") return { seeded: false, reason: "retry-owned" };
   const items = await store.listWorkflowWorkItemsForTask(task.id);
   /*
   FNXC:PlanningHandoffAtomicity 2026-08-13-03:49:
@@ -154,8 +165,20 @@ export async function resumeApprovedPlanReviewHandoff(
   if (isTaskBlockedOnApproval(task)) return { resumed: false, reason: "awaiting-approval" };
   if (task.paused === true || task.userPaused === true) return { resumed: false, reason: "paused" };
   if (task.status === "needs-replan") return { resumed: false, reason: "needs-replan" };
+  /*
+  FNXC:StrandedGateRetry 2026-10-13 (STAS-299):
+  An approval is an explicit operator action, and an explicit action is an honest exit from the
+  failure park — the same principle by which an operator retry/edit clears the skip-bypass taint.
+  Discharging it here is what keeps Approve working after STAS-299: the seeder below refuses to arm
+  work onto a card that reports a failure park, so without this an operator approving a stranded
+  plan would get a silent no-op that even stranded-continuation recovery now refuses to restart.
+  */
+  let current = task;
+  if (current.status === "failed" || current.status === "stuck-killed") {
+    current = await store.updateTask(current.id, { status: null, error: null });
+  }
 
-  const seeded = await seedPreReleasePlanReviewContinuation(store, task, ir, { atomic: true });
+  const seeded = await seedPreReleasePlanReviewContinuation(store, current, ir, { atomic: true });
   if (seeded.seeded) return { resumed: true, reason: "seeded", workItemId: seeded.workItemId };
   // FNXC:PlanningHandoffAtomicity 2026-08-13-04:20: the no-node bail now carries its own reason
   // token; this seam already pre-checked the node above, so map it to its legacy result name.
@@ -206,6 +229,15 @@ export function evaluateStrandedHoldContinuation(input: {
   if (input.promptContent === null) return { stranded: false, candidate: false, reason: "prompt-missing" };
   if (isUnplannedSeedPrompt(input.promptContent, input.task.id, input.task.title, input.task.description)) return { stranded: false, candidate: false, reason: "seed-prompt" };
   if (input.task.status === "planning" || input.task.status === "needs-replan") return { stranded: false, candidate: false, reason: "triage-owned" };
+  /*
+  FNXC:StrandedGateRetry 2026-10-13 (STAS-299):
+  The failure park self-healing stamps on a hold-lane card (and the `stuck-killed` park the watchdog
+  stamps) is owned by the retry contract, not by this sweep: a retry discharges it and re-arms the
+  gate through the graph. Naming the owner here keeps the sweep quiet on a parked card instead of
+  re-seeding the very gate whose death produced the park — an auto-retry of a park that exists to be
+  retried deliberately.
+  */
+  if (input.task.status === "failed" || input.task.status === "stuck-killed") return { stranded: false, candidate: false, reason: "retry-owned" };
   /*
   FNXC:PlanningDependencyReseed 2026-08-04-04:10:
   A pre-U11 planning handoff can have a real PROMPT, persisted parsed steps, and
