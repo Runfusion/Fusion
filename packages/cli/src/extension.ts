@@ -429,7 +429,15 @@ export function isTransientStoreBootFailure(error: unknown): boolean {
 /** @internal The actionable answer every extension surface gives for a stalled store boot. */
 export function buildStoreBootStallResult(toolName: string, error: unknown): {
   content: Array<{ type: "text"; text: string }>;
-  details: Record<string, unknown>;
+  // `error` stays a required member: this result also leaves `wrapExtensionToolExecute`, whose
+  // declared error branch is `details: { error: string }`.
+  details: {
+    transient: "taskstore-boot-timeout";
+    retryable: true;
+    bootTimeoutMs: number;
+    tool: string;
+    error: string;
+  };
   isError: true;
 } {
   const message = error instanceof Error ? error.message : String(error);
@@ -2810,17 +2818,18 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_task_retry",
     label: "fn: Retry Task",
     description:
-      "Retry a failed task — clears the error state. Non-review failures move to todo; in-review execution failures move to todo preserving progress; in-review merge failures stay in-place for auto-merge retry.",
+      "Retry a failed task — clears the error state. Non-review failures move to todo; in-review execution failures move to todo preserving progress; in-review merge failures stay in-place for auto-merge retry. Also reaches a card stranded by a dead workflow gate (a required Plan/Code Review row that failed with no verdict while the card sits in a pre-execution lane with an approved plan) and discharges that gate in place — no move, no discarded plan.",
     promptSnippet: "Retry a failed Fusion task (clears error, moves to todo or stays in in-review)",
     promptGuidelines: [
       "Use when a task has failed and needs to be retried",
-      "Only tasks in 'failed' or 'stuck-killed' state, plus stranded in-review tasks with incomplete execution or prior merge attempts, can be retried",
+      "A card parked in a pre-execution lane whose only failure is a verdict-less failed Plan/Code Review row is retryable too — the gate is discharged in place and the approved plan is preserved",
+      "Only tasks in 'failed' or 'stuck-killed' state, stranded in-review tasks with incomplete execution or prior merge attempts, and pre-execution cards parked behind a verdict-less failed gate, can be retried",
       "In-review tasks with incomplete steps (pending/in-progress) move to todo with preserveProgress so execution can resume",
       "In-review tasks with all steps done stay in in-review and reset merge retry state for auto-merge re-attempt",
-      "Tasks in other columns are moved to the todo column with error state cleared",
+      "Tasks in other columns are moved to the todo column with error state cleared; a stranded-gate card is discharged in place instead of moved",
     ],
     parameters: Type.Object({
-      id: Type.String({ description: "Task ID to retry (e.g. FN-001). Must be in 'failed' state." }),
+      id: Type.String({ description: "Task ID to retry (e.g. FN-001). Accepts a 'failed'/'stuck-killed' card, a stalled in-review card, and a pre-execution card parked behind a verdict-less failed gate." }),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -2917,9 +2926,18 @@ export default function kbExtension(pi: ExtensionAPI) {
       Upstream #1992 requires fn_task_retry to recover an in-review unusable-worktree session-start failure even when status remains merge-active. Keep this status bypass constrained to the centrally classified missing/incomplete/unregistered worktree signature.
       */
       const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns.has(task.column));
+      /*
+      FNXC:StrandedGateRetry 2026-10-13-04:00 (STAS-299 req 4):
+      Core's single classification, same call as the board route, the CLI command and the chat tool.
+      STAS-281 stalled because this tool — the only retry an agent can reach — admitted only a
+      card-level failure, while self-heal's damage lived in a step row. The stranded-gate shape is now
+      retryable here and discharges non-destructively (no move, nothing discarded).
+      */
+      const strandedGateRetry = fusionCore.classifyStrandedGateRetry({ task, ir: retryIr });
+      const strandedGateStepIds = strandedGateRetry.kind === "stranded-gate" ? strandedGateRetry.gateStepIds : [];
 
       // Validate task is in a retryable state
-      if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
+      if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry && strandedGateStepIds.length === 0) {
         return {
           content: [{ type: "text", text: `Task ${params.id} is not in a retryable state (status: ${task.status || 'none'})` }],
           isError: true,
@@ -2945,6 +2963,29 @@ export default function kbExtension(pi: ExtensionAPI) {
       };
       // FNXC:TaskWedgeNotifications 2026-08-10-20:15: an operator retry ends the prior terminal-failure episode and mints a fresh budget.
       await store.resetTerminalFailureAutoRecoveryBudget(params.id);
+
+      /*
+      FNXC:StrandedGateRetry 2026-10-13-04:00 (STAS-299 req 4 + Invariant C):
+      The non-destructive answer for a card whose only failure evidence is a gate row that died with no
+      verdict: clear the failure state, drop those rows so the gate re-evaluates as `missing`, and
+      touch nothing else. Deliberately NOT a `moveTask` — the card already sits in the lane a retry
+      would send it to, and RUFU-261's `parkOnHold: false` exists precisely because a user-sourced move
+      into a hold lane can park the card the operator just asked to run.
+      */
+      if (strandedGateStepIds.length > 0) {
+        await applyRetryReset(fusionCore.buildStrandedGateRetryPatch(task, strandedGateStepIds));
+        await store.logEntry(
+          params.id,
+          `Retry requested via Fusion extension (verdict-less ${strandedGateStepIds.join(", ")} gate row(s) discharged in ${task.column}; approved plan, step list and worktree preserved)`,
+        );
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Retried ${params.id} in ${task.column}: the verdict-less ${strandedGateStepIds.join(", ")} gate row(s) were discharged, so the gate re-runs against the approved plan. The card did not move and its steps, plan and worktree are intact.`,
+          }],
+          details: { taskId: params.id, column: task.column, strandedGateRetried: true, gateStepIds: strandedGateStepIds },
+        };
+      }
 
       if (isMissingWorktreeSessionRetry) {
         await applyRetryReset({

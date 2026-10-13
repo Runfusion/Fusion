@@ -3583,7 +3583,8 @@ export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOpti
   return {
     name: "fn_task_retry",
     label: "Retry Task",
-    description: "Retry a failed task. Clears failure state and re-queues the task for execution.",
+    description:
+      "Retry a failed task. Clears failure state and re-queues the task for execution. Also reaches a card stranded by a dead workflow gate — a required Plan/Code Review row that failed with no verdict while the card sits in a pre-execution lane with an approved plan — and discharges that gate in place, without moving the card or discarding its plan, steps or worktree.",
     parameters: taskRetryParams,
     execute: async (_id: string, params: Static<typeof taskRetryParams>) => {
       try {
@@ -3676,6 +3677,33 @@ export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOpti
           };
         }
 
+        /*
+        FNXC:StrandedGateRetry 2026-10-13-03:55 (STAS-299 req 4):
+        The card self-heal stranded by flipping a dead Plan Review row to `failed` while it sat in its
+        hold lane with an approved plan is the shape that had NO agent-reachable hatch at all: its
+        failure lives in a step row, not in a card status, so the status gate below refused it and
+        STAS-281 stalled 2.2 days. Core answers the shape identically here, on the CLI, in the
+        extension tool and on the board, so no surface can call the same card un-retryable.
+
+        Nothing moves and nothing is discarded: only the verdict-less gate rows are dropped, which is
+        what lets the gate re-run against the plan that was already approved.
+        */
+        const strandedGateRetry = fusionCore.classifyStrandedGateRetry({ task, ir: retryIr });
+        if (strandedGateRetry.kind === "stranded-gate") {
+          const gateStepIds = strandedGateRetry.gateStepIds;
+          await store.updateTask(params.id, fusionCore.buildStrandedGateRetryPatch(task, gateStepIds));
+          await store.logEntry(
+            params.id,
+            `Retry requested via chat tool (verdict-less ${gateStepIds.join(", ")} gate row(s) discharged in ${task.column}; approved plan, step list and worktree preserved)`,
+          );
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Retried ${params.id} in ${task.column}: the verdict-less ${gateStepIds.join(", ")} gate row(s) were discharged, so the gate re-runs against the approved plan. The card did not move and its steps, plan and worktree are intact.`,
+            }],
+            details: { taskId: params.id, column: task.column, strandedGateRetried: true, gateStepIds },
+          };
+        }
         if (task.status !== "failed" && task.status !== "stuck-killed") {
           return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
         }

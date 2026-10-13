@@ -8,7 +8,7 @@ Import union for this line: ours adds `isFollowUpTask`, `resolveWorkflowIrForTas
 but the merged body has no call site, so keeping them would be dead references. Engine side keeps ours
 (`admitTaskToWip`/`isFirstPlanningToWipAdmission`/`planTaskWorktreePath`) and `SelfHealingManager`, which both lines need.
 */
-import { TaskStore, COLUMNS, COLUMN_LABELS, deriveTaskLabelFromDescription, describeTaskTitleRejection, isFollowUpTask, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolvePreMergeGateForTask, resolveWorkflowIrForTaskWithProvenance, workflowHasColumn, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, buildManualRetryResetPatchIfCurrent, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, deliverTaskCommentFromStore, describeTaskCommentDelivery, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, deriveTaskLabelFromDescription, describeTaskTitleRejection, isFollowUpTask, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolvePreMergeGateForTask, resolveWorkflowIrForTaskWithProvenance, workflowHasColumn, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, buildManualRetryResetPatchIfCurrent, buildStrandedGateRetryPatch, classifyStrandedGateRetry, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, deliverTaskCommentFromStore, describeTaskCommentDelivery, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isFailedNoVerdictPreMergeReviewResult, admitTaskToWip, isFirstPlanningToWipAdmission, isInReviewMissingWorktreeSessionStartFailure, planTaskWorktreePath, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -1959,6 +1959,16 @@ export async function runTaskRetry(id: string, projectName?: string) {
         task.status === "stuck-killed" ||
         isInReviewExecutionStall ||
         isInReviewMergeRetryStall);
+    /*
+    FNXC:StrandedGateRetry 2026-10-13-04:10 (STAS-299 req 4 + Invariant C):
+    One classification, consumed by this command, the extension tool, the chat tool and the board
+    route. A card parked in a pre-execution lane whose only failure evidence is a required gate row
+    that died with no verdict is retryable on ALL FOUR surfaces or on none — the
+    FNXC:WorkflowLifecycleColumns notes on this file counted three copies of the retry gate precisely
+    because surfaces that each re-derive "is this retryable?" end up answering one card differently.
+    */
+    const strandedGateRetry = classifyStrandedGateRetry({ task, ir: retryIr });
+    const strandedGateStepIds = strandedGateRetry.kind === "stranded-gate" ? strandedGateRetry.gateStepIds : [];
     const noVerdictGate = !effectiveAutoMergeDisabled && isInReviewStatusNone && retryIr !== undefined
       ? await resolvePreMergeGateForTask(context.store, task.id, task.enabledWorkflowSteps, task).catch(() => undefined)
       : undefined;
@@ -1982,7 +1992,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     if (noVerdictReviewRetry) {
       throw new Error(`Task ${id} has a failed review with no verdict; retry it through the running dashboard or wait for engine recovery`);
     }
-    if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
+    if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry && strandedGateStepIds.length === 0) {
       throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
     }
 
@@ -2009,6 +2019,28 @@ export async function runTaskRetry(id: string, projectName?: string) {
 
     // FNXC:TaskWedgeNotifications 2026-08-10-20:15: a human Retry proves intervention and mints a fresh bounded terminal-failure budget.
     await context.store.resetTerminalFailureAutoRecoveryBudget(id);
+
+    /*
+    FNXC:StrandedGateRetry 2026-10-13-04:10 (STAS-299 Invariant C):
+    THIS branch exists because the generic fallthrough at the bottom of this command is destructive
+    for this shape: it clears `worktree`, `branch`, `baseBranch` and `baseCommitSha` so a retry can
+    pick a fresh base — which discards the branch the executor already built, on a card that lost
+    nothing but a verdict. The shared patch clears the failure state and drops only the verdict-less
+    gate rows, and the card is not moved: it already sits in the lane a re-queue would send it to,
+    and RUFU-261 exists because a move into a hold lane can park the card a retry was asked to run.
+    */
+    if (strandedGateStepIds.length > 0) {
+      await retryBoardCall(context, id, "update task", () => applyRetryReset(buildStrandedGateRetryPatch(task, strandedGateStepIds)));
+      await retryBoardCall(context, id, "log entry", () => context.store.logEntry(
+        id,
+        `Retry requested from CLI (verdict-less ${strandedGateStepIds.join(", ")} gate row(s) discharged in ${task.column}; approved plan, step list and worktree preserved)`,
+      ));
+
+      console.log();
+      console.log(`  ✓ Retried ${id} in ${task.column} (verdict-less ${strandedGateStepIds.join(", ")} gate discharged; approved plan, steps and worktree intact)`);
+      console.log();
+      return;
+    }
 
     /*
     FNXC:TaskRetryReleaseIntent 2026-09-22-07:39 (RUFU-261):

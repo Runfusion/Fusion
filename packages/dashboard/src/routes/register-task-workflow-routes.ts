@@ -64,6 +64,8 @@ import {
   buildAutoPauseClearPatch,
   buildManualRetryResetPatch,
   buildManualRetryResetPatchIfCurrent,
+  buildStrandedGateRetryPatch,
+  classifyStrandedGateRetry,
   reconcileDeterministicDuplicate,
   extractIntentSignature,
   findNearDuplicates,
@@ -3809,6 +3811,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       the builtins carry (`config.seam`, an exact `workflowAction` set) with node ids as a backstop.
       */
       const workflowIr = await resolveWorkflowIrForTask(scopedStore, task.id);
+      /*
+      FNXC:StrandedGateRetry 2026-10-13-03:40 (STAS-299 req 4 + Invariant C):
+      A card sitting in a pre-execution lane whose ONLY failure evidence is a required gate row that
+      died with no verdict (self-heal's FN-8492 orphan flip) is not "a stage to restart": the locked
+      stage planner serves a hold-lane card with `scope: "plan"`, which stamps `needs-replan`, empties
+      `steps`, clears `approvedPlanFingerprint` and deletes PROMPT.md. That trades a hiccuped review
+      session for the loss of the very plan the reviewer was reading — and `needs-replan` is refused
+      by every release mode in `evaluateUnplannedForExecution`, so the Retry would have swapped a
+      recoverable dead zone for a permanent one.
+
+      Core's single classification answers the shape here and on every other retry surface, against
+      the SAME workflow resolution this route already performs, so the board, the CLI, the chat tool
+      and the engine tool cannot disagree about what Retry means for one card (the
+      FNXC:WorkflowLifecycleColumns three-copies defect, measured on this same route).
+      */
+      const strandedGateRetry = classifyStrandedGateRetry({ task, ir: workflowIr });
+      const strandedGateStepIds = strandedGateRetry.kind === "stranded-gate" ? strandedGateRetry.gateStepIds : [];
       const retrySpecification = retrySpecificationStatus && workflowPlansInColumn(workflowIr, task.column);
       /*
       Narrowing the DESTRUCTIVE branch must not narrow RETRYABILITY — those were one boolean and are
@@ -3971,7 +3990,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const preserveWork = (req.body as { preserveWork?: unknown } | undefined)?.preserveWork === true;
       let stageRestartRefusal: Extract<Awaited<ReturnType<typeof restartTaskStage>>, { kind: "refused" }> | undefined;
-      if (!isMissingWorktreeSessionRetry) {
+      if (!isMissingWorktreeSessionRetry && strandedGateStepIds.length === 0) {
         // FNXC:TaskRecoveryVocabulary 2026-08-28-01:11: Retry must ask the locked restart
         // planner about every non-missing-worktree shape. Its shape-based refusal, including a
         // v1 no-column-model result, is preserved before legacy recovery gets a chance to handle
@@ -3994,7 +4013,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         stageRestartRefusal = stageResult;
       }
 
-      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !strandedSpecificationRetry && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
+      if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification && !strandedSpecificationRetry && !isInReviewRetry && !isMissingWorktreeSessionRetry && strandedGateStepIds.length === 0) {
         const stageReason = stageRestartRefusal?.reason ?? "unavailable";
         throw badRequest(`Retry cannot restart this stage (${stageReason}) and the task is not in a legacy retryable state (current status: ${task.status || "none"})`);
       }
@@ -4020,6 +4039,27 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       };
       // FNXC:TaskWedgeNotifications 2026-08-10-20:15: dashboard Retry is explicit operator intervention, so it clears the spent generic-terminal budget.
       await scopedStore.resetTerminalFailureAutoRecoveryBudget(req.params.id);
+
+      /*
+      FNXC:StrandedGateRetry 2026-10-13-03:40 (STAS-299 req 4 + Invariant C):
+      THE non-destructive answer, first branch of the handler: clear the failure state and drop ONLY
+      the verdict-less gate rows, so the graph's own gate re-evaluates as `missing` and Plan Review
+      re-runs against the plan that was already approved. The card does not move — a hold lane is
+      where it already sits, and `moveTask` would restamp `columnMovedAt` for a lane change that
+      never happened — and its `steps`, `currentStep`, approved-plan fingerprint, PROMPT.md, worktree
+      and branch all stay exactly as they are. Recovery then has a named owner again: with the
+      failure status discharged, self-healing's stranded-hold continuation sweep re-arms the gate
+      (`retry-owned` is the reason it refused to while the park stood).
+      */
+      if (strandedGateStepIds.length > 0) {
+        await applyRetryReset(buildStrandedGateRetryPatch(task, strandedGateStepIds));
+        await scopedStore.logEntry(
+          req.params.id,
+          `Retry requested from dashboard (verdict-less ${strandedGateStepIds.join(", ")} gate row(s) discharged in ${task.column}; approved plan, step list and worktree preserved)`,
+        );
+        res.json(await scopedStore.getTask(req.params.id));
+        return;
+      }
 
       if (isMissingWorktreeSessionRetry) {
         /*
