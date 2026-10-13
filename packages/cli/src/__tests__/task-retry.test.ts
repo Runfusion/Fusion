@@ -151,4 +151,92 @@ pgTest("runTaskRetry", () => {
     expect(updated.pausedReason).toBeFalsy();
     expect(updated.mergeRetries).toBe(0);
   });
+
+  /*
+  FNXC:StrandedGateRetry 2026-10-13-04:40 (STAS-299 req 4 + Invariant C):
+  The STAS-281 card at the CLI. Before this, `fn task retry FN-XXXX` on a card stranded by self-heal's
+  FN-8492 orphan flip answered either "not in a retryable state" (the card carries no `failed`
+  status — its failure is a step row) or, if the card had been re-stamped `failed`, ran the generic
+  fallthrough below the stranded branch: that clears `worktree`, `branch`, `baseBranch` and
+  `baseCommitSha`, i.e. it discards the branch and the approved plan to re-run a review session that
+  was never asked to be re-planned. These two cases pin both halves: the shape that used to be
+  refused is now retryable, and retrying it keeps the work.
+  */
+  const verdictlessPlanGateRow = {
+    workflowStepId: "plan-review",
+    workflowStepName: "Plan Review",
+    phase: "pre-merge" as const,
+    source: "optional-group" as const,
+    status: "failed" as const,
+    reviewKind: "plan" as const,
+    startedAt: "2026-09-24T00:16:39.000Z",
+    output: "Pending step result had no live session or lease; marked failed by self-healing (FN-8492).",
+  };
+
+  async function seedStrandedCard(store: ReturnType<typeof h.store>, status: "failed" | null) {
+    const task = await store.createTask({
+      title: "plan-review stranded in the hold lane",
+      description: "test",
+      column: "todo",
+    });
+    await store.updateTask(task.id, {
+      status,
+      error: status === "failed" ? "1 workflow step result(s) marked failed by self-healing (FN-8492)" : null,
+      approvedPlanFingerprint: "7a73aaff",
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Await the plan-review verdict", status: "pending" },
+      ],
+      currentStep: 1,
+      worktree: "/tmp/fusion-stranded-worktree",
+      branch: `fusion/${task.id}`,
+      // FNXC:CliTests 2026-08-23-16:14: branch writes need provenance; this fixture simulates an engine-written branch.
+      branchWriteOrigin: "engine" as const,
+      baseBranch: "main",
+      baseCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      workflowStepResults: [verdictlessPlanGateRow],
+    });
+    return task;
+  }
+
+  it("discharges a hold-lane verdict-less plan gate in place, keeping the approved plan and worktree", async () => {
+    const store = h.store();
+    const task = await seedStrandedCard(store, "failed");
+
+    await runTaskRetry(task.id);
+
+    const updated = await store.getTask(task.id);
+    // The card is not re-queued anywhere: it already sat in the lane a re-queue would target.
+    expect(updated.column).toBe("todo");
+    expect(updated.status).toBeFalsy();
+    expect(updated.error).toBeFalsy();
+    // The gate row is discharged, which is what lets Plan Review re-run as a `missing` gate.
+    expect(updated.workflowStepResults ?? []).toEqual([]);
+    // Invariant C: nothing that constitutes the approved work is touched.
+    expect(updated.approvedPlanFingerprint).toBe("7a73aaff");
+    expect(updated.steps?.map((step) => step.status)).toEqual(["done", "pending"]);
+    expect(updated.currentStep).toBe(1);
+    expect(updated.worktree).toBe("/tmp/fusion-stranded-worktree");
+    expect(updated.branch).toBe(`fusion/${task.id}`);
+    expect(updated.baseBranch).toBe("main");
+    expect(updated.baseCommitSha).toBe("0123456789abcdef0123456789abcdef01234567");
+    const log = (updated.log ?? []) as Array<{ action?: string }>;
+    expect(log.some((entry) => entry.action?.includes("gate row(s) discharged in todo"))).toBe(true);
+  });
+
+  it("reaches the stranded cards self-heal parked before the lifecycle fix, which carried no status", async () => {
+    const store = h.store();
+    /* Every card stranded by this defect BEFORE the fix has this shape: hold lane, approved plan,
+       failed gate row, and no card-level failure at all. Those operators had no escape hatch, which
+       is what made STAS-281 stall for 2.2 days with nobody owning it. */
+    const task = await seedStrandedCard(store, null);
+
+    await runTaskRetry(task.id);
+
+    const updated = await store.getTask(task.id);
+    expect(updated.column).toBe("todo");
+    expect(updated.workflowStepResults ?? []).toEqual([]);
+    expect(updated.approvedPlanFingerprint).toBe("7a73aaff");
+    expect(updated.worktree).toBe("/tmp/fusion-stranded-worktree");
+  });
 });

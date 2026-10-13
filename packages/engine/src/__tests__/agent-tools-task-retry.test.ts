@@ -262,4 +262,82 @@ describe("createTaskRetryTool", () => {
     expect(resetInReviewMergeRetry).toHaveBeenCalledWith(completedReviewTask);
     expect(logEntry).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:StrandedGateRetry 2026-10-13-04:55 (STAS-299 req 4 + Invariant C):
+  The chat tool is the retry an in-session agent can reach, and for STAS-281 it answered "not in a
+  retryable state (status: none)" — because this tool, like the board and the CLI, keyed retryability
+  on a card-level failure while self-heal's damage sat in a step row. The card had an approved plan and
+  a full step list; there was nothing an agent could do except park.
+
+  These cases pin both halves of the fix on this surface: the shape is admitted whether or not the card
+  carries the post-fix `failed` status, and discharging it changes exactly the failure state and the
+  verdict-less gate rows — no lane move, no discarded plan, steps, work, or worktree.
+  */
+  const strandedPlanGateTask = (overrides: Partial<Task> = {}) => task({
+    column: "todo",
+    status: null,
+    approvedPlanFingerprint: "7a73aaff",
+    steps: [
+      { id: "step-1", title: "Preflight", status: "done" },
+      { id: "step-2", title: "Await the plan-review verdict", status: "pending" },
+    ],
+    currentStep: 1,
+    worktree: "/tmp/fusion-stranded-worktree",
+    branch: "fusion/FN-9317",
+    workflowStepResults: [{
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      phase: "pre-merge",
+      source: "optional-group",
+      status: "failed",
+      reviewKind: "plan",
+      startedAt: "2026-09-24T00:16:39.000Z",
+      output: "Pending step result had no live session or lease; marked failed by self-healing (FN-8492).",
+    }],
+    ...overrides,
+  } as Partial<Task>);
+
+  function strandedStore(stranded: Task) {
+    const updateTask = vi.fn().mockResolvedValue(stranded);
+    const logEntry = vi.fn().mockResolvedValue(undefined);
+    const moveTask = vi.fn();
+    const store = {
+      getTask: vi.fn().mockResolvedValue(stranded),
+      getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined),
+      getSettings: vi.fn().mockResolvedValue({ autoMerge: true }),
+      updateTask,
+      updateTaskAtomic: vi.fn(),
+      logEntry,
+      moveTask,
+    } as unknown as TaskStore;
+    return { store, updateTask, logEntry, moveTask };
+  }
+
+  it.each([["the post-fix card self-heal parked as failed", { status: "failed", error: "1 workflow step result(s) marked failed by self-healing (FN-8492)" }], ["the card stranded before the lifecycle fix, which carried no status", {}]])(
+    "discharges a hold-lane verdict-less plan gate in place — %s", async (_name, overrides) => {
+      const stranded = strandedPlanGateTask(overrides);
+      const { store, updateTask, logEntry, moveTask } = strandedStore(stranded);
+
+      const result = await createTaskRetryTool(store, {}).execute("run", { id: stranded.id }, undefined as never, undefined as never, undefined as never);
+
+      expect((result as { isError?: boolean }).isError).not.toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("gate row(s) were discharged");
+
+      const patch = updateTask.mock.calls[0][1] as Record<string, unknown>;
+      expect(updateTask.mock.calls[0][0]).toBe(stranded.id);
+      expect(patch.status).toBeNull();
+      expect(patch.error).toBeNull();
+      // The gate row is dropped, not re-armed to `pending`: a `pending` row reads as in-flight work.
+      expect(patch.workflowStepResults).toEqual([]);
+      // Invariant C: the approved plan, its step list and the work itself are not inputs to this retry.
+      for (const destructive of ["steps", "currentStep", "approvedPlanFingerprint", "planDoc", "worktree", "branch", "baseBranch", "baseCommitSha"]) {
+        expect(patch, destructive).not.toHaveProperty(destructive);
+      }
+      // The card stays where it is — a hold lane is already the lane a re-queue would target, and
+      // RUFU-261 exists because a move into a hold lane can park the card the retry was asked to run.
+      expect(moveTask).not.toHaveBeenCalled();
+      expect(logEntry).toHaveBeenCalledWith(stranded.id, expect.stringContaining("gate row(s) discharged in todo"));
+    },
+  );
 });
