@@ -187,8 +187,16 @@ describe("extension agent-class boot budget (RUFU-377)", () => {
 
     // The shape RUFU-377 actually saw: wrapper prefix + store-boot subject + bare deadline.
     expect(result.content[0]?.text ?? "").toMatch(
-      /^fn_agent_show failed: fn extension TaskStore boot timed out after \d+ms$/,
+      /^fn_agent_show failed: fn extension TaskStore boot timed out after \d+ms\n/,
     );
+    /*
+    FNXC:BootTimeoutTransience 2026-10-13-03:05 (STAS-299, requirement 3): the anchor used to end at
+    the deadline sentence. STAS-281 measured why a bare deadline is not an answer — an agent told a
+    boot "timed out after 30000ms" cannot tell a slow boot from a forbidden call, so it stopped and
+    reported instead of calling again, which is the one action that works. The attribution line is
+    unchanged; the retry instruction is appended below it, so both contracts are pinned here.
+    */
+    expect(result.content[0]?.text ?? "").toContain("Retry this same call");
     expect(result.isError).toBe(true);
     expect(hung.calls).toHaveLength(1);
   });

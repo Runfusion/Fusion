@@ -340,7 +340,7 @@ interface StoreBootAttempt {
 interface ExtensionStoreState {
   readonly cache: Map<string, CachedStoreEntry>;
   readonly bootInflight: Map<string, StoreBootAttempt>;
-  readonly bootFailureCooldown: Map<string, { untilMs: number; error: string }>;
+  readonly bootFailureCooldown: Map<string, { untilMs: number; error: string; fromDeadline?: boolean }>;
   readonly knownProjectRoots: Set<string>;
 }
 
@@ -349,7 +349,7 @@ const extensionStoreGlobal = globalThis as typeof globalThis & { [key: symbol]: 
 const extensionStoreState = extensionStoreGlobal[extensionStoreStateKey] ?? {
   cache: new Map<string, CachedStoreEntry>(),
   bootInflight: new Map<string, StoreBootAttempt>(),
-  bootFailureCooldown: new Map<string, { untilMs: number; error: string }>(),
+  bootFailureCooldown: new Map<string, { untilMs: number; error: string; fromDeadline?: boolean }>(),
   knownProjectRoots: new Set<string>(),
 };
 extensionStoreGlobal[extensionStoreStateKey] = extensionStoreState;
@@ -382,6 +382,80 @@ Propagate the active tool AbortSignal into getStore without rewriting every exec
 const extensionToolSignal = new AsyncLocalStorage<AbortSignal | undefined>();
 /** Hard ceiling for extension TaskStore boot (second backend open inside a live dashboard/engine process). */
 const EXTENSION_STORE_BOOT_TIMEOUT_MS = 30_000;
+/*
+FNXC:BootTimeoutTransience 2026-10-13-03:05 (STAS-299, requirement 3):
+A store boot that burns its budget is a STALL, not a verdict. Both operator-visible fingerprints of
+that branch — the bare `… boot timed out after Nms` (wall-clock race) and the backoff-window sentence
+`… recently failed (cooldown Nms): abandoned after …` (the orphan is still booting and will serve the
+next caller) — were carried to the caller as an undifferentiated failure, so a policy-gated tool
+answered `denied … Failing closed — ask the operator to run this tool` and a read tool answered a raw
+`failed: …`. That is how STAS-281's agent lost its escape hatch twice: the denial named a permission
+problem that did not exist, and nothing told the agent that simply calling again was the fix.
+
+The two claims are now separate types: a transient boot stall carries `TaskStoreBootTransientError`,
+which every surface must answer with "retry this call", and a real boot failure keeps the honest
+fail-closed denial. The distinction is by branch, not by message-guessing: only the wall-clock
+deadline and the cooldown entry it leaves behind are transient; anything the factory itself raised
+stays a real failure.
+*/
+const BOOT_DEADLINE_CLASS = /timed out after \d+ms/;
+
+export class TaskStoreBootTransientError extends Error {
+  readonly transient = true as const;
+  readonly bootTimeoutMs: number;
+  constructor(message: string, bootTimeoutMs: number) {
+    super(message);
+    this.name = "TaskStoreBootTransientError";
+    this.bootTimeoutMs = bootTimeoutMs;
+  }
+}
+
+/** @internal Whether a store-boot rejection is a momentary stall the caller should retry. */
+export function isTransientStoreBootFailure(error: unknown): boolean {
+  if (error instanceof TaskStoreBootTransientError) return true;
+  if (error instanceof Error && error.name === "TaskStoreBootTransientError") return true;
+  /*
+  One fingerprint decides both this classification and the telemetry: the shipped deadline marker
+  `timed out after Nms`, which `getStore` already records as `"outcome":"deadline"` — emitted by the
+  wall-clock race and, indistinguishably, by the pool giving up on a lock (`connection timed out after
+  20242ms (canceling statement due to lock timeout)`, RUFU-377's real stall cause). Anything that ran
+  out of time is the stall class; a boot that failed for a reason other than waiting stays a real
+  failure. Classifying in one place rather than per surface is what keeps the answer an agent gets and
+  the record an operator hunts from disagreeing about whether the same event was slow or broken.
+  */
+  return error instanceof Error && BOOT_DEADLINE_CLASS.test(error.message);
+}
+
+/** @internal The actionable answer every extension surface gives for a stalled store boot. */
+export function buildStoreBootStallResult(toolName: string, error: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+  details: Record<string, unknown>;
+  isError: true;
+} {
+  const message = error instanceof Error ? error.message : String(error);
+  const budgetMs = error instanceof TaskStoreBootTransientError ? error.bootTimeoutMs : EXTENSION_STORE_BOOT_TIMEOUT_MS;
+  return {
+    content: [
+      {
+        /* The shipped attribution contract stays intact: `X failed: ` plus the store-boot subject on
+           the first line — RUFU-377's KTD-2 keeps the wrapper prefix outside the store attribution —
+           and the retry instruction rides below it instead of replacing it. */
+        type: "text" as const,
+        text: `${toolName} failed: ${message}\n` +
+          `Retry this same call — the boot is still running in the background and the next call is served ` +
+          `from it. Nothing was denied on policy grounds and nothing was lost; do not ask the operator.`,
+      },
+    ],
+    details: {
+      transient: "taskstore-boot-timeout",
+      retryable: true,
+      bootTimeoutMs: budgetMs,
+      tool: toolName,
+      error: message,
+    },
+    isError: true as const,
+  };
+}
 /*
 FNXC:MergeQueue 2026-07-15-11:15:
 Default wall-clock budget for store/CRUD host-extension tools. Long-running tools use resolveExtensionToolTimeoutMs instead of this flat default (research wait, skills install, imports).
@@ -552,7 +626,17 @@ export function wrapExtensionToolExecute<TArgs extends unknown[], TResult>(
         };
       }
       const message = error instanceof Error ? error.message : String(error);
-      if (/timed out after \d+ms/.test(message)) {
+      /*
+      FNXC:BootTimeoutTransience 2026-10-13-03:05 (STAS-299, requirement 3): read-only tools were the
+      other half of the measured failure — `fn_task_logs_read` died twice on the raw boot sentence and
+      the agent had nothing to act on. A stalled boot answers with the retry instruction on every
+      surface, gated or not.
+      */
+      if (isTransientStoreBootFailure(error)) {
+        console.warn(`[fusion-extension] ${toolName}: ${message}`);
+        return buildStoreBootStallResult(toolName, error);
+      }
+      if (BOOT_DEADLINE_CLASS.test(message)) {
         console.warn(`[fusion-extension] ${toolName}: ${message}`);
       } else {
         console.error(`[fusion-extension] ${toolName} failed: ${message}`);
@@ -673,6 +757,7 @@ function startStoreBoot(projectRoot: string): StoreBootAttempt {
       storeBootFailureCooldown.set(projectRoot, {
         untilMs: Date.now() + BOOT_FAILURE_COOLDOWN_MS,
         error: detail,
+        fromDeadline: true,
       });
       reportStoreBoot(projectRoot, "deadline", elapsedMs, detail);
     },
@@ -690,9 +775,11 @@ async function getStore(
 
   const cooldown = storeBootFailureCooldown.get(projectRoot);
   if (cooldown && Date.now() < cooldown.untilMs) {
-    throw new Error(
-      `fn extension TaskStore boot recently failed (cooldown ${BOOT_FAILURE_COOLDOWN_MS}ms): ${cooldown.error}`,
-    );
+    const cooldownMessage = `fn extension TaskStore boot recently failed (cooldown ${BOOT_FAILURE_COOLDOWN_MS}ms): ${cooldown.error}`;
+    /* The deadline's own backoff entry means the orphan boot is still in flight and will serve the
+       next caller, so this is the same stall, not a new failure. */
+    if (cooldown.fromDeadline) throw new TaskStoreBootTransientError(cooldownMessage, EXTENSION_STORE_BOOT_TIMEOUT_MS);
+    throw new Error(cooldownMessage);
   }
 
   const effectiveSignal = signal ?? extensionToolSignal.getStore();
@@ -720,8 +807,9 @@ async function getStore(
     const message = error instanceof Error ? error.message : String(error);
     if (isAbortError(error)) {
       reportStoreBoot(projectRoot, "aborted", Date.now() - attempt.startedAtMs);
-    } else if (/timed out after \d+ms/.test(message)) {
+    } else if (BOOT_DEADLINE_CLASS.test(message)) {
       attempt.reportDeadline(bootTimeoutMs);
+      throw new TaskStoreBootTransientError(message, bootTimeoutMs);
     }
     throw error;
   }
@@ -1248,6 +1336,15 @@ async function applyAgentPolicyGateForExtensionTool(
     try {
       store = await getStore(cwd);
     } catch (error) {
+      /*
+      FNXC:BootTimeoutTransience 2026-10-13-03:05 (STAS-299, requirement 3 + Invariant B):
+      A stalled boot is not a policy verdict. Denying it as one sent STAS-281's agent the sentence
+      "the agent permission policy could not be resolved … Failing closed — ask the operator", which
+      named a permission problem that did not exist and told the agent the one action that would have
+      worked (calling again) was unavailable. The stall is answered as what it is: retryable, with the
+      boot still in flight. A real boot failure below keeps RUFU-275's honest fail-closed denial.
+      */
+      if (isTransientStoreBootFailure(error)) return buildStoreBootStallResult(toolName, error);
       const bootMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [
@@ -1450,6 +1547,9 @@ async function applyAgentPolicyGateForExtensionTool(
     };
   }
 }
+
+/** @internal Test-only: exercise the policy gate's admission answers against an injected store boot. */
+export const __applyAgentPolicyGateForTesting = applyAgentPolicyGateForExtensionTool;
 
 function normalizeNullableStringInput(value: string | null | undefined): string | null | undefined {
   if (value === undefined) {
