@@ -95,6 +95,30 @@ export function isCompleteColumn(flags: TraitFlags): boolean {
   return flags.complete === true;
 }
 
+/*
+FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+The operator-intent half of the move-source vocabulary. `moveSource` has exactly three shipped values and
+no dedicated CLI value; inventing one would silently re-classify CLI moves out of every existing
+`moveSource === "user"` consumer (the approval-hold clear, the user-cancel semantics, the human-actor
+classification in `branch-and-pr-entities`). Measured against the real store:
+- `"user"` is what `fn task move`, the pi-extension Retry surfaces, and the dashboard drag/menu all send,
+  and it is what RUFU-389's agent-side `fn task move` arrived as — the intent class this guard exists for.
+- `"engine"` and `"scheduler"` are excluded by definition: merge finalization, scheduler placement, and
+  recovery rehoming, whose legitimate sequencing must not gain a new refusal.
+- The move seam resolves an OPTION-LESS public call to the emitted default `"engine"` (`moves.ts`), which is
+  what keeps the CLI merge finalizer (`task-lifecycle.ts`: `store.moveTask(id, completeTarget)` with no
+  options) exempt — refusing that path would strand a card whose merge already landed in the review lane
+  forever. Verified in `complete-column-gate-move-guard.pg.test.ts`, not assumed.
+`moveSource` names the intent contract, not the transport, so an agent's CLI move keeps the honest `"user"`
+stamp and is refused by THIS guard while its provenance is recorded separately (`moveCallerSurface`).
+*/
+export function isOperatorInitiatedMoveSource(
+  /** Mirrors `MoveTaskOptions["moveSource"]`, spelled inline to keep this module free of a `store.ts` import. */
+  moveSource: "user" | "engine" | "scheduler",
+): boolean {
+  return moveSource === "user";
+}
+
 /** A passive dwell/hold column (release-condition gated). */
 export function isHoldColumn(flags: TraitFlags): boolean {
   return flags.hold === true;

@@ -788,6 +788,20 @@ fn task pause FN-001
 fn task unpause FN-001
 ```
 
+`fn task move` is a transport for a board action, not a separate authority — it calls the same move seam as
+the dashboard. Two consequences are visible from the terminal:
+
+- **Moving a card into a terminal column (`done`) can be refused.** When the card's required workflow gates
+  carry no approving evidence — no row at all, `pending`, a `failed`/`REVISE` row, or a `skipped` row with no
+  audited waiver — the command exits non-zero with a sentence naming every silent gate
+  (`code-review (pre-merge) has no result recorded`) and the remediation. The fix is to run the missing gate,
+  not to re-issue the move: there is no `--force` that skips a required gate, because that flag does not exist
+  on `fn task move`. The waiver is the existing audited one — the operator-only `fn_task_bypass_review` tool
+  (or the card's Review menu, which posts `/tasks/<id>/bypass-review`), always with a reason.
+- **The CLI names who is moving.** A shell carrying Pi session markers is attributed `agent-cli` and the
+  refusal audit records its session id; a plain terminal is `operator-cli`. Attribution never turns a refusal
+  on or off — it only makes a human-attributed move distinguishable from an agent-driven one after the fact.
+
 ### Node routing controls
 
 ```bash

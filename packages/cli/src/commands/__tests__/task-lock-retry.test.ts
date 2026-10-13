@@ -272,8 +272,17 @@ describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found,
     A CLI move IS a user action, so it now carries `moveSource: "user"` — the store's move pipeline
     applies user-move semantics (and the dashboard move route already did this). Asserting the bare
     two-arg call pinned the pre-hardening shape.
+    FNXC:CompleteColumnGateEvidence 2026-10-11-19:56 (RUFU-406): the same call now also carries the
+    caller-principal pair, so the intent value is pinned exactly and the provenance by shape.
     */
-    expect(moveTask).toHaveBeenCalledWith("FN-5", "todo", { moveSource: "user" });
+    expect(moveTask).toHaveBeenCalledWith(
+      "FN-5",
+      "todo",
+      expect.objectContaining({
+        moveSource: "user",
+        moveCallerSurface: expect.stringMatching(/^(operator-cli|agent-cli)$/),
+      }),
+    );
     expect(closeProjectStore).toHaveBeenCalled();
     logSpy.mockRestore();
   });

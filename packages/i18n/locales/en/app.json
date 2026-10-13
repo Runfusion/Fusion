@@ -1258,6 +1258,7 @@
       "workflowMismatch": "Drag can't move a card between workflows. Use the workflow switcher instead.",
       "unknownColumn": "That column doesn't exist in this task's workflow.",
       "mergeBlocked": "This task is blocked from completing until its merge step finishes.",
+      "gateEvidenceMissing": "This task can't complete yet — a required workflow gate has not reported an approving verdict.",
       "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
       "unplannedForExecution": "This task isn't ready for execution yet — planning or plan review is still outstanding."
     },

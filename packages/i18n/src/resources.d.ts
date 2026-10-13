@@ -1335,6 +1335,7 @@ export default interface Resources {
       "inReview": "In Review",
       "rejection": {
         "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
+        "gateEvidenceMissing": "This task can't complete yet — a required workflow gate has not reported an approving verdict.",
         "guardRejected": "This move is not allowed by the workflow.",
         "mergeBlocked": "This task is blocked from completing until its merge step finishes.",
         "staleMovePrecondition": "This card already moved on. Refresh to see where it is now.",
@@ -12155,6 +12156,7 @@ export default interface Resources {
       "noWorkflowLanes": "No workflow lanes available",
       "rejection": {
         "capacityExhausted": "That column is at capacity. Try again when a slot frees up.",
+        "gateEvidenceMissing": "This task can't complete yet — a required workflow gate has not reported an approving verdict.",
         "guardRejected": "This move is not allowed by the workflow.",
         "mergeBlocked": "This task is blocked from completing until its merge step finishes.",
         "staleMovePrecondition": "This card already moved on. Refresh to see where it is now.",

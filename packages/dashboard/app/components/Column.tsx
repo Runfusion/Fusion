@@ -65,6 +65,21 @@ export function translateRejection(t: TFn, rejection: TransitionRejectionDetail)
     case "merge-blocked":
       return t("board.rejection.mergeBlocked", "This task is blocked from completing until its merge step finishes.");
     /*
+    FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+    Copy for the gate-EVIDENCE refusal, deliberately distinct from `merge-blocked` above: that code reports
+    missing MERGE evidence (an unlanded or unprovable merge), while this one reports that the card's own
+    required workflow gates never reported approvingly — measured 2026-09-29, RUFU-389 reached the terminal
+    lane holding a `plan-review` approval and ZERO `code-review` rows, so nothing about its merge diff was
+    the problem. Spelled as a static literal because that is what the i18next extractor sees: FN-8471's
+    `unplanned-for-execution` shipped as a server code with no client case and printed the raw key at
+    operators, so a new rejection code without a case here reproduces that defect.
+    */
+    case "gate-evidence-missing":
+      return t(
+        "board.rejection.gateEvidenceMissing",
+        "This task can't complete yet — a required workflow gate has not reported an approving verdict.",
+      );
+    /*
     FNXC:BoardRejections 2026-07-25-04:55:
     FN-8471 added this server-side code without a client case or catalog entry, so
     the default branch fell through to `t(messageKey, messageKey)` and the board

@@ -408,6 +408,28 @@ export interface MoveTaskOptions {
   parkOnHold?: boolean;
   allocateWorktree?: (reservedNames: Set<string>) => string | null;
   moveSource?: "user" | "engine" | "scheduler";
+  /*
+  FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+  The TRANSPORT that issued the move, recorded for refusal forensics only — it changes no decision.
+  It exists because `moveSource` classifies the intent contract (operator vs engine vs scheduler) and
+  cannot also name the surface: an agent's `fn task move` and a human's arrive as the same `"user"`,
+  which is precisely why RUFU-389's completion was unreadable after the fact (`moveSource:"user"` told
+  nobody who moved it). Observability-only by contract: adding it to the decision path would make a
+  label more authoritative than the audited evidence it reports on.
+  The vocabulary names the transport AND the principal class the transport can prove, because the
+  threat RUFU-406 closes is specifically an agent's shell masquerading as a human board action; a
+  plain `"cli"` label would preserve that ambiguity. Absent means the call came from in-repo code
+  (`store-direct`), never an unattributed surface: CLI and HTTP declare theirs at their own seams.
+
+  FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+  `moveCallerPrincipal` carries the session identity the CLI transport can actually observe (see
+  `resolveMoveCallerSurface` in the CLI). It is an id, never prose, and it is deliberately NOT the
+  Fusion `agentId`: no marker in a shell environment carries one, and guessing would fabricate
+  attribution. An operator resolves the owner through the persisted `sessionFile` on the task/agent
+  row, which the id matches.
+  */
+  moveCallerSurface?: "operator-cli" | "agent-cli" | "dashboard-http" | "store-direct";
+  moveCallerPrincipal?: { sessionId?: string };
   /** Registered reason from ENGINE_BACKWARD_MOVE_REASONS for a backward engine move. */
   lifecycleReason?: string;
   workflowMoveActor?: WorkflowMovePolicyInput["actor"];

@@ -4068,7 +4068,8 @@
       "staleMovePrecondition": "",
       "unplannedForExecution": "",
       "capacityExhausted": "",
-      "mergeBlocked": ""
+      "mergeBlocked": "",
+      "gateEvidenceMissing": ""
     },
     "done": "完成",
     "workflow": {

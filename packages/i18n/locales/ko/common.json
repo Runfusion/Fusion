@@ -52,7 +52,8 @@
       "staleMovePrecondition": "",
       "unknownColumn": "",
       "unplannedForExecution": "",
-      "workflowMismatch": ""
+      "workflowMismatch": "",
+      "gateEvidenceMissing": ""
     }
   },
   "chat": {

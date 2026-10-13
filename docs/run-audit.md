@@ -51,6 +51,32 @@ Events that close a task's delivery: blocked/advanced completion parks, already-
 | `task:merge-admission-deferred-live-execution` | Merge admission found a live executor session, execution lock, or active task signal and deferred without parking the task. Metadata contains task ID plus fixed source, signal, and outcome values only. |
 | `task:reconcile-confirmed-merge-checklist` | A confirmed merge reconciled stale non-terminal checklist steps or pending pre-merge results before terminal finalization. Metadata contains task ID, source, counts, prior column, and fixed outcome only. |
 
+### Complete-column gate-evidence refusal (RUFU-406)
+
+`task:move-refused-complete-column-gate-evidence` is emitted by the core move seam once per refused move
+into a column carrying the `complete` trait, when the move was attributed to a human (`moveSource: "user"`)
+and the card's required workflow gates carry no approving evidence — no row at all, `pending`, a
+`failed`/`REVISE` row, or a `skipped` row without an audited operator waiver. It is written by
+`@fusion/core` through the FN-9177 bounded seam and therefore sits intentionally outside the curated
+delivery-pipeline catalogue, like the approval-hold pair below.
+
+The row exists because the pre-existing invariant at this boundary read only the merge **blocker**, which a
+`in-progress → done` move never consults: measured 2026-09-29, RUFU-389 and RUFU-337 reached the terminal
+lane with zero `code-review` rows and left no row behind, and both had been closed by an agent through
+`fn task move` — whose CLI transport hardcodes `moveSource: "user"`, so the audit trail read as a human
+action. Metadata is `{ rejectionCode, toColumn, moveSource, moveCallerSurface, callerSessionId?, gateCount,
+gateFindings }`: a fixed rejection code, a column, the caller-surface enum (`operator-cli` / `agent-cli` /
+`dashboard-http` / `store-direct`, declared by the transport rather than inferred — the CLI classifies its own
+process, so an agent shell reporting through `fn task move` no longer reads as an operator at the keyboard), the
+session marker only when a process
+marker proved it, and counts. `gateFindings` holds at most eight `lane:gateId:state` triples. The refusal
+sentence, reviewer findings, verdict text, and paths never enter this row — the sentence lives on the card's
+History line, written alongside it.
+
+Without this row a refusal is invisible to the board: the move throws, the mover sees the sentence, and the
+card stays put. With it, "how often does a human-attributed move get refused at the completion boundary,
+and from which surface?" is one query.
+
 ## Self-healing reconciliation events
 
 Reconciliation-scoped auto-recover/reclaim events the self-healing sweep surfaces when it repairs board state after the fact.

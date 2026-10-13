@@ -35,7 +35,18 @@ import {
   type TransitionColumnFacts,
   evaluateCapacityRejection,
   evaluateTransitionInvariants,
+  isCompleteColumn,
+  isOperatorInitiatedMoveSource,
 } from "../workflows/workflow-transition-policy.js";
+/*
+FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406): The complete-column gate-evidence seam is
+consumed here — the ONE place every mover (CLI, dashboard route, graph, handoff, recovery) converges.
+*/
+import {
+  CompleteColumnGateEvidenceRejectionError,
+  describeCompleteColumnGateFindings,
+  resolveCompleteColumnGateEvidence,
+} from "../workflows/complete-column-gate-evidence.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, isReopenIntoPlanning} from "../workflows/default-workflow-hooks.js";
 import {columnsWithFlag, resolveLifecycleColumns, resolveReviewColumns, toTaskMoveLanes} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
@@ -277,12 +288,91 @@ export async function moveTaskImpl(store: TaskStore, id: string, toColumn: Colum
     // runtime-validate: flag-ON against the task's resolved workflow, flag-OFF
     // via the VALID_TRANSITIONS lookup (non-legacy ids reject as before).
     const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
-    return store.withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight }));
+    /*
+    FNXC:CompleteColumnGateEvidence 2026-10-11-20:10 (RUFU-406):
+    The refusal audit is attached as a rejection handler instead of `try { return await … } catch`, and the
+    difference is observable. The successful-move audit records caller attribution with
+    `new Error().stack?.split("\n").slice(0, 8)` below, and that eight-line window is exactly long enough to
+    still contain the invoking function; an `await` here keeps this async frame live while the lock body
+    runs, pushing the caller out of the window and silently truncating the attribution of EVERY move on the
+    board. `review-lane-cli-entry-dispatch.pg.test.ts` asserts the caller's own frame is present, so it
+    caught the one-frame regression — a `.catch` handler joins the chain after the body settles and leaves
+    the shipped frame depth untouched.
+    */
+    return store
+      .withTaskLock(id, () => store.moveTaskInternal(id, toColumn, options, { fromHandoff: false, movePolicyPreflight }))
+      .catch((error: unknown) => {
+        if (error instanceof CompleteColumnGateEvidenceRejectionError) {
+          recordCompleteColumnGateRefusal(store, { taskId: id, toColumn, options, error });
+        }
+        throw error;
+      });
   }
 
 export interface MoveTaskIfResult {
   task: Task;
   moved: boolean;
+}
+
+/*
+FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+Refusal observability for the complete-column gate-evidence guard, recorded OUTSIDE the move
+transaction. The refusal throws through `layer.transactionImmediate`, so a History line or audit row
+written there would roll back with the abort — measured cost of exactly that silence is RUFU-389, whose
+`moveSource:"user"` row was the only trace of the move and which left no signal for self-healing to act
+on. Best-effort by contract: the refusal itself is the guarantee, a dead History sink or audit host can
+only lose the echo. Metadata is ids, counts, and fixed enums — the finding triples are
+`lane:gateId:state`, never blocker prose, findings, or reviewer verdicts.
+*/
+export function recordCompleteColumnGateRefusal(
+  store: TaskStore,
+  args: {
+    taskId: string;
+    toColumn: ColumnId;
+    options?: MoveTaskOptions;
+    error: CompleteColumnGateEvidenceRejectionError;
+  },
+): void {
+  const { taskId, toColumn, options, error } = args;
+  const findings = error.gateFindings;
+  const metadata = {
+    rejectionCode: error.rejection.code,
+    toColumn: String(toColumn),
+    moveSource: options?.moveSource ?? "unset",
+    moveCallerSurface: options?.moveCallerSurface ?? "store-direct",
+    ...(options?.moveCallerPrincipal?.sessionId
+      ? { callerSessionId: options.moveCallerPrincipal.sessionId }
+      : {}),
+    gateCount: findings.length,
+    gateFindings: findings.slice(0, 8).map((finding) => `${finding.lane}:${finding.gateId}:${finding.state}`),
+  };
+  /*
+  FNXC:CompleteColumnGateEvidence 2026-10-11-20:10 (RUFU-406):
+  Both observability writes are fire-and-forget AND synchronous-throw safe: a store without `logEntry`, or
+  a run-audit sink that is absent, rejects, or hangs, must never replace the typed refusal — the caller has
+  to receive the gate-naming `TransitionRejectionError`, because that sentence is what makes the agent's
+  next action run the gate instead of retrying the move. The History line is deliberately the raw message
+  (a human reading the card sees exactly what the mover saw), and the audit row deliberately carries only
+  codes, columns, enums, and counts.
+  */
+  try {
+    void store.logEntry(taskId, error.message, "refused").catch(() => undefined);
+  } catch {
+    // A missing or throwing History writer must not mask the refusal.
+  }
+  try {
+    void emitBoundedRunAudit(store, {
+      taskId,
+      agentId: "task-store",
+      runId: `task-store:move:${taskId}`,
+      domain: "database",
+      mutationType: "task:move-refused-complete-column-gate-evidence",
+      target: taskId,
+      metadata,
+    });
+  } catch {
+    // Bounded telemetry is best-effort; the refusal is the contract.
+  }
 }
 
 /**
@@ -299,17 +389,25 @@ export async function moveTaskIfImpl(
   options?: MoveTaskOptions,
 ): Promise<MoveTaskIfResult> {
   const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
-  return store.withTaskLock(id, async () => {
-    const live = await store.readTaskForMove(id);
-    if (!await predicate(live) || live.column === toColumn) {
-      return { task: live, moved: false };
-    }
-    const task = await store.moveTaskInternal(id, toColumn, options, {
-      fromHandoff: false,
-      movePolicyPreflight,
-    }, live);
-    return { task, moved: true };
-  });
+  // Same frame-depth contract as `moveTaskImpl` above: a rejection handler, never an `await` wrapper.
+  return store
+    .withTaskLock(id, async () => {
+      const live = await store.readTaskForMove(id);
+      if (!await predicate(live) || live.column === toColumn) {
+        return { task: live, moved: false };
+      }
+      const task = await store.moveTaskInternal(id, toColumn, options, {
+        fromHandoff: false,
+        movePolicyPreflight,
+      }, live);
+      return { task, moved: true };
+    })
+    .catch((error: unknown) => {
+      if (error instanceof CompleteColumnGateEvidenceRejectionError) {
+        recordCompleteColumnGateRefusal(store, { taskId: id, toColumn, options, error });
+      }
+      throw error;
+    });
 }
 
 export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts: HandoffToReviewOptions): Promise<Task> {
@@ -745,6 +843,45 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
             decision.rejection,
             `Cannot move ${id} to '${toColumn}': ${decision.rejection.detail ?? decision.rejection.code}`,
           );
+        }
+
+        /*
+        FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+        The gate-EVIDENCE half of the completion boundary, one seam below every mover. Measured
+        2026-09-29: RUFU-389 was carried `todo -> in-progress -> done` by an agent's `fn task move`
+        while its only `workflowStepResults` row was `plan-review / APPROVE_WITH_NOTES` — zero
+        `code-review` rows — and it landed with no merge and no self-healing event. RUFU-337 is the
+        same shape. The pre-existing invariant above tests the merge BLOCKER's live verdict, which an
+        `in-progress -> done` move never consulted because `in-progress` carries no `merge-blocker`
+        trait: the completion boundary was trait-bound while `requiredPreMergeStepIds` is lane-bound,
+        so the evidence check only ever ran from the review lane. This closes that half for EVERY
+        operator-intent move into a `complete` column, from any source column.
+        BINDING: the target's `complete` TRAIT (never a column-name literal), operator intent only (the
+        RESOLVED source, so `"user"` alone — an option-less call resolves to the emitted `"engine"` default,
+        and `engine`/`scheduler` are the merge finalizer, scheduler placement, and recovery rehoming, whose
+        legitimate sequencing must not gain a new refusal), and not under `bypassGuards` (KTD-9, whose own contract already names
+        trait guards and abort-on-exit effects as what it suppresses). `bypassGuards` is unreachable
+        from the HTTP and CLI surfaces, so an agent cannot widen its own authority to dodge this.
+        IT DELIBERATELY DOES NOT READ: merge-content staleness or unprovability — those need the merge
+        diff and belong to `evaluatePreMergeApprovals`, which stays the stricter authority and will
+        still refuse the landing; nor does it consult `noCommitsExpected`, because the honest no-commit
+        path already writes `passed + APPROVE` and a claimed absence is not evidence. It reuses the
+        merge authority's OWN predicates (`requiresAuthoredReviewVerdict`, `isAuditedOperatorBypass`,
+        the not-run carrier) and `resolveRequiredPreMergeStepIds`, so the two doors agree by
+        construction rather than by a re-derived table; the single registered divergence is
+        `advisory_failure`, which the move seam accepts and the merge door will not publish over.
+        The refusal is a typed rejection with a deterministic sentence naming each silent gate, so the
+        agent's next action is running that gate rather than retrying the move.
+        */
+        if (isCompleteColumn(toFacts.flags) && !bypassGuards && isOperatorInitiatedMoveSource(moveSource)) {
+          const gateEvidence = resolveCompleteColumnGateEvidence({ ir: workflowIr, task });
+          if (gateEvidence.refuse) {
+            throw new CompleteColumnGateEvidenceRejectionError(
+              makeTransitionRejection("gate-evidence-missing", "transition.rejected.gateEvidenceMissing", true),
+              describeCompleteColumnGateFindings(gateEvidence.findings, { taskId: id, toColumn }),
+              gateEvidence.findings,
+            );
+          }
         }
       }
       // 4. Sync trait guards (in-lock) — plugin gate re-check. Skipped entirely

@@ -31,6 +31,21 @@ export type RunAuditMutationType =
   (plan-approval release, graph remediation, preserveStatus, userPaused).
   */
   | "task:move-cleared-approval-hold"
+  /*
+  FNXC:CompleteColumnGateEvidence 2026-10-11-20:10 (RUFU-406):
+  `task:move-refused-complete-column-gate-evidence` is emitted once per refused move into a `complete`
+  column: an operator-attributed move (board drag, `fn task move`, or a direct store call that declared
+  itself a user move) whose required workflow gates carry no approving evidence — zero rows, `pending`, a
+  failed/`REVISE` row, or a `skipped` row with no audited bypass. Measured 2026-09-29: RUFU-389 and RUFU-337
+  reached the terminal lane exactly this way and left no row behind, because the pre-existing invariant
+  consulted only the merge BLOCKER, which an `in-progress -> done` move never reads.
+  Metadata: { rejectionCode, toColumn, moveSource, moveCallerSurface, callerSessionId (only when a session
+  marker proved it), gateCount, gateFindings ( `lane:gateId:state` triples, capped at 8) } — a fixed code,
+  a column, fixed caller/gate-state enums, and counts. Never gate prose, reviewer findings, verdict text,
+  file paths, or the refusal sentence (that lives on the card's History line). Emitted through the FN-9177
+  bounded seam, so an absent, throwing, or hanging sink cannot change the refusal.
+  */
+  | "task:move-refused-complete-column-gate-evidence"
   | "overseer:intervention"
   /*
   FNXC:VanishedTaskDetection 2026-09-24-00:40 (RUFU-283):
