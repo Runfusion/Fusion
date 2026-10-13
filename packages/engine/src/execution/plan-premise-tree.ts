@@ -27,29 +27,52 @@ const GIT_TIMEOUT_MS = 20_000;
 const REGULAR_FILE_MODES = new Set(["100644", "100640", "100755"]);
 
 /*
-FNXC:PlanPremises 2026-09-27-02:40:
-A non-zero git exit IS an answer to these probes — an absent path, an absent blob, and an unknown ref
-are all ordinary outcomes — so the failure arm yields null instead of throwing. Nothing downstream
-substitutes a guess for null; the caller reports `unavailable`.
+STAS-301: what a probe produced, kept as two arms that can never carry the same meaning.
+  ok: true  — git ran and ANSWERED. An empty answer is still an answer ("no such path", "no such
+              ref"), and for the absence premise kinds it is the answer the plan is measured against.
+  ok: false — git never answered: it could not be spawned, exited non-zero, timed out, or overflowed
+              the output buffer. Nothing may be concluded from this arm; the caller reports
+              `unavailable` and the card stays where it is.
+The shape before this change was `string | null`, which put both cases in the null arm and inverted
+the absence premises: a probe that failed read as git having proven the thing absent, so the plan was
+satisfied and the card released on evidence that was never gathered.
 */
-async function gitProbe(repo: string, args: string[]): Promise<string | null> {
+export type Probe<T> = { ok: true; value: T } | { ok: false; detail: string };
+
+const firstMeaningfulLine = (text: string): string => text.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+
+/** Operator-facing, single-line, bounded: what the probe ran and what actually went wrong. */
+function probeFailure(repo: string, args: string[], error: unknown): Probe<never> {
+  const failure = error as { code?: number | string; signal?: string; killed?: boolean; stderr?: unknown } | undefined;
+  const marker = [
+    typeof failure?.code === "number" ? `exit ${failure.code}` : typeof failure?.code === "string" ? failure.code : "",
+    failure?.killed === true ? "timed out" : "",
+    typeof failure?.signal === "string" && failure.signal.length > 0 ? `signal ${failure.signal}` : "",
+  ].filter(Boolean).join(", ");
+  const stderr = typeof failure?.stderr === "string" ? failure.stderr : "";
+  const why = firstMeaningfulLine(stderr) || firstMeaningfulLine(error instanceof Error ? error.message : String(error)) || "the probe printed no error";
+  return { ok: false, detail: `git ${args.join(" ")} in ${repo} could not answer${marker.length > 0 ? ` (${marker})` : ""}: ${why}`.slice(0, 300) };
+}
+
+async function gitProbe(repo: string, args: string[]): Promise<Probe<string>> {
   try {
     const { stdout } = await execFileAsync("git", ["-C", repo, ...args], {
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
     });
-    return stdout;
-  } catch {
-    return null;
+    return { ok: true, value: stdout };
+  } catch (error) {
+    return probeFailure(repo, args, error);
   }
 }
 
-/** The probe's first non-empty line, or null when it failed or printed nothing. */
-async function gitLine(repo: string, args: string[]): Promise<string | null> {
+/** The probe's first non-empty line. An answered probe that printed nothing yields "", which is a
+ *  different fact from `ok: false` and stays in the `ok: true` arm. */
+async function gitLine(repo: string, args: string[]): Promise<Probe<string>> {
   const stdout = await gitProbe(repo, args);
-  const line = stdout?.split("\n")[0]?.trim() ?? "";
-  return line.length > 0 ? line : null;
+  if (!stdout.ok) return stdout;
+  return { ok: true, value: firstMeaningfulLine(stdout.value) };
 }
 
 export type CardGitIdentitySource = "worktree-head" | "branch-tip" | "declared-base";
@@ -76,7 +99,7 @@ export interface CardGitIdentity {
 
 export type CardGitIdentityResult = { ok: true; identity: CardGitIdentity } | { ok: false; detail: string };
 
-async function resolveCommit(repo: string, ref: string): Promise<string | null> {
+async function resolveCommit(repo: string, ref: string): Promise<Probe<string>> {
   return await gitLine(repo, ["rev-parse", "--verify", `${ref}^{commit}`]);
 }
 
@@ -117,21 +140,37 @@ export async function resolveCardGitIdentity(store: TaskStore, task: Task): Prom
   }
 
   const taskId = typeof task.id === "string" ? task.id.trim() : "";
+  /*
+  STAS-301: a rung whose probe could not answer is not a rung that was answered "no such ref" — it is
+  a rung that never got an answer. The ladder may still descend to a rung that does answer, but every
+  unanswered probe is recorded so the `unavailable` at the bottom names the failure instead of
+  reporting a card with a broken git as a card that has no branch and no base.
+  */
+  const unanswered: string[] = [];
+  const answeredCommit = async (repo: string, ref: string): Promise<string> => {
+    const commit = await resolveCommit(repo, ref);
+    if (!commit.ok) {
+      unanswered.push(commit.detail);
+      return "";
+    }
+    return commit.value;
+  };
+
   const worktree = typeof task.worktree === "string" ? task.worktree.trim() : "";
   if (worktree.length > 0 && existsSync(worktree) && (await isReclaimableWorktreeCandidate(worktree, { rootDir: root }))) {
-    const commit = await resolveCommit(worktree, "HEAD");
-    if (commit) return { ok: true, identity: { source: "worktree-head", taskId, repo: worktree, commit, ref: worktree, baseRef: "", rangeBase: null } };
+    const commit = await answeredCommit(worktree, "HEAD");
+    if (commit.length > 0) return { ok: true, identity: { source: "worktree-head", taskId, repo: worktree, commit, ref: worktree, baseRef: "", rangeBase: null } };
   }
 
   const branch = typeof task.branch === "string" ? task.branch.trim() : "";
   if (branch.length > 0) {
-    const commit = await resolveCommit(root, branch);
-    if (commit) return { ok: true, identity: { source: "branch-tip", taskId, repo: root, commit, ref: branch, baseRef: "", rangeBase: null } };
+    const commit = await answeredCommit(root, branch);
+    if (commit.length > 0) return { ok: true, identity: { source: "branch-tip", taskId, repo: root, commit, ref: branch, baseRef: "", rangeBase: null } };
   }
 
   const base = await declaredBaseRef(store, task, root);
-  const baseCommit = await resolveCommit(root, base);
-  if (baseCommit) {
+  const baseCommit = await answeredCommit(root, base);
+  if (baseCommit.length > 0) {
     return { ok: true, identity: { source: "declared-base", taskId, repo: root, commit: baseCommit, ref: base, baseRef: base, rangeBase: baseCommit } };
   }
 
@@ -153,20 +192,22 @@ export async function resolveCardGitIdentity(store: TaskStore, task: Task): Prom
   separately from the members that were searched, so a plan pointing at a sibling this workspace does
   not have reads differently from a base that is simply missing.
   */
-  if (!await isGitDatabase(root)) {
-    const { members, absent } = await workspaceMemberRepositories(root, task);
+  const rootIsRepository = await isGitDatabase(root);
+  if (rootIsRepository.ok && !rootIsRepository.value) {
+    const { members, absent, unresolved } = await workspaceMemberRepositories(root, task);
     for (const member of members) {
       const repo = join(root, member);
-      const commit = await resolveCommit(repo, base);
-      if (commit) {
+      const commit = await answeredCommit(repo, base);
+      if (commit.length > 0) {
         return { ok: true, identity: { source: "declared-base", taskId, repo, commit, ref: base, baseRef: base, rangeBase: commit } };
       }
     }
     const searched = members.length > 0 ? members.join(", ") : "none — the root holds no git repository";
     const namedAbsent = absent.length > 0 ? `; named by this card but absent from the workspace: ${absent.join(", ")}` : "";
+    const unclassified = unresolved.length > 0 ? `; not classified because their probe could not answer: ${unresolved.join(", ")}` : "";
     return {
       ok: false,
-      detail: `This card has no resolvable committed git identity: base ${base} resolved in no repository and the project root ${root} is not a git repository, so it was tried in each workspace member (members tried: ${searched}${namedAbsent})`,
+      detail: `This card has no resolvable committed git identity: base ${base} resolved in no repository and the project root ${root} is not a git repository, so it was tried in each workspace member (members tried: ${searched}${namedAbsent}${unclassified})${unansweredClause(unanswered)}`,
     };
   }
 
@@ -175,12 +216,29 @@ export async function resolveCardGitIdentity(store: TaskStore, task: Task): Prom
     branch.length > 0 && `branch ${branch}`,
     `base ${base}`,
   ].filter(Boolean).join(", ");
-  return { ok: false, detail: `This card has no resolvable committed git identity (tried ${tried})` };
+  return { ok: false, detail: `This card has no resolvable committed git identity (tried ${tried})${unansweredClause(unanswered)}` };
 }
 
-/** True when `dir` is usable as a git database — a repository or work tree at that exact path. */
-async function isGitDatabase(dir: string): Promise<boolean> {
-  return (await gitLine(dir, ["rev-parse", "--git-dir"])) !== null;
+/** The failures that stop being invisible once the ladder has nothing to resolve: an unanswered probe
+ *  is reported as a probe failure, never dressed up as an absent ref or an absent repository. */
+function unansweredClause(failures: string[]): string {
+  return failures.length === 0 ? "" : `; probes that could not answer: ${[...new Set(failures)].join(" | ")}`;
+}
+
+/*
+STAS-301: "there is no repository at this path" is something git answers with a NON-ZERO exit and a
+specific message, so this classification probe alone reads the message to tell an answered "no" apart
+from a probe that never answered. Every ref and content probe keeps treating a non-zero exit as no
+answer, because for those a non-zero exit is never a fact about the repository.
+*/
+const ANSWERED_NO_REPOSITORY = /not a git repository/i;
+
+/** Whether `dir` is usable as a git database — a repository or work tree at that exact path. A probe
+ *  that could not answer is `ok: false`, which is NOT evidence that `dir` is not a repository. */
+async function isGitDatabase(dir: string): Promise<Probe<boolean>> {
+  const probe = await gitProbe(dir, ["rev-parse", "--git-dir"]);
+  if (probe.ok) return { ok: true, value: probe.value.length > 0 };
+  return ANSWERED_NO_REPOSITORY.test(probe.detail) ? { ok: true, value: false } : probe;
 }
 
 /*
@@ -190,7 +248,7 @@ container artifact never masquerade as a member. A member the card names but tha
 reported rather than silently dropped from the search — an unregistered or since-removed sibling is
 not something this card may read, and it must not look like a base that merely went missing.
 */
-async function workspaceMemberRepositories(root: string, task: Task): Promise<{ members: string[]; absent: string[] }> {
+async function workspaceMemberRepositories(root: string, task: Task): Promise<{ members: string[]; absent: string[]; unresolved: string[] }> {
   let children: string[];
   try {
     children = readdirSync(root, { withFileTypes: true })
@@ -198,16 +256,19 @@ async function workspaceMemberRepositories(root: string, task: Task): Promise<{ 
       .map((entry) => entry.name)
       .sort();
   } catch {
-    return { members: [], absent: [] };
+    return { members: [], absent: [], unresolved: [] };
   }
   const named = [...new Set(Object.keys(task.workspaceWorktrees ?? {}).map((member) => member.trim()).filter(Boolean))];
   const ordered = [...named.filter((member) => children.includes(member)), ...children];
   const members: string[] = [];
+  const unresolved: string[] = [];
   for (const child of ordered) {
-    if (members.includes(child)) continue;
-    if (await isGitDatabase(join(root, child))) members.push(child);
+    if (members.includes(child) || unresolved.includes(child)) continue;
+    const isRepository = await isGitDatabase(join(root, child));
+    if (!isRepository.ok) unresolved.push(child);
+    else if (isRepository.value) members.push(child);
   }
-  return { members, absent: named.filter((member) => !members.includes(member)) };
+  return { members, absent: named.filter((member) => !members.includes(member) && !unresolved.includes(member)), unresolved };
 }
 
 /*
@@ -220,10 +281,20 @@ export async function attachCardCommitRange(store: TaskStore, task: Task, identi
   if (identity.source === "declared-base") return identity;
   const baseRef = await declaredBaseRef(store, task, identity.repo);
   const rangeBase = await gitLine(identity.repo, ["merge-base", baseRef, identity.commit]);
-  return { ...identity, baseRef, rangeBase };
+  /*
+  STAS-301 adjudicated, deliberately unchanged: a missing merge-base — git's answered "these two commits
+  have no common ancestor to range" AND a probe that could not answer alike — leaves the card's unique
+  commit set unprovable, so attribution falls through to the landed-card form and, failing that, to the
+  louder `stale` route. Fail-closed toward replanning, never toward release.
+  */
+  return { ...identity, baseRef, rangeBase: rangeBase.ok && rangeBase.value.length > 0 ? rangeBase.value : null };
 }
 
 export type PremiseVerdict = { satisfied: true } | { satisfied: false; reason: string };
+
+/** A premise is ANSWERED satisfied, ANSWERED violated, or never evaluated because git could not say
+ *  what the tree held. The third arm is `unavailable` at the release door, never `satisfied`. */
+export type PremiseEvaluation = Probe<PremiseVerdict>;
 
 /*
 FNXC:PlanPremises 2026-09-27-02:40:
@@ -232,20 +303,29 @@ The committed tree answers a premise through `git ls-tree` (existence and object
 historical "path exists but is not a regular file" verdict, because every premise kind describes a
 regular file.
 */
-async function evaluateLiteral(identity: CardGitIdentity, premise: Extract<PlanPremise, { literal: string }>, entry: string | null): Promise<PremiseVerdict> {
-  // A literal stated to be absent is absent when the file is absent — the historical contract, which a
-  // committed tree answers without opening anything.
-  if (!entry) {
-    return premise.kind === "text-absent" ? { satisfied: true } : { satisfied: false, reason: "path does not exist at the evaluated commit" };
+async function evaluateLiteral(identity: CardGitIdentity, premise: Extract<PlanPremise, { literal: string }>, entry: Probe<string>): Promise<PremiseEvaluation> {
+  if (!entry.ok) return entry;
+  /*
+  STAS-301: an absence premise is satisfied when GIT ANSWERED that the path is not there. The arm
+  below is reached only from an answered probe — a probe that failed returned two blocks up.
+  */
+  if (entry.value.length === 0) {
+    return premise.kind === "text-absent" ? { ok: true, value: { satisfied: true } } : { ok: true, value: { satisfied: false, reason: "path does not exist at the evaluated commit" } };
   }
-  const [mode] = entry.split(" ");
-  if (!mode || !REGULAR_FILE_MODES.has(mode)) return { satisfied: false, reason: "path exists but is not a regular file" };
+  const [mode] = entry.value.split(" ");
+  if (!mode || !REGULAR_FILE_MODES.has(mode)) return { ok: true, value: { satisfied: false, reason: "path exists but is not a regular file" } };
   const content = await gitProbe(identity.repo, ["show", `${identity.commit}:${premise.path}`]);
-  if (content === null) return { satisfied: false, reason: "file content is unreadable at the evaluated commit" };
+  // An unreadable file says nothing about what it contains. It may not be read as "the literal is not
+  // in there", which is what turned a broken read into a falsified plan and a card sent to replan.
+  if (!content.ok) return content;
   if (premise.kind === "text-present") {
-    return content.includes(premise.literal) ? { satisfied: true } : { satisfied: false, reason: "literal not found in file" };
+    return content.value.includes(premise.literal)
+      ? { ok: true, value: { satisfied: true } }
+      : { ok: true, value: { satisfied: false, reason: "literal not found in file" } };
   }
-  return content.includes(premise.literal) ? { satisfied: false, reason: "literal found in file" } : { satisfied: true };
+  return content.value.includes(premise.literal)
+    ? { ok: true, value: { satisfied: false, reason: "literal found in file" } }
+    : { ok: true, value: { satisfied: true } };
 }
 
 /*
@@ -253,18 +333,22 @@ FNXC:PlanPremises 2026-09-27-02:40:
 One `ls-tree -l` call names the entry AT the path with its mode: a regular file, a symlink (120000), or
 a directory (040000) all answer with exactly one line, and a path that a symlink or blob would have to
 lead through answers with nothing — the tree is descended only by git, never by the filesystem.
+STAS-301: "answers with nothing" and "the call never answered" are different outcomes and travel in
+different arms of `Probe`.
 */
-export async function evaluatePremiseAtCommit(identity: CardGitIdentity, premise: PlanPremise): Promise<PremiseVerdict> {
+export async function evaluatePremiseAtCommit(identity: CardGitIdentity, premise: PlanPremise): Promise<PremiseEvaluation> {
   const entry = await gitLine(identity.repo, ["ls-tree", "-l", identity.commit, "--", premise.path]);
   if (premise.kind === "text-present" || premise.kind === "text-absent") return evaluateLiteral(identity, premise, entry);
+  if (!entry.ok) return entry;
+  const absent = entry.value.length === 0;
   if (premise.kind === "file-absent") {
-    return entry ? { satisfied: false, reason: "path exists at the evaluated commit" } : { satisfied: true };
+    return absent ? { ok: true, value: { satisfied: true } } : { ok: true, value: { satisfied: false, reason: "path exists at the evaluated commit" } };
   }
-  if (!entry) return { satisfied: false, reason: "path does not exist at the evaluated commit" };
-  const [mode] = entry.split(" ");
+  if (absent) return { ok: true, value: { satisfied: false, reason: "path does not exist at the evaluated commit" } };
+  const [mode] = entry.value.split(" ");
   return mode && REGULAR_FILE_MODES.has(mode)
-    ? { satisfied: true }
-    : { satisfied: false, reason: "path exists but is not a regular file" };
+    ? { ok: true, value: { satisfied: true } }
+    : { ok: true, value: { satisfied: false, reason: "path exists but is not a regular file" } };
 }
 
 /*
@@ -283,8 +367,11 @@ async function landedCardDelivery(identity: CardGitIdentity, path: string): Prom
   const cardTaskId = identity.taskId.toUpperCase();
   if (cardTaskId.length === 0) return null;
   const record = await gitProbe(identity.repo, ["log", "-1", "--format=%h %s%x1f%b", identity.commit, "--", path]);
-  if (!record) return null;
-  const [header = "", body = ""] = record.split("\u001f");
+  // STAS-301 adjudicated, deliberately unchanged: an unanswered attribution probe answers "this card's
+  // delivery is not proven to have touched the path", which sends the verdict to the louder `stale`
+  // route — a replan — and never toward a release. Attribution semantics are STAS-282's deliverable.
+  if (!record.ok || record.value.trim().length === 0) return null;
+  const [header = "", body = ""] = record.value.split("\u001f");
   const subject = header.trim().replace(/^[0-9a-f]+\s+/, "");
   if (extractAttributedTaskId(subject, body) !== cardTaskId) return null;
   return header.trim();
@@ -293,16 +380,23 @@ async function landedCardDelivery(identity: CardGitIdentity, path: string): Prom
 /** The commit of THIS card's delivery that last changed `path`, formatted `%h %s`, or null when the
  *  card's delivery never touched that path. Two git-proven forms: a commit in the card's unique
  *  `base..tip` set, or — once that set is empty because the delivery landed — a commit in the
- *  evaluated history that names this exact card through the engine's attribution convention. */
+ *  evaluated history that names this exact card through the engine's attribution convention. A probe
+ *  that could not answer maps to null, which is the pre-existing fail-closed direction toward `stale`
+ *  (see `landedCardDelivery`); it is never read as an absence premise. */
 export async function invalidatedByCardDelivery(identity: CardGitIdentity, path: string): Promise<string | null> {
-  const ownRange = identity.rangeBase
-    ? await gitLine(identity.repo, ["log", "-1", "--format=%h %s", `${identity.rangeBase}..${identity.commit}`, "--", path])
-    : null;
-  return ownRange ?? await landedCardDelivery(identity, path);
+  if (identity.rangeBase) {
+    const ownRange = await gitLine(identity.repo, ["log", "-1", "--format=%h %s", `${identity.rangeBase}..${identity.commit}`, "--", path]);
+    if (ownRange.ok && ownRange.value.length > 0) return ownRange.value;
+  }
+  return await landedCardDelivery(identity, path);
 }
 
 /** Commit that last changed `path` anywhere in the evaluated history — what an ordinary stale verdict
- *  names when the card's own delivery is not responsible. */
-export async function lastCommitTouching(identity: CardGitIdentity, path: string): Promise<string | null> {
-  return await gitLine(identity.repo, ["log", "-1", "--format=%h %s", identity.commit, "--", path]);
+ *  names when the card's own delivery is not responsible. `null` is git's answered "no commit in this
+ *  history touches this path"; `ok: false` is a probe that never answered and must be reported as such
+ *  rather than as a history that does not contain the path. */
+export async function lastCommitTouching(identity: CardGitIdentity, path: string): Promise<Probe<string | null>> {
+  const commit = await gitLine(identity.repo, ["log", "-1", "--format=%h %s", identity.commit, "--", path]);
+  if (!commit.ok) return commit;
+  return { ok: true, value: commit.value.length > 0 ? commit.value : null };
 }

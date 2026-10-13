@@ -1,290 +1,363 @@
-import { execFileSync, execSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { describe, it, expect, afterEach } from "vitest";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { admitTaskToWip } from "../execution/hold-release.js";
-import { checkPlanPremises } from "../execution/plan-premise-check.js";
 import { TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION } from "../execution/plan-premise-ladder.js";
 
 /*
-STAS-301: a probe that FAILED and a probe that ANSWERED "nothing here" used to be the same value —
-gitProbe collapsed every throw (non-zero exit, timeout, maxBuffer overflow) into the same `null` a
-successful empty output produces. For the absence premise kinds that inversion is silent and
-directional: `entry === null` reads as satisfied, so a card whose plan was false released into a
-processing column, and the only evidence left on the card claimed the repository had refuted the plan.
-These tests attack the inversion where a real release decision hangs on it, and each one ships a
-control — the same premise over the same repository with a working probe — so a passing run cannot be
-read as "the fixture is simply broken".
+STAS-301 T1..T5: a probe that FAILED is not a probe that answered "nothing here".
+The defect (plan-premise-tree.ts `gitProbe`/`gitLine`, shipped by STAS-282): every git failure — a locked
+index, the 20 s timeout, an over-buffered read, a failed spawn — came back as the same `null` as a
+successful-but-empty `ls-tree`, so `text-absent` and `file-absent` premises resolved `satisfied: true`,
+the release door opened, and an executor was dispatched to re-implement work that was already delivered.
 
-Two independent failure mechanisms are exercised, both deterministic:
-  - a PATH shim that fails exactly one git subcommand against the evaluated repository (the in-repo
-    idiom from merger-commit-association-stats.test.ts), and
-  - a content read that overruns the probe's 8 MB maxBuffer, which raises ENOBUFS with no shim at all.
+Each test installs a `git` shim that fails ONE probe inside one repository and delegates every other
+invocation — the whole identity ladder, `merge-base`, the fixture's own git — to the real binary resolved
+before PATH was modified. Every test is paired with a control on the identical fixture without the shim,
+so the only variable is the probe's answer: this suite fails if the fix launders failure into absence,
+AND if it launders genuine absence into a hold.
+
+The premise under test is that premises evaluate against the CARD's own repository, so no engine-repo
+path appears in any fixture: a premise naming one would be the self-refuting-premise class STAS-264
+exists to report.
 */
 
 const roots: string[] = [];
-const shims: Array<{ restore(): void }> = [];
-const FLAG_ON = "export const alphaUpdatesEnabled = true;\n";
-const FLAG_OFF = "export const footer = true;\n";
-const ALPHA_PRESENT = '{"kind":"text-present","path":"src/App.tsx","literal":"alphaUpdatesEnabled"}';
-const ALPHA_ABSENT = '{"kind":"text-absent","path":"src/App.tsx","literal":"alphaUpdatesEnabled"}';
-const FILE_ABSENT = '{"kind":"file-absent","path":"src/App.tsx"}';
+const envKeys = ["PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"];
+const savedEnv = new Map<string, string | undefined>(envKeys.map((key) => [key, process.env[key]]));
 
 afterEach(() => {
-  while (shims.length > 0) shims.pop()!.restore();
-  while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
+  for (const [key, value] of savedEnv.entries()) {
+    // An originally-absent key must be deleted, not assigned — assigning undefined yields the string "undefined".
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  while (roots.length > 0) {
+    const root = roots.pop();
+    if (root) rmSync(root, { recursive: true, force: true });
+  }
 });
 
-/*
-The shim intercepts only engine probes: they are the sole git invocations addressed with `-C <repo>`,
-while this file's own helpers and the integration-branch resolver address their repository with `cwd`.
-Every other call execs the real binary, so a shimmed run and an unshimmed run differ in one probe.
-*/
-function failOneProbe(repo: string, subcommand: string): { calls(): string[] } {
-  const bin = mkdtempSync(join(tmpdir(), "stas301-git-shim-"));
-  roots.push(bin);
-  const logPath = join(bin, "probe-calls.log");
-  const realGit = execSync("command -v git", { encoding: "utf-8" }).trim();
-  writeFileSync(join(bin, "git"), [
-    "#!/bin/sh",
-    `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
-    `if [ "$1" = "-C" ] && [ "$2" = ${JSON.stringify(repo)} ] && [ "$3" = "${subcommand}" ]; then`,
-    "  echo 'fatal: shim: injected probe failure' >&2",
-    "  exit 128",
-    "fi",
-    `exec ${realGit} "$@"`,
-    "",
-  ].join("\n"));
-  chmodSync(join(bin, "git"), 0o755);
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${bin}:${originalPath ?? ""}`;
-  shims.push({
-    restore: () => {
-      if (originalPath === undefined) delete process.env.PATH;
-      else process.env.PATH = originalPath;
-    },
-  });
-  return {
-    calls: () => {
-      try {
-        return readFileSync(logPath, "utf-8").split("\n").filter(Boolean);
-      } catch {
-        return [];
-      }
-    },
-  };
-}
-
 const ir: WorkflowIr = {
-  version: "v2", id: "test", name: "test",
+  version: "v2", id: "probe-door", name: "Probe Door",
   columns: [
-    { id: "todo", name: "Planning", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "todo", name: "To Do", traits: [{ trait: "hold", config: { release: "capacity" } }] },
     { id: "doing", name: "Doing", traits: [{ trait: "wip" }] },
   ],
   nodes: [], edges: [],
+};
+
+const git = (repo: string, args: string[]): void => {
+  execFileSync("git", args, { cwd: repo, stdio: "ignore" });
 };
 
 /** A real repository, so a premise's truth is a committed git object rather than a mock's belief. */
 function makeRepo(): string {
   const root = mkdtempSync(join(tmpdir(), "stas301-probe-"));
   roots.push(root);
-  mkdirSync(join(root, "src"), { recursive: true });
-  writeFileSync(join(root, "src/App.tsx"), FLAG_ON);
-  const git = (args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
-  git(["init", "-q", "-b", "main", "."]);
-  git(["config", "user.email", "test@example.com"]);
-  git(["config", "user.name", "Test User"]);
-  git(["config", "commit.gpgsign", "false"]);
-  git(["add", "-A"]);
-  git(["commit", "-qm", "chore: land the flag on main"]);
+  // The probe itself must never be what makes a probe fail: this machine's global/system git config could
+  // carry aliases, hooks or fsmonitor helpers. Pin it to the empty set.
+  const gitconfig = join(root, "empty.gitconfig");
+  writeFileSync(gitconfig, "");
+  process.env.GIT_CONFIG_GLOBAL = gitconfig;
+  process.env.GIT_CONFIG_SYSTEM = gitconfig;
+  git(root, ["init", "-q", "-b", "main", "."]);
+  git(root, ["config", "user.email", "stas301@example.com"]);
+  git(root, ["config", "user.name", "STAS-301 Fixture"]);
+  git(root, ["config", "commit.gpgsign", "false"]);
   return root;
 }
 
-function commitOnIntegration(root: string, path: string, content: string, message: string): void {
-  writeFileSync(join(root, path), content);
-  execFileSync("git", ["add", "-A"], { cwd: root, stdio: "ignore" });
-  execFileSync("git", ["commit", "-qm", message], { cwd: root, stdio: "ignore" });
+/** A premise's truth is the COMMITTED content, so the fixture stages and commits what it just wrote. */
+function commitTree(root: string, message = "chore: land the fixture file"): void {
+  git(root, ["add", "-A"]);
+  git(root, ["commit", "-qm", message]);
 }
 
-function card(over: Partial<Task> & { prompt: string }): Task {
+/** A card whose authoritative prompt carries EXACTLY these premises, in this order. */
+const premisePrompt = (premises: string[]): string =>
+  `# Task\n\n## Plan Premises\n\n${premises.map((one) => `- ${one}`).join("\n")}\n\n## Steps\n\n### Step 0: Preflight\n`;
+
+function makeCard(prompt: string, sourceMetadata: Record<string, unknown> = {}, fields: Record<string, unknown> = {}): Task {
   return {
-    id: "STAS-301", title: "planned", description: "planned", column: "todo", status: null,
-    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    id: "STAS-301", title: "premise probe fixture", description: "planned", column: "todo", status: null,
     dependencies: [], steps: [], currentStep: 0, log: [],
-    ...over,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    prompt, sourceMetadata: { ...sourceMetadata }, baseBranch: "main",
+    ...fields,
   } as Task;
 }
 
-/** The live release door, so the verdict is measured by the move it authorises, not by its own wording. */
-function openDoor(task: Task, root: string) {
-  const moveTaskIf = vi.fn(async (_id: string, target: string, predicate: (live: Task) => boolean | Promise<boolean>) => {
+/** The store seams the premise gate and the release door read, with the real store's key-preserving
+ *  sourceMetadataPatch merge and its once-seam dedupe, so an episode is observable if one were written. */
+function makeStore(root: string, task: Task): TaskStore {
+  const entries = () => task.log as unknown[] as Array<{ action?: string; dedupeKey?: string; timestamp?: string }>;
+  const moveTaskIf = async (_id: string, target: string, predicate: (live: Task) => boolean | Promise<boolean>, options?: { allocateWorktree?: (names: Set<string>) => string | null }) => {
     if (!(await predicate(task))) return { task, moved: false };
+    options?.allocateWorktree?.(new Set());
     task.column = target;
     return { task, moved: true };
-  });
-  const store = {
+  };
+  return {
     getRootDir: () => root,
-    getSettings: vi.fn(async () => ({ maxConcurrent: 3 })),
-    updateTaskAtomic: vi.fn(async (_id: string, mutate: (live: Task) => unknown) => {
-      const patch = await mutate(task) as Record<string, unknown> | undefined;
+    getSettings: async () => ({ maxConcurrent: 3 }),
+    updateTaskAtomic: async (_id: string, mutate: (live: Task) => unknown) => {
+      const patch = await mutate(task);
       if (patch) {
-        const { sourceMetadataPatch, ...rest } = patch;
-        if (sourceMetadataPatch) task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...(sourceMetadataPatch as object) };
+        const { sourceMetadataPatch, ...rest } = patch as Record<string, unknown> & { sourceMetadataPatch?: Record<string, unknown> };
+        if (sourceMetadataPatch) task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...sourceMetadataPatch };
         Object.assign(task, rest);
       }
       return task;
-    }),
-    logEntry: vi.fn(async (_id: string, message: string) => { task.log.push({ timestamp: new Date().toISOString(), message } as never); }),
-    logEntryOnce: vi.fn(async (_id: string, input: { action: string; dedupeKey: string; windowMs: number }) => {
+    },
+    logEntry: async (_id: string, message: string) => {
+      entries().push({ timestamp: new Date().toISOString(), message } as never);
+    },
+    logEntryOnce: async (_id: string, input: { action: string; outcome?: string; dedupeKey: string; windowMs: number }) => {
       const cutoff = Date.now() - input.windowMs;
-      const dup = task.log.some((entry: { dedupeKey?: string; timestamp?: string }) =>
-        entry.dedupeKey === input.dedupeKey && Date.parse(entry.timestamp ?? "") >= cutoff);
-      if (dup) return;
-      task.log.push({ timestamp: new Date().toISOString(), action: input.action, dedupeKey: input.dedupeKey } as never);
-    }),
+      if (entries().some((entry) => entry.dedupeKey === input.dedupeKey && Date.parse(entry.timestamp ?? "") >= cutoff)) return;
+      entries().push({ timestamp: new Date().toISOString(), action: input.action, outcome: input.outcome, dedupeKey: input.dedupeKey } as never);
+    },
     moveTaskIf,
-    getTask: async () => task,
-    getTaskDocument: async () => null,
-    upsertTaskDocument: async () => {},
   } as unknown as TaskStore;
-  const reserve = vi.fn(() => ({ release: vi.fn() }));
-  const allocate = vi.fn(() => join(root, ".wt"));
-  const deps = { now: () => Date.now(), reserveSlot: reserve, allocateWorktree: allocate };
-  return { store, deps, reserve, allocate };
 }
 
-const release = (door: ReturnType<typeof openDoor>, task: Task) =>
-  admitTaskToWip(door.store, door.deps, task, "doing", ir, { expectedColumn: "todo" });
-
 const logActions = (task: Task): string[] =>
-  (task.log as Array<Record<string, unknown>>).filter((entry) => typeof entry.action === "string").map((entry) => entry.action as string);
+  (task.log as unknown[] as Array<{ action?: string }>).map((entry) => entry.action ?? "");
 
-describe("a plan premise probe that cannot answer", () => {
-  it("does not read a failed existence probe as an absent literal, and holds the card it cannot clear", async () => {
+/** Run the release door's premise check over `premises` as measured against the card's own repository. */
+async function checkPremises(root: string, premises: string[], fields: Record<string, unknown> = {}) {
+  const task = makeCard(premisePrompt(premises), {}, fields);
+  return await (await import("../execution/plan-premise-check.js")).checkPlanPremises(makeStore(root, task), task);
+}
+
+/** The premise check plus the door it gates: a verdict decides nothing on its own, the release does. */
+async function doorRelease(root: string, premises: string[], sourceMetadata: Record<string, unknown> = {}) {
+  const task = makeCard(premisePrompt(premises), sourceMetadata);
+  const store = makeStore(root, task);
+  const reserved: string[] = [];
+  const deps = {
+    now: Date.now,
+    reserveSlot: () => { reserved.push(task.id); return { release: () => undefined }; },
+    allocateWorktree: () => join(root, "allocated-worktree"),
+  };
+  const result = await (await import("../execution/hold-release.js")).admitTaskToWip(store, deps, task, "doing", ir);
+  return { result, reserved, task };
+}
+
+/*
+The shim: fails exactly the engine's own probe (`git -C <repo> <subcommand> …`), optionally narrowed to one
+path, with the production index.lock contention message from the defect report, and logs every call it
+saw — so a test can prove the probe it claims to have broken really was reached. Engine probes are the
+only git invocations addressed with `-C <repo>`; this file's own helpers address their repository by cwd.
+*/
+function failOneProbe(repo: string, subcommand: string, pathNeedle?: string): void {
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const shimDir = mkdtempSync(join(tmpdir(), "stas301-shim-"));
+  roots.push(shimDir);
+  const log = join(shimDir, "calls.log");
+  const record = (verdict: string) => `  printf '%s\\n' "${subcommand} $* ${verdict}" >> "${log}"`;
+  const failWith = [record("FAILED"), `  printf 'fatal: Unable to create ${repo}/.git/index.lock: File exists.\\n' >&2`, "  exit 128"];
+  const guarded = pathNeedle
+    ? ["  case \"$*\" in", `    *${pathNeedle}*)`, ...failWith.map((line) => `  ${line}`), "      ;;", "  esac"]
+    : failWith;
+  writeFileSync(join(shimDir, "git"), [
+    "#!/bin/sh",
+    `if [ "$1" = "-C" ] && [ "$2" = "${repo}" ] && [ "$3" = "${subcommand}" ]; then`,
+    ...guarded,
+    "fi",
+    record("ok"),
+    `exec ${realGit} "$@"`,
+    "",
+  ].join("\n"));
+  chmodSync(join(shimDir, "git"), 0o755);
+  process.env.PATH = `${shimDir}${process.env.PATH ? `:${process.env.PATH}` : ""}`;
+}
+
+/** Every engine probe the shim saw, with the verdict it gave. */
+function probeCalls(): string[] {
+  const shimDir = (process.env.PATH ?? "").split(":")[0];
+  const log = join(shimDir, "calls.log");
+  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
+}
+
+const sawFailed = (subcommand: string): boolean => probeCalls().some((call) => call.startsWith(`${subcommand} `) && call.endsWith("FAILED"));
+
+const LOCK_MESSAGE = "index.lock";
+const FAILED_PROBE = "could not answer";
+const GHOST_TRACKED = "ghost.ts";
+const FILE_ABSENT_OF_GHOST = `{"kind":"file-absent","path":"${GHOST_TRACKED}"}`;
+const TEXT_ABSENT_FLAG = '{"kind":"text-absent","path":"present.ts","literal":"FLAG_ON"}';
+
+describe("STAS-301 a plan-premise probe that failed is never a verified absence", () => {
+  /*
+  T1. The literal the plan promises to remove is still committed on main and the `ls-tree` probe fails.
+  The plan is false — yet the code today resolves satisfied: an absence premise read a transport error as
+  proof that the literal is gone.
+  */
+  it("T1 text-absent premise with a failing tree-listing probe holds the card and names the probe", 30_000, async () => {
     const root = makeRepo();
-    const premise = `## Plan Premises\n\n- ${ALPHA_ABSENT}\n\n## Steps\n`;
+    writeFileSync(join(root, "present.ts"), "export const FLAG_ON = true;\n");
+    commitTree(root);
 
-    // Control: with a working probe this premise is ANSWERED — the literal is in the file — so the plan
-    // is refuted and the card is held. The card below must not fare better for git being unreadable.
-    const control = card({ prompt: premise });
-    const controlDoor = openDoor(control, root);
-    expect(await release(controlDoor, control)).toMatchObject({ released: false, rejection: "plan-premise-stale" });
-    expect(control.column).toBe("todo");
+    failOneProbe(root, "ls-tree");
+    const check = await checkPremises(root, [TEXT_ABSENT_FLAG]);
+    expect(check).toMatchObject({ outcome: "unavailable", premiseViolations: [] });
+    expect(check.detail).toContain("ls-tree");
+    expect(check.detail).toContain(LOCK_MESSAGE);
+    expect(check.detail).toContain(FAILED_PROBE);
+    expect(check.detail).toContain('"text-absent"');
+    expect(check.detail).toContain("Evaluated at");
+    expect(sawFailed("ls-tree")).toBe(true);
 
-    const probe = failOneProbe(root, "ls-tree");
-    const held = card({ prompt: premise });
-    const heldDoor = openDoor(held, root);
-    expect(await checkPlanPremises(heldDoor.store, held)).toMatchObject({ outcome: "unavailable" });
-    // Proof the shim was the difference: the probe it was built to break really was attempted.
-    expect(probe.calls().some((call) => call.includes("ls-tree"))).toBe(true);
+    // T1b: the door holds the card, burns no escalation episode, and logs no premise-rejection replan.
+    const gate = await doorRelease(root, [TEXT_ABSENT_FLAG]);
+    expect(gate.result).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
+    expect(gate.reserved).toEqual([]);
+    expect(logActions(gate.task)).not.toContain(TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION);
+    expect(gate.task.column).toBe("todo");
+    expect((gate.task.sourceMetadata as Record<string, unknown>).planPremiseRejection).toBeUndefined();
+  });
 
-    expect(await release(heldDoor, held)).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
-    expect(held.column).toBe("todo");
-    // An unanswered probe is not a refusal either: no episode, no ladder refusal, no escalation record.
-    expect(held.sourceMetadata?.planPremiseRejection).toBeUndefined();
-    expect(logActions(held)).not.toContain(TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION);
-    expect(heldDoor.reserve).not.toHaveBeenCalled();
-    expect(heldDoor.allocate).not.toHaveBeenCalled();
-  }, 30_000);
-
-  it("does not read a failed existence probe as an absent file, and holds the card it cannot clear", async () => {
+  /*
+  T2. The premise kind the defect report names first, on its own fixture: `file-absent` while the file is
+  tracked on main. The inversion lives in two evaluators, so each kind is asserted on its own.
+  */
+  it("T2 file-absent premise with a failing tree-listing probe holds the card and names the probe", 30_000, async () => {
     const root = makeRepo();
-    const premise = `## Plan Premises\n\n- ${FILE_ABSENT}\n\n## Steps\n`;
+    writeFileSync(join(root, GHOST_TRACKED), "export const module = 1;\n");
+    commitTree(root);
 
-    const control = card({ prompt: premise });
-    const controlDoor = openDoor(control, root);
-    expect(await release(controlDoor, control)).toMatchObject({ released: false, rejection: "plan-premise-stale" });
+    failOneProbe(root, "ls-tree");
+    const gate = await doorRelease(root, [FILE_ABSENT_OF_GHOST]);
+    expect(gate.result).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
+    expect(gate.reserved).toEqual([]);
+    expect(logActions(gate.task)).not.toContain(TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION);
+    expect(gate.task.column).toBe("todo");
+    expect((gate.task.sourceMetadata as Record<string, unknown>).planPremiseRejection).toBeUndefined();
+    expect(sawFailed("ls-tree")).toBe(true);
+  });
 
-    const probe = failOneProbe(root, "ls-tree");
-    const held = card({ prompt: premise });
-    const heldDoor = openDoor(held, root);
-    const verdict = await checkPlanPremises(heldDoor.store, held);
-    expect(probe.calls().some((call) => call.includes("ls-tree"))).toBe(true);
-    expect(verdict).toMatchObject({ outcome: "unavailable" });
-    // The falsified-plan payload must not go on asserting a violation git never established.
-    expect(JSON.stringify(verdict)).not.toContain("path exists at the evaluated commit");
-
-    expect(await release(heldDoor, held)).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
-    expect(held.sourceMetadata?.planPremiseRejection).toBeUndefined();
-    expect(logActions(held)).not.toContain(TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION);
-  }, 30_000);
-
-  it("treats an unreadable file content as an unavailable probe, never as a falsified plan", async () => {
+  /*
+  T3. A regular file whose CONTENT read fails: an unreadable file says nothing about what it contains.
+  Today's code answers "file content is unreadable at the evaluated commit" — a violated premise — and
+  routes the card to replan. The same transport error reads as satisfied for text-absent and as falsified
+  here; both directions are the same defect, and neither is a fact about the file.
+  */
+  it("T3 a failing content read is unavailable for both literal kinds, not a falsified plan", 30_000, async () => {
     const root = makeRepo();
-    const probe = failOneProbe(root, "show");
+    writeFileSync(join(root, "present.ts"), "export const FLAG_ON = true;\n");
+    commitTree(root);
 
-    // Both content-reading kinds are covered: an unreadable file may neither confirm a literal nor
-    // deny one. Today it denies, which is the "card told its plan is false on an unreadable file" bug.
-    const present = card({ prompt: `## Plan Premises\n\n- ${ALPHA_PRESENT}\n\n## Steps\n` });
-    const presentDoor = openDoor(present, root);
-    expect(await checkPlanPremises(presentDoor.store, present)).toMatchObject({ outcome: "unavailable" });
-    expect(probe.calls().some((call) => call.includes("show"))).toBe(true);
+    failOneProbe(root, "show");
+    const check = await checkPremises(root, [TEXT_ABSENT_FLAG, '{"kind":"text-present","path":"present.ts","literal":"NEVER_COMMITTED"}']);
+    expect(check).toMatchObject({ outcome: "unavailable", premiseViolations: [] });
+    expect(check.detail).toContain("show");
+    expect(check.detail).toContain(LOCK_MESSAGE);
+    expect(sawFailed("show")).toBe(true);
+  });
 
-    const absent = card({ prompt: `## Plan Premises\n\n- ${ALPHA_ABSENT}\n\n## Steps\n` });
-    const absentDoor = openDoor(absent, root);
-    expect(await checkPlanPremises(absentDoor.store, absent)).toMatchObject({ outcome: "unavailable" });
-
-    expect(await release(presentDoor, present)).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
-    expect(present.sourceMetadata?.planPremiseRejection).toBeUndefined();
-    expect(logActions(present)).not.toContain(TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION);
-  }, 30_000);
-
-  it("treats a content read that overruns the probe buffer as unavailable, with no shim involved", async () => {
+  /*
+  T3b. The second deterministic failure mechanism, with NO shim at all: a committed file larger than
+  gitProbe's 8 MB maxBuffer overruns execFile (ENOBUFS) — one of the production triggers named in the
+  defect report. A whole-file read that cannot fit is not evidence that a literal is absent.
+  */
+  it("T3b an over-buffer content read fails closed the same way, with no shim at all", 30_000, async () => {
     const root = makeRepo();
-    // Past the probe's 8 MB maxBuffer, `git show` fails with ENOBUFS on its own — the ceiling is a real
-    // failure mode, and it must not be read as "the literal is not in this file".
-    commitOnIntegration(root, "src/Huge.tsx", `const payload = "${"x".repeat(9 * 1024 * 1024)}";\n`, "chore: commit an over-buffer file");
-    const task = card({ prompt: `## Plan Premises\n\n- {"kind":"text-present","path":"src/Huge.tsx","literal":"const payload"}\n\n## Steps\n` });
-    const opened = openDoor(task, root);
-    expect(await checkPlanPremises(opened.store, task)).toMatchObject({ outcome: "unavailable" });
-    expect(await release(opened, task)).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
-    expect(task.sourceMetadata?.planPremiseRejection).toBeUndefined();
-  }, 30_000);
+    writeFileSync(join(root, "big.txt"), Buffer.alloc(9 * 1024 * 1024, "x"));
+    commitTree(root);
 
-  it("does not attribute a falsified premise to the card's own delivery when the attribution probe fails", async () => {
+    const check = await checkPremises(root, ['{"kind":"text-absent","path":"big.txt","literal":"zzz"}']);
+    expect(check).toMatchObject({ outcome: "unavailable", premiseViolations: [] });
+    expect(check.detail).toContain("show");
+    expect(check.detail).toContain(FAILED_PROBE);
+  });
+
+  /*
+  T4 control (AC4). The identical fixture shape with nothing intercepting the probe: a literal the
+  committed file never carried and a path it never tracked are ANSWERED absent, and must still satisfy
+  and release exactly as fast as they do today.
+  */
+  it("T4 control a successful empty answer still satisfies the absence kinds and releases the card", 30_000, async () => {
     const root = makeRepo();
-    const git = (args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
-    git(["checkout", "-q", "-b", "fusion/stas-301"]);
-    commitOnIntegration(root, "src/App.tsx", FLAG_OFF, "feat: retire the alpha flag\n\nFusion-Task-Id: STAS-301");
-    git(["checkout", "-q", "main"]);
+    writeFileSync(join(root, "present.ts"), "export const FLAG_ON = true;\n");
+    commitTree(root);
 
-    // Control: with a working probe, this card's own delivery refuted the premise — evidence recorded,
-    // card released. The card below sits on the same repository and may not be called stale.
-    const control = card({ prompt: `## Plan Premises\n\n- ${ALPHA_PRESENT}\n\n## Steps\n`, branch: "fusion/stas-301" });
-    expect(await release(openDoor(control, root), control)).toMatchObject({ released: true });
+    const gate = await doorRelease(root, ['{"kind":"text-absent","path":"present.ts","literal":"NEVER_COMMITTED"}', '{"kind":"file-absent","path":"ghost/never-tracked.ts"}']);
+    expect(gate.result).toMatchObject({ released: true, task: { column: "doing" } });
+    expect(gate.reserved).toEqual(["STAS-301"]);
+  });
 
-    const probe = failOneProbe(root, "log");
-    const held = card({ prompt: `## Plan Premises\n\n- ${ALPHA_PRESENT}\n\n## Steps\n`, branch: "fusion/stas-301" });
-    const heldDoor = openDoor(held, root);
-    const verdict = await checkPlanPremises(heldDoor.store, held);
-    expect(probe.calls().some((call) => call.includes("log"))).toBe(true);
-    expect(verdict).toMatchObject({ outcome: "unavailable" });
-    // A detail git never earned: "the last commit touching this file is absent from this history".
-    expect(JSON.stringify(verdict)).not.toContain("absent from this history");
-    expect(held.sourceMetadata?.planPremiseRejection).toBeUndefined();
-    expect(logActions(held)).not.toContain(TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION);
-  }, 30_000);
-
-  it("names the probe failure in the identity detail instead of claiming the root is not a repository", async () => {
+  /*
+  T5 ordering. The premise set whose FIRST premise is genuinely falsified and whose SECOND premise's probe
+  cannot answer: one unverifiable fact voids the whole verdict. The answered violation must not be carried
+  into a stale verdict that burns the escalation ladder on a transport error.
+  */
+  it("T5 an answered violation plus an unanswered probe voids the whole verdict", 30_000, async () => {
     const root = makeRepo();
-    const probe = failOneProbe(root, "rev-parse");
-    const task = card({
-      prompt: `## Plan Premises\n\n- ${ALPHA_PRESENT}\n\n## Steps\n`,
-      branch: "fusion/ghost-card",
-      baseBranch: "ghost/base",
-    });
-    const opened = openDoor(task, root);
-    const verdict = await checkPlanPremises(opened.store, task);
-    expect(probe.calls().some((call) => call.includes("rev-parse"))).toBe(true);
-    expect(verdict).toMatchObject({ outcome: "unavailable" });
-    const detail = "detail" in verdict ? verdict.detail : "";
-    expect(detail).toContain("git identity");
-    expect(detail).toContain("injected probe failure");
-    // The root IS a git database; a probe that could not answer must not be reported as its absence.
-    expect(detail).not.toContain("is not a git repository");
-    expect(await release(opened, task)).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
-    expect(task.sourceMetadata?.planPremiseRejection).toBeUndefined();
-  }, 30_000);
+    writeFileSync(join(root, "present.ts"), "export const FLAG_ON = true;\n");
+    commitTree(root);
+
+    failOneProbe(root, "ls-tree", GHOST_TRACKED);
+    const check = await checkPremises(root, ['{"kind":"file-absent","path":"present.ts"}', FILE_ABSENT_OF_GHOST]);
+    expect(check).toMatchObject({ outcome: "unavailable", premiseViolations: [] });
+    expect(check.detail).toContain(GHOST_TRACKED);
+    expect(check.detail).not.toContain("Plan premise falsified while the card waited");
+    expect(sawFailed("ls-tree")).toBe(true);
+  });
+
+  /*
+  Attribution (the Requirement-5 adjudication, deliberately unchanged): the card delivered the file, its
+  branch merged into main, and the door re-evaluates there. The correct verdict is
+  premise-invalidated-by-delivery, which promotes with no episode. With the attribution probe broken the
+  verdict stays `stale` — the LOUDER route, never a release. What had to change is the detail: the old
+  code claimed "<path> is absent from this history", a fact git never reported.
+  */
+  it("attribution failure fails closed toward the louder stale route and names the probe that failed", 30_000, async () => {
+    const root = makeRepo();
+    writeFileSync(join(root, "present.ts"), "export const FLAG_ON = true;\n");
+    commitTree(root, "chore: base");
+    git(root, ["checkout", "-q", "-b", "fusion/stas-301-probe"]);
+    writeFileSync(join(root, GHOST_TRACKED), "export const module = 1;\n");
+    commitTree(root, "feat(STAS-301): land the ghost module");
+
+    // The card's own commit is what falsified the premise, so the honest verdict is the promotable one.
+    const delivered = await checkPremises(root, [FILE_ABSENT_OF_GHOST], { branch: "fusion/stas-301-probe" });
+    expect(delivered.outcome).toBe("premise-invalidated-by-delivery");
+
+    failOneProbe(root, "log", GHOST_TRACKED);
+    const check = await checkPremises(root, [FILE_ABSENT_OF_GHOST], { branch: "fusion/stas-301-probe" });
+    expect(check.outcome).toBe("stale");
+    expect(check.detail).toContain(FAILED_PROBE);
+    expect(check.detail).toContain(LOCK_MESSAGE);
+    expect(check.detail).not.toContain("is absent from this history");
+    expect(sawFailed("log")).toBe(true);
+  });
+
+  /*
+  Identity ladder. When every rung's `rev-parse` probe fails, the verdict must name the probe failure. The
+  old code claimed the project root "is not a git repository" — a classification that itself came from a
+  probe that never answered — and would send an operator down the wrong path.
+  */
+  it("an unanswered identity probe is reported as a probe failure, never as an absent repository", 30_000, async () => {
+    const root = makeRepo();
+    writeFileSync(join(root, "present.ts"), "export const FLAG_ON = true;\n");
+    commitTree(root);
+
+    failOneProbe(root, "rev-parse");
+    const check = await checkPremises(root, [FILE_ABSENT_OF_GHOST]);
+    expect(check.outcome).toBe("unavailable");
+    expect(check.detail).toContain(FAILED_PROBE);
+    // The classification this verdict used to be built from: a probe that never answered, read as "no repository here".
+    expect(check.detail).not.toContain("is not a git repository");
+
+    const gate = await doorRelease(root, [FILE_ABSENT_OF_GHOST]);
+    expect(gate.result).toMatchObject({ released: false, rejection: "plan-premise-unavailable" });
+    expect(gate.reserved).toEqual([]);
+    expect(logActions(gate.task)).not.toContain(TRIAGE_PLAN_PREMISE_REJECTED_REPLAN_LOG_ACTION);
+    expect(gate.task.column).toBe("todo");
+    expect(sawFailed("rev-parse")).toBe(true);
+  });
 });

@@ -176,7 +176,17 @@ export async function checkPlanPremises(store: TaskStore, task: Task): Promise<P
     */
     const written = premise.path;
     const resolved = reRootedPath(store, identity.identity.repo, premise);
-    const verdict = await evaluatePremiseAtCommit(identity.identity, resolved.premise);
+    const evaluation = await evaluatePremiseAtCommit(identity.identity, resolved.premise);
+    /*
+    STAS-301: a premise git could not answer is neither satisfied nor violated. It stops the whole
+    check right here — a verdict assembled from the premises that happened to be readable would release
+    or replan a card on a partial read — and it leaves as `unavailable`, the verdict the release door
+    already holds the card for: no episode, no escalation, no replan.
+    */
+    if (!evaluation.ok) {
+      return { outcome: "unavailable", detail: bounded(`Plan premise ${JSON.stringify(premise)} could not be evaluated. ${evaluation.detail} Evaluated at ${describeCardGitIdentity(identity.identity)}.`), promptFingerprint, premiseViolations: [] };
+    }
+    const verdict = evaluation.value;
     if (!verdict.satisfied) {
       violations.push({ premise, reason: resolved.reRooted ? `${verdict.reason} (written "${written}", resolved inside workspace member "${resolved.member}" as "${resolved.premise.path}")` : verdict.reason });
     }
@@ -197,7 +207,19 @@ export async function checkPlanPremises(store: TaskStore, task: Task): Promise<P
   for (const [index, violation] of violations.entries()) {
     const path = resolvedPaths[index] ?? violation.premise.path;
     const delivery = await invalidatedByCardDelivery(withRange, path);
-    attributed.push({ ...violation, delivery, upstream: delivery ? null : await lastCommitTouching(withRange, path) });
+    let upstream: string | null = null;
+    if (!delivery) {
+      const commit = await lastCommitTouching(withRange, path);
+      /*
+      STAS-301: an unanswered `git log` used to be reported as "<path> is absent from this history" —
+      git never said that. The verdict stays `stale`, the pre-existing fail-closed direction, but the
+      detail now says which probe failed instead of asserting a fact nobody observed.
+      */
+      upstream = commit.ok
+        ? (commit.value ?? `${path} is absent from this history`)
+        : `${path}'s last commit could not be read (${commit.detail})`;
+    }
+    attributed.push({ ...violation, delivery, upstream });
   }
   const evaluatedAt = `Evaluated at ${describeCardGitIdentity(withRange)}.`;
 
