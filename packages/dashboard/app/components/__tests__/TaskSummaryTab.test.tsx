@@ -21,6 +21,7 @@ describe("TaskSummaryTab", () => {
     expect(screen.queryByRole("heading", { name: "Completion summary" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "What changed" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Token usage & cost" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("task-summary-ai-disclosure")).not.toBeInTheDocument();
   });
 
   it("accepts undefined optional task detail fields without an orphaned completed-steps heading", () => {
@@ -44,6 +45,7 @@ describe("TaskSummaryTab", () => {
     const reviewStage = screen.getByTestId("task-history-stage-review");
     expect(within(reviewStage).getByText(completionSummary)).toBeInTheDocument();
     expect(screen.getAllByText(completionSummary)).toHaveLength(1);
+    expect(screen.getByTestId("task-summary-ai-disclosure")).toHaveAttribute("data-ai-disclosure", "generated-output");
   });
 
   it("does not repeat a completed step when no report was recorded", () => {
