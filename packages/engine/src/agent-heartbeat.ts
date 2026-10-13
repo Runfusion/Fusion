@@ -19,6 +19,15 @@
 
 import { DEFAULT_PROVIDER_INSTANCE_ID, deriveTaskLabelFromDescription, resolveAdvertisedCommentIds, type AgentStore, type AgentHeartbeatRun, type HeartbeatInvocationSource, type AgentHeartbeatConfig, type AgentBudgetStatus, type Message, type MessageStore, type TaskStore, type TaskDetail, type AgentRole, type Agent, type InboxTask, type RunMutationContext, type Settings, type AgentConfigRevision, type ReflectionStore, type ChatStore, type ChatRoom, type ChatRoomMessage, type AgentMemoryInclusionMode } from "@fusion/core";
 import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./scheduling/auto-claim-snapshot.js";
+import {
+  collectBoardSignal,
+  collectInboxSignal,
+  collectRoomSignal,
+  collectWakeSignals,
+  hasFresherWakeSignal,
+  parseHeartbeatWakeCursor,
+  type WakeRoomSignal,
+} from "./heartbeat-wake-signals.js";
 import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 import {
   ApprovalRequestStore,
@@ -1033,7 +1042,80 @@ export class HeartbeatMonitor {
     return this.chatStore;
   }
 
-  private async resolveRoomMessageSinceIso(agent: Agent, activeRunId: string): Promise<string> {
+  /**
+   * Decide whether a timer tick may spend an agent session, or has nothing newer to offer.
+   *
+   * FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300): the tick that follows an acknowledged,
+   * completed heartbeat re-ran verbatim until the inbox happened to change — the acknowledgement was
+   * never persisted, so nothing proved the previous run had already seen what the next one would
+   * advertise. Suppression is the exception here, not the default: every uncertainty in this
+   * decision (no prior run, a run that failed or never called `fn_heartbeat_done`, a cursor shape
+   * this build does not recognise, a probe that cannot read the store) dispatches. An agent over
+   * budget or over its budget threshold also dispatches, because that run record is the operator's
+   * only evidence of the overspend.
+   */
+  async decideTimerWake(
+    agent: Agent,
+    options?: { source?: HeartbeatExecutionOptions["source"]; triggerDetail?: string },
+  ): Promise<{ suppress: boolean; reason: string }> {
+    const source = options?.source ?? "timer";
+    if (source !== "timer") {
+      return { suppress: false, reason: `non-timer-source:${source}` };
+    }
+    if (options?.triggerDetail === "manual" || options?.triggerDetail === "ping") {
+      return { suppress: false, reason: `explicit-wake:${options.triggerDetail}` };
+    }
+    if (!this.taskStore) {
+      return { suppress: false, reason: "no-task-store" };
+    }
+
+    try {
+      const budget = await this.store.getBudgetStatus(agent.id);
+      if (budget?.isOverBudget) {
+        return { suppress: false, reason: "budget-exhausted-observability" };
+      }
+      if (budget?.isOverThreshold) {
+        return { suppress: false, reason: "budget-threshold-observability" };
+      }
+
+      const priorRuns = await this.store.getRecentRuns(agent.id, 5);
+      const newestRun = priorRuns[0];
+      if (!newestRun) {
+        return { suppress: false, reason: "no-prior-run" };
+      }
+      if (newestRun.status !== "completed") {
+        return { suppress: false, reason: `prior-run-${newestRun.status}` };
+      }
+
+      const cursor = parseHeartbeatWakeCursor(newestRun.resultJson);
+      if (cursor.kind === "absent") {
+        return { suppress: false, reason: "prior-run-unacknowledged" };
+      }
+      if (cursor.kind === "unsupported") {
+        return { suppress: false, reason: "unrecognised-wake-cursor" };
+      }
+
+      const sinceIso = await this.resolveRoomMessageSinceIso(agent);
+      const signals = await collectWakeSignals({
+        taskStore: this.taskStore,
+        agent,
+        chatStore: this.chatStore,
+        messageStore: this.messageStore,
+        autoClaimSnapshotManager: this.snapshotManager,
+        sinceIso,
+      });
+
+      if (hasFresherWakeSignal(cursor.cursor, signals)) {
+        return { suppress: false, reason: "fresher-signal" };
+      }
+      return { suppress: true, reason: "no-fresher-signal" };
+    } catch (error) {
+      heartbeatLog.warn(`wake-signal-probe-failed for ${agent.id}: ${error instanceof Error ? error.message : String(error)}`);
+      return { suppress: false, reason: "probe-failed" };
+    }
+  }
+
+  private async resolveRoomMessageSinceIso(agent: Agent, activeRunId?: string): Promise<string> {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
     try {
@@ -1215,45 +1297,9 @@ export class HeartbeatMonitor {
     return lines;
   }
 
-  private async getPendingRoomMessages(agent: Agent, sinceIso: string): Promise<{
-    entries: Array<{ room: ChatRoom; messages: ChatRoomMessage[] }>;
-    total: number;
-    truncatedCount: number;
-  }> {
-    if (!this.chatStore) {
-      return { entries: [], total: 0, truncatedCount: 0 };
-    }
-
+  private async getPendingRoomMessages(agent: Agent, sinceIso: string): Promise<WakeRoomSignal> {
     try {
-      const rooms = await this.chatStore.listRoomsForAgent(agent.id, { status: "active" });
-      const entries: Array<{ room: ChatRoom; messages: ChatRoomMessage[] }> = [];
-      let total = 0;
-      let surfaced = 0;
-      let truncatedCount = 0;
-
-      for (const room of rooms) {
-        const messages = await this.chatStore.listRoomMessagesSince(room.id, sinceIso, {
-          excludeSenderAgentId: agent.id,
-          limit: 10,
-        });
-        if (messages.length === 0) {
-          continue;
-        }
-
-        total += messages.length;
-        const remaining = 30 - surfaced;
-        if (remaining <= 0) {
-          truncatedCount += messages.length;
-          continue;
-        }
-
-        const surfacedMessages = messages.slice(0, remaining);
-        truncatedCount += messages.length - surfacedMessages.length;
-        entries.push({ room, messages: surfacedMessages });
-        surfaced += surfacedMessages.length;
-      }
-
-      return { entries, total, truncatedCount };
+      return await collectRoomSignal(this.chatStore, agent.id, sinceIso);
     } catch (error) {
       heartbeatLog.warn(`Failed to fetch room messages for ${agent.id}: ${error instanceof Error ? error.message : String(error)}`);
       return { entries: [], total: 0, truncatedCount: 0 };
@@ -4113,7 +4159,6 @@ export class HeartbeatMonitor {
           }
 
           // Build execution prompt
-          let pendingMessages: Message[] = [];
           let executionPrompt: string;
 
           const sinceIso = await this.resolveRoomMessageSinceIso(agent, run.id);
@@ -4135,17 +4180,27 @@ export class HeartbeatMonitor {
             audit,
           );
 
-          // Fetch unread messages when messageStore is available (for all trigger types)
-          if (this.messageStore) {
-            try {
-              pendingMessages = await this.messageStore.getInbox(agentId, "agent", { read: false, limit: 10 });
-            } catch (inboxErr) {
-              heartbeatLog.warn(`Failed to fetch inbox messages for ${agentId}: ${inboxErr instanceof Error ? inboxErr.message : String(inboxErr)}`);
-            }
+          /*
+          FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300):
+          The number the agent can reproduce with `fn_read_messages` is the message store's own
+          unread total, which is what `collectInboxSignal` returns. The `limit: 10` list is a
+          preview of those rows, never a total: measuring the live run store found the rendered
+          count pinned at 10 while the same inbox rows held up to 31 unread. A store we cannot
+          count yields `null`, and every surface that would print a number says so instead.
+          */
+          const inboxSignal = await collectInboxSignal(this.messageStore, agentId).catch((inboxErr) => {
+            heartbeatLog.warn(`pending-messages-count-unavailable for ${agentId}: ${inboxErr instanceof Error ? inboxErr.message : String(inboxErr)}`);
+            return { unreadTotal: null, preview: [] as Message[] };
+          });
+          const pendingMessages = inboxSignal.preview;
+          const unreadTotal = inboxSignal.unreadTotal;
+          if (unreadTotal === null && !this.messageStore) {
+            heartbeatLog.warn(`pending-messages-count-unavailable for ${agentId}: no authoritative message store is wired — the wake delta omits the pending-messages line rather than printing a number it cannot source`);
           }
+          const pendingMessagesLine = unreadTotal === null ? null : `- pending messages: ${unreadTotal}`;
 
           const wakeInboxEmpty =
-            pendingMessages.length === 0
+            unreadTotal === 0
             && pendingRoomMessages.total === 0
             && (effectiveTriggeringCommentIds?.length ?? 0) === 0;
 
@@ -4185,13 +4240,15 @@ export class HeartbeatMonitor {
 
           if (isWakeOnMessageTrigger) {
             heartbeatLog.log(
-              `[wake-trigger-diagnostics] agent=${agentId} run=${run.id} triggerDetail=${triggerDetail} source=${source} messageId=${wakeMessage?.messageId ?? "none"} from=${wakeMessage ? `${wakeMessage.fromType}:${wakeMessage.fromId}` : "none"} forced=${wakeMessage?.forced ?? false} createdAt=${wakeMessage?.createdAt ?? "none"} inboxUnreadCount=${pendingMessages.length} wakeMessageStillUnread=${wakeMessageStillUnread ?? "unknown"} pendingRoomMessages=${pendingRoomMessages.total}`,
+              `[wake-trigger-diagnostics] agent=${agentId} run=${run.id} triggerDetail=${triggerDetail} source=${source} messageId=${wakeMessage?.messageId ?? "none"} from=${wakeMessage ? `${wakeMessage.fromType}:${wakeMessage.fromId}` : "none"} forced=${wakeMessage?.forced ?? false} createdAt=${wakeMessage?.createdAt ?? "none"} inboxUnreadCount=${unreadTotal ?? "unknown"} wakeMessageStillUnread=${wakeMessageStillUnread ?? "unknown"} pendingRoomMessages=${pendingRoomMessages.total}`,
             );
           }
 
-          const wakeInboxSnapshotLine = wakeInboxEmpty
-            ? "- inbox snapshot: empty (already consumed)"
-            : `- inbox snapshot: ${pendingMessages.length} message(s)`;
+          const wakeInboxSnapshotLine = unreadTotal === null
+            ? "- inbox snapshot: count unavailable (no authoritative message store)"
+            : wakeInboxEmpty
+              ? "- inbox snapshot: empty (already consumed)"
+              : `- inbox snapshot: ${unreadTotal} message(s)`;
           /*
           FNXC:CommentDelivery 2026-09-27-17:30 (RUFU-259):
           The consumed branch used to print the message id anyway. `fn_read_messages` defaults to unread
@@ -4396,7 +4453,7 @@ export class HeartbeatMonitor {
               ...multiAssignWakeDeltaLines,
               wakeInboxSnapshotLine,
               ...(wakeTriggerSourceLine ? [wakeTriggerSourceLine] : []),
-              `- pending messages: ${pendingMessages.length}`,
+              ...(pendingMessagesLine ? [pendingMessagesLine] : []),
               `- pending room messages: ${pendingRoomMessages.total}`,
               `- auto-claim relevant tasks: ${autoClaimStatus}`,
               "",
@@ -4533,7 +4590,7 @@ export class HeartbeatMonitor {
               ...multiAssignWakeDeltaLines,
               wakeInboxSnapshotLine,
               ...(wakeTriggerSourceLine ? [wakeTriggerSourceLine] : []),
-              `- pending messages: ${pendingMessages.length}`,
+              ...(pendingMessagesLine ? [pendingMessagesLine] : []),
               `- pending room messages: ${pendingRoomMessages.total}`,
               `- triggering comments: ${readableTriggeringCommentCount} of ${(effectiveTriggeringCommentIds ?? []).length} readable on this card`,
               "",
@@ -4760,12 +4817,22 @@ export class HeartbeatMonitor {
 
           await flushAgentLogger();
 
-          // Mark messages as read after successful processing (only if messages were included in prompt)
-          if (pendingMessages.length > 0 && this.messageStore) {
+          /*
+          FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300):
+          Consumption is scoped to the ids this run actually put in front of the agent. The blanket
+          `markAllAsRead` this replaces retired every unread row: measured over the live run store,
+          58 timer runs flipped more rows read than they advertised and 162 messages were consumed
+          that the agent was never shown (worst run: rendered 10, swept 32). A message the agent
+          never saw therefore stays unread, and `markInboxAsRead` reports only the rows the store
+          confirmed read — a partial sweep cannot masquerade as a finished inbox.
+          */
+          const surfacedMessageIds = pendingMessages.map((message) => message.id);
+          let consumedMessageIds: string[] = [];
+          if (surfacedMessageIds.length > 0 && this.messageStore) {
             try {
-              await this.messageStore.markAllAsRead(agentId, "agent");
+              consumedMessageIds = await this.messageStore.markInboxAsRead(agentId, "agent", surfacedMessageIds);
             } catch (markReadErr) {
-              heartbeatLog.warn(`Failed to mark messages as read for ${agentId}: ${markReadErr instanceof Error ? markReadErr.message : String(markReadErr)}`);
+              heartbeatLog.warn(`heartbeat-inbox-consumption-failed for ${agentId}: ${markReadErr instanceof Error ? markReadErr.message : String(markReadErr)}`);
             }
           }
 
@@ -4782,6 +4849,33 @@ export class HeartbeatMonitor {
             completionResultJson.reason = "inbox_selected";
             completionResultJson.priority = inboxSelection.priority;
             completionResultJson.taskId = taskId;
+          }
+
+          /*
+          FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300):
+          An acknowledgement has to outlive the run that earned it. Measured in the live run store,
+          agent-ff03cfcc produced streaks of 15, 16, 17, 18 and 30 consecutive timer runs whose
+          persisted prompt hashed identically, because `fn_heartbeat_done` set only a local boolean
+          and the next tick had nothing to compare itself against. The acknowledgement plus the
+          signal cursors it covers are what a later timer tick proves its silence against; a board
+          read that fails here leaves the run without a cursor, and a tick without a cursor dispatches.
+          */
+          if (heartbeatDoneRecorded && !heartbeatProgressBudgetExhausted && this.taskStore) {
+            try {
+              completionResultJson.wakeCursor = {
+                consumedMessageIds,
+                roomEntryIds: pendingRoomMessages.entries.flatMap((entry) => entry.messages.map((message) => message.id)),
+                surfacedCommentIds: effectiveTriggeringCommentIds ?? [],
+                boardState: await collectBoardSignal({
+                  taskStore: this.taskStore,
+                  agent,
+                  autoClaimSnapshotManager: this.snapshotManager,
+                }),
+              };
+              completionResultJson.heartbeatDoneAccepted = true;
+            } catch (cursorErr) {
+              heartbeatLog.warn(`wake-cursor-unavailable for ${agentId}: ${cursorErr instanceof Error ? cursorErr.message : String(cursorErr)}`);
+            }
           }
 
           await this.completeRun(agentId, run.id, {
@@ -5769,6 +5863,7 @@ export class HeartbeatTriggerScheduler {
   private store: AgentStore;
   private callback: TriggerCallback;
   private taskStore?: TaskStore;
+  private shouldSuppressTimerWake?: (agent: Agent) => Promise<{ suppress: boolean; reason?: string }>;
   private timers: Map<string, AgentTimer> = new Map();
   private errorRecoveryLimit = MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS;
   private pendingAssignments: Map<string, PendingAssignment> = new Map();
@@ -5849,12 +5944,17 @@ export class HeartbeatTriggerScheduler {
   private static readonly DEFAULT_REPAIR_STALE_MULTIPLIER = 2;
   private static readonly DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
 
-  constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore, options?: { isTaskExecuting?: (taskId: string) => boolean; isAgentEffectivelyExecuting?: (agentId: string) => boolean }) {
+  constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore, options?: {
+    isTaskExecuting?: (taskId: string) => boolean;
+    isAgentEffectivelyExecuting?: (agentId: string) => boolean;
+    shouldSuppressTimerWake?: (agent: Agent) => Promise<{ suppress: boolean; reason?: string }>;
+  }) {
     this.store = store;
     this.callback = callback;
     this.taskStore = taskStore;
     this.isTaskExecuting = options?.isTaskExecuting;
     this.isAgentEffectivelyExecuting = options?.isAgentEffectivelyExecuting;
+    this.shouldSuppressTimerWake = options?.shouldSuppressTimerWake;
   }
 
   /**
@@ -7099,6 +7199,25 @@ export class HeartbeatTriggerScheduler {
       // The scheduler dispatches the callback regardless of budget status so that executeHeartbeat()
       // can create explicit run records with budget_exhausted/budget_threshold_exceeded reasons.
       // This makes timer budget skips observable rather than silent drops.
+
+      /*
+      FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300):
+      Last gate before spending a session: a tick whose every wake source is at or behind what the
+      last acknowledged heartbeat already consumed is answered here, with no run row, no session,
+      and no token. It sits after the pause, state, and active-run guards, so pause authority and
+      budget observability are untouched; a probe that cannot answer dispatches, because sleeping on
+      an unproven silence is the failure mode this discipline exists to prevent.
+      */
+      if (this.shouldSuppressTimerWake) {
+        const decision: { suppress: boolean; reason?: string } = await this.shouldSuppressTimerWake(agent).catch((suppressErr) => {
+          heartbeatLog.warn(`timer-wake-suppression-probe-failed for ${agentId}: ${suppressErr instanceof Error ? suppressErr.message : String(suppressErr)}`);
+          return { suppress: false };
+        });
+        if (decision.suppress) {
+          heartbeatLog.log(`timer-heartbeat-suppressed agentId=${agentId} reason=${decision.reason ?? "unspecified"}`);
+          return;
+        }
+      }
 
       await this.callback(agentId, "timer", {
         wakeReason: "timer",

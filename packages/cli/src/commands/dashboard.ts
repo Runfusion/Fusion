@@ -2803,6 +2803,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         // `isAgentEffectivelyExecuting` guard has a source — both stay unwired (the
         // guards simply never fire), matching the prior `isTaskExecuting` omission.
         // The real wiring is the InProcessRuntime construction site.
+        {
+          // STAS-300: this scheduler still executes heartbeats through heartbeatMonitorImpl, so an
+          // acknowledged idle agent must not be re-woken here either.
+          shouldSuppressTimerWake: async (agent) => heartbeatMonitorImpl
+            ? await heartbeatMonitorImpl.decideTimerWake(agent)
+            : { suppress: false },
+        },
       );
       triggerScheduler.start();
 

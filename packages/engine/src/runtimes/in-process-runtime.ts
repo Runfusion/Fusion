@@ -2114,6 +2114,14 @@ export class InProcessRuntime
             // — an override/defer column agent must not heartbeat concurrently with a
             // column-bound session it runs but is not assigned to.
             isAgentEffectivelyExecuting: (agentId) => this.executor.isAgentEffectivelyExecuting(agentId),
+            /*
+            FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300): the timer tick asks the monitor that
+            owns the run store and the wake signals, so the gate and the prompt it guards read the
+            same sources. No monitor means no answer, and an unanswered tick dispatches.
+            */
+            shouldSuppressTimerWake: async (agent) => this.heartbeatMonitor
+              ? await this.heartbeatMonitor.decideTimerWake(agent)
+              : { suppress: false },
           },
         );
         this.triggerScheduler.start();

@@ -23,7 +23,7 @@ import {
   type MessageStore,
   type Message,
 } from "@fusion/core";
-import { createMessage, createBudgetStatus } from "./heartbeat-test-helpers.js";
+import { createMessage, createBudgetStatus, createInboxMessageStore } from "./heartbeat-test-helpers.js";
 vi.mock("../logger.js", async () => {
   const { createMockLogger, formatMockError } = await import("./heartbeat-test-helpers.js");
   return {
@@ -2263,11 +2263,7 @@ describe("executeHeartbeat", () => {
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue([]),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore([]);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2323,11 +2319,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2346,7 +2338,7 @@ describe("executeHeartbeat", () => {
       // Messages should be fetched for no-task runs too
       expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
       // Messages should be marked as read after successful execution
-      expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+      expect(messageStore.markInboxAsRead).toHaveBeenCalledWith("agent-001", "agent", messages.map((message) => message.id));
 
       // Verify execution prompt included the messages
       const promptCalls = mockSession.prompt.mock.calls;
@@ -2542,11 +2534,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2602,11 +2590,7 @@ describe("executeHeartbeat", () => {
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue([]),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore([]);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2657,11 +2641,7 @@ describe("executeHeartbeat", () => {
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue([]),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore([]);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2755,11 +2735,7 @@ describe("executeHeartbeat", () => {
       const mockSession = createMockAgentSession();
       mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue([]),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore([]);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2794,11 +2770,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2814,7 +2786,7 @@ describe("executeHeartbeat", () => {
       });
 
       expect(result.status).toBe("completed");
-      expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+      expect(messageStore.markInboxAsRead).toHaveBeenCalledWith("agent-001", "agent", messages.map((message) => message.id));
     });
 
     it("does not mark messages as read on failed heartbeat execution", async () => {
@@ -2831,11 +2803,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2851,7 +2819,7 @@ describe("executeHeartbeat", () => {
       });
 
       expect(result.status).toBe("failed");
-      expect(messageStore.markAllAsRead).not.toHaveBeenCalled();
+      expect(messageStore.markInboxAsRead).not.toHaveBeenCalled();
     });
 
     it("fetches messages for timer-triggered runs when messageStore is available", async () => {
@@ -2867,11 +2835,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2891,7 +2855,7 @@ describe("executeHeartbeat", () => {
       // Messages should be fetched even for timer triggers
       expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
       // Messages should be marked as read after successful execution
-      expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+      expect(messageStore.markInboxAsRead).toHaveBeenCalledWith("agent-001", "agent", messages.map((message) => message.id));
 
       // Verify execution prompt included the messages
       const promptCalls = mockSession.prompt.mock.calls;
@@ -2914,11 +2878,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2936,7 +2896,7 @@ describe("executeHeartbeat", () => {
 
       expect(result.status).toBe("completed");
       expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
-      expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+      expect(messageStore.markInboxAsRead).toHaveBeenCalledWith("agent-001", "agent", messages.map((message) => message.id));
 
       // Verify execution prompt included the messages
       const promptCalls = mockSession.prompt.mock.calls;
@@ -2959,11 +2919,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -2981,7 +2937,7 @@ describe("executeHeartbeat", () => {
 
       expect(result.status).toBe("completed");
       expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
-      expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+      expect(messageStore.markInboxAsRead).toHaveBeenCalledWith("agent-001", "agent", messages.map((message) => message.id));
 
       // Verify execution prompt included the messages
       const promptCalls = mockSession.prompt.mock.calls;
@@ -3004,11 +2960,7 @@ describe("executeHeartbeat", () => {
         }),
       ];
 
-      const messageStore = {
-        setMessageToAgentHook: vi.fn(),
-        getInbox: vi.fn().mockReturnValue(messages),
-        markAllAsRead: vi.fn(),
-      } as unknown as MessageStore;
+      const messageStore = createInboxMessageStore(messages);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -3025,7 +2977,7 @@ describe("executeHeartbeat", () => {
 
       expect(result.status).toBe("completed");
       expect(messageStore.getInbox).toHaveBeenCalledWith("agent-001", "agent", { read: false, limit: 10 });
-      expect(messageStore.markAllAsRead).toHaveBeenCalledWith("agent-001", "agent");
+      expect(messageStore.markInboxAsRead).toHaveBeenCalledWith("agent-001", "agent", messages.map((message) => message.id));
 
       // Verify execution prompt included the messages
       const promptCalls = mockSession.prompt.mock.calls;
@@ -3077,13 +3029,17 @@ describe("executeHeartbeat", () => {
             const inbox = messages.get(key) || [];
             return { unreadCount: inbox.filter((message) => !message.read).length, messages: inbox };
           }),
-          markAllAsRead: vi.fn((participantId: string, participantType: string) => {
+          markInboxAsRead: vi.fn(async (participantId: string, participantType: string, messageIds: string[]) => {
             const key = `${participantId}:${participantType}`;
             const inbox = messages.get(key) || [];
-            inbox.forEach((message) => {
-              message.read = true;
-            });
-            messages.set(key, inbox);
+            const consumed: string[] = [];
+            for (const message of inbox) {
+              if (!message.read && messageIds.includes(message.id)) {
+                message.read = true;
+                consumed.push(message.id);
+              }
+            }
+            return consumed;
           }),
         } as unknown as MessageStore;
 

@@ -566,6 +566,34 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     return count;
   }
 
+  /**
+   * Mark exactly these messages read for one recipient and return the ids the store confirmed.
+   *
+   * FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300): `markAllAsRead` retires a whole inbox,
+   * which is wrong for a consumer that surfaced a capped preview — measured live, 162 messages
+   * were swept read that the agent had never been shown. A scoped consumer gets a receipt: an id
+   * that is not this recipient's unread, unarchived inbox row is left alone and stays out of the
+   * returned list, so the caller can tell a finished inbox from a partially consumed one.
+   */
+  async markInboxAsRead(
+    ownerId: string,
+    ownerType: ParticipantType,
+    messageIds: string[],
+  ): Promise<string[]> {
+    const recipientIds = new Set(this.getParticipantIdsForLookup(ownerId, ownerType));
+    const consumed: string[] = [];
+
+    for (const messageId of messageIds) {
+      const message = await this.getMessage(messageId);
+      if (!message || message.read || message.archived) continue;
+      if (!recipientIds.has(message.toId) || message.toType !== ownerType) continue;
+      await this.markAsRead(messageId);
+      consumed.push(messageId);
+    }
+
+    return consumed;
+  }
+
   async getDashboardInboxCategoryCounts(
     ownerId: string,
     ownerType: ParticipantType,
