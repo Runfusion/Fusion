@@ -1417,6 +1417,11 @@ export {
   planTaskColumnRestart,
 } from "./tasks/task-column-restart.js";
 export {
+  classifyStrandedGateRetry,
+  buildStrandedGateRetryPatch,
+} from "./tasks/stranded-gate-retry.js";
+export type { StrandedGateRetryClassification } from "./tasks/stranded-gate-retry.js";
+export {
   EXTERNAL_BLOCK_STATUS,
   EXTERNAL_BLOCK_PAUSE_REASON,
   isTaskExternallyBlocked,
