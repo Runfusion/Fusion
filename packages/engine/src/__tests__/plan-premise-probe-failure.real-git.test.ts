@@ -163,7 +163,8 @@ function failOneProbe(repo: string, subcommand: string, pathNeedle?: string): vo
   const guarded = pathNeedle
     ? ["  case \"$*\" in", `    *${pathNeedle}*)`, ...failWith.map((line) => `  ${line}`), "      ;;", "  esac"]
     : failWith;
-  writeFileSync(join(shimDir, "git"), [
+  const shim = join(shimDir, "git");
+  writeFileSync(shim, [
     "#!/bin/sh",
     `if [ "$1" = "-C" ] && [ "$2" = "${repo}" ] && [ "$3" = "${subcommand}" ]; then`,
     ...guarded,
@@ -172,8 +173,29 @@ function failOneProbe(repo: string, subcommand: string, pathNeedle?: string): vo
     `exec ${realGit} "$@"`,
     "",
   ].join("\n"));
-  chmodSync(join(shimDir, "git"), 0o755);
+  chmodSync(shim, 0o755);
+  warmUp(shim);
   process.env.PATH = `${shimDir}${process.env.PATH ? `:${process.env.PATH}` : ""}`;
+}
+
+/*
+STAS-301 fixture hardening. First exec of a freshly written script can fail with `spawn ETXTBSY` when
+the worker pool is spawning thousands of processes at the same time (measured on a contended run: the
+identity `rev-parse` never started, so the card was held `unavailable` — correctly, but for a reason
+unrelated to the probe the test broke). Production may not retry a probe — that is the whole point of
+the fix — so the fixture removes the window instead: the shim is executed once, synchronously, before
+any engine probe can reach it. A shim that cannot be executed at all is a broken fixture, so it fails.
+*/
+function warmUp(shim: string): void {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      execFileSync(shim, ["--version"], { stdio: "ignore" });
+      return;
+    } catch (error) {
+      const retryable = String(error).includes("ETXTBSY");
+      if (!retryable || attempt === 5) throw new Error(`fixture git shim cannot be executed: ${String(error)}`);
+    }
+  }
 }
 
 /** Every engine probe the shim saw, with the verdict it gave. */
