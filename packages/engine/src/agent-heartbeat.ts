@@ -4859,13 +4859,15 @@ export class HeartbeatMonitor {
           and the next tick had nothing to compare itself against. The acknowledgement plus the
           signal cursors it covers are what a later timer tick proves its silence against; a board
           read that fails here leaves the run without a cursor, and a tick without a cursor dispatches.
+          Every compared population comes from `collectBoardSignal`, which is the same read the next
+          tick performs — persisting this run's triggering comments instead would compare a run
+          trigger against durable board state and never satisfy the gate on a steered card.
           */
           if (heartbeatDoneRecorded && !heartbeatProgressBudgetExhausted && this.taskStore) {
             try {
               completionResultJson.wakeCursor = {
                 consumedMessageIds,
                 roomEntryIds: pendingRoomMessages.entries.flatMap((entry) => entry.messages.map((message) => message.id)),
-                surfacedCommentIds: effectiveTriggeringCommentIds ?? [],
                 boardState: await collectBoardSignal({
                   taskStore: this.taskStore,
                   agent,

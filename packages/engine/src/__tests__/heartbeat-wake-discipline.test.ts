@@ -115,12 +115,12 @@ function acknowledgedRun(overrides: Partial<AgentHeartbeatRun> = {}): AgentHeart
       wakeCursor: {
         consumedMessageIds: ["msg-shown-1"],
         roomEntryIds: ["room-entry-1"],
-        surfacedCommentIds: [],
         boardState: {
           assignedTaskId: TASK_ID,
           assignedTaskState: "in-progress",
           assignedRows: [`${TASK_ID}:in-progress`],
           autoClaimCandidates: [],
+          steeringCommentIds: [],
         },
       },
     },
@@ -309,6 +309,31 @@ function lastPrompt(session: Harness["session"]): string {
   return calls[calls.length - 1]?.[0] ?? "";
 }
 
+/**
+ * The real scheduler with the production suppression seam wired (`shouldSuppressTimerWake`), so a
+ * test can watch a physical timer tick end in a dispatch or in silence. The tick is invoked
+ * directly; only the scheduler's running flag gates it.
+ */
+function schedulerFor(
+  decide: (agent: Agent) => Promise<{ suppress: boolean; reason?: string }>,
+  agent: Agent = baseAgent(),
+): { callback: ReturnType<typeof vi.fn>; tick: () => Promise<void> } {
+  const store = {
+    getAgent: vi.fn().mockResolvedValue(agent),
+    getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+  } as unknown as AgentStore;
+  const callback = vi.fn().mockResolvedValue(undefined);
+  const scheduler = new HeartbeatTriggerScheduler(store, callback, undefined, {
+    shouldSuppressTimerWake: decide,
+  });
+  (scheduler as unknown as { running: boolean }).running = true;
+  const tick = async () => {
+    await (scheduler as unknown as { onTimerTick: (id: string, ms: number) => Promise<void> })
+      .onTimerTick(agent.id, 30_000);
+  };
+  return { callback, tick };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockedCreateFnAgent.mockResolvedValue({ session: mockSession() as never } as never);
@@ -463,7 +488,7 @@ describe("(A) timer dispatch requires something newer than the persisted cursors
     expect(await h.monitor.decideTimerWake(h.agent)).toMatchObject({ suppress: false });
   });
 
-  it("dispatches on a task comment the acknowledged run never surfaced", async () => {
+  it("dispatches on a steering comment the acknowledged cursor does not already cover", async () => {
     const h = createHarness({
       unreadTotal: 0,
       priorRuns: [acknowledged()],
@@ -493,13 +518,13 @@ describe("(A) timer dispatch requires something newer than the persisted cursors
             wakeCursor: {
               consumedMessageIds: [],
               roomEntryIds: [],
-              surfacedCommentIds: [],
               // The same board the no-task agent now stands on; only the candidate set may move.
               boardState: {
                 assignedTaskId: null,
                 assignedTaskState: null,
                 assignedRows: [],
                 autoClaimCandidates: [],
+                steeringCommentIds: [],
               },
             },
           },
@@ -602,26 +627,10 @@ describe("(A) timer dispatch requires something newer than the persisted cursors
 });
 
 describe("(A) the scheduler spends nothing on a suppressed timer tick", () => {
-  function schedulerFor(decide: (agent: Agent) => Promise<{ suppress: boolean; reason?: string }>) {
-    const agent = baseAgent();
-    const store = {
-      getAgent: vi.fn().mockResolvedValue(agent),
-      getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
-    } as unknown as AgentStore;
-    const callback = vi.fn().mockResolvedValue(undefined);
-    const scheduler = new HeartbeatTriggerScheduler(store, callback, undefined, {
-      shouldSuppressTimerWake: decide,
-    });
-    // The tick under test is invoked directly; only the scheduler's running flag gates it.
-    (scheduler as unknown as { running: boolean }).running = true;
-    return { scheduler, callback, store };
-  }
-
   it("does not dispatch and records no run when the decision suppresses", async () => {
-    const { scheduler, callback } = schedulerFor(async () => ({ suppress: true, reason: "no-fresher-signal" }));
+    const { callback, tick } = schedulerFor(async () => ({ suppress: true, reason: "no-fresher-signal" }));
 
-    await (scheduler as unknown as { onTimerTick: (id: string, ms: number) => Promise<void> })
-      .onTimerTick(AGENT_ID, 30_000);
+    await tick();
 
     expect(callback).not.toHaveBeenCalled();
     expect(vi.mocked(heartbeatLog.log)).toHaveBeenCalledWith(
@@ -630,23 +639,93 @@ describe("(A) the scheduler spends nothing on a suppressed timer tick", () => {
   });
 
   it("dispatches normally when the decision allows the tick", async () => {
-    const { scheduler, callback } = schedulerFor(async () => ({ suppress: false }));
+    const { callback, tick } = schedulerFor(async () => ({ suppress: false }));
 
-    await (scheduler as unknown as { onTimerTick: (id: string, ms: number) => Promise<void> })
-      .onTimerTick(AGENT_ID, 30_000);
+    await tick();
 
     expect(callback).toHaveBeenCalledWith(AGENT_ID, "timer", expect.objectContaining({ triggerDetail: "scheduled" }));
   });
 
   it("dispatches when the suppression probe itself throws", async () => {
-    const { scheduler, callback } = schedulerFor(async () => {
+    const { callback, tick } = schedulerFor(async () => {
       throw new Error("probe exploded");
     });
 
-    await (scheduler as unknown as { onTimerTick: (id: string, ms: number) => Promise<void> })
-      .onTimerTick(AGENT_ID, 30_000);
+    await tick();
 
     expect(callback).toHaveBeenCalled();
+  });
+});
+
+/*
+FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300 code review P0):
+
+The comment leg of the wake cursor is durable board state, not a per-run trigger. Steering comments
+accumulate on the card (the store trims only at 200 and never clears them), while a `timer` tick has
+no triggering comment at all — so a run that persisted its OWN trigger ids as the comment cursor left
+`surfacedCommentIds: []` against a card carrying any past comment, every later tick saw a "new"
+comment, and the acknowledged idle heartbeat was dispatched again forever: the 15-identical-timer-tick
+symptom of the 2026-10-04 STAS-270 re-measurement, on every steered card on the board. Every fixture
+above passes `taskComments: []`, which is why the suite could go green over it. The pair below drives
+the real producer and the real gate over one shared harness, so the two sides can no longer disagree.
+*/
+describe("(A) a card that has ever been steered still goes quiet", () => {
+  const STEERED = [{ id: "comment-old-1" }, { id: "comment-old-2" }];
+
+  /** Tick 1: a task-assigned heartbeat that acknowledges and completes, on a card with history. */
+  function steeredHarness(taskComments: Array<{ id: string }> = STEERED) {
+    const h = createHarness({ unreadTotal: 0, taskComments });
+    h.session.prompt.mockImplementation(async () => {
+      await h.invokeTool("fn_heartbeat_done", { summary: "Nothing to do." });
+    });
+    return h;
+  }
+
+  it("persists the steering comments its board read saw, not just this run's trigger ids", async () => {
+    const h = steeredHarness();
+
+    await h.monitor.executeHeartbeat({ agentId: AGENT_ID, source: "timer" });
+
+    const ackRow = h.savedRuns[h.savedRuns.length - 1];
+    const cursor = (ackRow.resultJson ?? {}) as { wakeCursor?: { boardState?: { steeringCommentIds?: string[] } } };
+    expect(cursor.wakeCursor?.boardState?.steeringCommentIds).toEqual(["comment-old-1", "comment-old-2"]);
+  });
+
+  it("suppresses the next timer tick on a steered card whose nothing else moved", async () => {
+    const h = steeredHarness();
+    await h.monitor.executeHeartbeat({ agentId: AGENT_ID, source: "timer" });
+    const ackRow = h.savedRuns[h.savedRuns.length - 1];
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    const runsAfterTick1 = h.savedRuns.length;
+
+    // Tick 2: the engine restarts the loop off the persisted row — same board, same stores.
+    vi.mocked(h.store.getRecentRuns).mockResolvedValue([ackRow]);
+    const { callback, tick } = schedulerFor((agent) => h.monitor.decideTimerWake(agent), h.agent);
+    await tick();
+
+    expect(callback).not.toHaveBeenCalled();
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    expect(h.savedRuns).toHaveLength(runsAfterTick1);
+  });
+
+  it("still dispatches when the steered card gains a comment the cursor never covered", async () => {
+    const h = steeredHarness();
+    await h.monitor.executeHeartbeat({ agentId: AGENT_ID, source: "timer" });
+    const ackRow = h.savedRuns[h.savedRuns.length - 1];
+    vi.mocked(h.store.getRecentRuns).mockResolvedValue([ackRow]);
+    vi.mocked(h.taskStore.getTasksByAssignedAgent).mockResolvedValue([
+      {
+        id: TASK_ID,
+        column: "in-progress",
+        assignedAgentId: AGENT_ID,
+        steeringComments: [...STEERED, { id: "comment-arrived-later" }],
+      },
+    ] as never);
+
+    const { callback, tick } = schedulerFor((agent) => h.monitor.decideTimerWake(agent), h.agent);
+    await tick();
+
+    expect(callback).toHaveBeenCalledWith(AGENT_ID, "timer", expect.objectContaining({ triggerDetail: "scheduled" }));
   });
 });
 
@@ -660,6 +739,12 @@ describe("(A)+(B) no re-derivable duplicate of the fixed mechanisms remains", ()
   it("no wake-delta renders a preview length as a count", () => {
     expect(/pending messages: \$\{pendingMessages\.length\}/.test(source)).toBe(false);
     expect(/inbox snapshot: \$\{pendingMessages\.length\}/.test(source)).toBe(false);
+  });
+
+  it("the wake cursor never persists a run's trigger ids as its comment population", () => {
+    expect(/surfacedCommentIds/.test(source)).toBe(false);
+    const probe = readFileSync(new URL("../heartbeat-wake-signals.ts", import.meta.url), "utf8");
+    expect(/steeringCommentIds: assignedTasks\.flatMap/.test(probe)).toBe(true);
   });
 
   it("the wake sources are read through one shared module, not re-derived per path", () => {

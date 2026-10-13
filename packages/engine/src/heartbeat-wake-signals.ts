@@ -17,6 +17,11 @@ Rules this module exists to enforce:
   instead of printing a 0.
 - A caller that cannot read a signal throws to its caller. Silence is what let an
   idle agent be re-dispatched for weeks.
+- A compared population is written and read by the SAME function over the SAME query. A cursor
+  that records one population while the next tick measures another can never be satisfied, and
+  the agent pays a full session for every tick: the first build of this gate persisted a run's
+  TRIGGERING comment ids and compared them to every steering comment on the assigned rows, so any
+  card that had ever been steered re-dispatched forever.
 */
 import type { Agent, ChatRoom, ChatRoomMessage, ChatStore, Message, MessageStore, TaskStore } from "@fusion/core";
 import { resolveFreshAutoClaimCandidates, type AutoClaimSnapshotManager } from "./scheduling/auto-claim-snapshot.js";
@@ -95,12 +100,18 @@ export async function collectRoomSignal(
 /**
  * What the last acknowledged run said it had seen. `consumedMessageIds` holds only ids the
  * store CONFIRMED read, so a listed id can never reappear in an unread query — the list is the
- * audit record of the acknowledgement, and the board/comment cursors are the freshness compare.
+ * audit record of the acknowledgement, and the board cursors are the freshness compare.
+ *
+ * Every compared population lives in `boardState` and comes out of `boardStateFrom`, so the run
+ * that writes a cursor and the tick that reads it cannot disagree about what a population holds.
+ * A cursor whose population the writer took from a different query than the reader's is the bug
+ * this shape exists to make impossible: the first build persisted a run's TRIGGERING comment ids
+ * and compared them against every steering comment on the assigned rows, so any card that had
+ * ever been steered re-dispatched forever.
  */
 export interface HeartbeatWakeCursor {
   consumedMessageIds: string[];
   roomEntryIds: string[];
-  surfacedCommentIds: string[];
   boardState: HeartbeatBoardState;
 }
 
@@ -109,12 +120,17 @@ export interface HeartbeatBoardState {
   assignedTaskState?: string | null;
   assignedRows: string[];
   autoClaimCandidates: string[];
+  /**
+   * Steering comments carried by the assigned rows, read in the same query as `assignedRows`.
+   * Steering comments are durable board state (the store trims at 200 and never clears them), so
+   * the compare asks only whether a NEW id appeared — an id this set already covers is history.
+   */
+  steeringCommentIds: string[];
 }
 
 export interface WakeSignalSnapshot {
   inboxUnreadTotal: number;
   roomEntryIds: string[];
-  steeringCommentIds: string[];
   boardState: HeartbeatBoardState;
 }
 
@@ -139,9 +155,9 @@ export function parseHeartbeatWakeCursor(resultJson: unknown): WakeCursorParse {
   if (
     !isStringArray(cursor.consumedMessageIds)
     || !isStringArray(cursor.roomEntryIds)
-    || !isStringArray(cursor.surfacedCommentIds)
     || !isStringArray(cursor.boardState.assignedRows)
     || !isStringArray(cursor.boardState.autoClaimCandidates)
+    || !isStringArray(cursor.boardState.steeringCommentIds)
   ) {
     return { kind: "unsupported" };
   }
@@ -151,12 +167,12 @@ export function parseHeartbeatWakeCursor(resultJson: unknown): WakeCursorParse {
     cursor: {
       consumedMessageIds: cursor.consumedMessageIds,
       roomEntryIds: cursor.roomEntryIds,
-      surfacedCommentIds: cursor.surfacedCommentIds,
       boardState: {
         assignedTaskId: readNullableString(cursor.boardState.assignedTaskId),
         assignedTaskState: readNullableString(cursor.boardState.assignedTaskState),
         assignedRows: cursor.boardState.assignedRows,
         autoClaimCandidates: cursor.boardState.autoClaimCandidates,
+        steeringCommentIds: cursor.boardState.steeringCommentIds,
       },
     },
   };
@@ -178,9 +194,10 @@ export interface WakeSignalSources {
 }
 
 /**
- * The board half of a wake cursor: the rows assigned to this agent with the column each sits in,
- * and — for an agent that can run unassigned — the auto-claim candidate set. Written by the run
- * that advertised them and compared by the next tick, so it must be read identically both times.
+ * The whole board half of a wake cursor: the rows assigned to this agent with the column each sits
+ * in, the steering comments those rows carry, and — for an agent that can run unassigned — the
+ * auto-claim candidate set. This is the ONLY writer of the compared board population, so the run
+ * that persists a cursor and the tick that compares against it ask the identical question.
  */
 export async function collectBoardSignal(
   sources: Pick<WakeSignalSources, "taskStore" | "agent" | "autoClaimSnapshotManager">,
@@ -210,7 +227,6 @@ export async function collectWakeSignals(sources: WakeSignalSources): Promise<Wa
   return {
     inboxUnreadTotal: inbox.unreadTotal,
     roomEntryIds: rooms.entries.flatMap((entry) => entry.messages.map((message) => message.id)),
-    steeringCommentIds: assignedTasks.flatMap((task) => (task.steeringComments ?? []).map((comment) => comment.id)),
     boardState: boardStateFrom(assignedTasks, agent, autoClaimCandidates),
   };
 }
@@ -225,6 +241,7 @@ function boardStateFrom(
     assignedTaskState: assignedTasks.find((task) => task.id === agent.taskId)?.column ?? null,
     assignedRows: assignedTasks.map((task) => `${task.id}:${task.column}`),
     autoClaimCandidates,
+    steeringCommentIds: assignedTasks.flatMap((task) => (task.steeringComments ?? []).map((comment) => comment.id)),
   };
 }
 
@@ -232,7 +249,7 @@ function boardStateFrom(
 export function hasFresherWakeSignal(cursor: HeartbeatWakeCursor, snapshot: WakeSignalSnapshot): boolean {
   if (snapshot.inboxUnreadTotal > 0) return true;
   if (snapshot.roomEntryIds.some((id) => !cursor.roomEntryIds.includes(id))) return true;
-  if (snapshot.steeringCommentIds.some((id) => !cursor.surfacedCommentIds.includes(id))) return true;
+  if (snapshot.boardState.steeringCommentIds.some((id) => !cursor.boardState.steeringCommentIds.includes(id))) return true;
   if (!sameIdSet(cursor.boardState.assignedRows, snapshot.boardState.assignedRows)) return true;
   if (cursor.boardState.assignedTaskState !== snapshot.boardState.assignedTaskState) return true;
   return !sameIdSet(cursor.boardState.autoClaimCandidates, snapshot.boardState.autoClaimCandidates);
