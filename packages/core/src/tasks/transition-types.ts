@@ -30,7 +30,17 @@ export type TransitionRejectionCode =
   | "capacity-exhausted"
   | "unknown-column"
   | "workflow-mismatch"
-  | "merge-blocked";
+  | "merge-blocked"
+  /*
+  FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+  The complete-column gate-EVIDENCE half of the completion boundary, distinct from `merge-blocked`
+  (missing merge evidence) and from `guard-rejected` (an adjacency/lifecycle-direction refusal): the
+  card's own required workflow gates never reported. Measured 2026-09-29 on RUFU-389, which reached
+  `done` from an agent's `fn task move` with zero `code-review` rows and no merge, and on RUFU-337 in
+  the same shape. Surfaces resolve it to copy naming each silent gate; retryable because running the
+  gate (or recording an audited bypass) makes the same move succeed.
+  */
+  | "gate-evidence-missing";
 
 /** The full, immutable set of rejection codes (handy for exhaustive validation). */
 export const TRANSITION_REJECTION_CODES: readonly TransitionRejectionCode[] = [
@@ -39,6 +49,7 @@ export const TRANSITION_REJECTION_CODES: readonly TransitionRejectionCode[] = [
   "unknown-column",
   "workflow-mismatch",
   "merge-blocked",
+  "gate-evidence-missing",
 ] as const;
 
 /**

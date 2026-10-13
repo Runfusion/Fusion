@@ -2760,6 +2760,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         preserveProgress,
         allocateWorktree,
         moveSource: "user" as const,
+        /*
+        FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406):
+        The transport is declared by the transport, not inferred downstream: this route is a board
+        request, so a refusal recorded from here can never be confused with an agent's shell. Provenance
+        only — the refusal a card with no gate evidence receives is identical over HTTP and CLI, which is
+        the point: RUFU-389's shape must be refused whoever asks.
+        */
+        moveCallerSurface: "dashboard-http" as const,
       };
 
       if (targetIsWip && guardTask && moveTargetIr && isFirstPlanningToWipAdmission(moveTargetIr, guardTask.column, column)) {

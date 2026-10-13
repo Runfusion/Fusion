@@ -52,7 +52,8 @@
       "staleMovePrecondition": "",
       "unknownColumn": "Essa coluna não existe no fluxo de trabalho desta tarefa.",
       "unplannedForExecution": "Esta tarefa ainda não está pronta para execução — o planejamento ou a revisão do plano ainda está pendente.",
-      "workflowMismatch": "Arrastar não pode mover um cartão entre fluxos de trabalho. Use o seletor de fluxo de trabalho."
+      "workflowMismatch": "Arrastar não pode mover um cartão entre fluxos de trabalho. Use o seletor de fluxo de trabalho.",
+      "gateEvidenceMissing": ""
     }
   },
   "chat": {

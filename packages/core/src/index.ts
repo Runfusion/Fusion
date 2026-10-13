@@ -873,7 +873,27 @@ export {
   isCompleteColumn,
   isHoldColumn,
   isHoldToWipBoundary,
+  isOperatorInitiatedMoveSource,
 } from "./workflows/workflow-transition-policy.js";
+/*
+FNXC:CompleteColumnGateEvidence 2026-10-11-19:35 (RUFU-406): The complete-column gate-evidence seam is
+exported for its tests and for the surfaces that name the silent gates; the refusal itself fires at the
+shared move seam, so no caller re-implements it.
+*/
+export {
+  classifyEmptyRequiredPreMergeSet,
+  classifyPreMergeGateEvidence,
+  CompleteColumnGateEvidenceRejectionError,
+  describeCompleteColumnGateFindings,
+  findLatestWorkflowStepResult,
+  resolveCompleteColumnGateEvidence,
+  type CompleteColumnEmptyReason,
+  type CompleteColumnGateEvidence,
+  type CompleteColumnGateEvidenceState,
+  type CompleteColumnGateFinding,
+  type CompleteColumnGateLane,
+  type CompleteColumnGateTask,
+} from "./workflows/complete-column-gate-evidence.js";
 export {
   resolveEffectiveSettings,
   resolveEffectiveSettingsDetailed,

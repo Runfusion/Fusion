@@ -1255,9 +1255,24 @@ describe("project-aware task command behavior", () => {
     await runTaskMove("FN-123", "done", "demo-project");
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
-    // FNXC:TaskMovement 2026-07-26-12:35: `fn task move` is a human board action and
-    // must carry the user move source so user-move semantics (hard cancel) apply.
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done", { moveSource: "user" });
+    /*
+    FNXC:TaskMovement 2026-07-26-12:35: `fn task move` is a human board action and
+    must carry the user move source so user-move semantics (hard cancel) apply.
+    FNXC:CompleteColumnGateEvidence 2026-10-11-19:56 (RUFU-406): the same call now also carries the
+    caller-principal pair, so the exact-object assertion becomes an intent-pinned one. `moveSource` must
+    stay exactly `"user"` — re-labelling it would silently move every real operator CLI move out of the
+    consumers that key off it — while the surface class is asserted by SHAPE, not value: it is derived
+    from the hosting shell's session markers, so a literal here would make the suite depend on whether the
+    test runner itself happens to sit inside an agent shell.
+    */
+    expect(mockMoveTask).toHaveBeenCalledWith(
+      "FN-123",
+      "done",
+      expect.objectContaining({
+        moveSource: "user",
+        moveCallerSurface: expect.stringMatching(/^(operator-cli|agent-cli)$/),
+      }),
+    );
   });
 
   it("routes a legacy-named custom WIP column through premise admission", async () => {
@@ -1403,6 +1418,128 @@ describe("project-aware task command behavior", () => {
 
     expect(disposer).toHaveBeenCalledOnce();
     expect(disposer).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-123" }));
+  });
+
+  /*
+  FNXC:CompleteColumnGateEvidence 2026-10-11-20:10 (RUFU-406):
+  The CLI is the surface RUFU-389 was closed through, so these cases pin what the terminal owes the person
+  standing at it: a refusal must arrive with the gates NAMED and the waiver NAMED (a message that only says
+  "not allowed" is what sent the agent into a retry loop), the caller class must reach the store, and a
+  close performed from an agent shell must announce itself. The marker variables are saved and restored per
+  case because the suite may itself run inside an agent shell — the assertions below pin both classes
+  explicitly rather than depending on the host.
+  */
+  const withShellEnv = async (
+    env: Record<string, string | undefined>,
+    run: () => Promise<void>,
+  ): Promise<void> => {
+    const keys = ["PI_SESSION_ID", "PI_SESSION_FILE"] as const;
+    const saved = new Map<string, string | undefined>(keys.map((key) => [key, process.env[key]]));
+    for (const key of keys) delete process.env[key];
+    Object.assign(process.env, env);
+    try {
+      await run();
+    } finally {
+      for (const key of keys) {
+        const prior = saved.get(key);
+        if (prior === undefined) delete process.env[key];
+        else process.env[key] = prior;
+      }
+    }
+  };
+
+  const moveHarnessStore = (overrides: Record<string, unknown> = {}) => ({
+    getTask: vi.fn().mockResolvedValue(makeTask({ id: "FN-123", column: "in-progress" })),
+    getTaskWorkflowSelection: vi.fn(() => undefined),
+    moveTask: vi.fn(async (id: string, column: string) => makeTask({ id, column })),
+    ...overrides,
+  });
+
+  const routeMoveThrough = (store: ReturnType<typeof moveHarnessStore>) =>
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: store as unknown as TaskStore,
+    });
+
+  it("runTaskMove surfaces a gate-evidence refusal with the gates and the waiver named", async () => {
+    const { CompleteColumnGateEvidenceRejectionError, describeCompleteColumnGateFindings, makeTransitionRejection } = await import("@fusion/core");
+    const findings = [{ gateId: "code-review", lane: "pre-merge" as const, state: "missing" as const }];
+    const refusal = new CompleteColumnGateEvidenceRejectionError(
+      makeTransitionRejection("gate-evidence-missing", "transition.rejected.gateEvidenceMissing", true),
+      // Built from the production sentence-builder, not a hand-typed fixture: the CLI promise is that
+      // the operator sees EXACTLY the copy the store seam wrote, gates and waiver route included.
+      describeCompleteColumnGateFindings(findings, { taskId: "FN-123", toColumn: "done" }),
+      findings,
+    );
+    const store = moveHarnessStore({ moveTask: vi.fn().mockRejectedValue(refusal) });
+    routeMoveThrough(store);
+
+    // bin.ts prints `Error: <message>` for a propagated throw, so propagating intact IS the CLI surfacing.
+    await expect(runTaskMove("FN-123", "done", "demo-project")).rejects.toThrow(/code-review/);
+    await expect(runTaskMove("FN-123", "done", "demo-project")).rejects.toThrow(/bypass-review/);
+    await expect(runTaskMove("FN-123", "done", "demo-project")).rejects.toBe(refusal);
+    expect(store.moveTask).toHaveBeenCalledTimes(3);
+  });
+
+  it("runTaskMove announces an agent-shell close and hands the principal to the store", async () => {
+    const store = moveHarnessStore();
+    routeMoveThrough(store);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await withShellEnv({ PI_SESSION_ID: "sess-cli-1" }, async () => {
+      await runTaskMove("FN-123", "done", "demo-project");
+    });
+
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-123",
+      "done",
+      expect.objectContaining({
+        moveSource: "user",
+        moveCallerSurface: "agent-cli",
+        moveCallerPrincipal: { sessionId: "sess-cli-1" },
+      }),
+    );
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("closed by: agent shell (session sess-cli-1)");
+    logSpy.mockRestore();
+  });
+
+  it("runTaskMove prints no caller line for a plain human shell", async () => {
+    const store = moveHarnessStore();
+    routeMoveThrough(store);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await withShellEnv({}, async () => {
+      await runTaskMove("FN-123", "done", "demo-project");
+    });
+
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-123",
+      "done",
+      expect.objectContaining({ moveSource: "user", moveCallerSurface: "operator-cli" }),
+    );
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("closed by");
+    logSpy.mockRestore();
+  });
+
+  it("announces the agent class only for a complete-lane move, not for every drag", async () => {
+    const store = moveHarnessStore();
+    routeMoveThrough(store);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await withShellEnv({ PI_SESSION_ID: "sess-cli-2" }, async () => {
+      await runTaskMove("FN-123", "in-review", "demo-project");
+    });
+
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-123",
+      "in-review",
+      expect.objectContaining({ moveCallerSurface: "agent-cli" }),
+    );
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("closed by");
+    logSpy.mockRestore();
   });
 
   it("runTaskAttach uses resolved project store when project name is provided", async () => {

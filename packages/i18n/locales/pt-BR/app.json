@@ -4068,7 +4068,8 @@
       "staleMovePrecondition": "",
       "unplannedForExecution": "Esta tarefa ainda não está pronta para execução — o planejamento ou a revisão do plano ainda está pendente.",
       "capacityExhausted": "Essa coluna está com capacidade esgotada. Tente novamente quando uma vaga se abrir.",
-      "mergeBlocked": "Esta tarefa está bloqueada para conclusão até que sua etapa de merge termine."
+      "mergeBlocked": "Esta tarefa está bloqueada para conclusão até que sua etapa de merge termine.",
+      "gateEvidenceMissing": ""
     },
     "done": "Concluída",
     "workflow": {

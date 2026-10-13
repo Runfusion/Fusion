@@ -8,7 +8,7 @@ Import union for this line: ours adds `isFollowUpTask`, `resolveWorkflowIrForTas
 but the merged body has no call site, so keeping them would be dead references. Engine side keeps ours
 (`admitTaskToWip`/`isFirstPlanningToWipAdmission`/`planTaskWorktreePath`) and `SelfHealingManager`, which both lines need.
 */
-import { TaskStore, COLUMNS, COLUMN_LABELS, deriveTaskLabelFromDescription, describeTaskTitleRejection, isFollowUpTask, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolvePreMergeGateForTask, resolveWorkflowIrForTaskWithProvenance, workflowHasColumn, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, buildManualRetryResetPatchIfCurrent, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, deliverTaskCommentFromStore, describeTaskCommentDelivery, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, deriveTaskLabelFromDescription, describeTaskTitleRejection, isFollowUpTask, MAX_TASK_MESSAGE_LENGTH, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, resolvePreMergeGateForTask, resolveWorkflowIrForTaskWithProvenance, workflowHasColumn, columnHasFlag, resolveEffectiveAutoMerge, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, buildManualRetryResetPatchIfCurrent, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, deliverTaskCommentFromStore, describeTaskCommentDelivery, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isFailedNoVerdictPreMergeReviewResult, admitTaskToWip, isFirstPlanningToWipAdmission, isInReviewMissingWorktreeSessionStartFailure, planTaskWorktreePath, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp, SelfHealingManager } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -44,6 +44,7 @@ import {
 } from "../project-routing.js";
 import { findNodeByNameOrId } from "./node.js";
 import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";
+import { cliMoveCallerOptions } from "../move-caller.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -1775,6 +1776,8 @@ export async function runTaskMove(id: string, column: string, projectName?: stri
       console.error(`Valid columns: ${ir.version === "v2" ? ir.columns.map((candidate) => candidate.id).join(", ") : COLUMNS.join(", ")}`);
       process.exit(1);
     }
+    // Classified once per command so the write and the terminal read-back can never disagree.
+    const caller = cliMoveCallerOptions();
     let task;
     if (isFirstPlanningToWipAdmission(ir, current.column, column)) {
       const settings = await context.store.getSettings();
@@ -1794,10 +1797,32 @@ export async function runTaskMove(id: string, column: string, projectName?: stri
       if (!admission.released) throw new Error(admission.detail ?? `Execution admission refused: ${admission.rejection ?? "release-gate"}`);
       task = admission.task;
     } else {
-      task = await context.store.moveTask(id, column as Column, { moveSource: "user" });
+      /*
+      FNXC:CompleteColumnGateEvidence 2026-10-11-19:56 (RUFU-406):
+      `moveSource: "user"` stays exactly as written above — it is the INTENT contract (a CLI move is a
+      board action, and the hard-cancel/approval-hold consumers key off that stamp). What RUFU-406 adds is
+      the PRINCIPAL beside it: measured 2026-09-29, an agent's `fn task move` carried the same `"user"`
+      stamp into the terminal lane (RUFU-389) and the durable record could not tell that shell from a
+      human's. The classifier never changes the verdict — a card without gate evidence is refused for an
+      agent exactly as for an operator — it only makes the refusal readable afterwards.
+      */
+      task = await context.store.moveTask(id, column as Column, { moveSource: "user", ...caller });
     }
     console.log();
     console.log(`  ✓ Moved ${task.id} → ${columnLabel(task.column)}`);
+    /*
+    FNXC:CompleteColumnGateEvidence 2026-10-11-20:10 (RUFU-406):
+    A close that came from an agent shell says so on the terminal. RUFU-389's card was closed by an agent
+    through `fn task move` while the durable record said `moveSource: "user"`, so nothing on the operator's
+    screen distinguished a human close from an agent close; this line is that distinction at the moment it
+    is still cheap — after the write, on the only lane where gate evidence is demanded (the `complete`
+    trait, not the literal id `done`). It is display-only: the classifier cannot and does not influence the
+    verdict, and an unmarked (genuinely human) shell prints nothing extra, so shipped output is unchanged
+    for the operator who was always the one moving cards by hand.
+    */
+    if (caller.moveCallerSurface === "agent-cli" && columnHasFlag(ir, column, "complete")) {
+      console.log(`  · closed by: agent shell${caller.moveCallerPrincipal?.sessionId ? ` (session ${caller.moveCallerPrincipal.sessionId})` : ""}`);
+    }
     console.log();
   });
 }

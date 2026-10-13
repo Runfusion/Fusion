@@ -6,6 +6,7 @@ import {
   createSharedPgTaskStoreTestHarness,
 } from "../__test-utils__/pg-test-harness.js";
 import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
+import type { TaskStore, WorkflowStepResult } from "../types.js";
 
 /*
 FNXC:WorkflowTransitionPolicy 2026-07-19-10:50:
@@ -28,6 +29,17 @@ from a merge-blocker column, and ONLY there):
  - Builtin cross edge, non-merge-blocker source into complete: in-progress → done allowed.
  - Builtin merge-blocker source into complete with unmet content checks:
    in-review → done with incomplete steps still rejects.
+
+/*
+FNXC:CompleteColumnGateEvidence 2026-10-11-20:48 (RUFU-406):
+The cross-edge case above is the merge-BLOCKER half of the completion boundary. RUFU-406 added a
+second, orthogonal door on every move into a `complete` column: the required pre-merge gate-EVIDENCE
+check, which fires whatever the source column's traits are — including this `in-progress → done`
+edge, where the merge blocker is skipped entirely and the evidence check is therefore the ONLY door.
+That is the RUFU-389 shape. So this fixture now carries approving `plan-review` + `code-review`
+evidence, which is the intent it always implicitly assumed: it exists to prove the merge blocker does
+NOT refuse this edge, not to prove a gateless card may be completed. The refusal of the gateless
+shape is pinned as its own case below, so both doors stay covered on the same edge.
 */
 
 /** Minimal six-column-benchmark-shaped IR: custom `merging` column between the
@@ -98,6 +110,21 @@ pgDescribe("merge-blocker keys on the workflow's review lane, not a hardcoded 'i
     await harness.store().updateGlobalSettings({ experimentalFeatures: { workflowColumns: true } });
   });
 
+  /** Give a card the built-in's required pre-merge gates as approving evidence, so a case that
+   *  exercises the merge-blocker half is not first refused by the gate-evidence door (RUFU-406). */
+  async function approveRequiredGates(store: TaskStore, taskId: string): Promise<void> {
+    const rows: WorkflowStepResult[] = ["plan-review", "code-review"].map((id) => ({
+      workflowStepId: id,
+      workflowStepName: id === "plan-review" ? "Plan Review" : "Code Review",
+      phase: "pre-merge" as const,
+      status: "passed" as const,
+      verdict: "APPROVE" as const,
+      reviewInputFingerprint: `sha256:${id}-fingerprint`,
+      completedAt: "2026-10-11T00:00:00.000Z",
+    }));
+    await store.updateTask(taskId, { workflowStepResults: rows });
+  }
+
   /** Force a task's column directly (bypassing move guards) so a single move
    *  edge can be exercised in isolation. Columnar tasks table (PG cutover). */
   async function forceColumn(taskId: string, column: string): Promise<void> {
@@ -125,10 +152,32 @@ pgDescribe("merge-blocker keys on the workflow's review lane, not a hardcoded 'i
     // in-lock move resolve the SAME catalog IR (a task with no selection hits a
     // pre-existing catalog-vs-const signature mismatch unrelated to this test).
     const task = await store.createTask({ description: "mission validation card", workflowId: "builtin:coding" });
+    // RUFU-406: this card owes the built-in's required pre-merge gates, and the evidence door is the
+    // only door on this edge. Carry the evidence so the assertion below stays about the merge blocker.
+    await approveRequiredGates(store, task.id);
 
     await forceColumn(task.id, "in-progress");
     const moved = await store.moveTask(task.id, "done", { moveSource: "user" });
     expect(moved.column).toBe("done");
+  });
+
+  /*
+  FNXC:CompleteColumnGateEvidence 2026-10-11-20:48 (RUFU-406):
+  The paired refusal on the SAME edge. Before RUFU-406 this move succeeded with zero gate rows,
+  because the merge-blocker invariant consults `getTaskMergeBlocker` only when the SOURCE column
+  carries the `mergeBlocker` trait — so `in-progress → done` never read the evidence authority at
+  all. The refusal is the fix: a card with no approving gate row cannot be hand-completed from its
+  execution lane either, over any transport.
+  */
+  it("refuses that same cross edge when the card carries no gate evidence, which is the RUFU-389 shape", async () => {
+    const store = harness.store();
+    const task = await store.createTask({ description: "gateless mission validation card", workflowId: "builtin:coding" });
+
+    await forceColumn(task.id, "in-progress");
+    await expect(store.moveTask(task.id, "done", { moveSource: "user" })).rejects.toThrow(
+      /Required workflow gate evidence is missing for: code-review/,
+    );
+    expect((await store.getTask(task.id))?.column).toBe("in-progress");
   });
 
   it("still rejects in-review → done when the merge-blocker content checks fail", async () => {
