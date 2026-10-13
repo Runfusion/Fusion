@@ -3990,7 +3990,8 @@ describe("executeHeartbeat", () => {
     it("fences late session callbacks after an operator stop terminalizes the run", async () => {
       const store = createStoreWithAgentForExec();
       const appendAgentLog = vi.fn().mockResolvedValue(undefined);
-      mockTaskStore = createMockTaskStore({ appendAgentLog });
+      const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
+      mockTaskStore = createMockTaskStore({ appendAgentLog, emitUsageEvent });
       const mockSession = createMockAgentSession();
       let onText: ((delta: string) => void) | undefined;
       let onToolStart: ((name: string, args?: Record<string, unknown>) => void) | undefined;
@@ -4024,6 +4025,7 @@ describe("executeHeartbeat", () => {
       await execution;
 
       expect(appendAgentLog).not.toHaveBeenCalled();
+      expect(emitUsageEvent.mock.calls.map(([event]) => event.kind)).toEqual(["session_start"]);
       expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "active");
     });
 

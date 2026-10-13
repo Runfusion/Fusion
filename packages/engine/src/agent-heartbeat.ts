@@ -2807,11 +2807,23 @@ export class HeartbeatMonitor {
         let heartbeatSession: { abort?: () => void | Promise<void> } | undefined;
         let stdoutExcerpt = "";
 
+        /*
+        FNXC:HeartbeatTelemetry 2026-10-13-08:05:
+        Runtime construction may synchronously report tool activity before trackAgent owns the
+        session. Admit only that exact pending run while its pre-track cancellation fence is open;
+        after tracking, every terminal fence remains mandatory for provider callbacks.
+        */
         const acceptsRunEvent = (): boolean => {
           const tracked = this.trackedAgents.get(agentId);
-          return tracked?.runId === run.id
-            && !tracked.eventFenceClosed
-            && !tracked.cancellationRequested
+          if (tracked?.runId === run.id) {
+            return !tracked.eventFenceClosed
+              && !tracked.cancellationRequested
+              && !heartbeatCompletionLatched
+              && !heartbeatProgressBudgetExhausted;
+          }
+          const pending = this.pendingHeartbeatRuns.get(agentId);
+          return pending?.runId === run.id
+            && !pending.cancellationRequested
             && !heartbeatCompletionLatched
             && !heartbeatProgressBudgetExhausted;
         };
@@ -3441,6 +3453,17 @@ export class HeartbeatMonitor {
         );
 
         try {
+          // FNXC:HeartbeatTelemetry 2026-10-13-08:32: construction-time callbacks can exhaust
+          // the progress budget, so do not dispatch the session's first provider turn afterward.
+          if (heartbeatProgressBudgetExhausted) {
+            await this.completeRun(agentId, run.id, {
+              status: "terminated",
+              stderrExcerpt: "Heartbeat progress budget exhausted",
+              resultJson: { reason: "heartbeat_progress_budget_exhausted", limit: MAX_HEARTBEAT_TOOL_CALLS },
+            });
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
+
           // Build execution prompt
           let pendingMessages: Message[] = [];
           let executionPrompt: string;
