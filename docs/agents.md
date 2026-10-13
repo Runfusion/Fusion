@@ -716,6 +716,16 @@ Prompt candidate rendering uses:
 
 `skipHeartbeatWhenIdle` defaults to `false`; when enabled, only scheduled timer ticks are skipped while the agent has no assigned task. Assignment-triggered wakeups and manual/on-demand runs still execute. Configure it in **Agent Detail → Settings → Heartbeat Settings → Skip heartbeat when idle**.
 
+### Idle timer suppression after an acknowledged heartbeat
+
+<!-- FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300): steady-state timer cadence and the store-truthful pending-messages number. The probe is packages/engine/src/heartbeat-wake-signals.ts; the gate is the last check in HeartbeatTriggerScheduler.onTimerTick. -->
+
+A scheduled timer tick does not dispatch merely because the interval elapsed. When the agent's most recent heartbeat run **completed with `fn_heartbeat_done` accepted**, that run's row persists a wake cursor (`heartbeatDoneAccepted` + `wakeCursor`: the message ids the store confirmed read, the room-entry ids and steering-comment ids the run surfaced, and the board it saw as assigned `id:column` rows, the bound card's column, and the auto-claim candidate ids). The next timer tick re-reads those same sources through the same probe the Wake Delta renders from (`packages/engine/src/heartbeat-wake-signals.ts`) and dispatches only when a source holds something **newer** than that cursor — any unread inbox row, a room entry or steering comment the run never surfaced, a changed assigned-row or auto-claim set, or a changed bound-card column. When nothing is newer the tick is answered with no run record and no session, plus one scheduler line: `timer-heartbeat-suppressed agentId=… reason=no-fresher-signal`. Comparisons are monotonic “is anything newer” checks against the persisted cursor; the per-run render window is never compared to a stored value, and the timer liveness stamp is written before the gate so a suppressed-but-live timer is never re-armed as a zombie by the timer audit.
+
+Never suppressed: a first tick with no completed predecessor; a predecessor that failed or completed without `fn_heartbeat_done`; any non-timer source (assignment, message, manual/ping, on-demand, automation/routine); budget-observability ticks, which keep producing their explicit `budget_exhausted` / budget-threshold run records; and any tick whose probe could not be read — that tick dispatches with a loud warn instead of sleeping on an unproven silence. `userPaused` and `runtimeConfig.skipHeartbeatWhenIdle` keep their own authority; suppression is the honest default for agents that leave that flag `false`.
+
+The same probe is the only source for the Wake Delta's `pending messages` number, which is the mailbox's unread **total** for that recipient — the value `fn_read_messages` queries — and not the length of the capped 10-row preview; the line is omitted with a loud warn when no authoritative message store is wired. A completed heartbeat retires as read exactly the messages it surfaced (`MessageStore.markInboxAsRead`), so mail an agent was never shown can no longer disappear from the count.
+
 ### No-task auto-claim behavior
 
 When an identity-bearing, non-ephemeral agent wakes with no assigned task and `runtimeConfig.autoClaimRelevantTasks !== false`, the heartbeat monitor scans open todo tasks and may claim one before constructing the prompt run.
