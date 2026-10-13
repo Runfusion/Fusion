@@ -7613,7 +7613,7 @@
     "installError": "스킬 설치 실패",
     "installFailed": "{{name}} 설치 실패: {{message}}",
     "installing": "설치 중…",
-    "installsCount": "{{count}}회 설치",
+    "installsCount": "{{value}}회 설치",
     "installSkill": "{{name}} 설치",
     "installSuccess": "{{name}} 설치됨",
     "loadCatalogError": "카탈로그 로드 실패",

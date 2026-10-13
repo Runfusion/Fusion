@@ -7786,7 +7786,7 @@ export default interface Resources {
       "installSkill": "Install {{name}}",
       "installSuccess": "Installed {{name}}",
       "installing": "Installing…",
-      "installsCount": "{{count}} installs",
+      "installsCount": "{{value}} installs",
       "loadCatalogError": "Failed to load catalog",
       "loadContentError": "Failed to load skill content",
       "loadDiscoveredError": "Failed to load discovered skills",

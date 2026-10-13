@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { createInstance } from "i18next";
+import { I18nextProvider, initReactI18next } from "react-i18next";
+import realEnApp from "../../../../i18n/locales/en/app.json";
 import { SkillsView } from "../SkillsView";
 import * as apiModule from "../../api";
 import type { DiscoveredSkill, CatalogEntry, SkillContent } from "@fusion/dashboard";
@@ -20,6 +23,22 @@ const mockInstallSkill = vi.mocked(apiModule.installSkill);
 const mockFetchSkillsCatalog = vi.mocked(apiModule.fetchSkillsCatalog);
 const mockFetchSkillContent = vi.mocked(apiModule.fetchSkillContent);
 const mockFetchSkillFileContent = vi.mocked(apiModule.fetchSkillFileContent);
+
+async function createRealEnglishInstance() {
+  const instance = createInstance();
+  await instance.use(initReactI18next).init({
+    lng: "en",
+    fallbackLng: "en",
+    ns: ["app"],
+    defaultNS: "app",
+    returnNull: false,
+    returnEmptyString: false,
+    react: { useSuspense: false },
+    interpolation: { escapeValue: false },
+    resources: { en: { app: realEnApp } },
+  });
+  return instance;
+}
 
 describe("SkillsView", () => {
   const mockAddToast = vi.fn();
@@ -187,12 +206,33 @@ describe("SkillsView", () => {
       });
     });
 
-    it("renders install counts", async () => {
-      render(<SkillsView addToast={mockAddToast} onClose={onClose} />);
+    it("renders locale-formatted install counts from the real English resource", async () => {
+      const catalogEntries: CatalogEntry[] = [
+        { ...mockCatalogEntries[0], id: "count-1234", name: "Count 1234", installs: 1234 },
+        { ...mockCatalogEntries[0], id: "count-0", name: "Count 0", installs: 0 },
+        { ...mockCatalogEntries[0], id: "count-1", name: "Count 1", installs: 1 },
+        { ...mockCatalogEntries[0], id: "count-duplicate", name: "Count duplicate", installs: 1234 },
+        { ...mockCatalogEntries[0], id: "count-undefined", name: "Count undefined", installs: undefined },
+      ];
+      mockFetchSkillsCatalog.mockResolvedValue({
+        entries: catalogEntries,
+        auth: { mode: "unauthenticated", tokenPresent: false, fallbackUsed: false },
+      });
+      const instance = await createRealEnglishInstance();
+      const { container } = render(
+        <I18nextProvider i18n={instance}>
+          <SkillsView addToast={mockAddToast} onClose={onClose} />
+        </I18nextProvider>,
+      );
 
       await waitFor(() => {
-        expect(screen.getByText(/1,234 installs/)).toBeTruthy();
-        expect(screen.getByText(/5,678 installs/)).toBeTruthy();
+        for (const [name, count] of [["Count 1234", "1,234 installs"], ["Count 0", "0 installs"], ["Count 1", "1 installs"], ["Count duplicate", "1,234 installs"]] as const) {
+          const card = screen.getByRole("heading", { name }).closest(".skills-view-card");
+          expect(card?.textContent).toContain(count);
+        }
+        const undefinedCard = screen.getByRole("heading", { name: "Count undefined" }).closest(".skills-view-card");
+        expect(undefinedCard?.querySelector(".skills-view-card-installs")).toBeNull();
+        expect(container.textContent).not.toContain("{{");
       });
     });
 

@@ -7614,7 +7614,7 @@
     "installError": "Impossible d'installer la compétence",
     "installFailed": "Impossible d'installer {{name}} : {{message}}",
     "installing": "Installation en cours…",
-    "installsCount": "{{count}} installations",
+    "installsCount": "{{value}} installations",
     "installSkill": "Installer {{name}}",
     "installSuccess": "{{name}} installé",
     "loadCatalogError": "Impossible de charger le catalogue",

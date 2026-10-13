@@ -7624,7 +7624,7 @@
     "installError": "Falha ao instalar habilidade",
     "installFailed": "Falha ao instalar {{name}}: {{message}}",
     "installing": "Instalando…",
-    "installsCount": "{{count}} instalações",
+    "installsCount": "{{value}} instalações",
     "installSkill": "Instalar {{name}}",
     "installSuccess": "{{name}} instalado",
     "loadCatalogError": "Falha ao carregar o catálogo",

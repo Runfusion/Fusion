@@ -7613,7 +7613,7 @@
     "installError": "安裝技能失敗",
     "installFailed": "安裝 {{name}} 失敗: {{message}}",
     "installing": "正在安裝…",
-    "installsCount": "{{count}} 次安裝",
+    "installsCount": "{{value}} 次安裝",
     "installSkill": "安裝 {{name}}",
     "installSuccess": "已安裝 {{name}}",
     "loadCatalogError": "載入目錄失敗",

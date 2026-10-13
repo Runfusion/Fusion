@@ -7646,7 +7646,7 @@
     "installError": "Failed to install skill",
     "installFailed": "Failed to install {{name}}: {{message}}",
     "installing": "Installing…",
-    "installsCount": "{{count}} installs",
+    "installsCount": "{{value}} installs",
     "installSkill": "Install {{name}}",
     "installSuccess": "Installed {{name}}",
     "loadCatalogError": "Failed to load catalog",
