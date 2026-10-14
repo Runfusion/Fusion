@@ -276,6 +276,28 @@ import type { StuckTaskDetector } from "./healing/stuck-task-detector.js";
 const STALE_PLANNING_STATUS_GRACE_MS = 20 * 60_000;
 export const PLANNING_CONTINUATION_LEASE_MS = 10 * 60_000;
 
+/*
+FNXC:PlanPromptWriteRefusal 2026-10-14-10:04 (RUFU-651):
+The unchanged-spec failure sentence is what an operator and every downstream test read, so it must
+name the party that actually stopped the plan. With no recorded write refusal the sentence is exactly
+what it always was — "Planner did not update the authoritative PROMPT.md" — because nothing proved
+otherwise. Once the durable writer refused a write during this attempt, blaming the planner is a
+misattribution: the card was blocked by its own spec-write guard (a reset fence, unparseable step
+headings, or a failed read-back), which is the class of cause behind `STUCK_LOOP_EXHAUSTED` cards
+that burned 6 planning attempts while running many sessions and leaving no artifact.
+*/
+export function describeUnwrittenPlanArtifact(
+  attemptId: string,
+  refusals: readonly PlanPromptWriteRefusalReason[] = [],
+): string {
+  const base = `Planner did not update the authoritative PROMPT.md during attempt ${attemptId}`;
+  if (refusals.length === 0) return base;
+  const tally = [...new Set(refusals)]
+    .map((reason) => `${reason} x${refusals.filter((candidate) => candidate === reason).length}`)
+    .join(", ");
+  return `${base} — the durable spec writer REFUSED this attempt's write (${tally}); this is a write refusal, not a planner that produced no plan`;
+}
+
 export interface PlanningDependencyInstructionTarget {
   repository: string;
   readiness: WorktreeDependencyReadiness;
@@ -375,6 +397,7 @@ import {
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskPromptWriteTool,
+  type PlanPromptWriteRefusalReason,
   createInstallWorktreeDependenciesTool,
   createWorkflowListTool,
   createWorkflowSelectTool,
@@ -3469,6 +3492,7 @@ export class TriageProcessor {
             task.id,
             triageRunContext,
             () => !this.resetFence.isStale(task.id, planningGeneration),
+            (info) => planningAttempt.promptWriteRefusals.push(info.reason),
           ),
           createInstallWorktreeDependenciesTool(this.store, task.id, {
             rootDir: this.rootDir,
@@ -3729,6 +3753,13 @@ export class TriageProcessor {
           baseline: planningAttemptBaseline,
           fallbackEngaged: false,
           fallbackSettlements: [] as Array<Promise<void>>,
+          /*
+          FNXC:PlanPromptWriteRefusal 2026-10-14-10:04 (RUFU-651):
+          Every spec write this attempt tried that the durable writer REFUSED. Without this the only
+          record of a refused write is a tool result inside a session transcript, so a card that was
+          blocked by the writer looked identical to a planner that never produced a plan.
+          */
+          promptWriteRefusals: [] as PlanPromptWriteRefusalReason[],
         };
         const fallbackObserver = createFallbackModelObserver({
           agent: "triage",
@@ -4293,7 +4324,7 @@ export class TriageProcessor {
                 ? `Planner runtime ${runtimeId} did not provide a fallback-dispatch settlement boundary for attempt ${planningAttempt.id}`
                 : planningAttempt.fallbackEngaged
                   ? `Planner fallback engaged during attempt ${planningAttempt.id}`
-                  : `Planner did not update the authoritative PROMPT.md during attempt ${planningAttempt.id}`;
+                  : describeUnwrittenPlanArtifact(planningAttempt.id, planningAttempt.promptWriteRefusals);
             /*
             FNXC:PlanReplanSessionBudget 2026-09-21-10:45 (RUFU-251):
             Inside a live Plan Review REVISE episode this is a planner-session failure, so it consumes

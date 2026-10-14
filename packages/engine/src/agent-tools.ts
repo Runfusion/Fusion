@@ -2532,11 +2532,62 @@ export function createInstallWorktreeDependenciesTool(
  * FNXC:WorkflowReviewers 2026-07-01-13:22:
  * Plan Review inline fixes must be able to rewrite the task's authoritative PROMPT.md, but that pre-execution reviewer should not need general source-file write tools. Route the write through TaskStore so existing PROMPT.md validation, task directory placement, and task.json sync remain the single persistence path.
  */
+/*
+FNXC:PlanPromptWriteRefusal 2026-10-14-10:04 (RUFU-651):
+`fn_task_prompt_write` can decline a spec write for three reasons that are NOT store outages: the
+planning generation was reset under the attempt, the submitted Markdown has unparseable `### Step N:`
+headings, or the authoritative read-back does not match what was submitted. Until now all three fell
+into this tool's catch-all `storeErrorResult`, so the planner was told "the board recorded nothing,
+retry the call" — and `tool-store-errors.ts`' own STAS-251 note says a refusal dressed as an outage
+is the lie that teaches agents to retry something that will never succeed.
+
+This is the failure signature of `STUCK_LOOP_EXHAUSTED` cards whose planner ran many sessions and
+wrote nothing: each attempt was refused, each refusal was reported as an outage, and nothing on the
+card recorded that a refusal happened at all, so triage could only blame the planner for "not
+updating PROMPT.md". A refusal now keeps a typed reason, is returned in refusal shape, and is
+reported once per attempt through `onWriteRefused` so the caller can attribute the attempt correctly.
+A genuine store failure still takes the unchanged outage path below.
+*/
+export type PlanPromptWriteRefusalReason =
+  | "planning-reset-fenced"
+  | "invalid-step-headings"
+  | "prompt-read-back-mismatch";
+
+export class PlanPromptWriteRefusalError extends Error {
+  constructor(readonly reason: PlanPromptWriteRefusalReason, detail: string) {
+    super(detail);
+    this.name = "PlanPromptWriteRefusalError";
+  }
+}
+
+const PLAN_PROMPT_WRITE_REFUSAL_GUIDANCE: Record<PlanPromptWriteRefusalReason, string> = {
+  "planning-reset-fenced":
+    "Do not retry: this planning attempt was superseded by a task reset and a newer generation owns the spec.",
+  "invalid-step-headings":
+    "Nothing was persisted. Fix the plan Markdown so every `### Step N:` heading parses, then submit the complete PROMPT.md again.",
+  "prompt-read-back-mismatch":
+    "Nothing verifiable was persisted: the authoritative PROMPT.md does not match the content submitted. Report this instead of assuming the plan published.",
+};
+
+function planPromptWriteRefusalResult(taskId: string, reason: PlanPromptWriteRefusalReason, detail: string) {
+  return {
+    content: [{
+      type: "text" as const,
+      // A refusal names its own reason and never claims the board was unreachable.
+      text: `ERROR: PROMPT.md plan write for ${taskId} refused (${reason}): ${detail} ${PLAN_PROMPT_WRITE_REFUSAL_GUIDANCE[reason]}`,
+    }],
+    details: { code: "PLAN_PROMPT_WRITE_REFUSED", refusal: reason },
+    isError: true,
+  };
+}
+
 export function createTaskPromptWriteTool(
   store: TaskStore,
   taskId: string,
   runContext?: RunMutationContext,
   canPersist?: () => boolean,
+  /** Called once per refused write so the owning attempt can attribute the failure to the writer, not the planner. */
+  onWriteRefused?: (info: { reason: PlanPromptWriteRefusalReason; detail: string }) => void,
 ): ToolDefinition {
   return {
     name: "fn_task_prompt_write",
@@ -2555,7 +2606,16 @@ export function createTaskPromptWriteTool(
       try {
         // FNXC:StepDependencyValidation 2026-10-01-01:59: Prompt publication must refuse
         // invalid Markdown dependencies before it mutates the authoritative plan.
-        fusionCore.parseStepHeadings(params.content);
+        // FNXC:PlanPromptWriteRefusal 2026-10-14-10:04 (RUFU-651): that refusal is the writer's
+        // verdict on submitted content, so it must not reach the caller as a store outage.
+        try {
+          fusionCore.parseStepHeadings(params.content);
+        } catch (validationError: unknown) {
+          throw new PlanPromptWriteRefusalError(
+            "invalid-step-headings",
+            validationError instanceof Error ? validationError.message : String(validationError),
+          );
+        }
         /*
         FNXC:TaskReset 2026-08-22-04:49:
         A triage attempt captured before Reset can outlive the route's non-reentrant planning lock.
@@ -2563,7 +2623,10 @@ export function createTaskPromptWriteTool(
         recreate PROMPT.md after Reset publishes the description-only state.
         */
         if (canPersist && !canPersist()) {
-          throw new Error(`Planning for ${taskId} was reset before PROMPT.md could be persisted`);
+          throw new PlanPromptWriteRefusalError(
+            "planning-reset-fenced",
+            `Planning for ${taskId} was reset before PROMPT.md could be persisted`,
+          );
         }
         // Workspace membership is derived from workspace.json at task start; PROMPT.md is plan-only.
         const promptUpdate = { prompt: params.content };
@@ -2577,7 +2640,10 @@ export function createTaskPromptWriteTool(
           */
           await store.withPlanningLifecycleLock(taskId, async () => {
             if (!canPersist()) {
-              throw new Error(`Planning for ${taskId} was reset before PROMPT.md could be persisted`);
+              throw new PlanPromptWriteRefusalError(
+                "planning-reset-fenced",
+                `Planning for ${taskId} was reset before PROMPT.md could be persisted`,
+              );
             }
             const updated = await store.withTaskLock(taskId, () => store.updateTaskUnlocked(taskId, promptUpdate, runContext));
             if (store.isBackendMode()) {
@@ -2604,10 +2670,16 @@ export function createTaskPromptWriteTool(
         try {
           persisted = await store.getTask(taskId);
         } catch {
-          throw new Error("authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified");
+          throw new PlanPromptWriteRefusalError(
+            "prompt-read-back-mismatch",
+            "authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified",
+          );
         }
         if (persisted?.prompt !== params.content) {
-          throw new Error("authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified");
+          throw new PlanPromptWriteRefusalError(
+            "prompt-read-back-mismatch",
+            "authoritative PROMPT.md read-back did not match the requested content; persistence could not be verified",
+          );
         }
         /*
         FNXC:PlanArtifactPersistence 2026-07-26-03:55:
@@ -2627,6 +2699,10 @@ export function createTaskPromptWriteTool(
         };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
+        if (err instanceof PlanPromptWriteRefusalError) {
+          onWriteRefused?.({ reason: err.reason, detail: err.message });
+          return planPromptWriteRefusalResult(taskId, err.reason, err.message);
+        }
         return storeErrorResult(`PROMPT.md plan mirror for ${taskId}`, err);
       }
     },
