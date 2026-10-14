@@ -6,6 +6,8 @@ const OPENROUTER_DEFAULT_REFERER = "https://runfusion.ai";
 const OPENROUTER_DEFAULT_TITLE = "Fusion";
 const ORCAROUTER_MODELS_URL = "https://api.orcarouter.ai/v1/models";
 const ORCAROUTER_DEFAULT_BASE_URL = "https://api.orcarouter.ai/v1";
+const ATLASCLOUD_MODELS_URL = "https://api.atlascloud.ai/v1/models";
+const ATLASCLOUD_DEFAULT_BASE_URL = "https://api.atlascloud.ai/v1";
 const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
 
 type ModelConfig = {
@@ -55,6 +57,7 @@ interface OpenRouterProviderPreferences {
 interface SettingsLike {
   openrouterModelSync?: boolean;
   orcarouterModelSync?: boolean;
+  atlascloudModelSync?: boolean;
   opencodeGoModelSync?: boolean;
   openrouterAppAttribution?: { referer?: string; title?: string };
   openrouterModelFilters?: OpenRouterModelFilters;
@@ -87,6 +90,10 @@ function toOpenRouterModels(json: {
     top_provider?: { max_completion_tokens?: number };
     pricing?: Record<string, string>;
     architecture?: { modality?: string; input_modalities?: string[] };
+    // Atlas Cloud reports these at the top level of each catalog entry.
+    input_modalities?: string[];
+    max_output_length?: number;
+    supported_features?: string[];
   }>;
 }): ModelConfig[] {
   return (json.data || []).map((model) => {
@@ -100,8 +107,10 @@ function toOpenRouterModels(json: {
       || id.includes("o4-")
       || id.includes("reasoner")
       || name.includes("thinking")
-      || name.includes("reasoner");
+      || name.includes("reasoner")
+      || (model.supported_features?.includes("reasoning") ?? false);
     const hasVision = model.architecture?.input_modalities?.includes("image")
+      ?? model.input_modalities?.includes("image")
       ?? model.architecture?.modality?.includes("multimodal")
       ?? false;
 
@@ -117,7 +126,7 @@ function toOpenRouterModels(json: {
         cacheWrite: parseCost(model.pricing?.input_cache_write),
       },
       contextWindow: model.context_length || 128000,
-      maxTokens: model.top_provider?.max_completion_tokens || 16384,
+      maxTokens: model.top_provider?.max_completion_tokens || model.max_output_length || 16384,
     };
   });
 }
@@ -255,6 +264,45 @@ async function syncOrcaRouterModels(options: StartupSyncOptions): Promise<void> 
   log("orcarouter", `Synced ${models.length} models from OrcaRouter API`);
 }
 
+/*
+FNXC:AtlasCloudProvider 2026-10-14-12:00:
+Fusion ships Atlas Cloud as a named OpenAI-compatible gateway provider, mirroring
+the OrcaRouter catalog-sync pattern. Atlas Cloud exposes a public `/v1/models`
+catalog, so the same `toOpenRouterModels` mapping is reused (the catalog returns
+prefixed model IDs such as `deepseek-ai/deepseek-v4-flash` that the gateway
+accepts verbatim on `POST /v1/chat/completions`). Registration uses
+`api: "openai-completions"` with `ATLASCLOUD_API_KEY` as the key reference (same
+convention as OrcaRouter); a key stored via the dashboard takes effect directly.
+Sync is gated by `atlascloudModelSync` (default true), and
+requests carry the key only when present.
+*/
+async function syncAtlasCloudModels(options: StartupSyncOptions): Promise<void> {
+  const { authStorage, modelRegistry, log } = options;
+  const apiKey = await authStorage.getApiKey("atlascloud");
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch(ATLASCLOUD_MODELS_URL, { headers });
+
+  if (!response.ok) {
+    log("atlascloud", `Failed to sync models: HTTP ${response.status}`);
+    return;
+  }
+
+  const json = await response.json() as Parameters<typeof toOpenRouterModels>[0];
+
+  const models = toOpenRouterModels(json);
+  modelRegistry.registerProvider("atlascloud", {
+    baseUrl: ATLASCLOUD_DEFAULT_BASE_URL,
+    apiKey: "ATLASCLOUD_API_KEY",
+    api: "openai-completions",
+    models,
+  });
+  log("atlascloud", `Synced ${models.length} models from Atlas Cloud API`);
+}
+
 export function normalizeOpencodeGoModel(modelId: string): ModelConfig {
   const trimmed = modelId.trim();
   // Strip the provider prefix (opencode/ or opencode-go/) — the Pi SDK
@@ -388,6 +436,15 @@ export async function syncStartupModels(options: StartupSyncOptions): Promise<vo
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       options.log("orcarouter", `Failed to sync models: ${message}`);
+    }
+  }
+
+  if (settings.atlascloudModelSync !== false) {
+    try {
+      await syncAtlasCloudModels(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      options.log("atlascloud", `Failed to sync models: ${message}`);
     }
   }
 
