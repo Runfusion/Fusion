@@ -170,7 +170,19 @@ export {
 } from "./postgres-health.js";
 export {
   detectTaskIdIntegrityAnomaliesAsync,
+  TaskIdIntegrityMeasurementError,
 } from "./async-task-id-integrity.js";
+
+/*
+FNXC:TaskIdIntegrityCanary 2026-09-26-01:15 (RUFU-301):
+The probe budget is shared across packages so the transport's server-side
+statement cap and the probe's client-side deadline cannot drift apart.
+*/
+export {
+  DEFAULT_HEALTH_PROBE_BUDGET_MS,
+  HEALTH_SESSION_STATEMENT_SAFETY_MARGIN_MS,
+  healthSessionStatementTimeoutMs,
+} from "./health-probe-budget.js";
 
 /**
  * FNXC:PostgresMigration 2026-06-24-10:00:

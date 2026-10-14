@@ -181,7 +181,7 @@ Agent-facing registration tools are documented in [Artifact registry tools](./ag
 
 ### Task-ID integrity detection
 
-Fusion runs a read-only task-ID integrity detector at startup and on demand to surface allocator regressions before operators lose track of overwritten cards. The detector checks for:
+Fusion runs a read-only task-ID integrity detector at startup and on demand to surface allocator regressions before operators lose track of overwritten cards. A measurement that cannot finish — cancelled by the health session's statement cap, lock-blocked, or otherwise failed — raises `TaskIdIntegrityMeasurementError` instead of resolving an empty report: an unread database is never recorded as a clean one. The detector checks for:
 
 - duplicate task IDs inside `tasks`
 - task IDs that exist in both `tasks` and `archivedTasks`
@@ -192,7 +192,8 @@ Fusion runs a read-only task-ID integrity detector at startup and on demand to s
 The latest report is exposed in two operator-facing places:
 
 - `GET /api/health` returns a `taskIdIntegrity` object with `status`, `checkedAt`, `anomalies`, and a `recommendedAction` string. Anomalies or an integrity-query `error` degrade the top-level health status; missing PostgreSQL layers and connectivity failures also fail closed rather than reporting the backend-mode healthy sentinel.
-- The dashboard renders a non-dismissible task-ID integrity banner for anomalous reports so the operator sees the issue in the same session.
+- An unmeasured check reports itself as unmeasured: `taskIdIntegrity.status: "error"` with a `failure` class of `unconfigured`, `unreachable`, or `incomplete`, and the payload gate publishes `corruptionDetected: true` beside any blocking error, because `false` reserves itself for "completed clean with no blocking errors".
+- The dashboard renders a non-dismissible task-ID integrity banner for anomalous reports so the operator sees the issue in the same session. An unmeasured report renders its own warning ("Task ID integrity could not be measured") rather than silence or an anomaly headline, and its body names the connectivity truth for its own `failure` class: only `incomplete` may say Fusion reached PostgreSQL, `unreachable` says Fusion could not reach it, and `unconfigured` says no health layer exists to probe. The banner cluster shows exactly one banner per failure: an integrity-only timeout suppresses the generic database banner, while a connectivity or configuration failure keeps it.
 
 ### Operator playbook
 

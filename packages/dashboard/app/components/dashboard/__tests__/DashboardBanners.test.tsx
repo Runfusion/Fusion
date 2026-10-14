@@ -33,7 +33,22 @@ vi.mock("../../UpdateAvailableBanner", () => ({
   ),
 }));
 vi.mock("../../MergeAdvanceNotice", () => ({ default: () => null }));
-vi.mock("../../TaskIdIntegrityBanner", () => ({ TaskIdIntegrityBanner: () => null }));
+/*
+FNXC:TaskIdIntegrityCanary 2026-09-26-02:26 (RUFU-301):
+The integrity banner mock now surfaces its gate inputs, because the banner cluster's
+own job is the routing decision: which of the two failure banners a given health
+payload shows. Rendering null made "unmeasured is visible" unassertable here.
+*/
+vi.mock("../../TaskIdIntegrityBanner", () => ({
+  TaskIdIntegrityBanner: ({ report }: { report: { status: string; failure?: string } }) => (
+    <section
+      role="status"
+      data-testid="integrity-banner"
+      data-status={report.status}
+      data-failure={report.failure ?? ""}
+    />
+  ),
+}));
 vi.mock("../../DbCorruptionBanner", () => ({
   DbCorruptionBanner: () => <section data-testid="database-health-banner" />,
 }));
@@ -113,27 +128,161 @@ describe("DashboardBanners update banner visibility", () => {
 });
 
 describe("DashboardBanners database health visibility", () => {
-  it("renders degraded PostgreSQL health without claiming corruption", () => {
+  /*
+  FNXC:TaskIdIntegrityCanary 2026-09-26-02:27 (RUFU-301):
+  These fixtures used to encode the old blindness — `corruptionDetected: false`
+  published next to "PostgreSQL health layer unavailable", and an integrity probe
+  that never finished rendered no integrity surface at all. Both are now forbidden
+  upstream (`buildHealthPayload`), so the fixtures state the publishable shapes and
+  the assertions cover the routing decision: one failure renders exactly one
+  banner, and "could not measure" is never silent.
+  */
+  function renderWithHealth(health: Record<string, unknown>) {
     render(
       <DashboardBanners
         {...buildProps({
           sessionsNeedingInput: [],
-          dashboardHealth: {
-            status: "degraded",
-            engine: { available: true },
-            database: {
-              healthy: false,
-              corruptionDetected: false,
-              corruptionErrors: ["PostgreSQL health layer unavailable"],
-              lastCheckedAt: null,
-            },
-            taskIdIntegrity: { status: "error", anomalies: [] },
-          } as DashboardBannersProps["dashboardHealth"],
+          dashboardHealth: health as DashboardBannersProps["dashboardHealth"],
         })}
       />,
     );
+  }
+
+  const healthShell = { status: "degraded", engine: { available: true } };
+
+  it("shows the generic database banner for a connectivity-class failure", () => {
+    renderWithHealth({
+      ...healthShell,
+      database: {
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["PostgreSQL health layer unavailable"],
+        lastCheckedAt: null,
+      },
+      taskIdIntegrity: {
+        status: "error",
+        anomalies: [],
+        error: "PostgreSQL health layer unavailable",
+        failure: "unconfigured",
+        recommendedAction: "Check the database configuration.",
+      },
+    });
 
     expect(screen.getByTestId("database-health-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("integrity-banner")).toHaveAttribute("data-failure", "unconfigured");
+  });
+
+  /*
+   * FNXC:TaskIdIntegrityCanary 2026-09-26-04:37 (RUFU-301):
+   * Code-review P0 parity. This is the payload a refused connection now produces
+   * (the connectivity verdict is inspected rather than dropped, so
+   * `evaluateDashboardPostgresHealth` publishes the ECONNREFUSED sentence under
+   * `failure: "unreachable"`). The banner cluster must keep the loud generic
+   * banner visible here — suppressing it would hide the only place the operator
+   * reads that PostgreSQL itself refused the connection — while the canary banner
+   * still reports that integrity was never measured.
+   */
+  it("keeps the generic banner visible for a refused connection that never reached the integrity stage", () => {
+    renderWithHealth({
+      ...healthShell,
+      database: {
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["PostgreSQL backend unreachable: connect ECONNREFUSED 127.0.0.1:5432"],
+        lastCheckedAt: null,
+      },
+      taskIdIntegrity: {
+        status: "error",
+        anomalies: [],
+        error: "PostgreSQL backend unreachable: connect ECONNREFUSED 127.0.0.1:5432",
+        failure: "unreachable",
+        recommendedAction: "Restore PostgreSQL connectivity and rerun the health check before creating new tasks.",
+      },
+    });
+
+    expect(screen.getByTestId("database-health-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("integrity-banner")).toHaveAttribute("data-failure", "unreachable");
+  });
+
+  it("shows the unmeasured banner instead of a duplicate generic banner when only the measurement failed", () => {
+    renderWithHealth({
+      ...healthShell,
+      database: {
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: [
+          "PostgreSQL task-ID integrity probe did not complete within its 4750ms stage budget",
+        ],
+        lastCheckedAt: null,
+      },
+      taskIdIntegrity: {
+        status: "error",
+        anomalies: [],
+        error: "PostgreSQL task-ID integrity probe did not complete within its 4750ms stage budget",
+        failure: "incomplete",
+        recommendedAction: "Look for locks or long-running statements on the task tables.",
+      },
+    });
+
+    const integrity = screen.getByTestId("integrity-banner");
+    expect(integrity).toHaveAttribute("data-status", "error");
+    expect(integrity).toHaveAttribute("data-failure", "incomplete");
+    // One failure, one banner: the generic "database health check failed" copy
+    // would alarm on the same sentence while pointing at a database that answered.
+    expect(screen.queryByTestId("database-health-banner")).not.toBeInTheDocument();
+  });
+
+  it("keeps the generic banner when the database itself failed and integrity measured clean", () => {
+    renderWithHealth({
+      ...healthShell,
+      database: {
+        healthy: false,
+        corruptionDetected: true,
+        corruptionErrors: ["corruptionDetails: duplicate task id FN-1"],
+        lastCheckedAt: null,
+      },
+      taskIdIntegrity: { status: "ok", anomalies: [], recommendedAction: null },
+    });
+
+    expect(screen.getByTestId("database-health-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("integrity-banner")).not.toBeInTheDocument();
+  });
+
+  it("shows only the integrity banner for a measured anomaly on a healthy database", () => {
+    renderWithHealth({
+      ...healthShell,
+      database: {
+        healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
+        lastCheckedAt: null,
+      },
+      taskIdIntegrity: {
+        status: "anomaly",
+        anomalies: [{ kind: "duplicate_active_id", prefix: "FN", affectedIds: ["FN-1"], details: "duplicate" }],
+        recommendedAction: "Pause task delegation.",
+      },
+    });
+
+    expect(screen.getByTestId("integrity-banner")).toHaveAttribute("data-status", "anomaly");
+    expect(screen.queryByTestId("database-health-banner")).not.toBeInTheDocument();
+  });
+
+  it("stays silent for a completed clean measurement", () => {
+    renderWithHealth({
+      status: "ok",
+      engine: { available: true },
+      database: {
+        healthy: true,
+        corruptionDetected: false,
+        corruptionErrors: [],
+        lastCheckedAt: null,
+      },
+      taskIdIntegrity: { status: "ok", anomalies: [], recommendedAction: null },
+    });
+
+    expect(screen.queryByTestId("integrity-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("database-health-banner")).not.toBeInTheDocument();
   });
 });
 

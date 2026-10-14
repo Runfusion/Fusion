@@ -5133,7 +5133,11 @@
     "recheck": "다시 확인",
     "rechecking": "다시 확인 중…",
     "activeTasks": "활성 작업",
-    "inFlightAgents": "실행 중인 에이전트"
+    "inFlightAgents": "실행 중인 에이전트",
+    "integrityNotMeasured": "",
+    "integrityNotMeasuredBody": "",
+    "integrityNotMeasuredBodyUnreachable": "",
+    "integrityNotMeasuredBodyUnconfigured": ""
   },
   "taskVerification": {
     "requestRejected": "",

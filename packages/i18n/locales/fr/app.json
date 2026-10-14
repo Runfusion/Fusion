@@ -5133,7 +5133,11 @@
     "recheck": "Vérifier",
     "rechecking": "Vérification en cours…",
     "activeTasks": "Tâches actives",
-    "inFlightAgents": "Agents en vol"
+    "inFlightAgents": "Agents en vol",
+    "integrityNotMeasured": "",
+    "integrityNotMeasuredBody": "",
+    "integrityNotMeasuredBodyUnreachable": "",
+    "integrityNotMeasuredBodyUnconfigured": ""
   },
   "taskVerification": {
     "requestRejected": "",

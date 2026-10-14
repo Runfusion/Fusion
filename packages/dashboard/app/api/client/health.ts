@@ -71,6 +71,18 @@ export interface DashboardHealthResponse {
   };
   database: {
     healthy: boolean;
+    /*
+    FNXC:TaskIdIntegrityCanary 2026-09-26-01:53 (RUFU-301):
+    Pair invariant, stable wire contract: `corruptionDetected: false` means a
+    completed integrity measurement found nothing, and the server guarantees it
+    never coexists with a non-empty `corruptionErrors` or `healthy: false`. A probe
+    that could not finish fails closed to `true`, because a corruption canary that
+    cannot verify must not advertise itself as clean — and this field stays a
+    boolean precisely so `if (corruptionDetected)` consumers keep failing closed
+    (a nullable "unknown" would read as falsy-clean at those call sites).
+    Read `taskIdIntegrity.status` to tell measured-corruption apart from
+    not-measured; `failure` names the evidence class of an unfinished probe.
+    */
     corruptionDetected: boolean;
     corruptionErrors: string[];
     lastCheckedAt: string | null;
@@ -87,6 +99,8 @@ export interface DashboardHealthResponse {
         checkedAt: string;
         anomalies: [];
         error: string;
+        /** Evidence class for why the measurement stopped (drives server-owned action text). */
+        failure?: "unconfigured" | "unreachable" | "incomplete";
         recommendedAction: string | null;
       };
 }

@@ -3,10 +3,30 @@ import {
   checkPostgresHealth,
   getSqliteMigrationState,
   detectTaskIdIntegrityAnomaliesAsync,
+  DEFAULT_HEALTH_PROBE_BUDGET_MS,
   type AsyncDataLayer,
   type TaskIdIntegrityReport,
   type TaskStore,
 } from "@fusion/core";
+
+/**
+ * Why a health probe stopped, as an evidence class rather than a guess.
+ *
+ * FNXC:TaskIdIntegrityCanary 2026-09-26-00:55 (RUFU-301):
+ * Every failure used to recommend "Restore PostgreSQL connectivity", which sent
+ * operators to the wrong door: measured against an `ACCESS EXCLUSIVE` lock on
+ * `project.tasks`, `pg_isready` answered `accepting connections` and `SELECT 1`
+ * succeeded while the integrity reads timed out. A deadline expiry is proof the
+ * measurement did not finish, not proof the server is down, so the two are now
+ * separate classes and the recommended action follows the evidence.
+ */
+export type DashboardHealthFailureClass =
+  /** No layer to probe (misconfiguration, or a store without a PostgreSQL layer). */
+  | "unconfigured"
+  /** PostgreSQL refused or dropped the connection itself. */
+  | "unreachable"
+  /** PostgreSQL was contacted, but a stage could not be measured inside its budget. */
+  | "incomplete";
 
 export type DashboardTaskIdIntegrityHealth =
   | TaskIdIntegrityReport
@@ -15,6 +35,7 @@ export type DashboardTaskIdIntegrityHealth =
       checkedAt: string;
       anomalies: [];
       error: string;
+      failure: DashboardHealthFailureClass;
     };
 
 export interface DashboardMigrationHealth {
@@ -27,8 +48,26 @@ export interface DashboardMigrationHealth {
   updatedAt: string;
 }
 
+/*
+FNXC:TaskIdIntegrityCanary 2026-09-26-01:50 (RUFU-301):
+Pair invariant: `corruptionDetected: false` is a *completed-clean* verdict, so it
+may never travel with a blocking integrity or connectivity error. Publishing it
+next to "integrity probe timed out" told operators the canary had run and come
+back clean when no query had finished — the exact blindness this change removes.
+
+The field stays a boolean on purpose rather than gaining a `null` "not measured"
+state: every consumer of a corruption canary truthiness-checks it, and a nullable
+verdict would read as falsy-clean at exactly those call sites, relocating the
+blindness instead of removing it. So an unfinished measurement fails closed to
+`true` — matching core's own rule in `refreshDatabaseHealthAsyncImpl`
+(`corruptionDetected: errors.length > 0`) — and the *reason* stays machine-readable
+in `taskIdIntegrity.status: "error"` plus its `failure` evidence class, which is
+where "not verified" is distinguishable from "verified corrupt".
+*/
+export type DashboardDatabaseHealth = ReturnType<TaskStore["getDatabaseHealth"]>;
+
 export interface DashboardPostgresHealthResult {
-  database: ReturnType<TaskStore["getDatabaseHealth"]>;
+  database: DashboardDatabaseHealth;
   taskIdIntegrity: DashboardTaskIdIntegrityHealth;
   migration?: DashboardMigrationHealth;
 }
@@ -39,16 +78,71 @@ export interface DashboardPostgresHealthContext {
   probeTimeoutMs?: number;
 }
 
-class HealthProbeTimeoutError extends Error {}
+/*
+FNXC:TaskIdIntegrityCanary 2026-09-26-01:00 (RUFU-301):
+The timeout sentence used to name the *total* probe budget, so a stage that had
+2.5 s left and never finished still claimed it "timed out after 5000ms". That
+misattribution made the budget look too small when the real problem was an
+earlier stage consuming it, and it hid which stage to investigate. The error now
+carries its own stage budget plus the elapsed time.
+*/
+class HealthProbeTimeoutError extends Error {
+  readonly stage: string;
+  readonly stageBudgetMs: number;
+  readonly elapsedMs: number;
 
-function withDeadline<T>(start: () => Promise<T>, remainingMs: number, label: string): Promise<T> {
-  if (remainingMs <= 0) return Promise.reject(new HealthProbeTimeoutError(`${label} timed out after ${remainingMs}ms`));
+  constructor(stage: string, stageBudgetMs: number, elapsedMs: number, probeBudgetMs: number) {
+    super(
+      `${stage} did not complete within its ${stageBudgetMs}ms stage budget `
+        + `(${elapsedMs}ms elapsed of a ${probeBudgetMs}ms probe)`,
+    );
+    this.name = "HealthProbeTimeoutError";
+    this.stage = stage;
+    this.stageBudgetMs = stageBudgetMs;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
+function withDeadline<T>(
+  start: () => Promise<T>,
+  remainingMs: number,
+  label: string,
+  probeBudgetMs: number,
+): Promise<T> {
+  const startedAt = Date.now();
+  const timeout = (budgetMs: number) =>
+    new HealthProbeTimeoutError(label, budgetMs, Math.max(0, Date.now() - startedAt), probeBudgetMs);
+  if (remainingMs <= 0) return Promise.reject(timeout(0));
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new HealthProbeTimeoutError(`${label} timed out after ${remainingMs}ms`)), remainingMs);
+    const timer = setTimeout(() => reject(timeout(remainingMs)), remainingMs);
     // Start only while budget remains; a later stage must not queue a new DB
     // request after an earlier stage used the shared health-probe deadline.
     void start().then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
   });
+}
+
+/**
+ * Classify a connectivity-stage failure that arrived as a THROWN error.
+ *
+ * A deadline expiry during the connectivity stage is `incomplete`: measured on
+ * the wedged `max: 1` health session, polls 2 and 3 timed out here purely
+ * because their `SELECT 1` queued behind an orphaned detector read, on a server
+ * that answered `pg_isready` happily. A connection-level error is `unreachable`.
+ *
+ * FNXC:TaskIdIntegrityCanary 2026-09-26-04:20 (RUFU-301):
+ * This is only the throw half of the connectivity verdict. `checkPostgresHealth`
+ * reports an unreachable backend by RESOLVING a non-empty verdict list, so the
+ * sibling classification for that shape lives at the call site below — a thrown
+ * error and a resolved verdict list must not be collapsed into one path.
+ */
+function classifyConnectivityError(error: unknown): DashboardHealthFailureClass {
+  if (error instanceof HealthProbeTimeoutError) return "incomplete";
+  const message = errorMessage(error).toLowerCase();
+  const connectionShape =
+    /connect|econnrefused|econnreset|etimedout|enotfound|eai_again|network|socket|closed|terminat|pool|carry no command/.test(
+      message,
+    );
+  return connectionShape ? "unreachable" : "incomplete";
 }
 
 /** Resolve the production TaskStore layer while retaining an explicit integration override. */
@@ -79,7 +173,7 @@ export async function evaluateDashboardPostgresHealth(
   deadline expiry; migration state remains advisory and cannot make readiness fail.
   */
   const checkedAt = new Date();
-  const timeoutMs = context?.probeTimeoutMs ?? 5_000;
+  const timeoutMs = context?.probeTimeoutMs ?? DEFAULT_HEALTH_PROBE_BUDGET_MS;
   const deadlineMs = Date.now() + timeoutMs;
   const remaining = () => Math.max(0, deadlineMs - Date.now());
   let layer: AsyncDataLayer | null = null;
@@ -87,17 +181,44 @@ export async function evaluateDashboardPostgresHealth(
     layer = resolveDashboardPostgresLayer(store, overrideLayer);
   } catch (error) {
     const message = `PostgreSQL health layer resolution failed: ${errorMessage(error)}`;
-    return failedHealth(checkedAt, message);
+    return failedHealth(checkedAt, "unconfigured", message);
   }
 
-  if (!layer) return failedHealth(checkedAt, "PostgreSQL health layer unavailable");
+  if (!layer) return failedHealth(checkedAt, "unconfigured", "PostgreSQL health layer unavailable");
 
-  const errors = await withDeadline(() => checkPostgresHealth(layer), remaining(), "PostgreSQL health probe").catch((error: unknown) => [
-    error instanceof HealthProbeTimeoutError
-      ? `PostgreSQL health probe timed out after ${timeoutMs}ms`
-      : `PostgreSQL health check failed: ${errorMessage(error)}`,
-  ]);
-  if (errors.length > 0) return failedHealth(checkedAt, ...errors);
+  /*
+  FNXC:TaskIdIntegrityCanary 2026-09-26-04:20 (RUFU-301):
+  `checkPostgresHealth` never rejects for a dead backend: it catches the ping
+  failure and RESOLVES `["PostgreSQL backend unreachable: connect ECONNREFUSED
+  …"]` (same shape for a failed health query or `datallowconn = false`), and its
+  contract obliges the caller to surface the DB-corruption banner (VAL-HEALTH-002)
+  on a non-empty list. Dropping that list made a downed PostgreSQL fall through
+  into the integrity stage, whose rejection was then published as
+  `failure: "incomplete"` — "we reached the database, only the measurement is
+  missing" — while the ECONNREFUSED evidence appeared nowhere and the generic
+  corruption banner was suppressed. The stage's resolved verdict is therefore
+  inspected, not discarded: it is connectivity evidence, so the original
+  sentences ride into `corruptionErrors` verbatim and the loud banner stays up.
+  Only an empty list means "connectivity measured clean, continue probing".
+  */
+  const connectivity = await withDeadline(
+    () => checkPostgresHealth(layer),
+    remaining(),
+    "PostgreSQL health probe",
+    timeoutMs,
+  ).then((verdicts) =>
+    verdicts.length === 0
+      ? null
+      : { failure: "unreachable" as const, messages: verdicts },
+  ).catch((error: unknown) => ({
+    failure: classifyConnectivityError(error),
+    messages: [
+      error instanceof HealthProbeTimeoutError
+        ? `PostgreSQL health probe ${error.message}`
+        : `PostgreSQL health check failed: ${errorMessage(error)}`,
+    ],
+  }));
+  if (connectivity) return failedHealth(checkedAt, connectivity.failure, ...connectivity.messages);
 
   /*
   FNXC:TaskIdIntegrity 2026-09-23-01:47:
@@ -112,18 +233,28 @@ export async function evaluateDashboardPostgresHealth(
       () => detectTaskIdIntegrityAnomaliesAsync(layer.healthDb, { projectId: taskIdIntegrityProjectId }),
       remaining(),
       "PostgreSQL task-ID integrity probe",
+      timeoutMs,
     );
   } catch (error) {
+    // The connectivity stage passed, so PostgreSQL is contactable; whatever
+    // stopped here (deadline, server-side cancellation, driver error) is an
+    // unfinished measurement, never a clean result.
     return failedHealth(
       checkedAt,
+      "incomplete",
       error instanceof HealthProbeTimeoutError
-        ? `PostgreSQL task-ID integrity probe timed out after ${timeoutMs}ms`
+        ? `PostgreSQL task-ID integrity probe ${error.message}`
         : `PostgreSQL task-ID integrity check failed: ${errorMessage(error)}`,
     );
   }
 
   try {
-    const migration = await withDeadline(() => resolveDashboardMigrationHealth(store, layer, context), remaining(), "PostgreSQL migration health probe");
+    const migration = await withDeadline(
+      () => resolveDashboardMigrationHealth(store, layer, context),
+      remaining(),
+      "PostgreSQL migration health probe",
+      timeoutMs,
+    );
     return {
       database: healthyDatabase(checkedAt),
       taskIdIntegrity,
@@ -172,7 +303,7 @@ async function resolveDashboardMigrationHealth(
   };
 }
 
-function healthyDatabase(checkedAt: Date): DashboardPostgresHealthResult["database"] {
+function healthyDatabase(checkedAt: Date): DashboardDatabaseHealth {
   return {
     healthy: true,
     corruptionDetected: false,
@@ -184,6 +315,7 @@ function healthyDatabase(checkedAt: Date): DashboardPostgresHealthResult["databa
 
 function failedHealth(
   checkedAt: Date,
+  failure: DashboardHealthFailureClass,
   ...errors: string[]
 ): DashboardPostgresHealthResult {
   const visibleErrors = errors.slice(0, 5);
@@ -191,7 +323,9 @@ function failedHealth(
   return {
     database: {
       healthy: false,
-      corruptionDetected: false,
+      // Fail closed: an unmeasured canary is never reported as clean. The
+      // "not verified" distinction lives in taskIdIntegrity.status/failure below.
+      corruptionDetected: true,
       corruptionErrors: visibleErrors,
       lastCheckedAt: checkedAt,
       isRunning: false,
@@ -201,6 +335,7 @@ function failedHealth(
       checkedAt: checkedAt.toISOString(),
       anomalies: [],
       error,
+      failure,
     },
   };
 }

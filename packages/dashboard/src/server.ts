@@ -106,6 +106,7 @@ import { requireAsyncLayer } from "./require-async-layer.js";
 import {
   evaluateDashboardPostgresHealth,
   resolveDashboardPostgresLayer,
+  type DashboardDatabaseHealth,
   type DashboardTaskIdIntegrityHealth,
 } from "./dashboard-postgres-health.js";
 import { ProviderHealthMonitor } from "./provider-health-monitor.js";
@@ -121,23 +122,51 @@ export function buildViewPreloadInjection(chunkMap: Record<string, ViewChunkMani
   return `<script>window.__FUSION_VIEW_CHUNKS__=${serializedChunkMap};(()=>{try{const chunkMap=window.__FUSION_VIEW_CHUNKS__||{};const projectId=localStorage.getItem("kb-dashboard-current-project");const scopedKey=projectId?"kb:"+projectId+":kb-dashboard-task-view":null;let taskView=(scopedKey&&localStorage.getItem(scopedKey))||localStorage.getItem("kb-dashboard-task-view");if(taskView==="devserver")taskView="dev-server";if(taskView==="roadmaps")taskView="board";if(typeof taskView!=="string"||taskView.startsWith("plugin:"))return;const chunkEntry=chunkMap[taskView];if(!chunkEntry)return;const chunkPath=typeof chunkEntry==="string"?chunkEntry:chunkEntry.file;const cssPaths=Array.isArray(chunkEntry.css)?chunkEntry.css:[];for(const cssPath of cssPaths){if(!cssPath)continue;const cssLink=document.createElement("link");cssLink.rel="stylesheet";cssLink.href=cssPath;document.head.appendChild(cssLink);}if(!chunkPath)return;const link=document.createElement("link");link.rel="modulepreload";link.href=chunkPath;link.crossOrigin="";document.head.appendChild(link);}catch{}})();</script>`;
 }
 
+/*
+FNXC:TaskIdIntegrityCanary 2026-09-26-01:05 (RUFU-301):
+The action has to name the evidence the probe actually produced. "Restore
+PostgreSQL connectivity" was shown for every failure, including the measured
+lock-queue case where `pg_isready` accepted connections and `SELECT 1` returned in
+1 ms — telling an operator to restore a database that is up sends them to the wrong
+subsystem while the real cause is a lock or long-running statement on the task
+tables. `unreachable` keeps the connectivity instruction; `incomplete` says the
+server answered and the measurement did not.
+*/
+function integrityRecommendedAction(report: Extract<DashboardTaskIdIntegrityHealth, { status: "error" }>): string {
+  switch (report.failure) {
+    case "unconfigured":
+      return "No PostgreSQL health layer is available to probe. Check the database configuration (DATABASE_URL / embedded startup) and restart the dashboard.";
+    case "unreachable":
+      return "Restore PostgreSQL connectivity and rerun the health check before creating new tasks.";
+    case "incomplete":
+    default:
+      return "PostgreSQL answered, but the task-ID integrity measurement did not finish inside its budget, so no verdict was measured. The next health check retries automatically; if it persists, look for locks or long-running statements on the task tables rather than assuming the database is down.";
+  }
+}
+
 function buildTaskIdIntegrityHealth(report: DashboardTaskIdIntegrityHealth) {
   return {
     status: report.status,
     checkedAt: report.checkedAt,
     anomalies: report.anomalies,
-    ...(report.status === "error" ? { error: report.error } : {}),
+    ...(report.status === "error" ? { error: report.error, failure: report.failure } : {}),
     recommendedAction:
       report.status === "anomaly"
         ? "Pause task delegation, inspect the affected task IDs, and run the allocator audit before creating new tasks."
         : report.status === "error"
-          ? "Restore PostgreSQL connectivity and rerun the health check before creating new tasks."
+          ? integrityRecommendedAction(report)
         : null,
   };
 }
 
-function buildHealthPayload(args: {
-  database: ReturnType<TaskStore["getDatabaseHealth"]>;
+/*
+FNXC:TaskIdIntegrityCanary 2026-09-26-02:12 (RUFU-301):
+Exported so the pair invariant (a blocking error is never published alongside
+`corruptionDetected: false`) is testable at the seam that publishes it. The two
+`/api/health` route handlers are its only production callers.
+*/
+export function buildHealthPayload(args: {
+  database: DashboardDatabaseHealth;
   taskIdIntegrityReport: DashboardTaskIdIntegrityHealth;
   migration?: import("./dashboard-postgres-health.js").DashboardMigrationHealth;
   cliPackageVersion: string;
@@ -145,9 +174,26 @@ function buildHealthPayload(args: {
 }) {
   const { database, cliPackageVersion, engineAvailable, migration } = args;
   const taskIdIntegrity = buildTaskIdIntegrityHealth(args.taskIdIntegrityReport);
+  /*
+   * FNXC:TaskIdIntegrityCanary 2026-09-26-01:52 (RUFU-301):
+   * Publication gate for the pair invariant: a blocking error and
+   * `corruptionDetected: false` must never leave this function together. `false`
+   * asserts a completed measurement that found nothing, so whenever the probe
+   * reported errors, said the database is unhealthy, or never produced an
+   * integrity verdict at all, the published field fails closed to `true`. An
+   * unmeasured canary is then indistinguishable-from-worse-than corruption for
+   * every boolean consumer, which is the safe direction for a security check,
+   * while `taskIdIntegrity.status` says which of the two it actually is.
+   */
+  const blockingErrors =
+    database.corruptionErrors.length > 0
+    || !database.healthy
+    || taskIdIntegrity.status === "error";
+  const corruptionDetected = blockingErrors ? true : database.corruptionDetected;
   return {
     // Durable running/failed migration markers must never be hidden behind ok health.
-    status: migration || !database.healthy || database.corruptionDetected || taskIdIntegrity.status !== "ok" ? "degraded" : "ok",
+    status: migration || !database.healthy || corruptionDetected || taskIdIntegrity.status !== "ok" ? "degraded" : "ok",
+    database: { ...database, corruptionDetected },
     version: cliPackageVersion,
     uptime: Math.floor(process.uptime()),
     /*
@@ -157,7 +203,6 @@ function buildHealthPayload(args: {
     engine: {
       available: engineAvailable,
     },
-    database,
     taskIdIntegrity,
     ...(migration ? { migration } : {}),
   };

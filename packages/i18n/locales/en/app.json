@@ -6818,7 +6818,11 @@
     "refreshFailed": "Failed to refresh integrity status.",
     "activeTasks": "Active Tasks",
     "metricsTitle": "Health Metrics",
-    "recheck": "Re-check"
+    "recheck": "Re-check",
+    "integrityNotMeasured": "Task ID integrity could not be measured",
+    "integrityNotMeasuredBody": "Fusion reached PostgreSQL, but the task-ID integrity check did not finish, so there is no corruption verdict. This is not a clean result — the next health check retries automatically.",
+    "integrityNotMeasuredBodyUnreachable": "Fusion could not reach PostgreSQL, so the task-ID integrity check could not run. This is not a clean result — no corruption verdict was measured.",
+    "integrityNotMeasuredBodyUnconfigured": "No PostgreSQL health layer is available, so the task-ID integrity check could not run at all. This is not a clean result — the canary has never measured."
   },
   "docker": {
     "creatingNode": "Creating Docker node...",

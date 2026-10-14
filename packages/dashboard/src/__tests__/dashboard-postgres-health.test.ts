@@ -128,13 +128,68 @@ describe("evaluateDashboardPostgresHealth", () => {
     expect(healthMocks.checkPostgresHealth).not.toHaveBeenCalled();
     expect(result.database).toMatchObject({
       healthy: false,
-      corruptionDetected: false,
+      // FNXC:TaskIdIntegrityCanary 2026-09-26-02:08 (RUFU-301): an unmeasured
+      // canary is not a clean canary, so the boolean fails closed.
+      corruptionDetected: true,
       corruptionErrors: ["PostgreSQL health layer unavailable"],
     });
     expect(result.taskIdIntegrity).toMatchObject({
       status: "error",
       error: "PostgreSQL health layer unavailable",
+      // The evidence class rides the measurement it describes, which is what the
+      // banner and the recommended action read.
+      failure: "unconfigured",
     });
+  });
+
+  /*
+  FNXC:TaskIdIntegrityCanary 2026-09-26-04:35 (RUFU-301):
+  Code-review P0. `checkPostgresHealth` never rejects for a dead backend: it
+  RESOLVES a non-empty verdict list naming the connection failure, and its contract
+  obliges the caller to surface the DB-corruption banner on a non-empty list. That
+  list used to be discarded (`.then(() => null)`), so a downed PostgreSQL fell
+  through into the integrity stage and was published as `failure: "incomplete"` —
+  "PostgreSQL answered, … rather than assuming the database is down" — with the
+  ECONNREFUSED evidence nowhere and the generic banner suppressed. Assert the real
+  seam: the resolved verdict decides the class, the original sentence survives
+  verbatim in `corruptionErrors`, and the integrity detector is never reached.
+  */
+  it("classifies a resolved unreachable verdict as a connectivity failure, not an unfinished measurement", async () => {
+    const store = { getAsyncLayer: () => layer } as TaskStore;
+    healthMocks.checkPostgresHealth.mockResolvedValue([
+      "PostgreSQL backend unreachable: connect ECONNREFUSED 127.0.0.1:5432",
+    ]);
+
+    const result = await evaluateDashboardPostgresHealth(store);
+
+    expect(result.taskIdIntegrity).toMatchObject({
+      status: "error",
+      failure: "unreachable",
+      error: "PostgreSQL backend unreachable: connect ECONNREFUSED 127.0.0.1:5432",
+    });
+    expect(result.database).toMatchObject({
+      healthy: false,
+      // Pair invariant: a blocking error never travels with a clean-canary claim.
+      corruptionDetected: true,
+      corruptionErrors: ["PostgreSQL backend unreachable: connect ECONNREFUSED 127.0.0.1:5432"],
+    });
+    // Connectivity failed, so the integrity stage must not pretend to have run.
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).not.toHaveBeenCalled();
+  });
+
+  it("classifies a reachable server that refuses the database as unreachable", async () => {
+    const store = { getAsyncLayer: () => layer } as TaskStore;
+    healthMocks.checkPostgresHealth.mockResolvedValue([
+      "PostgreSQL database is not accepting connections (datallowconn = false)",
+    ]);
+
+    const result = await evaluateDashboardPostgresHealth(store);
+
+    expect(result.taskIdIntegrity).toMatchObject({ status: "error", failure: "unreachable" });
+    expect(result.database.corruptionErrors).toEqual([
+      "PostgreSQL database is not accepting connections (datallowconn = false)",
+    ]);
+    expect(healthMocks.detectTaskIdIntegrityAnomaliesAsync).not.toHaveBeenCalled();
   });
 
   it("returns a probe-timeout degradation instead of waiting for a saturated pool", async () => {
@@ -146,9 +201,14 @@ describe("evaluateDashboardPostgresHealth", () => {
     await vi.advanceTimersByTimeAsync(25);
     const result = await pending;
 
-    expect(result.database.corruptionErrors).toEqual([
-      "PostgreSQL health probe timed out after 25ms",
-    ]);
+    // RUFU-301: an expired deadline is a stalled measurement, so the copy names
+    // the stage that produced no answer instead of the generic timeout wording.
+    expect(result.database.corruptionErrors).toHaveLength(1);
+    expect(result.database.corruptionErrors[0]).toContain(
+      "PostgreSQL health probe did not complete within its 25ms stage budget",
+    );
+    expect(result.database.corruptionDetected).toBe(true);
+    expect(result.taskIdIntegrity).toMatchObject({ status: "error", failure: "incomplete" });
     vi.useRealTimers();
   });
 
@@ -161,9 +221,12 @@ describe("evaluateDashboardPostgresHealth", () => {
     await vi.advanceTimersByTimeAsync(25);
     const result = await pending;
 
-    expect(result.database.corruptionErrors).toEqual([
-      "PostgreSQL task-ID integrity probe timed out after 25ms",
-    ]);
+    expect(result.database.corruptionErrors).toHaveLength(1);
+    expect(result.database.corruptionErrors[0]).toContain(
+      "PostgreSQL task-ID integrity probe did not complete within its 25ms stage budget",
+    );
+    expect(result.database.corruptionDetected).toBe(true);
+    expect(result.taskIdIntegrity).toMatchObject({ status: "error", failure: "incomplete" });
     vi.useRealTimers();
   });
 
@@ -207,9 +270,12 @@ describe("evaluateDashboardPostgresHealth", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     const result = await pending;
 
-    expect(result.database.corruptionErrors).toEqual([
-      "PostgreSQL health probe timed out after 5000ms",
-    ]);
+    expect(result.database.corruptionErrors).toHaveLength(1);
+    expect(result.database.corruptionErrors[0]).toContain(
+      "PostgreSQL health probe did not complete within its 5000ms stage budget",
+    );
+    expect(result.database.corruptionDetected).toBe(true);
+    expect(result.taskIdIntegrity).toMatchObject({ status: "error", failure: "incomplete" });
     vi.useRealTimers();
   });
 
@@ -221,12 +287,13 @@ describe("evaluateDashboardPostgresHealth", () => {
 
     expect(result.database).toMatchObject({
       healthy: false,
-      corruptionDetected: false,
+      corruptionDetected: true,
       corruptionErrors: ["PostgreSQL task-ID integrity check failed: integrity query timed out"],
     });
     expect(result.taskIdIntegrity).toMatchObject({
       status: "error",
       error: "PostgreSQL task-ID integrity check failed: integrity query timed out",
+      failure: "incomplete",
     });
   });
 

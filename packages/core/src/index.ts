@@ -3235,6 +3235,17 @@ export {
   validateAndHealSchema,
   vacuumAnalyze,
   detectTaskIdIntegrityAnomaliesAsync,
+  TaskIdIntegrityMeasurementError,
+  /*
+  FNXC:TaskIdIntegrityCanary 2026-09-26-02:10 (RUFU-301):
+  The dashboard probe caller and the PostgreSQL health transport live in different
+  packages but must agree on one budget: the transport's server-side statement cap
+  is derived from the same constant the caller enforces as a client deadline. Root
+  barrel exposure keeps that agreement importable instead of duplicated.
+  */
+  DEFAULT_HEALTH_PROBE_BUDGET_MS,
+  HEALTH_SESSION_STATEMENT_SAFETY_MARGIN_MS,
+  healthSessionStatementTimeoutMs,
   EXPECTED_PROJECT_COLUMNS,
   // FNXC:SqliteRemoval 2026-06-25-00:00:
   // SQLite migrator (U9) exports. The dual-read cutover harness (U10) has been

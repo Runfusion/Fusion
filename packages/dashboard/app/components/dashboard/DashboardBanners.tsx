@@ -85,6 +85,30 @@ export function DashboardBanners({
 }: DashboardBannersProps) {
   /* FNXC:DashboardBanners 2026-06-26-00:00: The Open Mailbox approval banner is gated by an approval:<id> candidate from a real ApprovalRequest. The count floor remains only for the approval-SSE/count-refresh race and must not fabricate a mailbox request for task awaiting-approval states. */
   const showMailboxApprovalBanner = isMailboxApprovalCandidate(approvalBannerCandidate);
+  /*
+   * FNXC:TaskIdIntegrityCanary 2026-09-26-01:54 (RUFU-301):
+   * The gate used to be `status === "anomaly" && recommendedAction`, which left an
+   * integrity probe that never completed with no integrity surface at all — the
+   * canary's failure looked identical to its success from the integrity side.
+   * "Could not measure" now renders too, so every non-ok integrity state is visible.
+   */
+  const integrityHealth = dashboardHealth?.taskIdIntegrity;
+  const showTaskIdIntegrityBanner =
+    integrityHealth?.status === "error"
+    || (integrityHealth?.status === "anomaly" && Boolean(integrityHealth.recommendedAction));
+  /*
+   * FNXC:TaskIdIntegrityCanary 2026-09-26-01:56 (RUFU-301):
+   * One failure, one banner. An `incomplete` probe means connectivity passed and
+   * only the integrity measurement is missing, so the generic
+   * "Database health check failed" banner would alarm on the very same sentence
+   * the specific NOT-VERIFIED banner already shows, and its backup/permissions
+   * guidance points at a database that measurably answered. Connectivity-class
+   * failures (`unreachable` / `unconfigured`) keep the generic banner unchanged.
+   */
+  const integrityUnmeasuredOnly =
+    integrityHealth?.status === "error" && integrityHealth.failure === "incomplete";
+  const showDbCorruptionBanner =
+    dashboardHealth?.database?.healthy === false && !integrityUnmeasuredOnly;
   /* FNXC:AuthRecovery 2026-09-10-21:28: Daemon-auth token recovery owns unauthorized remediation while its blocking full-screen page is open. Suppress engine remediation banners in parallel so operators fix the token once without seeing stale engine restart/start controls or live-region shells. */
   const showEngineRemediationBanners = !authTokenRecoveryOpen;
 
@@ -162,10 +186,10 @@ export function DashboardBanners({
       {viewMode === "project" && currentProject && (
         <MergeAdvanceNotice projectId={currentProject.id} />
       )}
-      {viewMode === "project" && currentProject && dashboardHealth?.taskIdIntegrity?.status === "anomaly" && dashboardHealth.taskIdIntegrity.recommendedAction && (
+      {viewMode === "project" && currentProject && showTaskIdIntegrityBanner && integrityHealth && (
         <TaskIdIntegrityBanner
-          report={dashboardHealth.taskIdIntegrity}
-          recommendedAction={dashboardHealth.taskIdIntegrity.recommendedAction}
+          report={integrityHealth}
+          recommendedAction={integrityHealth.recommendedAction}
           onRefresh={(report, recommendedAction) => {
             setDashboardHealth((current) => {
               if (!current) {
@@ -188,7 +212,7 @@ export function DashboardBanners({
           }}
         />
       )}
-      {viewMode === "project" && currentProject && dashboardHealth?.database?.healthy === false && (
+      {viewMode === "project" && currentProject && showDbCorruptionBanner && dashboardHealth && (
         <DbCorruptionBanner
           errors={dashboardHealth.database.corruptionErrors}
           lastCheckedAt={dashboardHealth.database.lastCheckedAt}

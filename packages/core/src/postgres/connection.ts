@@ -33,6 +33,7 @@ import {
   describeBackendForLog,
 } from "./backend-resolver.js";
 import { redactCredentialsFromMessage, redactConnectionString } from "./credential-redact.js";
+import { healthSessionStatementTimeoutMs } from "./health-probe-budget.js";
 
 const log = createLogger("postgres-connection");
 
@@ -233,13 +234,27 @@ export async function createConnectionSetFromUrl(
   exhausts the runtime pool. This separately owned, max-one session retains
   the runtime target, pooler policy, and project/RLS binding without becoming
   a general query surface or a per-request connection.
+
+  FNXC:PostgresHealthTransport 2026-09-26-00:45 (RUFU-301):
+  Because the session is max-one, a probe the caller abandoned at its deadline
+  used to stay active on it: pg_stat_activity showed `SELECT id FROM project.tasks`
+  still running 5.0 s after the health call returned, and the next two polls then
+  failed in the *earlier* connectivity stage because their `SELECT 1` queued behind
+  that orphan. The session now carries a server-side `statement_timeout` below the
+  probe budget, so PostgreSQL cancels the statement itself. Measured against an
+  ACCESS EXCLUSIVE lock on project.tasks: cancelled at 1504 ms against a 1500 ms
+  cap, 0 queries left on the session, next statement served in 1 ms, and a
+  legitimate 20k-row read unaffected at 15 ms.
   */
   const healthSql = postgres(runtimeUrl, {
     max: 1,
     connect_timeout: connectTimeout,
     idle_timeout: idleTimeout,
     prepare: runtimePrepare,
-    connection: runtimeConnectionParameters,
+    connection: {
+      ...runtimeConnectionParameters,
+      statement_timeout: healthSessionStatementTimeoutMs(),
+    },
     onnotice: () => {},
   });
   const healthDb: PostgresJsDatabase<AnySchema> = drizzle(healthSql);

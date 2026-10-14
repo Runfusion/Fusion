@@ -5133,7 +5133,11 @@
     "recheck": "重新檢查",
     "rechecking": "重新檢查中…",
     "activeTasks": "活躍任務",
-    "inFlightAgents": "執行中的代理"
+    "inFlightAgents": "執行中的代理",
+    "integrityNotMeasured": "",
+    "integrityNotMeasuredBody": "",
+    "integrityNotMeasuredBodyUnreachable": "",
+    "integrityNotMeasuredBodyUnconfigured": ""
   },
   "taskVerification": {
     "requestRejected": "",

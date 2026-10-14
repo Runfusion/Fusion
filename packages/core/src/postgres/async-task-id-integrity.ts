@@ -31,6 +31,30 @@ import { PROJECT_SCHEMA } from "./schema/_shared.js";
 
 const TASK_ID_PATTERN = /^([A-Z][A-Z0-9]*)-(\d+)$/;
 
+/**
+ * Raised when a task-ID integrity measurement could not be completed.
+ *
+ * FNXC:TaskIdIntegrityCanary 2026-09-26-00:50 (RUFU-301):
+ * This detector used to swallow every query failure and answer
+ * `buildReport(checkedAt, [])`, i.e. `status: "ok"` with zero anomalies. A
+ * cancelled, lock-blocked, or otherwise failed read therefore published the
+ * same clean verdict as a completed scan, which is how the canary went blind
+ * while `/api/health` kept reporting `status: "ok"`. An integrity check that
+ * never finished is not a clean result, so no failure path may fabricate a
+ * report: the measurement either returns rows it actually read or it raises.
+ * Callers map this to an explicitly unmeasured verdict.
+ */
+export class TaskIdIntegrityMeasurementError extends Error {
+  override readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(`Task-ID integrity measurement did not complete: ${reason}`);
+    this.name = "TaskIdIntegrityMeasurementError";
+    this.cause = cause;
+  }
+}
+
 function parseTaskId(taskId: string): { prefix: string; sequence: number } | null {
   const match = taskId.trim().toUpperCase().match(TASK_ID_PATTERN);
   if (!match) return null;
@@ -198,9 +222,11 @@ export async function detectTaskIdIntegrityAnomaliesAsync(
     }
 
     return buildReport(checkedAt, anomalies);
-  } catch {
-    // On any query failure, return an ok report (fail-open). The separate
-    // health check will surface connectivity issues via the corruption banner.
-    return buildReport(checkedAt, []);
+  } catch (error) {
+    // FNXC:TaskIdIntegrityCanary 2026-09-26-00:50 (RUFU-301): never fail open.
+    // Rewrapping (not swallowing) keeps the driver's reason — statement timeout,
+    // connection loss, permission denial — visible to the health surface.
+    if (error instanceof TaskIdIntegrityMeasurementError) throw error;
+    throw new TaskIdIntegrityMeasurementError(error);
   }
 }
