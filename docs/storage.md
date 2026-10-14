@@ -395,6 +395,7 @@ API endpoints reviewed:
 | `favoriteModels` | Global | `GET/PUT /api/settings/global` | Favorited models |
 | `openrouterModelSync` | Global | `GET/PUT /api/settings/global` | Startup model sync behavior |
 | `orcarouterModelSync` | Global | `GET/PUT /api/settings/global` | OrcaRouter startup model sync behavior |
+| `atlascloudModelSync` | Global | `GET/PUT /api/settings/global` | Atlas Cloud startup model sync behavior |
 | `modelOnboardingComplete` | Global | `GET/PUT /api/settings/global` | Onboarding completion flag |
 | `executionGlobalProvider` | Global | `GET/PUT /api/settings/global` | Global baseline AI provider for task execution |
 | `executionGlobalModelId` | Global | `GET/PUT /api/settings/global` | Global baseline AI model ID for task execution |
