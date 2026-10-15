@@ -4054,8 +4054,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             const targetExists = existsSync(target.canonicalPath);
             if (targetExists) {
               const resolvedPath = await realpath(target.canonicalPath);
+              /*
+              FNXC:TaskReset 2026-09-25-08:56:
+              Compare the realpath'd target against a realpath'd containment root. `containmentRoot` and
+              `canonicalPath` are both plain `resolve()` output (canonicalizeWorktreePath is deliberately
+              resolve-only, because it is a lock key), so the containment check above is symmetric. `resolvedPath`
+              here has been through realpath, so comparing it to the raw root makes any worktrees root under a
+              symlink look like a path escape and refuses a legitimate Reset. On macOS that is every default temp
+              path (/var -> /private/var); for a user it is any symlinked worktrees root or volume.
+              `isInsideConfiguredWorktreesDir` canonicalizes both sides for exactly this reason (see
+              canonicalizePath in worktree-pool.ts); the workspace-task-dir branch must match it.
+
+              The fallback keeps the guard fail-closed: if the root cannot be realpath'd we compare against the
+              raw path rather than skipping containment.
+              */
+              const resolvedContainmentRoot = await realpath(target.containmentRoot).catch(() => target.containmentRoot);
               const resolvedContained = resetPlan.layout === "workspace-task-dir"
-                ? isStrictDescendant(target.containmentRoot, resolvedPath)
+                ? isStrictDescendant(resolvedContainmentRoot, resolvedPath)
                 : isInsideConfiguredWorktreesDir(target.repoRootDir, settings, resolvedPath, workspaceContext);
               if (!resolvedContained) {
                 throw badRequest("Reset refuses an unsafe worktree path outside the configured worktree root");
@@ -4074,18 +4089,31 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
                 getRegisteredPathsForRepo(target.repoRootDir),
               ]);
               const targetBranch = typeof target.branch === "string" ? target.branch.trim() : "";
+              /*
+              FNXC:TaskReset 2026-09-25-08:56:
+              Ownership is proven by comparing this target against the paths git reports, so both sides must be
+              spelled the same way. Git prints a worktree's realpath, while `canonicalPath` is plain `resolve()`
+              of the configured path, so under a symlinked worktrees root every comparison misses and Reset
+              refuses its own worktree as unprovable. Matching on realpath keeps the proof exact rather than
+              loosening it: a genuinely foreign or unregistered path still fails closed.
+              */
+              const realTargetPath = await realpath(target.canonicalPath).catch(() => target.canonicalPath);
+              const samePath = async (candidate: string) =>
+                await realpath(candidate).catch(() => resolve(candidate)) === realTargetPath;
               let registeredOwner = false;
               if (targetBranch.length > 0) {
                 for (const entry of registeredBranches) {
-                  if (entry.branch === targetBranch && await canonicalizeWorktreePath(entry.worktreePath) === target.canonicalPath) {
+                  if (entry.branch === targetBranch && await samePath(entry.worktreePath)) {
                     registeredOwner = true;
                     break;
                   }
                 }
               }
+              const registeredCanonicalPath = registeredPaths.has(target.canonicalPath)
+                || (await Promise.all([...registeredPaths].map(samePath))).some(Boolean);
               const recoveredCanonicalOwner = !registeredOwner
                 && target.canonicalPath === resetPlan.canonicalSingularWorktreePath
-                && registeredPaths.has(target.canonicalPath);
+                && registeredCanonicalPath;
               if (!registeredOwner && !recoveredCanonicalOwner) {
                 throw conflict(`Reset refuses a worktree whose managed task ownership cannot be proven${targetSuffix(target.repoRel)}`);
               }
