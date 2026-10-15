@@ -73,7 +73,7 @@ import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
 import { PluginRunner } from "../plugins/plugin-runner.js";
 import { MissionAutopilot } from "../missions/mission-autopilot.js";
 import { MissionExecutionLoop } from "../missions/mission-execution-loop.js";
-import { TriageProcessor } from "../triage.js";
+import { PLANNING_CONTINUATION_LEASE_MS, TriageProcessor } from "../triage.js";
 import { validateProjectNodeMapping } from "../project/node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
 import {
@@ -103,6 +103,21 @@ backlog permanently and the number stops distinguishing real debt from documente
 */
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
+
+/*
+FNXC:PlanningContinuationDispatch 2026-10-15-10:06:
+The planning-continuation dispatch claim published `running` with `leaseExpiresAt: null`. A null expiry is
+exactly the shape `evaluateStrandedContinuationReclaim` classifies as a dead lease (`Number.NaN` → `requeue
+reason: "dead-lease"`), so the reclaim sweep requeued the row seconds after it was claimed, and the next
+scheduler pass claimed it again: a claim/requeue livelock, measured as 46 `running` rows of which 28 were
+dispatch claims right after a clean restart. `triage.ts` already leases the same row kind for
+PLANNING_CONTINUATION_LEASE_MS and renews it; the dispatch claim was the one writer that skipped it, which
+is why the reaper's existing `lease-active` verdict could never fire for a claim. The width is reused rather
+than invented so crash recovery still happens: after the lease passes, the reclaim sweep behaves as before.
+*/
+export function planningContinuationDispatchLeaseExpiresAt(now = Date.now()): string {
+  return new Date(now + PLANNING_CONTINUATION_LEASE_MS).toISOString();
+}
 
 /**
  * FNXC:PluginMcpServers 2026-07-23-12:00:
@@ -846,7 +861,7 @@ async function dispatchPlanningContinuationIfCurrent(input: {
         expectedState: currentItem.state,
         expectedLeaseOwner: currentItem.leaseOwner,
         leaseOwner,
-        leaseExpiresAt: null,
+        leaseExpiresAt: planningContinuationDispatchLeaseExpiresAt(),
         lastError: null,
         blockedReason: null,
       });
