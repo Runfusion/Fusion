@@ -367,7 +367,8 @@ Re-assigning or un-assigning a card that already has a live execution session us
 is a workflow-node run, so the implementation-lane verdict applies), which means a reviewer-only lane — the shape every reviewer agent
 on a default board has — refuses every review dispatch its own sweep opens. Left at that, the ledger row stayed `running` with no session,
 reconciliation closed it as `engine-lost:`, that prefix was exempt from the attempt budget, and the sweep re-dispatched forever: measured
-24 dispatches to one lane over 2 h 28 m with no reviewer session ever starting. The decline now closes that attempt as
+2026-10-15: four cards sat in `in-review` accumulating declines (`VLLM-089` at attempt 387 with 336 dispatch lines, `VLLM-104`, `RUFU-343`,
+`SANE-484`), and not one of them ever produced a reviewer session. The decline now closes that attempt as
 `lane-capability-declined:<lane>/<binding>/<code>/<policySignature>`, the sweep reads that witness as a recorded refusal, classifies the card
 `capability-declined`, names it once per card per policy episode on the card's History, and stops routing that binding — no park, no error,
 no lifecycle move, and a distinct count from `reviewer-busy`, because "the only lane I can route to refuses this class" is a different
