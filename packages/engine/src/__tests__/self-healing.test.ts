@@ -4966,6 +4966,47 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("does not admit a user-paused current-approval task to normal merge recovery", async () => {
+      const enqueueMerge = vi.fn().mockReturnValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      const listWorkflowWorkItemsForTask = vi.fn(async () => []);
+      (store as any).listWorkflowWorkItemsForTask = listWorkflowWorkItemsForTask;
+      (managerWithRecovery as any).mergeStarvationDrops.set("FN-4999-user-paused", 2);
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        id: "FN-4999-user-paused",
+        column: "in-review",
+        paused: false,
+        userPaused: true,
+        status: null,
+        error: null,
+        worktree: "/tmp/test-project/.worktrees/fn-4999-user-paused",
+        steps: [{ name: "Ship it", status: "done" }],
+        // A current pre-merge receipt makes this a normal merge-recovery
+        // candidate absent the explicit user hold.
+        workflowStepResults: [{ id: "code-review", status: "passed", phase: "pre-merge" }],
+        mergeDetails: undefined,
+        log: [],
+      }]);
+
+      expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(0);
+      expect(enqueueMerge).not.toHaveBeenCalled();
+      expect(store.mergeTask).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.logEntry).not.toHaveBeenCalled();
+      expect(listWorkflowWorkItemsForTask).not.toHaveBeenCalled();
+      expect((managerWithRecovery as any).mergeStarvationDrops.get("FN-4999-user-paused")).toBe(2);
+
+      managerWithRecovery.stop();
+    });
+
     /*
     FNXC:PreMergeApproval 2026-09-01-14:05:
     The review recovery sweep must solve stale content-bound approvals by re-seeding review, not by
