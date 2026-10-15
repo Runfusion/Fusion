@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **4 active observation records** (entries 2, 13, 20, and 21), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **5 active observation records** (entries 2, 13, 20, 21, and 22), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -310,6 +310,18 @@ The combined ProjectEngine/workspace-merger verification observed an empty recal
 The verified `test-timings-shard-3` artifact (`11332755977`, SHA-256 `85a8465f96e26a8ec9f0d80ff9f051f6a9e66673a0042fdd18c2d434a7577ec4`) reported the badge as `pending` rather than `auto-available` at `AgentDetailView.core.test.tsx:507` after 58.443616 ms. The shard command was `pnpm test:ci:shard --shard 3 --total 4`; its dashboard reporter was otherwise complete (176 suites, 6,008 passing tests, one failure).
 
 FN-9506 reproduced the pending-to-resolved transition with a deferred discovery response. It preserves the stored legacy reference in the tooltip, proves a pending click makes no content request, waits for `data-skill-state="auto-available"`, and then proves one `fetchSkillContent(canonicalId, projectId)` request. Production code was unchanged: `AgentDetailView` deliberately mounts skill discovery only after the agent has loaded, so agent-before-discovery is the reachable lifecycle. No retry, timeout, skip, or weakened assertion was introduced. The file has 55 focused cases and is outside the thin merge gate, so this high-value first sighting remains recorded rather than quarantined. A second sighting of this file requires a same-change file-level quarantine in `scripts/lib/test-quarantine.json` and `quarantinedDashboardTests`.
+
+### 22. Pipeline smoke Coding S17 post-merge restart
+
+- **Status:** Active first sighting — recorded 2026-10-15 by FN-9551; no quarantine.
+- **File:** `packages/engine/src/__tests__/pipeline-smoke/pipeline-restart-coding.pipeline.test.ts`
+- **Exact test:** `pipeline smoke: Coding restart scenarios > S17 runs every Coding restart stage through one fixture lifecycle` (`builtin:coding`, `post-merge` record).
+- **Observed tree/SHA:** Full Suite run [38660462920](https://github.com/Runfusion/Fusion/actions/runs/38660462920), `0a427caf1fa2a3ba04b70d887686ca9c9e31942c`.
+- **Observed frequency:** One hosted Pipeline smoke sighting; the focused test and one full local smoke reproduction passed.
+
+The retained `pipeline-smoke-report` artifact recorded a watchdog timeout at 175018 ms against the unchanged 175000 ms budget. It retained 40 completed records, last completed `S17/builtin:coding/merge-in-flight`, and exactly one missing key: `S17/builtin:coding/post-merge`. The report contained no malformed line and no Vitest result JSON, proving the producer was still executing rather than accepting a partial census.
+
+FN-9551 ran the unchanged focused engine-pipeline-smoke Coding S17 file successfully in 48.1 s and `pnpm smoke:pipeline` successfully in 152924 ms with all 41 unique passing records; Coding S17 post-merge completed once in 5769 ms. The incident did not reproduce locally. FN-9550 changes only PostgreSQL cleanup/status support and does not cross this runner or S17 execution path. The smoke report now retains a redacted start event so a future watchdog failure names the in-flight scenario, `scenario-execution` stage, and elapsed time while the 41-record census still fails closed. The file retains five real Git/PostgreSQL restart stages and valuable production coverage, so this first isolated observation is registered rather than quarantined. A second sighting requires same-change file-level quarantine under the deletion ratchet.
 
 ### Common shape and investigated result
 

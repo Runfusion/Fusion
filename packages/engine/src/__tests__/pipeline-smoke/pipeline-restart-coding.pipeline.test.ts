@@ -1,4 +1,7 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,
@@ -30,15 +33,43 @@ describeIfReady("pipeline smoke: Coding restart scenarios", () => {
     projectId: "pipeline-smoke-restart-coding",
   });
   let harness: PipelineSmokeHarness;
+  let reportDir: string | undefined;
+  let reportPath: string;
+  let priorScenarioReport: string | undefined;
+  let ownsScenarioReport = false;
 
+  /*
+  FNXC:PipelineSmoke 2026-10-15-00:58:
+  FN-9551 needs this focused fixture to inspect its terminal post-merge record without replacing
+  the runner-owned report path. A standalone run gets an isolated report, while the full smoke
+  keeps its shared producer file so the manifest census retains all five Coding S17 variants.
+  */
   beforeAll(pg.beforeAll);
   beforeEach(async () => {
     await pg.beforeEach();
+    priorScenarioReport = process.env.FUSION_PIPELINE_SMOKE_REPORT;
+    if (priorScenarioReport) {
+      reportPath = priorScenarioReport;
+      ownsScenarioReport = false;
+    } else {
+      reportDir = mkdtempSync(join(tmpdir(), "fusion-pipeline-coding-s17-"));
+      reportPath = join(reportDir, "scenarios.jsonl");
+      process.env.FUSION_PIPELINE_SMOKE_REPORT = reportPath;
+      ownsScenarioReport = true;
+    }
     harness = await PipelineSmokeHarness.create(pg);
   });
   afterEach(async () => {
-    await harness.dispose();
-    await pg.afterEach();
+    try {
+      await harness.dispose();
+      await pg.afterEach();
+    } finally {
+      if (ownsScenarioReport) {
+        if (priorScenarioReport === undefined) delete process.env.FUSION_PIPELINE_SMOKE_REPORT;
+        else process.env.FUSION_PIPELINE_SMOKE_REPORT = priorScenarioReport;
+        rmSync(reportDir, { recursive: true, force: true });
+      }
+    }
   });
   afterAll(pg.afterAll);
 
@@ -59,5 +90,8 @@ describeIfReady("pipeline smoke: Coding restart scenarios", () => {
         return { observedTerminal: observed.observedTerminal, wedge: observed.wedge };
       });
     }
+    const events = readFileSync(reportPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const completedPostMerge = events.filter((event) => event.event !== "started" && event.scenarioId === "S17" && event.workflowId === workflowId && event.variant === "post-merge");
+    expect(completedPostMerge).toEqual([expect.objectContaining({ expectedTerminal: "merged-done", observedTerminal: "merged-done", verdict: "pass" })]);
   });
 });

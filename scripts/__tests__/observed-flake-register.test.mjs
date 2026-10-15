@@ -195,6 +195,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "21. Agent Detail legacy skill discovery ordering",
       status: "Active first sighting — recorded 2026-10-05 by FN-9506; deterministic test repair landed, with a second sighting requiring file-level quarantine.",
     },
+    {
+      heading: "22. Pipeline smoke Coding S17 post-merge restart",
+      status: "Active first sighting — recorded 2026-10-15 by FN-9551; no quarantine.",
+    },
   ]);
 });
 
