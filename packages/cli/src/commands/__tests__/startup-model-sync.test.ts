@@ -277,6 +277,40 @@ describe("startup-model-sync", () => {
     }));
   });
 
+  it("keeps the Requesty catalog when the managed list has the wrong shape", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ data: {} }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ data: [null, { api: "chat" }, { id: "openai/gpt-4o-mini", api: "chat" }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const registerProvider = vi.fn();
+    const log = vi.fn();
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        requestyModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue("rqsty-secret") },
+      modelRegistry: { registerProvider },
+      log,
+    });
+
+    expect(log).toHaveBeenCalledWith("requesty", expect.stringContaining("no data array"));
+    expect(registerProvider).toHaveBeenCalledWith("requesty", expect.objectContaining({
+      models: [expect.objectContaining({ id: "openai/gpt-4o-mini" })],
+    }));
+  });
+
   it("fetches both public Requesty lists without a saved key", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({

@@ -273,9 +273,16 @@ type RequestyModel = {
   supports_reasoning?: boolean;
 };
 
-function toRequestyModels(json: { data?: RequestyModel[] }): ModelConfig[] {
-  return (json.data || [])
-    .filter((model) => model.id && (model.api ?? "chat") === "chat")
+function toRequestyModels(json: unknown): ModelConfig[] {
+  const data = (json as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data)) {
+    throw new Error("response has no data array");
+  }
+  return (data as Array<RequestyModel | null>)
+    .filter((model): model is RequestyModel =>
+      typeof model === "object" && model !== null
+      && typeof model.id === "string" && model.id.length > 0
+      && (model.api ?? "chat") === "chat")
     .map((model) => ({
       id: model.id,
       name: model.id,
@@ -307,6 +314,9 @@ FNXC:RequestyProvider 2026-09-25-13:02:
 Both lists are public: keyless `/v1/models` returns 200, and only an invalid key gets 403, so both lists are fetched with or without a saved key.
 Each list is fetched independently: an HTTP error, network error, invalid JSON or timeout on one list is logged and the other list is still registered.
 Each request is bounded by `REQUESTY_MODELS_TIMEOUT_MS`, so a stalled Requesty response cannot hold back the opencode-go sync that runs after it.
+
+FNXC:RequestyProvider 2026-10-15-10:00:
+The response shape is validated inside the same per-list boundary: a body without a `data` array is logged as a failure for that list, and entries that are not objects with a non-empty string `id` are skipped, so a malformed managed list cannot stop the full catalog from registering.
 */
 async function syncRequestyModels(options: StartupSyncOptions): Promise<void> {
   const { authStorage, modelRegistry, log } = options;
@@ -319,20 +329,20 @@ async function syncRequestyModels(options: StartupSyncOptions): Promise<void> {
   const models: ModelConfig[] = [];
   const seen = new Set<string>();
   for (const url of [REQUESTY_MANAGED_MODELS_URL, REQUESTY_MODELS_URL]) {
-    let json: { data?: RequestyModel[] };
+    let listModels: ModelConfig[];
     try {
       const response = await fetch(url, { headers, signal: AbortSignal.timeout(REQUESTY_MODELS_TIMEOUT_MS) });
       if (!response.ok) {
         log("requesty", `Failed to sync models from ${url}: HTTP ${response.status}`);
         continue;
       }
-      json = await response.json() as { data?: RequestyModel[] };
+      listModels = toRequestyModels(await response.json());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log("requesty", `Failed to sync models from ${url}: ${message}`);
       continue;
     }
-    for (const model of toRequestyModels(json)) {
+    for (const model of listModels) {
       if (!seen.has(model.id)) {
         seen.add(model.id);
         models.push(model);
