@@ -3185,7 +3185,37 @@ export class HeartbeatMonitor {
                 leaves the wake behaving exactly as it did before this change.
                 */
                 await this.recordLaneCapabilityDecline(agent, boundTask, run.id);
-                // Decline ≠ unbind: fall through to inbox/auto-claim without touching the binding.
+                /*
+                FNXC:LaneCapabilityReviewRefusal 2026-10-15-21:15 (RUFU-685):
+                A declined binding still has to be dealt with, or the card is assigned to an agent that will
+                never run it: the decline named the mismatch and stopped the session, and nothing released the
+                assignment, so a queued card could sit claimed-by-nobody-forever while every later wake took the
+                same decline. The sanctioned release is the same durable seam the model used to be trusted with
+                (`fn_task_handoff_to_workflow_executor` → `handoffTaskToWorkflowExecutor`), which is why this path
+                now calls it directly instead of asking a session to do it: the refusal means the session must not
+                run at all, so a tool the run never opens cannot be the cure. Measured on the failing heartbeat
+                suite: the wake ended `status: completed, resultJson.reason: "no_assignment"` with zero sessions and
+                zero releases — the handoff invariant the suite encodes ('release durably, do not log ready') had
+                become unreachable.
+
+                The seam is its own authority on what may be released: it refuses `paused`, `checkout_held`,
+                `assigned_to_other`, and any card outside the queued/hold lane (`not_queued`) — so an RUFU-682
+                review-lane refusal stays bound and keeps its review routing, exactly as before. The attempt is
+                best-effort and outcome-logged: an AgentStore without the method, or a refusal, leaves the decline
+                behaving exactly as it did one commit ago.
+                */
+                const released = await Promise.resolve(
+                  this.store.handoffTaskToWorkflowExecutor?.(agentId, wakeTaskId, runContext),
+                ).catch((handoffErr: unknown) => {
+                  heartbeatLog.warn(`Lane-capability decline release failed for ${agentId}/${wakeTaskId}: ${handoffErr instanceof Error ? handoffErr.message : String(handoffErr)}`);
+                  return null;
+                });
+                if (released && !released.ok) {
+                  heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} kept the binding — Workflow Executor release refused (${released.reason})`);
+                } else if (released) {
+                  heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} released the queued card to Workflow Executor admission`);
+                }
+                // Decline ≠ unbind by raw write: the release above is the only thing that may drop the binding.
                 taskId = undefined;
               }
             }

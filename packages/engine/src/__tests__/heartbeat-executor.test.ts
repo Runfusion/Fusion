@@ -2230,7 +2230,19 @@ describe("executeHeartbeat", () => {
         expect(callArgs.systemPrompt).toContain("Inline operating instruction");
         expect(callArgs.systemPrompt).toContain("File-backed operating instruction");
         expect(callArgs.systemPrompt).toContain("## Soul");
-        expect(callArgs.systemPrompt).toContain("## Agent Memory");
+        /*
+        FNXC:PromptByteStability 2026-10-15-21:02 (RUFU-267 re-pin, RUFU-685):
+        RUFU-267 moved runtime-mutable prompt state out of the serialized system prompt into a
+        `## Session Context` tail on the turn's user message, so the provider has a byte-stable prefix
+        to cache. Memory bodies are exactly that volatile state, so this assertion belonged to the old
+        location. Measured on the current build: `## Agent Memory` and the agent's memory text arrive on
+        mockSession.prompt's request tail, never in systemPrompt. Asserting the head would only re-add
+        volatility, so assert the delivery that actually happens.
+        */
+        const executionPrompt = String(mockSession.prompt.mock.calls.at(-1)?.[0] ?? "");
+        expect(executionPrompt).toContain("## Session Context");
+        expect(executionPrompt).toContain("## Agent Memory");
+        expect(executionPrompt).toContain("Remember to prefer concrete actions");
       } finally {
         rmSync(tmpRoot, { recursive: true, force: true });
       }
@@ -3459,9 +3471,21 @@ describe("executeHeartbeat", () => {
       expect(callArgs.systemPrompt).toContain(HEARTBEAT_SYSTEM_PROMPT);
       expect(callArgs.systemPrompt).toContain("## Soul");
       expect(callArgs.systemPrompt).toContain("Act like a practical teammate who prioritizes clarity.");
-      expect(callArgs.systemPrompt).toContain("## Agent Memory");
-      expect(callArgs.systemPrompt).toContain("Recent runs found flaky tests in integration suites.");
+      /*
+      FNXC:PromptByteStability 2026-10-15-21:02 (RUFU-267 re-pin, RUFU-685):
+      Config-time blocks (soul, instructions) stay in the cached head; memory is request-volatile and
+      is appended to the turn's prompt. Re-pinned onto the seam that carries each one today.
+      */
+      const executionPrompt = String(mockSession.prompt.mock.calls.at(-1)?.[0] ?? "");
+      expect(executionPrompt).toContain("## Session Context");
+      expect(executionPrompt).toContain("## Agent Memory");
+      expect(executionPrompt).toContain("Recent runs found flaky tests in integration suites.");
       expect(callArgs.systemPrompt).toContain("Always log blockers with actionable next steps.");
+      /*
+      FNXC:PromptByteStability 2026-10-15-21:02 (RUFU-685): Project memory is resolved from the
+      workspace at session-config time and stays in the cached head — the sibling tests below pin it
+      there too — while the agent's own memory body is per-request. Keep them asserted apart.
+      */
       expect(callArgs.systemPrompt).toContain("## Project Memory");
       expect(callArgs.systemPrompt).toContain("fn_memory_search");
       expect(callArgs.systemPrompt).toContain("fn_task_log");
@@ -3619,10 +3643,16 @@ describe("executeHeartbeat", () => {
         await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
 
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
-        expect(callArgs.systemPrompt).toContain("## Agent Memory");
-        expect(callArgs.systemPrompt).toContain("workspace memory for heartbeat");
-
         const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0] as string;
+        /*
+        FNXC:PromptByteStability 2026-10-15-21:02 (RUFU-267 re-pin, RUFU-685):
+        Workspace-file memory is loaded per request, so it is volatile by definition and reaches the
+        model on the request tail. The `- memory: loaded (… source: workspace)` line below already
+        proved the load happened on that message; the header/body asserts now name the same seam.
+        */
+        expect(executionPrompt).toContain("## Session Context");
+        expect(executionPrompt).toContain("## Agent Memory");
+        expect(executionPrompt).toContain("workspace memory for heartbeat");
         expect(executionPrompt).toMatch(/- memory: loaded \(\d+ chars, sha256:[a-f0-9]{8}, source: workspace\)/);
       } finally {
         rmSync(rootDir, { recursive: true, force: true });
