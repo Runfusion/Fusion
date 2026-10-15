@@ -1406,8 +1406,7 @@ describe("PlanningModeModal sequential flow", () => {
     mockRespondToPlanning.mockRejectedValue(new Error("Generation already in progress for this response"));
 
     renderSession();
-    fireEvent.click(await screen.findByLabelText("Secure defaults"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await selectResponseAfterHydration("Secure defaults");
     await waitFor(() => expect(sessionReads).toBe(2));
     await waitFor(() => expect(mockConnectPlanningStream).toHaveBeenCalledWith("session-1", "project-1", expect.any(Object)));
 
@@ -1481,8 +1480,7 @@ describe("PlanningModeModal sequential flow", () => {
     }
 
     renderSession(sessionId);
-    fireEvent.click(await screen.findByLabelText("Secure defaults"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await selectResponseAfterHydration("Secure defaults");
     await waitFor(() => expect(fetchCount).toBe(2));
 
     await act(async () => {
@@ -1558,10 +1556,7 @@ describe("PlanningModeModal sequential flow", () => {
     const { rerender } = render(<PlanningModeModal {...props} resumeSessionId="session-a" />);
 
     fireEvent.click(await screen.findByLabelText("Secure defaults"));
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Next" }));
-      await Promise.resolve();
-    });
+    await clickEnabledPlanningButton("Next");
     await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledTimes(1));
     rerender(<PlanningModeModal {...props} resumeSessionId="session-b" />);
     expect(await screen.findByText("What did session B ask?")).toBeInTheDocument();
@@ -1621,8 +1616,7 @@ describe("PlanningModeModal sequential flow", () => {
     expect(await screen.findByLabelText("Secure defaults")).toBeInTheDocument();
     handlers?.onError?.("The old stream failed");
     await waitFor(() => expect(fetchCount).toBe(2));
-    fireEvent.click(screen.getByLabelText("Secure defaults"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await selectResponseAfterHydration("Secure defaults");
     const connectionCountAfterResponse = mockConnectPlanningStream.mock.calls.length;
     await act(async () => {
       resolveRecovery({
@@ -1683,8 +1677,7 @@ describe("PlanningModeModal sequential flow", () => {
     });
     mockRespondToPlanning.mockReturnValue(new Promise(() => undefined));
     renderSession();
-    fireEvent.click(await screen.findByLabelText("Secure defaults"));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await selectResponseAfterHydration("Secure defaults");
     const workspace = screen.getByTestId("planning-workspace");
     expect(workspace).toHaveAttribute("aria-busy", "true");
     expect(screen.getByText("Generating plan…")).toBeInTheDocument();
@@ -1891,7 +1884,7 @@ describe("PlanningModeModal sequential flow", () => {
       currentQuestion: { id: "q-next", type: "text", question: "What comes next?" },
       summary: summaryWithRefinements,
     });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await clickEnabledPlanningButton("Next");
     await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledWith(
       "session-1",
       { "q-prior": "Preserve drafts" },
