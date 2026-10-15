@@ -1432,7 +1432,10 @@
     "agentRepliesFailed": "Certains agents n’ont pas pu répondre : {{agents}}",
     "noDefaultModelConfigured": "Configurez un modèle de chat par défaut dans les Paramètres avant de créer une conversation.",
     "questionOptionalLabel": "",
-    "questionSelectHintWithOptional": ""
+    "questionSelectHintWithOptional": "",
+    "contextTruncationUnproven": "",
+    "contextTruncationNotice_one": "",
+    "contextTruncationNotice_other": ""
   },
   "chatRooms": {
     "error": {
@@ -6365,6 +6368,8 @@
       "stashUrlLabel": "",
       "stashUrlPlaceholder": "",
       "uploadTaskAgentLogTranscriptToStash": "",
+      "chatContextBudget": "",
+      "chatContextBudgetHelp": "",
       "03": "",
       "agentsGetMemorySearchMemoryGetAndMemory": "",
       "agentsSearchWithQmdFirstFallBackTo": "",
@@ -6413,7 +6418,9 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "preOverflowCompaction": "",
+      "preOverflowCompactionHelp": ""
     },
     "merge": {
       "abort": "",
