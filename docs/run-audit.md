@@ -162,13 +162,15 @@ Both events are deliberately outside the curated delivery-pipeline event catalog
 
 The same decline now settles the review attempt it refused, and RUFU-682 is why. When the refused attempt is one the
 review dispatch sweep opened, the decline closes that reviewer-run row as `failed` with reason
-`lane-capability-declined:<lane>/<binding>/<code>/<policySignature>` (witness and reason builder: `reviewerRunLaneDeclineReason`;
-the closer: `declineReviewerRunForLane`, which refuses to settle a row another reviewer opened). That reason is what the sweep reads
+`lane-capability-declined:<assignmentPolicy>/[<roles,…>]` — the lane's policy signature, produced by `laneCapabilityDeclinePolicy`
+through the reason builder `reviewerRunLaneDeclineReason`; measured live: `lane-capability-declined:auto/[reviewer]` (witness closer:
+`declineReviewerRunForLane`, which refuses to settle a row another reviewer opened). That reason is what the sweep reads
 back as a recorded refusal: it classifies the card as **`capability-declined`**, announces the sentence once per card per policy
-episode through the card's History, and stops routing that binding, so the refusal is the last dispatch the lane ever receives for
-that policy. It is **not** a `reviewer-busy` park: the card stays un-parked with no error, because the refusal is a routing fact
-about one binding, not a fault in the card. The policy signature in the reason is what lifts it — editing the lane's roles, binding,
-or `assignmentPolicy` changes the signature, so the previous refusal stops proving anything and dispatch re-arms on the next tick.
+episode through the card's History, and routes no further dispatch to that binding, so the refusal is the last dispatch the lane ever
+receives under that signature. It is **not** a `reviewer-busy` park: the card stays un-parked with no error, because the refusal is a
+routing fact about one binding, not a fault in the card. The signature is what lifts it — editing the lane's **roles** or its
+`runtimeConfig.assignmentPolicy` changes the signature, so the previous refusal stops proving anything and dispatch re-arms on the next
+tick; the lane's binding is not part of the signature, and changing it alone does not re-arm.
 No new event is emitted, because the existing row already names the defect; what was missing was that the row's evidence lived where
 the deciding loop could not read it. The refusal itself stays countable through the ledger: `select rework_round, status, failure_reasons
 from project.task_reviewer_runs where task_id = '<ID>' and failure_reasons like '%lane-capability-declined:%' order by rework_round` counts

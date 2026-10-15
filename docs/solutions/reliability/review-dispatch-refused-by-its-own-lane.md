@@ -58,13 +58,17 @@ The refusal is now recorded where the deciding loop reads it, in the same call t
 (`packages/engine/src/agent-heartbeat.ts` → `recordLaneCapabilityDecline`):
 
 - `declineReviewerRunForLane` closes that reviewer's live attempt as `failed` with reason
-  `lane-capability-declined:<lane>/<binding>/<code>/<policySignature>`. It refuses to settle a row another reviewer opened, and a ledger
+  `lane-capability-declined:<assignmentPolicy>/[<roles,…>]` — the lane's policy signature, measured live as
+  `lane-capability-declined:auto/[reviewer]`. It refuses to settle a row another reviewer opened, and a ledger
   outage cannot change the decline.
 - The sweep derives refusals from those rows (`declinedReviewersForTask`) and classifies a card whose entire enabled reviewer pool has
   refused as **`capability-declined`**: it names the refusal once per card per policy episode on the card's History and routes no further
   dispatch to a refused binding. Partial refusal re-routes to a sibling reviewer instead.
-- The refusal carries the lane's **policy signature**, so it is evidence with an expiry: editing the lane's roles, binding, or
-  `assignmentPolicy` changes the signature, the old refusal stops proving anything, and dispatch re-arms on the next tick.
+- The refusal carries the lane's **policy signature** (`laneCapabilityDeclinePolicy` = resolved `assignmentPolicy` + `roles`), so it is
+  evidence with an expiry: editing the lane's **roles** or its `runtimeConfig.assignmentPolicy` changes the signature, the old refusal stops
+  proving anything, and dispatch re-arms on the next tick. The signature does **not** include the lane's binding, so re-pointing a binding alone
+  does not re-arm — the operator lever is the role set (measured 2026-10-15: no agent on this host stores a runtimeConfig at all, so every lane's
+  policy resolves to `auto` and roles are the only moving part).
 
 Deliberate boundaries: no column or lifecycle move, no unbind, no role change, and `capability-declined` stays a **separate count** from
 `reviewer-busy` — "the only lane I can route to refuses this class" and "the reviewer is occupied" need different operator actions, which
@@ -75,16 +79,23 @@ is what merging them into one log line cost. The mutation owner for a mis-placed
 
 | Symptom | Check |
 | --- | --- |
-| Did a refusal stop the loop, or is it still spinning? | `select rework_round, status, failure_reasons from project.task_reviewer_runs where task_id='<ID>' order by rework_round desc limit 5` — `failure_reasons` is a text column holding a JSON array, so match `failure_reasons like '%lane-capability-declined:%'`; the last line's timestamp in the engine log is the other half |
+| Did a refusal stop the loop, or is it still spinning? | `select rework_round, status, failure_reasons from project.task_reviewer_runs where task_id='<ID>' order by rework_round desc limit 5` — `failure_reasons` is a text column holding a JSON array, so match `failure_reasons like '%lane-capability-declined:%'`; a frozen `max(rework_round)` across several minutes is the stop signal |
 | Was the refusal correct as written? | `select id, role, roles from project.agents where id='<lane>'` — `roles = ["reviewer"]` against a card in a `humanReview`-trait column is the policy answering honestly, not a mis-read |
-| Which cards are refused right now? | the sweep's per-tick `emptyClasses()` `capability-declined` count, and each named card's History line |
-| Did an operator's policy edit re-arm dispatch? | the refused row's signature no longer matches the lane's current policy signature |
+| Which cards are refused right now? | the sweep logs `capability-declined: <ID> (attempts=N) — no reviewer work dispatched` each tick, and each named card carries the refusal sentence on its History |
+| Did an operator's edit re-arm dispatch? | the refused row's stored signature (`auto/[reviewer]`) no longer matches the lane's current roles/policy, so the next tick re-dispatches |
 
 ## Notes
 
+- Production confirmation, same evening (`e4944ae9e9` deployed 20:51 local): the wake logged
+  `Agent agent-6774b4e6 refused the review attempt on RUFU-343; the review lane will not re-dispatch this binding until its lane capability
+  changes`, `RUFU-343` attempt 74 closed as `["lane-capability-declined:auto/[reviewer]"]`, and the sweep switched to
+  `capability-declined: RUFU-343 (attempts=74) — no reviewer work dispatched`. No attempt number advanced afterwards on any of the four cards.
+  The stop is not instantaneous: the refused attempt has to exist first, and `engine-lost` closes ran on a ~40-minute cadence, so a card that
+  was mid-attempt at deploy time takes one more cycle to reach the refusal.
 - **What the fix does not do.** It stops the loop and names the refusal; it does not decide who may review. After the fix, a card whose
   whole reviewer pool refuses sits in `in-review`, un-parked, with its History naming the refusal, until an operator either widens a
-  lane's roles/binding (which retires the refusal by signature and re-arms dispatch on the next tick) or routes the card. Making a
+  lane's roles or gives it `runtimeConfig.assignmentPolicy` (which retires the refusal by signature and re-arms dispatch on the next tick) or
+  routes the card. Making a
   reviewer-only lane capable of running a review-node run is a routing-model decision beyond this card's scope, and this card deliberately
   did not smuggle it in as "stop the loop by allowing the dispatch".
 - The audit event `task:lane-capability-declined` already existed and already named the defect; the fix added **no new event**. What was

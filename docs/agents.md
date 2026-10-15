@@ -367,14 +367,17 @@ Re-assigning or un-assigning a card that already has a live execution session us
 is a workflow-node run, so the implementation-lane verdict applies), which means a reviewer-only lane — the shape every reviewer agent
 on a default board has — refuses every review dispatch its own sweep opens. Left at that, the ledger row stayed `running` with no session,
 reconciliation closed it as `engine-lost:`, that prefix was exempt from the attempt budget, and the sweep re-dispatched forever: measured
-2026-10-15: four cards sat in `in-review` accumulating declines (`VLLM-089` at attempt 387 with 336 dispatch lines, `VLLM-104`, `RUFU-343`,
-`SANE-484`), and not one of them ever produced a reviewer session. The decline now closes that attempt as
-`lane-capability-declined:<lane>/<binding>/<code>/<policySignature>`, the sweep reads that witness as a recorded refusal, classifies the card
-`capability-declined`, names it once per card per policy episode on the card's History, and stops routing that binding — no park, no error,
-no lifecycle move, and a distinct count from `reviewer-busy`, because "the only lane I can route to refuses this class" is a different
-operator problem than "the reviewer is occupied". Editing the lane's roles, binding, or `assignmentPolicy` changes the recorded signature,
-which retires the refusal and re-arms dispatch on the next tick. Pinned by
-`packages/engine/src/__tests__/review-lane-capability-refusal.test.ts` and its `.pg` counterpart.
+2026-10-15: four cards sat in `in-review` accumulating declines (`VLLM-089` at attempt 387 with 336 dispatch lines by 17:39 UTC, `VLLM-104`,
+`RUFU-343`, `SANE-484`), and not one of them ever produced a reviewer session. The decline now closes that attempt as
+`lane-capability-declined:<assignmentPolicy>/[<roles,…>]` (measured live: `auto/[reviewer]`), the sweep reads that witness as a recorded refusal,
+classifies the card `capability-declined`, names it once per card per policy episode on the card's History, and routes no further dispatch to that
+binding — no park, no error, no lifecycle move, and a distinct count from `reviewer-busy`, because "the only lane I can route to refuses this
+class" is a different operator problem than "the reviewer is occupied". Editing the lane's **roles** or its `runtimeConfig.assignmentPolicy`
+changes the recorded signature, which retires the refusal and re-arms dispatch on the next tick; the binding is not in the signature, so
+changing it alone does not re-arm. Confirmed in production the evening it shipped: `[heartbeat] Agent <lane> refused the review attempt on
+RUFU-343; the review lane will not re-dispatch this binding until its lane capability changes`, then
+`[ReviewDispatchSweep] capability-declined: RUFU-343 (attempts=74) — no reviewer work dispatched`, with the attempt count frozen at that value.
+Pinned by `packages/engine/src/__tests__/review-lane-capability-refusal.test.ts` and its `.pg` counterpart.
 
 ### Running-state invariant for assigned durable agents (FN-4249)
 
