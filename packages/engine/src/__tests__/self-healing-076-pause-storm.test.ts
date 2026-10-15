@@ -102,6 +102,13 @@ function createMockStore(settingsPartial: Partial<Settings> = {}): TaskStore & E
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     getTasksDir: vi.fn().mockReturnValue("/tmp/test-project/.fusion/tasks"),
     listWorkflowWorkItemsForTask: vi.fn().mockResolvedValue([]),
+    /*
+    FNXC:SelfHealingIrCache 2026-10-15-21:20 (RUFU-689):
+    The maintenance batch builds `new EpochedWorkflowIrCache(() => store.workflowDefinitionEpoch())`;
+    without this seam the pause-gate suite fails inside the batch (TypeError) instead of asserting the
+    pause behavior it is about. Constant epoch = warm cache, nothing invalidated, nothing hidden.
+    */
+    workflowDefinitionEpoch: vi.fn(() => 0),
   };
   // Emitting `settings:updated` updates the stored settings in place, mirroring the real store.
   emitter.on("settings:updated", (payload: { settings: Settings }) => {

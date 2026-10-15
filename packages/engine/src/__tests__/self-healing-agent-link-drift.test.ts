@@ -14,6 +14,16 @@ describe("FN-4296: self-healing agent link drift", () => {
     const store = {
       getSettings: vi.fn(async () => ({})),
       listWorkflowWorkItemsForTask: vi.fn(async () => []),
+      /*
+      FNXC:SelfHealingIrCache 2026-10-15-21:20 (RUFU-689):
+      SelfHealingManager builds its maintenance-batch IR cache as
+      `new EpochedWorkflowIrCache(() => store.workflowDefinitionEpoch())`, so a reduced fake that
+      omits the method makes the whole batch reject (`this.store.workflowDefinitionEpoch is not a
+      function`) and every sweep in the batch reports the same TypeError — the suite went red on an
+      assertion about agent-link drift while the real failure was a missing fake seam. A constant
+      epoch is the right fixture value: the cache stays warm and no invalidation is being tested here.
+      */
+      workflowDefinitionEpoch: vi.fn(() => 0),
       getTask: vi.fn(async (taskId: string) => {
         const result = tasks[taskId] ?? null;
         if (result instanceof Error) throw result;
@@ -406,6 +416,8 @@ describe("FN-4296: self-healing agent link drift", () => {
     const store = {
       getSettings: vi.fn(async () => ({})),
       listWorkflowWorkItemsForTask: vi.fn(async () => []),
+      // See the FNXC:SelfHealingIrCache note in buildManager — the maintenance IR cache calls this.
+      workflowDefinitionEpoch: vi.fn(() => 0),
       getTask: vi.fn(async (taskId: string) => tasks[taskId] ?? null),
       recordRunAuditEvent: vi.fn(async () => {}),
       listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]),
