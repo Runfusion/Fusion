@@ -125,7 +125,7 @@ async function loadCommandHandlers() {
   so keeping canonical's names would destructure `undefined` and re-add a dead dispatch. Ours + canonical's addition.
   */
   const { runTaskCreate, runTaskList, runTaskMove, runTaskRename, runTaskMerge, runTaskReconcile, runTaskUpdate, runTaskDeps, runTaskLog, runTaskLogs, runTaskShow, runTaskAttach, runTaskPause, runTaskUnpause, runTaskImportFromGitHub, runTaskImportFromGitLab, runTaskDuplicate, runTaskRefine, runTaskPlan, runTaskDelete, runTaskRetry, runTaskComment, runTaskComments, runTaskSteer, runTaskSetNode, runTaskClearNode } = await import("./commands/task.js");
-  const { runPrCreate, runPrShow, runPrList, runPrRespond, runPrApprove, runPrRetry, runPrMerge, runPrClose, runPrAutomerge, runPrAutomergeCleanup } = await import("./commands/pr.js");
+  const { runPrCreate, runPrShow, runPrList, runPrRespond, runPrApprove, runPrRetry, runPrMerge, runPrClose, runPrAutomerge, runPrAutomergeCleanup, runPrMergeability } = await import("./commands/pr.js");
   const { runSettingsShow, runSettingsSet } = await import("./commands/settings.js");
   const { runSettingsExport } = await import("./commands/settings-export.js");
   const { runSettingsImport } = await import("./commands/settings-import.js");
@@ -208,6 +208,7 @@ async function loadCommandHandlers() {
     runPrClose,
     runPrAutomerge,
     runPrAutomergeCleanup,
+    runPrMergeability,
     runSettingsShow,
     runSettingsSet,
     runSettingsExport,
@@ -377,6 +378,8 @@ PR:
   fn pr automerge <pr-id> [on|off]    Toggle auto-merge for the PR
   fn pr automerge-cleanup [--apply] [--json]
                                       Dry-run or apply legacy auto-merge stamp cleanup
+  fn pr mergeability [--repo <owner/repo>] [--prs <n,n>] [--merge-tree] [--json]
+                                      Classify PR mergeability (GitHub CONFLICTING is the only conflict authority)
   fn mission create [title] [desc] [--goal <id>] [--base-branch <branch>]
                                       Create a new mission (repeat --goal to link goals)
   fn mission list | ls                List missions
@@ -857,6 +860,7 @@ async function main() {
     runPrClose,
     runPrAutomerge,
     runPrAutomergeCleanup,
+    runPrMergeability,
     runSettingsShow,
     runSettingsSet,
     runSettingsExport,
@@ -1132,9 +1136,21 @@ async function main() {
               json: args.includes("--json"),
             }, projectName);
             break;
+          /*
+          FNXC:PrMergeability 2026-10-14-23:56:
+          `fn pr mergeability` is read-only and store-free, so the router forwards flags only — no task/PR entity id and no project store resolution.
+          */
+          case "mergeability":
+            await runPrMergeability({
+              repo: getFlagValue(args, "--repo"),
+              prs: getFlagValue(args, "--prs"),
+              mergeTree: args.includes("--merge-tree"),
+              json: args.includes("--json"),
+            }, projectName);
+            break;
           default:
             console.error(`Unknown subcommand: pr ${subcommand || ""}`);
-            console.error("Try: fn pr create <task-id> | list | show <id> | approve <id> | respond <id> | retry <id> | merge <id> | close <id> | automerge <id> [on|off] | automerge-cleanup [--apply] [--json]");
+            console.error("Try: fn pr create <task-id> | list | show <id> | approve <id> | respond <id> | retry <id> | merge <id> | close <id> | automerge <id> [on|off] | automerge-cleanup [--apply] [--json] | mergeability [--repo <owner/repo>] [--prs <n,n>] [--merge-tree] [--json]");
             process.exit(1);
         }
         break;

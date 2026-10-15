@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import {
   TaskStore,
   resolveReviewColumns,
@@ -6,10 +7,17 @@ import {
   isPrEntityActionable,
   autoMergeGateReason,
   resolveTaskPrHeadBranch,
+  buildPrMergeabilityReport,
+  createMergeTreeProbe,
+  fetchPrMergeabilityRecords,
+  formatPrMergeabilityReport,
+  PrMergeabilityFetchError,
+  resolveGitBinary,
+  type MergeTreeVerdict,
   type PrEntity,
   type PrThreadState,
 } from "@fusion/core";
-import { classifyGhError, getGhErrorMessage, getCurrentRepo, isGhAuthenticated, isGhAvailable } from "@fusion/core/gh-cli";
+import { classifyGhError, getGhErrorMessage, getCurrentRepo, isGhAuthenticated, isGhAvailable, runGhJsonAsync } from "@fusion/core/gh-cli";
 import { releaseHeldTaskByEvent } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolveProject, createLocalStore, closeProjectStore, asLocalProjectContext, type ProjectContext } from "../project-context.js";
@@ -650,6 +658,196 @@ export async function runPrAutomergeCleanup(options: PrAutomergeCleanupOptions =
     if (context) {
       await closeProjectStore(context);
     }
+  }
+}
+
+// ── Mergeability classification receipt (`fn pr mergeability`) ──────────────
+
+export interface PrMergeabilityOptions {
+  /** `owner/repo`; defaults to the current repository's origin remote. */
+  repo?: string;
+  /** Comma-separated PR numbers. Omit to classify every OPEN PR in the repo. */
+  prs?: string;
+  /** Corroborate each verdict with an offline `git merge-tree` probe. */
+  mergeTree?: boolean;
+  /** Emit the structured report instead of the text receipt. */
+  json?: boolean;
+}
+
+const MERGEABILITY_GH_TIMEOUT_MS = 30_000;
+const MERGEABILITY_GIT_TIMEOUT_MS = 20_000;
+const MERGEABILITY_USAGE =
+  "Usage: fn pr mergeability [--repo <owner/repo>] [--prs <n,n>] [--merge-tree] [--json]";
+
+/**
+ * Parse `--prs` into validated positive integers BEFORE any of them can reach
+ * an argv array. Rejects an empty token (`--prs 1,,2`) rather than silently
+ * dropping it, because a silently-dropped number is a PR nobody classified.
+ */
+function parseMergeabilityPrNumbers(raw: string | undefined): { ok: true; numbers: number[] } | { ok: false; message: string } {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "") return { ok: true, numbers: [] };
+
+  const numbers: number[] = [];
+  for (const token of trimmed.split(",")) {
+    const value = token.trim();
+    if (value === "") return { ok: false, message: "--prs contains an empty entry" };
+    if (!/^\d+$/.test(value)) return { ok: false, message: `--prs entry "${value}" is not a positive integer` };
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      return { ok: false, message: `--prs entry "${value}" is not a positive integer` };
+    }
+    numbers.push(parsed);
+  }
+  return { ok: true, numbers: [...new Set(numbers)].sort((a, b) => a - b) };
+}
+
+/**
+ * Async, timeout-bounded `git` runner for the corroborating probe.
+ *
+ * `execFile` rejects on a non-zero exit, but `git merge-tree` uses exit 1 to
+ * REPORT conflicts — a real verdict, not a failure — so the exit code is
+ * returned to the classifier instead of thrown. A spawn-level failure (missing
+ * `git`, timeout) has no numeric code and maps to a code no verdict reads from.
+ */
+async function runMergeabilityGit(
+  args: string[],
+  options?: { cwd?: string; timeoutMs?: number },
+): Promise<{ code: number; stdout: string }> {
+  const git = await resolveGitBinary();
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(
+        git,
+        args,
+        {
+          cwd: options?.cwd,
+          timeout: options?.timeoutMs,
+          maxBuffer: 4 * 1024 * 1024,
+          windowsHide: true,
+          encoding: "utf-8",
+        },
+        (error, out) => {
+          if (error) reject(Object.assign(error, { stdout: out }));
+          else resolve(String(out ?? ""));
+        },
+      );
+    });
+    return { code: 0, stdout };
+  } catch (error) {
+    const failure = error as { code?: unknown; stdout?: unknown };
+    if (typeof failure.code === "number") {
+      return { code: failure.code, stdout: String(failure.stdout ?? "") };
+    }
+    // ENOENT / SIGKILL-after-timeout: no verdict at all, never "clean".
+    return { code: -1, stdout: "" };
+  }
+}
+
+/**
+ * Classify PR mergeability and print the deterministic evidence receipt.
+ *
+ * FNXC:PrMergeability 2026-10-14-23:56:
+ * This is the schedule-invocable seam RUFU-468's monitor automation needs: the
+ * `command`/`ai-prompt` step receives one stdout string as its `output`/`report`,
+ * so a successful run emits EXACTLY ONE `console.log` containing the whole
+ * receipt — no decorative banners that a prompt would have to strip. All
+ * classification authority lives in `@fusion/core`'s `pr-mergeability` module
+ * (`api.mergeable === "CONFLICTING"` only); this handler owns repo resolution,
+ * argv-shaped flags, and IO wiring and adds no verdict logic of its own, so a
+ * second definition of "conflicting" cannot appear here.
+ *
+ * Deliberately store-free: the command reads GitHub and `git` only, so it opens
+ * no `TaskStore` and the FN-7738 lock-retry/close-on-every-exit-path contract
+ * does not apply. `_projectName` exists for handler-signature parity with every
+ * other `fn pr` subcommand (bin.ts always forwards it) and is unused by design.
+ */
+export async function runPrMergeability(
+  options: PrMergeabilityOptions = {},
+  _projectName?: string,
+): Promise<void> {
+  /*
+  FNXC:PrMergeability 2026-10-14-23:56:
+  Report the availability and authentication pre-flight in the same gh-error shape
+  every other gh-backed path prints, so a scheduled run's transcript reads the same
+  whatever failed. Each sentence states only the condition actually observed, which
+  is what lets the shared classifier attach the right code, hint, and action.
+  */
+  if (!isGhAvailable()) {
+    console.error(formatGhErrorForCli(new Error("gh cli is not available")));
+    process.exit(1);
+    return;
+  }
+  if (!isGhAuthenticated()) {
+    console.error(formatGhErrorForCli(new Error("gh: not logged into GitHub")));
+    process.exit(1);
+    return;
+  }
+
+  const parsed = parseMergeabilityPrNumbers(options.prs);
+  if (!parsed.ok) {
+    console.error(`Error: ${parsed.message}\n${MERGEABILITY_USAGE}`);
+    process.exit(1);
+    return;
+  }
+
+  let repo = (options.repo ?? "").trim();
+  if (repo === "") {
+    const gitRepo = getCurrentRepo(process.cwd());
+    if (!gitRepo) {
+      console.error(`Error: could not resolve a GitHub repository from the current directory.\n${MERGEABILITY_USAGE}`);
+      process.exit(1);
+      return;
+    }
+    repo = `${gitRepo.owner}/${gitRepo.repo}`;
+  }
+
+  try {
+    const records = await fetchPrMergeabilityRecords(runGhJsonAsync, {
+      repo,
+      prNumbers: parsed.numbers,
+      cwd: process.cwd(),
+      timeoutMs: MERGEABILITY_GH_TIMEOUT_MS,
+    });
+
+    /*
+    FNXC:PrMergeability 2026-10-14-23:56:
+    Corroboration is opt-in and OFF by default: `git merge-tree` costs several
+    process spawns per PR and the API verdict alone already answers the question,
+    so a scheduled sweep pays that cost only when `--merge-tree` asked for it.
+    Probes run sequentially to keep the transcript and the receipt deterministic.
+    */
+    const probes: Record<number, MergeTreeVerdict> = {};
+    if (options.mergeTree) {
+      const probe = createMergeTreeProbe(runMergeabilityGit, {
+        cwd: process.cwd(),
+        timeoutMs: MERGEABILITY_GIT_TIMEOUT_MS,
+      });
+      for (const record of records) {
+        probes[record.number] = await probe(record);
+      }
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify(buildPrMergeabilityReport(records, probes, { repo }), null, 2));
+      return;
+    }
+
+    console.log(formatPrMergeabilityReport(records, probes, { repo }));
+  } catch (error) {
+    /*
+    FNXC:PrMergeability 2026-10-14-23:56:
+    A failed run never prints a receipt: RUFU-468's automation reads the presence of a
+    `MERGEABILITY` line as "this classifier ran", so a truncated run must not hand it one.
+    The explicit `return` after `process.exit` is what makes that true even when a caller
+    (a test, or any future stub of `process.exit`) lets the exit call come back.
+    */
+    if (error instanceof PrMergeabilityFetchError || classifyGhError(error).code !== "unknown") {
+      console.error(formatGhErrorForCli(error));
+      process.exit(1);
+      return;
+    }
+    throw error;
   }
 }
 

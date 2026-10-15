@@ -888,7 +888,33 @@ fn task import-gitlab group/project --resource project-issues --labels bug --lim
 fn task import-gitlab group/subgroup --resource group-issues --limit 20
 fn task import-gitlab 12345 --resource merge-requests --limit 5
 fn task import-gitlab platform/team/app --resource project-issues --project self-managed
+fn pr mergeability --repo acme/widgets --prs 3619,3628 --merge-tree
 ```
+
+#### Mergeability classification
+
+`fn pr mergeability` answers "can these PRs merge right now?" for a human or a scheduled workflow step without opening a board store. GitHub is the only conflict authority: a PR is reported as conflicting only when its `mergeable` field says `CONFLICTING`, never because of a status string or a local heuristic.
+
+```bash
+fn pr mergeability                                        # every OPEN PR in the current repo
+fn pr mergeability --repo acme/widgets --prs 3619,3628
+fn pr mergeability --merge-tree --json
+```
+
+Flags:
+- `--repo <owner/repo>`: Target repository (defaults to the current directory's GitHub remote).
+- `--prs <n,n>`: Classify exactly these PR numbers instead of discovering the open set.
+- `--merge-tree`: Corroborate each verdict with an offline `git merge-tree` probe. A conflict is a finding, not a failed run.
+- `--json`: Emit the structured report instead of the text receipt.
+
+Output discipline — what a reader may rely on:
+
+- One `MERGEABILITY repo=<repo> classified=<n> conflicts=<n>` header, then one `CONFLICT #<n> …` line per conflicting PR. A failed run prints `GitHub error: …` and no header at all, so the presence of a `MERGEABILITY` line always means the classifier ran.
+- Exit code 0 means "the classifier completed", not "everything merges". Exit 1 is reserved for a failed run.
+- `mergeStateStatus` (`BLOCKED`, `BEHIND`, `UNKNOWN`, …) is printed as evidence only and never produces a `CONFLICT` line, so a PR blocked by reviews or behind the base branch is not reported as conflicting.
+- With `--merge-tree`, the conflict line reports `merge-tree=CONFLICTING|CLEAN|UNAVAILABLE` and `conflicted_files=<count>`; without it the line says `merge-tree=not-probed` rather than implying a clean probe.
+- When GitHub and the probe disagree, a separate `DISAGREE: #<n> …` line prints both answers and chooses neither.
+- No line ever names a cause (`[our-main]` or `[upstream]`) — the classifier cannot prove which side carries the conflict.
 
 ---
 

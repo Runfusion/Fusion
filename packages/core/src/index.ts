@@ -1240,6 +1240,32 @@ export {
 export type { StepLedgerSealEvaluation } from "./task-store/step-ledger-seal.js";
 export { evaluateSkipBypassTaint } from "./merge/skip-bypass-taint-guard.js";
 export type { SkipBypassTaintEvaluation } from "./merge/skip-bypass-taint-guard.js";
+/*
+FNXC:PrMergeability 2026-10-12-03:20:
+RUFU-471 exposes the PR mergeability classifier through the package root so the
+`fn pr mergeability` CLI seam consumes the same authority the engine would, without
+reaching into a deep path. Named exports (not `export *`) per the package convention.
+*/
+export {
+  PR_MERGEABILITY_GH_FIELDS,
+  PR_MERGEABILITY_GH_JSON_FIELDS,
+  PrMergeabilityFetchError,
+  isPrMergeabilityConflict,
+  classifyPrMergeability,
+  buildPrMergeabilityReport,
+  formatPrMergeabilityReport,
+  requireMergeabilityRepo,
+  requireMergeabilityPrNumber,
+  prMergeabilityViewArgs,
+  prMergeabilityListArgs,
+  normalizePrMergeabilityRecord,
+  fetchPrMergeabilityRecords,
+  mergeTreeHeadRefCandidates,
+  mergeTreeBaseRefCandidates,
+  parseMergeTreeOutput,
+  createMergeTreeProbe,
+} from "./merge/pr-mergeability.js";
+export type { PrMergeabilityRecord, MergeTreeVerdict, MergeTreeProbeStatus, MergeTreeUnavailableReason, PrMergeabilityConflict, PrMergeabilityDisagreement, PrMergeabilityClassification, PrMergeabilityReport, GhJsonRunner, MergeTreeGitRunner } from "./merge/pr-mergeability.js";
 export {
   __getDeterministicGuardMutexSize,
   deterministicGuardLocks,

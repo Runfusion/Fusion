@@ -52,6 +52,7 @@ const commandMocks = vi.hoisted(() => ({
   runPrClose: vi.fn(),
   runPrAutomerge: vi.fn(),
   runPrAutomergeCleanup: vi.fn(),
+  runPrMergeability: vi.fn(),
 
   runSettingsShow: vi.fn(),
   runSettingsSet: vi.fn(),
@@ -253,6 +254,7 @@ vi.mock("../commands/pr.js", () => ({
   runPrClose: commandMocks.runPrClose,
   runPrAutomerge: commandMocks.runPrAutomerge,
   runPrAutomergeCleanup: commandMocks.runPrAutomergeCleanup,
+  runPrMergeability: commandMocks.runPrMergeability,
 }));
 
 vi.mock("../commands/settings.js", () => ({
@@ -1150,6 +1152,30 @@ describe("bin command routing and fallbacks", () => {
     expect(commandMocks.runPrAutomergeCleanup).toHaveBeenCalledWith(
       { apply: true, json: true },
       "ops",
+    );
+  });
+
+  /*
+  FNXC:PrMergeability 2026-10-14-23:56:
+  RUFU-468's monitor automation invokes this subcommand from a scheduled step, so the
+  router — not an interactive human — is the caller that must be proven. The pin is the
+  whole flag surface: `--repo`/`--prs` carry values while `--merge-tree`/`--json` are
+  booleans, and a silently-dropped flag would make a scheduled sweep classify the wrong
+  repository or the wrong PR set without any visible failure.
+  */
+  it("routes pr mergeability flags", async () => {
+    await runBin(["pr", "mergeability", "--repo", "acme/widgets", "--prs", "3619,3628", "--merge-tree", "--json", "--project", "ops"]);
+    expect(commandMocks.runPrMergeability).toHaveBeenCalledWith(
+      { repo: "acme/widgets", prs: "3619,3628", mergeTree: true, json: true },
+      "ops",
+    );
+  });
+
+  it("routes pr mergeability with defaults when no flags are given", async () => {
+    await runBin(["pr", "mergeability"]);
+    expect(commandMocks.runPrMergeability).toHaveBeenCalledWith(
+      { repo: undefined, prs: undefined, mergeTree: false, json: false },
+      undefined,
     );
   });
 
