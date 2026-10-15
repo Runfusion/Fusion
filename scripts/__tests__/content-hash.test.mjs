@@ -9,7 +9,12 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeContentHash, createRepoContentSnapshot } from "../lib/content-hash.mjs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { computeContentHash, createRepoContentSnapshot, defaultGitRunner, GIT_OUTPUT_MAX_BUFFER } from "../lib/content-hash.mjs";
+
+// The cap-ratchet test measures the real checkout this script lives in.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
  * Build a fake git runner from a description of the tree.
@@ -200,4 +205,94 @@ test("snapshot path produces identical hashes to the spawn path and spawns no gi
   const coreOnly = computeContentHash({ ...base, inputPaths: ["packages/core"], readFn, snapshot });
   const engineOnly = computeContentHash({ ...base, inputPaths: ["packages/engine"], readFn, snapshot });
   assert.notEqual(coreOnly, engineOnly);
+});
+
+/*
+FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+The build cache once hashed the EMPTY set for every package because `git ls-files -s` output
+(1,101,325 bytes) exceeded spawnSync's 1 MB maxBuffer: spawnSync reported ENOBUFS, the runner
+returned null, and null parsed as "no tracked files". All 30 packages shared one digest, the cache
+called a three-day-old dist current, and a deploy restarted from it on a green exit 0.
+These tests pin the two halves of the fix: an unusable scan is `unknown` (null), never empty;
+and the output cap is above what this repository actually emits.
+*/
+
+test("createRepoContentSnapshot distinguishes an unusable scan from a clean tree", () => {
+  const clean = createRepoContentSnapshot({
+    rootDir: "/fake",
+    gitFn: (args) => {
+      if (args[0] === "ls-files") return "100644 aaa 0\tpackages/core/src/index.ts";
+      if (args[0] === "status") return "";
+      return "true";
+    },
+  });
+  assert.equal(clean.scanFailed, false, "a clean tree legitimately has zero dirty/untracked paths");
+  assert.equal(clean.trackedByPath.size, 1);
+
+  const failed = createRepoContentSnapshot({
+    rootDir: "/fake",
+    gitFn: (args) => {
+      if (args[0] === "ls-files") return null; // ENOBUFS / git failure
+      if (args[0] === "status") return "";
+      return "true";
+    },
+  });
+  assert.equal(failed.scanFailed, true);
+  assert.equal(failed.trackedByPath.size, 0);
+});
+
+test("computeContentHash returns null for an unusable snapshot instead of a zero-file digest", () => {
+  const broken = {
+    trackedByPath: new Map(),
+    dirtyPaths: new Set(),
+    untrackedPaths: new Set(),
+    scanFailed: true,
+  };
+  assert.equal(computeContentHash({ rootDir: "/fake", inputPaths: ["packages/core"], snapshot: broken }), null);
+
+  // Same shape without the flag (a genuinely empty scan) still produces a digest, so the two
+  // states stay observably different in both directions.
+  const genuinelyEmpty = { ...broken, scanFailed: false };
+  assert.notEqual(
+    computeContentHash({ rootDir: "/fake", inputPaths: ["packages/core"], snapshot: genuinelyEmpty }),
+    null,
+  );
+});
+
+test("computeContentHash returns null when the scoped git scan fails", () => {
+  const tree = { tracked: { "packages/core/src/index.ts": "aaa" } };
+  const working = computeContentHash({
+    rootDir: "/fake",
+    inputPaths: ["packages/core"],
+    gitFn: fakeGit(tree),
+    readFn: () => "",
+  });
+  assert.equal(typeof working, "string");
+
+  const failing = computeContentHash({
+    rootDir: "/fake",
+    inputPaths: ["packages/core"],
+    gitFn: (args) => (args[0] === "ls-files" ? null : fakeGit(tree)(args)),
+    readFn: () => "",
+  });
+  assert.equal(failing, null, "a failed scan must not be folded into a hash of nothing");
+  assert.notEqual(failing, working);
+});
+
+test("git output cap exceeds what this repository actually emits", (t) => {
+  const probe = defaultGitRunner(["rev-parse", "--is-inside-work-tree"], repoRoot);
+  if (probe !== "true") {
+    t.skip("not a git checkout (installed package / dist copy)");
+    return;
+  }
+  const listing = defaultGitRunner(["ls-files", "-s"], repoRoot);
+  assert.notEqual(listing, null, "the repo-wide index listing must be readable, not ENOBUFS-truncated");
+  const bytes = Buffer.byteLength(listing ?? "", "utf8");
+  assert.ok(
+    bytes < GIT_OUTPUT_MAX_BUFFER,
+    `git ls-files -s emits ${bytes} bytes; GIT_OUTPUT_MAX_BUFFER is ${GIT_OUTPUT_MAX_BUFFER} — raise the cap or narrow the scan`,
+  );
+  const snapshot = createRepoContentSnapshot({ rootDir: repoRoot });
+  assert.equal(snapshot.scanFailed, false);
+  assert.ok(snapshot.trackedByPath.size > 0, "the repo-wide snapshot must see tracked files");
 });

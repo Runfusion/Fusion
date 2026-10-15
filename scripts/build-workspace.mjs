@@ -367,7 +367,18 @@ export function evaluatePackageBuild(pkg, { rootDir, cache, existsFn = existsSyn
   const sourceHash = computePackageSourceHash(pkg, rootDir, { gitFn, snapshot });
   if (force) return { shouldBuild: true, reason: "force", sourceHash, missingOutputs };
   if (missingOutputs.length > 0) return { shouldBuild: true, reason: "missing-output", sourceHash, missingOutputs };
-  if (sourceHash === null) return { shouldBuild: true, reason: "no-git-hash", sourceHash, missingOutputs };
+  /*
+  FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+  Both null sources build, but they are named apart because the operator action differs:
+  'no-git-hash' is expected outside a checkout (mtime/always-build is the design), while
+  'git-scan-failed' means the cache could not be trusted INSIDE a work tree — that is the
+  RUFU-565 shape, and a run that rebuilds everything for that reason is behaving correctly
+  but needs the underlying git scan fixed. Naming it keeps a green rebuild from hiding it.
+  */
+  if (sourceHash === null) {
+    const reason = snapshot?.scanFailed ? "git-scan-failed" : "no-git-hash";
+    return { shouldBuild: true, reason, sourceHash, missingOutputs };
+  }
   const entry = cache?.entries?.[pkg.name];
   if (!entry?.sourceHash) return { shouldBuild: true, reason: "no-cache", sourceHash, missingOutputs };
   if (entry.sourceHash !== sourceHash) return { shouldBuild: true, reason: "changed-inputs", sourceHash, missingOutputs };
@@ -377,6 +388,51 @@ export function evaluatePackageBuild(pkg, { rootDir, cache, existsFn = existsSyn
 /** @deprecated Use evaluatePackageBuild */
 export function evaluatePluginBuild(pkg, options) {
   return evaluatePackageBuild(pkg, options);
+}
+
+/**
+ * Digest a package-build hash would produce from a scan that saw zero files.
+ *
+ * Exported because the poison detector below compares against it, and a test can pin that
+ * the value is stable per BUILD_CACHE_VERSION rather than recomputed ad hoc.
+ *
+ * @param {string} [rootDir]
+ * @returns {string}
+ */
+export function emptyScanDigest(rootDir = repoRoot) {
+  return computeContentHash({
+    rootDir,
+    inputPaths: [],
+    versionPrefix: `package-build-v${BUILD_CACHE_VERSION}`,
+    snapshot: {
+      trackedByPath: new Map(),
+      dirtyPaths: new Set(),
+      untrackedPaths: new Set(),
+      scanFailed: false,
+    },
+  });
+}
+
+/*
+FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+Distinct packages have distinct input sets, so a REAL content hash is never shared between two of
+them. One hash shared by every skipped package, equal to the digest of a zero-file scan, is the
+signature of the RUFU-565 poisoning: `git ls-files -s` failed (past maxBuffer, git unavailable,
+a repo grown past the cap) and every package hashed nothing. The cache then reports a three-day-old
+dist as current on a green exit 0, which is how a stale artifact reached production twice.
+
+Returns the shared digest, or null when the evidence is ordinary.
+
+@param {object[]} skippedPackages @param {{ sourceHash?: string|null }[]}
+@param {{ rootDir?: string }} [options]
+@returns {string|null}
+*/
+export function detectPoisonedSkipHash(skippedPackages, { rootDir = repoRoot } = {}) {
+  if ((skippedPackages?.length ?? 0) < 2) return null;
+  const hashes = new Set(skippedPackages.map((pkg) => pkg.sourceHash).filter(Boolean));
+  if (hashes.size !== 1) return null;
+  const [shared] = [...hashes];
+  return shared === emptyScanDigest(rootDir) ? shared : null;
 }
 
 /**
@@ -590,6 +646,32 @@ export function main({
   console.log(`[build-workspace] ${scope}: ${plannedNames.join(", ") || "(none)"}`);
   if (skippedNames.length > 0) {
     console.log(`[build-workspace] skipped unchanged packages: ${skippedNames.join(", ")}`);
+  }
+  /*
+  FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+  Two failure classes that both used to leave this script printing a green exit 0 over an artifact
+  nobody rebuilt. They are reported apart because they need different operator actions.
+  - scanFailed: the git scan was unreadable, so nothing was hashed. Every package is planned
+    (reason 'git-scan-failed') — slow but correct, so the run is not failed; only the silence is fixed.
+  - poisoned skip evidence: the scan worked but each skip rests on the zero-file digest, so the
+    cached 'unchanged' verdicts are false and dist will not be rebuilt. That is not a slower build,
+    it is a wrong artifact, so the run refuses to claim success. FUSION_BUILD_ALLOW_POISONED_CACHE=1
+    is the escape hatch for a workspace that legitimately has ≥2 zero-file packages colliding here.
+  */
+  if (snapshot?.scanFailed) {
+    process.stderr.write(
+      "[build-workspace] WARNING: git content scan failed (git ls-files / git status unusable); " +
+        "content-hash caching is disabled for this run and every package is rebuilding.\n",
+    );
+  }
+  const poisonedSkipHash = detectPoisonedSkipHash(skippedPackages, { rootDir });
+  if (poisonedSkipHash && env.FUSION_BUILD_ALLOW_POISONED_CACHE !== "1") {
+    process.stderr.write(
+      `[build-workspace] FAILED: skip cache is poisoned — all ${skippedNames.length} skipped packages share sourceHash ${poisonedSkipHash.slice(0, 12)}, ` +
+        `the digest of a scan that read zero files, so 'unchanged' cannot be trusted and dist may be stale. ` +
+        "Rebuild once with --force (or delete .fusion/cache/plugin-build-cache.json) and check git access in this checkout.\n",
+    );
+    return 1;
   }
   if (effectiveFullPackage) {
     console.log("[build-workspace] full CLI packaging enabled (CI / FUSION_CLI_FULL_PACKAGE / --full)");

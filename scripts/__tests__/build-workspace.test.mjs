@@ -11,6 +11,10 @@ import {
   computePluginSourceHash,
   discoverWorkspacePackages,
   ensureFullPackageCliPlanned,
+  detectPoisonedSkipHash,
+  emptyScanDigest,
+  evaluatePackageBuild,
+  main,
   planWorkspaceBuild,
   readPluginBuildCache,
   requiredPluginOutputs,
@@ -319,4 +323,125 @@ test("wantsFullCliPackage matches CLI packaging env rules", () => {
   assert.equal(wantsFullCliPackage({ FUSION_CLI_FULL_PACKAGE: "1" }, { fullFlag: false }), true);
   assert.equal(wantsFullCliPackage({ FUSION_CLI_FULL_PACKAGE: "0", CI: "true" }, { fullFlag: true }), false);
   assert.equal(wantsFullCliPackage({ npm_lifecycle_event: "prepack" }, { fullFlag: false }), true);
+});
+
+/*
+FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+The skip cache can certify a stale dist as current when the git scan behind the hash is unusable:
+every package then hashes the empty set to one shared digest, a written cache entry matches it
+forever, and `pnpm build` exits 0 having rebuilt nothing. These tests pin the three properties that
+make that impossible to miss again: unknown is never 'unchanged', a working scan outlives a poisoned
+entry, and a run whose skips all rest on the zero-file digest cannot claim success.
+*/
+
+function emptyTreeGitFn() {
+  return (args) => {
+    if (args[0] === "rev-parse") return "true";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "status") return "";
+    return null;
+  };
+}
+
+function writeBuildCache(root, entries) {
+  mkdirSync(path.join(root, ".fusion", "cache"), { recursive: true });
+  writeFileSync(
+    path.join(root, ".fusion", "cache", "plugin-build-cache.json"),
+    JSON.stringify({ version: BUILD_CACHE_VERSION, entries }, null, 2),
+  );
+}
+
+test("an unusable git scan builds with a named reason instead of reporting unchanged", () => {
+  withWorkspace((root) => {
+    writePluginDist(root);
+    mkdirSync(path.join(root, "packages/core", "dist"), { recursive: true });
+    writeFileSync(path.join(root, "packages/core", "dist", "index.js"), "export const core = 1;\n");
+    initGit(root);
+    const packages = discoverWorkspacePackages(root);
+    const core = packageByName(packages, "@fusion/core");
+    writeBuildCache(root, { "@fusion/core": { sourceHash: "a".repeat(64) } });
+    const brokenSnapshot = {
+      trackedByPath: new Map(),
+      dirtyPaths: new Set(),
+      untrackedPaths: new Set(),
+      scanFailed: true,
+    };
+
+    const evaluation = evaluatePackageBuild(core, {
+      rootDir: root,
+      cache: { version: BUILD_CACHE_VERSION, entries: { "@fusion/core": { sourceHash: emptyScanDigest(root) } } },
+      snapshot: brokenSnapshot,
+    });
+
+    assert.equal(evaluation.sourceHash, null, "an unreadable scan must yield unknown, not a digest");
+    assert.equal(evaluation.shouldBuild, true);
+    assert.equal(evaluation.reason, "git-scan-failed");
+    assert.notEqual(evaluation.reason, "unchanged", "unknown evidence must never read as current");
+  });
+});
+
+test("a poisoned cache entry is outlived by the first working scan", () => {
+  withWorkspace((root) => {
+    writePluginDist(root);
+    mkdirSync(path.join(root, "packages/core", "dist"), { recursive: true });
+    writeFileSync(path.join(root, "packages/core", "dist", "index.js"), "export const core = 1;\n");
+    initGit(root);
+    const packages = discoverWorkspacePackages(root);
+    const core = packageByName(packages, "@fusion/core");
+
+    const evaluation = evaluatePackageBuild(core, {
+      rootDir: root,
+      cache: { version: BUILD_CACHE_VERSION, entries: { "@fusion/core": { sourceHash: emptyScanDigest(root) } } },
+    });
+
+    assert.notEqual(evaluation.sourceHash, emptyScanDigest(root));
+    assert.equal(evaluation.reason, "changed-inputs", "the legacy poisoned constant must not survive a real hash");
+    assert.equal(evaluation.shouldBuild, true);
+  });
+});
+
+test("detectPoisonedSkipHash fires only on the shared zero-file digest", () => {
+  withWorkspace((root) => {
+    const digest = emptyScanDigest(root);
+    assert.match(digest, /^[0-9a-f]{64}$/);
+
+    assert.equal(detectPoisonedSkipHash([], { rootDir: root }), null);
+    assert.equal(detectPoisonedSkipHash([{ sourceHash: digest }], { rootDir: root }), null, "one package sharing a digest is not a pattern");
+    assert.equal(
+      detectPoisonedSkipHash([{ sourceHash: digest }, { sourceHash: "b".repeat(64) }], { rootDir: root }),
+      null,
+      "distinct real hashes are ordinary evidence even if one equals the digest",
+    );
+    assert.equal(
+      detectPoisonedSkipHash([{ sourceHash: digest }, { sourceHash: digest }], { rootDir: root }),
+      digest,
+    );
+  });
+});
+
+test("main refuses exit 0 when every skip rests on the zero-file digest", () => {
+  withWorkspace((root) => {
+    writePluginDist(root);
+    mkdirSync(path.join(root, "packages/core", "dist"), { recursive: true });
+    writeFileSync(path.join(root, "packages/core", "dist", "index.js"), "export const core = 1;\n");
+    const digest = emptyScanDigest(root);
+    writeBuildCache(root, {
+      "@fusion/core": { sourceHash: digest },
+      "@fusion-plugin-examples/alpha": { sourceHash: digest },
+    });
+    let spawns = 0;
+    const spawnFn = () => {
+      spawns += 1;
+      return { status: 0 };
+    };
+    const options = { rootDir: root, spawnFn, gitFn: emptyTreeGitFn(), env: {} };
+
+    assert.equal(main(options), 1, "skips backed by a scan that read zero files cannot be reported as success");
+    assert.equal(spawns, 0, "the refusal happens before any build is claimed");
+    assert.equal(
+      main({ ...options, env: { FUSION_BUILD_ALLOW_POISONED_CACHE: "1" } }),
+      0,
+      "the escape hatch exists for a workspace that legitimately collides here",
+    );
+  });
 });

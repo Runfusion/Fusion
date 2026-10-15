@@ -13,6 +13,21 @@
  * read and hash its actual bytes rather than trusting the (now stale) index blob
  * SHA. Untracked-but-not-ignored files are likewise read and hashed. Only when a
  * path is fully clean do we lean on git's blob SHA without touching the file.
+ *
+ *
+ * FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+ * A git scan that FAILED must never be read as a scan that found NOTHING, and the output
+ * cap must never cause the failure. Two independent changes, both required by measurement:
+ *   - `spawnSync` defaults to a 1,024,000-byte maxBuffer, and this repo's `git ls-files -s`
+ *     is 1,101,325 bytes over 10,007 files, so the repo-wide snapshot spawn died with
+ *     ENOBUFS (status null, stdout truncated at 1,064,960 bytes). Every package then hashed
+ *     the empty set to one constant (package-build-v2 empty digest d337ddb8105f…), which the
+ *     build cache stored as a legitimate 'unchanged' key: a deploy restarted from a three-day
+ *     old dist on a green exit 0. Hence GIT_OUTPUT_MAX_BUFFER below.
+ *   - maxBuffer alone would leave every other spawn failure (git missing, OOM, a repo twice
+ *     this size) producing the same silent empty hash. So an unusable scan is now reported
+ *     (snapshot `scanFailed`) and hashed as `null` = unknown, which callers treat as 'do not
+ *     skip, do not cache'. Fail-slow is acceptable; fail-green is not.
  */
 
 import { spawnSync } from "node:child_process";
@@ -20,8 +35,21 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+/*
+FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+Node's spawnSync default maxBuffer is 1,024,000 bytes. `git ls-files -s` in this repo is
+already 1.1 MB, so the default silently truncates the repo-wide snapshot with ENOBUFS and the
+build cache mistakes 'scan failed' for 'no tracked files'. 64 MB is far above any plausible
+index listing for a monorepo of this shape (≈100 bytes/entry → ~670k files) while staying a
+cap rather than an allocation, so a runaway path list cannot grow the parent's heap without bound.
+*/
+export const GIT_OUTPUT_MAX_BUFFER = 64 * 1024 * 1024;
+
 /**
  * Default git runner. Returns trimmed stdout on success, null on failure.
+ *
+ * A null return means the scan is UNUSABLE, not empty — see the file header: callers must
+ * propagate unknown rather than fold it into a hash of nothing.
  *
  * @param {string[]} args
  * @param {string} cwd
@@ -32,6 +60,7 @@ export function defaultGitRunner(args, cwd) {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER,
   });
   if (result.status !== 0) return null;
   return result.stdout.trim();
@@ -106,15 +135,22 @@ function parseStatus(statusOut) {
  * @param {object} options
  * @param {string} options.rootDir
  * @param {(args: string[], cwd: string) => string|null} [options.gitFn]
- * @returns {{ trackedByPath: Map<string, string>, dirtyPaths: Set<string>, untrackedPaths: Set<string> }}
+ * @returns {{ trackedByPath: Map<string, string>, dirtyPaths: Set<string>, untrackedPaths: Set<string>, scanFailed: boolean }}
  */
 export function createRepoContentSnapshot({ rootDir, gitFn = defaultGitRunner }) {
-  const tracked = parseLsFiles(gitFn(["ls-files", "-s"], rootDir));
+  const trackedOut = gitFn(["ls-files", "-s"], rootDir);
+  const statusOut = gitFn(["status", "--porcelain", "-uall"], rootDir);
+  const tracked = parseLsFiles(trackedOut);
   const trackedByPath = new Map(tracked.map((entry) => [entry.filePath, entry.blobSha]));
-  const { dirtyPaths, untrackedPaths } = parseStatus(
-    gitFn(["status", "--porcelain", "-uall"], rootDir),
-  );
-  return { trackedByPath, dirtyPaths, untrackedPaths };
+  const { dirtyPaths, untrackedPaths } = parseStatus(statusOut);
+  /*
+  FNXC:WorkspaceBuildCache 2026-10-15-20:46 (RUFU-565):
+  `scanFailed` is the difference between an empty repository and a scan that could not be read.
+  Empty maps are a real answer; null from git is not. A clean tree legitimately yields zero dirty
+  and zero untracked paths, so emptiness alone must not be the failure signal — only a null output is.
+  */
+  const scanFailed = trackedOut === null || statusOut === null;
+  return { trackedByPath, dirtyPaths, untrackedPaths, scanFailed };
 }
 
 /**
@@ -150,7 +186,9 @@ function matchesInputPaths(filePath, inputPaths) {
  *        Optional repo-wide snapshot; when given, no git is spawned — entries
  *        are selected from the snapshot by path prefix. Hash output is
  *        identical to the spawn path for the same tree state.
- * @returns {string} 64-char hex SHA-256.
+ * @returns {string|null} 64-char hex SHA-256, or null when the git evidence behind
+ *          the scan is unusable (`unknown`). Callers must treat null as 'build and do
+ *          not cache', never as a value comparable against a previous entry.
  */
 export function computeContentHash({
   rootDir,
@@ -167,6 +205,11 @@ export function computeContentHash({
   let trackedByPath;
   let dirtyPaths;
   let untrackedPaths;
+  if (snapshot?.scanFailed) {
+    // Unknown, not empty: an unusable repo-wide scan must not hash to the empty set,
+    // or every package shares one constant and a stale dist looks current forever.
+    return null;
+  }
   if (snapshot) {
     // Select from the repo-wide snapshot by prefix — zero git spawns.
     trackedByPath = new Map();
@@ -179,12 +222,13 @@ export function computeContentHash({
     );
   } else {
     // Tracked files (index blob SHAs) for every input path.
-    const tracked = parseLsFiles(gitFn(["ls-files", "-s", "--", ...inputPaths], rootDir));
-    trackedByPath = new Map(tracked.map((entry) => [entry.filePath, entry.blobSha]));
+    const trackedOut = gitFn(["ls-files", "-s", "--", ...inputPaths], rootDir);
     // Working-tree status: which tracked files are modified, which are untracked.
-    ({ dirtyPaths, untrackedPaths } = parseStatus(
-      gitFn(["status", "--porcelain", "-uall", "--", ...inputPaths], rootDir),
-    ));
+    const statusOut = gitFn(["status", "--porcelain", "-uall", "--", ...inputPaths], rootDir);
+    if (trackedOut === null || statusOut === null) return null;
+    const tracked = parseLsFiles(trackedOut);
+    trackedByPath = new Map(tracked.map((entry) => [entry.filePath, entry.blobSha]));
+    ({ dirtyPaths, untrackedPaths } = parseStatus(statusOut));
   }
 
   // Build the full path list: every tracked file plus every untracked file.
