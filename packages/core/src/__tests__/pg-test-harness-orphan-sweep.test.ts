@@ -9,9 +9,17 @@
  * something it does not own.
  */
 import { describe, it, expect } from "vitest";
-import { __pgTestTemplateTestHooks } from "../__test-utils__/pg-test-harness.js";
+import {
+  __pgTestTemplateTestHooks,
+  planPgOrphanCleanup,
+  type PgOrphanInventoryRow,
+} from "../__test-utils__/pg-test-harness.js";
 
 const { parsePerFileDbPid } = __pgTestTemplateTestHooks;
+
+function inventory(...rows: Array<[datname: string, sessionCount?: number]>): PgOrphanInventoryRow[] {
+  return rows.map(([datname, sessionCount = 0]) => ({ datname, sessionCount }));
+}
 
 describe("per-file orphan-sweep name matcher", () => {
   it("extracts the owning pid from a uniqueDbName-shaped per-file database", () => {
@@ -49,5 +57,38 @@ describe("per-file orphan-sweep name matcher", () => {
     expect(parsePerFileDbPid("fusion_shared_12345")).toBeNull(); // pid only
     expect(parsePerFileDbPid("fusion_shared_12345_7_abc12")).toBeNull(); // random too short
     expect(parsePerFileDbPid("fusion_shared_12345_7_abc1234")).toBeNull(); // random too long
+  });
+
+  it("plans only dead, strict, session-free Fusion artifacts", () => {
+    const golden = "fusion_schema_template_999_goldenrun";
+    const plan = planPgOrphanCleanup(
+      inventory(
+        [golden],
+        ["fusion_schema_template_101_goldenold"],
+        ["fusion_shared_102_1_abc123"],
+        ["fusion_shared_103_1_abc123", 1],
+        ["fusion_schema_template_104_bad-token"],
+        ["fusion_shared_105_1_abc123"],
+        ["production_database"],
+      ),
+      golden,
+      (pid) => pid === 105,
+    );
+
+    expect(plan).toEqual({
+      candidates: ["fusion_schema_template_101_goldenold", "fusion_shared_102_1_abc123"],
+      truncated: false,
+    });
+  });
+
+  it("retains a bounded, incomplete inventory instead of treating it as clean", () => {
+    const rows = Array.from({ length: 17 }, (_, index) => [
+      `fusion_shared_${1000 + index}_1_abc123`,
+    ] as [string]);
+    const plan = planPgOrphanCleanup(inventory(...rows), "fusion_schema_template_999_goldenrun", () => false);
+
+    expect(plan.truncated).toBe(true);
+    expect(plan.candidates).toHaveLength(16);
+    expect(plan.candidates).not.toContain("fusion_shared_1016_1_abc123");
   });
 });

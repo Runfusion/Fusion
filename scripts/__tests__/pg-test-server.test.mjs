@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertPlatformSupportsCommand,
   classifyClusterHealth,
   classifyOwnership,
   classifyProbeGating,
@@ -22,6 +23,13 @@ test("rejects ephemeral roots and parses supported commands", () => {
   assert.deepEqual(parseArgs(["up", "--", "--port", "55432", "--replace", "--json"]), { command: "up", port: 55432, replace: true, purge: false, json: true, help: false });
   assert.throws(() => parseArgs(["bogus"]), /unknown argument/);
   assert.match(stagedRootFor({ home: "/home/node/.fusion/pg-test-server", platform: "linux", arch: "arm64" }), /15\.18\.0-beta\.17-linux-arm64$/);
+});
+
+test("permits Darwin status while refusing all provisioning commands before side effects", () => {
+  assert.doesNotThrow(() => assertPlatformSupportsCommand("darwin", "status"));
+  assert.throws(() => assertPlatformSupportsCommand("darwin", "up"), /Unsupported platform darwin/);
+  assert.throws(() => assertPlatformSupportsCommand("darwin", "down"), /Unsupported platform darwin/);
+  assert.doesNotThrow(() => assertPlatformSupportsCommand("linux", "up"));
 });
 
 test("derives identity exactly as postgres URL and environment fallbacks", () => {

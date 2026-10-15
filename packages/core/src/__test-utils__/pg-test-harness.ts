@@ -540,23 +540,12 @@ function parseTemplatePid(dbName: string): number | null {
 }
 
 /*
-FNXC:PgTestOrphanSweep 2026-09-28-00:32:
-Slow-test fix (gate reliability): a vitest invocation that is killed or crashes
-before its `afterEach`/`afterAll`/`drop()` runs leaves its per-file databases
-(`uniqueDbName` -> `<prefix>_<pid>_<counter>_<random6>`) behind. Unlike the
-template databases, these per-file databases had NO reclamation path, so across
-many interrupted local runs they accumulated unbounded (measured 1533 leftover
-`fusion_*` databases on one dev box). PostgreSQL CREATE/DROP DATABASE cost grows
-with the catalog size, so at that volume every per-file `beforeAll` CREATE
-DATABASE crossed 7s and the whole pg-gate reported 15s hookTimeouts.
-
-`parsePerFileDbPid` recognizes the per-file naming tail (`_<pid>_<counter>_<random6>`)
-and extracts the owning pid; the golden-template sweep drops any such database
-whose owning pid is dead (`isPidAlive` -> ESRCH). This mirrors the template
-dead-pid sweep and is safe: the current run's own databases share this live pid,
-and a concurrent same-machine run under a different (live) pid is never touched.
-Any name that does not match the strict per-file tail (a real Fusion project DB,
-or a template) returns null and is left alone.
+FNXC:PgTestOrphanSweep 2026-10-15-00:14:
+FN-9550 retains dead-run artifact recovery without allowing a large catalog or
+an ambiguous name to consume the merge-gate setup budget. `parsePerFileDbPid`
+recognizes only the helper's `_<pid>_<counter>_<random6>` tail; cleanup additionally
+requires a dead owner and zero attached sessions. A bounded inspection leaves
+all malformed, live, unknown, current-run, and uninspected databases untouched.
 */
 function parsePerFileDbPid(dbName: string): number | null {
   // Never treat a schema-template database as a per-file database; those have
@@ -585,6 +574,45 @@ function isPidAlive(pid: number): boolean {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code !== "ESRCH";
   }
+}
+
+const MAX_ORPHAN_CLEANUP_CANDIDATES = 16;
+
+export interface PgOrphanInventoryRow {
+  readonly datname: string;
+  /** Any attached backend is unsafe: a cleanup race must fail closed. */
+  readonly sessionCount: number;
+}
+
+export interface PgOrphanCleanupPlan {
+  readonly candidates: readonly string[];
+  /** True means the catalog inspection was deliberately incomplete, never clean. */
+  readonly truncated: boolean;
+}
+
+/**
+ * FNXC:PgGateOrphanCleanup 2026-10-15-00:14:
+ * FN-9550 bounds setup-time catalog work and treats generated names as a necessary,
+ * not sufficient, ownership proof. Only strict Fusion test identities with a dead
+ * owner and no attached sessions are eligible; malformed, current-run, live, unknown,
+ * and concurrently used databases remain untouched.
+ */
+export function planPgOrphanCleanup(
+  inventory: readonly PgOrphanInventoryRow[],
+  currentGoldenName: string,
+  ownerIsAlive: (pid: number) => boolean = isPidAlive,
+): PgOrphanCleanupPlan {
+  const bounded = inventory.slice(0, MAX_ORPHAN_CLEANUP_CANDIDATES);
+  const candidates = bounded.flatMap(({ datname, sessionCount }) => {
+    if (datname === currentGoldenName || sessionCount !== 0) return [];
+    const ownerPid = parseTemplatePid(datname) ?? parsePerFileDbPid(datname);
+    if (ownerPid === null || ownerIsAlive(ownerPid)) return [];
+    return [datname];
+  });
+  return {
+    candidates,
+    truncated: inventory.length > MAX_ORPHAN_CLEANUP_CANDIDATES,
+  };
 }
 
 /**
@@ -723,37 +751,28 @@ function ensureGoldenTemplate(): Promise<string> {
       } finally {
         await client`SELECT pg_advisory_unlock(hashtext('fusion_golden_marker_table_ddl'))`;
       }
-      // Sweep templates orphaned by crashed/finished processes and drop marker
-      // rows whose golden database no longer exists.
-      const rows = await client<{ datname: string }[]>`
-        SELECT datname FROM pg_database
-        WHERE datname LIKE ${SCHEMA_TEMPLATE_PREFIX + "\\_%"}
+      // Inspect only a deterministic, bounded candidate window. A large local
+      // catalog must not consume a fixture hook, and any uninspected row is
+      // intentionally retained rather than guessed clean.
+      const inventory = await client<PgOrphanInventoryRow[]>`
+        SELECT d.datname, COUNT(a.pid)::int AS "sessionCount"
+        FROM pg_database d
+        LEFT JOIN pg_stat_activity a
+          ON a.datname = d.datname AND a.pid <> pg_backend_pid()
+        WHERE d.datname LIKE 'fusion\\_%'
+        GROUP BY d.datname
+        ORDER BY d.datname
+        LIMIT ${MAX_ORPHAN_CLEANUP_CANDIDATES + 1}
       `;
-      for (const row of rows) {
-        if (row.datname === goldenName) continue;
-        const pid = parseTemplatePid(row.datname);
-        if (pid !== null && isPidAlive(pid)) continue;
-        await gatedDdl(client, `DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`).catch(() => {});
+      const cleanupPlan = planPgOrphanCleanup(inventory, goldenName);
+      for (const datname of cleanupPlan.candidates) {
+        // Never FORCE or terminate: a session that appears after inspection
+        // makes PostgreSQL reject this ordinary DROP rather than harming it.
+        await gatedDdl(client, `DROP DATABASE IF EXISTS "${datname}"`).catch(() => {});
       }
       await client.unsafe(
         `DELETE FROM ${GOLDEN_MARKER_QUALIFIED} WHERE name NOT IN (SELECT datname FROM pg_database)`,
       ).catch(() => {});
-
-      // FNXC:PgTestOrphanSweep 2026-09-28-00:32:
-      // Also reclaim per-file databases orphaned by a killed/crashed run (see
-      // parsePerFileDbPid). Without this, per-file databases accumulate
-      // unbounded and eventually make every CREATE/DROP DATABASE — and thus the
-      // pg-gate's per-file beforeAll — cross the 15s hookTimeout.
-      const perFileRows = await client<{ datname: string }[]>`
-        SELECT datname FROM pg_database
-        WHERE datname LIKE 'fusion\\_%'
-          AND datname NOT LIKE ${SCHEMA_TEMPLATE_PREFIX + "\\_%"}
-      `;
-      for (const row of perFileRows) {
-        const pid = parsePerFileDbPid(row.datname);
-        if (pid === null || isPidAlive(pid)) continue;
-        await gatedDdl(client, `DROP DATABASE IF EXISTS "${row.datname}" WITH (FORCE)`).catch(() => {});
-      }
 
       // Serialize the build across forks; the winner applies the baseline while
       // the rest block here, then observe the ready marker and skip the build.
