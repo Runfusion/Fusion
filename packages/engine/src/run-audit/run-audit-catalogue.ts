@@ -90,10 +90,11 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   "agent:error-retry-exhausted",
   "agent:error-parked-unrecoverable",
   "agent:heartbeat-move-skipped-soft-delete",
+  "agent:unresponsive-recovery-cancelled",
 ] as const;
 
 /**
- * The 31-event literal union of the curated catalogue. `as const` preserves the literal element
+ * The 32-event literal union of the curated catalogue. `as const` preserves the literal element
  * tuples so the notes map can be keyed by exactly the catalogued events (rather than widening to the
  * full `DatabaseMutationType` union). The exported array below is still typed as
  * `Readonly<DatabaseMutationType[]>`, so member-validity remains compile-time-enforced: assigning
@@ -200,4 +201,6 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "An operator-actionable durable-agent error parks the agent 'paused' with pauseReason error-unrecoverable for human repair.",
   "agent:heartbeat-move-skipped-soft-delete":
     "A heartbeat move races a soft-deleted task and is skipped without parking the durable agent.",
+  "agent:unresponsive-recovery-cancelled":
+    "An unresponsive-recovery episode, or the recovery wake it queued, stood down because run history proves the agent completed a later heartbeat run cleanly.",
 };

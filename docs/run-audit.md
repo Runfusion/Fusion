@@ -195,6 +195,7 @@ Events that make durable-agent error states and their recovery inspectable.
 | `agent:error-retry-exhausted` | A durable-agent error retry budget is exhausted and the agent is parked `paused` with pauseReason `error-retry-exhausted`. |
 | `agent:error-parked-unrecoverable` | An operator-actionable durable-agent error parks the agent `paused` with pauseReason `error-unrecoverable` for human repair. |
 | `agent:heartbeat-move-skipped-soft-delete` | A heartbeat move races a soft-deleted task and is skipped without parking the durable agent. |
+| `agent:unresponsive-recovery-cancelled` | An `unresponsive-recovery` episode, or the recovery wake it queued, stood down because run history proves the agent is alive. Metadata is ids and timestamps only: `agentId`, the `stuckRunId` that stopped ticking, the `completingRunId` that closed completed after it, that run's `completedAt`, and `reason` (`episode-start` at the decision, `queued-wake-fire-time` when the wake fired only after a clean completion landed). |
 
 `agent:throttle-cooldown-armed` records the heartbeat arming one bounded re-probe after a run failed on a
 provider throttle envelope (HTTP 429 `rate_limit_error` / `Rate limit exceeded` / `~~429~~`) rather than

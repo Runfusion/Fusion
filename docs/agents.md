@@ -1504,6 +1504,30 @@ When a tracked agent misses heartbeat for `2 × heartbeatTimeoutMs`, the monitor
 2. `pauseAgent(agentId, { pauseReason: "heartbeat-unresponsive", stopActiveRun: false })`
 3. `resumeAgent(agentId, { triggerDetail: "unresponsive-recovery", triggerSource: "heartbeat-unresponsive", clearPauseReason: true })`
 
+**Completion-freshness gate (STAS-308).** A silent tick is a symptom, not proof of death - the agent may
+have finished every tick since. Both decisions therefore read one bounded page of the agent's run
+history first (`store.getRecentRuns`, newest-first) and stand down when a run *past* the stuck one closed
+`status: "completed"` with a non-null `endedAt`:
+
+1. At episode start the episode is cancelled: the stuck session is still disposed and untracked, but the
+   run is not terminated, the agent is neither paused nor resumed, and no wake is dispatched.
+2. At the queued wake's fire time - recovery queues behind the per-agent start lock, so the evidence that
+   justified it can be minutes stale by the time the wake runs. A clean completion that landed meanwhile
+   cancels the wake before any run row is opened and releases the wake-goal claim it had reserved.
+
+`terminated` and `failed` rows never count as proof of life: recovery writes `terminated` for the run it
+kills, so counting them would let an episode certify its own victim as proof that the agent is alive. A
+run-history read that throws, or a page that cannot locate the stuck run, proceeds with recovery - losing
+recovery is worse than spending one session on it. Every cancellation is durable as
+`agent:unresponsive-recovery-cancelled`.
+
+**Recovery backoff (STAS-308).** Each episode an agent takes earns it a cooldown before an identical
+episode may start again: twice the recovery window, doubling per consecutive episode, capped at six hours
+(`getRecoveryBackoff(agentId)` exposes `attempts` and `backoffUntilMs`). An agent that really does stay
+stuck is re-woken on a widening schedule instead of once per window, and a cancellation clears the
+doubling streak while still arming one recovery window of quiet so the poll loop cannot re-enter on the
+same stale entry.
+
 Effects:
 - Agent state transitions `running/active → paused → active`
 - Orphan reconcile uses `3 × heartbeatTimeoutMs` where the timeout is likewise multiplier-scaled first
