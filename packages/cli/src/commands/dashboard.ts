@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { stat, readdir, readFile as fsReadFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { launchUrl, secretForDisplay } from "./startup-secret.js";
 import {
   type TaskStore,
   type SecretsStore,
@@ -3834,9 +3835,18 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       console.log(`  ────────────────────────`);
       console.log(`  → ${baseUrl}`);
       if (dashboardAuthToken) {
+        /*
+        FNXC:StartupSecretDisplay 2026-10-15-21:25 (RUFU-687):
+        Non-TTY branch, which is exactly the shape that leaked: `fn serve`/`fn dashboard` under a
+        watchdog writes this block into a log file, and both the raw token and a working
+        `?token=` URL ended up persisted there (measured: 175 credential-bearing occurrences in one
+        production log, one of them replayed against the bypass-review route). The TTY branch above
+        still hands the operator the raw value in the TUI panel, because there the destination is a
+        terminal, not an archive.
+        */
         console.log(`  Auth:    bearer token required`);
-        console.log(`  Token:   ${dashboardAuthToken}`);
-        console.log(`  Open:    ${tokenizedUrl}`);
+        console.log(`  Token:   ${secretForDisplay(dashboardAuthToken)}`);
+        console.log(`  Open:    ${launchUrl(baseUrl, dashboardAuthToken)}`);
         console.log(`           (the browser stores the token so you only need to click once)`);
       } else {
         console.log(`  Auth:    disabled (--no-auth)`);

@@ -11,6 +11,7 @@
 
 import type { AddressInfo } from "node:net";
 import { join, resolve as pathResolve } from "node:path";
+import { launchUrl, secretForDisplay } from "./startup-secret.js";
 import {
   CentralCore,
   TaskStore,
@@ -1245,12 +1246,21 @@ export async function runServe(
   if (daemonToken) {
     console.log(opts.daemon ? `  Fusion Node (daemon mode)` : `  Fusion Node`);
     console.log(`  ────────────────────────`);
-    console.log(`  → http://${selectedHost}:${actualPort}/?token=${daemonToken}`);
+    /*
+    FNXC:StartupSecretDisplay 2026-10-15-21:25 (RUFU-687):
+    This banner used to print the bearer token twice in the clear (the `?token=` launch URL and the
+    `fn node connect --api-key …` example). The watchdog runs serve with stdout appended to a log
+    file, so those lines persisted an operator dashboard credential 175 times in one production log,
+    and one of them was replayed successfully against POST /api/tasks/:id/bypass-review. The sink now
+    decides: an interactive terminal still gets the raw value (the operator needs it, and it is
+    ephemeral), a redirected or piped stream gets a mask. See startup-secret.ts.
+    */
+    console.log(`  → ${launchUrl(`http://${selectedHost}:${actualPort}`, daemonToken)}`);
     console.log();
     console.log(`  Token: fn_${maskApiKey(daemonToken)}`);
     console.log();
     console.log(`  Connect from another machine:`);
-    console.log(`    fn node connect <name> --url http://<host>:<port> --api-key ${daemonToken}`);
+    console.log(`    fn node connect <name> --url http://<host>:<port> --api-key ${secretForDisplay(daemonToken)}`);
     console.log();
     console.log(`  Health:     GET /api/health`);
     console.log(`  API:        /api/* (bearer token required)`);

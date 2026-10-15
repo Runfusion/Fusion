@@ -348,6 +348,24 @@ The terminal UI is localized. `--lang <code>` (one of `en`, `zh-CN`, `zh-TW`,
 | `--dev` | Start dashboard in development mode. The AI engine still starts unless `--no-engine` is also passed. |
 | `--no-engine` | Start dashboard/API only with no AI engine, planning, or scheduler runtime. |
 
+#### Startup banner token display
+
+The startup banner prints the launch URL and the bearer token so you can open your own dashboard.
+**Where that output goes decides how much it reveals:**
+
+- **Interactive terminal** — the raw token and a clickable `?token=…` URL, because the value is
+  ephemeral and faces you.
+- **Redirected or piped stdout** (`… | tee`, `nohup`, `systemd`, a watchdog script, CI) — a mask
+  (`****<last4>`) plus a hint instead. A banner written to a log file is an archive of a live
+  credential: `fn serve` under a watchdog previously persisted the working dashboard token hundreds
+  of times in one log, and log shipping, rotation, backups and support bundles carry it away.
+
+This affects display only. `--token <value>` still sets a known token, `$FUSION_DASHBOARD_TOKEN` /
+`$FUSION_DAEMON_TOKEN` still supply one, and `fn daemon --token-only` still prints the daemon's
+token on demand — so masking the banner cannot lock you out of your own UI. If you ran a
+non-interactive `fn serve`/`fn dashboard` before this rule, treat the token in that log as exposed
+and rotate it (restart with `--token`, or set a new `$FUSION_DASHBOARD_TOKEN`).
+
 ### Interactive Terminal UI (TTY Mode)
 
 When running in an interactive terminal (TTY), `fn dashboard` starts an
