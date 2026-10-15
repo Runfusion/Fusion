@@ -37,11 +37,22 @@ if (!executablePath && browserRequired) {
     "[task-modal-touch-resize] Chromium is required for task-title stability coverage; set FUSION_BROWSER_SMOKE_BROWSER or CHROME_BIN.",
   );
 }
-const screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8602");
-const floatingWindowScreenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8605");
-const fn8607Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8607");
-const fn8806Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-8806");
-const fn115Screenshots = path.resolve(process.cwd(), "e2e/__screenshots__/fn-115");
+/*
+FNXC:BrowserEvidence 2026-09-29-16:54:
+These captures are per-run evidence: nothing in the suite reads them back or compares against them. They used to
+be written into the tracked e2e/__screenshots__ directory, so every browser-lane run dirtied a dozen PNGs, and
+history shows repeated "commit/restore regenerated baselines" churn where a careless commit could replace the
+reviewed acceptance evidence with whatever the latest local run happened to render.
+
+They now go to an untracked, git-ignored output directory (override with FUSION_BROWSER_SCREENSHOT_DIR). The
+tracked PNGs remain as the historical acceptance evidence for FN-115, FN-8602, FN-8605, FN-8607 and FN-8806.
+*/
+const screenshotRoot = path.resolve(process.cwd(), process.env.FUSION_BROWSER_SCREENSHOT_DIR ?? "test-results/browser-screenshots");
+const screenshots = path.join(screenshotRoot, "fn-8602");
+const floatingWindowScreenshots = path.join(screenshotRoot, "fn-8605");
+const fn8607Screenshots = path.join(screenshotRoot, "fn-8607");
+const fn8806Screenshots = path.join(screenshotRoot, "fn-8806");
+const fn115Screenshots = path.join(screenshotRoot, "fn-115");
 
 /*
 FNXC:ModalTouchGeometry 2026-09-21-09:45:
