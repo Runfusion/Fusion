@@ -29,6 +29,17 @@ export interface PromptLayerInput {
   pluginContributions?: string;
   /** Formatted performance feedback section. */
   performanceFeedback?: string;
+  /**
+   * Prebuilt operator-language directive (core buildOperatorLanguageDirective) for the lane's
+   * resolved settings.
+   *
+   * FNXC:OperatorLanguage 2026-09-16-13:05:
+   * RUFU PR review: every lane whose operator-facing prose the setting promises to steer
+   * (executor task logs, reviewer verdicts, triage planning output) must carry the directive, so
+   * the seam that already composes every lane's prompt is the single injection point. Empty or
+   * `"auto"` settings produce no directive and leave prompts byte-identical.
+   */
+  operatorLanguageDirective?: string;
 }
 
 /**
@@ -40,7 +51,7 @@ export interface PromptLayerInput {
  * sessions of the same role, enabling cross-session prompt caching.
  */
 export function buildPromptLayers(input: PromptLayerInput): SystemPromptLayers {
-  const { basePrompt, agentInstructions, memorySection, goalContext, pluginContributions, performanceFeedback } = input;
+  const { basePrompt, agentInstructions, memorySection, goalContext, pluginContributions, performanceFeedback, operatorLanguageDirective } = input;
 
   const dynamicParts: string[] = [];
 
@@ -71,6 +82,11 @@ export function buildPromptLayers(input: PromptLayerInput): SystemPromptLayers {
   const trimmedFeedback = performanceFeedback?.trim() ?? "";
   if (trimmedFeedback) {
     dynamicParts.push(trimmedFeedback);
+  }
+
+  const trimmedOperatorLanguage = operatorLanguageDirective?.trim() ?? "";
+  if (trimmedOperatorLanguage) {
+    dynamicParts.push(trimmedOperatorLanguage);
   }
 
   return {
