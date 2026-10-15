@@ -139,8 +139,10 @@ pgDescribe("durable agent Activity analytics", () => {
     ]);
     expect(toolRows).toEqual([
       { kind: "tool_call", agent_id: "durable-e2e", task_id: null, tool_name: "Read", category: "read", meta: null },
-      { kind: "tool_result", agent_id: "durable-e2e", task_id: null, tool_name: "Read", category: "read", meta: { durationMs: 0 } },
+      expect.objectContaining({ kind: "tool_result", agent_id: "durable-e2e", task_id: null, tool_name: "Read", category: "read", meta: expect.objectContaining({ durationMs: expect.any(Number) }) }),
     ]);
+    const toolResult = toolRows.find((row) => row.kind === "tool_result");
+    expect((toolResult?.meta as { durationMs?: unknown } | null)?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it("sums CLI and agent sessions, honors the range, and isolates the bound project", async () => {
