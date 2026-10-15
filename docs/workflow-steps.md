@@ -732,7 +732,9 @@ FNXC:AgentSteering 2026-06-30-14:18:
 Workflow-step prompt agents are reviewer-style gates even when they do not call the shared reviewStep helper. They receive the same canonical user-authored task comments and legacy steering context as Plan Review and Code Review so Browser Verification and custom gates evaluate explicit operator requirements.
 -->
 
-Prompt-mode workflow-step agents receive user-authored task comments plus legacy steering entries in their system prompt. Agent-authored comments are excluded, duplicate ids are de-duped, and this context is omitted when no user-authored entries exist.
+Prompt-mode workflow-step agents receive user-authored task comments plus legacy steering entries in the step **request** prompt (`buildStepPrompt`/`buildReducedStepPrompt`). Agent-authored comments are excluded, duplicate ids are de-duped, and this context is omitted when no user-authored entries exist.
+
+RUFU-267: the step's serialized **system prompt** is a constant (`WORKFLOW_STEP_SYSTEM_PROMPT`) — the card identity sentence, the agent's memory bodies and its rating summary all ride the step request, because a workflow-step session rebuilds its prompt for every step of every card and any per-card byte in the head defeats provider prefix caching. See `docs/architecture.md` → "Serialized prompt byte-stability".
 
 ## Tool Modes
 

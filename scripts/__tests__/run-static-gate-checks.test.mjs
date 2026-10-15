@@ -88,6 +88,13 @@ const EXPECTED_GATE_CHECKS = [
   reshuffle that dropped the validator.
   */
   check("nonlatin-tracked-text"),
+  /*
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+  Appends the 22nd validator, check-prompt-volatility, at the end of the blocking chain. Appending keeps
+  the contiguous validator prefix in the same order package.json declares it, which the deep-equal mirror
+  below compares positionally.
+  */
+  check("prompt-volatility"),
 ];
 
 function createFixture() {
@@ -173,6 +180,22 @@ test("blocking gate chain enforces non-Latin script contamination detection", ()
   assert.ok(
     checks.includes(check("nonlatin-tracked-text")),
     "scripts/check-nonlatin-tracked-text.mjs must stay in the contiguous blocking validator prefix of test:gate:static",
+  );
+});
+
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+Same reasoning as the retention and lockfile pins: the mirror list above is updated by the very refactor
+that would drop a validator, so blocking membership is asserted on its own. A prompt-volatility guard that
+silently left the blocking chain would be decoration — the volatile-creep defect it prevents is invisible
+to every other gate (a lane that re-adds runtime state to a system prompt keeps lint, typecheck, build and
+tests green; only provider-side cache behaviour notices).
+*/
+test("blocking gate chain enforces serialized-prompt volatility scanning", () => {
+  const checks = readStaticGateChecks();
+  assert.ok(
+    checks.includes(check("prompt-volatility")),
+    "scripts/check-prompt-volatility.mjs must stay in the contiguous blocking validator prefix of test:gate:static",
   );
 });
 

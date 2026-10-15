@@ -6,6 +6,7 @@ import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
 import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
 import { createFnAgent } from "../pi.js";
+import { withRequestVolatileContext } from "../execution/prompt-layers.js";
 import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { execSync } from "node:child_process";
 import { writeFile, rm } from "node:fs/promises";
@@ -3191,45 +3192,77 @@ describe("completion recommendation prompt contract", () => {
   });
 
   /*
-  FNXC:WorkflowRouting 2026-08-23-13:25:
-  The production executor prompt resolver treats creation tools as available by default. Only an
-  explicit withheld=true removes that tool's created-task workflow guidance; omitted and empty
-  availability inputs preserve both clauses, while one withheld tool preserves the other clause.
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267), superseding FNXC:WorkflowRouting 2026-08-23-13:25:
+  Per-session tool withholding is board state, not role configuration, so it no longer forks the
+  serialized system prompt — two consecutive executor requests for cards with different policies used to
+  diverge at the tools section. `getExecutorSystemPrompt(settings)` now always renders the
+  available-by-default routing clause, and `getWithheldFollowUpToolGuidance(settings, availability)`
+  renders the same withheld sentences for the end of that session's request, where they still win over
+  the base text ("Ignore any instruction above…"). The behavioral requirement these cases always
+  protected — the executor is told precisely which follow-up tools it does not have, and which routing
+  clause survives — is asserted on the prompt the model actually receives: head + request tail.
   */
-  it.each([
-    ["task creation only", { taskCreateWithheld: false, delegateWithheld: true }, "`fn_task_create`", "`fn_delegate_task`"],
-    ["delegation only", { taskCreateWithheld: true, delegateWithheld: false }, "`fn_delegate_task`", "`fn_task_create`"],
-  ])("renders workflow routing for the %s surface", async (_label, availability, presentTool, absentTool) => {
-    const { getExecutorSystemPrompt } = await import("../executor.js");
-    const prompt = getExecutorSystemPrompt({ agentPrompts: undefined } as any, availability);
+  async function composeExecutorPrompt(
+    settings: Record<string, unknown>,
+    availability?: { taskCreateWithheld?: boolean; delegateWithheld?: boolean },
+  ): Promise<string> {
+    const { getExecutorSystemPrompt, getWithheldFollowUpToolGuidance } = await import("../executor.js");
+    const head = getExecutorSystemPrompt(settings as any);
+    return withRequestVolatileContext(head, {
+      policySections: getWithheldFollowUpToolGuidance(settings as any, availability),
+    });
+  }
 
-    const clause = getCreatedTaskWorkflowRoutingClause(prompt);
-    expect(clause).toBe(`- You may still set the workflow on tasks you create via ${presentTool}.`);
-    expect(clause).not.toContain(absentTool);
+  it.each([
+    ["task creation only", { taskCreateWithheld: false, delegateWithheld: true }, "`fn_delegate_task`", "`fn_task_create`"],
+    ["delegation only", { taskCreateWithheld: true, delegateWithheld: false }, "`fn_task_create`", "`fn_delegate_task`"],
+  ])("names the withheld tool for the %s surface without touching the shared system prompt", async (_label, availability, absentTool, presentTool) => {
+    const { getExecutorSystemPrompt, getWithheldFollowUpToolGuidance } = await import("../executor.js");
+    const settings = { agentPrompts: undefined } as any;
+    const withheld = getWithheldFollowUpToolGuidance(settings, availability);
+
+    // The withheld notice names the tool that is gone and leaves the other one's routing clause alone.
+    // (`absentTool`/`presentTool` already carry their markdown backticks.)
+    expect(withheld).toContain(`structurally withhold ${absentTool}`);
+    expect(withheld).not.toContain(`withhold ${presentTool}`);
+    // The serialized system prompt is the same for every session of this configuration, withheld or not:
+    // it takes settings only, so per-session tool state cannot reach it.
+    expect(getExecutorSystemPrompt).toHaveLength(1);
+    expect(getExecutorSystemPrompt(settings)).toContain(
+      "- You may still set the workflow on tasks you create via `fn_task_create` or `fn_delegate_task`.",
+    );
   });
 
   it.each([
     ["omitted availability", undefined],
     ["empty availability", {}],
-  ])("keeps both workflow creation clauses for %s", async (_label, availability) => {
-    const { getExecutorSystemPrompt } = await import("../executor.js");
-    const prompt = getExecutorSystemPrompt({ agentPrompts: undefined } as any, availability);
+  ])("keeps both workflow creation clauses and emits no withheld notice for %s", async (_label, availability) => {
+    const { getExecutorSystemPrompt, getWithheldFollowUpToolGuidance } = await import("../executor.js");
+    const prompt = getExecutorSystemPrompt({ agentPrompts: undefined } as any);
 
     expect(getCreatedTaskWorkflowRoutingClause(prompt)).toBe(
       "- You may still set the workflow on tasks you create via `fn_task_create` or `fn_delegate_task`.",
     );
+    expect(getWithheldFollowUpToolGuidance({ agentPrompts: undefined } as any, availability)).toBe("");
     expect(prompt).not.toContain("Follow-up task creation is disabled for this session");
   });
 
-  it("removes created-task workflow guidance when both creation tools are withheld", async () => {
-    const { getExecutorSystemPrompt } = await import("../executor.js");
-    const prompt = getExecutorSystemPrompt(
-      { agentPrompts: undefined } as any,
+  it("overrides the available-tools routing guidance when both creation tools are withheld", async () => {
+    const prompt = await composeExecutorPrompt(
+      { agentPrompts: undefined },
       { taskCreateWithheld: true, delegateWithheld: true },
     );
 
-    expect(getCreatedTaskWorkflowRoutingClause(prompt)).toBeUndefined();
+    // The base clause is still present (byte-stable head), but the withheld notice is appended after
+    // it and instructs the model to ignore the earlier wording — last write wins, as before.
+    expect(prompt).toContain(
+      "- You may still set the workflow on tasks you create via `fn_task_create` or `fn_delegate_task`.",
+    );
     expect(prompt).toContain("Task-execution sessions structurally withhold `fn_task_create` and `fn_delegate_task`");
+    expect(prompt).toContain("Ignore any instruction above that tells you to file follow-up work");
+    expect(prompt.indexOf("structurally withhold")).toBeGreaterThan(
+      prompt.indexOf("You may still set the workflow"),
+    );
   });
 
   it.each([
@@ -3237,8 +3270,10 @@ describe("completion recommendation prompt contract", () => {
     ["only delegation is withheld", { delegateWithheld: true }],
     ["task creation and delegation are withheld", { taskCreateWithheld: true, delegateWithheld: true }],
   ])("keeps enabled recommendation guidance available when %s", async (_label, availability) => {
-    const { getExecutorSystemPrompt } = await import("../executor.js");
-    const prompt = getExecutorSystemPrompt({ agentPrompts: undefined, maxRecommendationsPerTask: 3 } as any, availability);
+    const prompt = await composeExecutorPrompt(
+      { agentPrompts: undefined, maxRecommendationsPerTask: 3 },
+      availability,
+    );
 
     expect(prompt).toContain("Follow-up task creation is disabled for this session");
     expect(prompt).toContain("completion recommendation route");
@@ -3246,13 +3281,25 @@ describe("completion recommendation prompt contract", () => {
   });
 
   it("does not present recommendations as an available fallback when capture is disabled and creation is withheld", async () => {
-    const { getExecutorSystemPrompt } = await import("../executor.js");
-    const prompt = getExecutorSystemPrompt(
-      { agentPrompts: undefined, maxRecommendationsPerTask: 0 } as any,
+    const prompt = await composeExecutorPrompt(
+      { agentPrompts: undefined, maxRecommendationsPerTask: 0 },
       { taskCreateWithheld: true, delegateWithheld: true },
     );
 
     expect(prompt).toContain("Recommendation capture is disabled, so retain non-blocking context");
     expect(prompt).not.toContain("use the available completion recommendation route");
+  });
+
+  /*
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+  The ratchet for this lane: the serialized head must not regain any per-session withheld-tool wording,
+  otherwise two consecutive same-role executor requests fork again at the tools section.
+  */
+  it("keeps per-session withheld-tool policy out of the serialized system prompt", async () => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const head = getExecutorSystemPrompt({ agentPrompts: undefined } as any);
+
+    expect(head).not.toContain("structurally withhold");
+    expect(head).not.toContain("Follow-up task creation is disabled for this session");
   });
 });

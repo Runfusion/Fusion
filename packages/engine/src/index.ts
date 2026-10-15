@@ -721,12 +721,34 @@ export { AgentReflectionService, type AgentReflectionServiceOptions } from "./ag
 export { AgentSelfImproveService, type AgentSelfImproveServiceOptions } from "./agents/agent-self-improve.js";
 export {
   buildAgentChatPrompt,
+  buildAgentChatPromptParts,
   resolveAgentInstructionsWithRatings,
+  resolveAgentInstructionParts,
+  resolveAgentInstructionPartsWithRatings,
   resolveAgentInstructions,
   buildSystemPromptWithInstructions,
   resolveAgentHeartbeatProcedure,
   ensureDefaultHeartbeatProcedureFile,
+  type AgentChatPromptParts,
+  type AgentInstructionParts,
 } from "./agents/agent-instructions.js";
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+The request-tail seam is exported so the dashboard chat lane composes its volatile per-turn context
+through the same helper the engine lanes use, instead of hand-joining memory/mention blocks into a
+system prompt the way it did before the split.
+*/
+export {
+  buildPromptLayers,
+  collapsePromptLayers,
+  buildRequestVolatileContext,
+  appendRequestVolatileContext,
+  withRequestVolatileContext,
+  SESSION_CONTEXT_HEADING,
+  type SystemPromptLayers,
+  type PromptLayerInput,
+  type RequestVolatileInput,
+} from "./execution/prompt-layers.js";
 export { HEARTBEAT_PROCEDURE, HEARTBEAT_SYSTEM_PROMPT, HEARTBEAT_NO_TASK_SYSTEM_PROMPT } from "./agent-heartbeat.js";
 export {
   MOCK_PROVIDER_ID,

@@ -149,7 +149,7 @@ import {
   reportBranchAttribution,
   BranchCrossContaminationError,
 } from "../execution/branch-conflicts.js";
-import { buildPromptLayers, collapsePromptLayers } from "../execution/prompt-layers.js";
+import { buildPromptLayers, collapsePromptLayers, buildRequestVolatileContext, appendRequestVolatileContext } from "../execution/prompt-layers.js";
 import {
   createRunVerificationTool,
   runVerificationCommand as runTaskVerificationCommand,
@@ -182,7 +182,7 @@ import {
   isSessionWorktreeCompatible,
 } from "./session-worktree-paths.js";
 import { isWorkflowStepSkillDiscoverable, mergeAdditionalSkillPaths } from "./skill-path-helpers.js";
-import { getExecutorSystemPrompt } from "./system-prompt.js";
+import { getExecutorSystemPrompt, getWithheldFollowUpToolGuidance } from "./system-prompt.js";
 // FNXC:CommandCenterActivity 2026-08-15-22:15: FN-8868 usage telemetry + session boundaries (restored post-wave-18).
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
 import { createConfiguredCommandAbortError, createSeenSteeringIds } from "./task-predicates.js";
@@ -336,6 +336,12 @@ export type RunImplementationDeps = {
   resetStepsIfWorkLost: AnyFn;
   resolveEffectivePrincipalId: AnyFn;
   resolveInstructionsForRole: AnyFn;
+  /*
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+  Parts-form sibling of `resolveInstructionsForRole`: the executor lane needs the config-time half
+  (system prompt) separated from the memory and rating halves (request tail) to keep its cached prefix.
+  */
+  resolveInstructionPartsForRole: AnyFn;
   resolveMcpServers: AnyFn;
   resolveResumeLanes: AnyFn;
   resolveSeamColumnAgent: AnyFn;
@@ -2479,8 +2485,18 @@ export async function runImplementation(
         // instructions, so the coding session speaks AS the column agent. No binding
         // → role instructions unchanged (characterization parity).
         const columnAgentPersona = columnAgentSeam ? buildAgentPersona(columnAgentSeam.agent) : undefined;
-        const executorInstructions = columnAgentPersona
-          ?? (await deps.resolveInstructionsForRole("executor", settings));
+        /*
+        FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+        The persona half is the per-card choice of which agent the session speaks as, so it belongs to the
+        request; the role's own instruction file stays in the head. Memory bodies and the rating summary
+        are runtime-mutable and travel with the request too.
+        */
+        const executorRoleParts = columnAgentPersona
+          ? { configTime: "", memorySection: "", performanceFeedback: "" }
+          : await deps.resolveInstructionPartsForRole("executor", settings);
+        const executorConfigInstructions = executorRoleParts.configTime;
+        const executorMemorySection = executorRoleParts.memorySection;
+        const executorPerformanceFeedback = executorRoleParts.performanceFeedback;
 
         // Build structured layers for cross-session prompt caching.
         const executorPluginContributions = await buildPluginPromptSection(
@@ -2500,15 +2516,32 @@ export async function runImplementation(
         });
         const executorGoalContext = executorGoalResolution.goalContext;
 
+        /*
+        FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+        Three per-card inputs used to sit in the executor's serialized system prompt: live goal rows, the
+        board-policy withheld-tool wording, and (through `resolveAgentInstructions`) the running agent's
+        memory bodies plus any column-agent persona that supersedes the assigned agent. Two consecutive
+        executor sessions — different cards, or the same card with a column-agent switch — therefore
+        diverged early and the provider prefix cache covered almost none of a prompt built for every
+        single execution. The head keeps only settings-derived role text, memory instructions, the
+        agent's own config-time instructions, plugin contributions and the language directive; everything
+        per-card now rides the execution request, on the fresh and the resumed path alike.
+        */
         const executorLayers = buildPromptLayers({
-          basePrompt: getExecutorSystemPrompt(settings, { taskCreateWithheld, delegateWithheld }),
-          goalContext: executorGoalContext,
-          agentInstructions: executorInstructions,
+          basePrompt: getExecutorSystemPrompt(settings),
+          agentInstructions: executorConfigInstructions,
           pluginContributions: executorPluginContributions,
           operatorLanguageDirective: buildOperatorLanguageDirective(settings),
         });
 
         const executorSystemPromptFinal = collapsePromptLayers(executorLayers);
+        const executorVolatileContext = buildRequestVolatileContext({
+          memorySection: executorMemorySection,
+          goalContext: executorGoalContext,
+          identitySection: columnAgentPersona ?? "",
+          performanceFeedback: executorPerformanceFeedback,
+          policySections: getWithheldFollowUpToolGuidance(settings, { taskCreateWithheld, delegateWithheld }),
+        });
 
         // sessionFile must be let because it's assigned before downstream retry-session reassignment.
         let session: AgentSession;
@@ -2672,7 +2705,7 @@ export async function runImplementation(
              * pick up where you left off") would silently skip the findings and the remediation round
              * would do nothing, bouncing again on the next review.
              */
-            await promptWithFallback(session, [
+            await promptWithFallback(session, appendRequestVolatileContext([
               "Your session was resumed.",
               "PROMPT.md may have been UPDATED since your last turn — re-read it now before doing anything else.",
               "If it contains a `## Workflow Step Failure` section, a review gate requested changes: address those findings. Fix every P0; fix P1 unless you have a concrete reason not to, and say which you declined and why. P2 items are optional.",
@@ -2680,7 +2713,15 @@ export async function runImplementation(
               "Otherwise continue the task from where you left off.",
               "Review the current state of your worktree, then proceed with the next pending step.",
               ...(acquisition.overlapResumeContext ? ["", "## Overlap wait synchronization", acquisition.overlapResumeContext] : []),
-            ].join("\n"));
+              /*
+              FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+              A resumed session used to get its refreshed runtime state (memory bodies, goal rows, rating
+              summary, per-card persona, withheld-tool policy) from a freshly rebuilt system prompt. Now that
+              those blocks ride the request, the resume turn must carry them too, or a remediation round would
+              run a session whose last system prompt predates the current state. Same block, same position:
+              the end of the request that needs it.
+              */
+            ].join("\n"), executorVolatileContext));
           } else {
             const customFieldDefs = await deps.resolveTaskCustomFieldDefs(task.id);
             const pluginTaskContributions = await buildPluginPromptSection("executor-task", deps.options.pluginRunner);
@@ -2697,7 +2738,13 @@ export async function runImplementation(
                 overlapResumeContext: acquisition.overlapResumeContext,
               },
             );
-            await promptWithFallback(session, agentPrompt);
+            /*
+            FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+            This task's goal rows, memory bodies, rating summary, column-agent persona and withheld-tool
+            policy ride the end of the execution request, which is where per-card context belongs; the
+            serialized system prompt is now identical for every executor session of one configuration.
+            */
+            await promptWithFallback(session, appendRequestVolatileContext(agentPrompt, executorVolatileContext));
           }
 
           /*

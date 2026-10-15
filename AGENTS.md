@@ -204,6 +204,13 @@ FNXC:TestFlakeRegister 2026-08-01-07:00: Issue #2862 recorded three suite-only P
 - Motivating incidents: FN-8606's `ModalShell` made Planning Mode and Settings untypable (each keystroke remounted the composer, so only the first character survived), and `MailboxModal`'s `ReplyContextExpandable` collapsed already-expanded reply rows whenever another row was expanded.
 - Testing note: `fireEvent.change` sets a value without needing the node to stay mounted, so it **cannot** catch this. Assert with real per-character `userEvent.type`, or assert DOM node identity across an unrelated re-render.
 
+### Standing Rule: The Serialized System Prompt Is Byte-Stable Per Role (RUFU-267)
+
+- Runtime-mutable content may not sit in the serialized system prompt. Retrieved memory bodies, live goal rows, rating summaries, per-card identity or policy blocks, and per-turn recall go in the **request tail** (`buildRequestVolatileContext()` + `appendRequestVolatileContext()` / `withRequestVolatileContext()` in `packages/engine/src/execution/prompt-layers.ts`), not in `dynamic`, not via `appendSystemPromptOverride`. `buildPromptLayers()` takes config-time inputs only; it has no `memorySection`/`goalContext`/`performanceFeedback` field to fill in.
+- Byte-stability means `expect(second).toBe(first)` for two consecutive same-role builds, not "the shared prefix is long" and not "the volatile parts are sorted last". Reordering volatile blocks inside the prompt does not fix the cache — the cached prefix still ends at the first changed byte.
+- Relocate, do not reword: keep each block's sentences and heading, keep their relative order, and move the whole block to the end of the request. Every send site of a lane needs the tail, **including resume paths** — a resume that skips it loses the state instead of restoring stability.
+- Enforced by `scripts/check-prompt-volatility.mjs` in the blocking `test:gate:static` chain (`pnpm check:prompt-volatility` standalone): volatile fields in composition calls, interpolated or identifier-joined `systemPrompt` values, and lanes that compose layers while dropping their volatile state. Lint, typecheck, build and ordinary tests all stay green when a prompt diverges per request, which is exactly why this needs a structural gate. Acceptance suite: `packages/engine/src/__tests__/prompt-byte-stability.test.ts`. Post-deploy verification: `docs/solutions/performance/serialized-prompt-byte-stability-runbook.md`.
+
 ### Standing Rule: Fix the Invariant, Not the Repro (FN-5893)
 
 - When fixing a bug, the regression test must assert the general invariant across ALL known surfaces — not only the single reported reproduction.

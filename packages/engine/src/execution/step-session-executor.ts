@@ -86,6 +86,29 @@ import { activeSessionRegistry } from "../agents/active-session-registry.js";
 
 const stepExecLog = createLogger("step-session-executor");
 
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+The workflow-step session's system prompt is now a constant: the task identity used to be interpolated
+into it, so two cards' step sessions never shared a serialized prompt and no provider prefix cache could
+form. The identity sentence keeps its exact wording and moves to the end of the step's request via
+`WORKFLOW_STEP_TASK_IDENTITY_LINE`, which execute-workflow-step.ts appends with the other per-card state.
+*/
+export const WORKFLOW_STEP_SYSTEM_PROMPT = `You are an AI agent executing steps for the task in this working directory.
+
+Your role:
+- Complete only the current step's scoped outcomes.
+- Read step context before editing.
+- Reuse existing patterns in nearby code.
+- Run relevant tests for changes made in this step.
+- Report blockers clearly instead of guessing.
+
+Follow instructions precisely and avoid unrelated changes.`;
+
+/** Per-card identity line for the step request tail; mirrors the wording the system prompt used to carry. */
+export function workflowStepTaskIdentityLine(taskId: string): string {
+  return `You are executing steps for task ${taskId}.`;
+}
+
 type WorkflowStepActivityRun = AgentHeartbeatRun & {
   contextSnapshot: NonNullable<AgentHeartbeatRun["contextSnapshot"]>;
 };
@@ -1708,16 +1731,14 @@ export class StepSessionExecutor {
               runtimeHint: this.options.runtimeHint,
               pluginRunner: this.options.pluginRunner,
               cwd: worktreePath,
-              systemPrompt: `You are an AI agent executing steps for task ${taskDetail.id}.
-
-Your role:
-- Complete only the current step's scoped outcomes.
-- Read step context before editing.
-- Reuse existing patterns in nearby code.
-- Run relevant tests for changes made in this step.
-- Report blockers clearly instead of guessing.
-
-Follow instructions precisely and avoid unrelated changes.`,
+              /*
+              FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+              The task id used to be interpolated into this head ("steps for task FN-1234"), so every card's
+              workflow-step session serialized a different system prompt and the provider prefix cache could
+              never match across cards. The id now rides the step request tail (WORKFLOW_STEP_TASK_IDENTITY_LINE
+              in execute-workflow-step.ts) with the same wording.
+              */
+              systemPrompt: WORKFLOW_STEP_SYSTEM_PROMPT,
               defaultProvider: executorProvider,
               defaultModelId: executorModelId,
               fallbackProvider: resolveExecutorFallbackModel(settings).provider,

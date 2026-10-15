@@ -32,7 +32,7 @@ import {
 } from "../agents/agent-session-helpers.js";
 import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
 import { computeTopLevelConcurrencyClaimedFromStore } from "../concurrency/concurrency.js";
-import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
+import { buildPromptLayers, collapsePromptLayers } from "../execution/prompt-layers.js";
 import { resolveTaskWorktreePath } from "../worktree/worktree-paths.js";
 import { createRunAuditor, type EngineRunContext } from "../util/run-audit.js";
 import { executorLog } from "../logger.js";
@@ -286,10 +286,19 @@ export function createSpawnAgentTool(
           child prompt carries the operator language directive like the parent lane.
           */
           const childOperatorLanguageDirective = buildOperatorLanguageDirective(settings);
-          const childSystemPrompt = buildSystemPromptWithInstructions(
-            childBasePrompt,
-            childOperatorLanguageDirective ? `${childInstructions}\n\n${childOperatorLanguageDirective}` : childInstructions,
-          );
+          /*
+          FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+          Composed through the same layer seam as every other lane instead of hand-joining the operator
+          language directive with a template literal. Both inputs are config-time, so the bytes are
+          unchanged (`base\n\n## Custom Instructions\n\n<instructions>\n\n<directive>`); the point is that
+          a child prompt now cannot acquire an interpolated runtime value without tripping
+          `scripts/check-prompt-volatility.mjs`.
+          */
+          const childSystemPrompt = collapsePromptLayers(buildPromptLayers({
+            basePrompt: childBasePrompt,
+            agentInstructions: childInstructions,
+            operatorLanguageDirective: childOperatorLanguageDirective,
+          }));
 
           // Build skill selection context for child agent session
           const childTask = await deps.store.getTask(taskId);

@@ -305,7 +305,10 @@ export function buildRunImplementationDeps(
       "appendReviewRemediationSteps",
       "attemptExecutorVerificationFix", "deleteActiveStepExecutor", "createTaskUpdateTool",
       "createTaskAddDepTool", "createTaskDoneTool", "createReviewDisputeTool", "createSpawnAgentTool",
-      "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
+      "resolveInstructionsForRole",
+      /* FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): the executor lane needs instructions split into cached and per-request halves. */
+      "resolveInstructionPartsForRole",
+      "finalizeAlreadyReviewedTask",
       "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
     ]),
     reexecuteTaskInPlace: async (taskId: string) => {
@@ -382,7 +385,7 @@ export function buildExecuteWorkflowStepDeps(host: any): any {
       "getRunContextFor",
       "captureModifiedFiles", "createSpawnAgentTool",
       "deleteActiveWorkflowStepSession", "getAssignedAgentRuntimeConfig", "getAuthoritativeAssignedAgent",
-      "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
+      "readTaskArtifact", "resolveInstructionsForRole", "resolveInstructionPartsForRole", "resolveMcpServers",
       "setActiveWorkflowStepSession",
     ]),
     sharedWorkerTools: buildSharedWorkerToolsDeps(host),

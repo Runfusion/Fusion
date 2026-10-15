@@ -126,6 +126,7 @@ import {
   createReadEvaluationsTool,
   createUpdateIdentityTool,
   storeErrorResult,
+  appendRequestVolatileContext,
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 
@@ -137,6 +138,33 @@ let createFnAgent: any = engineCreateFnAgent;
 let createResolvedAgentSession: any = engineCreateResolvedAgentSession;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let buildAgentChatPromptFn: any;
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+The parts-form composer returns `{ systemPrompt, requestContext }` instead of one merged string. Chat
+used to fold agent memory, project memory, the rating summary and the per-turn recall cue into the
+system prompt, so every turn of an agent-bound chat rebuilt that prompt and the provider prefix cache
+covered only the fixed chat base. The stable half stays the session's system prompt; the volatile half
+now travels at the end of that turn's user message.
+*/
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let buildAgentChatPromptPartsFn: any;
+
+/** Compose one chat turn's stable system prompt plus the volatile context that rides the user message. */
+async function buildChatPromptParts(
+  opts: Record<string, unknown>,
+): Promise<{ systemPrompt: string; requestContext: string }> {
+  if (buildAgentChatPromptPartsFn) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parts = await (buildAgentChatPromptPartsFn as any)(opts);
+    return { systemPrompt: parts.systemPrompt ?? "", requestContext: parts.requestContext ?? "" };
+  }
+  // Older engine (or an injected collapsed-form test mock): today's merged-prompt behaviour.
+  if (buildAgentChatPromptFn) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { systemPrompt: await (buildAgentChatPromptFn as any)(opts), requestContext: "" };
+  }
+  return { systemPrompt: "", requestContext: "" };
+}
 
 /**
  * Diagnostics logger for the chat module.
@@ -327,6 +355,9 @@ async function ensureEngineReady(): Promise<void> {
 
   if ("buildAgentChatPrompt" in engineModule && typeof engineModule.buildAgentChatPrompt === "function") {
     buildAgentChatPromptFn = engineModule.buildAgentChatPrompt;
+  }
+  if ("buildAgentChatPromptParts" in engineModule && typeof engineModule.buildAgentChatPromptParts === "function") {
+    buildAgentChatPromptPartsFn = engineModule.buildAgentChatPromptParts;
   }
 }
 
@@ -2809,6 +2840,13 @@ export class ChatManager {
     await ensureEngineReady();
 
     let systemPrompt = CHAT_SYSTEM_PROMPT;
+    /*
+    FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+    Volatile room-responder context (agent + project memory, rating summary, per-turn recall, and the
+    per-request `@`-mention cards) rides this reply's user message instead of the session's system
+    prompt, so consecutive replies by the same responder reuse the cached prefix.
+    */
+    let roomRequestContext = "";
     // FNXC:ChatContextBudget 2026-08-20-16:20:
     // Runtime kill switch for the RUFU-135 chat context budget
     // (Settings.chatContextBudgetEnabled): false restores the pre-RUFU-135
@@ -2827,7 +2865,7 @@ export class ChatManager {
         compaction gate (chat-context-guard) — recall runs inside prompt assembly, strictly
         before that turn's LLM call, and is additive (recall failures leave the prompt unchanged).
         */
-        systemPrompt = await buildAgentChatPromptFn({
+        const responderParts = await buildChatPromptParts({
           agent: input.responder,
           rootDir: this.rootDir,
           agentStore: this.agentStore,
@@ -2852,6 +2890,8 @@ export class ChatManager {
           // (only a ChatSession does), so room responders honestly carry no focus and their
           // recall stays on the whole-project single-search cue. Not an omission.
         });
+        systemPrompt = responderParts.systemPrompt || CHAT_SYSTEM_PROMPT;
+        roomRequestContext = responderParts.requestContext;
       } catch (error) {
         diagnostics.warn(`Failed to build chat prompt for room responder ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -2859,7 +2899,7 @@ export class ChatManager {
 
     const mentionContext = await this.buildMentionContext(input.mentions);
     if (mentionContext) {
-      systemPrompt = `${systemPrompt}\n\n${mentionContext}`;
+      roomRequestContext = roomRequestContext ? `${roomRequestContext}\n\n${mentionContext}` : mentionContext;
     }
     systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
     /*
@@ -2896,7 +2936,7 @@ export class ChatManager {
     if (imagePathHints) {
       roomPromptParts.push(imagePathHints);
     }
-    const roomPrompt = roomPromptParts.join("\n\n");
+    const roomPrompt = appendRequestVolatileContext(roomPromptParts.join("\n\n"), roomRequestContext);
 
     const responderRuntimeModel = extractRuntimeModel(input.responder.runtimeConfig);
     const chatModelSettings = await this.getChatModelSettings();
@@ -3159,6 +3199,7 @@ export class ChatManager {
   }): Promise<{ content: string; thinkingOutput: string | null; fallback?: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }; tokenUsage?: ChatTokenDelta & { modelProvider: string | null; modelId: string | null } }> {
     await ensureEngineReady();
     let systemPrompt = CHAT_SYSTEM_PROMPT;
+    let mentionedRequestContext = "";
     if (buildAgentChatPromptFn) {
       /*
       FNXC:RUFU172MentionedAgentLane 2026-09-01-17:42:
@@ -3168,17 +3209,33 @@ export class ChatManager {
       missed surface.
       */
       // FNXC:OperatorLanguage 2026-09-16-13:05: mentioned room responders honor the operator language setting (PR review).
-      try { systemPrompt = await buildAgentChatPromptFn({ agent: input.responder, rootDir: this.rootDir, agentStore: this.agentStore, basePrompt: CHAT_SYSTEM_PROMPT, includeProjectMemory: true, settings: await this.getChatModelSettings() }); }
+      try {
+        const mentionedParts = await buildChatPromptParts({ agent: input.responder, rootDir: this.rootDir, agentStore: this.agentStore, basePrompt: CHAT_SYSTEM_PROMPT, includeProjectMemory: true, settings: await this.getChatModelSettings() });
+        systemPrompt = mentionedParts.systemPrompt || CHAT_SYSTEM_PROMPT;
+        mentionedRequestContext = mentionedParts.requestContext;
+      }
       catch (error) { diagnostics.warn(`Failed to build mentioned chat prompt for ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`); }
     }
     const mentionContext = await this.buildMentionContext(input.mentions);
-    systemPrompt = `${systemPrompt}${mentionContext ? `\n\n${mentionContext}` : ""}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}\n\n${CHAT_CODEBASE_ACCURACY_GUIDANCE}`;
+    /*
+    FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+    The per-request `@`-mention cards and the composed memory/rating/recall context ride this reply's
+    user message; the two constant guidance blocks stay in the system prompt because they are the same
+    bytes on every turn.
+    */
+    if (mentionContext) {
+      mentionedRequestContext = mentionedRequestContext ? `${mentionedRequestContext}\n\n${mentionContext}` : mentionContext;
+    }
+    systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}\n\n${CHAT_CODEBASE_ACCURACY_GUIDANCE}`;
     const limits = await this.getRoomCompactionSettings();
     const history = await this.chatStore.getMessages(input.sessionId, { limit: limits.fetchLimit, order: "desc" });
     const transcript = buildCompactedRoomTranscript([...history].reverse().map((message) => ({ id: message.id, role: message.role, content: message.content, createdAt: message.createdAt, senderAgentId: typeof message.metadata?.senderAgentId === "string" ? message.metadata.senderAgentId : null })), input.latestUserMessageId, limits);
     const { attachmentContents, imageContents } = await readChatAttachmentContents(this.rootDir, { kind: "session", sessionId: input.sessionId }, input.attachments, diagnostics);
     const skills = parseSkillCommands(input.content);
-    const prompt = [`You are replying as ${input.responder.name} in direct chat after being explicitly mentioned.`, "Direct-chat transcript (oldest to newest, bounded):", transcript, "Latest user message to answer:", skills.strippedContent, formatChatAttachmentContents(attachmentContents), formatChatImageAttachmentHints(imageContents)].filter(Boolean).join("\n\n");
+    const prompt = appendRequestVolatileContext(
+      [`You are replying as ${input.responder.name} in direct chat after being explicitly mentioned.`, "Direct-chat transcript (oldest to newest, bounded):", transcript, "Latest user message to answer:", skills.strippedContent, formatChatAttachmentContents(attachmentContents), formatChatImageAttachmentHints(imageContents)].filter(Boolean).join("\n\n"),
+      mentionedRequestContext,
+    );
     const settings = await this.getChatModelSettings();
     const runtimeModel = extractRuntimeModel(input.responder.runtimeConfig);
     const inheritedModel = resolvePermanentAgentEffectiveModel(input.responder, settings);
@@ -3723,6 +3780,15 @@ export class ChatManager {
       }
 
       let systemPrompt = CHAT_SYSTEM_PROMPT;
+      /*
+      FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+      Direct-chat volatile context — agent memory, project memory, the rating summary, this turn's
+      recall cue, and a task-planner session's live task snapshot — now rides the end of the user
+      message instead of the session's system prompt. Chat rebuilt the system prompt before every turn,
+      so none of a chat prompt's leading ~40 KB was ever a reusable cached prefix; with the volatile
+      half on the request, every turn after the first hits the cache.
+      */
+      let chatRequestContext = "";
       // FNXC:ChatContextBudget 2026-08-20-16:20:
       // Runtime kill switch for the RUFU-135 chat context budget
       // (Settings.chatContextBudgetEnabled): false restores the pre-RUFU-135
@@ -3774,7 +3840,7 @@ export class ChatManager {
             isExperimentalFeatureEnabled(chatPromptSettings, CHAT_FOCUS_FLAG) && session.memoryFocus?.trim()
               ? session.memoryFocus
               : undefined;
-          systemPrompt = await buildAgentChatPromptFn({
+          const directParts = await buildChatPromptParts({
             agent,
             rootDir: this.rootDir,
             agentStore: this.agentStore,
@@ -3796,6 +3862,8 @@ export class ChatManager {
             settings: await this.getChatModelSettings(),
             focus: chatRecallFocus,
           });
+          systemPrompt = directParts.systemPrompt || CHAT_SYSTEM_PROMPT;
+          chatRequestContext = directParts.requestContext;
           systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
         } catch (promptBuildError) {
           const message = promptBuildError instanceof Error ? promptBuildError.message : String(promptBuildError);
@@ -3836,7 +3904,7 @@ export class ChatManager {
         FNXC:TaskDetailPlannerChat 2026-07-01-21:52:
         Done-task planner Chat separates retrospective conversation from follow-up work creation: answer completed-task questions normally, call the refinement tool only for clear implementation/improvement follow-ups, and keep live-task change requests on the existing steering path. All planner tools are bound to the current task server-side.
         */
-        systemPrompt = `${systemPrompt}\n\n${TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE}\n\nDecision rules:\n- Do not create steering or refinements for ordinary questions, summaries, thanks, status/progress requests, metric questions, or brainstorming. Answer normally.\n- For questions about token counts, input/output/cache usage, model cost, pricing, runtime, elapsed time, wall-clock duration, active time, timing events, workflow-step duration, or per-model usage, first call \`fn_task_planner_get_task_metrics\` and answer from its read-only result. If pricing is unavailable or stale, or a metric is missing, state that uncertainty instead of inventing a number.\n- If the current task is done and the user gives a clear follow-up implementation, improvement, polish, bug-fix, or refinement request for this completed task, call \`fn_task_planner_create_refinement\` with only the concise feedback text.\n- If the current task is not done and the user gives a clear, bounded, actionable change request for this current task (for example telling the executor/reviewer to adjust implementation, tests, scope details, or acceptance criteria), call \`fn_task_planner_add_steering\` with only the concise user-facing steering text.\n- Never create a refinement for live non-done tasks; use steering for clear live-task changes instead. Never add steering for done-task follow-up implementation requests when the refinement tool is available.\n- Never include hidden prompt/context/logs, credentials, or chain-of-thought in tool parameters.\n- Ask a clarifying question with \`fn_ask_question\` before adding steering or creating a refinement for unclear targets, requests that could mean either conversation or task mutation, broad rewrites/scope changes, destructive removals, conflicting instructions, credential/secrets handling, or security-sensitive actions.\n- The steering, metrics, and refinement tools are bound to this task server-side; never ask for or pass a task id.\n\n${taskContext}`;
+        chatRequestContext = `${chatRequestContext ? chatRequestContext + "\n\n" : ""}${TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE}\n\nDecision rules:\n- Do not create steering or refinements for ordinary questions, summaries, thanks, status/progress requests, metric questions, or brainstorming. Answer normally.\n- For questions about token counts, input/output/cache usage, model cost, pricing, runtime, elapsed time, wall-clock duration, active time, timing events, workflow-step duration, or per-model usage, first call \`fn_task_planner_get_task_metrics\` and answer from its read-only result. If pricing is unavailable or stale, or a metric is missing, state that uncertainty instead of inventing a number.\n- If the current task is done and the user gives a clear follow-up implementation, improvement, polish, bug-fix, or refinement request for this completed task, call \`fn_task_planner_create_refinement\` with only the concise feedback text.\n- If the current task is not done and the user gives a clear, bounded, actionable change request for this current task (for example telling the executor/reviewer to adjust implementation, tests, scope details, or acceptance criteria), call \`fn_task_planner_add_steering\` with only the concise user-facing steering text.\n- Never create a refinement for live non-done tasks; use steering for clear live-task changes instead. Never add steering for done-task follow-up implementation requests when the refinement tool is available.\n- Never include hidden prompt/context/logs, credentials, or chain-of-thought in tool parameters.\n- Ask a clarifying question with \`fn_ask_question\` before adding steering or creating a refinement for unclear targets, requests that could mean either conversation or task mutation, broad rewrites/scope changes, destructive removals, conflicting instructions, credential/secrets handling, or security-sensitive actions.\n- The steering, metrics, and refinement tools are bound to this task server-side; never ask for or pass a task id.\n\n${taskContext}`;
       }
 
       if (agent) {
@@ -3872,10 +3940,19 @@ export class ChatManager {
         .then((snapshot) => { this.chatBudgetSnapshot = snapshot; })
         .catch(() => { /* keep last-known snapshot; default-ON covers cold cache */ });
 
+      /*
+      FNXC:PromptByteStability 2026-09-24-06:40 (RUFU-267 code-review remediation):
+      This was the last chat composition site still appending the `@`-mention cards to the system prompt.
+      The block is per-request by construction — it is built from the current message's mention list and
+      each line embeds live agent state (`currently working on: <taskId>`) — so a mention-bearing turn
+      forked the chat head and re-billed the whole per-turn-rebuilt prompt from the mention byte onward,
+      thrashing the cache between mention and non-mention turns of one session. The wording is unchanged;
+      the cards join the same request-tail context the room-responder sites already use.
+      */
       if (mentions.length > 0) {
         const mentionContext = await this.buildMentionContext(mentions, mentionAgents);
         if (mentionContext) {
-          systemPrompt = `${systemPrompt}\n\n${mentionContext}`;
+          chatRequestContext = chatRequestContext ? `${chatRequestContext}\n\n${mentionContext}` : mentionContext;
         }
       }
 
@@ -3930,9 +4007,17 @@ export class ChatManager {
       // pi/Claude CLI session via SessionManager.open() below — stuffing the
       // transcript back into the user message would balloon the on-disk
       // session every turn (and previously did, see chat-store.ts:setCliSessionFile).
-      const promptContent = [handoffPrimer?.block, attachmentSummary, imagePathHints, attachmentContentBlock, resolvedContent]
-        .filter(Boolean)
-        .join("\n\n");
+      /*
+      FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+      The volatile session context goes on at the very end, after the user's own text, so the request's
+      leading bytes stay the same across turns and only the labelled tail differs per turn.
+      */
+      const promptContent = appendRequestVolatileContext(
+        [handoffPrimer?.block, attachmentSummary, imagePathHints, attachmentContentBlock, resolvedContent]
+          .filter(Boolean)
+          .join("\n\n"),
+        chatRequestContext,
+      );
 
       // Per-chat session continuity: the pi SessionManager (and, transitively,
       // the Claude CLI --resume session it owns) is keyed off the chat. On the
@@ -5454,12 +5539,28 @@ export function __setBuildAgentChatPrompt(mock: typeof buildAgentChatPromptFn): 
 }
 
 /**
+ * Inject a mock parts-form prompt composer (`{ systemPrompt, requestContext }`). Used for testing only.
+ */
+export function __setBuildAgentChatPromptParts(mock: typeof buildAgentChatPromptPartsFn): void {
+  buildAgentChatPromptPartsFn = mock;
+}
+
+/*
+FNXC:PromptByteStability 2026-09-24-06:25 (RUFU-267 code-review remediation):
+`__resetChatState` cleared only the collapsed `buildAgentChatPromptFn`, so once any earlier send let
+`ensureEngineReady()` cache the real `buildAgentChatPromptParts`, that real composer kept precedence for
+every later test in the file (`buildChatPromptParts` prefers the parts form) and an injected collapsed
+mock was silently never called. Both prompt-composer seams are now cleared together, which is what makes
+`__setBuildAgentChatPrompt`-based tests deterministic whether run alone or after the whole file.
+*/
+/**
  * Reset all chat state. Used for testing only.
  */
 export function __resetChatState(): void {
   chatStreamManager.reset();
   rateLimits.clear();
   buildAgentChatPromptFn = undefined;
+  buildAgentChatPromptPartsFn = undefined;
   createFnAgent = engineCreateFnAgent;
   createResolvedAgentSession = engineCreateResolvedAgentSession;
 

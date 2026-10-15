@@ -85,6 +85,18 @@ vi.mock("@fusion/engine", () => ({
   behavior, not token math, and a zero pending term keeps their existing prompt expectations.
   */
   estimatePendingRequestTokens: vi.fn(() => 0),
+  /*
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+  Chat names `appendRequestVolatileContext` in its import list because the per-turn volatile block
+  (memory bodies, recall cue, rating summary) now rides the request instead of the serialized system
+  prompt. Faithful passthrough of the real append semantics — these cases pin which bytes reach the
+  model per turn, so a no-op here would hide a lane that silently dropped its session context.
+  */
+  appendRequestVolatileContext: vi.fn((request: string, volatileContext: string) => {
+    if (!volatileContext?.trim()) return request;
+    if (!request?.trim()) return volatileContext;
+    return `${request}\n\n${volatileContext}`;
+  }),
   extractRuntimeHint: vi.fn(() => undefined),
   extractRuntimeModel: vi.fn(() => undefined),
   buildSessionSkillContextSync: vi.fn(() => ({ skillSelectionContext: undefined, resolvedSkillNames: [], skillSource: "none" as const })),

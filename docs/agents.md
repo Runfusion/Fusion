@@ -404,7 +404,7 @@ Built-in workflow roles select their own lanes: Planner uses planning, Reviewer 
 Model-less durable-agent heartbeats use the same role-lane chain. Calling the low-level heartbeat resolver without role context deliberately retains its historical execution-lane behavior for compatibility. Task execution remains settings-first as described above and is not changed by identity inheritance.
 
 Task-scoped heartbeat runs for durable agents execute inside the task's git worktree (same as ephemeral task execution), while no-task heartbeat runs continue to execute from the project root.
-Heartbeat and executor system prompts share the same active-goal context injector (`buildGoalContextSection`), so both lanes receive identical goal preambles when active goals exist.
+Heartbeat and executor runs share the same active-goal context injector (`buildGoalContextSection`), so both lanes receive the same goal text when active goals exist. Goal rows change as work lands, so that text is runtime-mutable: it rides the end of each request (see **Serialized Prompt Byte-Stability**) rather than the system prompt, which would otherwise diverge between two runs of the same role.
 
 If a heartbeat cannot create/run a session due to unavailable provider credentials or missing provider registration, Fusion records `resultJson.reason = "heartbeat_model_unavailable"` with actionable diagnostics in `resultJson.detail`/`stderrExcerpt`.
 
@@ -453,7 +453,7 @@ False-positive `heartbeat-model-unavailable` parks (session/registry/credential-
 When a triage/specification run targets a task with `assignedAgentId` and that agent is durable, planning now inherits the assigned agent context instead of only generic triage-role defaults.
 
 Triage inheritance behavior:
-1. The triage system prompt includes assigned-agent identity context and resolves instructions/soul/memory from that agent (including existing rating-aware instruction composition)
+1. Planning inherits the assigned agent: its config-time instructions/soul reach the triage system prompt, while the per-card identity line, the agent's memory bodies, and the rating-aware performance-feedback block ride the planning request tail (RUFU-267, **Serialized Prompt Byte-Stability**)
 2. Triage memory tools are created with assigned-agent memory context (`createMemoryTools(..., { agentMemory })`), so `fn_memory_search` / `fn_memory_get` can access `.fusion/agent-memory/{agentId}/...` during planning
 3. Planning model resolution prefers a complete assigned-agent runtime model pair first, then task planning overrides, then normal planning/project/global fallbacks
 
@@ -1712,7 +1712,7 @@ Agents can be paused by budget exhaustion. Timer-triggered heartbeats skip when 
 
 ## Agent Performance Ratings
 
-Agent performance ratings allow users and agents to provide feedback that influences future behavior through system prompt injection.
+Agent performance ratings allow users and agents to provide feedback that influences future behavior through prompt injection. Since RUFU-267 the derived rating summary is per-run state, so it is appended to the lane's **request** (`## Session Context (runtime state, refreshed per request)`), not to the serialized system prompt — see **Serialized Prompt Byte-Stability**.
 
 ### Rating API Endpoints
 
@@ -1866,7 +1866,7 @@ For workspace tasks, `fn_task_file_scope_add` must use qualified paths such as `
 Per-agent overrides via `runtimeConfig`:
 - **Heartbeat**: `heartbeatIntervalMs`, `heartbeatTimeoutMs`, `maxConcurrentRuns`. Triggered by timer, task assignment, or on-demand (`POST /api/agents/:id/runs`).
 - **Budgets**: per-agent token budget tracking; `HeartbeatMonitor.executeHeartbeat()` skips when `isOverBudget` or `isOverThreshold` (timer triggers). Hard caps pause the agent.
-- **Performance ratings**: 1–5 scale with trend analysis, injected into system prompts.
+- **Performance ratings**: 1–5 scale with trend analysis, injected into the lane request tail (RUFU-267: not the serialized system prompt, which must stay byte-identical per role).
 
 ## Memory Keeper (FN-8932)
 

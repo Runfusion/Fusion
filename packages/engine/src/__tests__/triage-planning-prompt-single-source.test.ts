@@ -118,9 +118,23 @@ async function captureBasePrompt(task: Task, store: TaskStore): Promise<string> 
 }
 
 async function capturePromptLayers(task: Task, store: TaskStore): Promise<string> {
-  let captured = "";
+  const captured = await capturePlanningExchange(task, store);
+  return captured.systemPrompt;
+}
+
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+Per-card planning context (assigned-planner identity, duplicate policy, the dependency instruction and
+live goal rows) used to be serialized into the planner's system prompt, so two consecutive planning
+requests diverged right after the role head and the provider prefix cache covered nothing but the role
+text. Those blocks now ride the planning REQUEST. This helper captures both halves of one planning turn
+so a case can assert where each block landed: the serialized prompt stays card-free, the request carries
+the card's blocks.
+*/
+async function capturePlanningExchange(task: Task, store: TaskStore): Promise<{ systemPrompt: string; request: string }> {
+  let systemPrompt = "";
   mockCreateFnAgent.mockImplementationOnce(async (opts: any) => {
-    captured = JSON.stringify(opts.systemPromptLayers ?? opts.systemPrompt);
+    systemPrompt = JSON.stringify(opts.systemPromptLayers ?? opts.systemPrompt);
     return {
       session: {
         state: {},
@@ -133,7 +147,13 @@ async function capturePromptLayers(task: Task, store: TaskStore): Promise<string
   });
 
   await new TriageProcessor(store, "/tmp/root").specifyTask(task);
-  return captured;
+
+  // This suite stubs `promptWithFallback`, so the planning turn's text is observable on that mock's
+  // call arguments — that seam is exactly where the volatile request tail is appended.
+  const { promptWithFallback } = await import("../pi.js");
+  const calls = vi.mocked(promptWithFallback).mock.calls;
+  const request = calls.length > 0 ? String(calls[calls.length - 1]?.[1] ?? "") : "";
+  return { systemPrompt, request };
 }
 
 const canonicalPlanningPrompt = resolvePlanningPromptFromIr(BUILTIN_CODING_WORKFLOW_IR)!;
@@ -223,14 +243,20 @@ describe("triage planning prompt single source", () => {
     const task = createTask({ id: `FN-6232-USER-${mode}`, executionMode: "standard", sourceType: "dashboard_ui" });
     const store = createStore(task, {}, mode === "lean" ? { leanPlanning: true } : {});
 
-    await expect(capturePromptLayers(task, store)).resolves.toContain("Only active tasks can be duplicate blockers");
+    const exchange = await capturePlanningExchange(task, store);
+    // The policy still reaches the planner, at the end of the request that needs it.
+    expect(exchange.request).toContain("Only active tasks can be duplicate blockers");
+    // And it is no longer serialized into the byte-stable system prompt shared by every planning request.
+    expect(exchange.systemPrompt).not.toContain("Only active tasks can be duplicate blockers");
   });
 
   it("injects active-only duplicate policy into programmatic planning sessions", async () => {
     const task = createTask({ id: "FN-6232-API", executionMode: "standard", sourceType: "api" });
     const store = createStore(task);
 
-    await expect(capturePromptLayers(task, store)).resolves.toContain("Only active tasks can be duplicate blockers");
+    const exchange = await capturePlanningExchange(task, store);
+    expect(exchange.request).toContain("Only active tasks can be duplicate blockers");
+    expect(exchange.systemPrompt).not.toContain("Only active tasks can be duplicate blockers");
   });
 
   it("uses a selected custom workflow planning prompt", async () => {

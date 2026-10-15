@@ -313,11 +313,39 @@ Task-execution sessions structurally withhold ${withheld}, regardless of the eph
 Ignore any instruction above that tells you to file follow-up work with ${withheld}. ${recommendationRoute} Implement required in-scope work directly here. Resolve missing tooling or optional services, substitute a runnable check, or complete achievable work and preserve deferred-verification context through the route above. Use \`fn_task_done(outcome="blocked", reason="...")\` only for a real Fusion task dependency or a host-resource, network, model-provider, or credential failure.`;
 }
 
-/** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
-export function getExecutorSystemPrompt(
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+Withheld follow-up-tool policy is per-session board state, not role configuration. Rendering it here
+made two consecutive executor requests for cards with different policies fork the serialized system
+prompt, so the provider prefix cache stopped at the tools section. The head always renders the
+available-by-default wording now and this exported helper produces the same withheld text for the
+request tail of the sessions that need it. The sentences are unchanged — they are appended last, so
+they still win over the base text, including an operator's custom executor prompt.
+*/
+
+/** Withheld follow-up-tool guidance for one session's request tail; empty when both tools are available. */
+export function getWithheldFollowUpToolGuidance(
   settings: Settings,
   toolAvailability?: { taskCreateWithheld?: boolean; delegateWithheld?: boolean },
 ): string {
+  const maximumRecommendations = settings.maxRecommendationsPerTask ?? 3;
+  const requireTaskRecommendations = settings.requireTaskRecommendations === true && maximumRecommendations > 0;
+  return getWithheldTaskCreationGuidance(
+    toolAvailability?.taskCreateWithheld === true,
+    toolAvailability?.delegateWithheld === true,
+    maximumRecommendations,
+    requireTaskRecommendations,
+  );
+}
+
+/**
+ * Resolve the executor system prompt from settings, falling back to the hardcoded constant.
+ *
+ * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): this takes settings only. Per-session tool
+ * withholding moved to `getWithheldFollowUpToolGuidance` for the request tail; a second parameter
+ * here would re-fork the cached prefix per card.
+ */
+export function getExecutorSystemPrompt(settings: Settings): string {
   /*
   FNXC:WorkflowRouting 2026-08-23-13:25:
   Tool availability is opt-out at this production boundary: omitted availability, an empty object,
@@ -325,8 +353,8 @@ export function getExecutorSystemPrompt(
   explicit withheld=true removes that tool's created-task workflow guidance.
   */
   const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts, {
-    taskCreateToolAvailable: toolAvailability?.taskCreateWithheld !== true,
-    delegateTaskToolAvailable: toolAvailability?.delegateWithheld !== true,
+    taskCreateToolAvailable: true,
+    delegateTaskToolAvailable: true,
   });
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
   /*
@@ -342,12 +370,6 @@ export function getExecutorSystemPrompt(
     basePrompt,
     isResearchToolSurfaceEnabled(settings) ? getResearchGuidanceForSurface("executor") : "",
     getCompletionRecommendationGuidance(maximumRecommendations, requireTaskRecommendations),
-    getWithheldTaskCreationGuidance(
-      toolAvailability?.taskCreateWithheld === true,
-      toolAvailability?.delegateWithheld === true,
-      maximumRecommendations,
-      requireTaskRecommendations,
-    ),
   ].filter((section) => section.trim());
   return sections.join("\n\n");
 }

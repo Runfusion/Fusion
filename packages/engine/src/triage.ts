@@ -252,11 +252,11 @@ import { isPlanningResetHoldClearingUpdate, PlanningResetFence } from "./plannin
 import { registerPlanningLivenessProbe } from "./agents/planning-liveness.js";
 import { isPlanningContinuationDispatchClaim } from "./agents/planning-execution-liveness.js";
 import {
-  resolveAgentInstructions,
-  resolveAgentInstructionsWithRatings,
+  resolveAgentInstructionParts,
+  resolveAgentInstructionPartsWithRatings,
   buildPluginPromptSection,
 } from "./agents/agent-instructions.js";
-import { buildPromptLayers, collapsePromptLayers } from "./execution/prompt-layers.js";
+import { buildPromptLayers, collapsePromptLayers, buildRequestVolatileContext, appendRequestVolatileContext, type RequestVolatileInput, type SystemPromptLayers } from "./execution/prompt-layers.js";
 import { createFallbackModelObserver } from "./auth/fallback-model-observer.js";
 import { planLog, formatError } from "./logger.js";
 // FNXC:PlanArtifactPersistence 2026-07-26-03:55: worktree-stranded plans are copied back into the project
@@ -607,6 +607,115 @@ reads markers from leading comments — an inline one attaches to the wrong node
 */
 function isOrphanedLegacyTriageRow(column: string, declaresTriage: boolean): boolean {
   return column === "triage" && !declaresTriage;
+}
+
+/**
+ * The planner's serialized system prompt, composed from config-time inputs only.
+ *
+ * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): hoisted out of the planning method so the byte-identity
+ * contract is testable against the production seam rather than a copy of the call. The signature is the
+ * guarantee: it accepts the role head, the planner's own instructions, plugin contributions and settings,
+ * and has no parameter for the per-card identity / duplicate-policy / dependency blocks or the live goal
+ * rows that used to sit here — those ride the planning request via `buildRequestVolatileContext`. Two
+ * consecutive planning requests therefore share a byte-identical system prompt and the provider prefix
+ * cache covers the role head plus the planner instructions again.
+ */
+export function buildTriagePromptLayers(input: {
+  basePrompt: string;
+  settings: Settings;
+  plannerInstructions: string;
+  pluginContributions?: string;
+}): SystemPromptLayers {
+  return buildPromptLayers({
+    basePrompt: input.basePrompt,
+    operatorLanguageDirective: fusionCore.buildOperatorLanguageDirective(input.settings),
+    agentInstructions: [
+      input.plannerInstructions,
+      isResearchToolSurfaceEnabled(input.settings)
+        ? getResearchGuidanceForSurface("triage")
+        : "",
+    ].filter((section) => section.trim()).join("\n\n"),
+    pluginContributions: input.pluginContributions,
+  });
+}
+
+/** Collapsed form of {@link buildTriagePromptLayers} for runtimes without structured caching. */
+export function buildTriageSystemPrompt(input: Parameters<typeof buildTriagePromptLayers>[0]): string {
+  return collapsePromptLayers(buildTriagePromptLayers(input));
+}
+
+/**
+ * Config-time planner instructions plus the runtime-mutable halves that must NOT join them.
+ *
+ * FNXC:PromptByteStability 2026-09-24-06:40 (RUFU-267 code-review remediation):
+ * The planner lane used to call the collapsed `resolveAgentInstructionsWithRatings` /
+ * `resolveAgentInstructions` helpers, so the agent's live memory bodies and its store-read rating summary
+ * landed inside `plannerInstructions` — and therefore inside the serialized planning system prompt — which
+ * diverged on every dispatch for any planner that ever wrote a memory note. This seam resolves the parts
+ * form once, hands back only the operator-config bytes as `plannerInstructions`, and keeps the memory and
+ * rating halves as a request-tail payload.
+ */
+export interface TriagePlannerInstructions {
+  plannerInstructions: string;
+  instructionVolatile: RequestVolatileInput;
+}
+
+/** Resolve one planner agent's instructions into the head-safe / tail-required split. */
+export async function resolveTriagePlannerInstructions(input: {
+  agent: Agent;
+  rootDir: string;
+  settings: Settings;
+  /** Ratings are fetched only for an explicitly assigned planner (matches the pre-split lane). */
+  includeRatings?: boolean;
+  agentStore?: import("@fusion/core").AgentStore;
+}): Promise<TriagePlannerInstructions> {
+  const memoryMode = resolveAgentMemoryInclusionMode({ agent: input.agent, globalSettings: input.settings }).mode;
+  const parts = input.includeRatings
+    ? await resolveAgentInstructionPartsWithRatings(input.agent, input.rootDir, input.agentStore, memoryMode)
+    : await resolveAgentInstructionParts(input.agent, input.rootDir, undefined, memoryMode);
+  return {
+    plannerInstructions: parts.configTime,
+    instructionVolatile: { memorySection: parts.memorySection, performanceFeedback: parts.performanceFeedback },
+  };
+}
+
+/**
+ * The planning dispatch's head and tail, composed by ONE production call.
+ *
+ * FNXC:PromptByteStability 2026-09-24-06:40 (RUFU-267 code-review remediation):
+ * Splitting a planner's instructions into a stable head and a volatile tail is only durable while the
+ * volatile halves have exactly one destination. Composing both halves here means a caller cannot adopt the
+ * head split and silently drop the memory / rating / goal / policy bytes, and the byte-identity acceptance
+ * test drives this seam instead of re-typing the call site (the previous test passed a literal
+ * `plannerInstructions` string, so it stayed green over the planner memory leak this remediation fixes).
+ */
+export function buildTriagePromptContext(input: {
+  basePrompt: string;
+  settings: Settings;
+  plannerInstructions: string;
+  instructionVolatile?: RequestVolatileInput;
+  pluginContributions?: string;
+  goalContext?: string;
+  identitySection?: string;
+  policySections?: string;
+}): { layers: SystemPromptLayers; systemPrompt: string; requestVolatileContext: string } {
+  const layers = buildTriagePromptLayers({
+    basePrompt: input.basePrompt,
+    settings: input.settings,
+    plannerInstructions: input.plannerInstructions,
+    pluginContributions: input.pluginContributions,
+  });
+  return {
+    layers,
+    systemPrompt: collapsePromptLayers(layers),
+    requestVolatileContext: buildRequestVolatileContext({
+      memorySection: input.instructionVolatile?.memorySection,
+      performanceFeedback: input.instructionVolatile?.performanceFeedback,
+      goalContext: input.goalContext,
+      identitySection: input.identitySection,
+      policySections: input.policySections,
+    }),
+  };
 }
 
 export type GhostBugExecFile = (file: string, args: string[], options: ExecFileOptions) => Promise<{ stdout: string; stderr: string }>;
@@ -3547,24 +3656,41 @@ export class TriageProcessor {
 
         let triageRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
 
-        // Resolve per-agent custom instructions for the triage role or assigned agent.
+        /*
+        FNXC:PromptByteStability 2026-09-24-06:40 (RUFU-267 code-review remediation):
+        This was the last lane still resolving planner instructions through the COLLAPSED helpers
+        (`resolveAgentInstructionsWithRatings` / `resolveAgentInstructions`), which return
+        `[configTime, memorySection, performanceFeedback].join("\n\n")`. The memory half is the agent's live
+        memory bodies (full mode) or the file-mutation-bearing heading index (index mode) and the rating half
+        is read from the store, so the string handed to `plannerInstructions` mutated on every planning
+        dispatch: any planner agent that ever appended a memory note kept a system prompt that differed
+        between consecutive same-role requests, i.e. the defect RUFU-267 removes stayed live for the planner.
+
+        The parts API splits the same bytes: only `configTime` (instructionsText / instructionsPath / soul —
+        operator-config-only writers) reaches `plannerInstructions`, while the memory and rating halves ride
+        the planning request tail with the rest of this dispatch's runtime state, so nothing is dropped.
+        */
         let triageInstructions = "";
+        let triageInstructionVolatile: RequestVolatileInput = {};
         if (assignedAgent) {
-          const memoryMode = resolveAgentMemoryInclusionMode({ agent: assignedAgent, globalSettings: settings }).mode;
-          triageInstructions = await resolveAgentInstructionsWithRatings(
-            assignedAgent,
-            this.rootDir,
-            this.options.agentStore,
-            memoryMode,
-          );
+          const resolved = await resolveTriagePlannerInstructions({
+            agent: assignedAgent,
+            rootDir: this.rootDir,
+            settings,
+            includeRatings: true,
+            agentStore: this.options.agentStore,
+          });
+          triageInstructions = resolved.plannerInstructions;
+          triageInstructionVolatile = resolved.instructionVolatile;
         } else if (this.options.agentStore) {
           try {
             const agents = await this.options.agentStore.listAgents({ role: "triage" });
             for (const agent of agents) {
               triageRuntimeHint ??= extractRuntimeHint(agent.runtimeConfig);
               if (agent.instructionsText || agent.instructionsPath || agent.soul || agent.memory) {
-                const memoryMode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
-                triageInstructions = await resolveAgentInstructions(agent, this.rootDir, undefined, memoryMode);
+                const resolved = await resolveTriagePlannerInstructions({ agent, rootDir: this.rootDir, settings });
+                triageInstructions = resolved.plannerInstructions;
+                triageInstructionVolatile = resolved.instructionVolatile;
                 break;
               }
             }
@@ -3717,22 +3843,33 @@ export class TriageProcessor {
           planningCwd,
           settings,
         });
-        const triageLayers = buildPromptLayers({
+        /*
+        FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+        The planner head used to carry three per-card blocks (assigned-agent identity, the board-derived
+        duplicate policy, and the dependency instruction re-read from the store for this card) plus live
+        goal rows. Those bytes differ between two consecutive planning requests of the same planner
+        role, so the serialized system prompt diverged right after the role head and the provider prefix
+        cache never covered the tail. The head keeps only role text, the planner's own instructions and
+        settings-rendered guidance; the per-card blocks ride the planning request that needs them.
+        The planner's own memory bodies and rating-summary block left the head in the same step (they were
+        arriving inside `plannerInstructions` via the collapsed resolver), so the tail renders them here too.
+        */
+        const {
+          layers: triageLayers,
+          systemPrompt: triageSystemPromptFinal,
+          requestVolatileContext: triageVolatileContext,
+        } = buildTriagePromptContext({
           basePrompt: renderedBasePrompt,
-          goalContext: triageGoalResolution.goalContext,
-          operatorLanguageDirective: fusionCore.buildOperatorLanguageDirective(settings),
-          agentInstructions: [
-            triageIdentitySection,
-            duplicatePolicyInstruction,
-            planningDependencyInstruction,
-            triageInstructions,
-            isResearchToolSurfaceEnabled(settings)
-              ? getResearchGuidanceForSurface("triage")
-              : "",
-          ].filter((section) => section.trim()).join("\n\n"),
+          settings,
+          plannerInstructions: triageInstructions,
+          instructionVolatile: triageInstructionVolatile,
           pluginContributions: triagePluginContributions,
+          goalContext: triageGoalResolution.goalContext,
+          identitySection: triageIdentitySection,
+          policySections: [duplicatePolicyInstruction, planningDependencyInstruction]
+            .filter((section) => section.trim())
+            .join("\n\n"),
         });
-        const triageSystemPromptFinal = collapsePromptLayers(triageLayers);
 
         /*
         FNXC:TriagePlanningRetry 2026-08-03-00:02:
@@ -4081,7 +4218,9 @@ export class TriageProcessor {
             const planningOutcome = await Promise.race([
               promptWithFallback(
                 session,
-                agentPrompt,
+                // FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267) — per-card planning context
+                // rides the request tail, not the byte-stable system prompt.
+                appendRequestVolatileContext(agentPrompt, triageVolatileContext),
                 imageContents.length > 0 ? { images: imageContents } : undefined,
               ).then(() => "completed" as const),
               planningTimeoutPromise,

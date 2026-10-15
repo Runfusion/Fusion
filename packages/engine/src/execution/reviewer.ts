@@ -41,10 +41,10 @@ import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agen
 import { reviewerLog } from "../logger.js";
 import { checkSessionError } from "../errors/usage-limit-detector.js";
 import {
-  resolveAgentInstructions,
+  resolveAgentInstructionParts,
   buildPluginPromptSection,
 } from "../agents/agent-instructions.js";
-import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
+import { buildPromptLayers, collapsePromptLayers, buildRequestVolatileContext, appendRequestVolatileContext } from "./prompt-layers.js";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { createMemoryGetTool, createMemorySearchTool, createTaskPromptWriteTool, createWebFetchTool } from "../agent-tools.js";
@@ -373,6 +373,13 @@ export async function reviewStep(
       : null;
 
   let reviewerInstructions = "";
+  /*
+   * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+   * Agent memory bodies change while reviews run, so they may no longer sit in the reviewer's
+   * serialized system prompt (they used to arrive inside `resolveAgentInstructions`' collapsed
+   * string). They are collected here and sent with the review request instead.
+   */
+  let reviewerMemoryBodies = "";
   if (options.agentStore && options.rootDir) {
     try {
       /*
@@ -390,7 +397,9 @@ export async function reviewStep(
       for (const agent of candidates) {
         if (agent.instructionsText || agent.instructionsPath) {
           const memoryMode = resolveAgentMemoryInclusionMode({ agent, globalSettings: effectiveSettings }).mode;
-          reviewerInstructions = await resolveAgentInstructions(agent, options.rootDir, undefined, memoryMode);
+          const reviewerInstructionParts = await resolveAgentInstructionParts(agent, options.rootDir, undefined, memoryMode);
+          reviewerInstructions = reviewerInstructionParts.configTime;
+          reviewerMemoryBodies = reviewerInstructionParts.memorySection;
           break;
         }
       }
@@ -404,16 +413,28 @@ export async function reviewStep(
   const workflowReviewerPrompt = options.store
     ? await resolveTaskSeamPrompt(options.store, taskId, "review").catch(() => undefined)
     : undefined;
-  // FN-6235: built-in reviewer policy is sourced from the resolved workflow IR review node;
-  // explicit reviewer role overrides still win, and the built-in default keeps this fail-soft.
-  const reviewerBasePrompt = userReviewerPrompt || workflowReviewerPrompt || resolveAgentPrompt("reviewer");
+  /*
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+  FN-6235 sourced the built-in reviewer policy from the selected workflow's IR review node, which made
+  that per-card text the reviewer lane's system-prompt head: two consecutive review requests of the
+  same reviewer role shared nothing past the model marker, because each card's workflow contributed a
+  different head. The head is now the role's own prompt again — explicit operator override, else the
+  built-in default — and the IR policy travels in the review request under a heading that keeps its
+  FN-6235 precedence over the built-in default. A user override still suppresses the IR text exactly
+  as before, and an absent IR keeps the built-in default head fail-soft.
+  */
+  const reviewerBasePrompt = userReviewerPrompt || resolveAgentPrompt("reviewer");
+  const reviewerTaskPolicy = !userReviewerPrompt && workflowReviewerPrompt?.trim()
+    ? `## Workflow Review Policy (this task)\n\nThese requirements come from the selected workflow's review node for this task. Where they conflict with the reviewer role policy above, they take precedence for this review.\n\n${workflowReviewerPrompt}`
+    : "";
   /*
   FNXC:MemoryPreSteering 2026-08-11-11:30:
   FN-8934 requires project-memory guidance to use the routed reviewer's mode as well as
   its instruction section, so an explicit off override suppresses every memory nudge.
   */
   const reviewerMemoryMode = resolveAgentMemoryInclusionMode({ agent: memoryAgent, globalSettings: effectiveSettings }).mode;
-  const memorySection = options.rootDir && effectiveSettings?.memoryEnabled !== false && reviewerMemoryMode !== "off"
+  // Static guidance on how to use memory (no memory bodies) — config-time, so it stays in the head.
+  const memoryInstructions = options.rootDir && effectiveSettings?.memoryEnabled !== false && reviewerMemoryMode !== "off"
     ? buildReviewerMemoryInstructions(options.rootDir, effectiveSettings, undefined, reviewerMemoryMode)
     : "";
 
@@ -428,11 +449,15 @@ export async function reviewStep(
   const layers = buildPromptLayers({
     basePrompt: reviewerBasePrompt,
     agentInstructions: reviewerInstructions,
-    memorySection,
+    memoryInstructions,
     pluginContributions: reviewerPluginContributions,
     operatorLanguageDirective: buildOperatorLanguageDirective(liveSettings),
   });
   const reviewerSystemPromptFinal = collapsePromptLayers(layers);
+  const reviewerVolatileContext = buildRequestVolatileContext({
+    memorySection: reviewerMemoryBodies,
+    taskReviewPolicy: reviewerTaskPolicy,
+  });
 
   let skillContext = undefined;
   if (options.agentStore && options.rootDir) {
@@ -646,7 +671,10 @@ export async function reviewStep(
     session: import("@earendil-works/pi-coding-agent").AgentSession,
     prompt: string,
   ): Promise<void> => {
-    await promptWithFallback(session, prompt);
+    // FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): this task's review policy and the routed
+    // reviewer's memory bodies ride the review request so the serialized system prompt stays
+    // byte-identical across reviews by the same reviewer role; every attempt and re-run shares this seam.
+    await promptWithFallback(session, appendRequestVolatileContext(prompt, reviewerVolatileContext));
     checkSessionError(session);
   };
 

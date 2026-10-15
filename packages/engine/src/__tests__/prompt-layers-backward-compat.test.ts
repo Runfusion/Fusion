@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
-import { buildPromptLayers, collapsePromptLayers } from "../execution/prompt-layers.js";
+import { buildPromptLayers, collapsePromptLayers, withRequestVolatileContext, SESSION_CONTEXT_HEADING } from "../execution/prompt-layers.js";
 
 /**
  * Backward compatibility tests: verify that the new layered prompt approach
@@ -83,37 +83,56 @@ describe("prompt layers backward compatibility", () => {
   });
 
   describe("reviewer assembly pattern", () => {
-    it("preserves memory-before-instructions ordering in dynamic layer", () => {
+    /*
+    FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+    This case used to assert that the reviewer's retrieved MEMORY.md BODY sat in the dynamic layer,
+    ahead of the agent instructions. That contract is retired: a retrieved memory body changes whenever
+    any agent writes memory, so two consecutive reviews of one task diverged at that block and the
+    provider prefix cache covered only the role head. `memorySection` is no longer a `buildPromptLayers`
+    input at all (the blocking guard refuses it). The rewritten case pins what replaced it: the static
+    memory-USE guidance keeps its memory → instructions → plugins order inside the serialized prompt,
+    while the retrieved body rides the request tail and never enters the layers.
+    */
+    it("keeps memory guidance ordered ahead of instructions and the retrieved memory body outside the prompt layers", () => {
       const basePrompt = "You are an independent code and plan reviewer.";
       const memoryInstructions = "## Memory\n\nUse fn_memory_search.";
+      const memoryBody = "## Memory\n\n- Reviewed FN-1201 on 2026-09-20.";
       const agentInstructions = "Focus on security.";
       const plugins = "## Plugin: lint\n\nCheck eslint.";
 
-      // The old reviewer pattern was:
-      //   buildSystemPromptWithInstructions(base + memory, instructions) + plugins
-      // which produced: base + memory → instructions → plugins
-      //
-      // The new pattern moves memory from stable to dynamic (so stable prefix
-      // is byte-identical even if memory changes mid-task), but preserves the
-      // relative ordering: memory → instructions → plugins in the dynamic layer.
       const layers = buildPromptLayers({
         basePrompt,
         agentInstructions,
-        memorySection: memoryInstructions,
+        memoryInstructions,
         pluginContributions: plugins,
       });
       const result = collapsePromptLayers(layers);
 
-      // Base prompt is the stable layer (no memory)
+      // Base prompt is the stable layer (no memory of any kind)
       expect(layers.stable).toBe(basePrompt);
 
-      // Dynamic layer preserves: memory → instructions → plugins ordering
+      // Serialized prompt preserves: memory guidance → instructions → plugins ordering
       const memoryIdx = result.indexOf("## Memory");
       const instructionsIdx = result.indexOf("## Custom Instructions");
       const pluginsIdx = result.indexOf("## Plugin:");
       expect(memoryIdx).toBeGreaterThan(0);
       expect(instructionsIdx).toBeGreaterThan(memoryIdx);
       expect(pluginsIdx).toBeGreaterThan(instructionsIdx);
+
+      // The volatile memory body is never part of the serialized system prompt.
+      expect(result).not.toContain("FN-1201");
+
+      // It rides the request tail instead, so it still reaches the model per request.
+      const tail = withRequestVolatileContext("Review task FN-1202.", { memorySection: memoryBody });
+      expect(tail.startsWith(result)).toBe(false);
+      expect(tail).toContain("FN-1201");
+      expect(tail).toContain(SESSION_CONTEXT_HEADING);
+
+      // And the serialized head is byte-stable across memory-body changes.
+      const otherBody = "## Memory\n\n- Reviewed FN-1203 on 2026-09-21.";
+      expect(collapsePromptLayers(layers)).toBe(result);
+      expect(withRequestVolatileContext("Review task FN-1202.", { memorySection: otherBody }))
+        .not.toBe(tail);
     });
   });
 

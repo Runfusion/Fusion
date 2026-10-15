@@ -44,6 +44,8 @@ import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { AgentLogger } from "../agents/agent-logger.js";
 import type { SessionBoundaryDescriptor } from "../agents/agent-runtime.js";
 import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
+import { buildRequestVolatileContext, appendRequestVolatileContext } from "../execution/prompt-layers.js";
+import { workflowStepTaskIdentityLine } from "../execution/step-session-executor.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -214,6 +216,13 @@ export type ExecuteWorkflowStepDeps = {
   getAuthoritativeAssignedAgent: AnyFn;
   readTaskArtifact: AnyFn;
   resolveInstructionsForRole: AnyFn;
+  /**
+   * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): parts-form sibling of
+   * `resolveInstructionsForRole`. A workflow-step session rebuilds its system prompt for every step of
+   * every card, so it needs the config-time half in the prompt and the agent's memory bodies / rating
+   * summary on the step request instead of inside the serialized head.
+   */
+  resolveInstructionPartsForRole: AnyFn;
   resolveMcpServers: AnyFn;
   setActiveWorkflowStepSession: AnyFn;
 };
@@ -931,7 +940,14 @@ CRITICAL SCOPING RULES — read before doing anything else:
       attempt: Attempt,
     ): Promise<WorkflowStepOutcome> => {
       if (graphSignal?.aborted) return graphAbortedOutcome();
-      const stepInstructions = await deps.resolveInstructionsForRole("executor", settings);
+      /*
+      FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+      Workflow step sessions (review gates, completion-summary nodes) rebuild this prompt for every step
+      of every card, so the agent's memory bodies and rating summary inside it reset the provider prefix
+      cache each time. Only the agent's config-time instructions and the language directive stay in the
+      step's system prompt; the memory and rating halves ride the step request instead.
+      */
+      const stepInstructionParts = await deps.resolveInstructionPartsForRole("executor", settings);
       /*
       FNXC:OperatorLanguage 2026-09-16-13:05:
       RUFU PR review: workflow-step sessions (review gates, completion-summary nodes) author the
@@ -941,8 +957,19 @@ CRITICAL SCOPING RULES — read before doing anything else:
       const stepOperatorLanguageDirective = buildOperatorLanguageDirective(settings);
       const stepSystemPrompt = buildSystemPromptWithInstructions(
         systemPrompt,
-        stepOperatorLanguageDirective ? `${stepInstructions}\n\n${stepOperatorLanguageDirective}` : stepInstructions,
+        [stepInstructionParts.configTime, stepOperatorLanguageDirective].filter((section) => section.trim()).join("\n\n"),
       );
+      /*
+      FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+      The step session's system prompt is a constant now, so the card identity sentence it used to open
+      with rides this request's tail together with the other per-card state (memory bodies, rating
+      summary) that used to fork the serialized prompt between two cards.
+      */
+      const stepVolatileContext = buildRequestVolatileContext({
+        identitySection: workflowStepTaskIdentityLine(task.id),
+        memorySection: stepInstructionParts.memorySection,
+        performanceFeedback: stepInstructionParts.performanceFeedback,
+      });
 
       // Build skill selection context for workflow step session
       const skillContext = await buildSessionSkillContext({
@@ -1268,8 +1295,11 @@ CRITICAL SCOPING RULES — read before doing anything else:
       try {
         const promptPromise = promptWithFallback(
           session,
-          `Execute the workflow step "${workflowStep.name}" for task ${task.id}.\n\n` +
-          `Review the work done in this worktree and evaluate it against the criteria in your instructions.`,
+          appendRequestVolatileContext(
+            `Execute the workflow step "${workflowStep.name}" for task ${task.id}.\n\n` +
+            `Review the work done in this worktree and evaluate it against the criteria in your instructions.`,
+            stepVolatileContext,
+          ),
         );
 
         const outcome = await Promise.race([

@@ -200,7 +200,13 @@ Free validateCompletionRecommendations export (FN-8850) — tests import from ex
 */
 export { validateCompletionRecommendations } from "./validate-completion-recommendations.js";
 export { WORKFLOW_STEP_NOTES_REPAIR_TIMEOUT_MS, WORKFLOW_STEP_VERDICT_REPAIR_TIMEOUT_MS } from "./execute-workflow-step.js";
-export { getExecutorSystemPrompt } from "./system-prompt.js";
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+Withheld follow-up-tool guidance is now a request-tail producer (the serialized executor prompt takes
+settings only), so the helper is part of the executor's public surface — lanes and tests compose the
+prompt the model actually receives as head + tail.
+*/
+export { getExecutorSystemPrompt, getWithheldFollowUpToolGuidance } from "./system-prompt.js";
 export {
   LEGACY_TERMINAL_COLUMNS,
   resolveTerminalColumnsFor,

@@ -45,6 +45,14 @@ describe("memory pre-steering injection inventory", () => {
     expect(source("packages/engine/src/agent-heartbeat.ts")).toContain('buildMemoryPreSteeringNudge("index")');
     expect(source("packages/engine/src/triage.ts")).toContain('buildTriageMemoryInstructions("", settings, undefined, memoryMode)');
     expect(source("packages/engine/src/execution/reviewer.ts")).toContain('buildReviewerMemoryInstructions(options.rootDir, effectiveSettings, undefined, reviewerMemoryMode)');
-    expect(source("packages/engine/src/merger.ts")).toContain('resolveAgentInstructions(agent, rootDir, undefined, memoryMode)');
+    /*
+    FNXC:PromptByteStability 2026-09-24-06:25 (RUFU-267):
+    The merger resolved instructions through the COLLAPSED `resolveAgentInstructions(...)`, which returned the
+    agent's memory bodies and rating summary inside the serialized merge system prompt. RUFU-267 moved that
+    lane to the parts form, so the mode-aware threading this inventory pins is now the parts resolver: the
+    mode argument still reaches memory resolution, and `mergerParts.memorySection` rides the merge request
+    tail via `buildRequestVolatileContext` instead of the prompt head.
+    */
+    expect(source("packages/engine/src/merger.ts")).toContain('resolveAgentInstructionParts(agent, rootDir, undefined, memoryMode)');
   });
 });

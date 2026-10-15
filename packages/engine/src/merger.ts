@@ -321,7 +321,12 @@ import { isContextLimitError } from "./errors/context-limit-detector.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import { cancellableSleep } from "./errors/retry-with-backoff.js";
 import { TRANSIENT_ERROR_PATTERNS } from "./errors/transient-error-patterns.js";
-import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agents/agent-instructions.js";
+import { resolveAgentInstructionParts, buildSystemPromptWithInstructions } from "./agents/agent-instructions.js";
+/*
+FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): the merge request carries the merger principal's
+runtime-mutable blocks (memory bodies, rating summary) that used to sit in the serialized system prompt.
+*/
+import { buildRequestVolatileContext, appendRequestVolatileContext } from "./execution/prompt-layers.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
@@ -11104,6 +11109,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
 
   // Resolve per-agent custom instructions for the merger role
   let mergerInstructions = "";
+  let mergerVolatileContext = "";
   if (options.agentStore) {
     try {
       const agents = await options.agentStore.listAgents({ role: "merger" });
@@ -11115,7 +11121,19 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
           Passing the resolved mode prevents off/index settings from silently receiving full-memory steering.
           */
           const memoryMode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
-          mergerInstructions = await resolveAgentInstructions(agent, rootDir, undefined, memoryMode);
+          /*
+          FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+          The collapsed resolver mixes the agent's memory bodies and rating summary (both mutate between
+          runs) into the same string the serialized system prompt carries, so every merge session
+          serialized a different head. The parts API keeps the config-time instructions in the prompt and
+          hands the mutating blocks to `mergerVolatileContext`, which rides the merge request instead.
+          */
+          const mergerParts = await resolveAgentInstructionParts(agent, rootDir, undefined, memoryMode);
+          mergerInstructions = mergerParts.configTime;
+          mergerVolatileContext = buildRequestVolatileContext({
+            memorySection: mergerParts.memorySection,
+            performanceFeedback: mergerParts.performanceFeedback,
+          });
           break;
         }
       }
@@ -11261,7 +11279,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     try {
       await withRateLimitRetry(async () => {
         throwIfAborted(options.signal, taskId);
-        await promptWithFallback(session, prompt);
+        await promptWithFallback(session, appendRequestVolatileContext(prompt, mergerVolatileContext));
         checkSessionError(session);
       }, {
         onRetry: (attempt, delayMs, error) => {
@@ -11303,7 +11321,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
         try {
           await withRateLimitRetry(async () => {
             throwIfAborted(options.signal, taskId);
-            await promptWithFallback(session, truncatedPrompt);
+            await promptWithFallback(session, appendRequestVolatileContext(truncatedPrompt, mergerVolatileContext));
             checkSessionError(session);
           }, {
             onRetry: (attempt, delayMs, error) => {

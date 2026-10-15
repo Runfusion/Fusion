@@ -10,7 +10,8 @@ A refactor rebased off a stale base does not conflict — it deletes. These asse
 producer cannot be removed while the validator that consumes it stays in place.
 */
 import { describe, expect, it } from "vitest";
-import { getExecutorSystemPrompt } from "../executor/system-prompt.js";
+import { withRequestVolatileContext } from "../execution/prompt-layers.js";
+import { getExecutorSystemPrompt, getWithheldFollowUpToolGuidance } from "../executor/system-prompt.js";
 
 const prompt = (settings: Record<string, unknown> = {}) => getExecutorSystemPrompt(settings as never);
 
@@ -60,18 +61,32 @@ describe("executor prompt: completion recommendations", () => {
     expect(text).not.toContain("MUST explicitly evaluate");
   });
 
+  /*
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+  Withheld follow-up-tool guidance is per-session board state, so it no longer serializes into the
+  executor's system prompt — it is appended to that session's request instead. The wiring this case
+  protects (a custom role prompt still receives the required-recommendation producer text, and the
+  withheld-tool branch keeps the completion-evaluation sentence) is now asserted on the composed prompt
+  the model receives: head + request tail.
+  */
   it("appends required guidance consistently to custom and withheld-tool prompts", () => {
-    const text = getExecutorSystemPrompt({
+    const settings = {
       maxRecommendationsPerTask: 2,
       requireTaskRecommendations: true,
       agentPrompts: {
         templates: [{ id: "custom-executor", name: "Custom", role: "executor", prompt: "Custom executor instructions.", builtIn: false }],
         roleAssignments: { executor: "custom-executor" },
       },
-    } as never, { taskCreateWithheld: true, delegateWithheld: true });
+    } as never;
 
-    expect(text).toContain("Custom executor instructions.");
-    expect(text).toContain("MUST explicitly evaluate");
+    const head = getExecutorSystemPrompt(settings);
+    const withheld = getWithheldFollowUpToolGuidance(settings, { taskCreateWithheld: true, delegateWithheld: true });
+    const text = withRequestVolatileContext(head, { policySections: withheld });
+
+    expect(head).toContain("Custom executor instructions.");
+    expect(head).toContain("MUST explicitly evaluate");
+    // The withheld-tool branch still carries the completion-evaluation sentence the validator expects.
+    expect(withheld).toContain("required completion evaluation");
     expect(text).toContain("required completion evaluation");
     expect(text).not.toContain("Recommendation capture is disabled");
   });

@@ -14,6 +14,7 @@ import {
   type Settings,
 } from "@fusion/core";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
+import { buildRequestVolatileContext } from "../execution/prompt-layers.js";
 import { createLogger } from "../logger.js";
 import { readAgentMemoryWorkspaceLongTerm } from "../agent-tools.js";
 import { buildMemoryIndex, buildMemoryHeadingIndex, clampUtf8 } from "./agent-memory-index.js";
@@ -336,21 +337,43 @@ function formatPerformanceFeedbackSection(ratingSummary: AgentRatingSummary): st
 }
 
 /**
- * Resolve custom instructions for an agent by combining inline text and/or
- * file-based instructions.
+ * An agent's prompt contributions split by volatility, so a lane can keep the config-time half in
+ * its serialized system prompt and send the runtime-mutable half with the request.
  *
- * @param agent - The agent record (may contain instructionsText and instructionsPath)
- * @param rootDir - Project root directory for resolving relative paths
- * @returns Concatenated instructions string, or empty string if none
+ * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+ * `resolveAgentInstructions` used to return one string that mixed an operator-editable instruction
+ * file with memory bodies and the rating-summary block, and every lane concatenated that string into
+ * its system prompt. The memory and rating halves mutate while the agent config does not, so the
+ * whole serialized prompt diverged on every request. The parts API keeps the same bytes and the same
+ * relative order — it only names which half is which, which is what a lane needs to satisfy the
+ * byte-identity requirement without dropping content.
  */
-export async function resolveAgentInstructions(
+export interface AgentInstructionParts {
+  /** Instructions text/file plus soul — changes only when the agent configuration is edited. */
+  configTime: string;
+  /** Formatted memory section (bodies or bounded heading index) — volatile, request tail. */
+  memorySection: string;
+  /** Rating-summary performance-feedback block — volatile, request tail. */
+  performanceFeedback: string;
+}
+
+/**
+ * Resolve an agent's prompt contributions, partitioned by volatility.
+ *
+ * @param agent - The agent record (may contain instructionsText, instructionsPath and soul)
+ * @param rootDir - Project root directory for resolving relative paths
+ * @param ratingSummary - Optional rating summary for the performance-feedback block
+ * @param inclusionMode - Memory inclusion mode resolved from settings/agent overrides
+ * @param memoryCapChars - Optional per-section memory budget; oversized memory becomes an index
+ */
+export async function resolveAgentInstructionParts(
   agent: Agent | null | undefined,
   rootDir: string,
   ratingSummary?: AgentRatingSummary,
   inclusionMode: AgentMemoryInclusionMode = "full",
   memoryCapChars?: number,
-): Promise<string> {
-  if (!agent) return "";
+): Promise<AgentInstructionParts> {
+  if (!agent) return { configTime: "", memorySection: "", performanceFeedback: "" };
 
   const parts: string[] = [];
 
@@ -404,6 +427,8 @@ export async function resolveAgentInstructions(
     }
   }
 
+  const configTime = parts.join("\n\n");
+
   const workspaceMemory = await readAgentMemoryWorkspaceLongTerm(rootDir, agent.id);
   const memorySection = await formatMemorySection(
     agent.memory ?? "",
@@ -413,15 +438,38 @@ export async function resolveAgentInstructions(
     inclusionMode,
     memoryCapChars,
   );
-  if (memorySection) {
-    parts.push(memorySection);
-  }
 
-  if (ratingSummary && ratingSummary.totalRatings > 0) {
-    parts.push(formatPerformanceFeedbackSection(ratingSummary));
-  }
+  const performanceFeedback =
+    ratingSummary && ratingSummary.totalRatings > 0
+      ? formatPerformanceFeedbackSection(ratingSummary)
+      : "";
 
-  return parts.join("\n\n");
+  return { configTime, memorySection, performanceFeedback };
+}
+
+/**
+ * Resolve custom instructions for an agent by combining inline text and/or
+ * file-based instructions.
+ *
+ * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): this collapsed form still mixes config-time
+ * and runtime-mutable halves, so it must NOT be handed to a system-prompt slot — lanes that build a
+ * serialized system prompt use {@link resolveAgentInstructionParts} and route `memorySection` /
+ * `performanceFeedback` through `buildRequestVolatileContext()`. It stays collapsed for the callers
+ * that never touch a system prompt (and is byte-identical to the pre-split implementation).
+ *
+ * @param agent - The agent record (may contain instructionsText and instructionsPath)
+ * @param rootDir - Project root directory for resolving relative paths
+ * @returns Concatenated instructions string, or empty string if none
+ */
+export async function resolveAgentInstructions(
+  agent: Agent | null | undefined,
+  rootDir: string,
+  ratingSummary?: AgentRatingSummary,
+  inclusionMode: AgentMemoryInclusionMode = "full",
+  memoryCapChars?: number,
+): Promise<string> {
+  const parts = await resolveAgentInstructionParts(agent, rootDir, ratingSummary, inclusionMode, memoryCapChars);
+  return [parts.configTime, parts.memorySection, parts.performanceFeedback].filter((part) => part?.trim()).join("\n\n");
 }
 
 /**
@@ -439,21 +487,59 @@ export async function resolveAgentInstructionsWithRatings(
     return "";
   }
 
-  const baseInstructions = await resolveAgentInstructions(agent, rootDir, undefined, inclusionMode, memoryCapChars);
+  const parts = await resolveAgentInstructionPartsWithRatings(agent, rootDir, agentStore, inclusionMode, memoryCapChars);
+  return [parts.configTime, parts.memorySection, parts.performanceFeedback].filter((part) => part?.trim()).join("\n\n");
+}
+
+/**
+ * Volatility-partitioned form of {@link resolveAgentInstructionsWithRatings}: the rating summary is
+ * fetched at runtime, so its block arrives separately from the agent's config-time instructions.
+ */
+export async function resolveAgentInstructionPartsWithRatings(
+  agent: Agent | null | undefined,
+  rootDir: string,
+  agentStore: AgentStore | undefined,
+  inclusionMode: AgentMemoryInclusionMode = "full",
+  memoryCapChars?: number,
+): Promise<AgentInstructionParts> {
+  if (!agent) {
+    return { configTime: "", memorySection: "", performanceFeedback: "" };
+  }
+
+  const baseParts = await resolveAgentInstructionParts(agent, rootDir, undefined, inclusionMode, memoryCapChars);
 
   if (!agentStore || !agent.id) {
-    return baseInstructions;
+    return baseParts;
   }
 
   try {
     const ratingSummary = await agentStore.getRatingSummary(agent.id);
-    return await resolveAgentInstructions(agent, rootDir, ratingSummary, inclusionMode, memoryCapChars);
+    return await resolveAgentInstructionParts(agent, rootDir, ratingSummary, inclusionMode, memoryCapChars);
   } catch {
-    return baseInstructions;
+    return baseParts;
   }
 }
 
-export async function buildAgentChatPrompt(options: {
+/**
+ * Chat prompt split into the byte-stable system-prompt half and the request-tail half.
+ *
+ * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+ * The chat lane rebuilt its system prompt before every turn and put the project memory body (or its
+ * heading index) plus the per-turn `## Memory Recall` cue inside it, so consecutive turns of the same
+ * chat agent shared no stable prefix at all. `systemPrompt` here holds only the chat base prompt,
+ * the agent identity, the operator-language directive and the agent's config-time instructions; the
+ * memory bodies, the rating summary, the project memory and the per-turn recall cue are returned as
+ * `requestContext` for the caller to append to that turn's user message. Byte-identity per
+ * (chat agent, configuration) is what makes the provider prefix cache cover the head again.
+ */
+export interface AgentChatPromptParts {
+  /** Byte-stable chat system prompt — safe to reuse across turns and sessions of the same agent. */
+  systemPrompt: string;
+  /** Runtime-mutable context for this turn's request tail ("" when the turn has none). */
+  requestContext: string;
+}
+
+export async function buildAgentChatPromptParts(options: {
   agent: Agent;
   rootDir: string;
   agentStore?: AgentStore;
@@ -490,7 +576,7 @@ export async function buildAgentChatPrompt(options: {
   focus?: string;
   /** Project settings for the recall enable/topK/memoryEnabled gates. */
   settings?: Partial<Settings>;
-}): Promise<string> {
+}): Promise<AgentChatPromptParts> {
   const { agent, rootDir, agentStore, basePrompt, includeProjectMemory = false, inclusionMode = "full" } = options;
 
   const titleSuffix = agent.title?.trim() ? `, ${agent.title.trim()}` : "";
@@ -512,9 +598,14 @@ export async function buildAgentChatPrompt(options: {
     instructionParts.push(operatorLanguageDirective);
   }
 
-  const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, agentStore, inclusionMode, options.memoryCapChars);
-  if (resolvedInstructions.trim()) {
-    instructionParts.push(resolvedInstructions);
+  const volatileParts: string[] = [];
+
+  const resolvedParts = await resolveAgentInstructionPartsWithRatings(agent, rootDir, agentStore, inclusionMode, options.memoryCapChars);
+  if (resolvedParts.configTime.trim()) {
+    instructionParts.push(resolvedParts.configTime);
+  }
+  if (resolvedParts.memorySection.trim()) {
+    volatileParts.push(resolvedParts.memorySection);
   }
 
   if (includeProjectMemory && inclusionMode !== "off") {
@@ -532,7 +623,7 @@ export async function buildAgentChatPrompt(options: {
         a budget (engine lanes) the legacy full injection is preserved.
         */
         if (options.memoryCapChars != null && projectMemory.length > options.memoryCapChars) {
-          instructionParts.push(
+          volatileParts.push(
             `## Project Memory\n\n` +
               buildMemoryHeadingIndex({
                 sectionHeader: "## Project Memory Index (use fn_memory_search / fn_memory_get to read)",
@@ -543,7 +634,7 @@ export async function buildAgentChatPrompt(options: {
               `\n_Project memory exceeds this session's ${options.memoryCapChars}-char context budget; the index above lists what is available. Read the relevant entries with fn_memory_search / fn_memory_get before answering from memory._`,
           );
         } else {
-          instructionParts.push(`## Project Memory\n\n${projectMemory}`);
+          volatileParts.push(`## Project Memory\n\n${projectMemory}`);
         }
       }
     } catch (error: unknown) {
@@ -554,15 +645,23 @@ export async function buildAgentChatPrompt(options: {
     }
   }
 
+  let recallSection = "";
+
   /*
   FNXC:PerTurnMemoryRecall 2026-08-19-01:05:
   RUFU-120 (B.2 LCM phase 2): per-turn proactive memory recall on the chat path. The
-  dashboard chat manager rebuilds this system prompt before EVERY turn's LLM call, so a
+  dashboard chat manager evaluates this before EVERY turn, so a
   bounded, keyword-normalized recall for the current topic (2-3 terms, top-K=3, client-side
   score filter, session-scoped dedup, <=800-char cue under the pre-steering marker) keeps
   the agent focused across long chats — the once-per-session pre-steering nudge alone left
   later turns blind to recent memory. Recall is strictly additive: any failure here (or a
   silent-skip result) degrades to the previous prompt, never to a broken turn.
+
+  FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+  This cue is derived from the current user message, so it changed on every turn and previously
+  rewrote the serialized system prompt every time — the chat lane's measured prefix-cache miss.
+  It is returned as `requestContext` for the caller to append to that turn's user message, which
+  keeps the recall behaviour identical while the system prompt stays byte-identical turn to turn.
   */
   if (options.topic?.trim() && inclusionMode !== "off") {
     try {
@@ -576,7 +675,7 @@ export async function buildAgentChatPrompt(options: {
         focus: options.focus,
       });
       if (recallCue) {
-        instructionParts.push(`## Memory Recall\n\n${recallCue}`);
+        recallSection = `## Memory Recall\n\n${recallCue}`;
       }
     } catch (error: unknown) {
       // Additive recall must never break prompt assembly — log and continue without the cue.
@@ -585,7 +684,42 @@ export async function buildAgentChatPrompt(options: {
     }
   }
 
-  return buildSystemPromptWithInstructions(basePrompt, instructionParts.join("\n\n"));
+  return {
+    systemPrompt: buildSystemPromptWithInstructions(basePrompt, instructionParts.join("\n\n")),
+    requestContext: buildRequestVolatileContext({
+      memorySection: volatileParts.join("\n\n"),
+      performanceFeedback: resolvedParts.performanceFeedback,
+      memoryRecall: recallSection,
+    }),
+  };
+}
+
+/**
+ * Build the chat prompt for an agent.
+ *
+ * FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): deprecated collapsed form — it returns the
+ * stable head and the per-turn volatile context as one string, which is only correct for callers that
+ * send the whole result as the *request* content. Chat/dashboard lanes must call
+ * {@link buildAgentChatPromptParts} so the volatile half stays out of the serialized system prompt;
+ * the static prompt-volatility guard refuses this symbol in a system-prompt slot.
+ */
+export async function buildAgentChatPrompt(options: {
+  agent: Agent;
+  rootDir: string;
+  agentStore?: AgentStore;
+  basePrompt: string;
+  includeProjectMemory?: boolean;
+  inclusionMode?: AgentMemoryInclusionMode;
+  topic?: string;
+  memoryCapChars?: number;
+  sessionId?: string;
+  focus?: string;
+  settings?: Partial<Settings>;
+}): Promise<string> {
+  const parts = await buildAgentChatPromptParts(options);
+  return parts.requestContext
+    ? `${parts.systemPrompt}\n\n${parts.requestContext}`
+    : parts.systemPrompt;
 }
 
 /**

@@ -102,6 +102,8 @@ export { resumeTaskForAgent as resumeTaskForAgentImpl } from "./resume-task-for-
 export { buildActionGateContext as buildActionGateContextImpl } from "./build-action-gate-context.js";
 export { buildPermanentAgentGatingContext as buildPermanentAgentGatingContextImpl } from "./build-permanent-agent-gating-context.js";
 export { resolveInstructionsForRole as resolveInstructionsForRoleImpl } from "./resolve-instructions-for-role.js";
+/* FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267): parts-form sibling — cached instructions vs the per-request memory/rating halves. */
+export { resolveInstructionPartsForRole as resolveInstructionPartsForRoleImpl } from "./resolve-instructions-for-role.js";
 export {
   signalTaskComplete as signalTaskCompleteImpl,
   triggerPostTaskReflectionCapture as triggerPostTaskReflectionCaptureImpl,

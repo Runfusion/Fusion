@@ -71,13 +71,13 @@ import { isTaskPlanningOrExecutionLive } from "./agents/planning-execution-liven
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { emitApprovalMail } from "./agents/approval-mail.js";
 import {
-  resolveAgentInstructionsWithRatings,
+  resolveAgentInstructionPartsWithRatings,
   buildPluginPromptSection,
   resolveAgentHeartbeatProcedure,
   ensureDefaultHeartbeatProcedureFile,
 } from "./agents/agent-instructions.js";
 import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, selectHeartbeatProcedure } from "./agents/heartbeat-procedure-resolver.js";
-import { buildPromptLayers, collapsePromptLayers } from "./execution/prompt-layers.js";
+import { buildPromptLayers, collapsePromptLayers, buildRequestVolatileContext, appendRequestVolatileContext, type RequestVolatileInput } from "./execution/prompt-layers.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import type { EventEmitter } from "node:events";
 import { createLogger, heartbeatLog, formatError } from "./logger.js";
@@ -3689,10 +3689,27 @@ export class HeartbeatMonitor {
         let resolvedInstructionsText = "";
         let resolvedInstructionsForIdentity: SnapshotFieldState = { status: "unset" };
         let workspaceMemoryForIdentity: SnapshotFieldState = { status: "unset" };
+        /*
+        FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+        The heartbeat head previously received one string that mixed the agent's instruction file
+        (config-time) with its memory bodies and the rating-summary block (both runtime-mutable), so
+        every heartbeat tick diverged the serialized system prompt and missed the provider prefix cache.
+        The parts API splits the same bytes: only `configTime` stays in the system prompt and the memory
+        / feedback halves ride the request tail with this run's prompt.
+        */
+        let heartbeatVolatile: RequestVolatileInput = {};
+        let heartbeatConfigInstructions = "";
         try {
-          const resolvedInstructions = await resolveAgentInstructionsWithRatings(agent, rootDir, this.store, resolvedMemoryMode.mode);
-          resolvedInstructionsText = resolvedInstructions;
-          const trimmed = resolvedInstructions.trim();
+          const resolvedParts = await resolveAgentInstructionPartsWithRatings(agent, rootDir, this.store, resolvedMemoryMode.mode);
+          heartbeatConfigInstructions = resolvedParts.configTime;
+          resolvedInstructionsText = [resolvedParts.configTime, resolvedParts.memorySection, resolvedParts.performanceFeedback]
+            .filter((part) => part.trim())
+            .join("\n\n");
+          heartbeatVolatile = {
+            memorySection: resolvedParts.memorySection,
+            performanceFeedback: resolvedParts.performanceFeedback,
+          };
+          const trimmed = resolvedInstructionsText.trim();
           resolvedInstructionsForIdentity = trimmed
             ? { status: "loaded", value: trimmed }
             : { status: "empty" };
@@ -3758,14 +3775,27 @@ export class HeartbeatMonitor {
         });
         const heartbeatGoalContext = heartbeatGoalResolution.goalContext;
 
+        /*
+        FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+        Goal context is resolved from live goal rows and the self-improvement prompt embeds the
+        "last self-improvement was at …" clock reading, so neither may enter the serialized system
+        prompt any more. They join the run's request tail together with the memory and rating blocks
+        split out above; the system prompt keeps only role text, memory *instructions*, config-time
+        agent instructions and plugin contributions.
+        */
         const heartbeatLayers = buildPromptLayers({
           basePrompt: baseHeartbeatSystemPrompt,
-          goalContext: heartbeatGoalContext,
-          agentInstructions: [resolvedInstructionsText, memoryInstructions, selfImprovePrompt].filter((part) => part.trim()).join("\n\n"),
+          agentInstructions: heartbeatConfigInstructions,
+          memoryInstructions,
           pluginContributions: heartbeatPluginContributions,
         });
 
         const systemPromptFinal = collapsePromptLayers(heartbeatLayers);
+        const heartbeatVolatileContext = buildRequestVolatileContext({
+          ...heartbeatVolatile,
+          goalContext: heartbeatGoalContext,
+          selfImprovePrompt,
+        });
 
         if (priorMemoryMode !== resolvedMemoryMode.mode) {
           const from = priorMemoryMode ? priorMemoryMode : "(initial)";
@@ -4710,6 +4740,17 @@ export class HeartbeatMonitor {
               "Run the Heartbeat Procedure above. Call fn_heartbeat_done when finished.",
             ].join("\n");
           }
+
+          /*
+          FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):
+          Single append point for this run's runtime-mutable context (memory bodies, goal rows, rating
+          summary, self-improvement clock). It rides the end of the heartbeat request instead of the
+          system prompt so the serialized system prompt is byte-identical between heartbeat ticks of the
+          same agent, which is what lets the provider prefix cache actually cover it. Appending here —
+          after both prompt branches and before the run-record capture — keeps the persisted prompt
+          observation faithful to what is actually sent.
+          */
+          executionPrompt = appendRequestVolatileContext(executionPrompt, heartbeatVolatileContext);
 
           // Persist prompts on the run record before executing so they are
           // observable in the dashboard even if execution fails partway through.

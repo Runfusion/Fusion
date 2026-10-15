@@ -995,7 +995,14 @@ describe("ChatManager.sendMessage", () => {
       expect(context).toBe("");
     });
 
-    it("sendMessage appends mention context to system prompt when mentions are present", async () => {
+    /*
+    FNXC:PromptByteStability 2026-09-24-06:25 (RUFU-267 code-review remediation, review finding P1):
+    The `@`-mention card carries live agent state (`currently working on: <task>`), so folding it into the
+    system prompt changed the serialized head on every mentioning turn and broke the provider prefix cache.
+    The card now rides the end of that turn's user message. This test pins both halves of the contract: the
+    card reaches the model, and a mentioning turn's system prompt is byte-identical to a non-mentioning one.
+    */
+    it("sendMessage delivers mention context on the request tail without changing the system prompt", async () => {
       mockAgentStore.listAgents.mockResolvedValue([
         {
           id: "agent-001",
@@ -1010,12 +1017,28 @@ describe("ChatManager.sendMessage", () => {
         },
       ]);
 
-      let createOptions: any;
+      const turns: Array<{ systemPrompt: string; sentContent: string }> = [];
+      const mentionCardFixture = (taskId: string) => [
+        {
+          id: "agent-001",
+          name: "Avery",
+          role: "executor",
+          state: "running",
+          taskId,
+          soul: "Mention-aware executor",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+          metadata: {},
+        },
+      ];
       __setCreateFnAgent(async (options: any) => {
-        createOptions = options;
+        const turn = { systemPrompt: options.systemPrompt as string, sentContent: "" };
+        turns.push(turn);
         return {
           session: {
-            prompt: vi.fn().mockResolvedValue(undefined),
+            prompt: vi.fn(async (content: string) => {
+              turn.sentContent = content;
+            }),
             dispose: vi.fn(),
             state: {
               messages: [{ role: "assistant", content: "Done" }],
@@ -1024,12 +1047,30 @@ describe("ChatManager.sendMessage", () => {
         };
       });
 
-      const chatManager = createChatManager();
-      await chatManager.sendMessage("chat-001", "hello @Avery");
+      const MENTION_HEADING = "The user mentioned the following agents in their message:";
 
-      expect(createOptions.systemPrompt).toContain("The user mentioned the following agents in their message:");
-      expect(createOptions.systemPrompt).toContain("@Avery");
-      expect(createOptions.systemPrompt).toContain("currently working on: FN-1948");
+      mockAgentStore.listAgents.mockResolvedValue(mentionCardFixture("FN-1948"));
+      await createChatManager().sendMessage("chat-001", "hello @Avery");
+
+      // Live agent state moved: the card must follow it on the request tail only.
+      mockAgentStore.listAgents.mockResolvedValue(mentionCardFixture("FN-2000"));
+      await createChatManager().sendMessage("chat-001", "hello @Avery");
+
+      expect(turns).toHaveLength(2);
+      const [firstTurn, secondTurn] = turns;
+
+      // Delivered, with the live assignment text, on every mentioning turn.
+      expect(firstTurn?.sentContent).toContain(MENTION_HEADING);
+      expect(firstTurn?.sentContent).toContain("@Avery");
+      expect(firstTurn?.sentContent).toContain("currently working on: FN-1948");
+      expect(secondTurn?.sentContent).toContain(MENTION_HEADING);
+      expect(secondTurn?.sentContent).toContain("currently working on: FN-2000");
+
+      // Stable: the mention card never enters the serialized system prompt, so the head is the same
+      // bytes across turns even while the mentioned agent's assignment changes.
+      expect(firstTurn?.systemPrompt).not.toContain(MENTION_HEADING);
+      expect(secondTurn?.systemPrompt).not.toContain(MENTION_HEADING);
+      expect(secondTurn?.systemPrompt).toBe(firstTurn?.systemPrompt);
     });
 
     it("sendMessage stores mention metadata on the user message", async () => {
@@ -2662,9 +2703,10 @@ describe("ChatManager.sendMessage", () => {
       thinkingLevel: "high",
     });
 
+    const plannerTurnPrompt = vi.fn().mockResolvedValue(undefined);
     const createResolvedSession = vi.fn(async () => ({
       session: {
-        prompt: vi.fn().mockResolvedValue(undefined),
+        prompt: plannerTurnPrompt,
         dispose: vi.fn(),
         state: {
           messages: [{ role: "assistant", content: "Planning response" }],
@@ -2743,31 +2785,43 @@ describe("ChatManager.sendMessage", () => {
     expect(createOptions.defaultProvider).toBe("openai");
     expect(createOptions.defaultModelId).toBe("gpt-direct");
     expect(createOptions.defaultThinkingLevel).toBe("high");
-    expect(createOptions.systemPrompt).toContain("## Task Planner Chat Context");
-    expect(createOptions.systemPrompt).toContain("Task ID: TEST-002");
-    expect(createOptions.systemPrompt).toContain("Title: Secondary project task");
-    expect(createOptions.systemPrompt).toContain("Prompt:\n# PROMPT.md");
-    expect(createOptions.systemPrompt).toContain("Use the secondary project's authoritative task context.");
-    expect(createOptions.systemPrompt).not.toContain("Task context could not be loaded");
-    expect(createOptions.systemPrompt).not.toContain("Default-project decoy content");
-    expect(createOptions.systemPrompt).toContain("Dependencies:\n- FN-7309:");
-    expect(createOptions.systemPrompt).toContain("Progress: step 1 of 1");
-    expect(createOptions.systemPrompt).toContain("Current step: Polish: in-progress");
-    expect(createOptions.systemPrompt).toContain("Polish: in-progress");
-    expect(createOptions.systemPrompt).toContain("Activity transcript loaded");
+    /*
+    FNXC:PromptByteStability 2026-09-24-06:25 (RUFU-267 code-review remediation):
+    A task-planner chat used to fold the live task snapshot and the planner decision rules into the
+    session's system prompt, rebuilding that prompt on every turn. Both halves now ride the end of the
+    turn's user message, so this asserts the split at the delivery seam: the snapshot and the rules reach
+    the model, and the serialized system prompt carries none of that per-task state.
+    */
+    const plannerTurnContent = plannerTurnPrompt.mock.calls[0]?.[0] as string;
+    expect(plannerTurnContent).toContain("## Task Planner Chat Context");
+    expect(plannerTurnContent).toContain("Task ID: TEST-002");
+    expect(plannerTurnContent).toContain("Title: Secondary project task");
+    expect(plannerTurnContent).toContain("Prompt:\n# PROMPT.md");
+    expect(plannerTurnContent).toContain("Use the secondary project's authoritative task context.");
+    expect(plannerTurnContent).not.toContain("Task context could not be loaded");
+    expect(plannerTurnContent).not.toContain("Default-project decoy content");
+    expect(plannerTurnContent).toContain("Dependencies:\n- FN-7309:");
+    expect(plannerTurnContent).toContain("Progress: step 1 of 1");
+    expect(plannerTurnContent).toContain("Current step: Polish: in-progress");
+    expect(plannerTurnContent).toContain("Polish: in-progress");
+    expect(plannerTurnContent).toContain("Activity transcript loaded");
+    // Constant guidance stays in the system prompt; only per-turn task state moved to the tail.
     expect(createOptions.systemPrompt).toContain("fn_ask_question");
-    expect(createOptions.systemPrompt).toContain("Do not create steering or refinements for ordinary questions");
-    expect(createOptions.systemPrompt).toContain("fn_task_planner_get_task_metrics");
-    expect(createOptions.systemPrompt).toContain("token counts, input/output/cache usage, model cost");
-    expect(createOptions.systemPrompt).toContain("state that uncertainty instead of inventing a number");
-    expect(createOptions.systemPrompt).toContain("ordinary status/progress/metrics questions");
-    expect(createOptions.systemPrompt).toContain("fn_task_planner_create_refinement");
-    expect(createOptions.systemPrompt).toContain("clear follow-up implementation, improvement, polish, bug-fix, or refinement request");
-    expect(createOptions.systemPrompt).toContain("Never create a refinement for live non-done tasks");
-    expect(createOptions.systemPrompt).toContain("never ask for or pass a task id");
-    expect(createOptions.systemPrompt).toContain("Ask a clarifying question");
-    expect(createOptions.systemPrompt).toContain("credential/secrets");
-    expect(createOptions.systemPrompt).toContain("destructive removals");
+    expect(plannerTurnContent).toContain("Do not create steering or refinements for ordinary questions");
+    expect(plannerTurnContent).toContain("fn_task_planner_get_task_metrics");
+    expect(plannerTurnContent).toContain("token counts, input/output/cache usage, model cost");
+    expect(plannerTurnContent).toContain("state that uncertainty instead of inventing a number");
+    expect(plannerTurnContent).toContain("ordinary status/progress/metrics questions");
+    expect(plannerTurnContent).toContain("fn_task_planner_create_refinement");
+    expect(plannerTurnContent).toContain("clear follow-up implementation, improvement, polish, bug-fix, or refinement request");
+    expect(plannerTurnContent).toContain("Never create a refinement for live non-done tasks");
+    expect(plannerTurnContent).toContain("never ask for or pass a task id");
+    expect(plannerTurnContent).toContain("Ask a clarifying question");
+    expect(plannerTurnContent).toContain("credential/secrets");
+    expect(plannerTurnContent).toContain("destructive removals");
+    expect(createOptions.systemPrompt).not.toContain("## Task Planner Chat Context");
+    expect(createOptions.systemPrompt).not.toContain("Task ID: TEST-002");
+    expect(createOptions.systemPrompt).not.toContain("Do not create steering or refinements for ordinary questions");
     expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_add_steering");
     expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_get_task_metrics");
     expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_get_pr_status");
@@ -2923,8 +2977,9 @@ describe("ChatManager.sendMessage", () => {
       agentId: "task-planner:FN-DONE",
       status: "active",
     });
+    const refinementTurnPrompt = vi.fn().mockResolvedValue(undefined);
     const createResolvedSession = vi.fn(async () => ({
-      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      session: { prompt: refinementTurnPrompt, dispose: vi.fn(), state: { messages: [] } },
     }));
     __setCreateResolvedAgentSession(createResolvedSession as any);
     const refinedTask = {
@@ -2946,9 +3001,16 @@ describe("ChatManager.sendMessage", () => {
     const createOptions = createResolvedSession.mock.calls[0]?.[0];
     const toolNames = createOptions.customTools.map((tool: { name: string }) => tool.name);
     expect(toolNames).toContain("fn_task_planner_create_refinement");
-    expect(createOptions.systemPrompt).toContain("If the current task is done");
-    expect(createOptions.systemPrompt).toContain("call `fn_task_planner_create_refinement` with only the concise feedback text");
-    expect(createOptions.systemPrompt).toContain("never ask for or pass a task id");
+    /*
+    FNXC:PromptByteStability 2026-09-24-06:25 (RUFU-267 code-review remediation):
+    Same split as the rich-context planner test — the decision rules are per-turn request-tail bytes,
+    not system-prompt bytes.
+    */
+    const refinementTurnContent = refinementTurnPrompt.mock.calls[0]?.[0] as string;
+    expect(refinementTurnContent).toContain("If the current task is done");
+    expect(refinementTurnContent).toContain("call `fn_task_planner_create_refinement` with only the concise feedback text");
+    expect(refinementTurnContent).toContain("never ask for or pass a task id");
+    expect(createOptions.systemPrompt).not.toContain("If the current task is done");
     const refinementTool = createOptions.customTools.find((tool: { name: string }) => tool.name === "fn_task_planner_create_refinement");
     expect(refinementTool.parameters).toEqual({
       type: "object",
@@ -3036,8 +3098,9 @@ describe("ChatManager.sendMessage", () => {
 
   it("does not register the refinement tool for live task-planner sessions", async () => {
     mockChatStore.getSession.mockReturnValue({ id: "chat-001", agentId: "task-planner:FN-LIVE", status: "active" });
+    const livePlannerTurnPrompt = vi.fn().mockResolvedValue(undefined);
     const createResolvedSession = vi.fn(async () => ({
-      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+      session: { prompt: livePlannerTurnPrompt, dispose: vi.fn(), state: { messages: [] } },
     }));
     __setCreateResolvedAgentSession(createResolvedSession as any);
     const taskStore = {
@@ -3054,8 +3117,15 @@ describe("ChatManager.sendMessage", () => {
     const toolNames = createOptions.customTools.map((tool: { name: string }) => tool.name);
     expect(toolNames).toContain("fn_task_planner_add_steering");
     expect(toolNames).not.toContain("fn_task_planner_create_refinement");
-    expect(createOptions.systemPrompt).toContain("If the current task is not done");
-    expect(createOptions.systemPrompt).toContain("call `fn_task_planner_add_steering`");
+    /*
+    FNXC:PromptByteStability 2026-09-24-06:25 (RUFU-267 code-review remediation):
+    The routing rules reach the model on this turn's message; the serialized system prompt stays free of
+    per-task planner text.
+    */
+    const livePlannerTurnContent = livePlannerTurnPrompt.mock.calls[0]?.[0] as string;
+    expect(livePlannerTurnContent).toContain("If the current task is not done");
+    expect(livePlannerTurnContent).toContain("call `fn_task_planner_add_steering`");
+    expect(createOptions.systemPrompt).not.toContain("If the current task is not done");
     expect(taskStore.refineTask).not.toHaveBeenCalled();
   });
 
