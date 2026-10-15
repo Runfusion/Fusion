@@ -276,3 +276,54 @@ describe("createUnmergedCommitProbe", () => {
     expect(await probe("fusion/definitely-not-a-real-branch-rufu-283")).toBeNull();
   });
 });
+
+/*
+FNXC:VanishedWorkNoticeGating 2026-10-15-21:50 (RUFU-690):
+The sweep's run-audit row is unconditional and its notice is not. Measured in production, a
+soft-deleted card whose `fusion/<id>` branch was cleaned up was labelled `state-unresolved` — the label
+reserved for a card unknown to every table — and that one label produced ~700 mailbox notices a day
+(15,101 system messages since 2026-09-24), while the classes worth waking someone for were 11 cards with
+proven unmerged commits and 18 with no row anywhere. These two cases pin both halves of the gate, so a
+future change cannot silently re-arm the alarm or silently drop the record.
+*/
+describe("vanished-work notice gating", () => {
+  it("records the tombstone class in run-audit without paging the operator", async () => {
+    writeTaskDir("RUFU-230", reviewMirror());
+
+    const summary = await detectVanishedTaskDirs({
+      store: storeWith({ "RUFU-230": TOMBSTONE }),
+      messageStore: { sendMessageOnce } as never,
+      rootDir: tasksDir,
+      probe: async () => null,
+      now: NOW,
+    });
+
+    expect(summary.findings.map((f) => f.reason)).toEqual(["row-tombstoned-branch-unprobed"]);
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0].metadata).toMatchObject({
+      taskId: "RUFU-230",
+      reason: "row-tombstoned-branch-unprobed",
+      unmergedCommitCount: null,
+    });
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(summary.alerted).toBe(0);
+    expect(summary.suppressed).toBe(1);
+  });
+
+  it("still pages for the same tombstone once unmerged commits are proven", async () => {
+    writeTaskDir("RUFU-231", reviewMirror());
+
+    const summary = await detectVanishedTaskDirs({
+      store: storeWith({ "RUFU-231": TOMBSTONE }),
+      messageStore: { sendMessageOnce } as never,
+      rootDir: tasksDir,
+      probe: async () => 2,
+      now: NOW,
+    });
+
+    expect(summary.findings.map((f) => f.reason)).toEqual(["row-tombstoned-branch-unmerged"]);
+    expect(auditRows).toHaveLength(1);
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect(summary.alerted).toBe(1);
+  });
+});

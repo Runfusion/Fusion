@@ -26,6 +26,7 @@ import {
   classifyVanishedTaskDir,
   DASHBOARD_USER_ID,
   taskBranchRefFor,
+  vanishedFindingRequiresOperatorNotice,
   WEDGE_RENOTIFY_COOLDOWN_MS,
   type MessageStore,
   type TaskIdPresence,
@@ -86,7 +87,7 @@ export interface VanishedTaskDetectionSummary {
   findings: VanishedTaskFinding[];
   /** Findings whose notice was newly inserted this sweep. */
   alerted: number;
-  /** Findings already announced in the current cooldown window, or undeliverable. */
+  /** Findings already announced in the current cooldown window, undeliverable, or class-gated to audit-only. */
   suppressed: number;
 }
 
@@ -227,8 +228,9 @@ export async function detectVanishedTaskDirs(
   summary.candidates = candidates.length;
 
   for (const candidate of candidates) {
-    // Past the probe budget the id is still reported, as `state-unresolved`: an unmeasured branch
-    // must stay visible rather than drop off the report.
+    // Past the probe budget the id is still reported with an un-probeable branch (`state-unresolved`,
+    // or `row-tombstoned-branch-unprobed` when a tombstone explains the row): an unmeasured branch must
+    // stay visible rather than drop off the report.
     const overBudget = summary.probed >= VANISHED_WORK_MAX_BRANCH_PROBES;
     const branchRef = taskBranchRefFor(candidate.taskId);
     const unmergedCommitCount = overBudget ? null : await probe(branchRef);
@@ -260,6 +262,24 @@ export async function detectVanishedTaskDirs(
         salvageTarget: finding.salvage.salvageTarget,
       },
     });
+
+    /*
+    FNXC:VanishedWorkNoticeGating 2026-10-15-21:50 (RUFU-690):
+    The run-audit row above is unconditional; only the mailbox write is gated. A soft-delete tombstone
+    whose branch is gone or unresolvable is a card a recorded delete already accounts for, so it stays
+    countable in the audit store without paging anyone — measured at ~700 notices a day (15,101 system
+    messages since 2026-09-24) against 11 cards that genuinely held unmerged commits and 18 that have no
+    row anywhere. See vanishedFindingRequiresOperatorNotice for the rule and what stays alarming.
+    */
+    if (!vanishedFindingRequiresOperatorNotice(finding.reason)) {
+      summary.suppressed += 1;
+      // Debug, not warn: this is an expected class at ~700 findings a day, and the durable record of
+      // it is the run-audit row emitted above — a warn line here would just move the spam to the log.
+      schedulerLog.debug(
+        `${VANISHED_WORK_SWEEP_NAME}: ${candidate.taskId} ${finding.reason} — recorded in run-audit without an operator notice; the reserved tombstone's own delete accounts for the card and no unmerged commit was proven.`,
+      );
+      continue;
+    }
 
     if (!messageStore?.sendMessageOnce) {
       summary.suppressed += 1;

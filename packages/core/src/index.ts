@@ -1297,6 +1297,7 @@ export {
   buildVanishedTaskNotice,
   buildVanishedTaskNoticeTitle,
   taskBranchRefFor,
+  vanishedFindingRequiresOperatorNotice,
   type VanishedTaskGateRow,
   type VanishedTaskDirInput,
   type VanishedTaskDirReason,

@@ -68,7 +68,15 @@ export type VanishedTaskDirReason =
   | "row-tombstoned-branch-unmerged"
   /** Tombstoned row whose branch is already gone — only the mirror survives. */
   | "row-tombstoned-branch-missing"
-  /** Branch state could not be resolved; reported so the unknown stays visible. */
+  /**
+   * FNXC:VanishedWorkTombstoneTaxonomy 2026-10-15-21:50 (RUFU-690): Tombstoned row whose branch could
+   * not be resolved. Named separately from `state-unresolved` because a tombstone is itself an
+   * explanation — the delete that produced it is audited — while `state-unresolved` means the card is
+   * unknown to every table and nothing accounts for its disappearance. Both keep the unknown visible;
+   * only the second one alarms an operator.
+   */
+  | "row-tombstoned-branch-unprobed"
+  /** No row anywhere and the branch could not be probed; reported so the unknown stays visible. */
   | "state-unresolved";
 
 /** Salvage guidance, derived so the operator never re-derives the ref or the command. */
@@ -150,6 +158,8 @@ function buildSalvageHint(input: {
       return `The row is a soft-delete tombstone, so its id stays reserved and no board read can resolve it, while ${count} unmerged ${commitWord} remain on the branch.${input.gateApproved ? " An approved gate had already passed." : ""} Resurrect the id with deleteTask(id, { allowResurrection: true }) or salvage the commits below before any purge path hard-deletes the tombstone.`;
     case "row-tombstoned-branch-missing":
       return "The row is a soft-delete tombstone and its branch is already gone. Only the disk mirror survives; restore it from .fusion/tasks/<ID>/task.json if the work was not intentionally abandoned.";
+    case "row-tombstoned-branch-unprobed":
+      return "The row is a soft-delete tombstone, so a recorded delete accounts for it, but its branch could not be resolved, so unmerged work cannot be ruled out. Check the disk mirror at .fusion/tasks/<ID>/task.json (and the reflog) before any purge path hard-deletes the tombstone.";
     case "state-unresolved":
     default:
       return "Branch state could not be probed, so unmerged work cannot be ruled out. Run the command below by hand before any cleanup touches this id.";
@@ -174,11 +184,29 @@ export function classifyVanishedTaskDir(input: VanishedTaskDirInput): VanishedTa
   const unmerged = input.unmergedCommitCount;
   const branchHasWork = typeof unmerged === "number" && unmerged > 0;
 
+  /*
+  FNXC:VanishedWorkTombstoneTaxonomy 2026-10-15-21:50 (RUFU-690):
+  The un-probeable test used to come first, which made an un-probeable branch shadow everything the
+  row evidence already knew: a soft-deleted card whose `fusion/<id>` branch had been cleaned up
+  reported `state-unresolved` — the same label a card unknown to every table gets — even though
+  `row.tombstoned` was true and the taxonomy already had tombstone-specific reasons. Measured in
+  production: 891 `state-unresolved` rows over 229 cards in three hours, of which 211 exist in
+  `project.tasks` as a soft-delete tombstone, against 11 cards that genuinely still hold unmerged
+  commits and 18 that have no row at all. Soft deletion stamps the `archived` sentinel together with
+  `deletedAt` by design (FNXC:TaskArchiveRemoval 2026-09-04-18:25), so that shape is simply "deleted",
+  and it is the shape this sweep sees most. Ordering the ladder by what is known — tombstone first,
+  then branch state — keeps the unknown visible for the rows nobody accounts for and stops borrowing the
+  most alarming label for the ones everybody does.
+  */
   let reason: VanishedTaskDirReason;
-  if (unmerged === null) {
+  if (row?.tombstoned) {
+    reason = unmerged === null
+      ? "row-tombstoned-branch-unprobed"
+      : branchHasWork
+        ? "row-tombstoned-branch-unmerged"
+        : "row-tombstoned-branch-missing";
+  } else if (unmerged === null) {
     reason = "state-unresolved";
-  } else if (row?.tombstoned) {
-    reason = branchHasWork ? "row-tombstoned-branch-unmerged" : "row-tombstoned-branch-missing";
   } else {
     reason = branchHasWork ? "row-missing-branch-unmerged" : "row-missing-branch-missing";
   }
@@ -199,8 +227,24 @@ export function classifyVanishedTaskDir(input: VanishedTaskDirInput): VanishedTa
   };
 }
 
-/** Operator-facing notice title for a finding (mailbox subject line). */
-export function buildVanishedTaskNoticeTitle(finding: VanishedTaskFinding): string {
+/*
+FNXC:VanishedWorkNoticeGating 2026-10-15-21:50 (RUFU-690):
+Which findings justify waking an operator. The sweep is report-only by design, but its notice is the
+surface the operator actually reads, and it was firing ~700 times a day (15,101 system messages since
+2026-09-24, latest measured 2026-10-15T19:02Z) for cards that a recorded delete already accounts for:
+`row-tombstoned-branch-missing` and `row-tombstoned-branch-unprobed` describe a soft-deleted card whose
+branch is gone or unresolvable, so there is nothing on a branch to lose and the disappearance is not
+silent — the delete is audited, the id stays reserved, and `deleteTask(id, { allowResurrection: true })`
+undoes it. Alarm is kept for exactly two situations: unmerged commits are PROVEN to exist on the task
+branch, or no row exists anywhere, which is the RUFU-225 shape this event was written for. The run-audit
+row is emitted for every finding either way, so the suppressed classes remain queryable and countable —
+the gate changes who is paged, never what is recorded.
+*/
+export function vanishedFindingRequiresOperatorNotice(reason: VanishedTaskDirReason): boolean {
+  return reason !== "row-tombstoned-branch-missing" && reason !== "row-tombstoned-branch-unprobed";
+}
+
+/** Operator-facing notice title for a finding (mailbox subject line). */export function buildVanishedTaskNoticeTitle(finding: VanishedTaskFinding): string {
   const work = finding.unmergedCommitCount === null
     ? "branch state unknown"
     : `${finding.unmergedCommitCount} unmerged ${finding.unmergedCommitCount === 1 ? "commit" : "commits"}`;

@@ -14,7 +14,9 @@ import {
   buildVanishedTaskNoticeTitle,
   classifyVanishedTaskDir,
   taskBranchRefFor,
+  vanishedFindingRequiresOperatorNotice,
   type VanishedTaskDirInput,
+  type VanishedTaskDirReason,
   type VanishedTaskGateRow,
 } from "../task-store/vanished-task-detection.js";
 import type { TaskIdPresence } from "../task-store/task-id-integrity.js";
@@ -177,5 +179,70 @@ describe("operator notice", () => {
     const finding = classifyVanishedTaskDir(input({ unmergedCommitCount: null }))!;
     expect(buildVanishedTaskNotice(finding)).toContain("unprobed");
     expect(buildVanishedTaskNoticeTitle(finding)).toContain("branch state unknown");
+  });
+});
+
+/*
+FNXC:VanishedWorkTombstoneTaxonomy 2026-10-15-21:50 (RUFU-690):
+The reason ladder used to test the un-probeable branch first, so a soft-deleted card whose branch was
+cleaned up got `state-unresolved` — the label reserved for a card unknown to every table — even though
+`row.tombstoned` was already in the input. Measured: 891 `state-unresolved` rows over 229 cards in three
+hours, 211 of them present in `project.tasks` as soft-delete tombstones (soft deletion stamps the
+`archived` sentinel with `deletedAt` by design), against 11 cards with proven unmerged commits and 18
+with no row at all. These cases pin that the unknown stays visible in BOTH shapes while the two labels
+stay distinguishable, and that paging follows the distinction rather than the label count.
+*/
+describe("tombstone branch state (RUFU-690)", () => {
+  it("names the tombstone when the branch cannot be resolved, instead of borrowing the unexplained label", () => {
+    const finding = classifyVanishedTaskDir(input({ row: TOMBSTONE, unmergedCommitCount: null }))!;
+    expect(finding.reason).toBe("row-tombstoned-branch-unprobed");
+    // The unknown is still named, not smoothed into "nothing at risk".
+    expect(finding.unmergedCommitCount).toBeNull();
+    expect(finding.salvage.hint).toContain("could not be resolved");
+  });
+
+  it("keeps `state-unresolved` for the card no table accounts for", () => {
+    // Same probe result, one input apart: the row evidence is the only difference.
+    expect(classifyVanishedTaskDir(input({ row: null, unmergedCommitCount: null }))!.reason).toBe(
+      "state-unresolved",
+    );
+  });
+
+  it("still separates proven work from a branch that merely measured zero on a tombstone", () => {
+    expect(classifyVanishedTaskDir(input({ row: TOMBSTONE, unmergedCommitCount: 4 }))!.reason).toBe(
+      "row-tombstoned-branch-unmerged",
+    );
+    expect(classifyVanishedTaskDir(input({ row: TOMBSTONE, unmergedCommitCount: 0 }))!.reason).toBe(
+      "row-tombstoned-branch-missing",
+    );
+  });
+});
+
+describe("vanishedFindingRequiresOperatorNotice", () => {
+  it("pages for proven work and for a card with no row anywhere", () => {
+    expect(vanishedFindingRequiresOperatorNotice("row-missing-branch-unmerged")).toBe(true);
+    expect(vanishedFindingRequiresOperatorNotice("row-missing-branch-missing")).toBe(true);
+    expect(vanishedFindingRequiresOperatorNotice("state-unresolved")).toBe(true);
+    expect(vanishedFindingRequiresOperatorNotice("row-tombstoned-branch-unmerged")).toBe(true);
+  });
+
+  it("holds the alarm for the two tombstone classes that prove nothing", () => {
+    expect(vanishedFindingRequiresOperatorNotice("row-tombstoned-branch-missing")).toBe(false);
+    expect(vanishedFindingRequiresOperatorNotice("row-tombstoned-branch-unprobed")).toBe(false);
+  });
+
+  it("covers every reason in the taxonomy, so a new class cannot default to alarming", () => {
+    // Non-vacuous against the enum: if a reason is added and not classified here, the lists go stale
+    // and the union check below stops being exhaustive at compile time.
+    const all: VanishedTaskDirReason[] = [
+      "row-missing-branch-unmerged",
+      "row-missing-branch-missing",
+      "row-tombstoned-branch-unmerged",
+      "row-tombstoned-branch-missing",
+      "row-tombstoned-branch-unprobed",
+      "state-unresolved",
+    ];
+    const decided = all.filter((reason) => typeof vanishedFindingRequiresOperatorNotice(reason) === "boolean");
+    expect(decided).toHaveLength(all.length);
   });
 });

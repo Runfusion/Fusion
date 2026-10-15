@@ -57,9 +57,13 @@ export type RunAuditMutationType =
   The literal names the class the operator must never lose silently (approved work with an unmerged
   branch), which is why it stays even though the sweep also reports the neighbouring classes: `reason`
   carries the taxonomy (`row-missing|row-tombstoned` × `branch-unmerged|branch-missing`, plus
-  `state-unresolved` when the branch could not be probed) and `gateApproved` says whether a gate
-  actually approved the card. Do not read a row with `gateApproved: false` as a false positive — it is
-  the same disappearance, just not yet an approved one.
+  `row-tombstoned-branch-unprobed` and `state-unresolved` when the branch could not be probed, the
+  former when a soft-delete tombstone already accounts for the row) and `gateApproved` says whether a
+  gate actually approved the card. Do not read a row with `gateApproved: false` as a false positive — it
+  is the same disappearance, just not yet an approved one. One row is written per finding and the row is
+  unconditional, but only the alarming reasons also raise a mailbox notice: the two tombstone classes
+  with no proven unmerged commit stay audit-only, so "nobody was paged" and "nothing was recorded" remain
+  distinguishable from this table alone.
 
   `task:row-purged-for-resurrection` is the mandatory pre-write for a tombstone hard-delete on the
   resurrection path, so a purged id is always attributable. Metadata: { taskId, operation,
