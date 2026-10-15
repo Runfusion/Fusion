@@ -1,6 +1,6 @@
 import type { WorkflowDefinition, WorkflowDefinitionKind, WorkflowIr, WorkflowIrNode, WorkflowSettingDefinition, TaskStore } from "@fusion/core";
 import { resolveRequestActor } from "../request-actor.js";
-import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, getBuiltinWorkflow, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps, enumeratePromptBearingWorkflowNodes, normalizeWorkflowIcon, WorkflowSwitchRehomeFailedError } from "@fusion/core";
+import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, getBuiltinWorkflow, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps, enumeratePromptBearingWorkflowNodes, normalizeWorkflowIcon, WorkflowSwitchRehomeFailedError, validateProjectDefaultWorkflowRef } from "@fusion/core";
 import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, validateCodeNodeSources, validateWorkflowIrDryRun } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
@@ -794,6 +794,19 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       const workflowId = (req.body ?? {}).workflowId;
       if (workflowId !== null && typeof workflowId !== "string") {
         throw badRequest("workflowId must be a string or null");
+      }
+      /*
+      FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+      This endpoint already refused an UNKNOWN id (404), but RUFU-391 widened the store seam to refuse
+      ids that exist yet are not valid defaults — deprecated, not-enabled, plugin-gated-but-missing, and
+      fragment built-ins. Those arrive from `setDefaultWorkflowId()` as plain Errors and would otherwise be
+      reported as a 500 for what is a correctable operator input, so the verdict is taken here from the
+      shared predicate and given a status: an id that does not exist stays a 404, every other refusal is a
+      400 carrying the store's own sentence. The store call below keeps enforcing the same rule.
+      */
+      const refusal = await validateProjectDefaultWorkflowRef(store, workflowId);
+      if (refusal) {
+        throw /not found/i.test(refusal) ? notFound(refusal) : badRequest(refusal);
       }
       try {
         await store.setDefaultWorkflowId(workflowId);

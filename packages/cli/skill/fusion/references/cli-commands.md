@@ -81,6 +81,8 @@ fn settings                                # Show all settings
 fn settings set maxConcurrent 4            # Update a setting
 fn settings set autoMerge false            # Disable auto-merge
 fn settings set prCompletionMode pr-first  # Use PR workflow
+fn settings set defaultWorkflowId builtin:stepwise-coding --project my-project  # Project default workflow (validated)
+fn settings set defaultWorkflowId none --project my-project                     # Clear it (none | null | empty)
 ```
 
 ## Backups

@@ -1299,6 +1299,8 @@ Show and manage settings.
 fn settings
 fn settings set maxConcurrent 4
 fn settings set defaultNodeId node_abc123
+fn settings set defaultWorkflowId builtin:stepwise-coding --project my-project
+fn settings set defaultWorkflowId none --project my-project
 fn settings set unavailableNodePolicy fallback-local
 fn settings set worktrunk.enabled true
 fn settings export [--scope global|project|both] [--output <file>]
@@ -1311,6 +1313,8 @@ fn settings import <file> [--scope global|project|both] [--merge] [--yes]
 | `--output` | Custom output file path for `settings export`. |
 | `--merge` | Merge imported values with existing settings (used by `settings import`). |
 | `--yes` | Skip confirmation prompt during `settings import`. |
+
+`defaultWorkflowId` is the workflow new cards inherit (project-only, so `--project` or a project directory is required). `none`, `null`, and an empty string clear it. Any other value is validated before it is written — an unknown id, a deprecated or project-disabled built-in, a built-in whose plugin is not installed, or a fragment is refused with the store's own sentence and a non-zero exit rather than persisted. See [Settings Reference → Project default workflow](./settings-reference.md#project-default-workflow-project-scope).
 
 ---
 

@@ -3,6 +3,7 @@ import {
   effectiveEnabledBuiltinWorkflowIds,
   getRequiredPluginIdForBuiltinWorkflow,
   validateEnabledBuiltinWorkflowIds,
+  validateProjectDefaultWorkflowRef,
 } from "@fusion/core";
 import { resolveRequestActor } from "../request-actor.js";
 
@@ -665,6 +666,33 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           }
         } catch (error) {
           throw badRequest(error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      /*
+      FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+      `defaultWorkflowId` was the one workflow-reference key this generic save accepted without a verdict:
+      `PUT /project/default-workflow` validated it (and `TaskStore.setDefaultWorkflowId()` always has), but
+      a whole-document save reached `updateSettings` raw, and a mistyped id silently routed every new card
+      into a workflow that does not resolve — `resolveEffectiveDefaultWorkflowId` applies no fallback to a
+      custom id. The verdict is the SAME shared predicate the CLI and the settings import now use, so the
+      four write surfaces cannot drift.
+
+      The one deliberate difference from the other surfaces: a value byte-identical to the one already
+      stored is accepted. A dashboard save posts the WHOLE settings document, so a project already
+      carrying a legacy default (written before this check existed) must stay savable — refusing it here
+      would make that project's Settings page unsaveable over a key the user did not even touch.
+      */
+      if (
+        Object.prototype.hasOwnProperty.call(clientSettings, "defaultWorkflowId")
+        && clientSettings.defaultWorkflowId !== null
+        && clientSettings.defaultWorkflowId !== undefined
+      ) {
+        const requestedDefaultWorkflowId = clientSettings.defaultWorkflowId;
+        const currentDefaultWorkflowId = (await scopedStore.getSettings()).defaultWorkflowId;
+        if (currentDefaultWorkflowId !== requestedDefaultWorkflowId) {
+          const refusal = await validateProjectDefaultWorkflowRef(scopedStore, String(requestedDefaultWorkflowId));
+          if (refusal) throw badRequest(refusal);
         }
       }
 

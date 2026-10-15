@@ -528,6 +528,8 @@ Security-sensitive file-browser escape hatches are project-only. `allowAbsoluteF
 | `engineerBacklogAutoClaim` | `boolean` | `false` | Opt engineer-role agents into no-task backlog auto-claim for implementation tasks. The default remains executor-only; per-agent `runtimeConfig.engineerBacklogAutoClaim` overrides this project default, and explicit routing/delegation is unchanged. Configure the project default in **Settings → Scheduling & Capacity → "Let engineer agents auto-claim backlog tasks"**; configure the per-agent override in **Agents → Agent Detail → Settings → Heartbeat Settings → "Engineer Backlog Auto-Claim"**. |
 | `defaultNodeId` | `string` | `undefined` | Optional project default execution node for task dispatch. When set, tasks without a per-task `nodeId` override resolve to this node (`routing source: project-default`). See [Task Management → Node Routing](./task-management.md#node-routing). |
 | `unavailableNodePolicy` | `"block" \| "fallback-local"` | `"block"` | Project routing policy used during scheduler dispatch when a task resolves to a remote node and node health is known. `"block"` keeps the task in `todo` if the node is unhealthy; `"fallback-local"` reroutes dispatch to local execution. See [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture). |
+<!-- FNXC:DefaultWorkflowWriteValidation 2026-10-15-02:13 (RUFU-391): the key had three unvalidated write paths and no CLI spelling; document the row and link the section that states which surfaces refuse. -->
+| `defaultWorkflowId` | `string` | `undefined` (falls back to `builtin:coding`) | Workflow new cards land in when nothing more specific selects one. Accepts a custom workflow id or an enabled built-in id; `null` clears it. Every write path validates the id first — see [Project default workflow (project scope)](#project-default-workflow-project-scope). |
 | `secretsAccessPolicy` | `"auto" \| "prompt" \| "deny"` | `undefined` | Project-level default secret access policy (overrides global default when present). |
 | `secretsEnv` | `{ enabled?: boolean; filename?: string; overwritePolicy?: "skip" \| "merge" \| "replace"; keyPrefix?: string; requireGitignored?: boolean }` | `undefined` | Per-project secrets `.env` materialization configuration. When `enabled`, the engine writes `secretsEnv.filename` (default `.env`) into each acquired task worktree from secrets marked `env_exportable=true`. `overwritePolicy` controls merge/skip/replace against an existing file; `requireGitignored` (default `true`) refuses to write a non-gitignored path; `keyPrefix` filters which exported keys are included. See [Secrets](./secrets.md#env-auto-write-into-worktrees). |
 | `mcpServers` | `McpServersSettings` | `{ enabled: false, servers: [] }` | Project-scoped MCP server settings. Project entries override global entries by `name`; `enabled:false` on a same-named project entry disables the inherited global server. Sensitive env/header/token material must be Fusion secret references only. See [MCP server settings](#mcp-server-settings). |
@@ -1173,6 +1175,58 @@ See also:
 - [Task Management → Node Routing](./task-management.md#node-routing)
 - [Multi-Project → Node Routing](./multi-project.md#node-routing)
 - [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture)
+
+### Project default workflow (project scope)
+
+<!--
+FNXC:DefaultWorkflowWriteValidation 2026-10-15-02:13 (RUFU-391):
+The operator premise was that the project default workflow was dashboard-only. Half of it was wrong —
+settings import already wrote the key — but the ergonomic CLI spelling did not exist (the key was absent
+from the CLI's valid-setting list) and NO path but the dedicated HTTP route validated the id. A typoed or
+since-deprecated id therefore persisted silently and routed every new card into a workflow that cannot
+resolve, because read-side resolution applies no fallback to a custom id. This section states which paths
+write the key, which refuse a bad id, and which tool owns which question, so the three workflow-adjacent
+surfaces stop being confused for one another.
+-->
+
+`defaultWorkflowId` is the workflow a project's **new** cards inherit when they land in the intake
+column. It is an ordinary project setting — not a workflow-scoped value, and not a per-task selection.
+
+**Which tool answers which question**
+
+| Question | Use | Why not the other |
+|---|---|---|
+| Which workflow do this project's new cards start in? | `fn settings set defaultWorkflowId <id\|none> --project <p>` (or Settings → General, or `fn settings import`) | `fn_workflow_select` changes one existing card, not the project default. |
+| What is a selected workflow's timeout / review gate / lane model? | `fn_workflow_settings` | Those are per-`(workflow, project)` values, not the project default pointer. |
+| Move one existing card onto a different workflow | `fn_workflow_select` | It never changes what the *next* card inherits. |
+
+Setting the project default is **not** a daemon-token operation and needs no new agent tool: the CLI
+path writes through the same store seam the dashboard picker uses.
+
+**Write-side validation.** An id is validated *before* it is written, on every surface. A refusal names
+the reason and nothing is persisted.
+
+| Write path | Behavior on an unresolvable id |
+|---|---|
+| `fn settings set defaultWorkflowId <id\|none>` | Non-zero exit, the store's own refusal sentence; `none`, `null`, and an empty string clear the setting. |
+| `PUT /api/project/default-workflow` | `404` for an id that does not exist at all, `400` for a shipped-but-disallowed one (fragment, deprecated, project-disabled, or plugin not installed). |
+| `PUT /api/settings` (generic settings save) | `400` — unless the incoming value is byte-identical to the value already stored, so a full-document save carrying a legacy value still succeeds. |
+| `fn settings import` (and the import route) | Refused **before any section is written**, so a rejected payload cannot leave the global half applied and the project half not. Returns the structured failure, it does not throw. |
+
+Refusals cover: an unknown id, a fragment (a reusable palette piece, never a selectable workflow), a
+deprecated built-in, a built-in the project has disabled, and a plugin-gated built-in whose plugin is not
+installed. Unknown ids keep the exact `Workflow '<id>' not found` sentence because the dedicated route
+maps that phrasing to HTTP 404; the shipped-but-disallowed refusals deliberately avoid those words so a
+built-in the product does ship is never reported as missing.
+
+**Reads are unchanged.** Validation is a write-time rule only. A value persisted before it became
+deprecated or disabled keeps resolving on every read path — including a custom id, which
+`resolveEffectiveDefaultWorkflowId` passes through with no fallback — so tightening the door never
+re-writes or bounces an operator's existing configuration.
+
+See also: [CLI Reference → settings](./cli-reference.md#fn-settings),
+[Workflow Settings](#workflow-settings),
+[Task Management → Node Routing](./task-management.md#node-routing).
 
 ### Remote Access settings (global-scoped)
 

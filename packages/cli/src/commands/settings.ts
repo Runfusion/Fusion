@@ -31,6 +31,7 @@ export const VALID_SETTINGS = [
   "worktrunk.binaryPath",
   "worktrunk.onFailure",
   "language",
+  "defaultWorkflowId",
 ] as const;
 
 // One-line redirect surfaced wherever the CLI lists/validates settings keys, so
@@ -48,6 +49,14 @@ const PROJECT_ONLY_SETTINGS = [
   "smartConflictResolution",
   "defaultNodeId",
   "unavailableNodePolicy",
+  /*
+  FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+  `defaultWorkflowId` is a PROJECT setting (`settings.defaultWorkflowId` on the project row) with no global
+  counterpart, so it is classified project-only exactly like `defaultNodeId`: without `--project` (or a
+  project working directory) there is no row to write, and silently targeting the global store would
+  appear to work while routing nothing.
+  */
+  "defaultWorkflowId",
 ] as const;
 
 type ValidSettingKey = (typeof VALID_SETTINGS)[number];
@@ -76,6 +85,8 @@ const STRING_SETTINGS: readonly string[] = [
   "defaultNodeId",
   "worktreesDir",
   "worktrunk.binaryPath",
+  // A workflow id is an opaque string here; whether it RESOLVES is the store seam's verdict, not the parser's.
+  "defaultWorkflowId",
 ];
 
 // Validation ranges for numeric settings
@@ -271,6 +282,10 @@ export async function runSettingsShow(projectName?: string): Promise<void> {
       keys: ["defaultNodeId", "unavailableNodePolicy"],
     },
     {
+      title: "Workflows",
+      keys: ["defaultWorkflowId"],
+    },
+    {
       title: "Notifications",
       keys: ["ntfyEnabled", "ntfyTopic"],
     },
@@ -343,6 +358,43 @@ export async function runSettingsSet(key: string, value: string, projectName?: s
       await globalStore!.updateSettings({ language: null } as unknown as Partial<GlobalSettings>);
       console.log();
       console.log("  ✓ Language reset to auto-detect (browser/environment locale)");
+      console.log();
+      return;
+    }
+
+    /*
+    FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+    `fn settings set defaultWorkflowId <id|none> --project <p>` now exists and is validated. Before this,
+    the key was simply absent from VALID_SETTINGS, so the CLI answered "Unknown setting" while the
+    dashboard's generic settings write persisted whatever it was handed — including an id that resolves to
+    nothing, which silently routed every new card in the project.
+
+    Two deliberate shape choices:
+    * The write goes through `TaskStore.setDefaultWorkflowId()` — the seam that already carries the shared
+      verdict — rather than a raw `updateSettings()` patch, so the CLI validates by REACHING the check
+      instead of restating it and cannot drift from the store or the dashboard.
+    * `none`, `null`, and an empty value are clear spellings for the one value that must never be gated:
+      clearing is always legal. Workflow ids are `builtin:*` or `wf-*`, so those sentinels cannot collide
+      with a real id. A rejected id surfaces the store's own sentence through the shared catch below —
+      non-zero exit, nothing persisted.
+    */
+    if (key === "defaultWorkflowId") {
+      if (!store) {
+        throw new Error('Setting "defaultWorkflowId" is project-only. Use --project or run from a project directory.');
+      }
+      const raw = (parsedValue as string).trim();
+      const clearSpellings = ["none", "null", ""];
+      if (clearSpellings.includes(raw.toLowerCase())) {
+        await store.setDefaultWorkflowId(null);
+        console.log();
+        console.log("  ✓ Cleared project default workflow (new cards use the first enabled workflow)");
+        console.log();
+        return;
+      }
+      await store.setDefaultWorkflowId(raw);
+      const effectiveDefault = await store.getDefaultWorkflowId();
+      console.log();
+      console.log(`  ✓ Project default workflow set to ${effectiveDefault ?? raw}`);
       console.log();
       return;
     }

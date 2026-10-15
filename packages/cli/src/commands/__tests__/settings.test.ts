@@ -550,4 +550,89 @@ describe("settings commands", () => {
     expect(output).toContain("Default Node Id");
     expect(output).toContain("Unavailable Node Policy");
   });
+
+  /*
+   * FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+   * `settings.defaultWorkflowId` used to be un-settable from the CLI ("Unknown setting") while the
+   * dashboard's generic write happily persisted an id that resolves to nothing. These cases pin the new
+   * contract: the key is settable, it is PROJECT-scoped, the write reaches the validating store seam
+   * (`setDefaultWorkflowId`) rather than a raw settings patch, `none`/`null`/empty clear it, and a refusal
+   * from that seam exits non-zero with the store's own sentence instead of pretending success.
+   */
+  describe("defaultWorkflowId", () => {
+    function mockProjectStore(overrides: Record<string, unknown> = {}) {
+      const store = {
+        setDefaultWorkflowId: vi.fn().mockResolvedValue(undefined),
+        getDefaultWorkflowId: vi.fn().mockResolvedValue("builtin:stepwise-coding"),
+        updateSettings: vi.fn().mockResolvedValue(makeSettings({})),
+        getSettings: vi.fn().mockResolvedValue(makeSettings({ defaultWorkflowId: "builtin:stepwise-coding" })),
+        ...overrides,
+      };
+      vi.mocked(resolveProject).mockResolvedValue({
+        projectId: "proj-1",
+        projectName: "demo-project",
+        projectPath: "/projects/demo",
+        isRegistered: true,
+        store: store as any,
+      });
+      return store;
+    }
+
+    it("is a valid, project-scoped string setting", () => {
+      expect(VALID_SETTINGS).toContain("defaultWorkflowId");
+      expect(parseValue("defaultWorkflowId", "builtin:stepwise-coding")).toBe("builtin:stepwise-coding");
+    });
+
+    it("requires project scope", async () => {
+      await expect(runSettingsSet("defaultWorkflowId", "builtin:coding")).rejects.toThrow("process.exit:1");
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Error: Setting "defaultWorkflowId" is project-only. Use --project or run from a project directory.',
+      );
+    });
+
+    it("writes through the validating store seam, not a raw settings patch", async () => {
+      const store = mockProjectStore();
+
+      await runSettingsSet("defaultWorkflowId", "builtin:stepwise-coding", "demo-project");
+
+      expect(store.setDefaultWorkflowId).toHaveBeenCalledWith("builtin:stepwise-coding");
+      expect(store.updateSettings).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it("treats none, null, and an empty value as a clear", async () => {
+      for (const spelling of ["none", "null", "", "NONE"]) {
+        const store = mockProjectStore();
+        await runSettingsSet("defaultWorkflowId", spelling, "demo-project");
+        expect(store.setDefaultWorkflowId).toHaveBeenLastCalledWith(null);
+      }
+    });
+
+    it("exits non-zero and persists nothing when the store seam refuses the id", async () => {
+      const store = mockProjectStore({
+        setDefaultWorkflowId: vi.fn().mockRejectedValue(
+          new Error("Workflow 'builtin:brainstorming' is deprecated and is not an allowed default workflow"),
+        ),
+      });
+
+      await expect(runSettingsSet("defaultWorkflowId", "builtin:brainstorming", "demo-project")).rejects.toThrow("process.exit:1");
+
+      expect(store.updateSettings).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("'builtin:brainstorming' is deprecated and is not an allowed default workflow"),
+      );
+      expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("Unknown setting"));
+    });
+
+    it("appears under a Workflows section in settings show", async () => {
+      mockProjectStore();
+
+      await runSettingsShow("demo-project");
+
+      const output = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(output).toContain("Workflows");
+      expect(output).toContain("Default Workflow Id");
+      expect(output).toContain("builtin:stepwise-coding");
+    });
+  });
 });

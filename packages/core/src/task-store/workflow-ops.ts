@@ -11,7 +11,7 @@ import type {Settings} from "../types.js";
 import { parseWorkflowIr, downgradeIrToV1IfPure } from "../workflows/workflow-ir.js";
 import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflows/workflow-reconciliation.js";
 import type {WorkflowFieldDefinition, WorkflowIr} from "../workflows/workflow-ir-types.js";
-import {resolveDefaultWorkflowIr} from "../workflows/builtin-workflows.js";
+import {resolveDefaultWorkflowIr, resolveEffectiveDefaultWorkflowId, isBuiltinWorkflowDeprecated, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow} from "../workflows/builtin-workflows.js";
 import "../builtin-traits.js";
 import {normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionUpdate} from "../workflows/workflow-definition-types.js";
 import {resolveDefaultOnOptionalGroupIds} from "../workflows/workflow-optional-steps.js";
@@ -546,27 +546,105 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
     }
   }
 
+/*
+FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+`settings.defaultWorkflowId` had ONE validating writer (`PUT /project/default-workflow` via this seam)
+and three unvalidated ones — `importSettings` (generic `store.updateSettings`), `PUT /api/settings`
+(a canonical project key with no sanitizer), and the CLI (the key was absent from `VALID_SETTINGS`, so
+`fn settings set` refused the real key with `Error: Unknown setting`). A mistyped or since-deprecated id
+therefore persisted silently, and because `resolveEffectiveDefaultWorkflowId` applies NO fallback to a
+custom id, every new card was then routed into a workflow that does not resolve.
+
+This is the single write-side predicate every surface now shares. The invariant:
+`defaultWorkflowId` can never GAIN an id that read-side resolution cannot turn into an existing,
+allowed workflow. Reads stay untouched — an id persisted before it became deprecated or disabled must
+keep resolving, so tightening is a write-time rule only.
+
+Two rules the callers depend on:
+1. The unknown-id sentence keeps its exact shape: `PUT /project/default-workflow` maps a refusal to
+   HTTP status by testing /not found/i, so an unknown id must stay a 404.
+2. The built-in refusals must NOT contain that substring, so a deprecated or disabled built-in reads
+   as a 400 "not an allowed default workflow" instead of a misleading 404 for something the catalog
+   genuinely does ship.
+
+Why the predicate sits ABOVE `updateSettings` rather than beside the sibling sanitizer
+`assertValidEnabledBuiltinWorkflowIds()` (which already refuses an unavailable plugin-gated id in
+`enabledBuiltinWorkflowIds` at that seam): `importSettings` has to refuse BEFORE it writes anything,
+because a mid-write raise would leave global settings applied and project settings not. A check inside
+the project-settings writer cannot give it that ordering guarantee, so every surface calls this
+predicate explicitly and `updateSettings` stays the raw escape hatch it has always been.
+
+The built-in decision is the tautology `resolveEffectiveDefaultWorkflowId(id, enabled) === id` rather
+than a re-derived set: that resolver already folds in deprecation, fragment membership, plugin gating,
+and the project's `enabledBuiltinWorkflowIds`. `isBuiltinWorkflowEnabled` is deliberately NOT used —
+it returns true for an undefined enablement list, which is exactly the permissive answer a write gate
+cannot accept. The branches below only split a confirmed refusal into a specific reason sentence, plus
+one extra pair the tautology cannot see: a project that explicitly lists a plugin-gated id in
+`enabledBuiltinWorkflowIds` passes the tautology, so the gate re-checks
+`getRequiredPluginIdForBuiltinWorkflow()` + `store.isPluginInstalled()` — the same pair the
+`enabledBuiltinWorkflowIds` sanitizer in `PUT /api/settings` uses.
+
+Clearing is always legal: `null` is the explicit-clear sentinel and validates unconditionally. The
+terminal `none`/`null`/empty-string spellings normalize to that `null` in the CLI parser, so this seam
+never has to guess which word an operator typed.
+*/
+/**
+ * Validate a candidate project-default workflow id WITHOUT writing it.
+ *
+ * @returns the operator-facing refusal sentence, or `undefined` when the id may be persisted.
+ * `null` is the explicit-clear sentinel and always validates.
+ */
+export async function validateProjectDefaultWorkflowRef(
+  store: TaskStore,
+  requestedWorkflowId: string | null,
+): Promise<string | undefined> {
+  if (requestedWorkflowId === null) return undefined;
+  const workflowId = requestedWorkflowId;
+
+  /*
+   * A `builtin:` candidate is classified against the CATALOG, not through the custom-definition read:
+   * `getWorkflowDefinition()` deliberately returns `undefined` for a plugin-gated built-in whose plugin
+   * is missing, so routing that candidate through the unknown-id branch would answer "not found" about
+   * a workflow the product genuinely ships. That is the misleading 404 this task removes.
+   */
+  if (isBuiltinWorkflowId(workflowId)) {
+    const builtin = getBuiltinWorkflow(workflowId);
+    if (!builtin) return `Workflow '${workflowId}' not found`;
+    if (builtin.kind === "fragment") {
+      return `Workflow '${workflowId}' is a fragment and cannot be set as the project default`;
+    }
+    if (isBuiltinWorkflowDeprecated(workflowId)) {
+      return `Workflow '${workflowId}' is deprecated and is not an allowed default workflow`;
+    }
+    const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(workflowId);
+    if (requiredPluginId && !(await store.isPluginInstalled(requiredPluginId))) {
+      return `Workflow '${workflowId}' requires plugin '${requiredPluginId}' which is not installed and is not an allowed default workflow`;
+    }
+    const { enabledBuiltinWorkflowIds } = await store.getSettings();
+    if (resolveEffectiveDefaultWorkflowId(workflowId, enabledBuiltinWorkflowIds) !== workflowId) {
+      return `Workflow '${workflowId}' is not an enabled built-in workflow and is not an allowed default workflow`;
+    }
+    return undefined;
+  }
+
+  const exists = await store.getWorkflowDefinition(workflowId);
+  if (!exists) return `Workflow '${workflowId}' not found`;
+  // KTD-1/R6: a fragment is a reusable palette piece, not a selectable workflow.
+  if (exists.kind === "fragment") {
+    return `Workflow '${workflowId}' is a fragment and cannot be set as the project default`;
+  }
+  return undefined;
+}
+
 export async function setDefaultWorkflowIdImpl(store: TaskStore, requestedWorkflowId: string | null): Promise<void> {
     /*
     FNXC:WorkflowIdentity 2026-09-14-19:06:
 A built-in revision retains its original identity. Migration 0079 converges persisted references before catalog reads, so selection, configuration and capacity use the same raw workflow id without redirects.
     */
-    const workflowId = requestedWorkflowId === null
-      ? null
-      : requestedWorkflowId;
-    if (workflowId) {
-      const exists = await store.getWorkflowDefinition(workflowId);
-      if (!exists) throw new Error(`Workflow '${workflowId}' not found`);
-      // KTD-1/R6: a fragment is a reusable palette piece, not a selectable
-      // workflow. Reject it at the write boundary so a fragment can never be
-      // persisted as the project default (the read-side skip in
-      // materializeDefaultWorkflowSteps remains as defense in depth).
-      if (exists.kind === "fragment") {
-        throw new Error(`Workflow '${workflowId}' is a fragment and cannot be set as the project default`);
-      }
-    }
+    const refusal = await validateProjectDefaultWorkflowRef(store, requestedWorkflowId);
+    if (refusal) throw new Error(refusal);
     // null is updateSettings' explicit-delete sentinel for project keys.
-    await store.updateSettings({ defaultWorkflowId: workflowId } as unknown as Partial<Settings>);
+    await store.updateSettings({ defaultWorkflowId: requestedWorkflowId } as unknown as Partial<Settings>);
   }
 
 export async function selectTaskWorkflowImpl(store: TaskStore, taskId: string, requestedWorkflowId: string): Promise<string[]> {

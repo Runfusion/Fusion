@@ -422,6 +422,7 @@ PR:
   fn settings                          Show current Fusion configuration
   fn settings set <key> <value>        Update a configuration setting
   fn settings set defaultNodeId <node-id>
+  fn settings set defaultWorkflowId <workflow-id|none> [--project <name>]
   fn settings set unavailableNodePolicy <block|fallback-local>
   fn settings set worktrunk.enabled <true|false>
   fn settings set worktrunk.onFailure <fail|fallback-native>

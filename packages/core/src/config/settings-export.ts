@@ -25,6 +25,7 @@ import {
   MOVED_SETTINGS_KEYS,
   stripMovedSettingsKeys,
 } from "./moved-settings.js";
+import { validateProjectDefaultWorkflowRef } from "../task-store/workflow-ops.js";
 import { createLogger } from "../process/logger.js";
 
 const log = createLogger("settings-export");
@@ -353,6 +354,39 @@ async function upgradeMovedKeysFromV1Project(
 }
 
 /**
+ * Refuse an unresolvable project `defaultWorkflowId` in an import payload BEFORE anything is written.
+ *
+ * Returns the refusal sentence, or `undefined` when the payload may proceed.
+ *
+ * FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+ * `importSettings` applies GLOBAL settings before PROJECT settings and turns a mid-write raise into
+ * `{ success: false, error }` — but a raise raised *inside* the project write would still have left the
+ * global section applied, i.e. a half-import. So the default-workflow verdict is taken up front with the
+ * same shared predicate every other write surface uses (`validateProjectDefaultWorkflowRef`), keeping the
+ * structured `{ success: false, error }` contract intact and the write order untouched.
+ *
+ * A payload that omits the key, or carries `null`/`undefined`, is a clear or a no-op and always proceeds;
+ * only a present non-null reference is judged.
+ */
+async function validateImportedDefaultWorkflowRef(
+  store: TaskStore,
+  data: SettingsExportData,
+  scope: "global" | "project" | "both",
+): Promise<string | undefined> {
+  if (scope === "global") return undefined;
+  const projectSection = data.project as Record<string, unknown> | undefined;
+  if (!projectSection || !Object.prototype.hasOwnProperty.call(projectSection, "defaultWorkflowId")) {
+    return undefined;
+  }
+  const raw = projectSection.defaultWorkflowId;
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return "settings.defaultWorkflowId must be a workflow id string, or null to clear it";
+  }
+  return validateProjectDefaultWorkflowRef(store, raw);
+}
+
+/**
  * Import settings into the current project.
  *
  * Validates the import data and applies it to global, project, and (v2) workflow
@@ -386,6 +420,21 @@ export async function importSettings(
   let globalCount = 0;
   let projectCount = 0;
   let workflowSettingsCount = 0;
+
+  /*
+   * RUFU-391: the default-workflow verdict is taken before the first write, so a refused import
+   * changes nothing at all — see `validateImportedDefaultWorkflowRef` for why the ordering matters.
+   */
+  const defaultWorkflowRefusal = await validateImportedDefaultWorkflowRef(store, data, scope);
+  if (defaultWorkflowRefusal) {
+    return {
+      success: false,
+      globalCount: 0,
+      projectCount: 0,
+      workflowSettingsCount: 0,
+      error: defaultWorkflowRefusal,
+    };
+  }
 
   try {
     // Import global settings if present and requested.

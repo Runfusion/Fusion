@@ -816,6 +816,14 @@ export {
   DEFAULT_WORKFLOW_ID,
   resolveDefaultWorkflowIr,
 } from "./workflows/builtin-workflows.js";
+/*
+FNXC:DefaultWorkflowWriteValidation 2026-10-14-23:58 (RUFU-391):
+The write-side default-workflow predicate is exported as a free function, NOT as a new public TaskStore
+method: `store.setDefaultWorkflowId()` already routes through it, and a second public entry point would
+just split the write surface the gate exists to protect. Inventory/drift guards count public store
+methods, so keeping it a module export leaves that census unchanged.
+*/
+export { validateProjectDefaultWorkflowRef } from "./task-store/workflow-ops.js";
 export {
   COMPLETION_SUMMARY_NODE_ID,
   completionSummaryNode,

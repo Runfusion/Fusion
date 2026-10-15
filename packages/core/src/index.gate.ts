@@ -680,6 +680,9 @@ export {
   DEFAULT_WORKFLOW_ID,
   resolveDefaultWorkflowIr,
 } from "./workflows/builtin-workflows.js";
+// RUFU-391: mirrored in the gate-safe barrel so `@fusion/core` resolves the shared default-workflow
+// write predicate identically under the engine-core project (see index.ts for the design note).
+export { validateProjectDefaultWorkflowRef } from "./task-store/workflow-ops.js";
 export {
   COMPLETION_SUMMARY_NODE_ID,
   completionSummaryNode,
