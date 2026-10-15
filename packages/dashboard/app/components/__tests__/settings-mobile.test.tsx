@@ -413,7 +413,7 @@ describe("SettingsModal mobile adaptations", () => {
       status: "ok",
       version: "",
       uptime: 120,
-      database: { healthy: true, corruptionDetected: false, corruptionErrors: [], lastCheckedAt: null, isRunning: false },
+      database: { healthy: true, corruptionDetected: false, corruptionErrors: [], lastCheckedAt: null },
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     });
     mockSettingsViewport(true);

@@ -86,7 +86,14 @@ export interface DashboardHealthResponse {
     corruptionDetected: boolean;
     corruptionErrors: string[];
     lastCheckedAt: string | null;
-    isRunning: boolean;
+    /*
+    FNXC:PostgresHealth 2026-10-15-13:28 (RUFU-302):
+    This shape previously carried `isRunning: boolean`, which was not a health
+    measurement — it mirrored a store-internal "a probe is in flight" transient that
+    every published producer hardcoded to `false`. It was read as DB-liveness proof
+    (RUFU-301) and proved nothing, so it is removed rather than replaced. Liveness is
+    already `healthy` (a real `SELECT 1` round-trip); no replacement field is added.
+    */
   };
   /*
   FNXC:PostgresHealth 2026-07-14-23:45:

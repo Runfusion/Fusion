@@ -64,7 +64,26 @@ blindness instead of removing it. So an unfinished measurement fails closed to
 in `taskIdIntegrity.status: "error"` plus its `failure` evidence class, which is
 where "not verified" is distinguishable from "verified corrupt".
 */
-export type DashboardDatabaseHealth = ReturnType<TaskStore["getDatabaseHealth"]>;
+/*
+FNXC:PostgresHealth 2026-10-15-13:28 (RUFU-302):
+The published health contract enumerates ONLY measured signals. This type used to
+be `ReturnType<TaskStore["getDatabaseHealth"]>`, which dragged the store's
+transient `isRunning` flag ("true while an asynchronous health check is in
+progress") into an operator-facing API — both producers hardcoded it to `false`,
+so it was a constant, not a measurement. RUFU-301's incident report read
+`database.isRunning:false` as proof the database was dead; it proved nothing.
+An open derivation is what let store bookkeeping reach the wire, so the shape is
+now written out explicitly and `isRunning` is simply absent. The core store
+snapshot keeps its internal probe-in-progress flag for its own use; it is
+intentionally NOT published. `lastCheckedAt` stays `Date | null` here (the
+producer's own clock) and serializes to an ISO string on the wire.
+*/
+export interface DashboardDatabaseHealth {
+  healthy: boolean;
+  corruptionDetected: boolean;
+  corruptionErrors: string[];
+  lastCheckedAt: Date | null;
+}
 
 export interface DashboardPostgresHealthResult {
   database: DashboardDatabaseHealth;
@@ -309,7 +328,6 @@ function healthyDatabase(checkedAt: Date): DashboardDatabaseHealth {
     corruptionDetected: false,
     corruptionErrors: [],
     lastCheckedAt: checkedAt,
-    isRunning: false,
   };
 }
 
@@ -328,7 +346,6 @@ function failedHealth(
       corruptionDetected: true,
       corruptionErrors: visibleErrors,
       lastCheckedAt: checkedAt,
-      isRunning: false,
     },
     taskIdIntegrity: {
       status: "error",

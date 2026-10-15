@@ -193,7 +193,25 @@ export function buildHealthPayload(args: {
   return {
     // Durable running/failed migration markers must never be hidden behind ok health.
     status: migration || !database.healthy || corruptionDetected || taskIdIntegrity.status !== "ok" ? "degraded" : "ok",
-    database: { ...database, corruptionDetected },
+    /*
+     * FNXC:PostgresHealth 2026-10-15-13:28 (RUFU-302):
+     * The published `database` object is a CLOSED enumerated shape, not a spread of
+     * the store-derived health value. `database: { ...database, corruptionDetected }`
+     * forwarded every member of the store snapshot verbatim, which is how the
+     * always-false `isRunning` probe-in-progress flag reached an operator-facing API
+     * and was misread by RUFU-301 as proof the database was dead. Enumerating the
+     * measured fields means a future store member cannot leak onto the wire without
+     * a deliberate edit here (the route-level key-set assertion in
+     * `health-payload-contract.test.ts` is the enforcement).
+     */
+    database: {
+      healthy: database.healthy,
+      // Pair invariant: a blocking error can never travel with a clean-canary
+      // claim, and an unmeasured canary can never claim to be clean.
+      corruptionDetected,
+      corruptionErrors: database.corruptionErrors,
+      lastCheckedAt: database.lastCheckedAt,
+    },
     version: cliPackageVersion,
     uptime: Math.floor(process.uptime()),
     /*

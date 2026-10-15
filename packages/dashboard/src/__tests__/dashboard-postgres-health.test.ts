@@ -48,6 +48,28 @@ describe("evaluateDashboardPostgresHealth", () => {
     expect(result.taskIdIntegrity.status).toBe("ok");
   });
 
+  /*
+  FNXC:PostgresHealth 2026-10-15-13:28 (RUFU-302):
+  The healthy producer must publish ONLY the measured fields. `isRunning` used to
+  be a hardcoded `false` here (a store snapshot member that leaked through the
+  old `ReturnType<TaskStore["getDatabaseHealth"]>` derivation) and was read as
+  DB-liveness proof it never was. Pin the closed key set so neither that flag nor
+  any future store member can reappear on the produced health object.
+  */
+  it("produces only the measured database fields from the healthy path (no isRunning)", async () => {
+    const store = { getAsyncLayer: () => layer } as TaskStore;
+
+    const result = await evaluateDashboardPostgresHealth(store);
+
+    expect(result.database).not.toHaveProperty("isRunning");
+    expect(Object.keys(result.database).sort()).toEqual([
+      "corruptionDetected",
+      "corruptionErrors",
+      "healthy",
+      "lastCheckedAt",
+    ]);
+  });
+
   it("prefers the engine project context for task-ID integrity partitioning", async () => {
     const boundLayer = { ...layer, projectId: "layer-project" } as AsyncDataLayer;
     const store = { getAsyncLayer: () => boundLayer } as TaskStore;
@@ -140,6 +162,14 @@ describe("evaluateDashboardPostgresHealth", () => {
       // banner and the recommended action read.
       failure: "unconfigured",
     });
+    // RUFU-302: the failed producer publishes the same closed key set — no isRunning.
+    expect(result.database).not.toHaveProperty("isRunning");
+    expect(Object.keys(result.database).sort()).toEqual([
+      "corruptionDetected",
+      "corruptionErrors",
+      "healthy",
+      "lastCheckedAt",
+    ]);
   });
 
   /*

@@ -27,7 +27,6 @@ function database(overrides: Partial<DashboardDatabaseHealth> = {}): DashboardDa
     corruptionDetected: false,
     corruptionErrors: [],
     lastCheckedAt: CHECKED_AT,
-    isRunning: false,
     ...overrides,
   };
 }
@@ -177,5 +176,31 @@ describe("buildHealthPayload pair invariant", () => {
     expectTypeOf(published.database.corruptionDetected).toEqualTypeOf<boolean>();
     expectTypeOf<DashboardDatabaseHealth["corruptionDetected"]>().toEqualTypeOf<boolean>();
     expect(typeof published.database.corruptionDetected).toBe("boolean");
+  });
+
+  it("publishes only the four measured database fields and cannot carry isRunning", () => {
+    /*
+    FNXC:PostgresHealth 2026-10-15-13:28 (RUFU-302):
+    The published shape used to be `ReturnType<TaskStore["getDatabaseHealth"]>`, so
+    the store snapshot's transient `isRunning` probe-in-progress flag rode into an
+    operator-facing API and was misread (RUFU-301) as proof the database was dead.
+    `isRunning` is now absent from the shape entirely, so the guard is a `keyof`
+    closure, not a `.not.toHaveProperty("isRunning")` over one literal — that would
+    pin a single removed member while the open-derivation leak stayed open. Adding
+    any store member to `DashboardDatabaseHealth` fails typecheck here; the
+    runtime assertion is the belt-and-suspenders over the served payload.
+    */
+    const published = payload(database(), CLEAN_INTEGRITY);
+
+    expectTypeOf<keyof DashboardDatabaseHealth>().toEqualTypeOf<
+      "healthy" | "corruptionDetected" | "corruptionErrors" | "lastCheckedAt"
+    >();
+    expect(published.database).not.toHaveProperty("isRunning");
+    expect(Object.keys(published.database).sort()).toEqual([
+      "corruptionDetected",
+      "corruptionErrors",
+      "healthy",
+      "lastCheckedAt",
+    ]);
   });
 });

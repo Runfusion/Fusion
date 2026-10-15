@@ -37,7 +37,7 @@ describe("api-node", () => {
         status: "online",
         version: "1.0.0",
         nodeId: "node_abc",
-        database: { healthy: true, isRunning: false, lastCheckedAt: null },
+        database: { healthy: true, lastCheckedAt: null },
       };
       mockProxyApi.mockResolvedValueOnce(mockHealth);
 
@@ -53,7 +53,7 @@ describe("api-node", () => {
         status: "offline",
         version: "2.0.0",
         nodeId: "node_xyz",
-        database: { healthy: false, isRunning: true, lastCheckedAt: "2026-05-11T10:00:00.000Z" },
+        database: { healthy: false, lastCheckedAt: "2026-05-11T10:00:00.000Z" },
       };
       mockProxyApi.mockResolvedValueOnce(mockHealth);
 
@@ -64,7 +64,6 @@ describe("api-node", () => {
       expect(result.nodeId).toBe("node_xyz");
       expect(result.database).toEqual({
         healthy: false,
-        isRunning: true,
         lastCheckedAt: "2026-05-11T10:00:00.000Z",
       });
     });

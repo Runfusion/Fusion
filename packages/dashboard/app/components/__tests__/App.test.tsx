@@ -149,7 +149,6 @@ vi.mock("../../api", async (importOriginal) => {
         corruptionDetected: false,
         corruptionErrors: [],
         lastCheckedAt: null,
-        isRunning: false,
       },
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     })),
@@ -1316,7 +1315,6 @@ beforeEach(() => {
       corruptionDetected: false,
       corruptionErrors: [],
       lastCheckedAt: null,
-      isRunning: false,
     },
     taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
   });
@@ -3365,7 +3363,6 @@ describe("FN-4250 FileBrowserProvider coverage", () => {
         corruptionDetected: false,
         corruptionErrors: [],
         lastCheckedAt: null,
-        isRunning: false,
       },
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     });
@@ -3405,7 +3402,6 @@ describe("FN-4250 FileBrowserProvider coverage", () => {
         corruptionDetected: false,
         corruptionErrors: [],
         lastCheckedAt: null,
-        isRunning: false,
       },
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     });
@@ -3434,7 +3430,6 @@ describe("FN-4250 FileBrowserProvider coverage", () => {
         corruptionDetected: false,
         corruptionErrors: [],
         lastCheckedAt: null,
-        isRunning: false,
       },
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     });

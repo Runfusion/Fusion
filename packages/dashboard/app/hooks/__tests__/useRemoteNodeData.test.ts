@@ -27,7 +27,7 @@ describe("useRemoteNodeData search query propagation", () => {
       status: "online",
       version: "1.0.0",
       nodeId: "node_abc",
-    database: { healthy: true, lastCheckedAt: null, isRunning: true },
+    database: { healthy: true, lastCheckedAt: null },
     });
     mockFetchRemoteNodeProjects.mockResolvedValueOnce([]);
   });
@@ -320,7 +320,7 @@ describe("useRemoteNodeData", () => {
 
   describe("when nodeId is provided", () => {
     it("fetches health and projects on mount", async () => {
-      const mockHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null, isRunning: true } };
+      const mockHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null } };
       const mockProjects = [
         {
           id: "proj_001",
@@ -351,7 +351,7 @@ describe("useRemoteNodeData", () => {
     });
 
     it("fetches tasks and project health when projectId option is provided", async () => {
-      const mockHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null, isRunning: true } };
+      const mockHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null } };
       const mockProjects = [
         {
           id: "proj_001",
@@ -415,7 +415,7 @@ describe("useRemoteNodeData", () => {
         status: "online",
         version: "1.0.0",
         nodeId: "node_abc",
-      database: { healthy: true, lastCheckedAt: null, isRunning: true },
+      database: { healthy: true, lastCheckedAt: null },
       });
       mockFetchRemoteNodeProjects.mockRejectedValueOnce(new Error("Failed to fetch projects"));
 
@@ -441,7 +441,7 @@ describe("useRemoteNodeData", () => {
     });
 
     it("refresh function re-fetches data", async () => {
-      const initialHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null, isRunning: true } };
+      const initialHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null } };
       const initialProjects = [
         {
           id: "proj_001",
@@ -466,7 +466,7 @@ describe("useRemoteNodeData", () => {
       expect(result.current.health).toEqual(initialHealth);
 
       // Set up new responses for refresh
-      const refreshedHealth = { status: "online", version: "1.1.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null, isRunning: true } };
+      const refreshedHealth = { status: "online", version: "1.1.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null } };
       const refreshedProjects = [
         {
           id: "proj_002",
@@ -492,7 +492,7 @@ describe("useRemoteNodeData", () => {
     });
 
     it("refetches when nodeId changes", async () => {
-      const mockHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null, isRunning: true } };
+      const mockHealth = { status: "online", version: "1.0.0", nodeId: "node_abc", database: { healthy: true, lastCheckedAt: null } };
       const mockProjects = [
         {
           id: "proj_001",

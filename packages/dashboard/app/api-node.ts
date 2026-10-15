@@ -15,7 +15,6 @@ export interface RemoteNodeHealth {
   database: {
     healthy: boolean;
     lastCheckedAt: string | null;
-    isRunning: boolean;
   };
 }
 

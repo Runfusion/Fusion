@@ -68,7 +68,6 @@ describe("TaskIdIntegrityBanner", () => {
         corruptionDetected: false,
         corruptionErrors: [],
         lastCheckedAt: null,
-        isRunning: false,
       },
       taskIdIntegrity: {
         status: "ok",
