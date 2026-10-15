@@ -160,6 +160,20 @@ Both events are deliberately outside the curated delivery-pipeline event catalog
 
 `task:lane-capability-declined` is emitted by the heartbeat wake gate when a wake carrying an explicitly assigned card re-runs the bind verdict and the lane is capability-ineligible for it. The decline suppresses only this dispatch — the binding is untouched — so without this row the only trace was a warn log and the card sat in the lane's todo forever. Metadata: `{ outcome: "declined", taskId, agentId, column, code: "lane-capability-mismatch" }`, emitted through the FN-9175 bounded seam under the wake's real `runId`, deduped with a 10-minute cooldown per (lane, card, policy); the decline sentence is never recorded.
 
+The same decline now settles the review attempt it refused, and RUFU-682 is why. When the refused attempt is one the
+review dispatch sweep opened, the decline closes that reviewer-run row as `failed` with reason
+`lane-capability-declined:<lane>/<binding>/<code>/<policySignature>` (witness and reason builder: `reviewerRunLaneDeclineReason`;
+the closer: `declineReviewerRunForLane`, which refuses to settle a row another reviewer opened). That reason is what the sweep reads
+back as a recorded refusal: it classifies the card as **`capability-declined`**, announces the sentence once per card per policy
+episode through the card's History, and stops routing that binding, so the refusal is the last dispatch the lane ever receives for
+that policy. It is **not** a `reviewer-busy` park: the card stays un-parked with no error, because the refusal is a routing fact
+about one binding, not a fault in the card. The policy signature in the reason is what lifts it — editing the lane's roles, binding,
+or `assignmentPolicy` changes the signature, so the previous refusal stops proving anything and dispatch re-arms on the next tick.
+No new event is emitted, because the existing row already names the defect; what was missing was that the row's evidence lived where
+the deciding loop could not read it. The refusal itself stays countable through the ledger: `select attempt_number, closed_reason
+from project.task_reviewer_runs where task_id = '<ID>' and closed_reason like 'lane-capability-declined:%'` counts the refusals, and
+the sweep's per-tick `emptyClasses()` map reports the card count under `capability-declined`.
+
 The repair half is the self-healing sweep `reconcile-lane-capability-misbind` (registered after the agent-link mirror sweeps), the **only** mutation owner for this defect class. It writes exactly one of three events per outcome, all under the fixed `runId: "lane-capability-reconcile"`: `task:reconcile-lane-capability-misbind-rebound` (`{ outcome: "rebound", taskId, priorAgentId, nextAgentId, column, candidateCount }`) when the card moved to an auto-eligible lane via the `updateTask({ assignedAgentId })` assignment seam; `task:reconcile-lane-capability-decline-frozen` (`{ outcome: "frozen", taskId, priorAgentId, column, code, candidateCount: 0 }`) once per card when no eligible lane exists — the freeze is the named `lane-capability-mismatch` external block, so a re-runs-stable sweep emits it at most once across passes; and `task:reconcile-lane-capability-misbind-no-action` (`{ outcome: "suppressed", suppressedCount }`) at most once per pass when candidates existed but every one hit an absolute guard (live session, pause, user-pause, existing freeze). Metadata is ids/counts/fixed enums only — never decline prose, policy text, or errors. Live-session, paused, and user-paused cards are never touched and no lifecycle column move ever happens; branch, worktree, and step progress survive the rebind by construction. Shape is pinned by `packages/engine/src/__tests__/self-healing-lane-capability.test.ts` and `packages/engine/src/__tests__/lane-capability-reconciliation.pg.test.ts`.
 
 ### The planning fence that terminalized a card it should have retried (RUFU-288)

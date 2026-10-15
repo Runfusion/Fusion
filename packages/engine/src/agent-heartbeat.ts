@@ -41,6 +41,8 @@ import {
   resolveTaskImplementationColumns,
   formatLaneCapabilityDeclineReason,
   laneCapabilityDeclinePolicy,
+  declineReviewerRunForLane,
+  reviewerRunLaneDeclineReason,
   LANE_CAPABILITY_DECLINE_CODE,
   type WorkflowIr,
   resolvePersistAgentThinkingLog,
@@ -3169,8 +3171,20 @@ export class HeartbeatMonitor {
                 implementationColumns: await resolveTaskImplementationColumns(taskStore, wakeTaskId),
               });
               if (!wakeBindVerdict.allowed) {
-                heartbeatLog.warn(`Agent ${agentId} declined bound task ${wakeTaskId}: ${formatLaneCapabilityDeclineReason(agent, boundTask)}`);
-                await this.auditLaneCapabilityDecline(agentId, boundTask.id, boundTask.column, agent, run.id);
+                /*
+                FNXC:LaneCapabilityReviewRefusal 2026-10-15-17:30 (RUFU-682):
+                ONE call carries the whole refusal: the named decline line, the bounded audit row, and the review-ledger
+                witness. Pairing them structurally is deliberate — the audit row alone could not be acted on, and the
+                witness alone would let the log and the ledger disagree. The ledger half is what the review dispatch
+                sweep reads: an attempt left `running` is closed by `reconcile-stranded-reviewer-runs` as `engine-lost:`,
+                the one reason class the sweep's anti-loop budget EXEMPTS, so the same deterministic capability mismatch
+                was dispatched again forever (measured: SANE-484 at `attempt 24`, 9 declines, 9 engine-lost closes, 0
+                sessions and 0 merge rows across 5.5 h).
+
+                The witness never decides the decline and never touches the binding: a ledger that cannot be written
+                leaves the wake behaving exactly as it did before this change.
+                */
+                await this.recordLaneCapabilityDecline(agent, boundTask, run.id);
                 // Decline ≠ unbind: fall through to inbox/auto-claim without touching the binding.
                 taskId = undefined;
               }
@@ -5613,6 +5627,44 @@ export class HeartbeatMonitor {
   */
   private static readonly LANE_CAPABILITY_DECLINE_AUDIT_COOLDOWN_MS = 10 * 60 * 1000;
   private readonly laneCapabilityDeclineAuditAt = new Map<string, number>();
+
+  /**
+   * The named decline, in one place: the operator-visible sentence, the bounded deduped audit row (RUFU-272), and
+   * the review-ledger refusal witness (RUFU-682).
+   *
+   * The third half exists because the first two could not stop a dispatch loop. `task:lane-capability-declined` said
+   * a lane refused a card, but the review dispatch sweep reads the reviewer-run ledger, and a refused attempt stayed
+   * `running` there until the stranded-run reconcile relabelled it `engine-lost:` — a reason class the anti-loop
+   * budget deliberately exempts, so attempts grew without ever spending it (SANE-484: attempts 20-25 in one
+   * afternoon, `reviewer-busy`/`parked` labels, no session, no merge row). The witness closes that same attempt with
+   * the lane's policy signature so `ReviewDispatchSweep` can honour the refusal instead of re-asking.
+   *
+   * Order matters only in that the refusal must never depend on the ledger: the decline is decided by the bind
+   * verdict above, and a ledger write that throws, is absent, or hangs cannot change the decline, the binding, or
+   * this wake. It moves no column and writes no lifecycle state.
+   */
+  private async recordLaneCapabilityDecline(
+    agent: Agent,
+    task: Pick<TaskDetail, "id" | "column">,
+    runId: string,
+  ): Promise<void> {
+    heartbeatLog.warn(`Agent ${agent.id} declined bound task ${task.id}: ${formatLaneCapabilityDeclineReason(agent, task)}`);
+    await this.auditLaneCapabilityDecline(agent.id, task.id, task.column, agent, runId);
+    if (!this.taskStore) return;
+    try {
+      const refused = await declineReviewerRunForLane(this.taskStore, {
+        taskId: task.id,
+        reviewerAgentId: agent.id,
+        reason: reviewerRunLaneDeclineReason(agent),
+        at: new Date().toISOString(),
+      });
+      if (refused) {
+        heartbeatLog.warn(`Agent ${agent.id} refused the review attempt on ${task.id}; the review lane will not re-dispatch this binding until its lane capability changes`);
+      }
+    } catch (error) {
+      heartbeatLog.debug(`Review-refusal witness for ${task.id} on ${agent.id} could not be recorded: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   private async auditLaneCapabilityDecline(
     agentId: string,

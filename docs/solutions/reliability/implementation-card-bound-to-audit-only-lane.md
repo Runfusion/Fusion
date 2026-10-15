@@ -84,3 +84,9 @@ carried only the deprecated singular `role`, hiding multi-role lanes from the se
   (precedent: `symbol-lock-reconcile`), or the bounded seam swallows a guaranteed insert failure.
 - The shared PG harness layer carries no `projectId`, so `store.asyncLayer` is unusable for agent-row
   fixtures there — seed via raw `adminSql` against `project.agents`.
+
+## See also
+
+- [`review-dispatch-refused-by-its-own-lane.md`](review-dispatch-refused-by-its-own-lane.md) (RUFU-682): what happens when the
+  decline is correct but a *second* dispatcher re-opens the attempt every tick, and why the refusal had to be recorded in the
+  reviewer-run ledger rather than only in run-audit.

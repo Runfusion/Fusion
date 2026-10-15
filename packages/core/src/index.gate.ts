@@ -991,6 +991,7 @@ export {
   openReviewerRunForTask,
   completeReviewerRunForTask,
   findLiveReviewerRunForTask,
+  declineReviewerRunForLane,
   listReviewerRunsForTask,
   invalidateReviewerRunsForTask,
   listStrandedLiveReviewerRuns,
@@ -1194,6 +1195,15 @@ export {
   formatTaskExternalBlockReason,
 } from "./tasks/task-external-block.js";
 export type { TaskExternalBlock, TaskExternalBlockOrigin, TaskExternalBlockReport } from "./tasks/task-external-block.js";
+/*
+FNXC:LaneCapabilityReviewRefusal 2026-10-15-17:40 (RUFU-682):
+The gate barrel must carry the decline contract the merge-gate file `review-lane-dispatch-sweep.test.ts` reaches
+through `@fusion/core`: the sweep module now reads a refusal witness out of every attempt row it counts, so an
+absent export surfaces as `reviewerRunLaneDeclineSignature is not a function` inside `engine-core` only
+(the failure mode FN-8651 documented for a barrel that is narrower than its gate files). Measured cost is this
+one already-loaded leaf — `agent-role-policy.ts` and `task-external-block.ts` are both in the gate closure today.
+*/
+export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
 export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
 export type {
   TaskColumnRestartEntryNode,

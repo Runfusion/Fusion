@@ -1490,7 +1490,7 @@ export {
   formatTaskExternalBlockReason,
 } from "./tasks/task-external-block.js";
 export type { TaskExternalBlock, TaskExternalBlockOrigin, TaskExternalBlockReport } from "./tasks/task-external-block.js";
-export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, formatLaneCapabilityDeclineReason, laneCapabilityDeclinePolicy, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
+export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
 export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
 export type {
   TaskColumnRestartEntryNode,
@@ -3551,6 +3551,7 @@ export {
   openReviewerRunForTask,
   completeReviewerRunForTask,
   findLiveReviewerRunForTask,
+  declineReviewerRunForLane,
   listReviewerRunsForTask,
   invalidateReviewerRunsForTask,
   listStrandedLiveReviewerRuns,

@@ -324,7 +324,7 @@ rows in `agent_heartbeats` ever" — measured live it has 4,413 heartbeat rows w
 patrols, not an absent timer.
 
 **Buckets, first-match order, actionable set.** Every review-lane card lands in exactly one bucket,
-first match wins: `E2 → E4 → E1 → E3 → B4 → B6 → B2 → B3 → B5 → B1`.
+first match wins: `E2 → E4 → E1 → E3 → B4 → E5 → B6 → B2 → B3 → B5 → B1`.
 
 | Bucket | Persisted state | Disposition |
 | --- | --- | --- |
@@ -333,6 +333,7 @@ first match wins: `E2 → E4 → E1 → E3 → B4 → B6 → B2 → B3 → B5 �
 | E1 review-level exclusion | review level None/0, or Plan-only with plan review satisfied | skip |
 | E3 nothing-reviewable | in review with no reviewable step, or a recorded nothing-reviewable outcome | fail loud, invent no review |
 | B4 running-live | open attempt **corroborated** by a live reviewer session on this exact card | skip, healthy |
+| E5 recorded refusal (`capability-declined`) | reviewer-run closed as `lane-capability-declined:<lane>/<binding>/<code>/<policySignature>` for every enabled reviewer, no live run, no verdict | withhold dispatch, name it on the card once per policy episode; **not** a park, and a distinct count from `reviewer-busy` |
 | B6 dispatched-no-work | live ledger row, no backing session, past the start-latency threshold | stall — re-dispatch on B3's budget |
 | B2 dispatched-no-verdict | a review that genuinely ran and never got a verdict (upstream Fusion#1946) | skip + log; operator hatches only, never fabricate a verdict |
 | B3 failed/crashed/stale | terminal-failed attempt, or a corroborated session that crashed/went stale | bounded re-dispatch, then park |
@@ -341,7 +342,7 @@ first match wins: `E2 → E4 → E1 → E3 → B4 → B6 → B2 → B3 → B5 �
 
 Actionable stall set = **B1 + in-budget B3 + in-budget B6 + B5** — never "everything in review",
 which would over-count healthy B4 and under-count what a deploy actually starts. The reconciliation
-identity `review-lane total = B1+B2+B3+B4+B5+B6+E1+E2+E3+E4` (each card ID exactly once) is the
+identity `review-lane total = B1+B2+B3+B4+B5+B6+E1+E2+E3+E4+E5` (each card ID exactly once) is the
 under-count guard: a snapshot that does not reconcile is invalid, not merely incomplete. An empty
 actionable set is **not** proof of anything; record `NO LIVE CASE OBSERVED — NOT PROOF`.
 

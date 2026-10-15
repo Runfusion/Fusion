@@ -182,6 +182,43 @@ export async function findLiveReviewerRunForTask(store: TaskStore, taskId: strin
   return layer.transactionImmediate((tx: DbTransaction) => findLiveReviewerRun(tx, { projectId, taskId }));
 }
 
+/*
+FNXC:LaneCapabilityReviewRefusal 2026-10-15-17:22 (RUFU-682):
+The review dispatch authority could not see that a dispatched attempt had been REFUSED, only that one had been
+opened. A wake declined for lane capability (`… has roles "reviewer"; implementation task …`) left its attempt row
+`running`, so `reconcile-stranded-reviewer-runs` closed it as `engine-lost:` — the one reason class the anti-loop
+budget exempts — and the sweep dispatched the same deterministic mismatch again (SANE-484: attempts 20…25 across
+one afternoon, zero sessions, zero merge rows). Refusing a binding requires the refusal to be a FACT on the row the
+dispatch owns, so the decline writes it here, at the moment the decline happens, through the ledger's own one-way
+completion guard.
+
+Keyed on (task, this reviewer): a decline from lane A must never settle lane B's in-flight attempt, and no row is
+ever invented — a decline with no live attempt (a timer wake on a bound card) witnesses nothing and changes nothing,
+which is what makes calling this from every wake safe. Takes no lifecycle action and moves no column.
+*/
+export async function declineReviewerRunForLane(
+  store: TaskStore,
+  input: { taskId: string; reviewerAgentId: string; reason: string; at: string },
+): Promise<boolean> {
+  const { layer, projectId } = requireProjectId(store, "declineReviewerRunForLane", input.taskId);
+  return layer.transactionImmediate(async (tx: DbTransaction) => {
+    const live = await findLiveReviewerRun(tx, { projectId, taskId: input.taskId });
+    // (card, lane) is the whole identity here: the live slot is one row per card, and the row names the lane the
+    // dispatch routed it to. A row held by ANOTHER lane is not ours to settle, and a wake with no open attempt (a
+    // timer wake on a bound card) writes nothing — which is what makes calling this from every wake safe. The
+    // heartbeat's run id is deliberately not compared: it is a different identifier space from `revrun_*`.
+    if (!live || live.reviewerAgentId !== input.reviewerAgentId) return false;
+    return completeReviewerRunInTransaction(tx, {
+      projectId,
+      id: live.id,
+      taskId: input.taskId,
+      status: "failed",
+      at: input.at,
+      failureReasons: [input.reason],
+    });
+  });
+}
+
 /**
  * Every attempt this card has ever had, oldest first, superseded rows included. The dispatch
  * sweep derives its anti-loop budget from these committed rows rather than from counters in

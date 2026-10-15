@@ -1,15 +1,18 @@
 import {
   CODE_REVIEW_GROUP_ID,
   completeReviewerRunForTask,
+  formatLaneCapabilityDeclineReason,
   invalidateReviewerRunsForTask,
   IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
   isEphemeralAgent,
+  laneCapabilityDeclinePolicy,
   listReviewerRunsForTask,
   latestTaskEnteredReviewAt,
   openReviewerRunForTask,
   resolveLifecycleColumns,
   resolveWorkflowIrForTaskWithProvenance,
   isEngineLossReviewerRun,
+  reviewerRunLaneDeclineSignature,
 } from "@fusion/core";
 import type {
   Agent,
@@ -87,6 +90,17 @@ export type ReviewDispatchClass =
   | "stalled-attempt"
   /** B4 — an open attempt corroborated by a live reviewer session on this exact card. */
   | "review-in-flight"
+  /*
+  FNXC:ReviewDispatchRefusal 2026-10-15-17:24 (RUFU-682):
+  A lane that REFUSES the card on capability grounds is not a lane that is busy. Before this bucket existed the
+  refusal was reported as `reviewer-busy` (SANE-484: `Dispatching review of SANE-484 to agent-0031e775 (attempt 24…)`
+  → `declined bound task … has roles "reviewer"; implementation task …` → `reviewer-busy … (attempts=24)`), so the
+  board looked congested while the real state was a deterministic mismatch nobody could see, and every ~40 minutes
+  the identical attempt repeated. This bucket is the named, countable refusal that stops routing to the declined
+  binding; it is NOT a lifecycle move — the card stays in its lane with its branch, worktree, and step progress.
+  */
+  /** RUFU-682 — every enabled reviewer already refused this card on capability grounds; re-dispatch repeats it. */
+  | "capability-declined"
   /** B5 — the residual when attempts ran out: surfaced, then left alone. */
   | "parked"
   /** E1 — deliberate no-code-review intent (review level 0 or an explicit step opt-out). */
@@ -111,6 +125,29 @@ export interface ReviewDispatchDecision {
   supersedeFirst: boolean;
   /** Next attempt number to record (1 for a never-dispatched card). */
   nextRound: number;
+}
+
+/*
+FNXC:ReviewDispatchRefusal 2026-10-15-17:26 (RUFU-682):
+The ledger already knew WHO refused and WHY (the decline witness names the lane and its policy signature); what
+was missing is the derivation the routing decision needs. Matched per (lane, signature), never by signature alone:
+two reviewers can share a policy signature, and a refusal by lane A is not a refusal by lane B — B has never been
+asked. The signature comparison is what keeps the refusal liftable: an operator who edits the lane's roles or
+assignment policy changes its signature, the recorded refusal stops matching, and the next tick routes again.
+No timer, no manual row edit, and no state for a sweep to forget on restart.
+*/
+/** The reviewers in `pool` whose CURRENT policy signature equals the one their refusal was recorded under. */
+export function declinedReviewersForTask(
+  rows: ReviewerRunRow[],
+  policySignatureByAgent: ReadonlyMap<string, string>,
+): Set<string> {
+  const declined = new Set<string>();
+  for (const row of rows) {
+    const signature = reviewerRunLaneDeclineSignature(row);
+    if (signature === null) continue;
+    if (policySignatureByAgent.get(row.reviewerAgentId) === signature) declined.add(row.reviewerAgentId);
+  }
+  return declined;
 }
 
 export interface ReviewDispatchTickResult {
@@ -162,10 +199,21 @@ export interface ReviewDispatchSweepOptions {
  * turns "stranded, cannot dispatch" into "attempts spent, parked forever". The exemption is keyed on the shared
  * `engine-lost:` reason prefix that sweep writes, not on status or age, and deliberately does NOT exempt the
  * dispatch sweep's own `dispatch-failed:` refusals, which were attempts that reached the point of failing.
+ *
+ * FNXC:ReviewDispatchRefusal 2026-10-15-17:25 (RUFU-682):
+ * A lane-capability refusal is exempt for the same reason, and the exemption is what makes the new bucket the
+ * operative authority instead of the counter. The refusal happens BEFORE any session starts, so counting it would
+ * (a) burn the card's budget on policy the reviewer never got to exercise, and (b) let the card land in `parked`
+ * — "attempts spent" — when the true fact is "this lane cannot take this card", which is the mislabel this card
+ * was filed against. Refusals are read as refusals by the binding-routing check below, not as attempts.
  */
 function unfinishedAttempts(rows: ReviewerRunRow[]): number {
   return rows.filter(
-    (row) => !isVerdictRecorded(row) && row.status !== "skipped" && !isEngineLossReviewerRun(row),
+    (row) =>
+      !isVerdictRecorded(row)
+      && row.status !== "skipped"
+      && !isEngineLossReviewerRun(row)
+      && reviewerRunLaneDeclineSignature(row) === null,
   ).length;
 }
 
@@ -186,6 +234,11 @@ export function classifyReviewCard(input: {
   rows: ReviewerRunRow[];
   activeRun: AgentHeartbeatRun | null;
   reviewerFound: boolean;
+  /**
+   * RUFU-682 — every reviewer the sweep could route this card to has already declined it on capability grounds.
+   * Computed by the caller from the ledger's decline witnesses (`declinedReviewersForTask`), never from a guess.
+   */
+  capabilityDeclinedForPool?: boolean;
   now: number;
   graceMs: number;
   startLatencyMs: number;
@@ -244,6 +297,14 @@ export function classifyReviewCard(input: {
   if (live) {
     // B4 requires corroboration by the live session itself, not merely the ledger row.
     if (input.activeRun && input.activeRun.taskId === input.task.id) return skip("review-in-flight");
+    /*
+    FNXC:ReviewDispatchRefusal 2026-10-15-17:26 (RUFU-682):
+    The refusal is checked BEFORE `reviewer-busy`, and the order is the whole point of the card. A busy reviewer
+    is a wait that ends; a capability refusal is the same verdict forever, and reporting it as a wait is what made
+    24 attempts look like congestion. The corroborated-session arm above still outranks it: a review that is
+    demonstrably running is not a refusal.
+    */
+    if (input.capabilityDeclinedForPool) return skip("capability-declined");
     if (input.activeRun) return skip("reviewer-busy");
     if (input.now - Date.parse(live.startedAt) < input.startLatencyMs) return skip("awaiting-handoff");
     if (unfinishedAttempts(rows) >= input.maxAttempts) return skip("parked");
@@ -254,6 +315,7 @@ export function classifyReviewCard(input: {
   if (newest) {
     if (isVerdictRecorded(newest)) return skip("verdict-recorded");
     if (newest.status === "skipped") return skip("nothing-reviewable");
+    if (input.capabilityDeclinedForPool) return skip("capability-declined");
     if (unfinishedAttempts(rows) >= input.maxAttempts) return skip("parked");
     return { bucket: "stalled-attempt", dispatch: true, supersedeFirst: false, nextRound };
   }
@@ -267,6 +329,7 @@ export function classifyReviewCard(input: {
   */
   const enteredMs = input.reviewEnteredAt ?? Date.parse(input.task.updatedAt);
   if (input.now - enteredMs < input.graceMs) return skip("awaiting-handoff");
+  if (input.capabilityDeclinedForPool) return skip("capability-declined");
   return { bucket: "never-dispatched", dispatch: true, supersedeFirst: false, nextRound: 1 };
 }
 
@@ -335,22 +398,34 @@ function carriesAuthoredReviewOutcome(result: { verdict?: unknown; bypassedBy?: 
  *    null is what authorises a dispatch, so passing a busy run here would serialise the pool back to one;
  * 3. when every reviewer is busy elsewhere, a busy run is handed over so the card is counted as `reviewer-busy`
  *    rather than vanishing from the sweep's accounting.
+ *
+ * FNXC:ReviewDispatchRefusal 2026-10-15-17:27 (RUFU-682): a reviewer that has ALREADY refused this card on
+ * capability grounds is excluded from arms 2 and 3 — that is what "stop further dispatch to the same binding"
+ * means while a second, capable reviewer still gets the card. Arm 1 is deliberately unfiltered: a lane running
+ * THIS card is a fact about a live session, and misreporting real work as a refusal is the worse error.
  */
 export function resolveReviewSlot(input: {
   pool: Agent[];
   busyRunByReviewer: Map<string, AgentHeartbeatRun | null>;
   allocatedThisTick: Set<string>;
   taskId: string;
+  /** Reviewers whose refusal is on record for this card; never offered the card again this tick. */
+  declined?: ReadonlySet<string>;
 }): { chosen: Agent | null; free: Agent | null; activeRun: AgentHeartbeatRun | null } {
+  const routable = input.declined
+    ? input.pool.filter((agent) => !input.declined!.has(agent.id))
+    : input.pool;
   const onThisCard = input.pool.find((agent) => input.busyRunByReviewer.get(agent.id)?.taskId === input.taskId) ?? null;
-  const free = input.pool.find((agent) => !input.allocatedThisTick.has(agent.id) && !input.busyRunByReviewer.get(agent.id)) ?? null;
-  const chosen = onThisCard ?? free ?? input.pool.find((agent) => input.busyRunByReviewer.get(agent.id)) ?? null;
+  const free = routable.find((agent) => !input.allocatedThisTick.has(agent.id) && !input.busyRunByReviewer.get(agent.id)) ?? null;
+  const chosen = onThisCard ?? free ?? routable.find((agent) => input.busyRunByReviewer.get(agent.id)) ?? null;
   const busyRun = chosen ? input.busyRunByReviewer.get(chosen.id) ?? null : null;
   return { chosen, free, activeRun: free && !onThisCard ? null : busyRun };
 }
 
 export class ReviewDispatchSweep {
   private timer?: NodeJS.Timeout;
+  /** How far apart two History refusals for one unchanged episode may be. */
+  private static readonly REFUSAL_HISTORY_WINDOW_MS = 6 * 60 * 60_000;
   private running = false;
   /** Suppresses repeat lines when a card sits in the same state across ticks (15 s cadence). */
   private lastLoggedBucket = new Map<string, ReviewDispatchClass>();
@@ -360,6 +435,12 @@ export class ReviewDispatchSweep {
   private readonly e4LogCooldownMs: number;
   private lastE4LogAt = 0;
   private e4Suppressed = 0;
+  /*
+  FNXC:ReviewDispatchRefusal 2026-10-15-17:29 (RUFU-682): the refusal is announced to the card ONCE per episode, not
+  every 15 s tick. `logEntryOnce`'s window is the durable bound; this set is what stops the sweep from taking the
+  card's advisory lock four times a minute while the misconfiguration stands.
+  */
+  private readonly refusalAnnounced = new Map<string, string>();
 
   public constructor(private readonly options: ReviewDispatchSweepOptions) {
     const projectId = options.projectId ?? options.store.getProjectId?.() ?? null;
@@ -448,8 +529,10 @@ export class ReviewDispatchSweep {
     */
     const pool = await this.resolveReviewerPool();
     const busyRunByReviewer = new Map<string, AgentHeartbeatRun | null>();
+    const policyByReviewer = new Map<string, string>();
     for (const reviewer of pool) {
       busyRunByReviewer.set(reviewer.id, await this.options.agentStore.getActiveHeartbeatRun(reviewer.id));
+      policyByReviewer.set(reviewer.id, laneCapabilityDeclinePolicy(reviewer));
     }
     /*
      * A reviewer given work during this tick is busy for the remainder of it: the snapshot above was taken
@@ -467,18 +550,25 @@ export class ReviewDispatchSweep {
        * 2. a reviewer with no run at all → hand it `null`, which is what authorises a dispatch;
        * 3. every reviewer busy on other cards → hand over a busy run (bucket `reviewer-busy`), which keeps
        *    the wait countable in the sweep's accounting instead of dropping the card from it.
+       *
+       * FNXC:ReviewDispatchRefusal 2026-10-15-17:28 (RUFU-682): a lane that refused THIS card is not a candidate
+       * for it, so the refusal is resolved before routing rather than after — dispatching to a refused binding to
+       * then refuse it in the classifier would keep writing attempts, which is the loop this closes.
        */
+      const declined = declinedReviewersForTask(rows, policyByReviewer);
       const { free, activeRun } = resolveReviewSlot({
         pool,
         busyRunByReviewer,
         allocatedThisTick,
         taskId: candidate.task.id,
+        declined,
       });
       const decision = classifyReviewCard({
         task: candidate.task,
         rows,
         activeRun,
         reviewerFound: pool.length > 0,
+        capabilityDeclinedForPool: pool.length > 0 && declined.size >= pool.length,
         now: now.getTime(),
         reviewEnteredAt: candidate.enteredReviewAt === null ? null : Date.parse(candidate.enteredReviewAt),
         graceMs: this.options.graceMs ?? DEFAULT_REVIEW_GRACE_MS,
@@ -487,6 +577,15 @@ export class ReviewDispatchSweep {
       });
       classes[decision.bucket] += 1;
       this.logBucketChange(candidate.task.id, decision.bucket, rows);
+      if (decision.bucket === "capability-declined") {
+        await this.announceCapabilityDecline(
+          candidate.task,
+          pool.filter((lane) => declined.has(lane.id)),
+          policyByReviewer,
+        );
+      } else {
+        this.refusalAnnounced.delete(candidate.task.id);
+      }
 
       // A dispatch needs a reviewer that is genuinely free — never the one already holding a run.
       if (!decision.dispatch || dispatches >= maxDispatches || !free) continue;
@@ -665,6 +764,48 @@ export class ReviewDispatchSweep {
     log.warn(`${this.projectTag}Closed review run ${runId} for ${taskId} as failed (${reason}, reviewer ${reviewerAgentId})`);
   }
 
+  /**
+   * FNXC:ReviewDispatchRefusal 2026-10-15-17:30 (RUFU-682):
+   * The refusal is worth one line on the card, because the alternative is the operator reading engine logs to learn
+   * why a review never happened. SANE-484 sat in `in-review` with no run, no merge, and 24 attempts while every
+   * fact about it lived in a warn line nobody scrolls. The sentence is the shared decline contract (never local
+   * prose), the write is append-only History — no column, no status, no pause — and `logEntryOnce`'s window plus
+   * this sweep's episode key bound it to one line per (card, declined-lane-set).
+   *
+   * Reached duck-typed the way RUFU-382 reaches the once-seam: a store without `logEntryOnce` keeps the refusal in
+   * the log line and the ledger witness rather than failing the tick.
+   */
+  private async announceCapabilityDecline(
+    task: Task,
+    declinedLanes: Agent[],
+    policyByReviewer: ReadonlyMap<string, string>,
+  ): Promise<void> {
+    const lanes = [...declinedLanes].sort((a, b) => a.id.localeCompare(b.id));
+    const episode = lanes.map((lane) => `${lane.id}=${policyByReviewer.get(lane.id) ?? "?"}`).join(",");
+    if (this.refusalAnnounced.get(task.id) === episode) return;
+    this.refusalAnnounced.set(task.id, episode);
+
+    const [first, ...rest] = lanes;
+    // The sentence names the lane, its roles/policy, the card, and the remedy; siblings are listed by id.
+    const sentence = first
+      ? formatLaneCapabilityDeclineReason(first, task)
+      : `Review dispatch refused for ${task.id}: the lane that declined it is no longer configured.`;
+    const action = rest.length > 0
+      ? `${sentence} Also declined by: ${rest.map((lane) => lane.id).join(", ")}.`
+      : sentence;
+    try {
+      await this.options.store.logEntryOnce?.(task.id, {
+        action,
+        outcome: "refused",
+        dedupeKey: `review-dispatch-capability-declined:${episode}`,
+        windowMs: ReviewDispatchSweep.REFUSAL_HISTORY_WINDOW_MS,
+      });
+    } catch (error) {
+      // Announcing is never the point; the refusal already stands in the ledger and the sweep's own line.
+      log.debug(`${this.projectTag}Could not record the review refusal for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   /** Every classification is actionable or surfaced exactly once, never once per 15 s tick. */
   private logBucketChange(taskId: string, bucket: ReviewDispatchClass, rows: ReviewerRunRow[]): void {
     if (bucket === "review-in-flight" || bucket === "awaiting-handoff") {
@@ -685,6 +826,7 @@ export class ReviewDispatchSweep {
 function emptyClasses(): Record<ReviewDispatchClass, number> {
   return {
     "never-dispatched": 0,
+    "capability-declined": 0,
     "verdict-recorded": 0,
     "stalled-attempt": 0,
     "review-in-flight": 0,

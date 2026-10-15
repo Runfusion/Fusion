@@ -363,6 +363,18 @@ Re-assigning or un-assigning a card that already has a live execution session us
 
 **Lane-capability revalidation at wake (RUFU-272).** A heartbeat wake that arrives carrying an explicitly assigned card re-runs the *same* bind verdict that the binding primitive applies (`evaluateImplementationTaskBind`, evaluated against the card's **workflow-resolved implementation lanes**, so renamed/custom boards are first-class). If the lane is capability-ineligible for the card — e.g. an audit-only reviewer (`assignmentPolicy: "none"`) that was bound before its policy was set — the wake **declines this dispatch**: it logs the named reason, records one bounded `task:lane-capability-declined` audit row (10-minute cooldown per lane/card/policy), and falls through to inbox/auto-claim exactly as an unbound lane would. Decline is never an unbind: the wake path mutates no binding, and it absolutely skips cards that are paused/user-paused, carried by a live session or another live heartbeat run, or unreadable (the gate fails open to pre-existing behavior). The mutation owner is the self-healing sweep `reconcile-lane-capability-misbind` (registered after the agent-link mirror sweeps): it re-binds stranded cards via the `TaskStore.updateTask(..., { assignedAgentId })` assignment seam only — branch, worktree, and step progress preserved, no lifecycle column move — choosing among lanes that are auto-eligible for the card (deterministic order: idle first, then id), and when no eligible lane exists it freezes the card **once** with the named `lane-capability-mismatch` external-block decline (resumable through the ordinary external-block resume surface) instead of looping silently. See `docs/solutions/reliability/implementation-card-bound-to-audit-only-lane.md`.
 
+**A review-lane refusal settles the attempt it refused (RUFU-682).** A review-lane card is implementation-class at wake time (a review
+is a workflow-node run, so the implementation-lane verdict applies), which means a reviewer-only lane — the shape every reviewer agent
+on a default board has — refuses every review dispatch its own sweep opens. Left at that, the ledger row stayed `running` with no session,
+reconciliation closed it as `engine-lost:`, that prefix was exempt from the attempt budget, and the sweep re-dispatched forever: measured
+24 dispatches to one lane over 2 h 28 m with no reviewer session ever starting. The decline now closes that attempt as
+`lane-capability-declined:<lane>/<binding>/<code>/<policySignature>`, the sweep reads that witness as a recorded refusal, classifies the card
+`capability-declined`, names it once per card per policy episode on the card's History, and stops routing that binding — no park, no error,
+no lifecycle move, and a distinct count from `reviewer-busy`, because "the only lane I can route to refuses this class" is a different
+operator problem than "the reviewer is occupied". Editing the lane's roles, binding, or `assignmentPolicy` changes the recorded signature,
+which retires the refusal and re-arms dispatch on the next tick. Pinned by
+`packages/engine/src/__tests__/review-lane-capability-refusal.test.ts` and its `.pg` counterpart.
+
 ### Running-state invariant for assigned durable agents (FN-4249)
 
 Invariant: a durable agent must not remain `state="running"` while its linked task is outside `in-progress` (especially `todo` + `status="queued"`).

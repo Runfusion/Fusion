@@ -96,3 +96,43 @@ export function hasLaneCapabilityFreeze(
 ): boolean {
   return task.externalBlock?.code === LANE_CAPABILITY_DECLINE_CODE;
 }
+
+/*
+FNXC:LaneCapabilityReviewRefusal 2026-10-15-17:20 (RUFU-682):
+The wake decline had a durable home for the IMPLEMENTATION case (the freeze patch above) and none for the
+REVIEW case, and the missing witness is what made the refusal infinite. Measured on production for SANE-484:
+`Dispatching review of SANE-484 to agent-0031e775 (attempt 24…)` → `declined bound task SANE-484: … has roles
+"reviewer"; implementation task …` → `parked: SANE-484 (attempts=24)`, 9 decline rows, zero merge rows, zero
+sessions across 5.5 h. Each dispatched attempt was closed by `reconcile-stranded-reviewer-runs` as `engine-lost:`,
+which `unfinishedAttempts` deliberately exempts — so the anti-loop budget could never see the refusal and the sweep
+re-dispatched the identical deterministic mismatch every ~40 minutes forever.
+
+The fix is a witness on the ledger row the dispatch already owns, not a new lifecycle state: the row closes with
+`lane-capability-declined:` plus the lane's policy signature, so the review dispatch authority can tell
+"this binding refuses this card" from "the reviewer is busy" and stop routing to that binding.
+
+The signature is part of the persisted reason on purpose. The refusal must be liftable by the operator remedy the
+decline sentence names (edit this lane's roles / assignmentPolicy, or reassign the card), so a recorded decline
+binds ONLY while the lane's CURRENT signature still equals the recorded one. No timer, no manual row edit: an
+operator who grants the lane the executor tag changes the signature and the next tick dispatches again.
+*/
+export const REVIEWER_RUN_LANE_DECLINE_PREFIX = "lane-capability-declined:";
+
+/** The persisted reason for a refused review attempt: the prefix plus the declining lane's policy signature. */
+export function reviewerRunLaneDeclineReason(agent: AgentAssignmentPolicyInput): string {
+  return `${REVIEWER_RUN_LANE_DECLINE_PREFIX}${laneCapabilityDeclinePolicy(agent)}`;
+}
+
+/**
+ * The policy signature a closed review attempt was declined under, or null when the attempt ended any other way.
+ * Compare against `laneCapabilityDeclinePolicy(currentAgent)`: equality means the same deterministic refusal still
+ * stands, inequality means the operator changed the lane and the refusal is stale history.
+ */
+export function reviewerRunLaneDeclineSignature(row: { failureReasons?: string[] | null }): string | null {
+  for (const reason of row.failureReasons ?? []) {
+    if (reason.startsWith(REVIEWER_RUN_LANE_DECLINE_PREFIX)) {
+      return reason.slice(REVIEWER_RUN_LANE_DECLINE_PREFIX.length);
+    }
+  }
+  return null;
+}
