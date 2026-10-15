@@ -185,6 +185,25 @@ Read the test-mode zero at RECORD time rather than binding it at module load. Th
 production and in suites; late binding is what lets a regression test drive a real cooldown through the real
 writer and reader instead of asserting against a stubbed clock.
 */
+/*
+FNXC:CapacitySuspendDeferral 2026-10-15-08:21 (RUFU-616):
+Widths for deferring a graph run that suspended at a capacity seam, read off the row's own previous
+deferral the same way the reclaim sweep reads its ladder.
+
+Deliberately shorter than `RECLAIM_DEFERRAL_LADDER_MS` (which opens at 30 minutes) because capacity is
+expected to free within minutes; a 30-minute first rung here would starve a card that could already run.
+The last rung is the cap, so a card whose capacity never frees still probes instead of vanishing.
+*/
+const CAPACITY_SUSPEND_DEFERRAL_MS: readonly number[] = [60_000, 2 * 60_000, 5 * 60_000, 15 * 60_000];
+
+/** Next deferral width: the first rung wider than the previous one, capped at the last rung. */
+function nextCapacitySuspendDeferralMs(priorWidthMs: number): number {
+  for (const rung of CAPACITY_SUSPEND_DEFERRAL_MS) {
+    if (!Number.isFinite(priorWidthMs) || priorWidthMs < rung) return rung;
+  }
+  return CAPACITY_SUSPEND_DEFERRAL_MS[CAPACITY_SUSPEND_DEFERRAL_MS.length - 1] ?? 15 * 60_000;
+}
+
 function principalHoldBackoffBaseMs(): number {
   return process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 15_000;
 }
@@ -1389,6 +1408,51 @@ export async function executeWorkflowGraph(
           signature,
           `[workflow-graph] ${task.id} suspended at node '${suspension?.nodeId ?? "unknown"}' (${suspension?.reason ?? "unknown"})`,
         );
+        /*
+        FNXC:CapacitySuspendDeferral 2026-10-15-08:21 (RUFU-616):
+        RUFU-442 bounded how often a capacity wait is RESTATED (its audit row and log line fire on the
+        transition into the wait) and deliberately left the wait itself alone, so the continuation stayed
+        due on every scheduler pass. Measured 2026-10-15: one card suspended at node `parse` re-dispatched
+        until the reclaim sweep had emitted 16,787 `dead-lease` requeues, and the `running` claim each
+        pass left behind was itself part of the occupancy that made the next pass refuse capacity - the
+        wait was manufacturing its own cause. So the capacity wait is deferred here rather than merely
+        quieted, through the same-state CAS the reclaim sweep already uses for its `defer` verdict
+        (`transitionWorkflowWorkItem(id, state, { expectedState, retryAfter })`), which is the sanctioned
+        seam: `listDueWorkflowWorkItems` hides a row whose `retryAfter` is in the future, so the row stops
+        being re-claimed every pass and stops minting phantom claims, with no new store surface.
+
+        Only `reason === "capacity"` is deferred. `pause` and the other boundary waits have an external
+        releaser that clears `retryAfter` on wake, and hiding one behind a timer would strand it.
+        No column move: a capacity verdict may slow a card down, never relocate it (lifecycle
+        containment), and this writes no lane field at all.
+        */
+        if (suspension?.reason === "capacity" && continuation
+          && typeof deps.store.transitionWorkflowWorkItem === "function") {
+          try {
+            const priorWidthMs = continuation.retryAfter && continuation.updatedAt
+              ? Date.parse(continuation.retryAfter) - Date.parse(continuation.updatedAt)
+              : Number.NaN;
+            const deferred = await deps.store.transitionWorkflowWorkItem(
+              continuation.id,
+              continuation.state,
+              {
+                expectedState: continuation.state,
+                retryAfter: new Date(Date.now() + nextCapacitySuspendDeferralMs(priorWidthMs)).toISOString(),
+              },
+            );
+            if (deferred.state !== continuation.state) {
+              /* Lost the race to a fresher writer: it owns the row now, so no deferral is claimed. */
+              executorLog.warn(
+                `[workflow-graph] ${task.id} capacity deferral lost the state race (row now '${deferred.state}'); no retryAfter applied`,
+              );
+            }
+          } catch (error) {
+            /* The wait is already durable; failing to slow it down must not change the suspension outcome. */
+            executorLog.warn(
+              `[workflow-graph] ${task.id} capacity deferral failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
         if (!isNewWait) return;
         await emitBoundedRunAudit(deps.store, {
           taskId: task.id,
