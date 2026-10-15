@@ -72,6 +72,7 @@ import {
   isEphemeralAgent,
   resolveEffectiveAgentPermissionPolicy,
   MAX_TASK_LIST_TEXT_CHARS,
+  TASK_BOARD_READ_CAVEAT,
   deriveFallbackTaskTitle,
   resolveTaskOutputLanguage,
   parsePlanningPlanMd,
@@ -5011,8 +5012,9 @@ export class TriageProcessor {
       name: "fn_task_list",
       label: "List Tasks",
       description:
-        "List all tasks that aren't done. Returns ID, description, column, " +
-        "and dependencies for each. Use to check for duplicates before planning.",
+        "List all tasks that aren't done. Returns ID, label, column, " +
+        "and dependencies for each. Use to check for duplicates before planning. " +
+        TASK_BOARD_READ_CAVEAT,
       parameters: Type.Object({}),
       execute: async () => {
         const tasks = await store.listTasks({ slim: true, includeArchived: false });
@@ -5058,7 +5060,8 @@ export class TriageProcessor {
       label: "Search Tasks",
       description:
         "Keyword search across active tasks by default. " +
-        "Done history is opt-in and must not be used for duplicate detection.",
+        "Done history is opt-in and must not be used for duplicate detection. " +
+        TASK_BOARD_READ_CAVEAT,
       parameters: taskSearchParams,
       execute: async (
         _callId: string,

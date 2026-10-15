@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, AgentLogEntry, Artifact, ArtifactCreateInput, ArtifactWithTask, Task, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus, WorkflowIrNode, IdeationCandidate, MissionWithHierarchy, DbTransaction } from "@fusion/core";
-import { listTraits, isBuiltinWorkflowId, isTaskNotFoundError, renderTaskCommentSection, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
+import { listTraits, isBuiltinWorkflowId, isTaskNotFoundError, renderTaskCommentSection, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, TASK_BOARD_READ_CAVEAT, formatCurrentTaskLine, normalizeWorkflowIcon, parseWorkflowIr, WorkflowIrError, assertColumnTraitsValid, ColumnTraitValidationError } from "@fusion/core";
 import { promoteHeldTask } from "./execution/hold-release.js";
 import { stepLifecycleNoopResult, storeErrorResult, storeWriteFailure } from "./tool-store-errors.js";
 import { computeCrossParentDiagnosticClaim, computeCrossParentDiagnosticClaimId, computeParentIntentClaimId, DASHBOARD_USER_ID, dailyMemoryPath, ensureOpenClawMemoryFiles, evaluateImplementationTaskBind, extractAgentProvisioningRequest, findSameAgentDuplicates, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveMemorySearchTopic, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
@@ -1883,14 +1883,23 @@ function formatTaskSummaryLine(task: { id: string; column: string; title?: strin
  *
  * FNXC:AgentTooling 2026-06-27-00:00:
  * Triage and planning-board surfaces now use canonical `fn_task_show`; deprecated `fn_task_get` survives only as a recognition alias in action-gate and analytics compatibility paths, not as a model-visible registered tool.
+ *
+ * FNXC:BoardReadToolDescriptions 2026-10-15-00:01:
+ * RUFU-378: the row-shape sentence no longer claims it "Returns ID, description, column". Each row is
+ * `ID (column): label [deps: …]` where label is `task.title` or a description clamped to 80 characters,
+ * so naming the field "description" told duplicate-checking agents their truncated intake stub was the
+ * card's text. It says "label" now and appends the shared `TASK_BOARD_READ_CAVEAT`, which sends the
+ * caller to `fn_task_show` for the full description and PROMPT.md before any duplicate, status, or scope
+ * judgement. `packages/engine/src/__tests__/board-read-tool-descriptions.test.ts` owns that contract.
  */
 export function createTaskListTool(store: TaskStore): ToolDefinition {
   return {
     name: "fn_task_list",
     label: "List Tasks",
     description:
-      "List active tasks that have not reached their workflow's Complete column. Returns ID, description, column, " +
-      "and dependencies for each. Use to discover work and check for duplicates.",
+      "List active tasks that have not reached their workflow's Complete column. Returns ID, label, column, " +
+      "and dependencies for each. Use to discover work and check for duplicates. " +
+      TASK_BOARD_READ_CAVEAT,
     parameters: taskListParams,
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
@@ -1911,7 +1920,8 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
     label: "Search Tasks",
     description:
       "Keyword search across active tasks by default. " +
-      "Done history is opt-in and must not be used for duplicate detection.",
+      "Done history is opt-in and must not be used for duplicate detection. " +
+      TASK_BOARD_READ_CAVEAT,
     parameters: taskSearchParams,
     execute: async (_id: string, params: Static<typeof taskSearchParams>) => {
       const query = params.query.trim();

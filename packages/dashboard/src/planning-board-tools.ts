@@ -1,6 +1,6 @@
 import * as fusionCore from "@fusion/core";
 import { storeErrorResult } from "@fusion/engine";
-import { MAX_TASK_LIST_TEXT_CHARS, type TaskStore } from "@fusion/core";
+import { MAX_TASK_LIST_TEXT_CHARS, TASK_BOARD_READ_CAVEAT, type TaskStore } from "@fusion/core";
 import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
 import type { WorkflowIr } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -64,8 +64,9 @@ export function createPlanningBoardTools(store: TaskStore): ToolDefinition[] {
     name: "fn_task_list",
     label: "List Tasks",
     description:
-      "List all tasks that aren't done. Returns ID, description, column, " +
-      "and dependencies for each. Use to check for duplicates before planning.",
+      "List all tasks that aren't done. Returns ID, label, column, " +
+      "and dependencies for each. Use to check for duplicates before planning. " +
+      TASK_BOARD_READ_CAVEAT,
     parameters: { type: "object", properties: {}, additionalProperties: false },
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false });

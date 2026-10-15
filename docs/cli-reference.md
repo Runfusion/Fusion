@@ -664,6 +664,8 @@ When supported by your configured runtime/model provider, planning sessions can 
 
 Planning sessions also have read-only board tools: `fn_task_list` (list active backlog tasks) and `fn_task_show` (read full task details, including PROMPT.md) so interviews can avoid duplicate in-flight plans and anchor questions to existing work. `fn_task_list` output is bounded and falls back to a defensive formatter if the runtime task-list clamp helper is unavailable, so board reads return text instead of failing during ambient planning or heartbeat checks. `fn_task_list` also accepts `includeDeleted: true` to surface soft-deleted blockers when diagnosing stalled dependency chains, and `fn_task_show` now auto-falls back to include soft-deleted tasks with a `[SOFT-DELETED at ...]` marker.
 
+A board row is `ID (column): label`, and that label is the card's title or, for a card with no title, the first 80 characters of its raw intake description (the intake stub). It is never the card's plan, so every board-read registration (`fn_task_list` and `fn_task_search` across the engine, triage, planning-board, and pi surfaces) states the truncation and points at `fn_task_show` for the full description and `PROMPT.md` before a caller judges duplicates, status, or scope. The generated pi skill catalog mirrors the same sentence because the pi registration carries it as an inline string literal.
+
 ```bash
 fn task plan [description]
 ```

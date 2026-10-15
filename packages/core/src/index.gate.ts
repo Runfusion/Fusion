@@ -200,6 +200,7 @@ export type {
   RankAssignedTasksForWakeDeltaResult,
 } from "./agents/assigned-task-ranking.js";
 export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./tasks/task-list-format.js";
+export { TASK_BOARD_READ_CAVEAT } from "./agent-tool-descriptions.js";
 export { collectTaskCommentEntries, renderTaskCommentSection, resolveAdvertisedCommentIds, MAX_COMMENT_LOOKUP_IDS } from "./tasks/task-comment-read.js";
 export type { TaskCommentEntry } from "./tasks/task-comment-read.js";
 export {

@@ -35,7 +35,7 @@ Update fields on an existing task. Supports modifying the title, description, de
 
 ### fn_task_list
 
-List all tasks on the Fusion board, grouped by column.
+List all tasks on the Fusion board, grouped by column. Each row shows a one-line label (the card's title, or the first 80 characters of its intake stub), not the card's plan. Call fn_task_show to read a candidate's full description and PROMPT.md before judging duplicates, status, or scope.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

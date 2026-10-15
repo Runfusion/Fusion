@@ -2447,7 +2447,18 @@ export default function kbExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "fn_task_list",
     label: "fn: List Tasks",
-    description: "List all tasks on the Fusion board, grouped by column.",
+    /*
+    FNXC:BoardReadToolDescriptions 2026-10-15-00:01:
+    RUFU-378 — the intake-stub caveat must stay an inline double-quoted literal here, NOT the shared
+    `TASK_BOARD_READ_CAVEAT` import: `scripts/sync-fusion-skill-tools.mjs` parses this file textually and
+    extracts only double-quoted string literals, so an imported constant would regenerate the tracked
+    skill catalog with the caveat missing and `pnpm check:fusion-skill-sync` green — the pi surface would
+    keep teaching the truncated label as if it were the card. Keep the wording in step with
+    `packages/core/src/agent-tool-descriptions.ts`.
+    */
+    description:
+      "List all tasks on the Fusion board, grouped by column. " +
+      "Each row shows a one-line label (the card's title, or the first 80 characters of its intake stub), not the card's plan. Call fn_task_show to read a candidate's full description and PROMPT.md before judging duplicates, status, or scope.",
     promptSnippet: "List all tasks on the Fusion board grouped by column",
     parameters: Type.Object({
       column: Type.Optional(
