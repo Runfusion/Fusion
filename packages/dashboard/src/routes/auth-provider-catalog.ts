@@ -64,6 +64,7 @@ export const STATIC_API_KEY_PROVIDER_CATALOG: AuthProviderCatalogEntry[] = [
   { id: "openrouter", name: "OpenRouter" },
   { id: "orcarouter", name: "OrcaRouter" },
   { id: "opencode-go", name: "Opencode (Go)" },
+  { id: "requesty", name: "Requesty" },
   { id: "tavily", name: "Tavily" },
   { id: "zai", name: "Zai" },
 ];
