@@ -100,6 +100,14 @@ printf "deploy report" | fn chat agent-abc123 --once --non-interactive
 
 A valid active lineage can bootstrap the first task for a hand-authored `defined` feature. The feature is linked to that exact task and promoted to `triaged`; later autonomous scheduler work still requires a `triaged` or `in-progress` feature.
 
+## Durable-agent identity lookup
+
+Agent IDs are authoritative and are resolved directly within the current project before display-name matching. `fn_agent_show`, configuration tools, and `GET /api/agents/:id` therefore continue to address the requested record even when legacy durable agents share a display name.
+
+Name-capable tools normalize display names by lowercasing and replacing non-alphanumeric runs with hyphens. A single durable match resolves normally; no match remains `not_found`. Multiple durable matches return `outcome: "ambiguous"` with the original query, normalized name, and lexically sorted `candidateAgentIds`. The dashboard shortname route returns the equivalent HTTP 409 payload with `code: "AMBIGUOUS_AGENT_NAME"`. Retry with one of the returned IDs rather than renaming, deleting, or guessing between records. Ephemeral/runtime rows do not make a durable display name ambiguous.
+
+Startup reconciliation may encounter multiple rows carrying the same built-in workflow-role provenance. It deterministically keeps the oldest valid `createdAt` owner (then the lexical ID as a tie-breaker) and removes only the duplicate row's built-in provenance markers. It does not delete or rename either agent or transfer task links, hierarchy, runtime settings, permissions, instructions, or other operator configuration, so the records can remain intentionally ambiguous by display name and independently usable by ID.
+
 ## Agent configuration updates from agents
 
 The `fn_agent_update` extension tool lets chat/extension callers update existing non-ephemeral agents in place instead of deleting and recreating them. It accepts `agent_id` plus any editable subset of:
