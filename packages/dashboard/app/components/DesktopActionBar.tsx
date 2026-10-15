@@ -99,10 +99,22 @@ export function DesktopActionBar({ entries, activeId, tasks, projectId, columnFl
   `ariaControls`). C'est ce qui permet à une entrée qui ouvre une surface plutôt qu'une page — le Chat aujourd'hui — de
   conserver exactement son contrat d'accessibilité où que l'hôte la rende : rangée centrale, piste de droite ou menu.
   */
+  /*
+  FNXC:DesktopNavigation 2026-10-15-08:16:
+  RUFU-331: `aria-current` was keyed on `entry.kind === "main-page"`, which was only ever a proxy for "this entry goes
+  to a page". Chat broke the proxy when it grew a page destination: an active view-mode Chat entry carried the active
+  class but no accessible current-page semantics, and the proxy would have needed a new kind every time a surface
+  acquires a second destination. The predicate is now the thing the proxy stood for — an active entry that does not
+  declare a popup has the screen as its destination, so it claims `aria-current="page"`; an entry that declares a
+  popup is never the current page, it is a control for a dialog, so the attribute stays off even while its popover is
+  mounted. Registry entries that route by `view` are unchanged (they carry no `ariaHasPopup`), and the Settings icon
+  now reads as the current page whenever Settings is the active view — same page, same truth the sidebar already
+  tells. Every visual state (`.desktop-action-bar__action--active`) is untouched: this attribute never drives CSS.
+  */
   const renderButton = (entry: DashboardNavigationEntry, inOverflow = false) => {
     const Icon = entry.icon;
     const active = entry.id === activeId || Boolean(entry.active);
-    return <button key={entry.id} type="button" className={`desktop-action-bar__action${active ? " desktop-action-bar__action--active" : ""}`} aria-label={entry.label} aria-current={active && entry.kind === "main-page" ? "page" : undefined} aria-haspopup={entry.ariaHasPopup} aria-expanded={entry.ariaExpanded} aria-controls={entry.ariaControls} data-testid={entry.testId} onClick={() => {
+    return <button key={entry.id} type="button" className={`desktop-action-bar__action${active ? " desktop-action-bar__action--active" : ""}`} aria-label={entry.label} aria-current={active && !entry.ariaHasPopup ? "page" : undefined} aria-haspopup={entry.ariaHasPopup} aria-expanded={entry.ariaExpanded} aria-controls={entry.ariaControls} data-testid={entry.testId} onClick={() => {
       const result = entry.onSelect?.();
       if (inOverflow) void Promise.resolve(result).then((accepted) => { if (accepted !== false) closeOverflow(); });
     }}>

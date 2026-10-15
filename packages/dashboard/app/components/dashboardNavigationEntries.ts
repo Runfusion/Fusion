@@ -54,6 +54,19 @@ export interface DashboardNavigationRegistryOptions {
   n'apparaît quand aucun projet n'est sélectionné.
   */
   onOpenChatPanel?: () => void;
+  /*
+  FNXC:DesktopNavigation 2026-10-15-08:09:
+  RUFU-331: Chat has TWO surfaces and the host alone knows which one this entry leads to and which one is on screen,
+  so it supplies both facts. `chatPanelOpen` keeps its narrow meaning — the anchored popover is MOUNTED — and never
+  stands in for "Chat is visible".
+  - `chatOpensPanel`: this entry's DESTINATION is the anchored popover (`chatLaunchMode === "popup"`).
+  - `chatSurfaceActive`: a Chat surface is active from the host's perspective (Chat page, Chat dock list, Chat page
+    host). The host must supply it rather than letting this registry infer from `view`: `App`'s `chatWindowRouteRef`
+    routes a `chat` view change into the dock list and forces `taskView` OFF `chat`, so `taskView === "chat"` is a
+    sufficient but not a necessary signal for "Chat is on screen".
+  */
+  chatOpensPanel?: boolean;
+  chatSurfaceActive?: boolean;
   chatPanelOpen?: boolean;
   chatPanelId?: string;
   planningNeedsInput?: boolean;
@@ -75,6 +88,29 @@ The desktop footer owns primary navigation only. History remains on complete-col
 export function buildDashboardNavigationEntries(options: DashboardNavigationRegistryOptions): DashboardNavigationEntry[] {
   const page = (id: string, label: string, view: TaskView, icon: ComponentType<LucideProps>, placement: DashboardNavigationPlacement = "overflow"): DashboardNavigationEntry => ({ id, label, view, icon, kind: "main-page", placement, testId: `desktop-nav-${id}`, onSelect: () => options.onChangeView(view) });
   /*
+  FNXC:DesktopNavigation 2026-10-15-08:09:
+  RUFU-331 makes the Chat entry's STATE a function of the surface the entry actually leads to. Until here the entry
+  read `chatPanelOpen` only, which was a complete model while the entry could open nothing but the anchored popover;
+  RUFU-303 moved its ACTION to the Chat page under the stored `view` launch mode and left the state reading the
+  popover, so that layout could never select its own navigation entry, burned its pending dot over an open
+  conversation, and announced "dialog, collapsed" for an item that only changes the view. The derivation now covers
+  both surfaces:
+  - `chatPanelSurface` — the anchored popover is mounted.
+  - `chatPageSurface` — a Chat surface is on screen: the host's own verdict, OR the current view is the Chat page
+    (`view === "chat"` is kept as an inferable subset so a host that only routes by view still selects).
+  - `chatActive` — selected state: either surface.
+  - `chatOpensPanel` — the dialog destination. When the host passes neither new option the fallback is "not on a Chat
+    page", which reproduces the pre-RUFU-303 popup semantics exactly for every legacy caller.
+  - `chatDeclaresDialog` — the dialog triple is claimed only when a popover is the destination or is mounted.
+  The pending dot is suppressed on `chatActive`, i.e. it is keyed on both surfaces, exactly like the sibling Mailbox
+  dot below has always been keyed on its own view (`options.view !== "mailbox"`).
+  */
+  const chatPanelSurface = Boolean(options.chatPanelOpen);
+  const chatPageSurface = Boolean(options.chatSurfaceActive) || options.view === "chat";
+  const chatActive = chatPanelSurface || chatPageSurface;
+  const chatOpensPanel = options.chatOpensPanel ?? !chatPageSurface;
+  const chatDeclaresDialog = chatPanelSurface || chatOpensPanel;
+  /*
   FNXC:DesktopNavigation 2026-09-16-04:15:
   FN-446: these destinations no longer declare their own placement. They are the head of the natural page order, and
   the quick-access selection below decides which of ALL page entries become `direct`; Agents is an ordinary entry that
@@ -92,9 +128,16 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
     FN-511 renverse FN-495 : le Chat EST une entrée de ce registre. L'invariant qui remplace l'ancienne interdiction est
     que ce registre en est l'UNIQUE propriétaire sur cet hôte : l'entrée est rendue exactement une fois (rangée directe
     quand la sélection résolue la contient, sinon menu « More »), et aucun second producteur de
-    `desktop-nav-chat-panel` codé en dur ne peut exister dans la barre. Le Chat ouvre un panneau ancré, pas une page,
-    donc il porte ses attributs de dialogue via les champs génériques ci-dessus ; `aria-controls` n'est déclaré que
-    lorsque la popover est réellement montée.
+    `desktop-nav-chat-panel` codé en dur ne peut exister dans la barre.
+
+    FNXC:DesktopNavigation 2026-10-15-08:09:
+    RUFU-331 falsifies one sentence of the block above: "Le Chat ouvre un panneau ancré, pas une page" was true while
+    the entry owned its own opener, and stopped being true when RUFU-303 routed it through `openChatFromLaunchMode`.
+    Chat reaches the anchored popover IN POPUP MODE and the full Chat page/dock surface in VIEW mode; the destination
+    is the host's stored `fusion:chat-launch-mode`, not a property of the entry. What survives of FN-511 is the single
+    ownership invariant and the reason the dialog attributes ride the generic fields above: wherever the host renders
+    the button (direct row, right track, **More** menu) it must carry the same contract. `aria-controls` remains
+    mounted-only, and in view mode the entry declares no dialog at all — see the derivation above.
     */
     ...(options.onOpenChatPanel ? [{
       id: "chat",
@@ -103,11 +146,11 @@ export function buildDashboardNavigationEntries(options: DashboardNavigationRegi
       kind: "existing-action" as const,
       placement: "overflow" as const,
       testId: "desktop-nav-chat-panel",
-      dot: options.chatHasUnreadResponse && !options.chatPanelOpen ? "pending" as const : undefined,
-      active: options.chatPanelOpen,
-      ariaHasPopup: "dialog" as const,
-      ariaExpanded: Boolean(options.chatPanelOpen),
-      ariaControls: options.chatPanelOpen ? options.chatPanelId : undefined,
+      dot: options.chatHasUnreadResponse && !chatActive ? "pending" as const : undefined,
+      active: chatActive,
+      ariaHasPopup: chatDeclaresDialog ? "dialog" as const : undefined,
+      ariaExpanded: chatDeclaresDialog ? chatPanelSurface : undefined,
+      ariaControls: chatPanelSurface ? options.chatPanelId : undefined,
       onSelect: options.onOpenChatPanel,
     }] : []),
   ];

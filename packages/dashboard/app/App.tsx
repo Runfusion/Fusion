@@ -2777,6 +2777,19 @@ const { tasks, isStale, isBoardRefreshInFlight, createTask, moveTask, boostTask,
     menu « More »). Sans projet courant l'option est omise, donc aucune entrée n'est construite.
     */
     onOpenChatPanel: currentProject ? openChatFromLaunchMode : undefined,
+    /*
+    FNXC:DesktopNavigation 2026-10-15-08:16:
+    RUFU-331 hands the registry the two facts it cannot derive: which surface this entry OPENS and which surface is
+    ON SCREEN. `openChatFromLaunchMode` picks the popover or the Chat page from the stored `fusion:chat-launch-mode`,
+    so the destination is `chatLaunchMode === "popup"` and nothing else. The active surface is the union of the Chat
+    hosts a wide shell can be showing — the Chat page route, the dock's inline list, or a visible detached window —
+    which is deliberately the same visibility union that clears the unread badge above (`useChatUnreadBadge`);
+    `chatPanelOpen` stays the narrow "popover is mounted" fact it always was. The dock case is why the host must say
+    it: `chatWindowRouteRef` routes a `chat` view change into the dock list and pushes `taskView` back off `chat`, so
+    no view boolean can see that surface.
+    */
+    chatOpensPanel: chatLaunchMode === "popup",
+    chatSurfaceActive: taskView === "chat" || chatDockHostOpen || chatSurfaceVisible,
     chatPanelOpen: toolPanel?.kind === "chat",
     chatPanelId: CHAT_TOOL_PANEL_ID,
     planningNeedsInput,

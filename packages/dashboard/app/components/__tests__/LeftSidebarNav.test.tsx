@@ -726,4 +726,33 @@ describe("LeftSidebarNav", () => {
       expect(planningButton.querySelector(".status-dot.status-dot--pending")).toBeNull();
     });
   });
+
+  /*
+  FNXC:Navigation 2026-10-15-11:20:
+  RUFU-331 : la barre latérale est le TROISIÈME hôte qui rend la pastille « réponse Chat » (avec le pied de page
+  ordinateur et la pill mobile), et elle applique sa PROPRE moitié silencieuse du prédicat —
+  `chatHasUnreadResponse && view !== "chat"` — et non le `dot` du registre : rien ne relie donc les trois hôtes et la
+  régression qui a rendu la pastille ineffaçable sur ordinateur pouvait se reproduire ici sans casser aucun test.
+  Les trois cas ci-dessous répètent exactement la forme du bloc `planningNeedsInput` ci-dessus (apparition, destination
+  active, drapeau éteint) pour que la moitié silencieuse soit épinglée sur chaque surface qui la recalcule.
+  */
+  describe("chatHasUnreadResponse dot", () => {
+    it("shows the pending dot on the Chat item while another view is open", () => {
+      renderSidebar({ chatHasUnreadResponse: true, view: "board" });
+
+      expect(screen.getByTestId("sidebar-nav-chat").querySelector(".status-dot.status-dot--pending")).toBeTruthy();
+    });
+
+    it("hides the dot when the user is already on the chat view", () => {
+      renderSidebar({ chatHasUnreadResponse: true, view: "chat" });
+
+      expect(screen.getByTestId("sidebar-nav-chat").querySelector(".status-dot.status-dot--pending")).toBeNull();
+    });
+
+    it("hides the dot when chatHasUnreadResponse is false", () => {
+      renderSidebar({ chatHasUnreadResponse: false, view: "board" });
+
+      expect(screen.getByTestId("sidebar-nav-chat").querySelector(".status-dot.status-dot--pending")).toBeNull();
+    });
+  });
 });

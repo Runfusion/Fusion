@@ -166,20 +166,131 @@ describe("dashboardNavigationEntries", () => {
     expect(onChangeView).toHaveBeenNthCalledWith(1, "files");
     expect(onChangeView).toHaveBeenNthCalledWith(2, "git-manager");
     expect(entries.some((entry) => entry.id === "dev-server")).toBe(true);
+  });
 
   /* FNXC:DesktopNavigation 2026-09-15-07:00 (operator decision, re-applied after FN-446): Chat reste une destination du pied de page avec son indicateur non lu. */
-  it("reflète l'état non lu de Chat sur l'entrée du footer et navigue vers la route chat", () => {
-    const withUnread = buildDashboardNavigationEntries({ ...base, chatHasUnreadResponse: true });
-    expect(withUnread.find((entry) => entry.id === "chat")?.dot).toBe("pending");
-    const onChangeView = vi.fn();
-    buildDashboardNavigationEntries({ ...base, onChangeView }).find((entry) => entry.id === "chat")?.onSelect?.();
-    expect(onChangeView).toHaveBeenCalledWith("chat");
+  /*
+  FNXC:DesktopNavigation 2026-10-15-08:09:
+  RUFU-331: the two Chat cases below sat INSIDE the `offre Files et Git …` body — that case never closed its brace — so
+  Vitest refused them ("Calling the test function inside another test function is not allowed") and the file's only
+  Chat coverage was the `construit l'entrée Chat seulement…` case. They are now siblings, and the first one stops
+  asserting the pre-RUFU-303 contract (`onSelect` routes to `onChangeView("chat")`): the entry's opener is
+  `openChatFromLaunchMode`, which chooses the popover or the page from the stored launch mode, so the registry can
+  only be held to CARRYING the host's opener and to deciding the observable state. The `chatOpensPanel: true` in these
+  two cases states the surface they were written for (the anchored popover); each surface gets its own case below.
+  */
+  it("reflète l'état non lu de Chat sur l'entrée du footer et porte l'ouvreuse de l'hôte", () => {
+    const onOpenChatPanel = vi.fn();
+    const withUnread = buildDashboardNavigationEntries({ ...base, onOpenChatPanel, chatHasUnreadResponse: true, chatOpensPanel: true });
+    const chat = withUnread.find((entry) => entry.id === "chat");
+    expect(chat?.dot).toBe("pending");
+    expect(chat?.onSelect).toBe(onOpenChatPanel);
   });
 
-  it("n'affiche pas la pastille non lue de Chat sur la route Chat active", () => {
-    const entries = buildDashboardNavigationEntries({ ...base, view: "chat" as const, chatHasUnreadResponse: true });
-    expect(entries.find((entry) => entry.id === "chat")?.dot).toBeUndefined();
+  /*
+  FNXC:DesktopNavigation 2026-10-15-08:09:
+  RUFU-331 SYMPTOM CASE (registry level). The Chat page is the active surface, so the entry must be selected, its
+  pending dot must be gone, and it must stop describing itself as a collapsed dialog: in view mode clicking the entry
+  changes the view, it never pops a dialog. `chatHasUnreadResponse: true` makes the three absent dialog attributes a
+  real check and not a field that was never produced.
+  */
+  it("marque Chat comme sélectionné et tait ses attributs de dialogue quand la page Chat est active", () => {
+    const chat = buildDashboardNavigationEntries({
+      ...base,
+      view: "chat" as const,
+      onOpenChatPanel: vi.fn(),
+      chatHasUnreadResponse: true,
+      chatOpensPanel: false,
+      chatPanelOpen: false,
+      chatPanelId: "chat-tool-panel",
+    }).find((entry) => entry.id === "chat");
+    expect(chat?.active).toBe(true);
+    expect(chat?.dot).toBeUndefined();
+    expect(chat?.ariaHasPopup).toBeUndefined();
+    expect(chat?.ariaExpanded).toBeUndefined();
+    expect(chat?.ariaControls).toBeUndefined();
   });
+
+  /*
+  FNXC:DesktopNavigation 2026-10-15-08:09:
+  RUFU-331: `view` alone cannot see the dock-list surface — `App`'s `chatWindowRouteRef` routes a `chat` view change
+  into the dock and forces `taskView` off `chat` — so the host also signals the surface directly. Same observable
+  state as the page case, reached by the other half of the host contract.
+  */
+  it("marque Chat comme sélectionné sur la signal d'hôte d'une surface Chat active hors vue", () => {
+    const chat = buildDashboardNavigationEntries({
+      ...base,
+      view: "board" as const,
+      onOpenChatPanel: vi.fn(),
+      chatHasUnreadResponse: true,
+      chatSurfaceActive: true,
+      chatOpensPanel: false,
+    }).find((entry) => entry.id === "chat");
+    expect(chat?.active).toBe(true);
+    expect(chat?.dot).toBeUndefined();
+    expect(chat?.ariaHasPopup).toBeUndefined();
+  });
+
+  /*
+  FNXC:DesktopNavigation 2026-10-15-08:09:
+  RUFU-331 control — popup mode with the popover CLOSED keeps today's contract exactly: not selected, dot burning,
+  dialog triple intact, and no `aria-controls` pointing at a dialog that is not mounted.
+  */
+  it("conserve le contrat popup fermé: non sélectionné, pastille, dialogue, sans aria-controls", () => {
+    const chat = buildDashboardNavigationEntries({
+      ...base,
+      onOpenChatPanel: vi.fn(),
+      chatHasUnreadResponse: true,
+      chatOpensPanel: true,
+      chatPanelId: "chat-tool-panel",
+    }).find((entry) => entry.id === "chat");
+    expect(chat?.active ?? false).toBe(false);
+    expect(chat?.dot).toBe("pending");
+    expect(chat?.ariaHasPopup).toBe("dialog");
+    expect(chat?.ariaExpanded).toBe(false);
+    expect(chat?.ariaControls).toBeUndefined();
+  });
+
+  /* RUFU-331 control — popup mode with the popover OPENED: selected, dot off, dialog expanded onto its real id. */
+  it("conserve le contrat popup ouvert: sélectionné, pastille éteinte, dialogue déplié sur son id", () => {
+    const chat = buildDashboardNavigationEntries({
+      ...base,
+      onOpenChatPanel: vi.fn(),
+      chatHasUnreadResponse: true,
+      chatOpensPanel: true,
+      chatPanelOpen: true,
+      chatPanelId: "chat-tool-panel",
+    }).find((entry) => entry.id === "chat");
+    expect(chat?.active).toBe(true);
+    expect(chat?.dot).toBeUndefined();
+    expect(chat?.ariaHasPopup).toBe("dialog");
+    expect(chat?.ariaExpanded).toBe(true);
+    expect(chat?.ariaControls).toBe("chat-tool-panel");
+  });
+
+  /*
+  RUFU-331 legacy control: a host that passes NEITHER new option must see the pre-change popup semantics, so the
+  widened derivation cannot silently reclassify an existing caller.
+  */
+  it("laisse le contrat popup aux hôtes qui ne passent aucune des deux nouvelles options", () => {
+    const chat = buildDashboardNavigationEntries({ ...base, onOpenChatPanel: vi.fn(), chatHasUnreadResponse: true, chatPanelId: "chat-tool-panel" }).find((entry) => entry.id === "chat");
+    expect(chat?.ariaHasPopup).toBe("dialog");
+    expect(chat?.ariaExpanded).toBe(false);
+    expect(chat?.active ?? false).toBe(false);
+    expect(chat?.dot).toBe("pending");
+  });
+
+  /* RUFU-331: no unread on the Board means no dot at all — the dot is unread-driven, not a surface badge. */
+  it("n'affiche aucune pastille Chat sans réponse non lue sur le Board", () => {
+    const chat = buildDashboardNavigationEntries({ ...base, onOpenChatPanel: vi.fn(), chatOpensPanel: true }).find((entry) => entry.id === "chat");
+    expect(chat).toBeDefined();
+    expect(chat?.dot).toBeUndefined();
+  });
+
+  /* RUFU-331: the entry exists only for a host that can open Chat at all (production: a selected project). */
+  it("ne construit aucune entrée Chat sans ouvreuse fournie par l'hôte", () => {
+    const entries = buildDashboardNavigationEntries({ ...base, view: "chat" as const, chatHasUnreadResponse: true, chatSurfaceActive: true });
+    expect(entries.some((entry) => entry.id === "chat")).toBe(false);
   });
 
   /*

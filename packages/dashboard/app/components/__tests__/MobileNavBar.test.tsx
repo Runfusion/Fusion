@@ -623,6 +623,47 @@ describe("MobileNavBar official mobile shell", () => {
     expect(screen.getByText("3")).toHaveClass("mobile-more-item-badge");
   });
 
+  /*
+   * RUFU-331 — CONTRÔLE DE LA SECONDE MOITIÉ DU PRÉDICAT.
+   * Le cas (i) ci-dessus n'observe que l'APPARITION de la pastille « réponse Chat ». La règle rendue est
+   * `chatHasUnreadResponse && view !== "chat"` : la suppression sur la destination elle-même n'était épinglée
+   * nulle part, alors que c'est exactement ce que l'opérateur ne pouvait plus effacer sur ordinateur.
+   * La pill rend Chat sur DEUX surfaces selon la sélection résolue — onglet direct (défaut : `chat` ferme les cinq
+   * créneaux) ou ligne du menu « Plus » (sélection explicite de cinq destinations sans `chat`) — donc les deux
+   * surfaces sont assertées dans les deux sens : la moitié silencieuse du prédicat peut régresser sur l'une.
+   */
+  it("tait l'indicateur de réponse Chat sur la destination Chat, en onglet comme en ligne de menu", () => {
+    /* Surface 1 — l'onglet direct : la destination active ne lève AUCUN indicateur, et le même arbre le lève dès
+       qu'on quitte la destination (même props de flux, seul `view` change). */
+    const { rerender } = render(<OfficialMobileShell view="chat" chatHasUnreadResponse />);
+    const chatTab = screen.getByTestId("mobile-nav-tab-chat");
+    expect(chatTab).toHaveClass("mobile-nav-tab--active");
+    expect(chatTab.querySelector(".status-dot--pending")).toBeNull();
+    expect(screen.queryByLabelText("Unread chat response")).toBeNull();
+
+    rerender(<OfficialMobileShell view="board" chatHasUnreadResponse />);
+    expect(screen.getByTestId("mobile-nav-tab-chat").querySelector(".status-dot--pending")).not.toBeNull();
+    expect(screen.getByLabelText("Unread chat response")).toHaveClass("mobile-nav-chat-unread-dot");
+  });
+
+  it("tait l'indicateur de réponse Chat sur la ligne du menu quand Chat est la destination active", () => {
+    /* Surface 2 — la ligne du menu : cinq destinations explicites sans `chat`, donc Chat n'est PLUS jamais un onglet
+       et son unique support d'indicateur est la ligne « Plus ». */
+    const chatInMenu = { quickAccessItems: ["command-center", "tasks", "planning", "missions", "agents"] } as const;
+    const onChat = render(<OfficialMobileShell view="chat" chatHasUnreadResponse {...chatInMenu} />);
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    const chatRow = screen.getByTestId("mobile-more-item-chat");
+    expect(chatRow.querySelector(".status-dot--pending")).toBeNull();
+    expect(screen.queryByLabelText("Unread chat response")).toBeNull();
+    onChat.unmount();
+
+    /* Contrôle : le même arbre, même sélection, seul `view` sort de la destination — la ligne lève l'indicateur. */
+    render(<OfficialMobileShell view="board" chatHasUnreadResponse {...chatInMenu} />);
+    fireEvent.click(screen.getByTestId("mobile-menu-trigger"));
+    expect(screen.getByTestId("mobile-more-item-chat").querySelector(".status-dot--pending")).not.toBeNull();
+    expect(screen.getByLabelText("Unread chat response")).toHaveClass("mobile-more-item-icon-dot");
+  });
+
   it("hides for modal, keyboard-independent hidden state, and desktop viewports", () => {
     const view = render(<OfficialMobileShell modalOpen />);
     expect(screen.queryByRole("navigation", { name: "Primary navigation" })).toBeNull();

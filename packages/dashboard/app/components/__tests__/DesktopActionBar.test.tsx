@@ -501,6 +501,57 @@ describe("DesktopActionBar", () => {
     expect(Array.from(right.querySelectorAll<HTMLElement>(".desktop-action-bar__action")).map((button) => button.dataset.testid)).toEqual(["desktop-nav-missions", "desktop-nav-terminal"]);
   });
 
+  /*
+   * FNXC:DesktopNavigation 2026-10-15-08:16 (RUFU-331):
+   * The rendered half of the two-surface contract. The registry decides what the Chat entry CLAIMS; these two cases
+   * prove `DesktopActionBar` renders that claim identically in the scroller and in the More menu, and that
+   * `aria-current` follows the DESTINATION KIND rather than the entry's kind label: a Chat entry whose destination is
+   * the Chat page is the current page, a Chat entry whose destination is a dialog never is — even while its popover
+   * is mounted and the entry is selected.
+   */
+  it("marque le Chat comme page courante et tait ses attributs de dialogue quand sa surface est la page", () => {
+    render(<DesktopActionBar
+      entries={entries(vi.fn(), { chatOpensPanel: false, chatSurfaceActive: true, chatHasUnreadResponse: true, quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "chat", "tasks", "planning", "missions"] }) })}
+      activeId="board"
+      tasks={[]}
+    />);
+
+    const chatButton = screen.getByTestId("desktop-nav-chat-panel");
+    expect(chatButton).toHaveClass("desktop-action-bar__action--active");
+    expect(chatButton).toHaveAttribute("aria-current", "page");
+    expect(chatButton).not.toHaveAttribute("aria-haspopup");
+    expect(chatButton).not.toHaveAttribute("aria-expanded");
+    expect(chatButton).not.toHaveAttribute("aria-controls");
+    /* The dot the operator could not clear is the same surface fact: a Chat surface is on screen. */
+    expect(chatButton.querySelector(".status-dot--pending")).toBeNull();
+  });
+
+  /*
+   * Control, rendered through the **More** menu rather than the scroller: `renderButton` is the one renderer both
+   * lanes use, so the popup contract must be identical there — selected while its popover is mounted, dialog triplet
+   * intact, and still no `aria-current`, because a dialog is never the current page.
+   *
+   * The quick-access selection below omits `chat` on purpose: with the DEFAULT five the registry classifies Chat as
+   * `direct` and DesktopActionBar excludes every direct entry from the overflow list, so the Chat button would render
+   * in the right track and no amount of `openOverflowMenu()` could find it (the shape this case first shipped with).
+   * Five explicit destinations is also the only way an operator can exclude Chat at all, so this fixture is the real
+   * configuration in which Chat lives in **More**.
+   */
+  it("garde le Chat sélectionné sans aria-current pendant que sa popover est montée", () => {
+    render(<DesktopActionBar
+      entries={entries(vi.fn(), { quickAccessEntryIds: resolveNavigationQuickAccessEntryIds({ mobileNavPrimaryItems: ["command-center", "tasks", "planning", "missions", "agents"] }), chatOpensPanel: true, chatPanelOpen: true, chatPanelId: "chat-tool-panel" })}
+      activeId="board"
+      tasks={[]}
+    />);
+
+    const chatButton = within(openOverflowMenu()).getByTestId("desktop-nav-chat-panel");
+    expect(chatButton).toHaveClass("desktop-action-bar__action--active");
+    expect(chatButton).toHaveAttribute("aria-haspopup", "dialog");
+    expect(chatButton).toHaveAttribute("aria-expanded", "true");
+    expect(chatButton).toHaveAttribute("aria-controls", "chat-tool-panel");
+    expect(chatButton).not.toHaveAttribute("aria-current");
+  });
+
   /* FN-511 cas (e) : sans cinquième raccourci ni Terminal, la piste de droite n'est pas rendue du tout. */
   it("ne laisse aucune coquille de piste droite sans cinquième raccourci ni Terminal", () => {
     render(<DesktopActionBar entries={entries(vi.fn(), { onOpenChatPanel: undefined, quickAccessEntryIds: ["board"] })} activeId="board" tasks={[]} />);

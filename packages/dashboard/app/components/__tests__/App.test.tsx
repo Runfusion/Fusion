@@ -8404,6 +8404,148 @@ describe("RUFU-303 stored Chat launch mode owns the Chat entry surfaces", () => 
 });
 
 /*
+RUFU-331 — THE CHAT ENTRY'S STATE FOLLOWS THE SURFACE IT OPENS.
+
+Original state: `buildDashboardNavigationEntries` derived the Chat entry's selected state, its unread dot, and its
+dialog attributes from `chatPanelOpen` alone — the state of the anchored popover. In the classic full-page layout the
+entry opens the Chat PAGE (RUFU-303 wired that launcher), so after navigating there the entry stayed unlit while the
+surface it leads to filled the window, the unread dot stayed lit because the popover was never mounted, and the button
+kept announcing `aria-haspopup="dialog"` / `aria-expanded="false"` for a popover that was neither open nor intended.
+Every case below mounts the real `<App />` and asserts the RENDERED state of the footer entry — the class the operator
+sees, the dot they cannot clear, and the dialog attributes an assistive-tech user hears — because the defect was
+registry wiring, not logic.
+
+The `footer` + `rightSidebarEnabled: false` configuration is the load-bearing one: `resolveChatHost` answers `"none"`
+there, so the unread hook's `primaryHostActive` stays false even while the Chat PAGE is on screen. The dot those cases
+observe is therefore un-clearable by the hook, and only the registry's new surface-aware clause can put it out.
+*/
+describe("RUFU-331 Chat entry state follows the surface it opens", () => {
+  const toolSettings = (overrides: Record<string, unknown> = {}) => ({
+    ...defaultSettings,
+    navigationPlacement: "footer" as const,
+    /* The shipped default: the footer Chat button is the subject, the panel/dock stays off unless a case opts in. */
+    rightSidebarEnabled: false,
+    ...overrides,
+  });
+
+  /*
+   * Same latest-registration discipline the unread suite documents: the unread subscription re-registers whenever
+   * effective Chat visibility changes, so an event must be dispatched into the CURRENT handler set.
+   */
+  const dispatchAssistantReply = async () => {
+    await waitFor(() => {
+      expect(mockSubscribeSse).toHaveBeenCalled();
+    });
+    const calls = mockSubscribeSse.mock.calls.filter(
+      ([url, sub]) => String(url).startsWith("/api/events") && typeof (sub as { events?: Record<string, unknown> })?.events?.["chat:message:added"] === "function",
+    );
+    const events = (calls.at(-1)?.[1] as { events: Record<string, (event: MessageEvent) => void> }).events;
+    await act(async () => {
+      events["chat:message:added"](
+        new MessageEvent("chat:message:added", { data: JSON.stringify({ role: "assistant", sessionId: "sess-other" }) }),
+      );
+    });
+  };
+
+  const chatEntry = () => screen.getByTestId("desktop-nav-chat-panel");
+  const unreadDot = (entry: HTMLElement) => entry.querySelector(".status-dot--pending");
+
+  /*
+   * SYMPTOM CASE. The operator stores the classic full-page layout, gets an unread reply, and opens Chat from the
+   * footer. Before the click the entry is an ordinary unlit destination carrying the unread dot; after it, the entry
+   * must read as the current page and the dot must be out — and the dialog attributes must be GONE, because there is
+   * no popover on this surface, open or otherwise.
+   */
+  it("selects the entry and clears its unread dot once the Chat page is the visible surface", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:chat-launch-mode", "view");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    const before = await screen.findByTestId("desktop-nav-chat-panel");
+    await dispatchAssistantReply();
+    await waitFor(() => expect(unreadDot(before)).not.toBeNull());
+    expect(before).not.toHaveClass("desktop-action-bar__action--active");
+
+    fireEvent.click(before);
+
+    const chatHost = await screen.findByTestId("chat-keep-alive");
+    expect(chatHost).not.toHaveAttribute("aria-hidden");
+    expect(screen.queryByTestId("chat-tool-popover")).toBeNull();
+
+    await waitFor(() => {
+      const entry = chatEntry();
+      expect(entry).toHaveClass("desktop-action-bar__action--active");
+      expect(unreadDot(entry)).toBeNull();
+    });
+    const entry = chatEntry();
+    expect(entry).toHaveAttribute("aria-current", "page");
+    expect(entry).not.toHaveAttribute("aria-haspopup");
+    expect(entry).not.toHaveAttribute("aria-expanded");
+    expect(entry).not.toHaveAttribute("aria-controls");
+  });
+
+  /*
+   * Control — the popup contract end to end, unchanged: unlit with a dot while closed, the dialog triplet plus the
+   * selected class while its popover is mounted, and NEVER `aria-current`, because a control for a dialog is not the
+   * current page. This is the case that keeps the popover's accessibility behavior identical.
+   */
+  it("keeps the popup dialog triplet and never claims the current page", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings());
+
+    render(<App />);
+
+    const closed = await screen.findByTestId("desktop-nav-chat-panel");
+    await dispatchAssistantReply();
+    await waitFor(() => expect(unreadDot(closed)).not.toBeNull());
+    expect(closed).not.toHaveClass("desktop-action-bar__action--active");
+    expect(closed).toHaveAttribute("aria-haspopup", "dialog");
+    expect(closed).toHaveAttribute("aria-expanded", "false");
+    expect(closed).not.toHaveAttribute("aria-controls");
+    expect(closed).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(closed);
+
+    expect(await screen.findByTestId("chat-tool-popover")).toBeInTheDocument();
+    const open = chatEntry();
+    expect(open).toHaveAttribute("aria-haspopup", "dialog");
+    expect(open).toHaveAttribute("aria-expanded", "true");
+    expect(open).toHaveAttribute("aria-controls", "dashboard-chat-panel");
+    expect(open).toHaveClass("desktop-action-bar__action--active");
+    expect(open).not.toHaveAttribute("aria-current");
+    expect(unreadDot(open)).toBeNull();
+  });
+
+  /*
+   * The host-only surface: on a dock shell a `chat` view change is routed into the dock's Chat list and `taskView`
+   * is pushed back off `chat`, so no view boolean can see this surface at all. Opening that dock must still light the
+   * entry, while the entry — still a popup launcher here — keeps declaring its dialog and still refuses
+   * `aria-current`. That asymmetry (selected AND a dialog opener) is exactly what the old single-surface derivation
+   * could not express.
+   */
+  it("marks the entry selected for a Chat surface the view route cannot see", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    localStorage.setItem("fusion:right-dock-view", "chat");
+    vi.mocked(fetchSettings).mockResolvedValue(toolSettings({ rightSidebarEnabled: true }));
+
+    render(<App />);
+
+    await screen.findByTestId("header-right-dock-toggle");
+    expect(chatEntry()).not.toHaveClass("desktop-action-bar__action--active");
+
+    fireEvent.click(screen.getByTestId("header-right-dock-toggle"));
+
+    await screen.findByTestId("right-dock-tab-chat");
+    await waitFor(() => expect(chatEntry()).toHaveClass("desktop-action-bar__action--active"));
+    const entry = chatEntry();
+    expect(entry).toHaveAttribute("aria-haspopup", "dialog");
+    expect(entry).not.toHaveAttribute("aria-current");
+  });
+});
+
+/*
 RUFU-326 — THE STORED CHAT LAUNCH MODE DECIDES THE KEYBOARD TARGET TOO.
 
 Original state: RUFU-303 gave the footer Chat entry its launch-mode launcher, but `toggleChatListShortcut` kept its
