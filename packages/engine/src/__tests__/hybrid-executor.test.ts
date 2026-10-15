@@ -487,8 +487,47 @@ describe("HybridExecutor", () => {
       manager?.restartProjectRuntime.mockRejectedValueOnce({ kind: "active_tasks", count: 3 });
 
       const result = await executor.transitionProjectIsolation("proj_test123", "child-process");
+      // Exact equality: a refusal the guard could not name must NOT grow a `blockingTaskIds` key — an
+      // empty array would read as "the read proved nothing blocks, yet we refused anyway". (RUFU-328)
       expect(result).toEqual({ ok: false, reason: "active_tasks", activeTaskCount: 3 });
       expect(mockCentralCore.updateProject).toHaveBeenCalledWith("proj_test123", { isolationMode: "in-process" });
+    });
+
+    /*
+    FNXC:IsolationTransitionBlockers 2026-10-15-06:30 (RUFU-328):
+    This method is the only route by which a guard's knowledge of WHICH cards block reaches the operator
+    (the dashboard's 409 body is built from this return value alone), so the ids have to survive the
+    trip — and survive as ids, not as a count the operator cannot look up. The rollback contract is
+    unchanged in either shape.
+    */
+    it("carries the blocking card ids when the guard names them", async () => {
+      const manager = mockProjectManagerInstances[0];
+      manager?.restartProjectRuntime.mockRejectedValueOnce({
+        kind: "active_tasks",
+        count: 2,
+        taskIds: ["SANE-435", "SANE-453"],
+      });
+
+      const result = await executor.transitionProjectIsolation("proj_test123", "child-process");
+      expect(result).toEqual({
+        ok: false,
+        reason: "active_tasks",
+        activeTaskCount: 2,
+        blockingTaskIds: ["SANE-435", "SANE-453"],
+      });
+      expect(mockCentralCore.updateProject).toHaveBeenCalledWith("proj_test123", { isolationMode: "in-process" });
+    });
+
+    it("omits the id list when the guard's answer names nothing usable", async () => {
+      const manager = mockProjectManagerInstances[0];
+      manager?.restartProjectRuntime.mockRejectedValueOnce({
+        kind: "active_tasks",
+        count: 1,
+        taskIds: ["", 42, null],
+      });
+
+      const result = await executor.transitionProjectIsolation("proj_test123", "child-process");
+      expect(result).toEqual({ ok: false, reason: "active_tasks", activeTaskCount: 1 });
     });
   });
 });

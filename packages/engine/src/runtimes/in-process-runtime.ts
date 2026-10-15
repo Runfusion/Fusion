@@ -55,7 +55,18 @@ import type {
   RuntimeStatus,
   RuntimeMetrics,
   ProjectRuntimeEvents,
+  RuntimeStopOptions,
 } from "../project/project-runtime.js";
+import {
+  ISOLATION_BLOCKER_READ_TIMEOUT_MS,
+  ISOLATION_BLOCKER_STORE_READ_TIMEOUT_MS,
+  isolationDrainVoteIsSettled,
+  resolveRuntimeIsolationBlockers,
+  withBoundedRead,
+  type IsolationBlockerAnswer,
+  type IsolationBlockerReadStore,
+  type WorktreeHolderHost,
+} from "../project/isolation-transition-blockers.js";
 import { runtimeLog } from "../logger.js";
 import { getActiveNotificationService } from "../util/notifier.js";
 import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
@@ -2664,7 +2675,7 @@ export class InProcessRuntime
    *
    * @throws Error if shutdown timeout is exceeded
    */
-  async stop(): Promise<void> {
+  async stop(options?: RuntimeStopOptions): Promise<void> {
     if (this.status === "stopped" || this.status === "stopping") {
       return;
     }
@@ -2820,15 +2831,63 @@ export class InProcessRuntime
       }
 
       // 8. Wait for active tasks to drain after aborting live sessions.
-      const settings = this.taskStore ? await this.taskStore.getSettings() : undefined;
-      const shutdownTimeout = settings?.runtimeStopDrainMs ?? 2000;
+      /*
+      FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+      The isolation-transition guard may hand this shutdown an explicit drain budget it already paid for:
+      the time a transition spent reading durable task state is time the drain no longer has. A carried
+      number is authoritative — including `0`, which is what a `runtimeStopDrainMs: 0` setting means — and
+      the settings read that supplies the default is skipped entirely when one arrives, because on that
+      path the caller already paid for it inside the guard's time bound.
+
+      No number means "derive your own", which is every historical caller (startup shutdown, `stopAll()`,
+      engine stop): the same settings key, the same 2000 ms default, the same unbounded settings await
+      this runtime has always made on that path.
+      */
+      const carriedDrainMs = typeof options?.drainMs === "number" && Number.isFinite(options.drainMs)
+        ? Math.max(0, Math.floor(options.drainMs))
+        : undefined;
+      const settings = carriedDrainMs === undefined && this.taskStore
+        ? await this.taskStore.getSettings()
+        : undefined;
+      const shutdownTimeout = carriedDrainMs ?? settings?.runtimeStopDrainMs ?? 2000;
       const startTime = Date.now();
 
       if (shutdownTimeout > 0) {
         const pollIntervalMs = Math.min(500, shutdownTimeout);
+        /*
+        FNXC:IsolationTransitionBlockers 2026-10-15-04:05 (RUFU-328):
+        The drain used to wait on the in-memory metric alone, so a card whose durable row was a terminal
+        `failed` park while an execution surface still reported it live held the shutdown for the whole
+        window and finished in the `post-abort drain timeout` warning. Each poll now takes one bounded
+        durable vote: a proven-empty blocker set means there is nothing left to wait FOR, so the drain
+        ends at once and the residual-holder warning below still records the disagreement. A vote that
+        cannot answer (no store, a hang, a rejection) counts as OCCUPIED — the historical behaviour — and
+        a `0` remaining budget starts no read at all, so the loop's wall-clock bound grows by at most one
+        deadline-clamped vote plus one poll interval. `settings` is reused from above: no second await.
+        */
+        const drainDeadlineMs = startTime + shutdownTimeout;
         while (Date.now() - startTime < shutdownTimeout) {
           const metrics = this.getMetrics();
           if (metrics.inFlightTasks === 0) {
+            break;
+          }
+          const voteBudgetMs = Math.max(
+            0,
+            Math.min(ISOLATION_BLOCKER_READ_TIMEOUT_MS, drainDeadlineMs - Date.now()),
+          );
+          if (
+            voteBudgetMs > 0 &&
+            (await isolationDrainVoteIsSettled({
+              executor: this.executor as unknown as WorktreeHolderHost | undefined,
+              store: this.taskStore as unknown as IsolationBlockerReadStore | undefined,
+              configuredDrainMs: shutdownTimeout,
+              budgetMs: voteBudgetMs,
+              entryAtMs: Date.now(),
+            }))
+          ) {
+            runtimeLog.log(
+              `Durable state proves the ${metrics.inFlightTasks} in-flight holder(s) have nothing left to drain — ending the post-abort drain early (the residual in-memory holder is the leak to repair)`,
+            );
             break;
           }
           runtimeLog.log(
@@ -3183,6 +3242,61 @@ export class InProcessRuntime
       lastActivityAt: this.lastActivityAt,
       memoryBytes,
     };
+  }
+
+  /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+  Durability parity for the in-flight guard. `getMetrics()` above answers from the executor's in-memory
+  holder map, which lags the durable board in both directions; this method is what the guard consults
+  when that memory says busy. It reads the SAME holder ids the metric counted (so the two answers can
+  never disagree about WHICH cards they are talking about), then lets `resolveIsolationBlockerAnswer`
+  decide against durable rows under the module's two budgets.
+
+  The drain-settings fetch happens here, bounded by the store-read constant, because `stop()` reaches
+  the same setting through an unbounded await that pre-dates this change (left alone deliberately —
+  fixing shutdown semantics is not this task's scope). Charging it inside the entry timestamp is what
+  keeps one transition attempt inside one bound end to end.
+
+  Every degradation is a `null` answer, never a throw and never `[]`: an executor double that cannot
+  prove liveness is treated as live (busy), and a store that cannot answer keeps the caller on its
+  historical refusal.
+  */
+  async getInFlightBlockers(options?: { budgetMs?: number }): Promise<IsolationBlockerAnswer> {
+    const entryAtMs = Date.now();
+    const budgetMs = options?.budgetMs ?? ISOLATION_BLOCKER_READ_TIMEOUT_MS;
+
+    const settings = this.taskStore
+      ? await withBoundedRead(() => this.taskStore.getSettings(), ISOLATION_BLOCKER_STORE_READ_TIMEOUT_MS)
+      : null;
+    const configuredDrainMs = settings?.runtimeStopDrainMs ?? 2_000;
+
+    const answer = await resolveRuntimeIsolationBlockers({
+      executor: this.executor as unknown as WorktreeHolderHost | undefined,
+      store: this.taskStore as unknown as IsolationBlockerReadStore | undefined,
+      configuredDrainMs,
+      // The remaining budget, not the full one: the settings fetch above already spent part of it.
+      // The resolver subtracts entry-elapsed once more, which under-estimates rather than exceeds.
+      budgetMs: Math.max(0, budgetMs - (Date.now() - entryAtMs)),
+      entryAtMs,
+    });
+
+    if (answer.taskIds === null) {
+      runtimeLog.warn(
+        `Isolation-transition durable read could not answer (${answer.reason ?? "unknown"}) for project ${this.config.projectId}; the guard stays on its in-memory refusal`,
+      );
+    }
+    if (answer.contradictedInMemory?.length) {
+      runtimeLog.warn(
+        `Isolation-transition durable read contradicted the in-memory signal for ${answer.contradictedInMemory.join(", ")} (board says failed, an execution surface is still live); the durable park wins and the disagreement is the leak to repair`,
+      );
+    }
+    if (answer.unknownIds?.length) {
+      runtimeLog.log(
+        `Isolation-transition durable read did not describe ${answer.unknownIds.join(", ")}; unknown cards block`,
+      );
+    }
+
+    return answer;
   }
 
   /**

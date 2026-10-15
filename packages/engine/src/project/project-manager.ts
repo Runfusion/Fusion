@@ -9,7 +9,10 @@ import type {
   ProjectRuntimeConfig,
   RuntimeStatus,
   GlobalMetrics,
+  RuntimeStopOptions,
 } from "./project-runtime.js";
+import type { IsolationBlockerAnswer } from "./isolation-transition-blockers.js";
+import { ISOLATION_BLOCKER_READ_TIMEOUT_MS } from "./isolation-transition-blockers.js";
 import { projectManagerLog } from "../logger.js";
 
 /**
@@ -56,6 +59,12 @@ export interface ProjectManagerEvents {
 export interface ProjectRuntimeRestartBlockedError {
   kind: "active_tasks";
   count: number;
+  /**
+   * Which cards the durable read counted as blockers, when the read was able to answer. Absent whenever
+   * it could not (no store, hang, rejection, or a runtime with no durable-read path), which is also the
+   * only case where `count` is a live-holder number rather than the size of a proven set.
+   */
+  taskIds?: string[];
 }
 
 export function isProjectRuntimeRestartBlockedError(error: unknown): error is ProjectRuntimeRestartBlockedError {
@@ -234,9 +243,11 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
    * Remove a project runtime and stop it.
    *
    * @param id - Project ID to remove
+   * @param stopOptions - Optional shutdown budget carried from a caller that already spent part of its
+   *   own transition bound (see {@link restartProjectRuntime}); omitted means the runtime derives its own.
    * @throws Error if runtime not found
    */
-  async removeProject(id: string): Promise<void> {
+  async removeProject(id: string, stopOptions?: RuntimeStopOptions): Promise<void> {
     const runtime = this.runtimes.get(id);
     if (!runtime) {
       throw new Error(`Runtime not found for project ${id}`);
@@ -246,7 +257,7 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     projectManagerLog.log(`Removing project runtime for ${id}`);
 
     // Stop the runtime
-    await runtime.stop();
+    await runtime.stop(stopOptions);
 
     // Remove from maps
     this.runtimes.delete(id);
@@ -452,15 +463,87 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
   */
 
 
+  /**
+   * Ask a runtime which of its in-flight cards a transition would actually destroy, degrading every
+   * hostile outcome — a runtime with no such path, a throw, or a hang — into a bare `null`.
+   *
+   * The `null` is load-bearing: the caller reads it as "cannot answer" and refuses exactly as it did
+   * before this capability existed. It must never collapse into `[]`, which means "proven settled" and
+   * releases the transition. The runtime already bounds its own read; this bound is the transport's, so
+   * a runtime whose method never returns cannot hold the transition open indefinitely either.
+   */
+  private async readIsolationTransitionBlockers(
+    runtime: ProjectRuntime,
+    budgetMs = ISOLATION_BLOCKER_READ_TIMEOUT_MS,
+  ): Promise<IsolationBlockerAnswer | null> {
+    if (!runtime.getInFlightBlockers) return null;
+    try {
+      const answer = await Promise.race<IsolationBlockerAnswer | null>([
+        runtime.getInFlightBlockers({ budgetMs }),
+        new Promise<null>((resolve) => {
+          const timer = setTimeout(() => resolve(null), budgetMs);
+          timer.unref?.();
+        }),
+      ]);
+      return answer && typeof answer === "object" && (answer.taskIds === null || Array.isArray(answer.taskIds))
+        ? answer
+        : null;
+    } catch (error) {
+      projectManagerLog.warn(
+        `Durable blocker read failed for one runtime (${error instanceof Error ? error.message : String(error)}); falling back to the in-flight metric`,
+      );
+      return null;
+    }
+  }
+
   async restartProjectRuntime(projectId: string, options?: { reason?: string; force?: boolean }): Promise<void> {
+    // One timestamp for the whole attempt, so the guard's decision and the shutdown that follows it
+    // divide a single bound instead of each being handed a fresh one.
     const runtime = this.runtimes.get(projectId);
     if (!runtime) {
       throw new Error(`Runtime not found for project ${projectId}`);
     }
 
     const metrics = runtime.getMetrics();
+    // Set only on the proven-clear path: the drain budget the runtime handed back, and the moment it
+    // handed it back, so the shutdown can be charged for everything that happened since.
+    let carriedDrainMs: number | undefined;
+    let answeredAtMs: number | undefined;
+    /*
+    FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+    The in-flight answer used to come from process memory alone, so a card whose durable row was a
+    terminal park — `failed` in the in-progress lane, nothing running behind it — refused isolation
+    transitions forever, and the operator's only route to the setting was deleting or moving cards from
+    an unrelated screen.
+
+    The metric stays the fast path and the fallback; durable state is consulted only when memory says
+    busy, because a busy answer is the only case where the refusal is worth a read:
+    - a proven-empty blocker set proceeds even though the metric is non-zero;
+    - a non-empty set refuses and names the cards, so the refusal can be read without guessing;
+    - a cannot-answer (no durable read, a hang, a rejection, or a runtime with no such path) refuses
+      exactly as before and carries no ids, because "the store would not answer" is not evidence of an
+      idle runtime — a slow store never buys a restart, and never costs more than the bound either.
+    `force: true` never reaches this read at all: same behaviour, same instant return, as before.
+    */
     if (!options?.force && metrics.inFlightTasks > 0) {
-      throw { kind: "active_tasks", count: metrics.inFlightTasks } satisfies ProjectRuntimeRestartBlockedError;
+      const answer = await this.readIsolationTransitionBlockers(runtime);
+
+      if (answer && Array.isArray(answer.taskIds)) {
+        if (answer.taskIds.length > 0) {
+          throw {
+            kind: "active_tasks",
+            count: metrics.inFlightTasks,
+            taskIds: answer.taskIds,
+          } satisfies ProjectRuntimeRestartBlockedError;
+        }
+        projectManagerLog.log(
+          `Project ${projectId}: in-flight metric says ${metrics.inFlightTasks}, durable state proves no blocker — proceeding with the transition`,
+        );
+        carriedDrainMs = typeof answer.drainMs === "number" ? answer.drainMs : undefined;
+        answeredAtMs = Date.now();
+      } else {
+        throw { kind: "active_tasks", count: metrics.inFlightTasks } satisfies ProjectRuntimeRestartBlockedError;
+      }
     }
 
     const project = await this.centralCore.getProject(projectId);
@@ -469,7 +552,23 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     }
 
     const workingDirectory = await this.centralCore.resolveLocalProjectWorkingDirectory(projectId);
-    await this.removeProject(projectId);
+    /*
+    FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+    Only the proven-clear path carries a drain budget. The runtime already charged its own decision time
+    to it; the project lookups above spent more of the same attempt, so they are charged here too. A
+    refusal never reaches this line and `force` never consulted durable state, so both keep the
+    historical full drain a runtime derives for itself.
+    */
+    const stopOptions: RuntimeStopOptions | undefined =
+      answeredAtMs === undefined
+        ? undefined
+        : {
+            drainMs: Math.max(
+              0,
+              (carriedDrainMs ?? 0) - (Date.now() - answeredAtMs),
+            ),
+          };
+    await this.removeProject(projectId, stopOptions);
 
     const capacity = await this.resolveStartupConcurrency(project, workingDirectory);
     await this.addProject({

@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { RuntimeMetrics, RuntimeStatus, ProjectRuntimeConfig } from "../../project/project-runtime.js";
+import type {
+  RuntimeMetrics,
+  RuntimeStatus,
+  ProjectRuntimeConfig,
+} from "../../project/project-runtime.js";
+import type { IsolationBlockerAnswer } from "../../project/isolation-transition-blockers.js";
 import {
   START_RUNTIME,
   STOP_RUNTIME,
   GET_STATUS,
   GET_METRICS,
+  GET_IN_FLIGHT_BLOCKERS,
   ERROR_EVENT,
 } from "../../ipc/ipc-protocol.js";
 
@@ -68,6 +74,21 @@ vi.mock("../in-process-runtime.js", () => {
 
     getMetrics = vi.fn(() => this.metrics);
 
+    /*
+    FNXC:IsolationTransitionBlockers 2026-09-15-06:25 (RUFU-328):
+    The worker's blocker handler calls this OPTIONAL capability, so the stub must be able to model every
+    way that call can fail to be an answer: absent (delete the method), throwing, or never settling. The
+    default is an implemented capability returning a controllable answer.
+    */
+    blockersAnswer: IsolationBlockerAnswer | null = { taskIds: [], reason: "declared-clear" };
+    blockersImpl: (() => Promise<IsolationBlockerAnswer | null>) | null = null;
+    getInFlightBlockers = vi.fn((options?: { budgetMs?: number }) => {
+      this.blockerBudgets.push(options?.budgetMs);
+      if (this.blockersImpl) return this.blockersImpl();
+      return Promise.resolve(this.blockersAnswer);
+    });
+    blockerBudgets: Array<number | undefined> = [];
+
     on = vi.fn((event: string, handler: (...args: any[]) => void) => {
       const existing = this.listeners.get(event) ?? [];
       existing.push(handler);
@@ -128,6 +149,10 @@ type MockRuntime = {
   stop: ReturnType<typeof vi.fn>;
   getStatus: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
+  getInFlightBlockers: ReturnType<typeof vi.fn>;
+  blockerBudgets: Array<number | undefined>;
+  blockersAnswer: IsolationBlockerAnswer | null;
+  blockersImpl: (() => Promise<IsolationBlockerAnswer | null>) | null;
   on: ReturnType<typeof vi.fn>;
   emit: (event: string, ...args: unknown[]) => void;
 };
@@ -204,16 +229,23 @@ describe("child-process-worker", () => {
     vi.restoreAllMocks();
   });
 
-  it("instantiates IpcWorker and registers START/STOP/GET_STATUS/GET_METRICS handlers", async () => {
+  it("instantiates IpcWorker and registers START/STOP/GET_STATUS/GET_METRICS/GET_IN_FLIGHT_BLOCKERS handlers", async () => {
     const worker = await loadWorkerModule();
 
+    /*
+    FNXC:IsolationTransitionBlockers 2026-09-15-06:28 (RUFU-328):
+    RE-PINNED from 4 to 5. The prior assertion encoded the pre-RUFU-328 handler set, and the fifth
+    registration IS the transport-parity deliverable: without it an isolated project cannot answer the
+    isolation-transition guard from durable state at all. This is the behavior change owning its own test.
+    */
     expect(mockState.ipcWorkers).toHaveLength(1);
-    expect(worker.onCommand).toHaveBeenCalledTimes(4);
+    expect(worker.onCommand).toHaveBeenCalledTimes(5);
     expect(worker.onCommand).toHaveBeenCalledWith(START_RUNTIME, expect.any(Function));
     expect(worker.onCommand).toHaveBeenCalledWith(STOP_RUNTIME, expect.any(Function));
     expect(worker.onCommand).toHaveBeenCalledWith(GET_STATUS, expect.any(Function));
     expect(worker.onCommand).toHaveBeenCalledWith(GET_METRICS, expect.any(Function));
-    expect(worker.handlers.size).toBe(4);
+    expect(worker.onCommand).toHaveBeenCalledWith(GET_IN_FLIGHT_BLOCKERS, expect.any(Function));
+    expect(worker.handlers.size).toBe(5);
   });
 
   it("START_RUNTIME creates and starts InProcessRuntime, then returns status", async () => {
@@ -367,6 +399,136 @@ describe("child-process-worker", () => {
 
     await expect(getMetricsHandler({})).resolves.toEqual(runtime.metrics);
     expect(runtime.getMetrics).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:IsolationTransitionBlockers 2026-09-15-06:30 (RUFU-328):
+  The child side of transport parity. These four cases are the whole contract of the handler: the ids
+  arrive, and every way of NOT knowing arrives as `taskIds: null` rather than an empty list or a
+  rejection. `[]` is a claim that the board is quiet, and a child that cannot see the board does not get
+  to make it — that distinction is what stops a lost channel from authorising a transition that deletes
+  a live run's worktree.
+  */
+  describe("GET_IN_FLIGHT_BLOCKERS", () => {
+    it("returns the blocker ids and drain budget the runtime reported", async () => {
+      const worker = await loadWorkerModule();
+      const startHandler = getHandler(worker, START_RUNTIME);
+      const handler = getHandler<{
+        taskIds: string[] | null;
+        drainMs?: number;
+        reason?: string;
+      }>(worker, GET_IN_FLIGHT_BLOCKERS);
+
+      await startHandler({ config: testConfig });
+      const runtime = mockState.runtimes[0] as MockRuntime;
+      runtime.blockersAnswer = {
+        taskIds: ["RUFU-328"],
+        drainMs: 1_750,
+        reason: "declared-blocked",
+      };
+
+      await expect(handler({ budgetMs: 500 })).resolves.toEqual({
+        taskIds: ["RUFU-328"],
+        drainMs: 1_750,
+        reason: "declared-blocked",
+      });
+    });
+
+    it("clamps the runtime's durable read to the inner budget, not the parent's outer one", async () => {
+      const worker = await loadWorkerModule();
+      const startHandler = getHandler(worker, START_RUNTIME);
+      const handler = getHandler(worker, GET_IN_FLIGHT_BLOCKERS);
+
+      await startHandler({ config: testConfig });
+      const runtime = mockState.runtimes[0] as MockRuntime;
+
+      await handler({ budgetMs: 500 });
+
+      // The parent sends its OUTER bound; forwarding it verbatim would let a hung child-side store
+      // consume every millisecond the parent is also willing to wait, racing the parent's own timeout
+      // instead of answering first. Clamping makes the child's `null` arrive inside the inner bound.
+      expect(runtime.blockerBudgets).toEqual([300]);
+    });
+
+    it("answers null when no engine has been started yet", async () => {
+      const worker = await loadWorkerModule();
+      const handler = getHandler<{ taskIds: string[] | null; reason?: string }>(
+        worker,
+        GET_IN_FLIGHT_BLOCKERS,
+      );
+
+      await expect(handler({ budgetMs: 500 })).resolves.toEqual({
+        taskIds: null,
+        reason: "transport-unavailable",
+      });
+    });
+
+    it("answers null when the runtime lacks the capability, without rejecting", async () => {
+      const worker = await loadWorkerModule();
+      const startHandler = getHandler(worker, START_RUNTIME);
+      const handler = getHandler<{ taskIds: string[] | null; reason?: string }>(
+        worker,
+        GET_IN_FLIGHT_BLOCKERS,
+      );
+
+      await startHandler({ config: testConfig });
+      const runtime = mockState.runtimes[0] as MockRuntime;
+      delete (runtime as { getInFlightBlockers?: unknown }).getInFlightBlockers;
+
+      await expect(handler({ budgetMs: 500 })).resolves.toEqual({
+        taskIds: null,
+        reason: "transport-answer-unusable",
+      });
+    });
+
+    it("answers null when the runtime's capability rejects, without rejecting", async () => {
+      const worker = await loadWorkerModule();
+      const startHandler = getHandler(worker, START_RUNTIME);
+      const handler = getHandler<{ taskIds: string[] | null; reason?: string }>(
+        worker,
+        GET_IN_FLIGHT_BLOCKERS,
+      );
+
+      await startHandler({ config: testConfig });
+      const runtime = mockState.runtimes[0] as MockRuntime;
+      runtime.blockersImpl = () => Promise.reject(new Error("child store exploded"));
+
+      // A rejection is its own reason, not a timeout: the operator remedy for a throwing store is to
+      // repair the store, and the transition still refuses either way.
+      await expect(handler({ budgetMs: 500 })).resolves.toEqual({
+        taskIds: null,
+        reason: "read-rejected",
+      });
+    });
+
+    it("answers null within the inner budget when the capability never settles", async () => {
+      const worker = await loadWorkerModule();
+      const startHandler = getHandler(worker, START_RUNTIME);
+      await startHandler({ config: testConfig });
+      const runtime = mockState.runtimes[0] as MockRuntime;
+      runtime.blockersImpl = () => new Promise<IsolationBlockerAnswer>(() => {});
+      const handler = getHandler<{ taskIds: string[] | null; reason?: string }>(
+        worker,
+        GET_IN_FLIGHT_BLOCKERS,
+      );
+
+      vi.useFakeTimers();
+      try {
+        let settled: unknown = "pending";
+        const pending = handler({ budgetMs: 500 }).then((value) => {
+          settled = value;
+        });
+
+        // 300 ms is the INNER bound; the parent's outer 500 ms is never reached because the child
+        // answers first. Without the clamp this handler would never settle at all.
+        await vi.advanceTimersByTimeAsync(300);
+        await pending;
+
+        expect(settled).toEqual({ taskIds: null, reason: "read-timed-out" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("SIGTERM stops runtime and shuts down IPC worker", async () => {

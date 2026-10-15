@@ -263,6 +263,14 @@ export { getModelRegistry as getModelRegistryImpl } from "./get-model-registry.j
 export { hasLiveSessionSurface as hasLiveSessionSurfaceImpl } from "./has-live-session-surface.js";
 export { listWorktreeHolders as listWorktreeHoldersImpl } from "./list-worktree-holders.js";
 export { countLiveWorktreeHolders as countLiveWorktreeHoldersImpl } from "./list-worktree-holders.js";
+/*
+FNXC:IsolationTransitionBlockers 2026-10-15-03:15 (RUFU-328):
+The id-level holder listings behind the isolation-transition veto: the LIVE ids (the count's own source,
+so metric and veto ids are one derivation) and ALL held ids (what a transition would actually destroy,
+liveness aside).
+*/
+export { listLiveWorktreeHolders as listLiveWorktreeHoldersImpl } from "./list-worktree-holders.js";
+export { listWorktreeHolderIds as listWorktreeHolderIdsImpl } from "./list-worktree-holders.js";
 export { isAgentEffectivelyExecuting as isAgentEffectivelyExecutingImpl } from "./is-agent-effectively-executing.js";
 export { getWorktreePath as getWorktreePathImpl } from "./get-worktree-path.js";
 export { buildInjectedRuntimeEnv as buildInjectedRuntimeEnvImpl } from "./build-injected-runtime-env.js";

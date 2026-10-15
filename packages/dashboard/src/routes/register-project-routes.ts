@@ -857,9 +857,22 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
               { force: Boolean(force) },
             );
             if (!transition.ok && transition.reason === "active_tasks") {
+              /*
+              FNXC:IsolationTransitionBlockers 2026-10-15-06:40 (RUFU-328):
+              The 409 body used to be only a count, so an operator staring at "3 active tasks" had no way
+              to tell live work from a leaked in-memory binding — the reported incident sat refused for
+              hours over two cards whose rows already read `failed`, and nothing on the dashboard named
+              them. The ids ride through from the guard's durable read; when that read could not answer,
+              the key is OMITTED rather than sent empty, because an empty list would claim the board
+              proved nothing blocks while the transition was still refused. `activeTaskCount` remains in
+              every shape, so any client reading only the count is unaffected.
+              */
               throw new ApiError(409, "active_tasks", {
                 error: "active_tasks",
                 activeTaskCount: transition.activeTaskCount ?? 0,
+                ...(transition.blockingTaskIds?.length
+                  ? { blockingTaskIds: transition.blockingTaskIds }
+                  : {}),
               });
             }
             delete updates.isolationMode;

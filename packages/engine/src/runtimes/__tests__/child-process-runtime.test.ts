@@ -11,6 +11,7 @@ import {
   START_RUNTIME,
   STOP_RUNTIME,
   GET_METRICS,
+  GET_IN_FLIGHT_BLOCKERS,
   TASK_CREATED,
   TASK_MOVED,
   TASK_UPDATED,
@@ -35,6 +36,10 @@ type MockChildOptions = {
   sendCallbackErrors?: Partial<Record<string, Error>>;
   markKilledOnSigterm?: boolean;
   emitExitOnKill?: boolean;
+  /** Answer for GET_IN_FLIGHT_BLOCKERS; a missing key answers with the default all-clear frame. */
+  blockersResponse?: unknown;
+  /** When true the child never answers GET_IN_FLIGHT_BLOCKERS, so the parent's own bound must fire. */
+  blockersSilent?: boolean;
 };
 
 type MockChildProcess = {
@@ -97,6 +102,15 @@ function createMockChildProcess(options: MockChildOptions = {}): MockChildProces
               lastActivityAt: "2026-04-08T00:00:00.000Z",
             },
         });
+      } else if (message.type === GET_IN_FLIGHT_BLOCKERS) {
+        if (!options.blockersSilent) {
+          respond(
+            OK,
+            options.blockersResponse ?? {
+              data: { taskIds: [], reason: "declared-clear" },
+            },
+          );
+        }
       } else if (message.type === "PING") {
         const pingOk = pingResults.shift() ?? true;
         if (pingOk) {
@@ -710,6 +724,103 @@ describe("ChildProcessRuntime", () => {
 
     it("getScheduler() always throws not accessible error", () => {
       expect(() => runtime.getScheduler()).toThrow("not accessible in ChildProcessRuntime");
+    });
+  });
+
+  /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-05:15 (RUFU-328):
+  Transport parity for the isolation-transition guard. An isolated project asks the CHILD which cards a
+  transition would destroy, and the answer must keep its three-way meaning across the boundary: ids,
+  `[]` proven clear, or `null` cannot-answer. The failure mode this exists to prevent is silent: a
+  transport that collapses `null` into `[]` turns a dead child into an all-clear and lets the transition
+  delete the worktree of a live run, so every unusable outcome below must be `null`, and `[]` may appear
+  only when the child actually proved the board clear.
+  */
+  describe("getInFlightBlockers transport parity", () => {
+    it("sends the caller's budget as the round-trip timeout and forwards the child's answer verbatim", async () => {
+      queueChild({
+        blockersResponse: { data: { taskIds: ["RUFU-328"], drainMs: 120, reason: "declared-blocked" } },
+      });
+      await runtime.start();
+
+      // The bound is the whole point of the exercise: IpcHost's own default is 30 seconds, which is
+      // three orders of magnitude past where waiting for a settings-change guard is worth it.
+      const sendCommand = runtimeAny.ipcHost.sendCommand.bind(runtimeAny.ipcHost);
+      const sendSpy = vi.fn((...args: unknown[]) => sendCommand(...(args as [string, unknown, number?])));
+      runtimeAny.ipcHost.sendCommand = sendSpy;
+
+      await expect(runtime.getInFlightBlockers({ budgetMs: 250 })).resolves.toMatchObject({
+        taskIds: ["RUFU-328"],
+        drainMs: 120,
+        reason: "declared-blocked",
+      });
+      expect(sendSpy).toHaveBeenCalledWith(GET_IN_FLIGHT_BLOCKERS, { budgetMs: 250 }, 250);
+    });
+
+    it("defaults the bound to the declared read budget when the caller names none", async () => {
+      queueChild();
+      await runtime.start();
+
+      const sendCommand = runtimeAny.ipcHost.sendCommand.bind(runtimeAny.ipcHost);
+      const sendSpy = vi.fn((...args: unknown[]) => sendCommand(...(args as [string, unknown, number?])));
+      runtimeAny.ipcHost.sendCommand = sendSpy;
+
+      await expect(runtime.getInFlightBlockers()).resolves.toMatchObject({
+        taskIds: [],
+        reason: "declared-clear",
+      });
+      expect(sendSpy).toHaveBeenCalledWith(GET_IN_FLIGHT_BLOCKERS, { budgetMs: 500 }, 500);
+    });
+
+    it("answers transport-unavailable without issuing a frame when no child is reachable", async () => {
+      // Never started: there is no channel at all, so the guard must learn that cheaply rather than
+      // waiting on a round trip it cannot make.
+      await expect(runtime.getInFlightBlockers({ budgetMs: 50 })).resolves.toEqual({
+        taskIds: null,
+        reason: "transport-unavailable",
+      });
+      expect(forkedChildren).toHaveLength(0);
+    });
+
+    it("answers transport-answer-unusable for a frame whose taskIds is not an array", async () => {
+      queueChild({ blockersResponse: { data: { taskIds: "RUFU-328" } } });
+      await runtime.start();
+
+      await expect(runtime.getInFlightBlockers({ budgetMs: 200 })).resolves.toEqual({
+        taskIds: null,
+        reason: "transport-answer-unusable",
+      });
+    });
+
+    it("answers transport-failed rather than an all-clear when the child rejects the command", async () => {
+      queueChild({ sendCallbackErrors: { [GET_IN_FLIGHT_BLOCKERS]: new Error("child vanished") } });
+      await runtime.start();
+
+      await expect(runtime.getInFlightBlockers({ budgetMs: 200 })).resolves.toEqual({
+        taskIds: null,
+        reason: "transport-failed",
+      });
+    });
+
+    it("settles inside its own bound when the child never answers", async () => {
+      vi.useFakeTimers();
+      try {
+        queueChild({ blockersSilent: true });
+        await runtime.start();
+
+        const answered = vi.fn();
+        runtime
+          .getInFlightBlockers({ budgetMs: 100 })
+          .then((answer: any) => answered(answer))
+          .catch((error: unknown) => answered({ rejected: String(error) }));
+
+        await vi.advanceTimersByTimeAsync(600);
+
+        // A hung child is uncertainty, never an all-clear, and the query must not outlive its budget.
+        expect(answered).toHaveBeenCalledWith({ taskIds: null, reason: "transport-failed" });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

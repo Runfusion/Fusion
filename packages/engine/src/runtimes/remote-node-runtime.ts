@@ -132,6 +132,17 @@ export class RemoteNodeRuntime
     throw new Error("Scheduler not accessible for remote node runtime.");
   }
 
+  /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-04:54 (RUFU-328):
+  This transport deliberately does NOT implement the optional `ProjectRuntime.getInFlightBlockers?()`
+  capability that InProcessRuntime and ChildProcessRuntime gained. The durable-status veto that capability
+  performs needs a local `TaskStore` to read each holder's board row, and this runtime has none by design
+  (`getTaskStore()` above throws). Leaving the member absent is the safe branch, not an unfinished one:
+  `ProjectManager.restartProjectRuntime()` treats a missing capability exactly as it did before RUFU-328 and
+  decides on `metrics.inFlightTasks > 0`, so a remote project can still never be restarted on an answer it
+  cannot prove — the worst outcome here is the historical conservative refusal, never a false all-clear.
+  Adding a remote read would mean inventing a cross-node status protocol for a settings-change guard.
+  */
   getMetrics(): RuntimeMetrics {
     void this.refreshMetrics();
     return { ...this.cachedMetrics };

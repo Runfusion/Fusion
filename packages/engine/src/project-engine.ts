@@ -89,7 +89,7 @@ import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import { createStoreSpecDriftRepository, SpecDriftReconciler } from "./spec-drift-reconciler.js";
 import { publishPersistedMissionFeatureAlignment } from "./missions/mission-feature-sync.js";
-import type { ProjectRuntimeConfig } from "./project/project-runtime.js";
+import type { ProjectRuntimeConfig, RuntimeStopOptions } from "./project/project-runtime.js";
 import { PrMonitor } from "./merge/pr-monitor.js";
 import { PlannerOverseerMonitor, resolveExecutorStuckAfterMs } from "./overseer/planner-overseer.js";
 import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "./overseer/planner-recovery-controller.js";
@@ -1989,7 +1989,15 @@ export class ProjectEngine {
    * active merge session is disposed so merge pipeline checkpoints can exit
    * promptly without continuing git/verification work after shutdown starts.
    */
-  async stop(): Promise<void> {
+  async stop(options?: RuntimeStopOptions): Promise<void> {
+    /*
+    FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+    `options` exists so a child process asked to stop by an isolation transition can forward the drain
+    budget that transition already paid for. The budget has to travel through THIS method rather than
+    straight to the runtime: `stop()` aborts merges, releases deferred merges, and stops every subsystem
+    before it reaches `runtime.stop()`, and a worker that skipped straight to the runtime would tear the
+    process down in a different order than every other stop path.
+    */
     /*
     FNXC:FasterStartup 2026-07-15-00:20:
     Always raise shuttingDown first so deferred startup work (OAuth, automation
@@ -2138,7 +2146,7 @@ export class ProjectEngine {
     */
 
     // Stop the core runtime (Triage, Scheduler, Executor, etc.)
-    await this.runtime.stop();
+    await this.runtime.stop(options);
 
     this.started = false;
     runtimeLog.log(`ProjectEngine stopped for ${this.config.projectId}`);

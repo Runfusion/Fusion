@@ -58,7 +58,24 @@ export abstract class TaskExecutorWorktreePureFacades extends TaskExecutorState 
   `isTaskLiveForOverseerRetry` (hosted on the session facades below this class, hence the abstract hook),
   which is what self-healing's leaked-slot reaper classifies with, so metric and reaper cannot drift.
   */
-  getLiveWorktreeHolderCount(): number { return impl.countLiveWorktreeHoldersImpl(this.activeWorktrees, (taskId) => this.isTaskLiveForOverseerRetry(taskId)); }
+  /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-03:25 (RUFU-328):
+  The id-level listings, so "how many" and "which ones" are ONE derivation instead of two rules over the
+  same map. The isolation-transition veto needs ids (a refusal that names nothing tells an operator
+  "2 tasks are running" with nothing to look at), and a count computed separately from the id list is a
+  third path to the same disagreement RUFU-323's FNXC note warns about — the count now IS the live list's
+  length, so a card can never be counted without being nameable, or named without being counted.
+
+  Two lists, deliberately different widths:
+  • `listLiveWorktreeHolderIds()` is the metric's own source — liveness-filtered.
+  • `listWorktreeHolderIds()` is every held id, liveness aside — what a transition would actually
+    destroy. The durable blocker decision enumerates this wider set on purpose: a card the in-memory
+    triple calls not-live while its durable row still says `executing` is the stale-negative that must
+    not be waved through, and liveness enters that decision only as drift evidence.
+  */
+  listLiveWorktreeHolderIds(): string[] { return impl.listLiveWorktreeHoldersImpl(this.activeWorktrees, (taskId) => this.isTaskLiveForOverseerRetry(taskId)); }
+  listWorktreeHolderIds(): string[] { return impl.listWorktreeHolderIdsImpl(this.activeWorktrees); }
+  getLiveWorktreeHolderCount(): number { return this.listLiveWorktreeHolderIds().length; }
   abstract isTaskLiveForOverseerRetry(taskId: string): boolean;
   protected async tryCreateWorktree(...args: FacadeRestArgs<typeof impl.tryCreateWorktreeImpl>): Promise<{ path: string; branch: string }> { return impl.tryCreateWorktreeImpl(bags.buildWorktreeCreateConflictFacadeDeps(this, (this as { MAX_WORKTREE_RETRIES?: number }).MAX_WORKTREE_RETRIES ?? constants.MAX_WORKTREE_RETRIES, bindHandleWorktreeConflict(this), bindTryCreateWorktree(this)), ...args); }
   protected async handleWorktreeConflict(...args: FacadeRestArgs<typeof impl.handleWorktreeConflictImpl>): Promise<{ path: string; branch: string } | null> { return impl.handleWorktreeConflictImpl(bags.buildWorktreeCreateConflictFacadeDeps(this, (this as { MAX_WORKTREE_RETRIES?: number }).MAX_WORKTREE_RETRIES ?? constants.MAX_WORKTREE_RETRIES, bindHandleWorktreeConflict(this), bindTryCreateWorktree(this)), ...args); }

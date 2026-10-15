@@ -586,12 +586,25 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
    *
    * Non-force transitions that fail runtime restart due to active tasks roll back
    * the persisted isolationMode change to its previous value before returning.
+   *
+   * FNXC:IsolationTransitionBlockers 2026-10-15-06:05 (RUFU-328):
+   * A bare `activeTaskCount` was the whole refusal, so an operator staring at `409 active_tasks` could not
+   * tell whether work was running or bookkeeping had leaked — the reported saneca case refused for hours
+   * over two cards whose rows already read `failed`, and the request named no card. The guard can now name
+   * the cards it actually waits for, and this method is the only route that carries that name to the HTTP
+   * layer, so the ids travel here as an OPTIONAL key: present when the durable read answered, omitted
+   * entirely when it did not. Omitting rather than sending `[]` is load-bearing — an empty array would
+   * read as "the read proved nothing blocks, yet we still refused", which is a contradiction, while an
+   * absent key honestly means "nothing could be named". The count stays authoritative in both shapes.
    */
   async transitionProjectIsolation(
     projectId: string,
     nextMode: IsolationMode,
     opts?: { force?: boolean },
-  ): Promise<{ ok: true } | { ok: false; reason: string; activeTaskCount?: number }> {
+  ): Promise<
+    | { ok: true }
+    | { ok: false; reason: string; activeTaskCount?: number; blockingTaskIds?: string[] }
+  > {
     const current = await this.centralCore.getProject(projectId);
     if (!current) {
       return { ok: false, reason: "project_not_found" };
@@ -611,10 +624,15 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
     } catch (error) {
       if (!opts?.force && error && typeof error === "object" && (error as { kind?: unknown }).kind === "active_tasks") {
         await this.centralCore.updateProject(projectId, { isolationMode: current.isolationMode });
+        const named = (error as { taskIds?: unknown }).taskIds;
+        const blockingTaskIds = Array.isArray(named)
+          ? named.filter((id): id is string => typeof id === "string" && id.length > 0)
+          : undefined;
         return {
           ok: false,
           reason: "active_tasks",
           activeTaskCount: Number((error as { count?: unknown }).count) || 0,
+          ...(blockingTaskIds && blockingTaskIds.length > 0 ? { blockingTaskIds } : {}),
         };
       }
       throw error;

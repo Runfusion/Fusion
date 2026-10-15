@@ -4,6 +4,7 @@ import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
 import { ChildProcessRuntime } from "../runtimes/child-process-runtime.js";
 import { RemoteNodeRuntime } from "../runtimes/remote-node-runtime.js";
 import { ProjectManager } from "../project/project-manager.js";
+import { ISOLATION_BLOCKER_READ_TIMEOUT_MS } from "../project/isolation-transition-blockers.js";
 import type { ProjectRuntimeConfig } from "../project/project-runtime.js";
 
 // Mock the runtimes
@@ -424,6 +425,181 @@ describe("ProjectManager", () => {
 
       expect(runtime.stop).toHaveBeenCalled();
       expect(manager.getRuntime("proj_test123")).not.toBe(runtime);
+    });
+  });
+
+  /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-06:20 (RUFU-328):
+  The durable half of the same guard. `metrics.inFlightTasks` answers from process memory, and the
+  recorded incident was memory that never unwound: two cards whose rows already read `status: "failed"`
+  kept the metric above zero and refused every unforced transition for hours, with a payload that named
+  nothing. The contract pinned here is the three-way meaning of the new capability, because the dangerous
+  direction is a FALSE release:
+    - a proven-empty answer releases even though the metric is non-zero (the bug fix);
+    - a non-empty answer refuses and names the cards (the diagnosability the reporter asked for);
+    - every hostile outcome — no capability, `null`, a throw, or a method that never returns — refuses
+      with the EXACT historical `{ kind, count }` shape and no ids, so uncertainty can never buy a restart
+      nor hold the transition open past the bound.
+  The budget assertions use fake timers: the repo forbids a test that waits on a real timeout.
+  */
+  describe("restartProjectRuntime durable blocker veto", () => {
+    const testConfig: ProjectRuntimeConfig = {
+      projectId: "proj_test123",
+      workingDirectory: "/tmp/test-project",
+      isolationMode: "in-process",
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+    };
+
+    beforeEach(() => {
+      mockCentralCore.resolveLocalProjectWorkingDirectory = vi.fn().mockResolvedValue("/tmp/test-project");
+    });
+
+    /** A runtime whose metric says `count` is busy, plus the optional veto seam the caller may consult. */
+    function stubBusyRuntime(
+      count: number,
+      blockers?: (options?: { budgetMs?: number }) => Promise<unknown>,
+    ) {
+      const runtime = manager.getRuntime("proj_test123") as unknown as {
+        getMetrics: ReturnType<typeof vi.fn>;
+        stop: ReturnType<typeof vi.fn>;
+        getInFlightBlockers?: ReturnType<typeof vi.fn>;
+      };
+      runtime.getMetrics.mockReturnValue({
+        inFlightTasks: count,
+        activeAgents: count,
+        lastActivityAt: new Date().toISOString(),
+      });
+      const veto = blockers ? vi.fn(blockers) : undefined;
+      if (veto) runtime.getInFlightBlockers = veto;
+      return { runtime, veto };
+    }
+
+    it("releases the transition when the durable read proves the busy metric is stale", async () => {
+      await manager.addProject(testConfig);
+      const { runtime, veto } = stubBusyRuntime(1, async () => ({
+        taskIds: [],
+        reason: "declared-clear",
+        // The runtime already paid 600 ms of a 10 000 ms drain out of its own decision.
+        drainMs: 9_400,
+        contradictedInMemory: ["SANE-435"],
+      }));
+
+      await manager.restartProjectRuntime("proj_test123", { reason: "isolation-change" });
+
+      // The guard released even though the in-memory metric said 1, and the veto ran inside the bound.
+      expect(veto).toHaveBeenCalledTimes(1);
+      expect(veto).toHaveBeenCalledWith(expect.objectContaining({ budgetMs: ISOLATION_BLOCKER_READ_TIMEOUT_MS }));
+      expect(runtime.stop).toHaveBeenCalledTimes(1);
+      const stopOptions = runtime.stop.mock.calls[0][0] as { drainMs: number };
+      expect(typeof stopOptions?.drainMs).toBe("number");
+      expect(stopOptions.drainMs).toBeLessThanOrEqual(9_400);
+      expect(manager.getRuntime("proj_test123")).not.toBe(runtime);
+    });
+
+    it("refuses and names the cards when durable state names them", async () => {
+      await manager.addProject(testConfig);
+      const { runtime, veto } = stubBusyRuntime(2, async () => ({
+        taskIds: ["SANE-435", "SANE-453"],
+        reason: "declared-blocked",
+        drainMs: 8_000,
+      }));
+
+      await expect(manager.restartProjectRuntime("proj_test123")).rejects.toEqual({
+        kind: "active_tasks",
+        count: 2,
+        taskIds: ["SANE-435", "SANE-453"],
+      });
+
+      // The refusal is the whole answer: nothing was stopped and the runtime is untouched.
+      expect(veto).toHaveBeenCalledTimes(1);
+      expect(runtime.stop).not.toHaveBeenCalled();
+      expect(manager.getRuntime("proj_test123")).toBe(runtime);
+    });
+
+    it("keeps the historical bare-count refusal when the runtime has no durable read path", async () => {
+      await manager.addProject(testConfig);
+      // No `getInFlightBlockers` on the stub: the shape a transport without the capability presents.
+      const { runtime } = stubBusyRuntime(3);
+
+      // Exact equality, not `objectContaining` — this asserts the ids key is ABSENT, so a caller that
+      // invents an empty list here would fail instead of reporting "blocked by nothing".
+      await expect(manager.restartProjectRuntime("proj_test123")).rejects.toEqual({
+        kind: "active_tasks",
+        count: 3,
+      });
+      expect(runtime.stop).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { case: "cannot-answer", answer: () => Promise.resolve({ taskIds: null, reason: "store-unavailable" }) },
+      { case: "a rejected read", answer: () => Promise.reject(new Error("store down")) },
+    ])("refuses conservatively on $case, with the historical shape and no ids", async ({ answer }) => {
+      await manager.addProject(testConfig);
+      const { runtime } = stubBusyRuntime(2, answer);
+
+      await expect(manager.restartProjectRuntime("proj_test123")).rejects.toEqual({
+        kind: "active_tasks",
+        count: 2,
+      });
+      expect(runtime.stop).not.toHaveBeenCalled();
+    });
+
+    it("refuses within the budget when the veto never returns, absorbing its late rejection", async () => {
+      await manager.addProject(testConfig);
+      let rejectLate!: (error: Error) => void;
+      const { runtime, veto } = stubBusyRuntime(
+        1,
+        () => new Promise((_resolve, rejectPromise) => { rejectLate = rejectPromise; }),
+      );
+
+      vi.useFakeTimers();
+      const unhandled = vi.fn();
+      process.on("unhandledRejection", unhandled);
+      try {
+        let refused = false;
+        const pending = manager.restartProjectRuntime("proj_test123").catch(() => { refused = true; });
+
+        await vi.advanceTimersByTimeAsync(ISOLATION_BLOCKER_READ_TIMEOUT_MS - 1);
+        // One millisecond short of the bound the guard is still (correctly) waiting, not guessing.
+        expect(refused).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(pending).resolves.toBeUndefined();
+        expect(refused).toBe(true);
+
+        // The abandoned read rejecting after the decision is already made must not surface as an
+        // unhandled rejection on the guard's side of the seam.
+        rejectLate(new Error("late store failure"));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(unhandled).not.toHaveBeenCalled();
+        expect(veto).toHaveBeenCalledTimes(1);
+        expect(runtime.stop).not.toHaveBeenCalled();
+      } finally {
+        process.off("unhandledRejection", unhandled);
+        vi.useRealTimers();
+      }
+    });
+
+    it("never consults the durable read for a force transition or an idle metric", async () => {
+      await manager.addProject(testConfig);
+      const force = stubBusyRuntime(4, async () => ({ taskIds: [], drainMs: 1 }));
+
+      await manager.restartProjectRuntime("proj_test123", { force: true });
+
+      expect(force.veto).not.toHaveBeenCalled();
+      expect(force.runtime.stop).toHaveBeenCalledTimes(1);
+      // `force` also keeps the historical unbudgeted shutdown: it never paid for a durable decision.
+      expect(force.runtime.stop.mock.calls[0][0]).toBeUndefined();
+
+      // The replacement runtime, now with an idle metric: a busy answer is the only case where the
+      // refusal is worth a durable read.
+      const idle = stubBusyRuntime(0, async () => ({ taskIds: ["should-not-be-read"], drainMs: 1 }));
+
+      await manager.restartProjectRuntime("proj_test123");
+
+      expect(idle.veto).not.toHaveBeenCalled();
+      expect(idle.runtime.stop).toHaveBeenCalledTimes(1);
     });
   });
 

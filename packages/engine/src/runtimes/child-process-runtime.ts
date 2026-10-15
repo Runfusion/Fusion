@@ -13,18 +13,22 @@ import type {
   RuntimeStatus,
   RuntimeMetrics,
   ProjectRuntimeEvents,
+  RuntimeStopOptions,
 } from "../project/project-runtime.js";
 import { IpcHost } from "../ipc/ipc-host.js";
 import {
   START_RUNTIME,
   STOP_RUNTIME,
   GET_METRICS,
+  GET_IN_FLIGHT_BLOCKERS,
   TASK_CREATED,
   TASK_MOVED,
   TASK_UPDATED,
   TASK_DELETED,
   ERROR_EVENT,
   HEALTH_CHANGED,
+  type GetInFlightBlockersPayload,
+  type GetInFlightBlockersResult,
   type TaskCreatedPayload,
   type TaskMovedPayload,
   type TaskUpdatedPayload,
@@ -32,6 +36,7 @@ import {
   type ErrorEventPayload,
   type HealthChangedPayload,
 } from "../ipc/ipc-protocol.js";
+import { ISOLATION_BLOCKER_READ_TIMEOUT_MS, type IsolationBlockerAnswer } from "../project/isolation-transition-blockers.js";
 import { runtimeLog } from "../logger.js";
 
 /**
@@ -333,8 +338,13 @@ export class ChildProcessRuntime
    * 3. Send STOP_RUNTIME command with 30s timeout
    * 4. Kill child process if graceful shutdown fails
    * 5. Set status to "stopped"
+   *
+   * FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+   * `drainMs` rides along in the STOP_RUNTIME payload so the child's own drain divides the same budget
+   * the transition guard spent, instead of re-deriving the full configured value from a fresh 30-second
+   * IPC round-trip. When no budget arrives the payload keeps its historical shape exactly.
    */
-  async stop(): Promise<void> {
+  async stop(options?: RuntimeStopOptions): Promise<void> {
     if (this.status === "stopped" || this.status === "stopping") {
       return;
     }
@@ -352,7 +362,14 @@ export class ChildProcessRuntime
       // Send graceful shutdown command
       if (this.ipcHost?.isConnected()) {
         runtimeLog.log("Sending STOP_RUNTIME command to child");
-        await this.ipcHost.sendCommand(STOP_RUNTIME, { timeoutMs: 30000 }, 35000);
+        await this.ipcHost.sendCommand(
+          STOP_RUNTIME,
+          {
+            timeoutMs: 30000,
+            ...(typeof options?.drainMs === "number" ? { drainMs: options.drainMs } : {}),
+          },
+          35000,
+        );
       }
     } catch (error) {
       runtimeLog.warn(`Graceful shutdown failed: ${error}`);
@@ -466,6 +483,49 @@ export class ChildProcessRuntime
       ...this.lastMetrics,
       lastActivityAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Ask the child which in-flight cards a transition would actually destroy.
+   *
+   * FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+   * Transport parity for the isolation-transition guard. Before this, an isolated project's guard could
+   * only read the parent's cached metrics, so the durable-status exemption and the blocker ids existed
+   * for in-process projects alone — and the same board state produced different transition verdicts in
+   * the two isolation modes.
+   *
+   * Two things are deliberate here:
+   * - The IPC timeout is the caller's own budget, passed explicitly. `IpcHost`'s default is 30 seconds,
+   *   which is three orders of magnitude past the point where waiting is worth it, and the whole value
+   *   of the guard is that it costs a bounded slice of one settings change.
+   * - Every failure mode (disconnected, timeout, rejection, a malformed frame, a dead child) resolves
+   *   `taskIds: null`. `null` is "cannot answer", which the caller answers with the historical refusal;
+   *   resolving `[]` instead would convert a dead child into an all-clear and let the transition delete
+   *   the worktree of a live run.
+   */
+  async getInFlightBlockers(options?: { budgetMs?: number }): Promise<IsolationBlockerAnswer> {
+    const budgetMs = options?.budgetMs ?? ISOLATION_BLOCKER_READ_TIMEOUT_MS;
+    if (!this.ipcHost?.isConnected()) {
+      return { taskIds: null, reason: "transport-unavailable" };
+    }
+    const payload: GetInFlightBlockersPayload = { budgetMs };
+    try {
+      const result = await this.ipcHost.sendCommand(GET_IN_FLIGHT_BLOCKERS, payload, budgetMs);
+      const answer = result as GetInFlightBlockersResult | null;
+      if (!answer || typeof answer !== "object" || !Array.isArray(answer.taskIds)) {
+        return { taskIds: null, reason: "transport-answer-unusable" };
+      }
+      return {
+        taskIds: answer.taskIds,
+        ...(typeof answer.drainMs === "number" ? { drainMs: answer.drainMs } : {}),
+        ...(answer.reason ? { reason: answer.reason as IsolationBlockerAnswer["reason"] } : {}),
+      };
+    } catch (error) {
+      runtimeLog.warn(
+        `GET_IN_FLIGHT_BLOCKERS IPC failed (${error instanceof Error ? error.message : String(error)}); refusing on the in-flight metric`,
+      );
+      return { taskIds: null, reason: "transport-failed" };
+    }
   }
 
   /**

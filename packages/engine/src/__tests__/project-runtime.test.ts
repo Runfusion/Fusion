@@ -499,3 +499,222 @@ describe("InProcessRuntime in-flight metric derivation", () => {
     }
   });
 });
+
+/*
+FNXC:IsolationTransitionBlockers 2026-10-15-03:40 (RUFU-328):
+The drain half of the isolation-transition path. A transition that spent part of its bound reading
+the board hands the shutdown the remainder, so one attempt cannot bill the same wall-clock twice —
+which matters most in the failure direction, because a runtime stuck on a hung read or an endless
+drain is unrecoverable from inside the request that refused. These pin the three things the carried
+budget must NOT do: re-derive the budget from settings (that await is unbounded, and the caller
+already paid for it), exceed the carried number, or swallow the fact that work was still live.
+*/
+describe("InProcessRuntime carried drain budget", () => {
+  const budgetConfig = {
+    projectId: "proj_drain",
+    workingDirectory: "worktree-relative",
+    isolationMode: "in-process",
+  } as const;
+
+  /**
+   * A runtime with just the seams `stop()`'s drain phase touches, plus a holder for `getMetrics()`.
+   *
+   * `live` drives BOTH the canonical liveness triple and the RUFU-323 live-count facade that production
+   * always provides. `withoutLiveCount` deletes the facade, so the metric falls back to the conservative
+   * ownership-map size — the leaked in-memory signal the durable drain vote exists to discharge.
+   */
+  function makeDrainRuntime(
+    live: boolean,
+    options?: {
+      rows?: Array<{ id: string; column: string; status: string }>;
+      withoutLiveCount?: boolean;
+    },
+  ): {
+    runtime: any;
+    getSettings: ReturnType<typeof vi.fn>;
+    listTasks: ReturnType<typeof vi.fn>;
+  } {
+    const runtime = new InProcessRuntime(budgetConfig as any, {} as any) as any;
+    runtime.status = "active";
+    const getSettings = vi.fn().mockResolvedValue({ runtimeStopDrainMs: 10_000 });
+    const listTasks = vi.fn(async () => options?.rows ?? []);
+    runtime.taskStore = { getSettings, listTasks };
+    runtime.pluginRunner = { shutdown: vi.fn().mockResolvedValue(undefined) };
+    runtime.worktreePool = { drain: vi.fn().mockReturnValue([]) };
+    const executor: Record<string, unknown> = {
+      activeWorktrees: new Map([["SANE-435", new Set(["worktree/sane-435"])]]),
+      isTaskLiveForOverseerRetry: () => live,
+      abortAllSessionBash: vi.fn(),
+      abortAllInFlight: vi.fn().mockResolvedValue(undefined),
+      disposeStoreLifecycleDisposers: vi.fn(),
+      disposeEphemeralTimers: vi.fn(),
+    };
+    if (!options?.withoutLiveCount) {
+      executor.getLiveWorktreeHolderCount = () => (live ? 1 : 0);
+    }
+    runtime.executor = executor;
+    return { runtime, getSettings, listTasks };
+  }
+
+  it("spends exactly the carried budget on a still-live holder, never the configured one", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, getSettings } = makeDrainRuntime(true);
+      let settled = false;
+      const stopPromise = runtime.stop({ drainMs: 250 }).then(() => { settled = true; });
+
+      // The carried number is authoritative: the settings key says 10 000 ms and is never even read,
+      // because the transition guard already paid for that await inside its own bound.
+      await vi.advanceTimersByTimeAsync(100);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(300);
+      await expect(stopPromise).resolves.toBeUndefined();
+      expect(getSettings).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats a carried zero as zero, exiting a busy drain at once", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, getSettings } = makeDrainRuntime(true);
+
+      // `runtimeStopDrainMs: 0` is an honest setting, so `0` must not read as "no budget carried".
+      const stopPromise = runtime.stop({ drainMs: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(stopPromise).resolves.toBeUndefined();
+      expect(getSettings).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("exits a busy drain immediately when the carried budget was already spent", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime } = makeDrainRuntime(true);
+
+      // A transition that overshot its bound arrives with nothing left; the drain must not invent more.
+      const stopPromise = runtime.stop({ drainMs: -500 });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(stopPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets a holder nothing proves live out of the drain without waiting", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, getSettings, listTasks } = makeDrainRuntime(false);
+
+      // No carried budget: this is the historical path, and it still consults settings. What changed
+      // is the metric it polls — a card with no live execution surface is no work, so the loop breaks
+      // on its first read instead of burning the full 10 seconds for a terminal park.
+      const stopPromise = runtime.stop();
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(stopPromise).resolves.toBeUndefined();
+      expect(getSettings).toHaveBeenCalledTimes(1);
+      // The vote is only taken when the in-memory number says busy: a metric already at zero must not
+      // cost the shutdown a durable read it does not need.
+      expect(listTasks).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-04:40 (RUFU-328):
+  The drain vote itself. The reported SANE shape is a card the board records as a terminal `failed` park
+  while an execution surface still reports it live: the in-memory number says busy indefinitely, and a
+  shutdown that polls only that number spends its whole window waiting for work that cannot resume. The
+  vote breaks that tie from durable state, and every case below keeps the metric CONSERVATIVELY busy
+  (`withoutLiveCount`) so what is under test is the durable read, not the RUFU-323 count.
+  */
+  it("ends the drain at once when durable state proves its only holder is a terminal park", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, listTasks } = makeDrainRuntime(false, {
+        withoutLiveCount: true,
+        rows: [{ id: "SANE-435", column: "in-progress", status: "failed" }],
+      });
+
+      // The configured window is 10 s; the first poll's vote must retire it instead of waiting it out.
+      const stopPromise = runtime.stop();
+      await vi.advanceTimersByTimeAsync(50);
+
+      await expect(stopPromise).resolves.toBeUndefined();
+      expect(listTasks).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits the whole window for a holder the durable row still counts", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, listTasks } = makeDrainRuntime(true, {
+        withoutLiveCount: true,
+        rows: [{ id: "SANE-435", column: "in-progress", status: "in-progress" }],
+      });
+      let settled = false;
+      const stopPromise = runtime.stop({ drainMs: 400 }).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(600);
+      await expect(stopPromise).resolves.toBeUndefined();
+      // A vote that named a blocker is what kept the wait: the read really ran.
+      expect(listTasks).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds a hanging durable read inside the drain rather than waiting on it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime } = makeDrainRuntime(true, { withoutLiveCount: true });
+      runtime.taskStore.listTasks = () => new Promise(() => {});
+
+      // Cannot-answer keeps the historical wait, so the shutdown ends on its own deadline — never on
+      // the hung read. This is the drain's no-unbounded-await guarantee.
+      const stopPromise = runtime.stop({ drainMs: 300 });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(stopPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still waits the configured budget for work that is genuinely live", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, getSettings } = makeDrainRuntime(true);
+      let settled = false;
+      const stopPromise = runtime.stop().then(() => { settled = true; });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await Promise.resolve();
+      // The drain is still waiting at half the configured budget: RUFU-328 did not turn a live card
+      // into an instant kill, it stopped counting a terminal park as one.
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(6_000);
+      await expect(stopPromise).resolves.toBeUndefined();
+      expect(getSettings).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

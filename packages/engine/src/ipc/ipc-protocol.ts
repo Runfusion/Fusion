@@ -37,6 +37,11 @@ export const STOP_RUNTIME = "STOP_RUNTIME" as const;
 export const GET_STATUS = "GET_STATUS" as const;
 /** Command type: Get runtime metrics */
 export const GET_METRICS = "GET_METRICS" as const;
+/**
+ * Command type: Ask the child which in-flight cards a project-isolation transition would actually
+ * destroy, from durable task state rather than the child's own process memory.
+ */
+export const GET_IN_FLIGHT_BLOCKERS = "GET_IN_FLIGHT_BLOCKERS" as const;
 /** Command type: Get TaskStore reference (returns serialized state) */
 export const GET_TASK_STORE = "GET_TASK_STORE" as const;
 /** Command type: Get Scheduler reference (returns serialized state) */
@@ -52,6 +57,7 @@ export type IpcCommandType =
   | typeof STOP_RUNTIME
   | typeof GET_STATUS
   | typeof GET_METRICS
+  | typeof GET_IN_FLIGHT_BLOCKERS
   | typeof GET_TASK_STORE
   | typeof GET_SCHEDULER
   | typeof PING;
@@ -69,6 +75,40 @@ export interface StartRuntimePayload {
 export interface StopRuntimePayload {
   /** Timeout in milliseconds for graceful shutdown (default: 30000) */
   timeoutMs?: number;
+  /**
+   * Remaining post-abort drain budget in milliseconds, already charged for the time an isolation
+   * transition spent proving its cards were settled. Absent means the child derives its own drain
+   * from `runtimeStopDrainMs`, which is every historical caller.
+   */
+  drainMs?: number;
+}
+
+/**
+ * Payload for GET_IN_FLIGHT_BLOCKERS command.
+ *
+ * FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+ * The budget crosses the wire deliberately. An isolated runtime's guard cannot let a slow child cost the
+ * transition more than the parent's own bound, and `IpcHost`'s default command timeout is 30 s — three
+ * orders of magnitude past the point where answering is worth waiting for. The parent therefore sends
+ * what it can still spend and sets the same number on the IPC call itself.
+ */
+export interface GetInFlightBlockersPayload {
+  /** Milliseconds the parent is still willing to wait for this answer. */
+  budgetMs?: number;
+}
+
+/**
+ * Response payload for GET_IN_FLIGHT_BLOCKERS.
+ *
+ * `taskIds: null` is a transport-level answer, not an empty one: it means the child could not consult
+ * durable state, and the parent must fall back to the conservative refusal. It is the same three-way
+ * shape the in-process runtime answers with, so a project cannot get a different transition verdict
+ * purely because it runs isolated.
+ */
+export interface GetInFlightBlockersResult {
+  taskIds: string[] | null;
+  drainMs?: number;
+  reason?: string;
 }
 
 // ── Response Types (Worker → Host) ──────────────────────────────────────
@@ -197,6 +237,7 @@ export function isIpcCommand(message: IpcMessage): boolean {
     STOP_RUNTIME,
     GET_STATUS,
     GET_METRICS,
+    GET_IN_FLIGHT_BLOCKERS,
     GET_TASK_STORE,
     GET_SCHEDULER,
     PING,

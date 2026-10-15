@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { countLiveWorktreeHolders, listWorktreeHolders } from "../executor/list-worktree-holders.js";
+import { countLiveWorktreeHolders, listLiveWorktreeHolders, listWorktreeHolderIds, listWorktreeHolders } from "../executor/list-worktree-holders.js";
 import { addActiveWorktree } from "../executor/active-worktrees.js";
 import { TaskExecutor } from "../executor.js";
 import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
@@ -156,6 +156,82 @@ describe("countLiveWorktreeHolders (liveness-derived holder accounting)", () => 
 
     expect(countLiveWorktreeHolders(activeWorktrees, () => true)).toBe(0);
     expect(listWorktreeHolders(activeWorktrees)).toHaveLength(0);
+  });
+});
+
+/*
+FNXC:IsolationTransitionBlockers 2026-10-15-03:25 (RUFU-328):
+Id-level holder listings. The isolation-transition veto refuses by NAME, so the executor must be able to
+say WHICH cards it holds, not merely how many — and the count must be the live list's length rather than
+a second rule over the same map, or a card can be counted without being nameable. Two listings on purpose:
+the liveness-filtered ids (the metric's own source) and every held id (what destroying a runtime would
+actually interrupt). The wider list must never DROP a live id, only add to it; the holder rule (an empty
+checkout Set is no holder, a workspace card is one holder whatever its sub-repo count) is shared with the
+count so the two cannot disagree about who holds anything.
+*/
+describe("holder id listings (one derivation with the live count)", () => {
+  it("names exactly the cards the live count counted", () => {
+    const activeWorktrees = new Map<string, Set<string>>([
+      ["SANE-435", new Set(["/wt/sane-435"])],
+      ["SANE-453", new Set(["/wt/sane-453"])],
+    ]);
+    const isLive = (taskId: string) => taskId === "SANE-453";
+
+    const liveIds = listLiveWorktreeHolders(activeWorktrees, isLive);
+
+    expect(liveIds).toEqual(["SANE-453"]);
+    // The count IS this list: no card is counted that the veto could not name.
+    expect(countLiveWorktreeHolders(activeWorktrees, isLive)).toBe(liveIds.length);
+  });
+
+  it("names every held id liveness aside, keeping a workspace card single", () => {
+    const activeWorktrees = new Map<string, Set<string>>([
+      ["FN-2001", new Set(["/wt/apps/api", "/wt/apps/web"])],
+      ["FN-2002", new Set(["/wt/apps/cli"])],
+    ]);
+
+    // One row per card, not per path — a card holding N sub-repos is one blocker, named once.
+    expect(listWorktreeHolderIds(activeWorktrees)).toEqual(["FN-2001", "FN-2002"]);
+    // A released-but-not-deleted key holds nothing, so it names nobody.
+    expect(listWorktreeHolderIds(new Map([["FN-4001", new Set()]]))).toEqual([]);
+  });
+
+  it("widens the held-id list beyond the live list without ever dropping a live id", () => {
+    const activeWorktrees = new Map<string, Set<string>>([
+      ["FN-5001", new Set(["/wt/a"])],
+      ["FN-5002", new Set(["/wt/b"])],
+      ["FN-5003", new Set(["/wt/c"])],
+    ]);
+    const live = listLiveWorktreeHolders(activeWorktrees, (taskId) => taskId === "FN-5002");
+    const held = listWorktreeHolderIds(activeWorktrees);
+
+    expect(live).toEqual(["FN-5002"]);
+    expect(held).toEqual(["FN-5001", "FN-5002", "FN-5003"]);
+    for (const id of live) expect(held).toContain(id);
+  });
+
+  it("keeps a real executor's count and id list in agreement across a terminal park", async () => {
+    const store = createMockStore();
+    const task = makeTask();
+    const sibling = makeTask({ id: "RUFU-328-B", title: "Still executing" });
+    store.getTask.mockResolvedValue(task);
+    (store as any).claimInterruptedStepSessionRepair = vi.fn().mockResolvedValue(null);
+    const executor = new TaskExecutor(store, repoRoot, {});
+    addActiveWorktree((executor as any).activeWorktrees, task.id, worktreePath);
+    addActiveWorktree((executor as any).activeWorktrees, sibling.id, join(repoRoot, "wt-b"));
+    // Only the sibling is on an execution surface; the parked card still holds its checkout.
+    (executor as any).executing.add(sibling.id);
+
+    expect(executor.listWorktreeHolderIds()).toEqual([task.id, sibling.id]);
+    expect(executor.listLiveWorktreeHolderIds()).toEqual([sibling.id]);
+    expect(executor.getLiveWorktreeHolderCount()).toBe(executor.listLiveWorktreeHolderIds().length);
+
+    await (executor as any).handleGraphFailure(task, makeGraphFailure());
+
+    // The committed park releases its claim, so both the held list and the live list lose it.
+    expect(executor.listWorktreeHolderIds()).toEqual([sibling.id]);
+    expect(executor.listLiveWorktreeHolderIds()).toEqual([sibling.id]);
+    expect(executor.getLiveWorktreeHolderCount()).toBe(1);
   });
 });
 

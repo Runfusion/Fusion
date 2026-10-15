@@ -126,6 +126,65 @@ describe("project isolation transition route", () => {
   });
 
   /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-06:45 (RUFU-328):
+  The two shapes of the 409 body, pinned as a pair. A refusal the durable guard could name must hand the
+  operator the card ids — the reported incident was a refusal that sat for hours naming nothing, because
+  a count alone cannot be looked up. A refusal where the read could not answer must NOT grow an empty
+  list: `blockingTaskIds: []` would tell the operator the board proved nothing blocks while the request
+  was still refused, which is the false-release claim in payload form.
+  */
+  it("names the blocking cards in the 409 body when the guard named them", async () => {
+    const hybridExecutor = readyExecutor(
+      vi.fn().mockResolvedValue({
+        ok: false,
+        reason: "active_tasks",
+        activeTaskCount: 2,
+        blockingTaskIds: ["SANE-435", "SANE-453"],
+      }),
+    );
+
+    const res = await request(
+      createApp({ hybridExecutor: hybridExecutor as any }),
+      "PATCH",
+      "/api/projects/proj_1",
+      JSON.stringify({ isolationMode: "child-process" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(409);
+    // `ApiError` serialises as { error: <message>, details: <payload> } (see `sendErrorResponse`), so the
+    // diagnostic payload the guard produced lands under `details`.
+    expect(res.body).toMatchObject({
+      error: "active_tasks",
+      details: {
+        activeTaskCount: 2,
+        blockingTaskIds: ["SANE-435", "SANE-453"],
+      },
+    });
+    // A refused transition persists nothing.
+    expect(central.updateProject).not.toHaveBeenCalled();
+  });
+
+  it("omits blockingTaskIds from the 409 body when the durable read could not answer", async () => {
+    const hybridExecutor = readyExecutor(
+      vi.fn().mockResolvedValue({ ok: false, reason: "active_tasks", activeTaskCount: 3 }),
+    );
+
+    const res = await request(
+      createApp({ hybridExecutor: hybridExecutor as any }),
+      "PATCH",
+      "/api/projects/proj_1",
+      JSON.stringify({ isolationMode: "child-process" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(409);
+    const details = (res.body as { details?: Record<string, unknown> }).details ?? {};
+    expect(details.activeTaskCount).toBe(3);
+    expect("blockingTaskIds" in details).toBe(false);
+  });
+
+  /*
   FNXC:HybridExecutorBoot 2026-09-26-03:10:
   RUFU-322: because HTTP listen no longer waits for `HybridExecutor.initialize()`, a transition request
   can reach the route while project runtimes are still loading. The route must then answer with a

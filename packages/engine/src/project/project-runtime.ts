@@ -1,6 +1,24 @@
 import type { EventEmitter } from "node:events";
 import type { TaskStore, Task, IsolationMode, ProjectSettings, GithubIssueAction, MigrationProgressEvent } from "@fusion/core";
 import type { Scheduler } from "../scheduler.js";
+import type { IsolationBlockerAnswer } from "./isolation-transition-blockers.js";
+
+/**
+ * Options accepted by {@link ProjectRuntime.stop}.
+ *
+ * FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+ * A transition that proved its cards were settled spent part of its wall-clock bound proving it, and
+ * that time is still owed by the shutdown that follows. `drainMs` carries the already-paid-for budget
+ * so one attempt cannot bill the drain in full a second time. Absent means "derive your own", which is
+ * every historical caller (startup shutdown, `stopAll`, engine stop) — their behaviour is unchanged.
+ */
+export interface RuntimeStopOptions {
+  /**
+   * Post-abort drain budget in milliseconds, already charged for the time a preceding guard consumed.
+   * A number here is authoritative — including `0`, which means the runtime declared no drain at all.
+   */
+  drainMs?: number;
+}
 
 /**
  * Runtime status for a ProjectRuntime instance.
@@ -151,7 +169,7 @@ export interface ProjectRuntime extends EventEmitter<ProjectRuntimeEvents> {
    * Waits for active tasks to complete (with timeout), stops the scheduler,
    * and cleans up resources.
    */
-  stop(): Promise<void>;
+  stop(options?: RuntimeStopOptions): Promise<void>;
 
   /**
    * Get the current runtime status.
@@ -184,6 +202,21 @@ export interface ProjectRuntime extends EventEmitter<ProjectRuntimeEvents> {
    * @returns Metrics including in-flight tasks, active agents, and memory usage
    */
   getMetrics(): RuntimeMetrics;
+
+  /*
+  FNXC:IsolationTransitionBlockers 2026-10-15-00:02 (RUFU-328):
+  Durability parity for the in-flight guard. `getMetrics()` answers from process memory, and process
+  memory lags the durable board in both directions, so an operator-facing "is anything running?" that
+  consults only it can be answered wrongly for hours. This method is consulted ONLY when the metric
+  says busy, and its option bag carries a budget rather than a retry policy — a transport that could
+  ask for a longer wait would make the bound a suggestion.
+
+  Optional on purpose: an isolated or remote runtime whose engine cannot reach durable state keeps
+  compiling and simply does not answer, which leaves the guard on its historical (conservative) path.
+  Every implementation must answer `{ taskIds: null }` rather than throwing or answering `[]`, because
+  an empty list is a claim that nothing blocks, and cannot-answer earns no such claim.
+  */
+  getInFlightBlockers?(options?: { budgetMs?: number }): Promise<IsolationBlockerAnswer>;
 }
 
 /**

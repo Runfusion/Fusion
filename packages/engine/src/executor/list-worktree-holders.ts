@@ -38,10 +38,43 @@ export function countLiveWorktreeHolders(
   activeWorktrees: Map<string, Set<string>>,
   isTaskLive: (taskId: string) => boolean,
 ): number {
-  let liveCount = 0;
+  return listLiveWorktreeHolders(activeWorktrees, isTaskLive).length;
+}
+
+/*
+FNXC:IsolationTransitionBlockers 2026-10-15-03:15 (RUFU-328):
+The id-level twin of the count, so "how many" and "which ones" cannot drift: the count IS this list's
+length. The isolation-transition veto needs the ids — a refusal that names nothing is an operator
+being told "2 tasks are running" with nothing to look at — and RUFU-323 left the veto reading the raw
+ownership map, which is the same third path to the same state its own FNXC comment warns about.
+
+Same holder rule as the count: a task with an empty checkout Set holds nothing, and a workspace card
+bound to N sub-repos appears once.
+ */
+export function listLiveWorktreeHolders(
+  activeWorktrees: Map<string, Set<string>>,
+  isTaskLive: (taskId: string) => boolean,
+): string[] {
+  const liveIds: string[] = [];
   for (const [taskId, worktreePaths] of activeWorktrees) {
     // An empty Set holds no checkout, so it is not a holder at all — mirrors `listWorktreeHolders`.
-    if (worktreePaths.size > 0 && isTaskLive(taskId)) liveCount++;
+    if (worktreePaths.size > 0 && isTaskLive(taskId)) liveIds.push(taskId);
   }
-  return liveCount;
+  return liveIds;
+}
+
+/*
+FNXC:IsolationTransitionBlockers 2026-10-15-03:15 (RUFU-328):
+Every held id, liveness aside — the input the durable blocker decision enumerates. Deliberately wider
+than the LIVE list: the veto asks "what would a transition destroy", and a card the in-memory triple
+calls not-live while its durable row still says `executing` is exactly the stale-negative that must not
+be waved through. Liveness stays relevant to that decision only as drift evidence
+(`classifyIsolationBlockers`), so the enumeration must not pre-filter by it.
+ */
+export function listWorktreeHolderIds(activeWorktrees: Map<string, Set<string>>): string[] {
+  const holderIds: string[] = [];
+  for (const [taskId, worktreePaths] of activeWorktrees) {
+    if (worktreePaths.size > 0) holderIds.push(taskId);
+  }
+  return holderIds;
 }
