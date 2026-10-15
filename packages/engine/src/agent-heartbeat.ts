@@ -402,6 +402,21 @@ interface PendingHeartbeatRun {
   cancellationRequested: boolean;
 }
 
+/**
+ * Per-agent unresponsive-recovery ledger. `stuckRunId` and `stuckRunStartedAtMs` record which tick
+ * recovery was summoned for, so the wake that episode queues can re-check the same evidence at the
+ * moment it actually fires (STAS-308).
+ */
+interface RecoveryEpisode {
+  /** Recovery episodes taken without a clean completion in between; drives the doubling cooldown. */
+  attempts: number;
+  /** Epoch ms before which no new recovery episode may start for this agent. */
+  backoffUntilMs: number;
+  stuckRunId: string;
+  /** The stuck tick's `startedAt`, when run history could resolve it. */
+  stuckRunStartedAtMs?: number;
+}
+
 interface TrackedAgent {
   agentId: string;
   session: AgentSession;
@@ -437,6 +452,39 @@ const REPORTS_STALE_INTERVAL_MULTIPLIER = 1.5;
  * tick/heartbeat) must not be misread as dead and reclaimed mid-run.
  */
 const MIN_HEARTBEAT_STALENESS_MS = 10 * 60_000;
+
+/*
+FNXC:RecoveryCompletionFreshnessGate 2026-10-15-08:46 (STAS-308):
+A tracked heartbeat that stops ticking is a symptom, not proof of death. The only durable record that
+the agent is alive again is its run history: a run that closed `status: "completed"` with a non-null
+`endedAt`. `terminated` and `failed` rows do not qualify — recovery itself writes `terminated` for the
+run it kills, so counting them would let a recovery episode certify its own victim as proof of life.
+Both halves of recovery (episode start, and the queued wake's fire time) consult one bounded run page
+before spending a session; see `findPostStuckCompletion`.
+*/
+const RECOVERY_RECENT_RUNS_LIMIT = 50;
+/** The pre-existing unresponsive window: a tick must go silent for 2x the configured timeout. */
+const RECOVERY_WINDOW_MULTIPLIER = 2;
+/** A first recovery episode earns 2x the recovery window before an identical one may repeat. */
+const RECOVERY_BACKOFF_BASE_MULTIPLIER = 2;
+/** Ceiling of the doubling ladder: a permanently stuck agent is re-woken at most every 6 hours. */
+const RECOVERY_BACKOFF_MAX_COOLDOWN_MS = 6 * 60 * 60_000;
+
+/** What one bounded run page can and cannot prove about a tick that stopped ticking. */
+type RecoveryLifeEvidence =
+  /** The page does not contain the stuck run, so nothing can be compared against it. */
+  | { kind: "unknown-baseline"; stuckRunStartedAtMs?: undefined }
+  /** A run past the stuck tick closed `status: "completed"` — the agent is alive. */
+  | { kind: "alive"; completingRun: AgentHeartbeatRun; stuckRunStartedAtMs: number }
+  /** No clean completion past the stuck tick: recovery must proceed. */
+  | { kind: "proceed"; stuckRunStartedAtMs?: number };
+
+/** Cooldown earned after `attempts` recovery episodes (`attempts` >= 1), doubling to a ceiling. */
+function recoveryBackoffCooldownMs(attempts: number, heartbeatTimeoutMs: number): number {
+  const recoveryWindowMs = RECOVERY_WINDOW_MULTIPLIER * heartbeatTimeoutMs;
+  const doubled = RECOVERY_BACKOFF_BASE_MULTIPLIER * recoveryWindowMs * 2 ** (attempts - 1);
+  return Math.min(doubled, RECOVERY_BACKOFF_MAX_COOLDOWN_MS);
+}
 
 /** Format milliseconds into a human-readable duration string (e.g. "5m", "1h 20m", "2h"). */
 export function formatDuration(ms: number): string {
@@ -1012,6 +1060,13 @@ export class HeartbeatMonitor {
   and runs normally — a goal nobody is working on must not be swallowed.
   */
   private wakeGoalClaims: Map<string, HeartbeatWakeClaim> = new Map();
+
+  /**
+   * Per-agent unresponsive-recovery ledger — see `RecoveryEpisode` (STAS-308). Records the cooldown an
+   * agent earns per recovery episode plus the tick that summoned it, so identical episodes are spaced
+   * and a queued recovery wake can re-check the evidence it was dispatched on.
+   */
+  private recoveryEpisodes: Map<string, RecoveryEpisode> = new Map();
 
   constructor(options: HeartbeatMonitorOptions) {
     this.store = options.store;
@@ -2468,6 +2523,17 @@ export class HeartbeatMonitor {
   }
 
   /**
+   * STAS-308: how many unresponsive-recovery episodes an agent has consumed and the instant the next
+   * one may start. This is the operator-visible half of the backoff — without it, a deferred recovery
+   * on a genuinely stuck agent is indistinguishable from a lost one.
+   */
+  getRecoveryBackoff(agentId: string): { attempts: number; backoffUntilMs: number } | undefined {
+    const episode = this.recoveryEpisodes.get(agentId);
+    if (!episode) return undefined;
+    return { attempts: episode.attempts, backoffUntilMs: episode.backoffUntilMs };
+  }
+
+  /**
    * FNXC:PostgresBackend 2026-06-28-10:20:
    * Wake-on-message delivery hook fired by MessageStore on an agent-directed send.
    * Now async + PG-capable: it reads the recipient agent via the AgentStore's async
@@ -2670,6 +2736,33 @@ export class HeartbeatMonitor {
           return duplicate;
         }
         wakeClaim = this.claimWakeGoal(agentId, resolvedTaskId);
+      }
+
+      /*
+      FNXC:RecoveryCompletionFreshnessGate 2026-10-15-08:46 (STAS-308): second half of the gate, at the
+      wake's FIRE time. STAS-270 measured that about half of recovery dispatches queue behind this very
+      lock and run only when the holder drains, so the evidence that justified the episode can be minutes
+      stale by the time the wake gets here. A clean completion that landed while we waited means this
+      session would wake an agent that is already working: cancel the wake, release the goal claim it
+      reserved (a claim whose owner never opens a run must not refuse later wakes), and hand back the run
+      that proves the agent is alive — the same identity-as-proof shape as the dedupe arm above. No run
+      row is opened, so nothing gets terminated on the way in.
+      */
+      const recoveryEpisode = this.recoveryEpisodes.get(agentId);
+      if (recoveryEpisode && contextSnapshot?.triggerSource === "heartbeat-unresponsive") {
+        const evidence = await this.findPostStuckCompletion(
+          agentId,
+          recoveryEpisode.stuckRunId,
+          recoveryEpisode.stuckRunStartedAtMs,
+        );
+        if (evidence.kind === "alive") {
+          this.releaseWakeGoalClaim(agentId, wakeClaim);
+          heartbeatLog.warn(
+            `Recovery wake cancelled for ${agentId}: run ${evidence.completingRun.id} completed at ${evidence.completingRun.endedAt} while this wake waited for the start lock — no session opened`,
+          );
+          await this.recordRecoveryCancellation(agentId, recoveryEpisode.stuckRunId, evidence.completingRun, "queued-wake-fire-time");
+          return evidence.completingRun;
+        }
       }
 
       const contextTriggeringCommentIds = Array.isArray(contextSnapshot?.triggeringCommentIds)
@@ -5684,12 +5777,164 @@ export class HeartbeatMonitor {
     this.onMissed?.(tracked.agentId, reason);
   }
 
+  /*
+  FNXC:RecoveryCompletionFreshnessGate 2026-10-15-08:46 (STAS-308):
+  One bounded run page answers both questions the gate has: when did the tick that stopped ticking
+  start, and has any later run closed `status: "completed"` since. Reading it is what replaces the old
+  zero-information decision — the episode previously could only ask "is this session still ticking?", a
+  question a hung client answers forever, while the durable record of the agent working again sat one
+  query away. A page that does not contain the stuck run proves nothing and says so: losing recovery is
+  worse than spending a session on it.
+  */
+  private async findPostStuckCompletion(
+    agentId: string,
+    stuckRunId: string,
+    stuckRunStartedAtMs?: number,
+  ): Promise<RecoveryLifeEvidence> {
+    let runs: AgentHeartbeatRun[];
+    try {
+      runs = await this.store.getRecentRuns(agentId, RECOVERY_RECENT_RUNS_LIMIT);
+    } catch (err) {
+      heartbeatLog.warn(
+        `Recovery gate for ${agentId} could not read recent runs (${err instanceof Error ? err.message : String(err)}) — recovering without proof of life`,
+      );
+      return { kind: "proceed" };
+    }
+
+    const stuckRun = runs.find((run) => run.id === stuckRunId);
+    const baselineMs = stuckRunStartedAtMs ?? (stuckRun ? Date.parse(stuckRun.startedAt) : Number.NaN);
+    if (!Number.isFinite(baselineMs)) return { kind: "unknown-baseline" };
+
+    const completingRun = runs.find(
+      (run) =>
+        run.id !== stuckRunId &&
+        run.status === "completed" &&
+        run.endedAt !== null &&
+        Date.parse(run.endedAt) > baselineMs,
+    );
+    if (!completingRun) return { kind: "proceed", stuckRunStartedAtMs: baselineMs };
+    return { kind: "alive", completingRun, stuckRunStartedAtMs: baselineMs };
+  }
+
+  /**
+   * STAS-308: stand down a recovery episode that run history has already made unnecessary. The hung
+   * session is still disposed and the entry untracked — that is the bookkeeping the poll loop needs —
+   * but the run row is NOT terminated and the agent is not paused/resumed: the agent is alive, so its
+   * own session still owns the tick, and a pause/resume pair would fire a wake nobody asked for.
+   */
+  private async cancelRecoveryEpisode(
+    tracked: TrackedAgent,
+    completingRun: AgentHeartbeatRun,
+    heartbeatTimeoutMs: number,
+  ): Promise<void> {
+    const agentId = tracked.agentId;
+    /*
+    Proof of life ends the doubling streak, but one recovery window of cooldown is still armed so the
+    poll loop cannot re-enter an episode for the same stale entry while the untrack settles.
+    */
+    this.recoveryEpisodes.set(agentId, {
+      attempts: 0,
+      backoffUntilMs: Date.now() + RECOVERY_WINDOW_MULTIPLIER * heartbeatTimeoutMs,
+      stuckRunId: tracked.runId,
+    });
+
+    try {
+      tracked.session.dispose();
+    } catch (err) {
+      heartbeatLog.warn(`Error disposing hung session for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    this.untrackAgent(agentId);
+
+    heartbeatLog.warn(
+      `Recovery cancelled for ${agentId}: run ${tracked.runId} is superseded by completed run ${completingRun.id} (ended ${completingRun.endedAt}) — the agent is alive, no wake dispatched`,
+    );
+    await this.recordRecoveryCancellation(agentId, tracked.runId, completingRun, "episode-start");
+  }
+
+  /**
+   * STAS-308: record the episode just taken and arm its cooldown, before `resumeAgent` queues the
+   * recovery wake — the wake reads this entry back at its fire time.
+   */
+  private armRecoveryEpisode(
+    agentId: string,
+    attempts: number,
+    stuckRunId: string,
+    stuckRunStartedAtMs: number | undefined,
+    heartbeatTimeoutMs: number,
+  ): void {
+    const cooldownMs = recoveryBackoffCooldownMs(attempts, heartbeatTimeoutMs);
+    const backoffUntilMs = Date.now() + cooldownMs;
+    this.recoveryEpisodes.set(agentId, { attempts, backoffUntilMs, stuckRunId, stuckRunStartedAtMs });
+    heartbeatLog.warn(
+      `Agent ${agentId} recovery attempt ${attempts}: no further recovery before ${new Date(backoffUntilMs).toISOString()} (${formatDuration(cooldownMs)}, doubling per consecutive episode up to ${formatDuration(RECOVERY_BACKOFF_MAX_COOLDOWN_MS)})`,
+    );
+  }
+
+  /**
+   * STAS-308: every recovery cancellation is durable telemetry, not just a log line — "recovery skipped
+   * itself" must be as auditable as "recovery fired" or the defect it prevents is unfalsifiable.
+   */
+  private async recordRecoveryCancellation(
+    agentId: string,
+    stuckRunId: string,
+    completingRun: AgentHeartbeatRun,
+    reason: "episode-start" | "queued-wake-fire-time",
+  ): Promise<void> {
+    await emitBoundedRunAudit(this.taskStore, {
+      agentId,
+      runId: stuckRunId,
+      domain: "database",
+      mutationType: "agent:unresponsive-recovery-cancelled",
+      target: agentId,
+      metadata: {
+        agentId,
+        stuckRunId,
+        completingRunId: completingRun.id,
+        completedAt: completingRun.endedAt,
+        reason,
+      },
+    });
+  }
+
   private async recoverUnresponsiveAgent(tracked: TrackedAgent, heartbeatTimeoutMs: number): Promise<void> {
+    const priorEpisode = this.recoveryEpisodes.get(tracked.agentId);
+    if (priorEpisode && Date.now() < priorEpisode.backoffUntilMs) {
+      heartbeatLog.debug(
+        `Deferring unresponsive-recovery for ${tracked.agentId} until ${new Date(priorEpisode.backoffUntilMs).toISOString()} — recovery attempt ${priorEpisode.attempts} is still inside its backoff window`,
+      );
+      return;
+    }
+
+    /*
+    FNXC:RecoveryCompletionFreshnessGate 2026-10-15-08:46 (STAS-308): first half of the gate, at episode
+    START. STAS-270 measured 138 recovery wakes in a single day against one card, and STAS-308 traced the
+    survivor path: a tick whose client stopped ticking while the agent kept completing later ticks
+    cleanly. That agent is alive by its own durable record, so the episode is cancelled instead of
+    terminating a live run and burning a fresh session on a zero-delta wake.
+    */
+    const evidence = await this.findPostStuckCompletion(tracked.agentId, tracked.runId);
+    if (evidence.kind === "alive") {
+      await this.cancelRecoveryEpisode(tracked, evidence.completingRun, heartbeatTimeoutMs);
+      return;
+    }
+    if (evidence.kind === "unknown-baseline") {
+      heartbeatLog.warn(
+        `Recovery gate for ${tracked.agentId} cannot locate stuck run ${tracked.runId} on the recent run page — recovering without proof of life`,
+      );
+    }
+
     const now = Date.now();
     const elapsed = now - tracked.lastSeen;
     const reason = `No heartbeat for ${formatDuration(elapsed)} (2× timeout threshold: ${formatDuration(heartbeatTimeoutMs * 2)})`;
 
     heartbeatLog.warn(`Recovering unresponsive agent ${tracked.agentId}: ${reason}`);
+    this.armRecoveryEpisode(
+      tracked.agentId,
+      (priorEpisode?.attempts ?? 0) + 1,
+      tracked.runId,
+      evidence.stuckRunStartedAtMs,
+      heartbeatTimeoutMs,
+    );
 
     const runIdToTerminate = tracked.runId;
 

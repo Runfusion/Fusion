@@ -194,12 +194,15 @@ describe("unresponsive-recovery completion-freshness gate", () => {
 
       await reachRecoveryWindow();
 
-      // No termination, no pause/resume, no recovery wake, no new session.
-      expect(session.dispose).not.toHaveBeenCalled();
+      // Only the hung session is disposed. Nothing is terminated, paused, or resumed, and no
+      // session is opened for a wake that will never run.
+      expect(session.dispose).toHaveBeenCalledTimes(1);
       expect(store.saveRun).not.toHaveBeenCalled();
       expect(store.updateAgentState).not.toHaveBeenCalled();
+      expect(store.updateAgent).not.toHaveBeenCalled();
       expect(store.startHeartbeatRun).not.toHaveBeenCalled();
       expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      expect(agentRow.state).toBe("running");
       // The stale tracked entry is dropped so the poll loop stops re-evaluating it.
       expect(monitor.getTrackedAgents()).not.toContain(AGENT_ID);
       // The cancellation is auditable: operator-visible log plus a durable run-audit record.

@@ -7,6 +7,9 @@ export function createMockStore(overrides: Partial<AgentStore> = {}): AgentStore
     recordHeartbeat: vi.fn().mockResolvedValue(undefined),
     updateAgentState: vi.fn().mockResolvedValue(undefined),
     getAgentsByReportsTo: vi.fn().mockResolvedValue([]),
+    // Recovery reads run history for proof of life (STAS-308); an unspecified history is an empty
+    // one, so the gate is served a real read instead of swallowing a missing-method error.
+    getRecentRuns: vi.fn().mockResolvedValue([]),
     ...overrides,
   } as unknown as AgentStore;
 }

@@ -661,6 +661,23 @@ export type DatabaseMutationType =
   FN-8004 records a heartbeat move that lost a concurrent soft-delete using identifiers and timestamps only. Never place the failed run text or agent lastError in this event because the race is benign and audit metadata must remain structured.
   */
   | "agent:heartbeat-move-skipped-soft-delete"
+  /*
+  * FNXC:RecoveryCompletionFreshnessGate 2026-10-15-08:46 (STAS-308):
+  * An `unresponsive-recovery` episode, or the recovery wake it queued, stood down because run history
+  * proved the agent is alive again. Recovery that skips itself has to be as auditable as recovery that
+  * fires, or the defect it prevents cannot be falsified. Metadata shape:
+  * ```ts
+  * {
+  *   agentId: string;
+  *   stuckRunId: string;                                  // the tick that stopped ticking
+  *   completingRunId: string;                             // the later run that closed completed
+  *   completedAt: string | null;                          // that run's endedAt (ISO)
+  *   reason: "episode-start" | "queued-wake-fire-time";   // which of the two gate halves fired
+  * }
+  * ```
+  * Run ids and timestamps only — no prompt content, no session transcript, no error prose.
+  */
+  | "agent:unresponsive-recovery-cancelled"
   | "task:release"
   | "task:pause"
   | "task:unpause"
