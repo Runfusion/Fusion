@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **5 active observation records** (entries 2, 13, 20, 21, and 22), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **6 active observation records** (entries 2, 13, 20, 21, 22, and 23), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -367,6 +367,18 @@ FN-9506 reproduced the pending-to-resolved transition with a deferred discovery 
 The failure read `expected "vi.fn()" to not be called at all, but actually been called 1 times`, and the single recorded call was a process-table sweep (`ps -axo pid=,ppid=,pgid=,command=` with a `stdio` option) — not the `git worktree prune` / `git branch` / `git log` storm the case exists to forbid, so the pause-arm invariant I1 guards was never violated. The case calls `runMaintenance()` directly and asserts the file's module-mocked `node:child_process` received zero calls, which makes it sensitive to any shellout from any batch item that settles inside its window. The named candidate emitter is the repository's only `ps -axo pid=,ppid=,pgid=,command=` sweep, `createFusionBrowserProductionReaperDeps().findProcessGroups` (`packages/engine/src/agent-browser-lifecycle.ts:172`), reached from the maintenance batch item `reap-expired-agent-browser-leases` (`packages/engine/src/self-healing.ts:2413` and `:3429`); no diagnosis beyond that attribution was performed, and none is justified by one observation.
 
 No timeout, retry, skip, quarantine, or weakened assertion was applied. The file holds 4 runtime-boundary cases and is outside the thin merge gate (`packages/engine/vitest.config.ts`'s `engine-core` include array names no `076` entry), so this first sighting is recorded rather than file-level quarantined. A second sighting of this file requires a same-change file-level quarantine in `scripts/lib/test-quarantine.json` plus the package vitest exclude list.
+
+### 23. Pipeline smoke Coding S17 post-merge restart
+
+- **Status:** Active first sighting — recorded 2026-10-15 by FN-9551; no quarantine.
+- **File:** `packages/engine/src/__tests__/pipeline-smoke/pipeline-restart-coding.pipeline.test.ts`
+- **Exact test:** `pipeline smoke: Coding restart scenarios > S17 runs every Coding restart stage through one fixture lifecycle` (`builtin:coding`, `post-merge` record).
+- **Observed tree/SHA:** Full Suite run [38660462920](https://github.com/Runfusion/Fusion/actions/runs/38660462920), `0a427caf1fa2a3ba04b70d887686ca9c9e31942c`.
+- **Observed frequency:** One hosted Pipeline smoke sighting; the focused test and one full local smoke reproduction passed.
+
+The retained `pipeline-smoke-report` artifact recorded a watchdog timeout at 175018 ms against the unchanged 175000 ms budget. It retained 40 completed records, last completed `S17/builtin:coding/merge-in-flight`, and exactly one missing key: `S17/builtin:coding/post-merge`. The report contained no malformed line and no Vitest result JSON, proving the producer was still executing rather than accepting a partial census.
+
+FN-9551 ran the unchanged focused engine-pipeline-smoke Coding S17 file successfully in 48.1 s and `pnpm smoke:pipeline` successfully in 152924 ms with all 41 unique passing records; Coding S17 post-merge completed once in 5769 ms. The incident did not reproduce locally. FN-9550 changes only PostgreSQL cleanup/status support and does not cross this runner or S17 execution path. The smoke report now retains a redacted start event so a future watchdog failure names the in-flight scenario, `scenario-execution` stage, and elapsed time while the 41-record census still fails closed. The file retains five real Git/PostgreSQL restart stages and valuable production coverage, so this first isolated observation is registered rather than quarantined. A second sighting requires same-change file-level quarantine under the deletion ratchet.
 
 ### Common shape and investigated result
 

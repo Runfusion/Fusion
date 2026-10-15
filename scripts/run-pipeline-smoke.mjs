@@ -43,18 +43,27 @@ export function parseScenarioRecords(raw) {
 }
 export function parseScenarioRecordsLenient(raw) {
   const records = [];
+  const started = [];
   const lines = String(raw ?? "").split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     if (!lines[index]) continue;
     try {
       const value = JSON.parse(lines[index]);
       if (!value || typeof value !== "object" || typeof value.scenarioId !== "string") throw new Error("missing scenarioId");
+      if (value.event === "started") {
+        if (typeof value.workflowId !== "string" || (value.variant !== undefined && typeof value.variant !== "string") || value.stage !== "scenario-execution" || !Number.isFinite(value.startedAtMs)) {
+          throw new Error("invalid scenario start event");
+        }
+        started.push(value);
+        continue;
+      }
+      if (value.event !== undefined) throw new Error(`unknown scenario report event ${String(value.event)}`);
       records.push(value);
     } catch (error) {
-      return { records, truncatedFinalRecord: { line: index + 1, reason: error instanceof Error ? error.message : String(error) } };
+      return { records, started, truncatedFinalRecord: { line: index + 1, reason: error instanceof Error ? error.message : String(error) } };
     }
   }
-  return { records, truncatedFinalRecord: undefined };
+  return { records, started, truncatedFinalRecord: undefined };
 }
 export function expectedScenarioIds() { return PIPELINE_SCENARIO_MANIFEST.map(({ id }) => id); }
 export function invocationKey(record) { return `${record.scenarioId}\u0000${record.workflowId ?? ""}\u0000${record.variant ?? ""}`; }
@@ -102,15 +111,16 @@ export function checkPrerequisites({ spawn: run = spawnSync } = {}) {
 }
 function atomicWrite(path, value) { const temp = `${path}.${process.pid}.tmp`; writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`); renameSync(temp, path); }
 function boundedMessage(error) { return String(error instanceof Error ? error.message : error).slice(0, 1000); }
-function failureReport({ error, attempt, durationMs, budgetMs }) {
-  const scenario = attempt?.scenarioPath && existsSync(attempt.scenarioPath) ? parseScenarioRecordsLenient(readFileSync(attempt.scenarioPath, "utf8")) : { records: [], truncatedFinalRecord: undefined };
+function failureReport({ error, attempt, durationMs, budgetMs, now = () => Date.now() }) {
+  const scenario = attempt?.scenarioPath && existsSync(attempt.scenarioPath) ? parseScenarioRecordsLenient(readFileSync(attempt.scenarioPath, "utf8")) : { records: [], started: [], truncatedFinalRecord: undefined };
   const vitestAvailable = Boolean(attempt?.vitestPath && existsSync(attempt.vitestPath));
   let testCount;
   try { if (vitestAvailable) ({ testCount } = parsePipelineSmokeReport(readFileSync(attempt.vitestPath, "utf8"))); } catch { /* malformed JSON remains failure evidence */ }
   const completedKeys = scenario.records.map(invocationKey);
   const missingInvocationKeys = expectedInvocationKeys().filter((key) => !completedKeys.includes(key));
   const lastComplete = scenario.records.at(-1);
-  return { schemaVersion: 2, project: PIPELINE_SMOKE_PROJECT, passed: false, durationMs, durationBudgetMs: budgetMs, failure: { message: boundedMessage(error), watchdog: attempt?.result ? { timedOut: Boolean(attempt.result.timedOut), code: attempt.result.code ?? null, signal: attempt.result.signal ?? null } : null, vitestReportAvailable: vitestAvailable, scenarioReportAvailable: Boolean(attempt?.scenarioPath && existsSync(attempt.scenarioPath)), testCount: testCount ?? null, completedRecordCount: scenario.records.length, lastComplete: lastComplete ? { scenarioId: lastComplete.scenarioId, workflowId: lastComplete.workflowId, variant: lastComplete.variant } : null, missingInvocationKeys, truncatedFinalRecord: scenario.truncatedFinalRecord ?? null } };
+  const inFlight = scenario.started.filter((event) => !completedKeys.includes(invocationKey(event))).at(-1);
+  return { schemaVersion: 2, project: PIPELINE_SMOKE_PROJECT, passed: false, durationMs, durationBudgetMs: budgetMs, failure: { message: boundedMessage(error), watchdog: attempt?.result ? { timedOut: Boolean(attempt.result.timedOut), code: attempt.result.code ?? null, signal: attempt.result.signal ?? null } : null, vitestReportAvailable: vitestAvailable, scenarioReportAvailable: Boolean(attempt?.scenarioPath && existsSync(attempt.scenarioPath)), testCount: testCount ?? null, completedRecordCount: scenario.records.length, lastComplete: lastComplete ? { scenarioId: lastComplete.scenarioId, workflowId: lastComplete.workflowId, variant: lastComplete.variant } : null, inFlightScenario: inFlight ? { scenarioId: inFlight.scenarioId, workflowId: inFlight.workflowId, variant: inFlight.variant, stage: inFlight.stage, elapsedMs: Math.max(0, now() - inFlight.startedAtMs) } : null, missingInvocationKeys, truncatedFinalRecord: scenario.truncatedFinalRecord ?? null } };
 }
 function compactSignature(records) { return records.map((record) => [invocationKey(record), record.expectedTerminal, record.observedTerminal, record.verdict, record.wedge ?? ""].join("\u0000")).sort().join("\n"); }
 function printTable(summary, records, write = console.log) { for (const record of records) write(`${record.scenarioId} ${record.variant ?? "-"} ${record.workflowId} ${record.verdict}`); write(`✓ pipeline smoke: ${summary.scenarioRecordCount}/${summary.expectedInvocationCount} invocations passed in ${summary.durationMs}ms (budget ${summary.durationBudgetMs}ms)`); }
@@ -138,7 +148,7 @@ export async function runPipelineSmoke({ spawn: prerequisiteSpawn = spawnSync, w
     }
     const final = { ...summaries.at(-1), runs: summaries.map(({ records: _records, ...summary }) => summary) }; atomicWrite(resolved.reportPath, final); if (resolved.json) write(JSON.stringify(final)); else printTable(final, final.records, write); return final;
   } catch (error) {
-    atomicWrite(resolved.reportPath, failureReport({ error, attempt, durationMs: now() - startedAt, budgetMs: resolved.budgetMs })); throw error;
+    atomicWrite(resolved.reportPath, failureReport({ error, attempt, durationMs: now() - startedAt, budgetMs: resolved.budgetMs, now })); throw error;
   } finally { rmSync(reportDir, { recursive: true, force: true }); }
 }
 function main() { try { const options = parseArgs(process.argv.slice(2)); void runPipelineSmoke({ options }).catch((error) => { console.error(`✗ ${boundedMessage(error)}`); process.exitCode = 1; }); } catch (error) { console.error(`✗ ${boundedMessage(error)}`); process.exitCode = 1; } }

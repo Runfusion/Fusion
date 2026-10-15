@@ -358,6 +358,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
       heading: "22. RUFU-076 pause-gate git-silence observes a maintenance process sweep",
       status: "Active first sighting — recorded 2026-10-08 by RUFU-323, attributed only as far as the recorded shellout names it.",
     },
+    {
+      heading: "23. Pipeline smoke Coding S17 post-merge restart",
+      status: "Active first sighting — recorded 2026-10-15 by FN-9551; no quarantine.",
+    },
   ]);
 });
 

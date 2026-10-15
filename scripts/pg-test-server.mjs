@@ -45,6 +45,19 @@ export function parseArgs(argv) {
   return out;
 }
 
+/**
+ * FNXC:PgTestStatusDarwin 2026-10-15-00:14:
+ * FN-9550 permits Darwin operators to inspect a manually provisioned local
+ * PostgreSQL target, but never grants the embedded-server helper authority to
+ * provision, replace, signal, or remove that server. Status reaches only target
+ * resolution and health probes; every mutating command still refuses first.
+ */
+export function assertPlatformSupportsCommand(platform, command) {
+  if (["darwin", "win32"].includes(platform) && command !== "status") {
+    throw new Error(`Unsupported platform ${platform}; set FUSION_PG_TEST_URL_BASE to a manually provisioned server.`);
+  }
+}
+
 function platformPackage(platform, arch) {
   if (platform !== "linux" || !["arm64", "x64"].includes(arch)) return null;
   return `@embedded-postgres/${platform}-${arch}`;
@@ -280,7 +293,7 @@ function help() { console.log("Usage: pnpm pg:test:up [-- --port N|--replace|--j
 
 async function main() {
   const args = parseArgs(process.argv.slice(2)); if (args.help) return help();
-  if (["darwin", "win32"].includes(process.platform)) throw new Error(`Unsupported platform ${process.platform}; set FUSION_PG_TEST_URL_BASE to a manually provisioned server.`);
+  assertPlatformSupportsCommand(process.platform, args.command);
   const target = resolveTarget({ argv: args }); if (target.refusal) throw new Error(`${target.refusal}: ${target.message}`);
   const home = serverHome(process.env); const dataDir = join(clusterRoot(target, process.env), "data");
   let health; try { health = await probe(target, markerMatches(dataDir, home) ? "script-owned" : "foreign-proven", { includeDdl: args.command === "up" }); } catch { health = { status: "unreachable", defects: ["unreachable"], notes: [] }; }

@@ -63,6 +63,8 @@ The initial harness wiring made a 27-worker PostgreSQL directory run worse, even
 
 Use `pnpm pg:test:up`, `pnpm pg:test:status`, and `pnpm pg:test:down`; forward flags as `pnpm pg:test:up -- --replace` and `pnpm pg:test:down -- --purge`. The script stages the pinned embedded PostgreSQL binaries under `~/.fusion/pg-test-server` (or `FUSION_PG_TEST_SERVER_HOME`) and never starts a relative or worktree-native executable. `dynamic_library_path` cannot repair `$libdir/plpgsql` because PostgreSQL resolves that path from its executable.
 
+On Darwin, `pnpm pg:test:status` is supported for a manually provisioned local target and performs only target resolution plus read-only health probes. It cannot start, stop, replace, repair, clean, create roles, or create databases. `pnpm pg:test:up` and `pnpm pg:test:down` remain explicitly refused on Darwin; configure `FUSION_PG_TEST_URL_BASE` for the local server you operate yourself.
+
 The configured identity follows `postgres@3.4.9`: role is URL username, then `PGUSERNAME`, `PGUSER`, and the OS user; password is URL password then `PGPASSWORD`; database is URL path, then `PGDATABASE`, then the role name. A role-only repair therefore still fails when its role-named database is absent. The readiness gate runs configured login, PL/pgSQL, maintenance, and admin-DDL probes. A bare or CI-shaped probe is diagnostic-only unless its independently resolved role/database is one the script provisions; no harness connect dials a path-less base URL.
 
 `FUSION_PG_TEST_URL_BASE` is shared by `up`, `status`, and `down`; export the same non-default URL for all three. A path-bearing URL is provisionable but reports `harness-url-concat`, since `${PG_TEST_URL_BASE}/${dbName}` corrupts the 24 harness URL constructions. The script refuses URL/`--port` conflicts and `PGHOST`/`PGPORT` endpoint divergence. It reuses healthy servers, never mutates a foreign server's roles or databases, and requires a proven data-directory/PID ownership chain before `--replace` can stop a broken PostgreSQL server. `pg_ctl` daemonizes the postmaster, avoiding detached process spawning. A skipped `pgDescribe` block is not PostgreSQL verification evidence.
@@ -664,6 +666,21 @@ expand `pnpm test` or the merge gate. The non-blocking `Pipeline smoke tier` job
 `.github/workflows/full-suite.yml` runs after merge with `fetch-depth: 0` and a
 PostgreSQL service; never add it to `pr-checks.yml`, branch protection, or the
 engine-core allow-list.
+
+<!-- FNXC:PipelineSmoke 2026-10-15-00:58: FN-9551 retained the fixed watchdog after a first hosted overrun and added diagnostic-only scenario starts, so an incomplete report identifies ongoing production work without lowering the strict completion census. -->
+**Incomplete-run evidence:** Full Suite run `38660462920` reached 175018 ms of the fixed
+175000 ms watchdog with 40 completed records and `S17/builtin:coding/post-merge` missing.
+The artifact's last completed record was Coding S17 `merge-in-flight`; it contained no Vitest
+JSON report, so it was an in-progress producer rather than a valid partial result. The incident
+was a first suite-only observation: the focused Coding S17 file passed in 48.1 s and a local
+`pnpm smoke:pipeline` passed all 41 records in 152924 ms. Do not raise the budget, workers,
+or timeouts to reproduce or address it. Every scenario now writes a redacted `started` event;
+on timeout, the retained failure report includes the uncompleted scenario key, its
+`scenario-execution` stage, and elapsed time, while only terminal records count toward the exact
+41 unique passing-record census. Use `pnpm smoke:pipeline` for an end-to-end reproduction and
+inspect `packages/engine/.pipeline-smoke-report.json`; GitHub-hosted evidence remains required
+for post-merge approval. A second sighting follows the file-level quarantine policy recorded in
+the observed suite-only flakes register.
 
 <!-- FNXC:PipelineSmoke 2026-09-12-22:57: FN-9291 keeps the opt-in lane observable from the ordinary engine test project without making its Git/PostgreSQL composition part of the merge gate. -->
 **Import-integrity ratchet:** Engine TypeScript configuration excludes `src/__tests__/**/*`, and this opt-in project is excluded from `engine-default`. Consequently, a test-only named import of a deleted engine export can evade typecheck, build, `verify:fast`, and the merge gate until the full smoke lane runs. `pipeline-smoke-import-integrity.test.ts` runs in `engine-default` and resolves each non-type named relative import from pipeline-smoke modules against its runtime module namespace, failing with the importer, specifier, and missing binding. When product behavior is removed, delete the tests that assert that retired behavior in the same change rather than restoring a compatibility stub.
