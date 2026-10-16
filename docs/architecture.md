@@ -1476,7 +1476,8 @@ and its deadline are shared by all of them rather than paid per surface:
   subject names the one that fired.
 - **`[taskstore-boot]` is process-local console output, not telemetry.** It carries cause and
   duration and reaches the launching process only — it is never a run-audit event, so a historical
-  stall cannot be attributed from the durable record.
+  stall cannot be attributed from that line. The attribution itself has ridden the durable record
+  since STAS-335, because it travels on the tool result the agent log stores (below).
 - **What that ceiling cost RUFU-377.** Re-measuring the seam live put a cold extension boot at
   226–229 ms (factory total; the light boot skips archive reintegration and patchnode reconcile per
   RUFU-275), the same `fn_agent_show` round trip at 247 ms, and its cached repeat at 7 ms — three
@@ -1499,6 +1500,27 @@ and its deadline are shared by all of them rather than paid per surface:
   is still refused immediately instead of re-paying the 30 000 ms boot, it is simply refused as
   *retryable*. A real policy denial stays a hard deny and a boot failure with a named cause stays
   a failure; only those two deadline-derived shapes change register.
+- **The stage record rides the answer (STAS-335).** The factory takes an `onBootStage` observer
+  (the `onMigrationProgress` precedent) and reports every stage — options/backend resolution,
+  embedded start, connection set, schema-baseline apply, data layer, store construct, post-open
+  passes — as `{ phase, durationMs, ok }`. The extension collects the stages of the attempt a caller
+  was waiting on, appends `Boot attribution: backend.applySchema=2628ms … (elapsed 2727ms of the
+  30000ms budget).` to the deadline shape and to the cooldown shape, carries them as
+  `details.bootStages` / `details.elapsedMs`, and stores them on the cooldown entry so a caller
+  arriving inside the backoff learns where the abandoned attempt stalled instead of only that it
+  stalled. That text is credential-safe by construction: phase labels and durations, never SQL text,
+  bound parameters, connection URLs, or a driver's `detail`.
+- **A query failure names its table and SQLSTATE (STAS-335).** A board read that *errored* after a
+  successful boot never reached the boot seam, so its only report was Drizzle's wrapper — the whole
+  statement re-printed, with the SQLSTATE buried in the `cause`. `describeStoreQueryFailure` now
+  reads that wrapper structurally (`query` + `cause.code`, deliberately never `params`) and
+  `storeErrorResult` appends `[statement=select table=agents sqlState=42P01]`, adding
+  `details.table` / `details.statement` / `details.sqlState` and a `details.operation` that says
+  whether a read lost nothing or a write left the board unchanged. The site this was measured on —
+  the agent-roster read, which had no catch at all and threw the wrapper past the tool boundary —
+  now answers in that shape. Measured against the live board the same read runs in 0.168 ms over 9
+  heap blocks, so this seam changed the *report* and no budget: `EXTENSION_STORE_BOOT_TIMEOUT_MS`,
+  the tool watchdog, and the teardown owner-vs-joiner lease rule are untouched.
 
 ### Binary identity
 - Published package defines `fn` binary (`packages/cli/package.json`)
