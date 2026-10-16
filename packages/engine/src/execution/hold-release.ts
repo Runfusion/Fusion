@@ -154,7 +154,7 @@ export interface HoldReleasePass {
   `isUnplannedForExecution` records itself) would be subtracted twice — once from `slot` and once from
   the child — which would shrink `slot` and inflate `unattributed` while leaving the reconciling list
   wrong. Keeping them in a separate map is what preserves both contracts at once: the printed
-  `(release-config=…, unattributed=…)` list keeps its exact meaning, and `Σ slotChildren ≤
+  `(release-config=…, unattributed=…)` list keeps its exact meaning, and `sum(slotChildren) ≤
   netWallMs("slot")` holds by construction because every child is a sequential wall window inside the
   slot window.
   */
