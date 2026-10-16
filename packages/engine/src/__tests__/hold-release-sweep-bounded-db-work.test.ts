@@ -27,6 +27,16 @@ function task(id: string, column = "todo"): Task {
   return {
     id, title: id, description: "", column, status: null, dependencies: [], steps: [], currentStep: 0, log: [],
     createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", columnMovedAt: "2026-01-01T00:00:00.000Z",
+    /*
+    FNXC:PlanPremisesFixtureGap 2026-10-16-19:03 (RUFU-698):
+    Same fixture gap as merged-intake-hold-column.test.ts: the plan-premise gate (RUFU-145 / RUFU-246)
+    fails a card CLOSED with no spec, and this store exposes no `getTasksDir`, so the gate reads
+    `task.prompt`. Without the field the release expectations below went red (`expected [] to deeply
+    equal [ 'H-A' ]`) while the read-shape expectations stayed green, so the file stopped guarding the
+    capacity path it exists for. A premise-free planned spec is vacuously satisfied — the unit under test
+    stays the bounded read shape and the capacity decision, not the premise gate.
+    */
+    prompt: "# Planned\n\n## Mission\nImplement the approved work.\n",
   } as Task;
 }
 

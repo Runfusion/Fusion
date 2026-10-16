@@ -51,6 +51,18 @@ function task(over: Partial<Task> = {}): Task {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     columnMovedAt: "2026-01-01T00:00:00.000Z",
+    /*
+    FNXC:PlanPremisesFixtureGap 2026-10-16-19:03 (RUFU-698):
+    A card released into processing must pass the plan-premise gate (RUFU-145 / RUFU-246). This fixture
+    store exposes no `getTasksDir`, so the gate reads `task.prompt`; with no prompt at all the card fails
+    CLOSED as `unavailable` and is never released — which presented here as three capacity-release
+    expectations going red (`expected [] to deeply equal [ 'H' ]`) while the hold-side tests in the same
+    file stayed green. This is the trap `hold-release-instrumentation.test.ts` already documents and
+    already carries the field for; this file was simply never updated when the gate landed. A planned
+    prompt that STATES no premises is vacuously satisfied, mirroring the PLANNED_PROMPT the fs-backed
+    fixtures write, so the unit under test stays the capacity decision and not the premise gate.
+    */
+    prompt: "# Planned\n\n## Mission\nImplement the approved work.\n",
     ...over,
   } as Task;
 }
