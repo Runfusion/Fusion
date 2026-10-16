@@ -1144,6 +1144,38 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     expect(tasks.find((task) => task.id === "FN-NEWER")).toMatchObject({ overlapBlockedBy: "FN-OLDER" });
   });
 
+  /*
+  FNXC:CapacitySlotCost 2026-10-16-20:50 (RUFU-698 Step 2):
+  The lease scan now derives one sorted registry view per pass and reuses it across candidates instead of
+  rebuilding `Array.from(activeScopes.entries()).sort(...)` per candidate. Reusing a VIEW is only safe if
+  what is reused is the registry and never a candidate's ANSWER. This fixture puts a card with a private
+  scope first in queue order ahead of an overlapping pair: a scan that cached the first verdict instead of
+  the view would report "free" for `FN-OLDER`/`FN-NEWER` and admit two cards onto the same files.
+  */
+  it("keeps the holder choice stable when other candidates are scanned before the overlap", async () => {
+    const tasks = [
+      makeTask({ id: "FN-FREE", column: "todo", worktree: "/wt/free", createdAt: "2026-01-01T00:00:00.000Z" }),
+      makeTask({ id: "FN-OLDER", column: "todo", worktree: "/wt/older", createdAt: "2026-01-02T00:00:00.000Z" }),
+      makeTask({ id: "FN-NEWER", column: "todo", worktree: "/wt/newer", createdAt: "2026-01-03T00:00:00.000Z" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-FREE": ["packages/core/src/store.ts"],
+      "FN-OLDER": ["packages/engine/src/scheduler.ts"],
+      "FN-NEWER": ["packages/engine/src/scheduler.ts"],
+    }, { maxConcurrent: 3 });
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+
+    // The private-scope card is unaffected by the shared-scope pair…
+    expect(store.moveTask).toHaveBeenCalledWith("FN-FREE", "in-progress", expect.anything());
+    // …and the pair still resolves to the queue-order head, with the other card naming it as the holder.
+    expect(store.moveTask).toHaveBeenCalledWith("FN-OLDER", "in-progress", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-NEWER", "in-progress", expect.anything());
+    expect(tasks.find((task) => task.id === "FN-NEWER")).toMatchObject({ overlapBlockedBy: "FN-OLDER" });
+  });
+
   it("does not let a dormant task block itself", async () => {
     const tasks = [makeTask({ id: "FN-A", column: "todo", worktree: "/wt/a" })];
     const store = createStore(tasks, { "FN-A": ["packages/core/src/store.ts"] });

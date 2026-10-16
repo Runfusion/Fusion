@@ -8,7 +8,9 @@ import {
   resolveWorkflowIrForTask,
   taskHoldsUnmergedCheckout,
   type Task,
+  type WorkflowIr,
   type WorkflowIrResolverStore,
+  type WorkflowSelectionCache,
 } from "@fusion/core";
 import { isPlanningLive } from "../agents/planning-liveness.js";
 import { createLogger } from "../logger.js";
@@ -621,16 +623,44 @@ Scope is deliberate: this is the enriched, store-backed path used by every engin
 (triage admission, the executor spawn tool, the scheduler's worktree gate, holder diagnostics). The
 synchronous semaphore leak valve and the display counts stay on the flag-less fallback.
 */
-async function enrichedTopLevelAgentTasksFromStore(store: WorkflowIrResolverStore, tasks: Task[]) {
-  const irCache = new Map();
+/*
+FNXC:CapacitySlotCost 2026-10-16-20:50 (RUFU-698 Step 2):
+A scheduler pass derives the SAME capacity facts from the SAME board many times: the agent dimension and
+the worktree dimension each fan out over every row, and until now each fan-out built a fresh
+IR/selection cache, so nothing was reused even between two dimensions of one derivation. Measured on a
+250-card board, one extra candidate reaching the admission gate cost 250 more selection reads (997 →
+1 247; 4 001 → 5 002 at 1 000 cards), which is how `slot` reached 13.7 s of a 30 038 ms sweep while
+`released=0`.
+
+The caches are caller-owned and PASS-scoped on purpose — a workflow selection write invalidates lane
+state, so the next pass must observe it (RUFU-073). This is a per-pass reuse seam, never a memo that
+outlives a pass.
+*/
+export interface CapacityEnrichmentCaches {
+  /** Keyed by workflow id; sharing it collapses the per-row IR resolution to one read per workflow. */
+  irCache?: Map<string, WorkflowIr>;
+  /** Keyed by task id; the caller's pass cache, so enrichment reuses the selection the sweep already read. */
+  selectionCache?: WorkflowSelectionCache;
+}
+
+async function enrichedTopLevelAgentTasksFromStore(
+  store: WorkflowIrResolverStore,
+  tasks: Task[],
+  caches?: CapacityEnrichmentCaches,
+) {
+  const irCache = caches?.irCache ?? new Map();
   return Promise.all(tasks.map(async (task) => {
-    const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+    const ir = await resolveWorkflowIrForTask(store, task.id, irCache, caches?.selectionCache);
     return { ...enrichRunningAgentTaskShape(task, ir), planningIsLive: isPlanningLive(task.id) };
   }));
 }
 
-export async function persistedTopLevelAgentTaskIdsFromStore(store: WorkflowIrResolverStore, tasks: Task[]): Promise<string[]> {
-  const enriched = await enrichedTopLevelAgentTasksFromStore(store, tasks);
+export async function persistedTopLevelAgentTaskIdsFromStore(
+  store: WorkflowIrResolverStore,
+  tasks: Task[],
+  caches?: CapacityEnrichmentCaches,
+): Promise<string[]> {
+  const enriched = await enrichedTopLevelAgentTasksFromStore(store, tasks, caches);
   const ids: string[] = [];
   for (const task of enriched) {
     if (isRunningAgentTask(task)) ids.push(task.id);
@@ -662,8 +692,9 @@ export async function persistedWorktreeHolderTaskIdsFromStore(
   store: WorkflowIrResolverStore,
   tasks: Task[],
   emptinessProof?: WorktreeHolderEmptinessProof,
+  caches?: CapacityEnrichmentCaches,
 ): Promise<string[]> {
-  const enriched = await enrichedTopLevelAgentTasksFromStore(store, tasks);
+  const enriched = await enrichedTopLevelAgentTasksFromStore(store, tasks, caches);
   const provenEmptyTaskIds = new Set<string>();
   if (emptinessProof) {
     const candidates = enriched.filter((task) => isWorktreeCapacityHolder(task));
@@ -689,8 +720,12 @@ export async function persistedWorktreeHolderTaskIdsFromStore(
   return ids;
 }
 
-export async function persistedTopLevelAgentSlotsFromStore(store: WorkflowIrResolverStore, tasks: Task[]): Promise<number> {
-  return countRunningAgentTasks(await enrichedTopLevelAgentTasksFromStore(store, tasks));
+export async function persistedTopLevelAgentSlotsFromStore(
+  store: WorkflowIrResolverStore,
+  tasks: Task[],
+  caches?: CapacityEnrichmentCaches,
+): Promise<number> {
+  return countRunningAgentTasks(await enrichedTopLevelAgentTasksFromStore(store, tasks, caches));
 }
 
 /**

@@ -119,25 +119,73 @@ feeds these decisions is intentionally unchanged — pausing a review card does 
 export function findFileScopeOverlaps(a: string[], b: string[]): FileScopeOverlapMatch[] {
   const matches = new Map<string, FileScopeOverlapMatch>();
   for (const path of a) {
-    const prefixA = path.endsWith("/*") ? path.slice(0, -1) : null;
     for (const blockerPath of b) {
-      if (isSharedBarrelOnlyMatch(path, blockerPath)) continue;
-      const prefixB = blockerPath.endsWith("/*") ? blockerPath.slice(0, -1) : null;
-      const cleanA = prefixA ? path.slice(0, -2) : path;
-      const cleanB = prefixB ? blockerPath.slice(0, -2) : blockerPath;
-      const overlaps = cleanA === cleanB
-        || Boolean(prefixA && blockerPath.startsWith(prefixA))
-        || Boolean(prefixB && path.startsWith(prefixB))
-        || Boolean(prefixA && prefixB && (prefixA.startsWith(prefixB) || prefixB.startsWith(prefixA)))
-        || path === blockerPath;
-      if (overlaps) matches.set(`${path}\u0000${blockerPath}`, { path, blockerPath });
+      if (!entryPathsOverlap(path, blockerPath)) continue;
+      matches.set(`${path}\u0000${blockerPath}`, { path, blockerPath });
     }
   }
   return [...matches.values()].sort((left, right) => left.path.localeCompare(right.path) || left.blockerPath.localeCompare(right.blockerPath));
 }
 
+/**
+ * The single match rule for ONE path pair, shared by the explaining matcher above and the boolean scan
+ * below. It is a function and not duplicated text because the two consumers must never be able to drift:
+ * admission would block on a pair the report cannot explain, or the report would explain a pair admission
+ * let through. The shared-barrel exemption and every prefix arm stay here.
+ */
+function entryPathsOverlap(path: string, blockerPath: string): boolean {
+  if (isSharedBarrelOnlyMatch(path, blockerPath)) return false;
+  const prefixA = path.endsWith("/*") ? path.slice(0, -1) : null;
+  const prefixB = blockerPath.endsWith("/*") ? blockerPath.slice(0, -1) : null;
+  const cleanA = prefixA ? path.slice(0, -2) : path;
+  const cleanB = prefixB ? blockerPath.slice(0, -2) : blockerPath;
+  return cleanA === cleanB
+    || Boolean(prefixA && blockerPath.startsWith(prefixA))
+    || Boolean(prefixB && path.startsWith(prefixB))
+    || Boolean(prefixA && prefixB && (prefixA.startsWith(prefixB) || prefixB.startsWith(prefixA)))
+    || path === blockerPath;
+}
+
+/*
+FNXC:CapacitySlotCost 2026-10-16-20:50 (RUFU-698 Step 2):
+Boolean overlap test that returns at the FIRST matching pair and allocates nothing. The previous
+implementation was `findFileScopeOverlaps(a, b).length > 0`, so every pair of scopes built a Map of
+match objects, a NUL-joined key per match, and a locale sort — purely to answer yes/no. Admission calls
+this once per candidate per holder (and the gridlock detector and self-healing reconciliation loop over
+the same helper), which makes the discarded allocation the cost of the scan.
+Consumers that EXPLAIN a blocker keep `findFileScopeOverlaps`, because they need the pairs and their
+order; only the boolean consumers were moved here.
+*/
 export function pathsOverlap(a: string[], b: string[]): boolean {
-  return findFileScopeOverlaps(a, b).length > 0;
+  for (const path of a) {
+    for (const blockerPath of b) {
+      if (entryPathsOverlap(path, blockerPath)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A `Map` that counts its own mutations. A pass derives scan views from the scope registries below and
+ * may cache them; the counter is what makes "nothing wrote since the last scan" provable instead of
+ * assumed. Every mutator bumps the version, including a `set` that replaces a value under an existing key.
+ */
+class VersionedScopeMap<K, V> extends Map<K, V> {
+  version = 0;
+  override set(key: K, value: V): this {
+    super.set(key, value);
+    this.version += 1;
+    return this;
+  }
+  override delete(key: K): boolean {
+    const changed = super.delete(key);
+    if (changed) this.version += 1;
+    return changed;
+  }
+  override clear(): void {
+    if (this.size > 0) this.version += 1;
+    super.clear();
+  }
 }
 
 function normalizeOverlapPath(path: string): string {
@@ -2890,10 +2938,16 @@ export class Scheduler {
       /* RUFU-200: pass the emptiness proof so a retained checkout that is clean AND zero commits
          ahead of base releases its `maxWorktrees` slot instead of phantom-holding capacity; the
          shared prover cache makes this the same git evidence the dormant-lease pass reads below. */
-      const activeWorktreeTaskIds = await persistedWorktreeHolderTaskIdsFromStore(selectionCachedStore, tasks, {
-        rootDir: () => this.store.getRootDir(),
-        settings,
-      });
+      const activeWorktreeTaskIds = await persistedWorktreeHolderTaskIdsFromStore(
+        selectionCachedStore,
+        tasks,
+        {
+          rootDir: () => this.store.getRootDir(),
+          settings,
+        },
+        // RUFU-698: same workflow-IR/selection caches as the claim snapshot below, per pass.
+        { irCache: wipIrCache, selectionCache },
+      );
       let reservedWorktreeSlots = activeWorktreeTaskIds.length;
       let reservedConcurrentSlots = wipTaskIds.length;
       const dispatchPrepByTaskId = new Map<string, {
@@ -2905,11 +2959,12 @@ export class Scheduler {
         observedOverlapBlockedBy: string | null;
         task: Task;
       }>();
-      const activeScopes = new Map<string, string[]>();
+      /* RUFU-698: versioned so the lease scan can reuse one sorted view per pass (see `scopeScanView`). */
+      const activeScopes = new VersionedScopeMap<string, string[]>();
       const activeScopeColumns = new Map<string, Task["column"]>();
-      const dormantScopes = new Map<string, QueuedOverlapCandidate>();
+      const dormantScopes = new VersionedScopeMap<string, QueuedOverlapCandidate>();
       const dormantScopeColumns = new Map<string, Task["column"]>();
-      const leaseWaiverIds = new Map<string, readonly string[]>();
+      const leaseWaiverIds = new VersionedScopeMap<string, readonly string[]>();
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
       const getFilteredFileScope = async (task: Pick<Task, "id" | "workspaceWorktrees">): Promise<string[]> => {
@@ -2922,6 +2977,85 @@ export class Scheduler {
         );
         filteredScopeByTaskId.set(task.id, filteredScope);
         return filteredScope;
+      };
+
+      /*
+      FNXC:CapacitySlotCost 2026-10-16-20:50 (RUFU-698 Step 2):
+      The final-claim snapshot is the last thing a reservation does before it asks the admission
+      coordinator for a slot, and it is derived from facts that cannot change within a sweep pass: the
+      same whole board, the same capacity predicates. It used to be built INSIDE the `reserveSlot`
+      closure, so `??=` memoized one candidate instead of one pass and every candidate paid a whole-board
+      `listTasks` plus both capacity fan-outs. A full pool is the worst case — every candidate takes the
+      refusal path — which is how one field sweep logged `slot=13770ms`, `released=0`, and a starved tail
+      of 444 cards on a 642-task project.
+
+      Hoisting the memo to pass scope makes it one derivation per pass. Two invariants have to survive
+      that sharing, and both are held here rather than hoped for:
+       - **same-pass admissions stay visible.** The snapshot is a baseline; the ids this pass admitted are
+         unioned in by `claimsIncludingThisPass` so a later candidate never competes against a count that
+         forgot an earlier release, and `ProjectAdmissionCoordinator` dedupes a reservation against
+         `claimedTaskIds` by task id, so the union cannot double-count the same card.
+       - **freshness stays pass-bound.** Selection/IR caches are per-pass (RUFU-073: a selection write
+         invalidates lane state and the next pass must observe it), so this is reuse inside one pass, not a
+         memo that outlives it. Cross-lane safety is unchanged: the coordinator still serialises merge,
+         planning and execution admission in-process, and the host semaphore still gates other processes.
+      */
+      type PassClaimSnapshot = {
+        agent: { count: number; ids: string[] };
+        worktree: { count: number; ids: string[] };
+      };
+      const capacityCaches = { irCache: wipIrCache, selectionCache };
+      let passClaimSnapshot: Promise<PassClaimSnapshot> | undefined;
+      const getPassClaimSnapshot = (): Promise<PassClaimSnapshot> => (passClaimSnapshot ??= (async () => {
+        /*
+        FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
+        attributed 1,187 MiB of one 10-minute window to `listTasksImpl -> rowToTask -> fromJson` - the whole-project
+        list hydrated per pass, where `project.tasks.log` averages 56 KB per card (146 MiB stored). This consumer
+        keys on ids/claim ids only and has zero `task.log` reads, so `excludeLog` removes the decode without
+        changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
+        `log_recent` for the log-derived signals.
+        */
+        /*
+        FNXC:CapacityModel 2026-09-01-14:49:
+        Full rows are re-read and each dimension is derived from its own canonical predicate, so the two
+        dimensions never disagree by sharing a slimmed projection. RUFU-698 moved that re-read from inside
+        each candidate's serialized drain to once per pass: the drain still serialises the three lanes
+        through `projectAdmissionCoordinator`, and the pass's own admissions are unioned back in below,
+        so nothing claims the final slot twice.
+        */
+        const liveTasks = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
+        /*
+        Both dimensions enrich the SAME rows through `selectionCachedStore` and one shared cache pair, so
+        the pass resolves a workflow IR once per workflow instead of once per dimension per candidate.
+        */
+        const [agentIds, worktreeIds] = await Promise.all([
+          persistedTopLevelAgentTaskIdsFromStore(selectionCachedStore, liveTasks, capacityCaches),
+          /* RUFU-200: same proof as the reservation below, so the serialized final-claim
+             snapshot and the capacity readout never disagree with admission. */
+          persistedWorktreeHolderTaskIdsFromStore(
+            selectionCachedStore,
+            liveTasks,
+            { rootDir: () => this.store.getRootDir(), settings },
+            capacityCaches,
+          ),
+        ]);
+        return {
+          agent: { count: agentIds.length, ids: agentIds },
+          worktree: { count: worktreeIds.length, ids: worktreeIds },
+        };
+      })());
+      /** The pass baseline plus every card this pass admitted and still holds — never a stale under-count. */
+      const claimsIncludingThisPass = async (): Promise<PassClaimSnapshot> => {
+        const claim = await getPassClaimSnapshot();
+        const admittedThisPass = [...dispatchPrepByTaskId.keys()];
+        if (admittedThisPass.length === 0) return claim;
+        /* Union by id: an admission whose durable row the baseline already saw must not count twice. */
+        const agentIds = new Set([...claim.agent.ids, ...admittedThisPass]);
+        const worktreeIds = new Set([...claim.worktree.ids, ...admittedThisPass]);
+        return {
+          agent: { count: agentIds.size, ids: [...agentIds] },
+          worktree: { count: worktreeIds.size, ids: [...worktreeIds] },
+        };
       };
 
       const mergeShadowEnabled = settings.mergeRequestContractShadowEnabled === true;
@@ -3030,12 +3164,35 @@ export class Scheduler {
         }
       }
 
+      /*
+      FNXC:CapacitySlotCost 2026-10-16-20:50 (RUFU-698 Step 2):
+      The lease scan used to rebuild and locale-sort the whole active-scope registry for EVERY candidate
+      (`Array.from(activeScopes.entries()).sort(...)`) and copy the dormant registry alongside it, so the
+      pass paid an O(n log n) rebuild per candidate for a view that only changes when this very pass
+      admits or releases a card. The registries are versioned, so the derived view is rebuilt on the first
+      scan after a real mutation and reused otherwise. The holder-selection rules — deterministic id order,
+      waiver skip, active before dormant — are untouched.
+      */
+      let scopeScanViewCache: { version: number; active: [string, string[]][]; dormant: QueuedOverlapCandidate[] } | undefined;
+      const scopeScanView = (): { active: [string, string[]][]; dormant: QueuedOverlapCandidate[] } => {
+        // Each version only ever increases, so the sum changes exactly when any registry mutated.
+        const version = activeScopes.version + dormantScopes.version + leaseWaiverIds.version;
+        if (scopeScanViewCache?.version !== version) {
+          scopeScanViewCache = {
+            version,
+            active: [...activeScopes.entries()].sort(([aId], [bId]) => aId.localeCompare(bId)),
+            dormant: [...dormantScopes.values()],
+          };
+        }
+        return scopeScanViewCache;
+      };
+
       const findOverlappingFileScopeLease = (
         candidate: Task,
         candidateScope: string[],
       ): { id: string; kind: "active" | "dormant"; column: Task["column"] } | null => {
-        const activeHolderId = Array.from(activeScopes.entries())
-          .sort(([aId], [bId]) => aId.localeCompare(bId))
+        const scanView = scopeScanView();
+        const activeHolderId = scanView.active
           .find(([holderId, holderScope]) =>
             holderId !== candidate.id
             && leaseWaiverIds.get(holderId)?.includes(candidate.id) !== true
@@ -3058,7 +3215,7 @@ export class Scheduler {
             ...(candidate.queueBoost ? { queueBoost: candidate.queueBoost } : {}),
             scope: candidateScope,
           },
-          Array.from(dormantScopes.values()).filter(
+          scopeScanView().dormant.filter(
             (holder) => holder.id !== candidate.id && leaseWaiverIds.get(holder.id)?.includes(candidate.id) !== true,
           ),
           this.pathsOverlap,
@@ -3307,7 +3464,7 @@ export class Scheduler {
               settings,
               promptPath,
               task,
-              plannerColumns: await resolveDedicatedPlannerColumnsForTask(this.store, task.id),
+              plannerColumns: await resolveDedicatedPlannerColumnsForTask(this.store, task.id, wipIrCache),
             });
             if (staleness.isStale) {
               schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
@@ -3697,52 +3854,24 @@ export class Scheduler {
           All three lanes count the same active population, so independent snapshots must not each
           claim the final slot. The reservation remains until the executor observes the persisted
           WIP row and takes the handoff.
+
+          FNXC:CapacitySlotCost 2026-10-16-20:50 (RUFU-698 Step 2):
+          The snapshot itself now lives at pass scope (one derivation per sweep pass, see
+          `getPassClaimSnapshot`) and every consumer here reads it through `claimsIncludingThisPass`, so
+          the shared baseline still reports the cards this very pass admitted. Only the closure-local memo
+          was removed; the serialization and the reservation lifetime are unchanged.
           */
-          let finalClaimSnapshot: Promise<{
-            agent: { count: number; ids: string[] };
-            worktree: { count: number; ids: string[] };
-          }> | undefined;
-          const getFinalClaimSnapshot = () => finalClaimSnapshot ??= (async () => {
-            /*
-            FNXC:CapacityModel 2026-09-01-14:49:
-            Re-read full rows inside the serialized drain and derive each dimension from its own
-            canonical predicate. Reservations bridge both persistence transfers without making
-            checkout-free planners appear in the worktree holder set.
-            */
-                          /*
-              FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
-              attributed 1,187 MiB of one 10-minute window to `listTasksImpl -> rowToTask -> fromJson` - the whole-project
-              list hydrated per pass, where `project.tasks.log` averages 56 KB per card (146 MiB stored). This consumer
-              keys on ids/claim ids only and has zero `task.log` reads, so `excludeLog` removes the decode without
-              changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
-              `log_recent` for the log-derived signals.
-              */
-              const liveTasks = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
-            const [agentIds, worktreeIds] = await Promise.all([
-              persistedTopLevelAgentTaskIdsFromStore(this.store, liveTasks),
-              /* RUFU-200: same proof as the reservation above, so the serialized final-claim
-                 snapshot and the capacity readout never disagree with admission. */
-              persistedWorktreeHolderTaskIdsFromStore(this.store, liveTasks, {
-                rootDir: () => this.store.getRootDir(),
-                settings,
-              }),
-            ]);
-            return {
-              agent: { count: agentIds.length, ids: agentIds },
-              worktree: { count: worktreeIds.length, ids: worktreeIds },
-            };
-          })();
           let projectSlotReserved = false;
           const admittedTaskId = await obs("slot:admission", () => projectAdmissionCoordinator.admitNext({
             projectId: this.store.getRootDir(),
             maxConcurrent: activeTaskLimit,
-            claimed: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).agent.count,
-            claimedTaskIds: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).agent.ids,
+            claimed: async () => (await obs("slot:claim-snapshot", claimsIncludingThisPass)).agent.count,
+            claimedTaskIds: async () => (await obs("slot:claim-snapshot", claimsIncludingThisPass)).agent.ids,
             ...(maxWorktrees === null ? {} : {
               worktreeGate: {
                 limit: maxWorktrees,
-                claimed: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).worktree.count,
-                claimedTaskIds: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).worktree.ids,
+                claimed: async () => (await obs("slot:claim-snapshot", claimsIncludingThisPass)).worktree.count,
+                claimedTaskIds: async () => (await obs("slot:claim-snapshot", claimsIncludingThisPass)).worktree.ids,
               },
             }),
             semaphore: this.options.semaphore,
@@ -3772,7 +3901,17 @@ export class Scheduler {
             after the coordinator admitted nobody and report the fresh canonical holder snapshot
             that made that decision; the pre-sweep snapshot is diagnostic-only and can be stale.
             */
-            const freshClaims = await getFinalClaimSnapshot();
+            /*
+            FNXC:WorktreeCapacity 2026-08-08-04:17:
+            A scheduler candidate can lose one serialized admission pass because a higher-priority
+            merge/planning provider was selected, even with a free slot. Only call it exhaustion
+            after the coordinator admitted nobody and report the canonical holder snapshot that made
+            that decision. Since RUFU-698 that snapshot is the pass-scoped baseline UNIONED with this
+            pass's own admissions, so the reported population still names every card that took a slot
+            in this pass — it is no longer the pre-sweep snapshot the comment warns about, and it is
+            not re-derived per candidate, which was the cost this refusal path paid on every card.
+            */
+            const freshClaims = await claimsIncludingThisPass();
             const exhausted = admittedTaskId === undefined;
             const freshDiagnostic = computeConcurrencyGateDiagnostic({
               agentSlots: freshClaims.agent.count,
