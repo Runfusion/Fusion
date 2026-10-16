@@ -387,7 +387,7 @@ async function isEmptyNonUtf8Cluster(db: PostgresJsDatabase<Record<string, never
 }
 
 async function bootSchemaBackend(
-  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir">,
+  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir" | "onBootStage">,
   bypassProjectIsolation = false,
 ): Promise<SchemaBackendBootResult> {
   let joinedRetryAttempt = 0;
@@ -431,7 +431,7 @@ async function bootSchemaBackend(
 }
 
 async function bootSchemaBackendOnce(
-  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir">,
+  options: Pick<CreateTaskStoreForBackendOptions, "env" | "backend" | "embeddedPgRequested" | "embeddedDataDir" | "poolMax" | "globalSettingsDir" | "onBootStage">,
   bypassProjectIsolation = false,
 ): Promise<SchemaBackendBootResult> {
   const env = options.env ?? process.env;
@@ -526,9 +526,11 @@ async function bootSchemaBackendOnce(
     a future stall names its own phase.
     */
     log.log(`startup phase backend.connect: ${Date.now() - openT0}ms`);
+    options.onBootStage?.({ phase: "connect", durationMs: Date.now() - openT0, ok: true });
     const applyT0 = Date.now();
     await applySchemaBaseline(connections.migration);
     log.log(`startup phase backend.applySchema: ${Date.now() - applyT0}ms`);
+    options.onBootStage?.({ phase: "applySchema", durationMs: Date.now() - applyT0, ok: true });
     return {
       backend: resolvedBackend,
       connections,
@@ -545,6 +547,7 @@ async function bootSchemaBackendOnce(
     has to diagnose. Whether the pool or the schema apply is on screen is already known here.
     */
     const failedPhase = connections ? "applySchema" : "connect";
+    options.onBootStage?.({ phase: failedPhase, durationMs: Date.now() - openT0, ok: false });
     log.warn(`startup-factory: backend.${failedPhase} FAILED after ${Date.now() - openT0}ms: ${describeErrorChain(error)}`);
     /*
     FNXC:PostgresEmbedded 2026-07-18-01:10:
@@ -756,6 +759,23 @@ export async function createCentralBackendLayer(
 /**
  * Options for {@link createTaskStoreForBackend}.
  */
+/*
+FNXC:TaskStoreBootStageAttribution 2026-10-16-04:30:
+STAS-335. Every boot stage below was ALREADY measured, but each number left the process only as
+`log.log` console output. For an agent session that channel is discarded — the extension is forked
+with `silent: true` and IPC alone is forwarded (packages/engine/src/runtimes/child-process-runtime.ts),
+recorded as the durable invariant in docs/architecture.md — so a store open that burned its 30 s
+budget could never say which stage ate it. This observer hands the identical numbers to the caller
+that owns the budget, which is what lets the boot report and the typed error carry per-stage
+attribution out to the agent instead of leaving it in a console nobody retains.
+*/
+/** One measured boot stage: which phase, how long it took, and whether it completed. */
+export interface BootStage {
+  readonly phase: string;
+  readonly durationMs: number;
+  readonly ok: boolean;
+}
+
 export interface CreateTaskStoreForBackendOptions {
   /**
    * The project working directory (rootDir) the TaskStore is scoped to. This
@@ -817,6 +837,8 @@ export interface CreateTaskStoreForBackendOptions {
   logged to the terminal; it must never throw (fire-and-forget UI plumbing).
   */
   readonly onMigrationProgress?: (event: import("./sqlite-migrator.js").MigrationProgressEvent) => void;
+  /** Per-stage boot attribution; the caller owns the collected record. Absent = no observer. */
+  readonly onBootStage?: (stage: BootStage) => void;
 }
 
 /**
@@ -909,6 +931,7 @@ export async function createTaskStoreForBackend(
   try {
     boot = await bootSchemaBackend(effectiveOptions);
     log.log(`startup phase backend.schemaBackend: ${Date.now() - schemaT0}ms`);
+  options.onBootStage?.({ phase: "schemaBackend", durationMs: Date.now() - schemaT0, ok: true });
   } catch (err) {
     log.warn(`startup-factory: backend.schemaBackend FAILED after ${Date.now() - schemaT0}ms: ${describeErrorChain(err)}`);
     /*
@@ -1310,6 +1333,7 @@ export async function createTaskStoreForBackend(
       });
     }
     log.log(`startup phase backend.taskStore.construct: ${Date.now() - constructT0}ms`);
+    options.onBootStage?.({ phase: "taskStore.construct", durationMs: Date.now() - constructT0, ok: true });
   } catch (err) {
     log.warn(`startup-factory: backend.taskStore.construct FAILED after ${Date.now() - constructT0}ms: ${describeErrorChain(err)}`);
     await asyncLayer.close().catch(() => undefined);
@@ -1336,7 +1360,9 @@ export async function createTaskStoreForBackend(
     taskStore.getGlobalSettingsStore(),
   );
   log.log(`startup phase backend.backupSettingsMigration: ${Date.now() - backupMigrationT0}ms`);
+  options.onBootStage?.({ phase: "backupSettingsMigration", durationMs: Date.now() - backupMigrationT0, ok: true });
   log.log(`startup phase backend.factory.total: ${Date.now() - factoryT0}ms`);
+  options.onBootStage?.({ phase: "factory.total", durationMs: Date.now() - factoryT0, ok: true });
 
   /*
   FNXC:PluginPostgresContract 2026-07-14-18:32:

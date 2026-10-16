@@ -3360,6 +3360,7 @@ export type {
   ProjectPartitionOwnership,
   ProjectPartitionRekeyReason,
   BackendBootResult,
+  BootStage,
   CreateTaskStoreForBackendOptions,
   LoadedPluginSchemaContract,
 } from "./postgres/index.js";

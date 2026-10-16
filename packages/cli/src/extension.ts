@@ -5,6 +5,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import * as fusionCore from "@fusion/core";
 import {
   type TaskStore,
+  type BootStage,
   createTaskStoreForBackend,
   drizzleSql,
   AgentStore,
@@ -335,12 +336,27 @@ interface StoreBootAttempt {
   readonly startedAtMs: number;
   /** Records the abandoned deadline, arms the shared backoff, and relabels the orphan's own outcome as late-*. */
   reportDeadline(budgetMs: number): void;
+  /** The stages measured so far, so an abandoned waiter can report where the boot actually stood. */
+  stages(): readonly BootStage[];
 }
+
+/**
+ * Why the last boot could not serve a caller, and how far it got. `stages`/`elapsedMs` exist so a
+ * later caller arriving inside the backoff window is told where the abandoned attempt stalled rather
+ * than only that it stalled (STAS-335).
+ */
+type StoreBootCooldownEntry = {
+  untilMs: number;
+  error: string;
+  fromDeadline?: boolean;
+  stages?: readonly BootStage[];
+  elapsedMs?: number;
+};
 
 interface ExtensionStoreState {
   readonly cache: Map<string, CachedStoreEntry>;
   readonly bootInflight: Map<string, StoreBootAttempt>;
-  readonly bootFailureCooldown: Map<string, { untilMs: number; error: string; fromDeadline?: boolean }>;
+  readonly bootFailureCooldown: Map<string, StoreBootCooldownEntry>;
   readonly knownProjectRoots: Set<string>;
 }
 
@@ -349,7 +365,7 @@ const extensionStoreGlobal = globalThis as typeof globalThis & { [key: symbol]: 
 const extensionStoreState = extensionStoreGlobal[extensionStoreStateKey] ?? {
   cache: new Map<string, CachedStoreEntry>(),
   bootInflight: new Map<string, StoreBootAttempt>(),
-  bootFailureCooldown: new Map<string, { untilMs: number; error: string; fromDeadline?: boolean }>(),
+  bootFailureCooldown: new Map<string, StoreBootCooldownEntry>(),
   knownProjectRoots: new Set<string>(),
 };
 extensionStoreGlobal[extensionStoreStateKey] = extensionStoreState;
@@ -403,11 +419,31 @@ const BOOT_DEADLINE_CLASS = /timed out after \d+ms/;
 export class TaskStoreBootTransientError extends Error {
   readonly transient = true as const;
   readonly bootTimeoutMs: number;
-  constructor(message: string, bootTimeoutMs: number) {
+  /** Per-stage attribution measured up to the moment the waiter gave up; empty when nothing finished. */
+  readonly stages: readonly BootStage[];
+  /** How long the attempt had actually been running when the deadline fired. */
+  readonly elapsedMs: number;
+  constructor(message: string, bootTimeoutMs: number, stages: readonly BootStage[] = [], elapsedMs = 0) {
     super(message);
     this.name = "TaskStoreBootTransientError";
     this.bootTimeoutMs = bootTimeoutMs;
+    this.stages = stages;
+    this.elapsedMs = elapsedMs;
   }
+}
+
+/*
+FNXC:TaskStoreBootStageAttribution 2026-10-16-04:30:
+STAS-335. The stall answer used to name only the budget it burned, which told an agent to retry but
+not what was slow, and told an operator nothing at all once the process-local console line was
+discarded. Naming the stages here is credential-safe by construction: phase labels and durations
+only — never SQL text, parameters, connection URLs, or the `detail` strings a driver may fill with
+server-side paths.
+*/
+/** One-line per-stage attribution for a stalled or failed store boot. */
+export function formatBootStages(stages: readonly BootStage[]): string {
+  if (stages.length === 0) return "no boot stage completed before the deadline";
+  return stages.map((stage) => `${stage.phase}=${stage.durationMs}ms${stage.ok ? "" : " FAILED"}`).join(" ");
 }
 
 /** @internal Whether a store-boot rejection is a momentary stall the caller should retry. */
@@ -437,11 +473,24 @@ export function buildStoreBootStallResult(toolName: string, error: unknown): {
     bootTimeoutMs: number;
     tool: string;
     error: string;
+    stages: readonly BootStage[];
+    elapsedMs: number;
+    /** Credential-safe per-stage attribution: phase labels and durations only. */
+    attribution: string;
   };
   isError: true;
 } {
   const message = error instanceof Error ? error.message : String(error);
   const budgetMs = error instanceof TaskStoreBootTransientError ? error.bootTimeoutMs : EXTENSION_STORE_BOOT_TIMEOUT_MS;
+  /*
+  STAS-335: the stage record rides to the caller, not just to a console line the forked runtime drops.
+  A synthesized error with no measured attempt carries no attribution line rather than a fabricated one.
+  */
+  const stages = error instanceof TaskStoreBootTransientError ? error.stages : [];
+  const elapsedMs = error instanceof TaskStoreBootTransientError ? error.elapsedMs : 0;
+  const attribution = stages.length > 0 || elapsedMs > 0
+    ? `\nBoot attribution: ${formatBootStages(stages)} (elapsed ${elapsedMs}ms of the ${budgetMs}ms budget).`
+    : "";
   return {
     content: [
       {
@@ -451,7 +500,8 @@ export function buildStoreBootStallResult(toolName: string, error: unknown): {
         type: "text" as const,
         text: `${toolName} failed: ${message}\n` +
           `Retry this same call — the boot is still running in the background and the next call is served ` +
-          `from it. Nothing was denied on policy grounds and nothing was lost; do not ask the operator.`,
+          `from it. Nothing was denied on policy grounds and nothing was lost; do not ask the operator.` +
+          attribution,
       },
     ],
     details: {
@@ -460,6 +510,9 @@ export function buildStoreBootStallResult(toolName: string, error: unknown): {
       bootTimeoutMs: budgetMs,
       tool: toolName,
       error: message,
+      stages,
+      elapsedMs,
+      attribution: formatBootStages(stages),
     },
     isError: true as const,
   };
@@ -693,9 +746,16 @@ function reportStoreBoot(
   outcome: "ok" | "failed" | "deadline" | "late-success" | "late-failure" | "aborted",
   durationMs: number,
   detail?: string,
+  stages?: readonly BootStage[],
 ): void {
   console.warn(
-    `[taskstore-boot] ${JSON.stringify({ projectRoot, outcome, durationMs, ...(detail ? { detail } : {}) })}`,
+    `[taskstore-boot] ${JSON.stringify({
+      projectRoot,
+      outcome,
+      durationMs,
+      ...(stages && stages.length > 0 ? { stages } : {}),
+      ...(detail ? { detail } : {}),
+    })}`,
   );
 }
 
@@ -710,6 +770,8 @@ function startStoreBoot(projectRoot: string): StoreBootAttempt {
   const startedAtMs = Date.now();
   /* Set when a waiter reports the deadline; the orphan then labels itself late-* instead of ok. */
   let deadlineReported = false;
+  /* STAS-335: the factory reports each stage as it lands, so an abandoned waiter can say how far it got. */
+  const stages: BootStage[] = [];
 
   const promise = (async () => {
     try {
@@ -727,26 +789,31 @@ function startStoreBoot(projectRoot: string): StoreBootAttempt {
         rootDir: projectRoot,
         skipArchiveReintegrationOnInit: true,
         skipPatchnodeReconcileOnInit: true,
+        onBootStage: (stage) => {
+          stages.push(stage);
+        },
       });
       storeBootFailureCooldown.delete(projectRoot);
       // Do not overwrite a host-injected external store that landed while we were booting.
       const raced = storeCache.get(projectRoot);
       if (raced?.external) {
         await boot.shutdown().catch(() => undefined);
-        reportStoreBoot(projectRoot, deadlineReported ? "late-success" : "ok", Date.now() - startedAtMs, "host-injected store served instead");
+        reportStoreBoot(projectRoot, deadlineReported ? "late-success" : "ok", Date.now() - startedAtMs, "host-injected store served instead", stages);
         return raced.store;
       }
       /* FNXC:TaskLifecycleTools 2026-08-15-06:35: Agent tools intentionally install the protective baseline with no force path; only a human CLI invocation can override live removal. */
       storeCache.set(projectRoot, { store: boot.taskStore, shutdown: boot.shutdown });
-      reportStoreBoot(projectRoot, deadlineReported ? "late-success" : "ok", Date.now() - startedAtMs);
+      reportStoreBoot(projectRoot, deadlineReported ? "late-success" : "ok", Date.now() - startedAtMs, undefined, stages);
       return boot.taskStore;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       storeBootFailureCooldown.set(projectRoot, {
         untilMs: Date.now() + BOOT_FAILURE_COOLDOWN_MS,
         error: message,
+        stages,
+        elapsedMs: Date.now() - startedAtMs,
       });
-      reportStoreBoot(projectRoot, deadlineReported ? "late-failure" : "failed", Date.now() - startedAtMs, message);
+      reportStoreBoot(projectRoot, deadlineReported ? "late-failure" : "failed", Date.now() - startedAtMs, message, stages);
       throw error;
     } finally {
       storeBootInflight.delete(projectRoot);
@@ -758,6 +825,7 @@ function startStoreBoot(projectRoot: string): StoreBootAttempt {
   return {
     promise,
     startedAtMs,
+    stages: () => stages,
     reportDeadline(budgetMs: number): void {
       deadlineReported = true;
       const elapsedMs = Date.now() - startedAtMs;
@@ -766,8 +834,10 @@ function startStoreBoot(projectRoot: string): StoreBootAttempt {
         untilMs: Date.now() + BOOT_FAILURE_COOLDOWN_MS,
         error: detail,
         fromDeadline: true,
+        stages,
+        elapsedMs,
       });
-      reportStoreBoot(projectRoot, "deadline", elapsedMs, detail);
+      reportStoreBoot(projectRoot, "deadline", elapsedMs, detail, stages);
     },
   };
 }
@@ -785,8 +855,16 @@ async function getStore(
   if (cooldown && Date.now() < cooldown.untilMs) {
     const cooldownMessage = `fn extension TaskStore boot recently failed (cooldown ${BOOT_FAILURE_COOLDOWN_MS}ms): ${cooldown.error}`;
     /* The deadline's own backoff entry means the orphan boot is still in flight and will serve the
-       next caller, so this is the same stall, not a new failure. */
-    if (cooldown.fromDeadline) throw new TaskStoreBootTransientError(cooldownMessage, EXTENSION_STORE_BOOT_TIMEOUT_MS);
+       next caller, so this is the same stall, not a new failure. The abandoned attempt's stage record
+       rides along, so the caller sees where that attempt stalled rather than only that it stalled. */
+    if (cooldown.fromDeadline) {
+      throw new TaskStoreBootTransientError(
+        cooldownMessage,
+        EXTENSION_STORE_BOOT_TIMEOUT_MS,
+        cooldown.stages ?? [],
+        cooldown.elapsedMs ?? 0,
+      );
+    }
     throw new Error(cooldownMessage);
   }
 
@@ -817,7 +895,12 @@ async function getStore(
       reportStoreBoot(projectRoot, "aborted", Date.now() - attempt.startedAtMs);
     } else if (BOOT_DEADLINE_CLASS.test(message)) {
       attempt.reportDeadline(bootTimeoutMs);
-      throw new TaskStoreBootTransientError(message, bootTimeoutMs);
+      throw new TaskStoreBootTransientError(
+        message,
+        bootTimeoutMs,
+        attempt.stages(),
+        Date.now() - attempt.startedAtMs,
+      );
     }
     throw error;
   }

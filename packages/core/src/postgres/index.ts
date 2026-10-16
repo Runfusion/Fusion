@@ -251,6 +251,7 @@ export {
   TEST_DATABASE_MIGRATION_URL_ENV,
   type BackendBootResult,
   type CentralBackendLayerResult,
+  type BootStage,
   type CreateTaskStoreForBackendOptions,
 } from "./startup-factory.js";
 
