@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Hold-release sweep line now names what the capacity-reservation leg costs and how often it ran.
+summary: Queued cards stop waiting behind a permanently starved tail; slow capacity sweeps get cheaper.
 category: performance
-dev: Adds `slot-calls=N` and an optional `slot-detail=(slot:dispatch-guard=…, slot:claim-snapshot=…, slot:admission=…, slot:residual=…)` group after the reconciling parenthesis in the `Hold-release sweep:` line; the existing `(release-config=…, slot=…, unattributed=…)` bucket list and its reconciliation to `evaluate` are unchanged, and no release decision, capacity limit, or lease lifetime changed.
+dev: Two changes to the hold-release sweep. (1) Budget truncation now rotates: the cards a truncated pass never evaluated are evaluated first on the next pass, reported as `rotated-deferred=N` (bounded tail, self-clearing once a pass fits its budget). Previously the deterministic queue order re-skipped the same tail every pass (`budget-truncated unevaluated=444` with `released=0`). (2) Pass-invariant capacity facts are derived once per pass — the final-claim snapshot is memoised per scheduler pass and both capacity dimensions share one workflow-IR/selection cache (measured: second candidate at the admission gate went from 250 extra selection reads on a 250-card board to 1). Same-pass admissions are unioned into the claim set, so this cannot over-admit. Step 1's `slot-calls=N` and `slot-detail=(…)` attribution fields and the RUFU-209 reconciling bucket list are unchanged; no release decision, capacity limit, lease lifetime, held clock, or budget constant changed.

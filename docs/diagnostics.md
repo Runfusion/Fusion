@@ -267,6 +267,20 @@ The `slot` bucket was the sweep's only un-attributed giant (`slot=13770ms` insid
 
 Reading it: a large `slot:claim-snapshot` means the reservation leg is re-deriving board-wide capacity state per candidate; a large `slot:admission` means the serialized admission drain itself dominates; a large `slot:residual` means unobserved work inside the reservation and is the cue to add a named child, not to raise the sweep budget.
 
+## Hold-release truncation rotation field (RUFU-698)
+
+- `rotated-deferred=N` — the sweep evaluated `N` cards first because the previous pass was budget-truncated before reaching them. Printed only when `N > 0`, and only on the full summary line: a pass truncated in its preamble never built an ordered candidate list, so it rotated nothing and printing the field there would be a claim about work it did not do.
+
+Reading it: `rotated-deferred` recurring pass after pass means the board cannot be evaluated inside the budget at all, and the lever is the cost of the leg named by `slot-detail`, not `SWEEP_BUDGET_MS`. A pass that finishes inside its budget clears the rotation, so the field disappearing is the signal that the queue head is no longer being inverted.
+
+<!--
+FNXC:CapacitySlotCost 2026-10-16-21:08 (RUFU-698):
+The field exists because `budget-truncated unevaluated=444` was stable across passes on a 642-task project
+with `capacity_refused=0`: the same tail was re-skipped forever. Pair it with `slot-calls` and
+`slot:claim-snapshot` — before this card they read `released=0, slot-calls=high,
+slot:claim-snapshot=large`, which is the signature of per-candidate whole-board re-derivation.
+-->
+
 ## `/metrics` observability endpoint (RUFU-081)
 
 The dashboard HTTP server exposes **`GET /metrics`** — a plain-text Prometheus exposition endpoint (`text/plain; version=0.0.4; charset=utf-8`) serving the system / runtime / Fusion-domain measurements that earlier CPU and UI-responsiveness diagnoses had to collect by hand (`curl /api/health` for event-loop latency, `ps` for child-process cadence, `psql` for query rate, RAM-usage sampling for RSS). A `curl /metrics` returns the same numbers a Prometheus/Grafana scrape would consume; no OTLP collector or `prom-client` dependency is involved — the module serializes Prometheus text in-process.

@@ -71,12 +71,31 @@ function manualHoldIr(): WorkflowIr {
   } as unknown as WorkflowIr;
 }
 
+/** A capacity hold with room to spare, so a refusal here is never a shortage. */
+function capacityIr(): WorkflowIr {
+  return {
+    version: "v2",
+    id: WF,
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "todo", label: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      { id: "in-progress", label: "In Progress", traits: [{ trait: "wip", config: { limit: 10 } }] },
+      { id: "done", label: "Done", traits: [{ trait: "complete" }] },
+    ],
+  } as unknown as WorkflowIr;
+}
+
 /**
  * `blowDeadlineOnFirstDefinitionRead` advances the shared clock past the sweep budget during the first
  * definition read, which lands inside candidate 0's evaluation: candidate 0 completes, the next
  * top-of-loop deadline check truncates, and everything behind candidate 0 becomes the deferred tail.
  */
-function storeWith(tasks: Task[], clock: { t: number }, opts: { blowDeadline?: boolean } = {}): TaskStore {
+function storeWith(
+  tasks: Task[],
+  clock: { t: number },
+  opts: { blowDeadline?: boolean; ir?: WorkflowIr } = {},
+): TaskStore {
   const selection = { workflowId: WF, stepIds: [] };
   let reads = 0;
   return {
@@ -96,7 +115,7 @@ function storeWith(tasks: Task[], clock: { t: number }, opts: { blowDeadline?: b
     getWorkflowDefinition: vi.fn(async () => {
       reads += 1;
       if (opts.blowDeadline && reads === 1) clock.t += 11;
-      return { ir: manualHoldIr() };
+      return { ir: opts.ir ?? manualHoldIr() };
     }),
   } as unknown as TaskStore;
 }
@@ -143,6 +162,55 @@ describe("hold-release sweep truncation rotation (RUFU-698)", () => {
     const third = await runHoldReleaseSweep(storeWith(tasks, clock), deps);
     expect(third.rotatedDeferredCount).toBeUndefined();
     expect(heldOrder(third)).toEqual(["R-A", "R-B", "R-C", "R-D"]);
+  });
+
+  /*
+  FNXC:HoldReleaseTruncationRotation 2026-10-16-21:00 (RUFU-698 Step 4 — symptom verification):
+  ORIGINAL SYMPTOM: `Hold-release sweep … 30038ms … released=0, held=3, budget-truncated
+  unevaluated=444` on EVERY pass of a 642-task project, with `capacity_refused=0`, i.e. capacity was
+  free and the same 444 cards were never examined twice.
+
+  EXACT REPRODUCTION: a capacity-releasable board whose reservation leg spends the sweep budget, a
+  queue head whose admission is refused, and a tail behind the break. The fake clock advances inside
+  `reserveSlot` (25 ms per call, 60 ms budget), which is what the field sweep measured at seconds per
+  call, so truncation is deterministic rather than timing-dependent.
+
+  ASSERTION IT IS GONE: the shape `truncated AND released nothing` may appear once, but it must not
+  survive a second pass while capacity is free — the deferred tail is served first and releases.
+  */
+  it("releases the starved tail on the next pass while capacity is free", async () => {
+    const warn = vi.spyOn(schedulerLog, "warn").mockImplementation(() => {});
+    const clock = { t: 1_000 };
+    const tasks: Task[] = [];
+    for (let index = 0; index < 60; index += 1) tasks.push(task(`FILL-${String(index).padStart(3, "0")}`));
+    for (let index = 1; index <= 12; index += 1) tasks.push(task(`C-${String(index).padStart(2, "0")}`));
+    for (const filler of tasks) filler.column = filler.id.startsWith("C-") ? "todo" : "done";
+    const store = storeWith(tasks, clock, { ir: capacityIr() });
+
+    /*
+    The first three cards lose admission (the field case: a higher-priority lifecycle lane took the
+    slot), and each attempt spends 25 ms of a 60 ms budget — the leg is what exhausts it, not the count.
+    */
+    const refusedHeadIds = new Set(["C-01", "C-02", "C-03"]);
+    const reserveSlot = async (candidate: Task) => {
+      clock.t += 25;
+      return refusedHeadIds.has(candidate.id) ? null : { release: () => undefined };
+    };
+    const deps = { now: () => clock.t, budgetMs: 60, reserveSlot };
+
+    // Pass 1 reproduces the report exactly: truncated, and nothing released despite free capacity.
+    const first = await runHoldReleaseSweep(store, deps);
+    expect(first.budgetTruncated).toBe(true);
+    expect((first.unevaluatedCount ?? 0)).toBeGreaterThan(0);
+    expect(first.released).toEqual([]);
+
+    // Pass 2: the deferred tail is served first and releases — the pairing is broken.
+    const second = await runHoldReleaseSweep(store, deps);
+    expect(second.rotatedDeferredCount).toBeGreaterThan(0);
+    expect(second.released.length).toBeGreaterThan(0);
+    expect(second.released).toContain("C-04");
+    const line = [...warn.mock.calls].map((call) => String(call[0])).find((l) => l.includes("rotated-deferred="));
+    expect(line).toBeDefined();
   });
 
   it("a deferred id that left the board shifts nothing else", async () => {
