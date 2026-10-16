@@ -144,11 +144,34 @@ export interface HoldReleasePass {
   net<T>(name: string, fn: () => T | Promise<T>): Promise<T>;
   /** Total ms recorded so far (used by `net` to subtract nested leaves). */
   recordedMs(): number;
+  /*
+  FNXC:HoldReleaseSlotAttribution 2026-10-16-17:19 (RUFU-698 Step 1):
+  The `slot` bucket was the sweep's only un-attributed giant (field: `slot=13770ms` inside a 30038ms
+  sweep with `released=0`), but the work behind it lives inside the scheduler's `reserveSlot` closure,
+  which the sweep cannot see into. `slotChildren` holds FULL wall ms per `slot:*` child so the
+  reservation leg becomes measurable at call granularity. Children deliberately do NOT go through
+  `phases`/`recorded`: a child that contained an inner sweep net (e.g. `unplanned`, which
+  `isUnplannedForExecution` records itself) would be subtracted twice — once from `slot` and once from
+  the child — which would shrink `slot` and inflate `unattributed` while leaving the reconciling list
+  wrong. Keeping them in a separate map is what preserves both contracts at once: the printed
+  `(release-config=…, unattributed=…)` list keeps its exact meaning, and `Σ slotChildren ≤
+  netWallMs("slot")` holds by construction because every child is a sequential wall window inside the
+  slot window.
+  */
+  slotChildren: Map<string, number>;
+  /** FULL wall ms per `net()` bucket name. Never printed in the reconciling list; used to bound `slotChildren`. */
+  netWallMs: Map<string, number>;
+  /** Capacity reservations THIS pass performed — the divisor that turns a `slot` total into a per-call cost. */
+  slotCalls: number;
+  /** Record `fn`'s FULL wall time under a `slot:*` child name without touching the reconciling buckets. */
+  wall<T>(name: string, fn: () => T | Promise<T>): Promise<T>;
 }
 
 /** Build a fresh per-pass observation record. Never reuse across passes. */
 function createHoldReleasePass(now: () => number, counters?: SweepCounters): HoldReleasePass {
   const phases = new Map<string, number>();
+  const slotChildren = new Map<string, number>();
+  const netWallMs = new Map<string, number>();
   let recorded = 0;
   const add = (name: string, ms: number): void => {
     phases.set(name, (phases.get(name) ?? 0) + ms);
@@ -157,10 +180,19 @@ function createHoldReleasePass(now: () => number, counters?: SweepCounters): Hol
   const pass: HoldReleasePass = {
     now,
     phases,
+    slotChildren,
+    netWallMs,
+    slotCalls: 0,
     promptMemo: new Map(),
     workItemMemo: new Map(),
     counters,
     recordedMs: () => recorded,
+    async wall<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
+      const start = now();
+      const value = await fn();
+      slotChildren.set(name, (slotChildren.get(name) ?? 0) + Math.max(0, now() - start));
+      return value;
+    },
     async time<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
       const start = now();
       const value = await fn();
@@ -171,8 +203,10 @@ function createHoldReleasePass(now: () => number, counters?: SweepCounters): Hol
       const start = now();
       const before = recorded;
       const value = await fn();
+      const wallMs = Math.max(0, now() - start);
       // Net = wall time minus everything attributed inside `fn`, so buckets stay non-overlapping.
-      add(name, Math.max(0, (now() - start) - (recorded - before)));
+      add(name, Math.max(0, wallMs - (recorded - before)));
+      netWallMs.set(name, (netWallMs.get(name) ?? 0) + wallMs);
       return value;
     },
   };
@@ -985,6 +1019,34 @@ export async function runHoldReleaseSweep(
     `evaluate` — `unattributed` is the honest residual, never a hidden slice.
     */
     const PHASE_ORDER = ["release-config", "dependency", "readiness", "issue-release", "prompt", "unplanned", "workitem", "handoff", "slot"] as const;
+    /*
+    FNXC:HoldReleaseSlotAttribution 2026-10-16-17:19 (RUFU-698 Step 1):
+    Printed as its OWN group after the reconciling parenthesis, never inside it: the existing
+    `(release-config=…, slot=…, unattributed=…)` list is an operator contract (docs/diagnostics.md) and
+    is asserted literally by hold-release-sweep-evaluate-attribution.test.ts. `slot-calls` is the field
+    that replaces an inference with a measurement — before it, a `slot=12074ms` line with `released=0`
+    and `held=5` only allowed a ~2s-per-call guess, because the handful of candidates that reached the
+    reservation line was unknown.
+    */
+    const SLOT_PHASE_ORDER = ["slot:dispatch-guard", "slot:scope", "slot:claim-snapshot", "slot:admission", "slot:lease-write"] as const;
+    const slotFields = (): string => {
+      const named = SLOT_PHASE_ORDER.filter((name) => pass.slotChildren.has(name));
+      // An unlisted child is still printed (sorted) — an unexpected cost must not be silently dropped.
+      const extra = [...pass.slotChildren.keys()].filter((name) => !(SLOT_PHASE_ORDER as readonly string[]).includes(name)).sort();
+      const children = [...named, ...extra];
+      if (children.length === 0) return `, slot-calls=${pass.slotCalls}`;
+      /*
+      FNXC:HoldReleaseSlotAttribution 2026-10-16-17:19 (RUFU-698 Step 1):
+      `slot:residual` is the slot WINDOW minus every named child, so the detail group reconciles with
+      the reservation leg the same way `unattributed` reconciles the phase list. A cost nobody named is
+      therefore visible as a number instead of disappearing, which is what makes the next step (cut the
+      dominant child) decidable from one log line.
+      */
+      const residualMs = Math.max(0, (pass.netWallMs.get("slot") ?? 0) - [...pass.slotChildren.values()].reduce((sum, ms) => sum + ms, 0));
+      const parts = children.map((name) => `${name}=${Math.max(0, pass.slotChildren.get(name) ?? 0)}ms`);
+      if (residualMs > 0) parts.push(`slot:residual=${residualMs}ms`);
+      return `, slot-calls=${pass.slotCalls}, slot-detail=(${parts.join(", ")})`;
+    };
     const phasesSummary = (evaluateMs: number): string => {
       const bucket = (name: string): number => Math.max(0, pass.phases.get(name) ?? 0);
       const attributedMs = PHASE_ORDER.reduce((sum, name) => sum + bucket(name), 0);
@@ -996,7 +1058,7 @@ export async function runHoldReleaseSweep(
     const logPreambleTruncation = (unevaluatedCount: number): HoldReleaseResult => {
       prefetchMs = deps.now() - prefetchStartedMs;
       const sweepMs = deps.now() - sweepStartedMs;
-      const summary = `Hold-release sweep: project=${projectKey}: ${sweepMs}ms (prefetch ${prefetchMs}ms, ir-resolve ${irResolveMs}ms, evaluate 0ms over ${unevaluatedCount} tasks${phasesSummary(0)}), released=0, held=0`
+      const summary = `Hold-release sweep: project=${projectKey}: ${sweepMs}ms (prefetch ${prefetchMs}ms, ir-resolve ${irResolveMs}ms, evaluate 0ms over ${unevaluatedCount} tasks${phasesSummary(0)})${slotFields()}, released=0, held=0`
         + `, budget-truncated unevaluated=${unevaluatedCount}`
         + (sweepMs > budgetMs ? `, budgetOverrunMs=${sweepMs - budgetMs}` : "")
         + `, reads(settings=${counters.settings}, tasks=${counters.tasks}, batchSelections=${counters.batchSelections}, selections=${counters.selections}, definitions=${counters.definitions}, handoffMarkers=${counters.handoffMarkers}, prompts=${counters.prompts}, workItems=${counters.workItems}, evalSettings=${counters.evalSettings}), scanned=0, heldCandidates=0`;
@@ -1215,7 +1277,7 @@ export async function runHoldReleaseSweep(
     is the honest residual so the phase list always reconciles with `evaluate` rather than silently
     hiding a slice of it.
     */
-    const summary = `Hold-release sweep: project=${projectKey}: ${sweepMs}ms (prefetch ${prefetchMs}ms, ir-resolve ${irResolveMs}ms, evaluate ${evaluateMs}ms over ${allTasks.length} tasks${phasesSummary(evaluateMs)}), released=${result.released.length}, held=${result.held.length}`
+    const summary = `Hold-release sweep: project=${projectKey}: ${sweepMs}ms (prefetch ${prefetchMs}ms, ir-resolve ${irResolveMs}ms, evaluate ${evaluateMs}ms over ${allTasks.length} tasks${phasesSummary(evaluateMs)})${slotFields()}, released=${result.released.length}, held=${result.held.length}`
       + (result.budgetTruncated ? `, budget-truncated unevaluated=${result.unevaluatedCount ?? 0}` : "")
       + (sweepMs > budgetMs ? `, budgetOverrunMs=${sweepMs - budgetMs}` : "")
       + `, reads(settings=${counters.settings}, tasks=${counters.tasks}, batchSelections=${counters.batchSelections}, selections=${counters.selections}, definitions=${counters.definitions}, handoffMarkers=${counters.handoffMarkers}, prompts=${counters.prompts}, workItems=${counters.workItems}, evalSettings=${counters.evalSettings})`
@@ -1555,6 +1617,7 @@ async function issueRelease(
     // pass's prompt memo and its cost lands in the `slot` phase rather than vanishing from attribution.
     const doReserve = () => deps.reserveSlot!(task, target, options.pass);
     reservation = options.pass ? await options.pass.net("slot", doReserve) : await doReserve();
+    if (options.pass) options.pass.slotCalls += 1;
     if (!reservation) {
       /*
       Semaphore/worktree exhausted — reservation-first means no move at all.

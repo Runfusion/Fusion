@@ -3148,6 +3148,13 @@ export class Scheduler {
         now: () => Date.now(),
         selectionCache,
         reserveSlot: async (task, _target, pass?: HoldReleasePass): Promise<SlotReservation | null> => {
+          /*
+          FNXC:HoldReleaseSlotAttribution 2026-10-16-17:19 (RUFU-698 Step 1):
+          Records FULL wall time into the pass's `slot:*` child buckets so the reservation leg names where
+          its time goes instead of being inferred from `slot` ÷ an unknown call count. Outside a sweep
+          there is no pass and no observer — the call runs unwrapped, with no behavior change.
+          */
+          const obs = <T>(name: string, fn: () => T | Promise<T>): Promise<T> => (pass ? pass.wall(name, fn) : Promise.resolve(fn()));
           let reservedScope = false;
           let priorActiveScope: string[] | undefined;
           let priorActiveScopeColumn: Task["column"] | undefined;
@@ -3183,7 +3190,7 @@ export class Scheduler {
           The workflow-column dispatch path is the only dispatcher when the flag is on, so the planning/bootstrap guards from the legacy todo filter must also apply here — and they must be TRAIT-based, not keyed on the literal "todo" column id. A custom workflow's intake/planning column can be renamed (`ideas`, `Inbox`, the default workflow's renamed "Planning"), so gating this guard on `task.column === "todo"` alone let an unplanned card in a renamed intake column bypass the stub check and release straight into execution (FN-7648). `isUnplannedForExecution` resolves the intake trait on the task's OWN resolved workflow IR so every renamed variant is covered.
           */
           try {
-            const ir = await resolveWorkflowIrForTask(this.store, task.id, wipIrCache, selectionCache);
+            const ir = await obs("slot:dispatch-guard", () => resolveWorkflowIrForTask(this.store, task.id, wipIrCache, selectionCache));
             // RUFU-209: this guard re-checks the SAME snapshot task the sweep just checked for readiness,
             // so forward the sweep's pass and its PROMPT.md memo. A reservation invoked outside a sweep
             // (pass undefined) keeps its own live read.
@@ -3247,7 +3254,7 @@ export class Scheduler {
           FNXC:WorkflowScheduling 2026-06-23-11:12:
           The workflow sweep is the only dispatcher, so the scheduler-only pre-dispatch gates must run before a capacity hold moves to an execution column. Keep dependency, filesystem, node-routing, permanent-agent, and oscillation checks on this path instead of relying on the retired todo loop.
           */
-          const validation = await this.validateTaskFilesystem(task);
+          const validation = await obs("slot:dispatch-guard", () => this.validateTaskFilesystem(task));
           if (!validation.valid) {
             schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
             /*
@@ -3635,9 +3642,9 @@ export class Scheduler {
           }
 
           if (settings.groupOverlappingFiles && missionAdmission.kind === "coarse-fallback") {
-            const taskScope = await getFilteredFileScope(task);
+            const taskScope = await obs("slot:scope", () => getFilteredFileScope(task));
             if (taskScope.length > 0 && !isCoordinationOnlyTask(task, taskScope)) {
-              const overlapLease = findOverlappingFileScopeLease(task, taskScope);
+              const overlapLease = await obs("slot:scope", () => findOverlappingFileScopeLease(task, taskScope));
 
               if (overlapLease) {
                 await this.transitionQueuedEpisode(task, {
@@ -3726,16 +3733,16 @@ export class Scheduler {
             };
           })();
           let projectSlotReserved = false;
-          const admittedTaskId = await projectAdmissionCoordinator.admitNext({
+          const admittedTaskId = await obs("slot:admission", () => projectAdmissionCoordinator.admitNext({
             projectId: this.store.getRootDir(),
             maxConcurrent: activeTaskLimit,
-            claimed: async () => (await getFinalClaimSnapshot()).agent.count,
-            claimedTaskIds: async () => (await getFinalClaimSnapshot()).agent.ids,
+            claimed: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).agent.count,
+            claimedTaskIds: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).agent.ids,
             ...(maxWorktrees === null ? {} : {
               worktreeGate: {
                 limit: maxWorktrees,
-                claimed: async () => (await getFinalClaimSnapshot()).worktree.count,
-                claimedTaskIds: async () => (await getFinalClaimSnapshot()).worktree.ids,
+                claimed: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).worktree.count,
+                claimedTaskIds: async () => (await obs("slot:claim-snapshot", getFinalClaimSnapshot)).worktree.ids,
               },
             }),
             semaphore: this.options.semaphore,
@@ -3755,7 +3762,7 @@ export class Scheduler {
                 return true;
               },
             }],
-          });
+          }));
           if (!projectSlotReserved) {
             releaseReservedScope();
             /*
