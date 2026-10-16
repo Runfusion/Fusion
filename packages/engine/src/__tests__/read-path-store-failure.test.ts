@@ -14,8 +14,8 @@ The logging consequence is asserted through the real `AgentLogger.onToolEnd` sea
 write lane, because `isError` exists precisely to move that row's type.
 */
 import { describe, expect, it, vi } from "vitest";
-import { TaskNotFoundError, type Message, type MessageStore, type TaskStore } from "@fusion/core";
-import { createReadMessagesTool, createTaskLogsReadTool, createTaskShowTool } from "../agent-tools.js";
+import { TaskNotFoundError, type AgentStore, type Message, type MessageStore, type TaskStore } from "@fusion/core";
+import { createListAgentsTool, createReadMessagesTool, createTaskLogsReadTool, createTaskShowTool } from "../agent-tools.js";
 import { AgentLogger } from "../agents/agent-logger.js";
 import { STORE_RETRY_GUIDANCE, storeErrorResult } from "../tool-store-errors.js";
 
@@ -152,5 +152,57 @@ describe("read-path sites that must keep answering without the flag (STAS-259 pi
     expect(unreachableResult.isError).toBe(true);
     expect(unreachableResult.details?.code).toBe(SHARED_CODE);
     expect(textOf(unreachableResult)).toContain(STORE_RETRY_GUIDANCE);
+  });
+});
+
+/*
+STAS-335: the agent-roster read had no catch at all, so the failure an executor actually saw was the
+Drizzle wrapper — the whole SELECT re-printed, the bound project id, and SQLSTATE 42P01 buried in the
+`cause` — thrown past the tool boundary as a bare echo. The pins below hold the two halves: the refused
+roster arrives in the shared shape naming table + SQLSTATE + operation=read, and a roster that is
+simply empty stays an ordinary answer.
+*/
+
+/** The failure the driver really throws: a wrapper whose message is the statement and whose cause carries the SQLSTATE. */
+function refusedRosterRead(): Error {
+  const query = `select "id", "name" from "project"."agents" where "project"."agents"."project_id" = $1`;
+  const error = new Error(`${SENTINEL}: Failed query: ${query}`) as Error & { query: string; cause: { code: string } };
+  error.query = query;
+  error.cause = { code: "42P01" };
+  return error;
+}
+
+describe("fn_list_agents reports a refused roster read as an attributed tool error (STAS-335)", () => {
+  it("names the table, the SQLSTATE and operation=read instead of throwing the raw query", async () => {
+    const store = { listAgents: vi.fn(() => Promise.reject(refusedRosterRead())) } as unknown as AgentStore;
+
+    const result = (await createListAgentsTool(store).execute("call-1", {})) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.code).toBe(SHARED_CODE);
+    expect(result.details?.operation).toBe("read");
+    expect(result.details?.table).toBe("agents");
+    expect(result.details?.sqlState).toBe("42P01");
+    const text = textOf(result);
+    expect(text).toContain(SENTINEL);
+    expect(text).toContain(STORE_RETRY_GUIDANCE);
+    /* A roster the store refused is not a board with no agents. */
+    expect(text).not.toMatch(/no agents found/i);
+  });
+
+  it("keeps an empty roster and a populated roster unflagged", async () => {
+    const empty = { listAgents: vi.fn(async () => []) } as unknown as AgentStore;
+    const emptyResult = (await createListAgentsTool(empty).execute("call-1", {})) as ToolResult;
+    expect(textOf(emptyResult)).toContain("No agents found");
+    expect(emptyResult.isError).toBeUndefined();
+
+    const listed = {
+      listAgents: vi.fn(async () => [
+        { id: "agent-335", name: "Executor", role: "executor", state: "idle", createdAt: "", updatedAt: "" },
+      ]),
+    } as unknown as AgentStore;
+    const listedResult = (await createListAgentsTool(listed).execute("call-2", {})) as ToolResult;
+    expect(textOf(listedResult)).toContain("agent-335");
+    expect(listedResult.isError).toBeUndefined();
   });
 });
