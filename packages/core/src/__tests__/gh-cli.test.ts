@@ -527,6 +527,25 @@ describe("isGhAvailableAsync / isGhAuthenticatedAsync", () => {
     expect(mockExecFile).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let a check started before a reset restore its answer", async () => {
+    resetGhAvailabilityCache();
+    let finishOld: ((error: Error | null, stdout: string, stderr: string) => void) | undefined;
+    mockExecFile.mockReset();
+    mockExecFile.mockImplementation((_bin: string, _args: string[], _opts: unknown, callback: ExecCallback) => {
+      finishOld = callback;
+      return {} as ReturnType<typeof import("node:child_process").execFile>;
+    });
+    const old = isGhAuthenticatedAsync();
+    resetGhAvailabilityCache();
+    finishOld?.(null, "Logged in", "");
+    await expect(old).resolves.toBe(true);
+
+    mockExecFileSync.mockReset();
+    mockExecFileSync.mockReturnValue("You are not logged into any GitHub hosts");
+    expect(isGhAuthenticated()).toBe(false);
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+  });
+
   it("shares its cache with the sync helper", async () => {
     resetGhAvailabilityCache();
     mockExecFileSync.mockReset();

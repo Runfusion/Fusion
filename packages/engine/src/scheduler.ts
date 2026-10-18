@@ -1294,23 +1294,24 @@ export class Scheduler {
             this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
           }
         } else if (from === parked.review && to !== parked.review) {
-          // If task has a closed/merged PR, drain buffered comments before
-          // stopping monitoring (drainComments needs the tracked PR to still exist)
+          // If task has a closed/merged PR, finish monitoring: wait for a poll already waiting on
+          // gh, then drain everything buffered (FNXC:GhAsyncChecks) and stop.
           if (task.prInfo && (task.prInfo.status === "closed" || task.prInfo.status === "merged")) {
-            const comments = this.options.prMonitor.drainComments(task.id);
-            if (comments.length > 0 && this.options.onClosedPrFeedback) {
-              void Promise.resolve(this.options.onClosedPrFeedback(task.id, task.prInfo, comments))
-                .then(() => {
-                  schedulerLog.log(`Invoked onClosedPrFeedback for ${task.id} with ${comments.length} comment(s)`);
-                })
-                .catch((err) => {
-                  schedulerLog.error(`Error in onClosedPrFeedback for ${task.id}:`, err);
-                });
-            }
+            const prInfo = task.prInfo;
+            const onClosedPrFeedback = this.options.onClosedPrFeedback;
+            void this.options.prMonitor.finishMonitoring(task.id)
+              .then(async (comments) => {
+                if (comments.length === 0 || !onClosedPrFeedback) return;
+                await onClosedPrFeedback(task.id, prInfo, comments);
+                schedulerLog.log(`Invoked onClosedPrFeedback for ${task.id} with ${comments.length} comment(s)`);
+              })
+              .catch((err) => {
+                schedulerLog.error(`Error in onClosedPrFeedback for ${task.id}:`, err);
+              });
+          } else {
+            // Task moved out of in-review, stop monitoring
+            this.options.prMonitor.stopMonitoring(task.id);
           }
-
-          // Task moved out of in-review, stop monitoring
-          this.options.prMonitor.stopMonitoring(task.id);
         }
       }
 

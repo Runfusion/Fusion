@@ -91,6 +91,8 @@ let cachedAvailable: { value: boolean; at: number } | undefined;
 let cachedAuthenticated: { value: boolean; at: number } | undefined;
 let availableInFlight: Promise<boolean> | undefined;
 let authenticatedInFlight: Promise<boolean> | undefined;
+/** Bumped by resetGhAvailabilityCache so a check started before a reset never writes its answer. */
+let ghCheckGeneration = 0;
 
 /**
  * Reset the in-memory cache. Call after operations that legitimately change
@@ -102,6 +104,7 @@ export function resetGhAvailabilityCache(): void {
   cachedAuthenticated = undefined;
   availableInFlight = undefined;
   authenticatedInFlight = undefined;
+  ghCheckGeneration++;
 }
 
 /**
@@ -169,8 +172,9 @@ export function isGhAvailableAsync(): Promise<boolean> {
     return Promise.resolve(cachedAvailable.value);
   }
   if (!availableInFlight) {
+    const generation = ghCheckGeneration;
     const pending = execFileStdout(["--version"]).then(() => true, () => false).then((value) => {
-      cachedAvailable = { value, at: Date.now() };
+      if (generation === ghCheckGeneration) cachedAvailable = { value, at: Date.now() };
       if (availableInFlight === pending) availableInFlight = undefined;
       return value;
     });
@@ -185,10 +189,11 @@ export function isGhAuthenticatedAsync(): Promise<boolean> {
     return Promise.resolve(cachedAuthenticated.value);
   }
   if (!authenticatedInFlight) {
+    const generation = ghCheckGeneration;
     const pending = execFileStdout(["auth", "status"])
       .then((out) => out.includes("Logged in") || out.includes("Authenticated"), () => false)
       .then((value) => {
-        cachedAuthenticated = { value, at: Date.now() };
+        if (generation === ghCheckGeneration) cachedAuthenticated = { value, at: Date.now() };
         if (authenticatedInFlight === pending) authenticatedInFlight = undefined;
         return value;
       });
