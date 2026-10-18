@@ -25,21 +25,25 @@ export interface PrMonitorGhClient {
 
 /**
  * Default gh-backed implementation used in production runtime.
+ *
+ * FNXC:GhAsyncChecks 2026-10-18-01:20: every call is async. The monitor polls each tracked PR every
+ * 30 s, and the previous execFileSync calls blocked the daemon's event loop for the whole `gh`
+ * round trip (about a fifth of the daemon's busy time in a profile on 2026-10-18).
  */
 export function createDefaultPrMonitorGhClient(): PrMonitorGhClient {
   return {
     async checkAuth(): Promise<boolean> {
       try {
-        const { isGhAvailable, isGhAuthenticated } = await import("@fusion/core");
-        return isGhAvailable() && isGhAuthenticated();
+        const { isGhAvailableAsync, isGhAuthenticatedAsync } = await import("@fusion/core");
+        return (await isGhAvailableAsync()) && (await isGhAuthenticatedAsync());
       } catch {
         return false;
       }
     },
 
     async fetchComments({ owner, repo, prNumber, since }: FetchPrCommentsInput): Promise<PrComment[]> {
-      const { runGhJson } = await import("@fusion/core");
-      const pr = runGhJson<GhPrViewJson>([
+      const { runGhJsonAsync } = await import("@fusion/core");
+      const pr = await runGhJsonAsync<GhPrViewJson>([
         "pr",
         "view",
         String(prNumber),
