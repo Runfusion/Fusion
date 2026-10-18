@@ -45,6 +45,7 @@ const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+
 
 function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
   const dependencies = pkg.dependencies ?? {};
+  const devDependencies = pkg.devDependencies ?? {};
   const peerDependencies = pkg.peerDependencies ?? {};
   const peerDependenciesMeta = pkg.peerDependenciesMeta ?? {};
 
@@ -78,16 +79,34 @@ function assertRuntimeDepsAreNotOptionalPeers(pkg: any, label: string): void {
     `${label}: pi-ai and pi-coding-agent must remain a matched exact version pair`,
   ).toBe(dependencies["@earendil-works/pi-coding-agent"]);
 
-  expect(dependencies, `${label}: typebox must not be promoted into runtime dependencies`).not.toHaveProperty(
-    "typebox",
-  );
-  expect(peerDependencies, `${label}: typebox remains the optional peer control`).toHaveProperty(
-    "typebox",
-    "*",
-  );
-  expect(peerDependenciesMeta.typebox, `${label}: typebox remains optional peer metadata`).toEqual({
-    optional: true,
-  });
+  /*
+  FNXC:CliPackaging 2026-10-18-15:58:
+  The published CLI entries (dist/bin.js, dist/extension.js, dist/child-process-worker.js) keep a
+  static `import ... from "typebox"` as an external: tsup bundles @fusion/* via noExternal but leaves
+  third-party packages external, so a clean installed tree must resolve typebox from the package root.
+  Declaring it only as a devDependency plus an optional peer reproduced
+  ERR_MODULE_NOT_FOUND: Cannot find package 'typebox' imported from STAGE/dist/bin.js
+  (installed-help.log) — an optional peer is omitted from a standalone install, and a devDependency
+  is stripped by the publish boundary's consumers. A third-party module statically reachable from a
+  published entry is therefore a required runtime dependency at the repo range (^1.3.25), never
+  dev-only and never an optional peer. Mirrors the typescript fix at FNXC:KnowledgeGraph 2026-08-11-05:52.
+  */
+  expect(
+    dependencies,
+    `${label}: typebox must be a required runtime dependency at the repo range`,
+  ).toHaveProperty("typebox", "^1.3.25");
+  expect(
+    devDependencies,
+    `${label}: typebox must not be a dev-only runtime requirement`,
+  ).not.toHaveProperty("typebox");
+  expect(
+    peerDependencies,
+    `${label}: typebox must not be declared as a peer dependency`,
+  ).not.toHaveProperty("typebox");
+  expect(
+    peerDependenciesMeta,
+    `${label}: typebox must not carry optional-peer metadata that npm/pnpm may omit`,
+  ).not.toHaveProperty("typebox");
 }
 
 describe("node-pty platform packaging", () => {
@@ -229,7 +248,9 @@ describe("CLI package.json publishing config", () => {
 
   /**
    * FNXC:Packaging 2026-06-13-16:36:
-   * Standalone npm/pnpm installs may omit a package when the published manifest declares it as both a runtime dependency and an optional peer. Keep the pi runtime packages as plain dependencies so dist/bin.js and dist/extension.js can resolve their static imports outside the monorepo, while leaving typebox as the optional-peer control because Fusion does not import it at runtime.
+   * Standalone npm/pnpm installs may omit a package when the published manifest declares it as both a runtime dependency and an optional peer. Keep the pi runtime packages as plain dependencies so dist/bin.js and dist/extension.js can resolve their static imports outside the monorepo.
+   * FNXC:Packaging 2026-10-18-15:58:
+   * typebox is now handled the same way: the bundled CLI entries import it statically, so it is a required runtime dependency rather than the former optional-peer control. See the FNXC:CliPackaging note above for the installed-help.log symptom this guard encodes.
    */
   it("does not declare runtime dependencies as optional peers in source or published manifests", () => {
     assertRuntimeDepsAreNotOptionalPeers(pkg, "source manifest");
@@ -259,9 +280,17 @@ describe("CLI package.json publishing config", () => {
       expect(manifest.devDependencies).not.toHaveProperty("drizzle-orm");
       expect(manifest.devDependencies).not.toHaveProperty("mysql2");
       expect(manifest.devDependencies).not.toHaveProperty("postgres");
-      expect(manifest.peerDependencies).not.toHaveProperty("drizzle-orm");
-      expect(manifest.peerDependencies).not.toHaveProperty("mysql2");
-      expect(manifest.peerDependencies).not.toHaveProperty("postgres");
+      /*
+       * FNXC:CliPackaging 2026-10-18-16:02:
+       * This guard asserts three SDK-declaration dependencies are never demoted to a peer. Once typebox
+       * moved from an optional peer to a runtime dependency (the installed-help fix), the CLI manifest
+       * carries no peerDependencies at all, so read it null-safely: an absent peer map still proves none
+       * of these keys is a peer. Same intent as before, just no longer predicated on a non-empty map.
+       */
+      const peerDeps = manifest.peerDependencies ?? {};
+      expect(peerDeps).not.toHaveProperty("drizzle-orm");
+      expect(peerDeps).not.toHaveProperty("mysql2");
+      expect(peerDeps).not.toHaveProperty("postgres");
     }
   });
 
