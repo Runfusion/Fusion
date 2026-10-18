@@ -2420,11 +2420,21 @@ export class AgentStore extends EventEmitter {
       adopts the opt-in default without unnecessarily rewriting an already-converged owner.
       */
       const enabled = typeof currentRuntimeConfig.enabled === "boolean" ? currentRuntimeConfig.enabled : false;
+      /*
+      FNXC:MemoryAgent 2026-10-04-19:10:
+      The heartbeat interval is an operator choice too. Startup convergence previously reset any saved
+      interval to the default on every store init, so a longer cadence could never stick. Keep a valid
+      saved interval and fall back to the default only when it is missing or not a positive number.
+      */
+      const savedInterval = currentRuntimeConfig.heartbeatIntervalMs;
+      const heartbeatIntervalMs = typeof savedInterval === "number" && Number.isFinite(savedInterval) && savedInterval > 0
+        ? savedInterval
+        : DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS;
       const runtimeConfig = currentRuntimeConfig.enabled === enabled
         && currentRuntimeConfig.autoClaimRelevantTasks === false
-        && currentRuntimeConfig.heartbeatIntervalMs === DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS
+        && currentRuntimeConfig.heartbeatIntervalMs === heartbeatIntervalMs
         ? currentRuntimeConfig
-        : { ...currentRuntimeConfig, enabled, autoClaimRelevantTasks: false, heartbeatIntervalMs: DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS };
+        : { ...currentRuntimeConfig, enabled, autoClaimRelevantTasks: false, heartbeatIntervalMs };
       const updates: Partial<Agent> = {
         roles: [...BUILTIN_MEMORY_AGENT_DEFAULT.roles],
         role: "custom",
