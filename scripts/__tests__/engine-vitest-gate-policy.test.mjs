@@ -133,6 +133,7 @@ test("root and package gate scripts still propagate real Vitest failures", () =>
     staticCheck("pi-versions-pinned"),
     staticCheck("workspace-package-graph"),
     staticCheck("no-test-timeout-appeasement"),
+    staticCheck("no-comment-assertions-in-tests"),
     staticCheck("changeset-format"),
     staticCheck("mock-completeness"),
     staticCheck("inert-sync-lane-conversions"),
@@ -151,8 +152,13 @@ test("root and package gate scripts still propagate real Vitest failures", () =>
   concurrent static validators, 21 engine-core files, two PG canaries, and
   four unit-gate files. Keep this cardinality alongside the ordered ledger so
   a future declaration edit cannot silently invalidate the timing baseline.
+
+  FNXC:GatePolicyDrift 2026-10-18-00:21:
+  FN-9563 found this guard stale after the production static chain admitted
+  the no-comment-assertions validator. Mirror the complete live chain so a
+  policy test cannot falsely report a healthy merge gate as invalid.
   */
-  assert.equal(gateValidators.length, 15, "the W33 timing baseline requires all 15 static validators");
+  assert.equal(gateValidators.length, 16, "the blocking static-validator composition must remain complete");
   assert.equal(new Set(gateValidators).size, gateValidators.length, "the static validator composition must be duplicate-free");
   assert.match(gate, /pnpm --filter @fusion\/engine test:core/);
   assert.match(gate, /pnpm --filter @fusion\/core test:pg-gate/);
@@ -162,6 +168,16 @@ test("root and package gate scripts still propagate real Vitest failures", () =>
   assert.match(gate, /wait \$unit_pid \|\| status=1/);
   assert.match(gate, /&& pnpm --filter @runfusion\/fusion test:ci-shape$/);
   /*
+  FNXC:PgGateRootTopology 2026-10-18-00:35:
+  FN-9563 keeps a production-shaped diagnostic driver beside the exact root
+  composition. It must continue to invoke the root gate rather than recreating
+  its three concurrent lanes in a test-only approximation.
+  */
+  assert.equal(
+    root.scripts?.["test:pg-gate-root-topology"],
+    "node scripts/test-pg-gate-root-topology.mjs",
+  );
+  /*
   FNXC:MergeGatePolicy 2026-08-23-18:16:
   The core unit gate includes migration-wiring integrity alongside the lifecycle columns and
   workflow-IR allow-list checks. Keep this exact command mirror current so a policy test detects
@@ -170,6 +186,11 @@ test("root and package gate scripts still propagate real Vitest failures", () =>
   assert.equal(
     core.scripts?.["test:unit-gate"],
     "vitest run src/__tests__/task-merge.test.ts src/__tests__/legacy-adoption.test.ts src/__tests__/no-hardcoded-lifecycle-columns.test.ts src/__tests__/sync-workflow-ir-callsite-allowlist.test.ts src/__tests__/migration-wiring-integrity.test.ts --silent=passed-only --reporter=dot",
+  );
+  assert.match(
+    core.scripts?.["test:pg-gate"] ?? "",
+    /FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_LOG="\$\{FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_LOG:-\}"/,
+    "the real PG gate must relay opt-in observer evidence to its forked workers",
   );
   assert.doesNotMatch(gate, /NODE_NO_WARNINGS/);
   assert.doesNotMatch(root.scripts?.["test"] ?? "", /NODE_NO_WARNINGS/);
@@ -240,7 +261,9 @@ test("pg gate canaries remain a subset of the enabled non-blocking PG suite", ()
   assert.match(core.scripts?.test ?? "", /^vitest run\b/, "the non-blocking core lane must execute Vitest");
   assert.doesNotMatch(core.scripts?.test ?? "", /\s(?:--exclude|--include)\b/, "the non-blocking core lane must not narrow discovery");
   assert.match(coreConfig, /include:\s*\["src\/\*\*\/\*.test\.ts"\]/, "the default core config must discover PG tests");
-  assert.match(coreConfig, /const quarantinedCoreTests: string\[\] = \[\]/, "no PG test may be hidden by quarantine exclusion");
+  // FNXC:GatePolicyDrift 2026-10-18-00:21: Core now declares its empty quarantine list inline,
+  // so assert the observable empty exclusion contract instead of a retired implementation detail.
+  assert.match(coreConfig, /exclude:\s*\[\s*\]/, "no PG test may be hidden by quarantine exclusion");
 
   for (const file of formerGateMembers) {
     assert.ok(discoveredPgFiles.has(file), `former PG gate member must remain discovered: ${file}`);

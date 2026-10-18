@@ -9,6 +9,7 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { resolvePgSetupParticipation, runPgSetupPreflight } from "./pg-setup-participation.js";
 
 export const WORKER_ROOT_OWNER_FILE = ".fusion-test-worker-root-owner";
 const FUSION_TEST_RUN_TOKEN_ENV = "FUSION_TEST_RUN_TOKEN";
@@ -130,7 +131,7 @@ export default function setup(): () => Promise<void> {
   */
   process.env.FUSION_PG_TEMPLATE_OWNER_PID = String(process.pid);
 
-  return async function teardown() {
+  const teardown = async function teardown() {
     try {
       process.chdir(tmpdir());
     } catch {
@@ -165,4 +166,19 @@ export default function setup(): () => Promise<void> {
     }
     removeLegacyTopLevelHomeRoots();
   };
+
+  const pgParticipation = resolvePgSetupParticipation();
+  if (!pgParticipation.participating) return teardown;
+
+  /*
+  FNXC:PgGatePrebuild 2026-10-18-00:28:
+  FN-9563 requires global setup, not the first forked beforeAll, to publish a
+  ready golden schema template for the explicit PG gate. Keep the harness lazy
+  so all other Vitest lanes remain connectionless, and leave unavailable PG
+  targets to pgDescribe's existing skip contract.
+  */
+  return runPgSetupPreflight(async () => {
+    const { PG_AVAILABLE, preparePgTestGoldenTemplate } = await import("./pg-test-harness.js");
+    if (PG_AVAILABLE) await preparePgTestGoldenTemplate();
+  }).then(() => teardown);
 }

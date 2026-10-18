@@ -2,6 +2,7 @@ import { defineConfig, mergeConfig } from "vitest/config";
 
 import baseConfig from "./vitest.config";
 import { computeMaxWorkers } from "./src/__test-utils__/vitest-workers";
+import { collectPgTimeoutBoundaryObserverEnv } from "./src/__test-utils__/pg-setup-participation";
 
 /*
 FNXC:PgTestWorkerCap 2026-07-18-18:00:
@@ -33,6 +34,10 @@ this config; the interleaved full core suite is unaffected because pg files are
 a small fraction of it and rarely run 6-at-once.
 */
 const PG_MAX_WORKERS = 4;
+const pgTimeoutObserverEnv = collectPgTimeoutBoundaryObserverEnv();
+const pgTimeoutObserverDefines = Object.fromEntries(
+  Object.entries(pgTimeoutObserverEnv).map(([key, value]) => [`process.env.${key}`, JSON.stringify(value)]),
+);
 
 export default mergeConfig(
   baseConfig,
@@ -47,7 +52,9 @@ export default mergeConfig(
       */
       env: {
         FUSION_PG_TEST_SETUP_PARTICIPANT: "1",
+        ...pgTimeoutObserverEnv,
       },
+      define: pgTimeoutObserverDefines,
       maxWorkers: computeMaxWorkers({ maxCap: PG_MAX_WORKERS }),
       minWorkers: 1,
     },

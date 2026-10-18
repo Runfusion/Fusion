@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
+  isPgTestGoldenTemplateReady,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 
@@ -22,7 +23,18 @@ pgTest("VAL-CROSS-001: End-to-end task lifecycle (PostgreSQL)", () => {
     projectId: "lifecycle-e2e-test",
   });
 
-  beforeAll(h.beforeAll);
+  beforeAll(async () => {
+    /*
+    FNXC:PgGatePrebuild 2026-10-18-00:28:
+    FN-9563 keeps this lifecycle canary on the real PG gate and proves its
+    hook consumes global-setup readiness before allocating an isolated store.
+    Normal non-gate PG discovery retains the harness's cold-build coverage.
+    */
+    if (process.env.FUSION_PG_TEST_SETUP_PARTICIPANT === "1") {
+      expect(await isPgTestGoldenTemplateReady()).toBe(true);
+    }
+    await h.beforeAll();
+  });
   beforeEach(h.beforeEach);
   afterEach(h.afterEach);
   afterAll(h.afterAll);

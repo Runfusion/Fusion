@@ -106,6 +106,29 @@ export interface PgTimeoutBoundaryObserver {
 
 let processProbeCount = 0;
 
+/*
+FNXC:PgGateRootTopology 2026-10-18-00:35:
+FN-9563 needs observer controls in forked Vitest workers, whose runtime process
+environment can omit parent-only diagnostic flags. Vite exposes explicit test
+configuration through import.meta.env; merge only the observer namespace so
+ordinary runtime settings and credentials cannot enter the diagnostic channel.
+*/
+function resolveObserverRuntimeEnv(): NodeJS.ProcessEnv {
+  const importedEnv = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+  const observerEnv = Object.fromEntries(
+    Object.entries(importedEnv ?? {}).filter(([key, value]) =>
+      (key === "FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER"
+        || key.startsWith("FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_"))
+      && typeof value === "string",
+    ),
+  );
+  // Vite can replace a whole process.env object in a forked module graph.
+  // Access through globalThis so vitest-setup's configured worker values remain
+  // available to the optional observer without changing its defaults.
+  const runtimeEnv = globalThis.process?.env ?? process.env;
+  return { ...runtimeEnv, ...observerEnv };
+}
+
 /** Test-only reset for deterministic process-cap coverage. */
 export function __resetPgTimeoutBoundaryObserverProbeCountForTest(): void {
   processProbeCount = 0;
@@ -278,7 +301,7 @@ probe result censors the timeout population this default-off observer measures.
 The breach locates a boundary but never asserts PostgreSQL state.
 */
 export function createPgTimeoutBoundaryObserver(options: PgTimeoutBoundaryObserverOptions = {}): PgTimeoutBoundaryObserver {
-  const env = options.env ?? process.env;
+  const env = options.env ?? resolveObserverRuntimeEnv();
   if (env.FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER !== "1") {
     return {
       enabled: false,

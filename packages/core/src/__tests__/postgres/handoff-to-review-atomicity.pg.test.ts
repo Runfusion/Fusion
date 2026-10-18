@@ -20,6 +20,7 @@ import { eq, and } from "drizzle-orm";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
+  isPgTestGoldenTemplateReady,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import * as schema from "../../postgres/schema/index.js";
@@ -32,7 +33,19 @@ pgTest("handoff-to-review transactional invariant (PostgreSQL)", () => {
     prefix: "fusion_handoff_atomic",
   });
 
-  beforeAll(h.beforeAll);
+  beforeAll(async () => {
+    /*
+    FNXC:PgGatePrebuild 2026-10-18-00:28:
+    FN-9563 regresses the actual gate path: its participating global setup must
+    publish the marker-backed golden template before this canary's forked
+    beforeAll begins. The assertion is conditional so ordinary PG discovery
+    still exercises the harness's on-demand cold-build contract.
+    */
+    if (process.env.FUSION_PG_TEST_SETUP_PARTICIPANT === "1") {
+      expect(await isPgTestGoldenTemplateReady()).toBe(true);
+    }
+    await h.beforeAll();
+  });
   beforeEach(async () => {
     await h.beforeEach();
   });

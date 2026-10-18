@@ -833,6 +833,56 @@ function ensureGoldenTemplate(): Promise<string> {
   return ready;
 }
 
+/*
+FNXC:PgGatePrebuild 2026-10-18-00:28:
+FN-9563 observed both merge-gate canaries timing out before their bodies when
+forks first contended for golden-template construction. Build the same fenced,
+marker-after-success golden template during participating global setup so worker
+beforeAll hooks consume only a fully-ready source; the boundary observer records
+that pre-admission work separately from test execution without changing budgets.
+*/
+export async function preparePgTestGoldenTemplate(): Promise<string> {
+  const timeoutObserver = createPgTimeoutBoundaryObserver({
+    probe: createPgTimeoutBoundaryProbe(),
+  });
+  try {
+    return await timeoutObserver.observeBoundary(
+      "setup",
+      "template.ensure-golden",
+      ensureGoldenTemplate,
+    );
+  } finally {
+    await timeoutObserver.flush().catch(() => {});
+    await timeoutObserver.dispose().catch(() => {});
+  }
+}
+
+/**
+ * Read marker-backed golden readiness without connecting to the template itself.
+ * The check is used by the merge canaries before their own beforeAll allocation.
+ */
+export async function isPgTestGoldenTemplateReady(): Promise<boolean> {
+  const goldenName = goldenTemplateName();
+  return withMaintenanceSql(async (client) => {
+    try {
+      const rows = await client.unsafe<{ ready: boolean }[]>(
+        `SELECT EXISTS(
+          SELECT 1 FROM ${GOLDEN_MARKER_QUALIFIED} m
+          JOIN pg_database d ON d.datname = m.name
+          WHERE m.name = $1
+        ) AS ready`,
+        [goldenName],
+      );
+      return rows[0]?.ready === true;
+    } catch (error) {
+      // A missing marker table is not ready; callers must never infer readiness
+      // from a golden database alone.
+      if ((error as { code?: string }).code === "42P01") return false;
+      throw error;
+    }
+  });
+}
+
 /**
  * FNXC:PgTestTemplateDb 2026-07-19-17:20:
  * Ensure this module instance's per-module schema-template database exists, and

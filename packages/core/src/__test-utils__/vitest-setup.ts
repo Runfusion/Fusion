@@ -74,6 +74,24 @@ function installWarningFilter(): void {
 
 installWarningFilter();
 
+/*
+FNXC:PgGateRootTopology 2026-10-18-00:35:
+FN-9563's root-gate driver relies on the opt-in observer reaching forked test
+workers. Vitest exposes configured worker variables through import.meta.env;
+copy only that diagnostic namespace into process.env before harness imports,
+never database URLs or general parent configuration.
+*/
+const configuredVitestEnv = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+for (const [key, value] of Object.entries(configuredVitestEnv ?? {})) {
+  if (
+    (key === "FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER"
+      || key.startsWith("FUSION_PG_TEST_TIMEOUT_BOUNDARY_OBSERVER_"))
+    && typeof value === "string"
+  ) {
+    process.env[key] = value;
+  }
+}
+
 // Never let a DATABASE_URL exported for the operator's normal Fusion runtime
 // leak into a Vitest worker. Tests that exercise external PostgreSQL construct
 // an isolated database through FUSION_PG_TEST_* and set DATABASE_URL explicitly
