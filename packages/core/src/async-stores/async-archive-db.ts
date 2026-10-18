@@ -145,12 +145,74 @@ export async function listArchivedTasks(
   handle: QueryHandle,
   projectId?: string,
 ): Promise<ArchivedTaskEntry[]> {
+  const taskJsonRows = await readArchivedTaskJsonRows(handle, projectId);
+  return taskJsonRows.map((taskJson) => JSON.parse(taskJson) as ArchivedTaskEntry);
+}
+
+/*
+FNXC:ArchivedTaskListCache 2026-10-17-18:30:
+Unpaged `listTasks()` (archive included by default) and the recommendations list call
+listArchivedTasks on every engine sweep and dashboard poll. Each call detoasted and shipped every
+snapshot's task_json (tens of MB on a long-lived project), which made it the costliest statement on a
+shared PostgreSQL host even though the archive rarely changes. The raw JSON text is now cached per
+query handle and scope, guarded by a fingerprint of row identity and row version (`xmin`, which
+changes on every insert and update, including the upsert path). The fingerprint is checked on every
+call, so writes from any process are seen at once; only an unchanged archive is served from memory.
+Each call still parses fresh objects, so callers can mutate results without touching the cache.
+*/
+interface ArchivedTaskJsonCacheEntry {
+  fingerprint: string;
+  taskJsonRows: string[];
+  fullReads: number;
+}
+
+const archivedTaskJsonCache = new WeakMap<object, Map<string, ArchivedTaskJsonCacheEntry>>();
+
+function archivedTaskJsonCacheKey(projectId?: string): string {
+  return projectId ? `project:${projectId}` : "all";
+}
+
+async function readArchiveFingerprint(handle: QueryHandle, projectId?: string): Promise<string> {
+  const rows = await handle
+    .select({
+      rowCount: sql<string>`count(*)::text`,
+      versionSum: sql<string>`coalesce(sum(hashtextextended(${archivedTaskColumns.id} || ':' || ${schema.archive.archivedTasks}.xmin::text, 0)), 0)::text`,
+    })
+    .from(schema.archive.archivedTasks)
+    .where(archiveProjectScope(projectId));
+  const row = rows[0] as { rowCount: string; versionSum: string } | undefined;
+  return `${row?.rowCount ?? "0"}:${row?.versionSum ?? "0"}`;
+}
+
+async function readArchivedTaskJsonRows(handle: QueryHandle, projectId?: string): Promise<string[]> {
+  const key = archivedTaskJsonCacheKey(projectId);
+  let byScope = archivedTaskJsonCache.get(handle);
+  if (!byScope) {
+    byScope = new Map();
+    archivedTaskJsonCache.set(handle, byScope);
+  }
+  const fingerprint = await readArchiveFingerprint(handle, projectId);
+  const cached = byScope.get(key);
+  if (cached && cached.fingerprint === fingerprint) {
+    return cached.taskJsonRows;
+  }
   const rows = await handle
     .select({ taskJson: archivedTaskColumns.taskJson })
     .from(schema.archive.archivedTasks)
     .where(archiveProjectScope(projectId))
     .orderBy(desc(archivedTaskColumns.archivedAt));
-  return rows.map((row) => JSON.parse((row as { taskJson: string }).taskJson) as ArchivedTaskEntry);
+  const taskJsonRows = rows.map((row) => (row as { taskJson: string }).taskJson);
+  byScope.set(key, { fingerprint, taskJsonRows, fullReads: (cached?.fullReads ?? 0) + 1 });
+  return taskJsonRows;
+}
+
+/**
+ * Diagnostics for the archived-task list cache: how many full task_json reads
+ * listArchivedTasks has made for this handle and scope. Used by tests and
+ * operators to confirm an unchanged archive is served from memory.
+ */
+export function getArchivedTaskListFullReadCount(handle: QueryHandle, projectId?: string): number {
+  return archivedTaskJsonCache.get(handle)?.get(archivedTaskJsonCacheKey(projectId))?.fullReads ?? 0;
 }
 
 /**
