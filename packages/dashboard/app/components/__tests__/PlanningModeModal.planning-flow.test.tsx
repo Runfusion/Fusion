@@ -85,6 +85,15 @@ async function clickEnabledPlanningButton(name: string) {
   });
 }
 
+async function emitPlanningSessionUpdated(payload: Record<string, unknown>) {
+  await waitFor(() => expect(mockPlanningSse.events?.["ai_session:updated"]).toEqual(expect.any(Function)));
+  act(() => {
+    mockPlanningSse.events?.["ai_session:updated"]?.(new MessageEvent("ai_session:updated", {
+      data: JSON.stringify(payload),
+    }));
+  });
+}
+
 describe("PlanningModeModal sequential flow", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -655,13 +664,114 @@ describe("PlanningModeModal sequential flow", () => {
       result: JSON.stringify(summaryWithRefinements),
       inputPayload: "{}",
     });
-    mockPlanningSse.events?.["ai_session:updated"]?.(new MessageEvent("ai_session:updated", {
-      data: JSON.stringify({ ...base, type: "planning", status: "awaiting_input" }),
-    }));
+    await emitPlanningSessionUpdated({ ...base, type: "planning", status: "awaiting_input" });
 
     expect(await screen.findByText("New question?")).toBeInTheDocument();
     expect(screen.queryByText("Old question?")).toBeNull();
     expect(mockConnectPlanningStream).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a restored session when a peer advances it before its first hydration settles", async () => {
+    const oldSession = {
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-old", type: "text", question: "Old question?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    };
+    let resolveInitialHydration!: (session: Record<string, unknown>) => void;
+    mockFetchAiSession
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitialHydration = resolve; }))
+      .mockResolvedValueOnce({
+        ...oldSession,
+        updatedAt: new Date(Date.now() + 1_000).toISOString(),
+        currentQuestion: JSON.stringify({ id: "q-new", type: "text", question: "New question?" }),
+      });
+
+    renderSession();
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledTimes(1));
+    await emitPlanningSessionUpdated({ ...base, type: "planning", status: "awaiting_input" });
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveInitialHydration(oldSession);
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("New question?")).toBeInTheDocument();
+    expect(screen.queryByText("Old question?")).toBeNull();
+    expect(mockConnectPlanningStream).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed, foreign, and replayed idle-session updates", async () => {
+    const oldSession = {
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-old", type: "text", question: "Old question?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    };
+    mockFetchAiSession.mockResolvedValue(oldSession);
+    renderSession();
+    await screen.findByText("Old question?");
+
+    await emitPlanningSessionUpdated({ type: "chat", id: "session-1" });
+    await emitPlanningSessionUpdated({ type: "planning" });
+    await emitPlanningSessionUpdated({ ...base, type: "planning", id: "other-session" });
+    expect(mockFetchAiSession).toHaveBeenCalledTimes(1);
+
+    const peerUpdate = { ...base, type: "planning", status: "awaiting_input" };
+    await emitPlanningSessionUpdated(peerUpdate);
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledTimes(2));
+    await emitPlanningSessionUpdated(peerUpdate);
+    await act(async () => Promise.resolve());
+
+    expect(mockFetchAiSession).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Old question?")).toBeInTheDocument();
+    expect(mockConnectPlanningStream).not.toHaveBeenCalled();
+  });
+
+  it("keeps a submitted turn when an earlier peer refresh settles late", async () => {
+    const oldSession = {
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-old", type: "text", question: "Old question?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      inputPayload: "{}",
+    };
+    let resolvePeerRefresh!: (session: Record<string, unknown>) => void;
+    let resolveResponse!: (response: { currentQuestion: { id: string; type: "text"; question: string }; summary: typeof summaryWithRefinements }) => void;
+    mockFetchAiSession
+      .mockResolvedValueOnce(oldSession)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolvePeerRefresh = resolve; }));
+    mockRespondToPlanning.mockImplementationOnce(() => new Promise((resolve) => { resolveResponse = resolve; }));
+
+    renderSession();
+    await screen.findByText("Old question?");
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText("Type your answer here..."), "Keep this answer");
+
+    await emitPlanningSessionUpdated({ ...base, type: "planning", status: "awaiting_input" });
+    await waitFor(() => expect(mockFetchAiSession).toHaveBeenCalledTimes(2));
+    await clickEnabledPlanningButton("Next");
+    await waitFor(() => expect(mockRespondToPlanning).toHaveBeenCalledWith("session-1", { "q-old": "Keep this answer" }, "project-1"));
+    expect(screen.getByTestId("planning-workspace")).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => {
+      resolvePeerRefresh(oldSession);
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("planning-workspace")).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => {
+      resolveResponse({
+        currentQuestion: { id: "q-new", type: "text", question: "Newest question?" },
+        summary: summaryWithRefinements,
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("Newest question?")).toBeInTheDocument();
+    expect(screen.queryByText("Old question?")).toBeNull();
   });
 
   /*
@@ -701,9 +811,7 @@ describe("PlanningModeModal sequential flow", () => {
     }
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 
-    mockPlanningSse.events?.["ai_session:updated"]?.(new MessageEvent("ai_session:updated", {
-      data: JSON.stringify({ ...base, type: "planning", status: "awaiting_input" }),
-    }));
+    await emitPlanningSessionUpdated({ ...base, type: "planning", status: "awaiting_input" });
     await act(async () => {
       await Promise.resolve();
     });

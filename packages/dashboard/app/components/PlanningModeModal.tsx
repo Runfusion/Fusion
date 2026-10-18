@@ -581,6 +581,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const planningAutoRetryOwnerRef = useRef<{ sessionId: string; token: symbol; ownsTurn?: () => boolean } | null>(null);
   const startPlanningAutoRetryRef = useRef<(sessionId: string, ownsTurn?: () => boolean) => Promise<boolean>>(async () => false);
   const planningSessionLoadEpochRef = useRef(0);
+  // FNXC:PlanningSessionSync 2026-10-18-01:53: Deduplicate replayed global session events without taking ownership away from the durable row.
+  const planningSessionUpdateKeysRef = useRef(new Map<string, string>());
   /*
   FNXC:PlanningTurnReconciliation 2026-08-16-06:22:
   Same-session streamed durable turns and response submissions can supersede a pending
@@ -2011,6 +2013,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const loadSession = useCallback(
     async (sessionId: string) => {
       const loadEpoch = ++planningSessionLoadEpochRef.current;
+      const turnEpoch = planningTurnEpochRef.current;
+      /*
+      FNXC:PlanningSessionSync 2026-10-18-01:53:
+      A peer tab can advance an idle persisted interview while this tab is fetching it. Accept
+      only the fetch that still owns both the selected-session load and the current turn, then
+      claim that turn before hydration so an older fetch cannot replace the newer question or a
+      locally submitted response.
+      */
       /*
       FNXC:PlanningMode 2026-08-16-08:54:
       An idle-session SSE refresh rehydrates the same server session while its question remains
@@ -2063,7 +2073,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
       try {
         const session = await fetchAiSession(sessionId);
-        if (planningSessionLoadEpochRef.current !== loadEpoch || currentSessionIdRef.current !== sessionId) return;
+        if (
+          planningSessionLoadEpochRef.current !== loadEpoch
+          || planningTurnEpochRef.current !== turnEpoch
+          || currentSessionIdRef.current !== sessionId
+        ) return;
+        planningTurnEpochRef.current += 1;
         if (!session) {
           // The session was deleted (commonly: this tab just turned it into
           // tasks via Create Task / Create Tasks). Quietly fall back to the
@@ -2260,7 +2275,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           });
         }
       } catch (err) {
-        if (planningSessionLoadEpochRef.current !== loadEpoch || currentSessionIdRef.current !== sessionId) return;
+        if (
+          planningSessionLoadEpochRef.current !== loadEpoch
+          || planningTurnEpochRef.current !== turnEpoch
+          || currentSessionIdRef.current !== sessionId
+        ) return;
+        planningTurnEpochRef.current += 1;
         currentSessionIdRef.current = sessionId;
         setActivePlanPrompt("");
         setError(null);
@@ -2401,11 +2421,20 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     const handleUpdated = (e: MessageEvent) => {
       try {
         const updated = JSON.parse(e.data) as AiSessionSummary;
-        if (updated.type !== "planning") return;
+        if (updated.type !== "planning" || typeof updated.id !== "string" || !updated.id) return;
+        const updateKey = `${updated.updatedAt}:${updated.status}:${updated.archived}`;
+        if (planningSessionUpdateKeysRef.current.get(updated.id) === updateKey) return;
+        planningSessionUpdateKeysRef.current.set(updated.id, updateKey);
         setPlanningSessions((prev) => dedupeSessionsById([updated, ...prev]));
         const currentView = viewRef.current;
+        /*
+        FNXC:PlanningSessionSync 2026-10-18-02:05:
+        A peer tab may advance a restored idle session before its first hydration resolves. The
+        neutral loading view has no stream owner, so it must issue the same fenced durable refresh
+        as an already rendered question; otherwise the stale first fetch can replace that advance.
+        */
         const isSelectedIdleSession = updated.id === currentSessionIdRef.current
-          && (currentView.type === "question" || currentView.type === "plan_review")
+          && (currentView.type === "session_loading" || currentView.type === "question" || currentView.type === "plan_review")
           && streamConnectionRef.current === null;
         if (isSelectedIdleSession) {
           void loadSession(updated.id);
