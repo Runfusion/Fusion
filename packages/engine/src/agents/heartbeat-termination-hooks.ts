@@ -11,7 +11,7 @@ type Session = { agent?: Pick<AgentSession["agent"], "finishTurn" | "prepareRequ
 type TurnDecision = Extract<Awaited<ReturnType<NonNullable<AgentSession["agent"]["finishTurn"]>>>, object>;
 type RequestUpdate = Extract<Awaited<ReturnType<NonNullable<AgentSession["agent"]["prepareRequest"]>>>, object>;
 
-/*
+/**
 FNXC:HeartbeatTermination 2026-10-19-09:10:
 Terminal intent must close dispatch even while no abortable replacement session is bound.
 Preserve the SDK's hooks and enforce the monitor's existing latch at turn/request boundaries.
@@ -36,7 +36,7 @@ export function installHeartbeatTerminationHooks(session: Session, shouldStop: (
   };
 }
 
-/** Keep genuine failures visible even if a credential rotation already in flight re-enters. */
+/** FNXC:HeartbeatTermination 2026-10-19-11:20: Keep genuine failures visible even if a credential rotation already in flight re-enters. */
 export function createHeartbeatPromptAttemptRunner(shouldStop: () => boolean) {
   let failure: unknown;
   let failed = false;

@@ -3418,6 +3418,7 @@ export class HeartbeatMonitor {
           ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
           actionGateContext: this.buildActionGateContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
           permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
+          onSessionCreated: (created) => installHeartbeatTerminationHooks(created, shouldStopHeartbeat),
         });
         heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
         installHeartbeatTerminationHooks(session, shouldStopHeartbeat);
@@ -3990,6 +3991,7 @@ export class HeartbeatMonitor {
                   ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
                   actionGateContext: this.buildActionGateContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
                   permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
+                  onSessionCreated: (created) => installHeartbeatTerminationHooks(created, shouldStopHeartbeat),
                 });
                 session = created.session;
                 heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
@@ -4061,6 +4063,11 @@ export class HeartbeatMonitor {
 
           await flushAgentLogger();
 
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
+
           // Mark messages as read after successful processing (only if messages were included in prompt)
           if (pendingMessages.length > 0 && this.messageStore) {
             try {
@@ -4068,6 +4075,11 @@ export class HeartbeatMonitor {
             } catch (markReadErr) {
               heartbeatLog.warn(`Failed to mark messages as read for ${agentId}: ${markReadErr instanceof Error ? markReadErr.message : String(markReadErr)}`);
             }
+          }
+
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
           }
 
           // Complete run successfully
@@ -4092,6 +4104,11 @@ export class HeartbeatMonitor {
             resultJson: completionResultJson,
             stdoutExcerpt: stdoutExcerpt || undefined,
           });
+
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
 
           if (shouldRecordSelfImprove && this.selfImproveService) {
             try {

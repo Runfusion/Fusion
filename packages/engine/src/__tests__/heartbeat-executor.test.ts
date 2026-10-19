@@ -11,6 +11,7 @@ import {
   HEARTBEAT_NO_TASK_PROCEDURE,
   getAgentSoulWords,
 } from "../agent-heartbeat.js";
+import * as heartbeatTokenUsage from "../execution/session-token-usage.js";
 import { AgentLogger } from "../agents/agent-logger.js";
 import { expectAppendAgentLog } from "./agent-log-assertions.js";
 import {
@@ -3985,6 +3986,51 @@ describe("executeHeartbeat", () => {
       expect(result.status).toBe("terminated");
       expect(mockedCreateFnAgent).not.toHaveBeenCalled();
       expect(appendAgentLog).not.toHaveBeenCalled();
+    });
+
+
+    it.each(["token accounting", "logger flush", "inbox write"])("does not record success effects after cancellation during %s", async (phase) => {
+      const store = createStoreWithAgentForExec();
+      const mockSession = createMockAgentSession();
+      let promptReturned = false;
+      mockSession.prompt = vi.fn(async () => { promptReturned = true; });
+      mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+      let reached!: () => void;
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { reached = resolve; });
+      const resume = new Promise<void>((resolve) => { release = resolve; });
+      let gated = false;
+      const gate = async () => { if (!gated) { gated = true; reached(); await resume; } };
+      const tokenSpy = vi.spyOn(heartbeatTokenUsage, "accumulateSessionTokenUsage");
+      if (phase === "token accounting") tokenSpy.mockImplementation(gate);
+      const flush = AgentLogger.prototype.flush;
+      const flushSpy = vi.spyOn(AgentLogger.prototype, "flush").mockImplementation(async function () {
+        if (phase === "logger flush" && promptReturned) await gate();
+        return flush.call(this);
+      });
+      const markAllAsRead = vi.fn(async () => { if (phase === "inbox write") await gate(); });
+      const messageStore = {
+        setMessageToAgentHook: vi.fn(), getInbox: vi.fn().mockReturnValue([createMessage({ id: "pending-inbox", fromId: "agent-2", content: "Process this message" })]),
+        markAllAsRead,
+      } as unknown as MessageStore;
+      const recordSelfImprove = vi.fn();
+      const monitor = new HeartbeatMonitor({
+        store, taskStore: mockTaskStore, messageStore, rootDir: "/tmp",
+        selfImproveService: { shouldRunSelfImprove: vi.fn().mockResolvedValue(true), getSelfImprovePrompt: vi.fn().mockResolvedValue("Reflect"), recordSelfImprove } as any,
+      });
+      const execution = monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+      try {
+        await pending;
+        await monitor.stopRun("agent-001", { preservePausedState: true });
+      } finally {
+        release();
+      }
+      const result = await execution;
+      tokenSpy.mockRestore();
+      flushSpy.mockRestore();
+      expect(result.status).toBe("terminated");
+      expect(markAllAsRead).toHaveBeenCalledTimes(phase === "inbox write" ? 1 : 0);
+      expect(recordSelfImprove).not.toHaveBeenCalled();
     });
 
     it("fences late session callbacks after an operator stop terminalizes the run", async () => {

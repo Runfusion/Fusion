@@ -98,6 +98,7 @@ interface FakeSessionEnv {
 
 const ownedDirs: OwnedDirs[] = [];
 
+/** FNXC:HeartbeatTermination 2026-10-19-11:20: Allocate test-owned session directories and register them for teardown. */
 function makeOwnedDirs(): OwnedDirs {
   const base = mkdtempSync(join(tmpdir(), "heartbeat-guard-heartbeat-"));
   const dirs = { cwd: join(base, "cwd"), agentDir: join(base, "agentDir") };
@@ -115,6 +116,7 @@ afterAll(() => {
   }
 });
 
+/** FNXC:HeartbeatTermination 2026-10-19-11:20: Keep real SDK sessions isolated from the machine's extensions, skills and prompt files. */
 function createEmptyResourceLoader(): ResourceLoader {
   return {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
@@ -131,6 +133,7 @@ function createEmptyResourceLoader(): ResourceLoader {
   };
 }
 
+/** FNXC:HeartbeatTermination 2026-10-19-11:20: Build a protocol-valid deterministic response for the real SDK agent loop. */
 function buildAssistantMessage(
   model: { api: string; provider: string; id: string },
   spec: ScriptedResponse,
@@ -264,12 +267,14 @@ async function createFakeSdkEnv(): Promise<FakeSessionEnv> {
 }
 
 
+/** FNXC:HeartbeatTermination 2026-10-19-11:20: Coordinate cancellation and stream preparation without real-time sleeps. */
 function deferredGate(): DeferredGate {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
 
+/** FNXC:HeartbeatTermination 2026-10-19-11:20: Open a real SDK session with the fixture provider and monitor-state termination hooks. */
 async function openHeartbeatSession(env: FakeSessionEnv, state: { stopped: boolean; steer?: boolean }) {
   let session!: SdkAgentSession;
   const tools: ToolDefinition[] = [{

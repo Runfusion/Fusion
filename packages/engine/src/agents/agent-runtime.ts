@@ -203,6 +203,8 @@ export interface AgentRuntimeOptions {
    * the runtime's internal setup latency rather than unbounded.
    */
   beforeSpawnSession?: () => Promise<void> | void;
+  /** FNXC:HeartbeatTermination 2026-10-19-11:15: Configure each SDK session before prompting, including internal model or thinking-level replacements. */
+  onSessionCreated?: (session: AgentSession) => void;
   /** Callback fired when runtime falls back from primary model to fallback model. */
   onFallbackModelUsed?: (payload: FallbackModelUsedPayload) => Promise<void> | void;
   /** Optional task context for fallback notifications. */
