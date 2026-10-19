@@ -46,7 +46,7 @@ import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {getTaskMergeBlocker} from "../merge/task-merge.js";
 import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
-import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
+import {__setTaskActivityLogLimitsForTesting, compactTaskActivityLog, truncateTaskLogOutcome} from "../task-store/comments.js";
 import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "./async/async-persistence.js";
 import {disposeTaskBeforeMove} from "../tasks/task-move-disposer.js";
 import {resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
@@ -275,6 +275,42 @@ export interface MoveTaskIfResult {
   moved: boolean;
 }
 
+/*
+FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+Thrown INSIDE the move transaction when a caller-supplied fenced decision no longer matches the fresh
+row. It aborts the transaction — so neither the decision nor the transition persists — and
+`moveTaskIfImpl` converts it to the honest `{ task, moved: false }` receipt. It is deliberately a
+distinct class: a genuine store failure must not be mistaken for an expected-row mismatch, and a
+caller that reached `moveTaskInternal` directly (rather than through the conditional seam) sees a
+throw rather than a silent skip.
+*/
+export class FencedMoveDecisionRefusedError extends Error {
+  constructor(
+    readonly taskId: string,
+    readonly reason: "missing-row" | "deleted" | "revision-mismatch" | "column-mismatch" | "identity-mismatch",
+  ) {
+    super(`Fenced move decision refused for ${taskId}: ${reason}`);
+    this.name = "FencedMoveDecisionRefusedError";
+  }
+}
+
+/**
+ * FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+ * The project's own activity-log discipline (`comments.ts`: push, then trim to
+ * `getTaskActivityLogEntryLimit()` with `truncateTaskLogOutcome` applied) reproduced for an
+ * in-transaction append. Composed from the FRESH transaction row so prior history survives and the
+ * cap still holds — never from a caller-captured or log-stripped read.
+ */
+function appendDecisionEntryToLog(existingLog: Task["log"], entry: { action: string; outcome?: string }): Task["log"] {
+  const timestamp = new Date().toISOString();
+  const appended = [...(existingLog ?? []), {
+    timestamp,
+    action: entry.action,
+    ...(entry.outcome !== undefined ? { outcome: truncateTaskLogOutcome(entry.outcome) } : {}),
+  }];
+  return compactTaskActivityLog(appended);
+}
+
 /**
  * FNXC:RuntimeTaskOrchestrationAsync 2026-07-29-12:00:
  * FN-8361 recovery releases must read, predicate, and transition under one task
@@ -287,6 +323,7 @@ export async function moveTaskIfImpl(
   toColumn: ColumnId,
   predicate: (live: Task) => boolean | Promise<boolean>,
   options?: MoveTaskOptions,
+  fencedDecision?: MoveTaskInternalOptions["fencedDecision"],
 ): Promise<MoveTaskIfResult> {
   const movePolicyPreflight = await store.prepareWorkflowMovePolicyPreflight(id, toColumn, options, { fromHandoff: false });
   return store.withTaskLock(id, async () => {
@@ -294,10 +331,26 @@ export async function moveTaskIfImpl(
     if (!await predicate(live) || live.column === toColumn) {
       return { task: live, moved: false };
     }
-    const task = await store.moveTaskInternal(id, toColumn, options, {
-      fromHandoff: false,
-      movePolicyPreflight,
-    }, live);
+    let task: Task;
+    try {
+      task = await store.moveTaskInternal(id, toColumn, options, {
+        fromHandoff: false,
+        movePolicyPreflight,
+        ...(fencedDecision ? { fencedDecision } : {}),
+      }, live);
+    } catch (error) {
+      /*
+      FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+      An expected-row mismatch proved a NEWER committed row exists. The transaction already rolled
+      back, so nothing landed; report the honest skip with the fresh row rather than pretending the
+      stale caller's decision moved anything. Every other error propagates unchanged.
+      */
+      if (error instanceof FencedMoveDecisionRefusedError) {
+        const fresh = await store.readTaskForMove(id).catch(() => live);
+        return { task: fresh, moved: false };
+      }
+      throw error;
+    }
     return { task, moved: true };
   });
 }
@@ -1162,6 +1215,70 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       (the failure mode that made the R1 sentinel unbindable).
       */
       await acquireTaskAdvisoryXactLock(tx, layer.projectId, id);
+
+      /*
+       * The fenced decision's composed log. Declared here and APPLIED after the `terminalFailureApply`
+       * branch below, because that branch rebuilds `task` wholesale from its own fresh-row read; applying
+       * the decision log last guarantees the two never silently discard each other.
+       */
+      let fencedDecisionLog: Task["log"] | undefined;
+
+      /*
+      FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+      THE FENCED DECISION APPLIES HERE — after the per-task advisory lock, against the FRESH row, in
+      the SAME transaction as the column transition and the `task:move` audit row.
+
+      Why here and not earlier: the caller's `moveTaskIf` predicate ran under `withTaskLock`, which is
+      an IN-PROCESS promise chain — this file's own capacity comment states the deployment shape that
+      makes that insufficient ("multi-node is several nodes against one PostgreSQL database"). And
+      `moveTaskInternal` upserts the caller-captured snapshot, so a decision appended outside this
+      transaction can be overwritten by the very move it explains. Below the advisory lock the row
+      cannot change until this transaction commits or rolls back, so the revision/identity re-check
+      here is a real fence rather than an observation, and the append + transition + audit are one
+      commit-or-rollback pair.
+
+      A mismatch THROWS (rolling the transaction back) rather than returning, so the caller can never
+      mistake "nothing persisted" for "the archive landed".
+      */
+      if (internal.fencedDecision) {
+        const fenced = internal.fencedDecision;
+        const freshRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+        if (!freshRow) throw new FencedMoveDecisionRefusedError(id, "missing-row");
+        const fresh = store.rowToTask(store.pgRowToTaskRow(freshRow));
+        const expected = fenced.expected;
+        if (fresh.deletedAt != null) throw new FencedMoveDecisionRefusedError(id, "deleted");
+        if (fresh.column !== expected.expectedColumn) throw new FencedMoveDecisionRefusedError(id, "column-mismatch");
+        /*
+        FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+        The durable REVISION check. `updatedAt` is the row's revision token here — the value the caller
+        captured from the row it had just read — and it is exactly why `updatedAt` must not double as
+        the caller's episode signal: `logEntry` advances it on both persistence branches, so a
+        self-logging boundary comparing it would make every legitimate decision self-invalidate.
+        */
+        if (fresh.updatedAt !== expected.expectedUpdatedAt) throw new FencedMoveDecisionRefusedError(id, "revision-mismatch");
+        if ((fresh.checkedOutBy ?? null) !== (expected.expectedCheckedOutBy ?? null)) throw new FencedMoveDecisionRefusedError(id, "revision-mismatch");
+        if ((fresh.checkoutNodeId ?? null) !== (expected.expectedCheckoutNodeId ?? null)) throw new FencedMoveDecisionRefusedError(id, "revision-mismatch");
+        if ((fresh.checkoutLeaseEpoch ?? 0) !== (expected.expectedCheckoutLeaseEpoch ?? 0)) throw new FencedMoveDecisionRefusedError(id, "revision-mismatch");
+        if (expected.identity) {
+          for (const [key, want] of Object.entries(expected.identity)) {
+            const keyTyped = key as keyof typeof expected.identity & keyof Task;
+            const has = Object.prototype.hasOwnProperty.call(expected.identity, keyTyped);
+            if (!has) continue;
+            const identityKey = keyTyped as keyof Task;
+            if (fresh[identityKey] !== want) throw new FencedMoveDecisionRefusedError(id, "identity-mismatch");
+          }
+        }
+
+        /*
+        FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+        The log is composed from the FRESH row, so an unrelated newer history entry can never be
+        clobbered and the project's log cap/truncation still applies. The remaining transition fields
+        stay as the caller's move computed them — the revision check above already proved this row is
+        the one the caller predicated on, so those fields are not stale.
+        */
+        fencedDecisionLog = appendDecisionEntryToLog(fresh.log, fenced.entry);
+      }
+
       if (internal.terminalFailureApply) {
         /*
         FNXC:TaskWedgeNotifications 2026-08-10-20:40:
@@ -1192,6 +1309,8 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           },
         } as Task;
       }
+      if (fencedDecisionLog) task = { ...task, log: fencedDecisionLog };
+
       const capacityWorkflowId = await readTaskWorkflowSelectionInTransaction(tx, layer.projectId, id);
       const capacityPoolId = resolveCapacityPoolId(capacityWorkflowId);
       const capacityIr = await resolveWorkflowIrForSelectedWorkflowId(store, capacityWorkflowId);
