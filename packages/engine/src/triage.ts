@@ -664,7 +664,7 @@ export function createGhostBugProbeExec(
       const result = await runExecFile(argv[0]!, argv.slice(1), {
         cwd: options?.cwd,
         timeout: options?.timeoutMs,
-        maxBuffer: 1024 * 1024,
+        maxBuffer: (argv[1] === "ls-tree" || argv[1] === "show") ? 16 * 1024 * 1024 : 1024 * 1024,
         shell: false,
       });
       return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
@@ -5747,8 +5747,8 @@ export class TriageProcessor {
             branch: expected.branch,
             worktree: expected.worktree,
             baseCommitSha: expected.baseCommitSha,
-            title: ctx.consumed.title,
-            description: ctx.consumed.description,
+            title: expected.title,
+            description: expected.description,
           },
         },
       },

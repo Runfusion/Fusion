@@ -13,8 +13,9 @@
  *  - PRIOR HISTORY SURVIVES (the clobber this design prevents is a stripped-read overwrite), and
  *  - a MISMATCHED expected record lands NEITHER the decision NOR the move.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { pgDescribe, createSharedPgTaskStoreTestHarness } from "../__test-utils__/pg-test-harness.js";
+import * as persistence from "../task-store/async/async-persistence.js";
 import { __setTaskActivityLogLimitsForTesting } from "../task-store/comments.js";
 
 pgDescribe("moveTaskIf fenced decision — atomic decision + transition", () => {
@@ -30,6 +31,43 @@ pgDescribe("moveTaskIf fenced decision — atomic decision + transition", () => 
     if (!row) throw new Error(`fixture row ${taskId} disappeared`);
     return row;
   };
+
+
+  it("holds a PostgreSQL row lock from fenced validation until the move commits", async () => {
+    const store = harness.store();
+    const task = await store.createTask({ description: "fenced move row-lock serialization" });
+    const before = await readRow(store, task.id);
+    let reached!: () => void;
+    let release!: () => void;
+    const rowRead = new Promise<void>((resolve) => { reached = resolve; });
+    const continueMove = new Promise<void>((resolve) => { release = resolve; });
+    const originalRead = persistence.readTaskRowInTransaction;
+    let gated = false;
+    const spy = vi.spyOn(persistence, "readTaskRowInTransaction").mockImplementation(async (...args) => {
+      const row = await originalRead(...args);
+      if (args[1] === task.id && !gated) {
+        gated = true; reached(); await continueMove;
+      }
+      return row;
+    });
+    const move = store.moveTaskIf(task.id, "in-progress", () => true, { moveSource: "engine" }, {
+      entry: { action: "row-locked decision" },
+      expected: { expectedColumn: before.column, expectedUpdatedAt: before.updatedAt },
+    });
+    try {
+      await rowRead;
+      await expect(harness.adminSql().begin(async (sql) => {
+        await sql.unsafe("SELECT id FROM project.tasks WHERE id = $1 FOR UPDATE NOWAIT", [task.id]);
+      })).rejects.toMatchObject({ code: "55P03" });
+    } finally {
+      release();
+      await move;
+      spy.mockRestore();
+    }
+    expect((await readRow(store, task.id)).column).toBe("in-progress");
+    await harness.adminSql().unsafe("UPDATE project.tasks SET paused = 1 WHERE id = $1", [task.id]);
+    expect((await readRow(store, task.id)).paused).toBe(true);
+  });
 
   it("APPLIES the decision entry to the fresh in-transaction row and commits it WITH the transition", async () => {
     const store = harness.store();

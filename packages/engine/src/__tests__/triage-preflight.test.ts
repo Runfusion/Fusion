@@ -202,7 +202,7 @@ describe("triage-preflight", () => {
     for (const { argv } of greps) {
       // The revision is a discrete positional element BEFORE the `--` pathspec separator, and every
       // argv entry is discrete data — nothing shell-interpolated could smuggle a pipe or subshell.
-      expect(argv.slice(0, 6)).toEqual(["git", "grep", "-nF", "-e", expect.any(String), REVISION.sha]);
+      expect(argv.slice(0, 6)).toEqual(["git", "grep", "-qF", "-e", expect.any(String), REVISION.sha]);
       expect(argv[6]).toBe("--");
       expect(argv.join(" ")).not.toMatch(/packages\/|\|\| true|\||&&|;|\$\(/);
     }
@@ -249,7 +249,7 @@ describe("triage-preflight", () => {
     const exec = vi.fn().mockResolvedValue({ stdout: "", stderr: "", exitCode: 1 });
     const leadingDash = await probeCitedConstructs([{ kind: "snippet", raw: "-not-an-option" }], { cwd: "/repo", exec, revision: REVISION });
     expect(leadingDash[0].probeError).toBeUndefined();
-    expect(exec.mock.calls[0][0].slice(0, 7)).toEqual(["git", "grep", "-nF", "-e", "-not-an-option", REVISION.sha, "--"]);
+    expect(exec.mock.calls[0][0].slice(0, 7)).toEqual(["git", "grep", "-qF", "-e", "-not-an-option", REVISION.sha, "--"]);
     exec.mockClear();
     const unsafe = await probeCitedConstructs([
       { kind: "snippet", raw: "bad\ninput" },
@@ -366,7 +366,7 @@ describe("triage-preflight", () => {
   /* ── worktree ownership gates (GhostBug) ────────────────────────────────────── */
 
   it("Gate 1: rejects an unsafe declared path with pure string checks and ZERO filesystem or containment access", async () => {
-    for (const worktree of ["relative/dir", "/has space/dir", "/nul\0dir", "/trailing space/", "\n/etc"]) {
+    for (const worktree of ["relative/dir", "/nul\0dir", "/tab\tdir", "/delete\x7fdir", "\n/etc"]) {
       const git = branchOnly();
       const decision = await preflight(git, "`foo_bar`", {
         worktree,
@@ -546,7 +546,7 @@ describe("triage-preflight", () => {
     const gitSetup = (args: string[], cwd?: string) => execFileSync("git", args, { cwd: cwd ?? root, encoding: "utf8" }).trim();
 
     beforeEach(async () => {
-      root = await realpath(await mkdtemp(join(tmpdir(), "fusion-ghost-real-")));
+      root = await realpath(await mkdtemp(join(tmpdir(), "fusion ghost real ")));
       gitSetup(["init", "-b", "main"]);
       gitSetup(["config", "user.email", "zp-002@example.invalid"]);
       gitSetup(["config", "user.name", "GhostBug"]);
@@ -976,4 +976,46 @@ describe("triage-preflight", () => {
     expect(rejecting).toHaveBeenCalledWith("git", ["grep", "needle"], expect.objectContaining({ cwd: "/repo", timeout: 123, maxBuffer: 1024 * 1024, shell: false }));
     await expect(createGhostBugProbeExec(vi.fn().mockRejectedValue({ stdout: "", stderr: "fatal" }))(["git", "status"])).resolves.toEqual({ stdout: "", stderr: "fatal" });
   });
+});
+
+describe("review regressions: worktree spaces and probe output bounds", () => {
+
+  it("accepts spaces in an owned worktree while preserving repository identity checks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion owned space "));
+    try {
+      const owned = join(root, "worktrees", "task with spaces");
+      await mkdir(owned, { recursive: true });
+      const git = branchOnly({
+        commonDirFor: () => join(root, ".git"),
+        headFor: () => REVISION.sha,
+        grep: () => "hit",
+      });
+      const result = await runGhostBugPreflight(task, "`foo_bar`", {
+        rootDir: root, exec: git.exec, branch: "fusion/T-1", worktree: owned,
+        isOwnedWorktreePath: (candidate) => candidate === owned,
+      });
+      expect(result).toMatchObject({ decision: "pass", passKind: "verified-present" });
+      expect(git.calls.some(({ cwd }) => cwd === owned)).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("keeps a large tree listing available and uses bounded-output grep probes", async () => {
+    const listing = "src/example.ts\n" + "src/other-entry.ts\n".repeat(70000);
+    const exec = createGhostBugProbeExec(async (_file, args, options) => {
+      if (args[0] === "ls-tree") {
+        expect(options.maxBuffer).toBeGreaterThan(Buffer.byteLength(listing));
+        return { stdout: listing, stderr: "" };
+      }
+      if (args[0] === "show") {
+        expect(options.maxBuffer).toBeGreaterThan(2 * 1024 * 1024);
+        return { stdout: "export const sampleControl = true;\n" + "x".repeat(2 * 1024 * 1024), stderr: "" };
+      }
+      expect(args.slice(0, 2)).toEqual(["grep", "-qF"]);
+      return { stdout: "", stderr: "" };
+    });
+    expect(await runProbePositiveControl({ cwd: "/repo", exec, revision: REVISION })).toBe("matched");
+    expect(await probeCitedConstructs([{ kind: "identifier", raw: "sampleControl" }], { cwd: "/repo", exec, revision: REVISION }))
+      .toMatchObject([{ matched: true }]);
+  });
+
 });

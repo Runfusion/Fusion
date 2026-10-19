@@ -352,8 +352,7 @@ function canonicalizeOnce(path: string): string {
 function isLexicallySafeAbsolutePath(candidate: unknown): candidate is string {
   return typeof candidate === "string"
     && candidate.length > 0
-    && !/[\0\n\r]/.test(candidate)
-    && !/\s/.test(candidate)
+    && !/[\x00-\x1f\x7f]/.test(candidate)
     && isAbsolute(candidate);
 }
 
@@ -763,7 +762,7 @@ export async function probeCitedConstructs(
     const revision = opts.revision.sha;
     const argv = construct.kind === "identifier" && construct.filePath
       ? ["git", "cat-file", "-e", `${revision}:${construct.filePath}`]
-      : ["git", "grep", "-nF", "-e", construct.raw, revision, "--", ":/"];
+      : ["git", "grep", "-qF", "-e", construct.raw, revision, "--", ":/"];
     try {
       findings.push(classifyProbe(construct, await opts.exec(argv, { cwd: opts.cwd, timeoutMs })));
     } catch (error) {
@@ -817,7 +816,7 @@ export async function runProbePositiveControl(
     ));
     if (!line) return "unavailable";
 
-    const probe = await exec(["git", "grep", "-nF", "-e", line, revision, "--", ":/"]);
+    const probe = await exec(["git", "grep", "-qF", "-e", line, revision, "--", ":/"]);
     if (probe.exitCode === 0) return "matched";
     return probe.exitCode === 1 && probe.stderr.trim().length === 0 ? "unmatched" : "unavailable";
   } catch {

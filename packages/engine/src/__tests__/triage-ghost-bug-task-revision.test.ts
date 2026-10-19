@@ -425,6 +425,19 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
     }).finalizeApprovedTask(task, written, { requirePlanApproval: false } as Settings);
   }
 
+
+  async function runTimedOutFinalize(harness: StoreHarness, rootDir: string, task: Task, written: string): Promise<void> {
+    let reached!: () => void;
+    const probeReached = new Promise<void>((resolve) => { reached = resolve; });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const result = runFinalize(harness, rootDir, task, written, () => { reached(); return NEVER_SETTLES([], undefined); });
+      await probeReached;
+      await vi.advanceTimersByTimeAsync(15001);
+      await result;
+    } finally { vi.useRealTimers(); }
+  }
+
   /** A release-path assertion: the card reached the ready lane through the real handoff. */
   function expectReleased(harness: StoreHarness) {
     expect(harness.row.column).toBe(HOLDING);
@@ -455,6 +468,16 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
     // No archive commit, so no decision record and no archive-side visibility rows.
     expect(harness.commits.some((commit) => commit.decisionAction)).toBe(false);
     expect(harness.activities).toEqual([]);
+  });
+
+
+  it.each([undefined, null, ""])("archives a bug-fix task with a missing or blank title (%s)", async (title) => {
+    const written = specFor("BUG-022");
+    const rootDir = await fixtureRoot("BUG-022", written);
+    const task = taskFixture({ id: "BUG-022", title, description: "Fix a bug: typecheck error in `ghost_target_fn`", branch: "fusion/T-1" } as never);
+    const harness = createStoreHarness({ task: { ...task } });
+    await runFinalize(harness, rootDir, task, written, revisionExec({ constructPresentOn: [], controlOkOn: [REVISION_SHA], branchTip: REVISION_SHA }));
+    expect(harness.row.column).toBe(ARCHIVED);
   });
 
   it("LEGITIMATE ARCHIVE: genuine absence on the proven revision with a passing control archives transaction-atomically", async () => {
@@ -611,7 +634,7 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
     const harness = createStoreHarness({ task: { ...task } });
 
     // A probe exec that never settles — the exact shape of the old fail-open timeout.
-    await runFinalize(harness, rootDir, task, written, NEVER_SETTLES);
+    await runTimedOutFinalize(harness, rootDir, task, written);
 
     expect(harness.row.paused).toBe(true);
     expect(harness.row.pausedReason).toBe("ghost-bug-preflight-unverified");
@@ -654,7 +677,7 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
     expect(harness.row.paused).not.toBe(true);
   });
 
-  it("CONSUMED-INPUT BINDING: a PROMPT.md rewrite during the commit window blocks the archive and pauses nothing", async () => {
+  it("LEGITIMATE ARCHIVE: a proven branch needs no baseline HEAD", async () => {
     const written = specFor("BUG-009");
     const rootDir = await fixtureRoot("BUG-009", written);
     const task = taskFixture({ id: "BUG-009", branch: "fusion/T-1" });
@@ -666,7 +689,6 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
       branchTip: REVISION_SHA,
     }), messageStoreDouble(harness));
 
-    // Simulated independently below: rewrite the authoritative artifact BEFORE the boundary runs.
     expect(harness.row.column).toBe(ARCHIVED);
   });
 
@@ -746,15 +768,24 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
       baselineHead: MAIN_SHA,
     });
     let republished = false;
+    let signalRewritten!: () => void;
+    const rewritten = new Promise<void>((resolve) => { signalRewritten = resolve; });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const stalled: ProbeExec = async (argv, opts) => {
       if (argv[1] === "grep" && !republished) {
         republished = true;
         await writeFile(join(rootDir, ".fusion", "tasks", "BUG-011", "PROMPT.md"), promptB, "utf-8");
+        signalRewritten();
         return new Promise<never>(() => undefined);
       }
       return base(argv, opts);
     };
-    await runFinalize(harness, rootDir, task, promptA, stalled);
+    try {
+      const result = runFinalize(harness, rootDir, task, promptA, stalled);
+      await rewritten;
+      await vi.advanceTimersByTimeAsync(15001);
+      await result;
+    } finally { vi.useRealTimers(); }
     expect(republished).toBe(true);
 
     // B is NOT paused, no task-log entry was added, and nothing was handed off.
@@ -770,7 +801,7 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
     const task = taskFixture({ id: "BUG-012", branch: "fusion/T-1" });
     const harness = createStoreHarness({ task: { ...task } });
 
-    await runFinalize(harness, rootDir, task, written, NEVER_SETTLES);
+    await runTimedOutFinalize(harness, rootDir, task, written);
 
     expect(harness.row.paused).toBe(true);
     expect(harness.row.pausedReason).toBe("ghost-bug-preflight-unverified");
@@ -870,7 +901,7 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
     const task = taskFixture({ id: "BUG-015", branch: "fusion/T-1" });
     const harness = createStoreHarness({ task: { ...task }, refuseHoldFence: true });
 
-    await runFinalize(harness, rootDir, task, written, NEVER_SETTLES);
+    await runTimedOutFinalize(harness, rootDir, task, written);
 
     // Refused: no pause, no history entry, no release, and NO false durable-hold claim.
     expect(harness.row.paused).not.toBe(true);

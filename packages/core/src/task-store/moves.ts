@@ -1232,7 +1232,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       an IN-PROCESS promise chain — this file's own capacity comment states the deployment shape that
       makes that insufficient ("multi-node is several nodes against one PostgreSQL database"). And
       `moveTaskInternal` upserts the caller-captured snapshot, so a decision appended outside this
-      transaction can be overwritten by the very move it explains. Below the advisory lock the row
+      transaction can be overwritten by the very move it explains. The row-level lock below also fences writers that do not use the advisory lock; the row
       cannot change until this transaction commits or rolls back, so the revision/identity re-check
       here is a real fence rather than an observation, and the append + transition + audit are one
       commit-or-rollback pair.
@@ -1242,7 +1242,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       */
       if (internal.fencedDecision) {
         const fenced = internal.fencedDecision;
-        const freshRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+        const freshRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true, forUpdate: true }, layer.projectId);
         if (!freshRow) throw new FencedMoveDecisionRefusedError(id, "missing-row");
         const fresh = store.rowToTask(store.pgRowToTaskRow(freshRow));
         const expected = fenced.expected;
