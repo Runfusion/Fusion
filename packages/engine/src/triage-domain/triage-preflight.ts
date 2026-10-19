@@ -86,6 +86,7 @@ const TEXTISH_EXTENSIONS = new Set([
   "vue", "svelte", "sh",
 ]);
 
+/** FNXC:GhostBugPreflight 2026-10-19-11:20: Recognize corrective tasks from their title or description before running Git probes. */
 export function isBugFixShape(task: { title: string | null; description: string }): boolean {
   const title = task.title?.trim() ?? "";
   const description = task.description?.trim() ?? "";
@@ -94,6 +95,7 @@ export function isBugFixShape(task: { title: string | null; description: string 
   return BUG_FIX_REGEX.test(`${title}\n${description}`);
 }
 
+/** FNXC:GhostBugPreflight 2026-10-19-11:20: Extract a bounded, deduplicated set of cited code constructs from the accepted prompt. */
 export function extractCitedConstructs(prompt: string): CitedConstruct[] {
   const seen = new Set<string>();
   const constructs: CitedConstruct[] = [];
@@ -139,6 +141,7 @@ export function extractCitedConstructs(prompt: string): CitedConstruct[] {
   return constructs;
 }
 
+/** FNXC:GhostBugPreflight 2026-10-19-11:20: Bound retained probe diagnostics without changing the exit-status verdict. */
 function truncateOutput(stdout: string): string {
   const trimmed = stdout.trim();
   return trimmed.length <= MAX_OUTPUT_LENGTH ? trimmed : `${trimmed.slice(0, MAX_OUTPUT_LENGTH)}…[truncated]`;
@@ -238,6 +241,7 @@ export type GhostBugUnverifiedReason = (typeof GHOST_BUG_UNVERIFIED_REASONS)[num
 
 const UNVERIFIED_REASON_SET: ReadonlySet<string> = new Set<string>(GHOST_BUG_UNVERIFIED_REASONS);
 
+/** FNXC:GhostBugPreflight 2026-10-19-11:20: Narrow persisted reason text to a recognized fail-closed outcome. */
 export function isGhostBugUnverifiedReason(value: string): value is GhostBugUnverifiedReason {
   return UNVERIFIED_REASON_SET.has(value);
 }
@@ -403,6 +407,7 @@ async function observeRepositoryIdentityDir(
   }
 }
 
+/** FNXC:GhostBugPreflight 2026-10-19-11:20: Resolve and validate a commit object at the already selected repository directory. */
 async function resolveCommitObjectAt(
   exec: ProbeExec,
   cwd: string,
@@ -713,6 +718,7 @@ export interface ProbeRevisionContext {
   revision?: ResolvedProbeRevision;
 }
 
+/** FNXC:GhostBugPreflight 2026-10-19-11:20: Probe each cited construct against the pinned revision with bounded diagnostics. */
 export async function probeCitedConstructs(
   constructs: CitedConstruct[],
   opts: { cwd: string; timeoutMs?: number; exec: ProbeExec } & ProbeRevisionContext,

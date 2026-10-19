@@ -396,6 +396,7 @@ export async function readTaskRowsBySourceLineage(
   }).from(schema.project.tasks).where(and(scope, sql`(${predicates.reduce((left, right) => sql`${left} OR ${right}`)})`));
 }
 
+/** FNXC:TaskStoreMove 2026-10-19-11:20: Read a project-scoped task inside its transaction, optionally locking it through validation and commit. */
 export async function readTaskRowInTransaction(
   tx: DbTransaction,
   id: string,
