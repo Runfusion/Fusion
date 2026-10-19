@@ -107,6 +107,7 @@ import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels, resolveExecutorFallbackThinkingLevel } from "./agents/agent-session-helpers.js";
+import { createHeartbeatPromptAttemptRunner, installHeartbeatTerminationHooks } from "./agents/heartbeat-termination-hooks.js";
 import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildSessionSkillContextSync } from "./cli-runtime/session-skill-context.js";
@@ -2804,6 +2805,11 @@ export class HeartbeatMonitor {
         let heartbeatSummary: string | undefined;
         let heartbeatCompletionLatched = false;
         let heartbeatProgressBudgetExhausted = false;
+        const heartbeatRetryAbortController = new AbortController();
+        const shouldStopHeartbeat = (): boolean => heartbeatCompletionLatched
+          || heartbeatProgressBudgetExhausted
+          || heartbeatRetryAbortController.signal.aborted
+          || isRunCancellationRequested();
         let heartbeatSession: { abort?: () => void | Promise<void> } | undefined;
         let stdoutExcerpt = "";
 
@@ -2828,6 +2834,7 @@ export class HeartbeatMonitor {
             && !heartbeatProgressBudgetExhausted;
         };
         const stopHeartbeatSession = (): void => {
+          heartbeatRetryAbortController.abort();
           // AgentSession.abort is the supported Pi cancellation entry point. It is
           // intentionally best effort: completeRun still fences any late settlement.
           void Promise.resolve(heartbeatSession?.abort?.()).catch((error: unknown) => {
@@ -3364,7 +3371,6 @@ export class HeartbeatMonitor {
         }
 
         // Create agent session
-        const heartbeatRetryAbortController = new AbortController();
         let { session } = await createResolvedAgentSession({
           sessionPurpose: "heartbeat",
           runtimeHint: extractRuntimeHint(agent.runtimeConfig),
@@ -3414,6 +3420,7 @@ export class HeartbeatMonitor {
           permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
         });
         heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
+        installHeartbeatTerminationHooks(session, shouldStopHeartbeat);
         // A pause can land during asynchronous session construction. Dispose
         // without tracking and never dispatch its first provider turn.
         if (isRunCancellationRequested()) {
@@ -3926,7 +3933,8 @@ export class HeartbeatMonitor {
           if (isRunCancellationRequested()) {
             return (await this.store.getRunDetail(agentId, run.id))!;
           }
-          await withRateLimitRetry(async () => promptWithFallback(session, executionPrompt), {
+          const runPromptAttempt = createHeartbeatPromptAttemptRunner(shouldStopHeartbeat);
+          await withRateLimitRetry(async () => runPromptAttempt(() => promptWithFallback(session, executionPrompt)), {
             signal: heartbeatRetryAbortController.signal,
             rotation: this.credentialRotator && heartbeatSessionModels.defaultProvider ? {
               providerId: heartbeatSessionModels.defaultProvider,
@@ -3985,6 +3993,7 @@ export class HeartbeatMonitor {
                 });
                 session = created.session;
                 heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
+                installHeartbeatTerminationHooks(session, shouldStopHeartbeat);
                 /*
                 FNXC:CommandCenterActivity 2026-08-09-15:06:
                 Credential rotation constructs a replacement AgentSession, so it owns a new
@@ -4010,6 +4019,13 @@ export class HeartbeatMonitor {
             },
           });
           if (dispatchedRotation) rotationEvent?.recordOutcome("rotation-succeeded");
+
+          // A stopped run must not mark its inbox read or record a successful checkpoint.
+          // completeRun's existing terminal fence remains authoritative for its persisted status.
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
 
           // Capture real per-session token counts from pi-coding-agent's
           // SessionStats. Falls back to a 4-chars-per-token estimate of output

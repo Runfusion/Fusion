@@ -4126,6 +4126,50 @@ describe("executeHeartbeat", () => {
   });
 
   describe("fn_heartbeat_done tool", () => {
+    it("installs request and turn fences driven by the monitor's completion latch", async () => {
+      const store = createStoreWithAgentForExec();
+      const mockSession = {
+        ...createMockAgentSession(),
+        agent: { prepareRequest: vi.fn(), finishTurn: vi.fn() },
+      };
+      let doneTool: any;
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        doneTool = opts.customTools[opts.customTools.length - 1];
+        return { session: mockSession as any };
+      });
+      mockSession.prompt.mockImplementation(async () => {
+        await doneTool.execute("done", {});
+        await expect(mockSession.agent.prepareRequest({} as never, undefined as never))
+          .rejects.toThrow("Heartbeat termination requested");
+        await expect(mockSession.agent.finishTurn({} as never, undefined as never))
+          .resolves.toEqual({ action: "end" });
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+      expect(result.status).toBe("completed");
+      expect(mockSession.abort).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces a genuine retryable failure after completion without dispatching another attempt", async () => {
+      const store = createStoreWithAgentForExec();
+      const mockSession = createMockAgentSession();
+      let doneTool: any;
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        doneTool = opts.customTools[opts.customTools.length - 1];
+        return { session: mockSession as any };
+      });
+      mockSession.prompt.mockImplementation(async () => {
+        await doneTool.execute("done", {});
+        throw new Error("429 rate limit after completion");
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+      expect(result.status).toBe("failed");
+      expect(result.stderrExcerpt).toContain("429 rate limit after completion");
+      expect(mockSession.prompt).toHaveBeenCalledTimes(1);
+      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    });
+
     it("captures summary from fn_heartbeat_done in resultJson", async () => {
       const store = createStoreWithAgentForExec();
       let capturedDoneTool: any;
