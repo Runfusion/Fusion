@@ -240,6 +240,19 @@ export async function executeWorkflowStep(
     reviewInputFingerprint?: string;
     /** Identifies the repository inspected by a per-repository workspace dispatch. */
     dispatchLabel?: string;
+    /*
+    FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25:
+    Plan Review R1 — the Plan Review prompt node's ACTUAL reviewer input bytes. The graph executor
+    fingerprints the plan BEFORE it dispatches the reviewer, so the fingerprint must be of the exact
+    string this function materializes into the reviewer context, not of an unrelated earlier read.
+    When present, this string IS the reviewer's PROMPT.md: the pre-dispatch fingerprint and the
+    materialized bytes are therefore the same value by construction, which is the only claim the
+    Plan Review release/anchor proof is allowed to make. A preliminary read elsewhere proves nothing
+    about the bytes a reviewer was actually shown. Only honored for a Plan Review step; every other
+    step keeps the independent store read below byte-for-byte, and an absent/blank snapshot is the
+    pre-existing read path.
+    */
+    planReviewSpecSnapshot?: string;
   },
 ): Promise<WorkflowStepOutcome> {
   const diffBaseCommitSha = stepOptions?.diffBaseCommitSha ?? task.baseCommitSha;
@@ -309,7 +322,24 @@ export async function executeWorkflowStep(
      */
     let workflowReviewSpecArtifact: string | undefined;
     if (isReviewTypeWorkflowStep) {
-      try {
+      /*
+      FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25:
+      Materialization binding: a graph-dispatched Plan Review supplies the exact snapshot it
+      fingerprinted pre-dispatch, so the reviewer consumes those bytes instead of a second,
+      independent read that could have drifted since the capture. This is not a shortcut past the
+      read — it is the binding. The graph's terminal-staleness fence still recomputes the CURRENT
+      plan and refuses when it no longer equals the captured value, so a snapshot that has gone stale
+      blocks; it can never release. Non-plan review steps and snapshot-less dispatches keep the
+      store read unchanged.
+      */
+      const boundPlanReviewSnapshot = isPlanReviewStep
+        && typeof stepOptions?.planReviewSpecSnapshot === "string"
+        && stepOptions.planReviewSpecSnapshot.trim().length > 0
+        ? stepOptions.planReviewSpecSnapshot
+        : undefined;
+      if (boundPlanReviewSnapshot !== undefined) {
+        workflowReviewSpecArtifact = boundPlanReviewSnapshot;
+      } else try {
         workflowReviewSpecArtifact = await deps.readTaskArtifact(task.id, "PROMPT.md");
       } catch (error) {
         const diagnostic = `PROMPT.md could not be read because task storage failed; ${workflowStep.name} must retry without replanning. ${error instanceof Error ? error.message : String(error)}`;

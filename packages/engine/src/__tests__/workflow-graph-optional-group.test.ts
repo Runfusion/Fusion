@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BUILTIN_CODING_WORKFLOW_IR, BUILTIN_STEPWISE_CODING_WORKFLOW_IR, upsertWorkflowStepResult } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, BUILTIN_STEPWISE_CODING_WORKFLOW_IR, computePlanApprovalFingerprint, computeWorkflowIrPin, upsertWorkflowStepResult } from "@fusion/core";
 import type { TaskDetail, WorkflowIr, WorkflowStepResult } from "@fusion/core";
 
 import {
@@ -811,6 +811,35 @@ describe("WorkflowGraphExecutor optional-group", () => {
     ]));
   });
 
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+  Plan Review: a settled-passed Plan Review releases the graph gate only with the FULL current-evidence
+  contract satisfied — a bare passed row (the old shape-only release) now dispatches a genuine
+  review. The fixture below therefore carries a complete dispatch-captured proof bound to the same
+  plan content the wired artifact-read seam returns and to the task's approval anchor.
+  */
+  const releasedPlanArtifact = "# Plan\n\ntriage-approved content";
+  const releasedPlanRow = (ir: WorkflowIr): WorkflowStepResult => {
+    const startedAt = "2026-10-11T09:00:00.000Z";
+    const completedAt = "2026-10-11T09:00:05.000Z";
+    return {
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      phase: "pre-merge",
+      source: "optional-group",
+      status: "passed",
+      verdict: "APPROVE",
+      startedAt,
+      completedAt,
+      reviewedInputIdentity: {
+        planFingerprint: computePlanApprovalFingerprint(releasedPlanArtifact),
+        workflowPin: computeWorkflowIrPin(ir, "plan-review"),
+        runAttemptId: "triage-episode-run",
+        attemptStartedAt: startedAt,
+      },
+    };
+  };
+
   it("skips Plan Review in the execution graph when triage already passed it", async () => {
     const requestFix = vi.fn(async () => true);
     const calls: string[] = [];
@@ -851,12 +880,16 @@ describe("WorkflowGraphExecutor optional-group", () => {
       },
       logTaskEntry: (summary) => { logs.push(summary); },
       requestPreMergeOptionalStepFix: requestFix,
-    });
+      primitives: {
+        readArtifact: async () => releasedPlanArtifact,
+      },
+    } as unknown as ConstructorParameters<typeof WorkflowGraphExecutor>[0]);
 
     const result = await executor.run({
       ...taskWith(["plan-review"]),
       id: "FN-plan-review-passed",
-      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "passed" }],
+      approvedPlanFingerprint: computePlanApprovalFingerprint(releasedPlanArtifact),
+      workflowStepResults: [releasedPlanRow(ir)],
     } as TaskDetail, settingsOn(), ir);
 
     expect(result.outcome).toBe("success");
@@ -936,7 +969,12 @@ describe("WorkflowGraphExecutor optional-group", () => {
     },
   );
 
-  it("repairs missing Plan Review result from the latest completed log before execution", async () => {
+  /*
+  Plan Review (2026-10-11): the former log-repair subject is deleted — task-log prose is never identity.
+  The same inputs (older completed Plan Review log, no current projection) now prove the inverse
+  invariant: a genuine reviewer dispatches against the current plan; nothing is reconstructed.
+  */
+  it("dispatches a genuine Plan Review when only an older completed log exists (no projection, no anchor)", async () => {
     const records: Array<{ workflowStepId: string; status: string; notes?: string }> = [];
     const calls: string[] = [];
     const logs: string[] = [];
@@ -996,17 +1034,16 @@ describe("WorkflowGraphExecutor optional-group", () => {
       ],
     } as TaskDetail, settingsOn(), ir);
 
+    // The old completion log releases nothing: the reviewer genuinely runs first.
+    expect(calls).toEqual(["plan-review-step", "execute"]);
     expect(result.outcome).toBe("success");
-    expect(calls).toEqual(["execute"]);
+    // Only genuine attempt rows — a pending lease claim, then this attempt's terminal row.
     expect(records).toEqual([
-      expect.objectContaining({
-        workflowStepId: "plan-review",
-        workflowStepName: "Plan Review",
-        status: "passed",
-        notes: "approved after replan",
-      }),
+      expect.objectContaining({ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "pending" }),
+      expect.objectContaining({ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "passed", source: "optional-group" }),
     ]);
-    expect(logs).toContain("[pre-merge] Workflow step already passed: Plan Review");
+    // The deleted log-recovery's release log line no longer exists anywhere.
+    expect(logs).not.toContain("[pre-merge] Workflow step already passed: Plan Review");
   });
 
   it("cycles REVISE findings across graph runs until APPROVE, and blocks when the budget seam declines", async () => {

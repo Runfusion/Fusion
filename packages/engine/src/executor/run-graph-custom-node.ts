@@ -27,6 +27,7 @@ import {
   WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY,
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
   WORKFLOW_OPTIONAL_GROUP_PHASE_CONTEXT_KEY,
+  WORKFLOW_PLAN_REVIEW_SNAPSHOT_CONTEXT_KEY,
   WORKFLOW_REVIEW_KIND_CONTEXT_KEY,
 } from "../workflows/workflow-graph-executor.js";
 import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
@@ -409,6 +410,16 @@ export async function runGraphCustomNode(
     // CLI-agent nodes are handled above and remain enforced.
     const optionalGroupId = typeof graphContext?.[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY] === "string"
       ? graphContext[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]
+      : undefined;
+    /*
+    FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25:
+    Plan Review R1: the graph-executor-owned Plan Review snapshot (see
+    `WORKFLOW_PLAN_REVIEW_SNAPSHOT_CONTEXT_KEY`). Read once here and forwarded to the singular-step
+    dispatch only; a script node, a workspace review lane, and every non-plan node ignore it.
+    */
+    const planReviewSpecSnapshot = typeof graphContext?.[WORKFLOW_PLAN_REVIEW_SNAPSHOT_CONTEXT_KEY] === "string"
+      && (graphContext[WORKFLOW_PLAN_REVIEW_SNAPSHOT_CONTEXT_KEY] as string).trim().length > 0
+      ? graphContext[WORKFLOW_PLAN_REVIEW_SNAPSHOT_CONTEXT_KEY] as string
       : undefined;
     /*
     FNXC:WorkflowReviewFindings 2026-08-05-06:29:
@@ -1020,6 +1031,16 @@ export async function runGraphCustomNode(
             outputLanguage,
             ...(nodeSessionBoundary ? { sessionBoundary: nodeSessionBoundary } : {}),
             ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
+            /*
+            FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25:
+            Plan Review R1 — hand the graph's pre-dispatch Plan Review snapshot to the only place that
+            actually materializes the reviewer's PROMPT.md. The graph sets this key solely for a
+            plan-review attempt whose identity it captured and fingerprinted before dispatch; here it
+            becomes the reviewer's input bytes, so "the reviewer reviewed what was fingerprinted" is
+            true by construction rather than inferred from an earlier read. Any other node carries no
+            key and therefore keeps the independent store read.
+            */
+            ...(planReviewSpecSnapshot !== undefined ? { planReviewSpecSnapshot } : {}),
           });
         } finally {
           // The graph owns this per-node environment, so it must retire its exact lease on every exit.

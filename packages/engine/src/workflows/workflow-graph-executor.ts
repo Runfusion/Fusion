@@ -7,11 +7,12 @@ import type {
   WorkflowIrEdge,
   WorkflowIrNode,
   WorkflowIrNodeKind,
+  WorkflowIrPin,
   WorkflowNodeExtensionResult,
   WorkflowStepResult,
   WorkflowStepNotRunReason,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTOR, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied, parseNoOpCompletionMarker, requiresContentReviewProof, resolveRequiredPreMergeStepIds } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, FAST_LANE_SKIP_VALUE, FAST_MODE_BYPASS_ACTOR, PLAN_REVIEW_GROUP_ID, WORKFLOW_STEP_NOT_RUN_REASONS, WorkflowIrError, computePlanApprovalFingerprint, computeWorkflowIrPin, getWorkflowExtensionRegistry, instanceNodeId, resolveFastLaneRoute, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, parseNoOpCompletionMarker, requiresContentReviewProof, resolveRequiredPreMergeStepIds } from "@fusion/core";
 import {
   DEPENDENCY_BOOTSTRAP_CONFIGURATION_REQUIRED_VALUE,
   isDependencyBootstrapConfigurationBlock,
@@ -34,7 +35,7 @@ import {
   type WorkflowCustomNodeRunner,
   type WorkflowLegacySeams,
 } from "./workflow-node-handlers.js";
-import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
+import { primitiveNodeContext, type WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 import type { PrNodeDeps } from "../merge/pr-nodes.js";
 import {
   runSplitJoin,
@@ -171,6 +172,70 @@ export const WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY = "workflow:optionalGroupActive
 export const WORKFLOW_OPTIONAL_GROUP_PHASE_CONTEXT_KEY = "workflow:optionalGroupPhase";
 /** Explicit parent marker for template execution; never inferred from template labels or output. */
 export const WORKFLOW_REVIEW_KIND_CONTEXT_KEY = "workflow:reviewKind";
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+Plan Review: the pre-dispatch captured Plan Review input snapshot. Threaded into the optional group's
+template context so reviewer materialization consumes the exact string the dispatch proof was
+fingerprinted from, instead of an independent read whose equality nothing proves.
+*/
+export const WORKFLOW_PLAN_REVIEW_SNAPSHOT_CONTEXT_KEY = "workflow:plan-review-snapshot";
+
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25:
+Plan Review R3 — an optional capability carried on the already-forwarded runtime-primitives object.
+`WorkflowGraphTaskRunner` forwards its primitives through a `Proxy` that wraps every callable it
+resolves, so an own function property survives the hop and stays callable (it is additionally counted
+as an invoked primitive, which is accurate — it performs a store read). Production attaches the reader
+at the adapter literal for that reason.
+
+An optional capability carried on the runtime-primitives object that
+resolves the CURRENT durable workflow definition for a task. The graph's own `ir` argument is the
+snapshot this run resolved at run start: a workflow definition replaced in the store while a reviewer
+is running leaves that JavaScript object untouched, so recomputing a pin from it proves only what
+THIS run was launched with — never what is durable now. Authority boundaries (Plan Review release,
+terminal staleness, approval-anchor application) therefore take their current pin from this reader
+when one is wired; production attaches `withPlanReviewCurrentWorkflowReader` (execute-workflow-graph
+adapter seam), whose resolution runs through `resolveWorkflowIrForTaskWithProvenance` under the
+STRICT Plan Review classification below — never the bare fail-soft `resolveWorkflowIrForTask`,
+whose default substitution can pin-match a default-equal captured pin from a FAILED read. An
+unwired reader (raw in-memory graph runs, unit harnesses) falls back to the run-start IR, but a
+WIRED reader that returns nothing or throws is unreadable and refuses — it is never treated as
+"unchanged".
+*/
+export const PLAN_REVIEW_CURRENT_WORKFLOW_READER = "workflow:plan-review-current-workflow-reader";
+
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-16:59:
+Plan Review R3 — the reader's 3-state return. The general core resolver is fail-soft BY CONTRACT: a
+throwing selection read, a selected definition that is missing/malformed/throwing, and an
+unregistered builtin id all SUBSTITUTE the default coding IR, and `resolveWorkflowIrForTask`
+reports only the `.ir` — the substitution is invisible to the caller. A Plan Review whose current
+definition genuinely IS a default-equal workflow would then see a read FAILURE produce a pin
+identical to the captured pin: the fail-soft substitution would masquerade as "still current" and
+release or stamp on unknown evidence. Unreadable is UNKNOWN, and unknown blocks. So the
+authoritative Plan Review adapter must classify the resolution BEFORE currentness is accepted —
+a read SUCCESS is never refused here:
+ - a named selection whose definition was read successfully (source "selection"), or
+ - a SUCCESSFUL selection read that found no selection (source "default" with
+   `selectionAbsent: true`), where the default workflow is legitimately authoritative.
+Anything else (throwing selection read, deleted/malformed selected definition, unregistered
+builtin) yields `{ ok: false, reason: "current-workflow-read-failed" }`. Never blanket-reject by
+provenance alone, and never use the IR-id cross-check as a success signal: an authored IR's id may
+legitimately differ from the store-allocated workflow id (core comment on
+`resolveWorkflowIrForTaskWithProvenance`), so id equality proves nothing either way. This strict
+classifier lives in the Plan Review authority paths ONLY — the general core resolver and every
+other consumer keep their fail-soft contract byte-for-byte.
+*/
+export type PlanReviewCurrentIrResolution =
+  | { ok: true; ir: WorkflowIr }
+  | { ok: false; reason: "current-workflow-read-failed" };
+
+export type PlanReviewCurrentWorkflowReader = (taskId: string) => Promise<PlanReviewCurrentIrResolution>;
+
+/** Structural view of the primitives seam with the optional Plan Review reader capability attached. */
+export type PrimitivesWithCurrentWorkflowReader = WorkflowRuntimePrimitives & {
+  readonly [PLAN_REVIEW_CURRENT_WORKFLOW_READER]?: PlanReviewCurrentWorkflowReader;
+};
 export const WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY = "workflow:blockingSeverity";
 export const WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND: WorkflowNodeAbortKind = "engine-pause";
 
@@ -194,19 +259,62 @@ A graph keeps result persistence fail-soft, but a terminal record can require a 
 only after the sink confirms that lease was durably accepted. This receipt prevents a transient
 pending-write failure from suppressing the later terminal gate result.
 */
-export interface WorkflowStepResultPersistenceOutcome {
+export type WorkflowStepResultPersistenceOutcome = {
   /** `false` remains reserved for the repository-scope CAS supersession route. */
   scopeCurrent: boolean;
   /** True only when this invocation durably applied its result patch. */
   persisted: boolean;
   disposition?: "applied" | "fence-refused" | "scope-superseded" | "aborted" | "no-writer" | "error";
   persistedResult?: WorkflowStepResult;
-}
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-20:42:
+  Plan Review (review validation, Code Review finding `anchor-refusal-race-narrow`) — the honest disposition of a
+  Plan Review SATISFIED APPLICATION at the approval-anchor seam. `disposition: "applied"` ONLY
+  describes the ROW write: a genuine passed row may persist as honest history while the anchor
+  authority REFUSES the satisfied application (`anchor-proof-refused`, or
+  `apply-check-ownership-lost`). Preserved history is NOT admission — the fresh graph admission
+  must block on any non-`"applied"` value, and a later successful graph-side re-read in the SAME
+  run may never erase the apply-time refusal. Absent for every non-plan-review or non-satisfied
+  write, keeping all other lanes byte-inert.
+  */
+  satisfiedApplication?: PlanReviewSatisfiedApplication;
+};
+
+/** Fixed vocabulary for the Plan Review satisfied-application disposition (production adapter
+ *  `persistWorkflowStepResultWithOutcome` sets it; the graph's fresh-approving gate consumes it). */
+export type PlanReviewSatisfiedApplication =
+  | "applied"
+  | "anchor-proof-refused"
+  | "apply-check-ownership-lost";
 
 export type WorkflowStepResultPersistenceResult =
   | WorkflowStepResultPersistenceOutcome
   | boolean
   | void;
+
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+Plan Review: closed refusal vocabulary for the graph's Plan Review release contract. A refusal is always
+"dispatch a genuine review", never an inferred PASS; the fixed codes keep the diagnostic surface
+free of task content.
+*/
+type PlanReviewReleaseRefusal =
+  | "no-current-candidate"
+  | "multiple-candidates"
+  | "not-passed"
+  | "no-approving-verdict"
+  | "not-graph-authored"
+  | "historical-carrier-marker"
+  | "missing-original-times"
+  | "non-distinct-original-times"
+  | "incomplete-proof"
+  | "proof-attempt-identity-mismatch"
+  | "workflow-pin-mismatch"
+  | "missing-approval-anchor"
+  | "current-plan-unreadable"
+  | "current-workflow-unreadable"
+  | "plan-identity-mismatch"
+  | "failure-ordering-unprovable";
 
 interface WorkflowNodeProgressLease {
   result: WorkflowStepResult;
@@ -1092,53 +1200,40 @@ export class WorkflowGraphExecutor {
             : node.id;
           /*
           FNXC:PlanReview 2026-08-04-06:35:
-          Triage runs Plan Review before releasing a task to execution so the task stays in the triage column during review. When the execution graph later reaches the same optional group, only an unsuperseded projection may satisfy, repair, or hold the gate; old-episode evidence must never suppress the current reviewer session.
+          Triage runs Plan Review before releasing a task to execution so the task stays in the triage column during review. When the execution graph later reaches the same optional group, only a
+          projection that passes the FULL current-evidence contract may satisfy the gate; old-episode
+          evidence must never suppress the current reviewer session.
+
+          FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+          Plan Review — this is the graph's ONE fail-closed Plan Review release authority. Log prose is
+          never identity and log timestamps only ever block. The binding proof must have been
+          captured BEFORE dispatch from the materialized reviewer snapshot (plan fingerprint +
+          workflow pin + run/attempt identity + exact attemptStartedAt) and is bound three ways at
+          release: recomputed-current == task approval anchor == the row's captured planFingerprint,
+          AND the captured pin == the current resolved workflow/node, AND the proof's attemptStartedAt
+          == the row's own startedAt. Every skipped carrier (operator bypass, arbitration release,
+          fast-mode, stale-callback waiver) never releases here; neither does a CLOSE_NO_OP row — the
+          genuine no-op routing is the only path for a close. Missing, null, unequal, ambiguous, or
+          contradictory evidence falls through to a genuine dispatch; nothing is ever inferred PASS.
+          A release performs no workflow-step write and rewrites nothing.
           */
-          if (
-            node.id === PLAN_REVIEW_GROUP_ID
-            && task.workflowStepResults?.some(isPlanReviewSatisfied)
-          ) {
-            context[`node:${node.id}:outcome`] = "success";
-            this.deps.logTaskEntry?.("[pre-merge] Workflow step already satisfied: Plan Review");
-            return await traverseChildren(node, { outcome: "success", value: "already-passed" });
-          }
-          const hasPlanReviewProjection = task.workflowStepResults?.some(
-            (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID,
-          ) === true;
-          const repairedPlanReview = node.id === PLAN_REVIEW_GROUP_ID && !hasPlanReviewProjection
-            ? recoverPassedPlanReviewFromLatestLog(task)
-            : undefined;
-          if (repairedPlanReview) {
-            const repairedPersistence = await this.recordOptionalGroupStepResult(task.id, repairedPlanReview);
-            /*
-             * FNXC:AuthoritativeGateResult 2026-09-12-23:22:
-             * Reconstruction has no lease to clean up, but it can still await a terminal sink while
-             * an operator cancels the run. Preserve the node-boundary abort contract instead of
-             * converting that interruption into a synthetic persistence failure.
-             */
-            if (this.isRunAborted()) {
-              context[`node:${node.id}:outcome`] = "failure";
-              const aborted = this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
-              Object.assign(context, aborted.contextPatch);
-              return aborted;
-            }
-            const repairedResult = repairedPersistence.persistedResult;
-            if (
-              repairedPersistence.scopeCurrent
-              && repairedPersistence.persisted
-              && repairedPersistence.disposition === "applied"
-              && repairedResult?.status === "passed"
-              && (repairedResult.verdict === "APPROVE" || repairedResult.verdict === "APPROVE_WITH_NOTES")
-            ) {
+          if (node.id === PLAN_REVIEW_GROUP_ID) {
+            const release = await this.resolvePlanReviewGraphRelease(node, task, ir);
+            if (release.released) {
               context[`node:${node.id}:outcome`] = "success";
-              this.deps.logTaskEntry?.("[pre-merge] Workflow step already passed: Plan Review");
+              this.deps.logTaskEntry?.("[pre-merge] Workflow step already satisfied: Plan Review");
               return await traverseChildren(node, { outcome: "success", value: "already-passed" });
             }
-            context[`node:${node.id}:outcome`] = "failure";
-            context[`node:${node.id}:value`] = "gate-persistence-unavailable";
-            return { outcome: "failure", value: "gate-persistence-unavailable" };
+            this.deps.logTaskEntry?.(`[pre-merge] Plan Review existing projection refused release (${release.reason}) — dispatching a genuine review`);
           }
           /*
+           * Plan Review (2026-10-11): the former log-derived Plan Review "recovery" early exit is
+           * DELETED. Task-log prose is never identity and a log timestamp can never prove which
+           * plan content a reviewer actually inspected — reconstructing a passed/APPROVE row from
+           * it manufactured release authority out of audit trail (the stale approval class).
+           * With no current projection the lease/claim path below runs, which dispatches a genuine
+           * Plan Review against the plan that is actually current.
+           *
            * FNXC:PlanReviewLease 2026-07-18-23:50:
            * U3 / KTD-4/R5 — the graph is now the SOLE Plan Review owner (triage's
            * out-of-graph gate is deleted). A `pending` Plan Review result is a LEASE:
@@ -1186,6 +1281,41 @@ export class WorkflowGraphExecutor {
             node.config?.phase === "post-merge" ? "post-merge" : "pre-merge";
           const logPrefix = stepPhase === "post-merge" ? "[post-merge]" : "[pre-merge]";
           const stepStartedAt = new Date().toISOString();
+          /*
+          FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+          Plan Review (review validation): the Plan Review release/anchor proof is captured BEFORE the reviewer is
+          dispatched and persisted on the lease claim itself. The approval anchor is recomputed at
+          persistence time and task-log prose is never identity, so a terminal-time read proves
+          nothing about what was reviewed — capture is the only honest authority. The captured
+          elements are the plan fingerprint of the materialized reviewer snapshot, the workflow pin
+          (a plan edit and a workflow-IR swap during review are the same ordering class), the
+          run/attempt identity, and the exact attempt start time. Any missing/unreadable/blank input
+          or a fingerprint-computation throw means NO proof — the attempt can never release the gate
+          or stamp the anchor, which is fail-closed (a genuine review), never an inferred PASS.
+          */
+          const isPlanReviewGate = node.id === PLAN_REVIEW_GROUP_ID;
+          let planReviewSnapshot: string | undefined;
+          let planReviewProof: WorkflowStepResult["reviewedInputIdentity"];
+          if (isPlanReviewGate) {
+    planReviewSnapshot = await this.readPlanReviewArtifactContent(node, task);
+    if (planReviewSnapshot !== undefined && planReviewSnapshot.trim().length > 0) {
+      try {
+        planReviewProof = {
+          planFingerprint: computePlanApprovalFingerprint(planReviewSnapshot),
+          // The pin follows the same before-dispatch rule: NEVER recompute-and-stamp at completion.
+          workflowPin: computeWorkflowIrPin(ir, node.id),
+          runAttemptId: runId,
+          attemptStartedAt: stepStartedAt,
+        };
+      } catch {
+        // A fingerprint-computation failure is "no proof", never a default-filled or copied value.
+        planReviewProof = undefined;
+        planReviewSnapshot = undefined;
+      }
+    } else {
+      planReviewSnapshot = undefined;
+    }
+          }
           const pendingLease = await this.recordOptionalGroupStepResult(task.id, {
             workflowStepId: node.id,
             workflowStepName: groupName,
@@ -1205,22 +1335,43 @@ export class WorkflowGraphExecutor {
             the node id is unknown, which preserves the previous floor-only behavior.
             */
             ...(this.deps.localNodeId ? { leaseNodeId: this.deps.localNodeId } : {}),
+            ...(planReviewProof ? { reviewedInputIdentity: planReviewProof } : {}),
           });
           this.deps.logTaskEntry?.(`${logPrefix} Starting workflow step: ${groupName}`);
 
+          /*
+          FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+          Materialization binding: a standalone pre-read is not automatically the reviewer's actual
+          input. At the last point this file controls before template materialization, re-read the
+          artifact and compare against the captured snapshot; a mismatch strips the proof for this
+          attempt (fixed reason code, no task content, no identity ever written). The comparison is
+          block-only — it can never grant anything. The captured snapshot additionally travels in the
+          template context so materialization consumes the exact fingerprinted string.
+          */
+          let planReviewProofStripped = false;
           const groupResult = await runOptionalGroup(node, {
             context,
-            runTemplateNode: (tNode, sig, contextOverride) => {
+            runTemplateNode: async (tNode, sig, contextOverride) => {
               /*
               FNXC:FastOptionalSteps 2026-06-30-09:12:
               Optional-group template execution carries the parent group id in context so fast mode can skip only top-level review/validation gates. Once an operator explicitly enables an optional group, that selection is stronger than the fast default and its prompt/script/gate body must run.
               */
+              if (isPlanReviewGate && planReviewProof && !planReviewProofStripped) {
+                const materializationRead = await this.readPlanReviewArtifactContent(node, task);
+                if (materializationRead !== planReviewSnapshot) {
+                  planReviewProofStripped = true;
+                  this.deps.logTaskEntry?.("[pre-merge] plan-review identity capture did not match the materialized reviewer input — no release authority for this attempt (gate-capture-materialization-mismatch)");
+                }
+              }
               const optionalGroupContext = {
                 ...(contextOverride ?? context),
                 [WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]: node.id,
                 [WORKFLOW_OPTIONAL_GROUP_PHASE_CONTEXT_KEY]: stepPhase,
                 ...(this.workflowReviewKind(node) ? { [WORKFLOW_REVIEW_KIND_CONTEXT_KEY]: this.workflowReviewKind(node) } : {}),
                 ...(this.workflowBlockingSeverity(node) ? { [WORKFLOW_BLOCKING_SEVERITY_CONTEXT_KEY]: this.workflowBlockingSeverity(node) } : {}),
+                ...(isPlanReviewGate && planReviewProof && !planReviewProofStripped && planReviewSnapshot !== undefined
+                  ? { [WORKFLOW_PLAN_REVIEW_SNAPSHOT_CONTEXT_KEY]: planReviewSnapshot }
+                  : {}),
               };
               return this.executeMaterializedTemplateNode(tNode, task, settings, optionalGroupContext, ir, sig);
             },
@@ -1349,6 +1500,13 @@ export class WorkflowGraphExecutor {
             ...(reviewInputFingerprint !== undefined ? { reviewInputFingerprint } : {}),
             ...(reviewedCommitSha !== undefined ? { reviewedCommitSha } : {}),
             ...(supersededFindingSourceWorkflowStepId && supersededFindingIds?.length ? { supersededFindingSourceWorkflowStepId, supersededFindingIds } : {}),
+            /*
+            FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+            The fenced terminal row carries the SAME dispatch-captured object unchanged — never a
+            re-read, never a re-derive, never a copy of a newer identity. A stripped capture writes
+            no identity, leaving this attempt without release/anchor authority forever.
+            */
+            ...(isPlanReviewGate && planReviewProof && !planReviewProofStripped ? { reviewedInputIdentity: planReviewProof } : {}),
             startedAt: stepStartedAt,
             completedAt: new Date().toISOString(),
           }, terminalFence);
@@ -1362,6 +1520,17 @@ export class WorkflowGraphExecutor {
             Object.assign(context, aborted.contextPatch);
             return aborted;
           }
+          /*
+          FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+          Plan Review terminal-staleness fence — a fresh re-read may only BLOCK, never release and never
+          re-stamp. After persistence, recompute the current plan fingerprint and the current
+          workflow pin and compare them against the attempt's DISPATCH-CAPTURED values; a stripped
+          capture already proves a mid-attempt mismatch. Any drift or an unreadable recompute after
+          a successful capture is a stale completion: the genuine reviewer row stays recorded
+          exactly as produced (verdict and timestamps never rewritten, proof never re-derived), but
+          the implementation path does not open — the next attempt reviews the current inputs for
+          real.
+          */
           const scopeCurrent = terminalPersistence.scopeCurrent;
           if (!scopeCurrent) {
             /* FNXC:RepositoryScope 2026-08-21-02:48: Optional-group Code Review cannot route an approval once its terminal scope CAS is superseded. */
@@ -1418,14 +1587,75 @@ export class WorkflowGraphExecutor {
             context[`node:${node.id}:value`] = value;
             return { outcome: "failure", value };
           }
+          /*
+          FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25:
+          Plan Review terminal-staleness fence — a fresh re-read may only BLOCK, never release and never
+          re-stamp. Recompute the current plan fingerprint and the current workflow pin and compare
+          them against the attempt's DISPATCH-CAPTURED values. Any drift, or an unreadable recompute
+          after a successful capture, is a stale completion: the genuine reviewer row stays recorded
+          exactly as produced (verdict, timestamps and proof never rewritten, never re-derived), but
+          the implementation path does not open — the next attempt reviews the current inputs for real.
+
+          Plan Review R2 — the same contract applies to EVERY fresh approving Plan Review terminal, not only
+          to attempts whose capture happened to succeed. Without it, an attempt that captured nothing
+          (an unwired primitives seam, an unreadable/blank artifact, a stripped materialization guard)
+          persisted a `passed` row and the graph walked straight into implementation: the anchor seam
+          correctly refused to stamp, but a passed row alone was enough to keep the card moving. A
+          genuine reviewer verdict is still persisted unchanged — this only withholds the
+          implementation path, never rewrites history and never synthesizes a PASS.
+
+          It runs HERE, after the durable-result routing above, deliberately: a refused or superseded
+          terminal write has its own honest fixed outcome (`gate-persistence-unavailable`,
+          `workspace-review-superseded`) and must not be re-labelled by an identity check over a row
+          that never landed.
+          */
+          if (isPlanReviewGate && stepStatus === "passed"
+            && (verdict === "APPROVE" || verdict === "APPROVE_WITH_NOTES")) {
+            if (!planReviewProof || planReviewProofStripped) {
+              this.deps.logTaskEntry?.("[pre-merge] Plan Review completed with no dispatch-captured identity — implementation not released (gate-unproven-plan-review-input)");
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = "gate-unproven-plan-review-input";
+              return { outcome: "failure", value: "gate-unproven-plan-review-input" };
+            }
+            /*
+            FNXC:CurrentPlanReviewIdentity 2026-10-11-20:42:
+            Plan Review (review validation, Code Review finding `anchor-refusal-race-narrow`) — the SECOND
+            authority already spoke during terminal persistence and REFUSED this attempt's
+            satisfied application at the approval-anchor seam (an unvalidatable outer proof, or a
+            competing reclaim that won the fenced apply-check). The genuine row stays persisted as
+            honest history — preserved history is NOT admission — so this check runs BEFORE the
+            fresh graph-side re-read: a later successful graph read in the SAME run can never
+            erase the apply-time refusal. Nothing is rewritten; the existing
+            gate-unproven-plan-review-input lifecycle re-dispatches a genuine review.
+            */
+            if (terminalPersistence.satisfiedApplication !== undefined
+              && terminalPersistence.satisfiedApplication !== "applied") {
+              this.deps.logTaskEntry?.(`[pre-merge] Plan Review satisfied application was refused at the approval-anchor seam (${terminalPersistence.satisfiedApplication}) — implementation not released (gate-unproven-plan-review-input)`);
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = "gate-unproven-plan-review-input";
+              return { outcome: "failure", value: "gate-unproven-plan-review-input" };
+            }
+            const stale = await this.planReviewTerminalIdentityDrifted(node, task, ir, planReviewProof);
+            if (stale) {
+              this.deps.logTaskEntry?.("[pre-merge] Plan Review completed against inputs that are no longer current — implementation not released (gate-stale-review-input)");
+              context[`node:${node.id}:outcome`] = "failure";
+              context[`node:${node.id}:value`] = "gate-stale-review-input";
+              return { outcome: "failure", value: "gate-stale-review-input" };
+            }
+          }
           // `[pre-merge]`/`[post-merge]` terminal logs follow the durable row when one exists.
           if (notRunReason && effectiveStepStatus === "skipped") {
             this.deps.logTaskEntry?.(`${logPrefix} Workflow step not executed: ${groupName}`, `${notRunReason}${stepOutput ? `\n${stepOutput}` : ""}`);
           } else if (effectiveStepStatus === "passed") {
             /*
             FNXC:ReviewVerdictNotes 2026-08-28-21:23:
-            Preserve the passed review rationale in the completion log detail. Both log-based Plan
-            Review reconstruction paths can then rebuild a result with its note instead of a bare verdict.
+            Preserve the passed review rationale in the completion log detail for the operator's
+            audit trail.
+
+            Plan Review (2026-10-11): the two former log-based Plan Review reconstruction paths are
+            DELETED. Neither this completed line nor the failed line below may ever be consumed by
+            a release or an approval-anchor decision — log entries are audit trail only, and a log
+            timestamp may at most refuse a release, never grant one.
             */
             const completionDetail = stepNotes || stepOutput;
             if (completionDetail) {
@@ -2069,6 +2299,199 @@ export class WorkflowGraphExecutor {
    * Recording is additive visibility bookkeeping — a sink failure (or absent sink)
    * must NEVER affect graph execution, so swallow errors and no-op when unwired.
    */
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+  Plan Review: the graph's single fail-closed Plan Review release contract, evaluated in fixed order and
+  refusing (falling through to a genuine dispatch) at the first miss. Reasons are a closed enum so
+  the refusal diagnostic never carries task content. The current-plan recompute is a fresh read that
+  may only ever BLOCK — release requires it to EQUAL the task anchor and the row's dispatch-captured
+  fingerprint, never merely "a read happened". This is graph release authority only; the independent
+  approval-anchor authority lives at the persistence seam (execute-workflow-graph.ts).
+  */
+  private async resolvePlanReviewGraphRelease(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    ir: WorkflowIr,
+  ): Promise<{ released: true } | { released: false; reason: PlanReviewReleaseRefusal }> {
+    const refuse = (reason: PlanReviewReleaseRefusal) => ({ released: false as const, reason });
+    /* 1. Single candidate: the only non-superseded terminal plan-review row for this node id. A
+       live pending lease is never a candidate (lease classification runs after this exit and only
+       terminal rows are read here); zero or multiple candidates are absent/contradictory evidence. */
+    const candidates = (task.workflowStepResults ?? []).filter(
+      (result) => result.workflowStepId === node.id && result.supersededAt == null && result.status !== "pending",
+    );
+    if (candidates.length === 0) return refuse("no-current-candidate");
+    if (candidates.length > 1) return refuse("multiple-candidates");
+    const row = candidates[0];
+    /* 2. Genuine terminal passed row only — every skipped carrier (operator bypass, arbitration
+       release, fast-mode carrier, automated stale-callback waiver) refuses, however complete its
+       shape and whatever anchor the task carries. */
+    if (row.status !== "passed") return refuse("not-passed");
+    /* 3. Real approving verdict only; CLOSE_NO_OP is not a generic approval and never releases. */
+    if (row.verdict !== "APPROVE" && row.verdict !== "APPROVE_WITH_NOTES") return refuse("no-approving-verdict");
+    /* 4. Genuine graph-authored terminal decorations: both original times present, parseable, and
+       strictly ordered (completion later than start); no bypass/waiver/remediation-archive/resume
+       markers.
+       FNXC:CurrentPlanReviewIdentity 2026-10-12-17:59:
+       Plan Review (review validation bounded current-candidate correction) — the release path previously refused only
+       NaN/equal times, so a terminal row whose completion preceded its start reached implementation
+       with no reviewer dispatch while the independent approval-anchor writer
+       (planReviewOriginalTimesValid/planReviewAnchorProofAllows in execute-workflow-graph.ts, which
+       requires completedMs > startedMs) refused the same row. The two Plan Review authority surfaces
+       must hold the identical chronological invariant: a real completion is always strictly later
+       than its start, so reversal (like equality or an unparseable value) refuses via the existing
+       fixed vocabulary — no new reason string. */
+    if (row.source !== "optional-group") return refuse("not-graph-authored");
+    if (row.bypassedBy !== undefined || row.bypassedAt !== undefined || row.bypassReason !== undefined
+      || row.automatedStaleCallbackWaiver !== undefined
+      || row.remediationArchivedAt !== undefined
+      || row.resumedBy !== undefined || row.resumedAt !== undefined) return refuse("historical-carrier-marker");
+    if (!row.startedAt || !row.completedAt) return refuse("missing-original-times");
+    const startedMs = Date.parse(row.startedAt);
+    const completedMs = Date.parse(row.completedAt);
+    if (Number.isNaN(startedMs) || Number.isNaN(completedMs) || completedMs <= startedMs) return refuse("non-distinct-original-times");
+    /* 5. Machine-verifiable dispatch-captured proof: complete, and the captured attemptStartedAt
+       equals the row's own startedAt (a proof copied onto another row is fabricated and refuses). */
+    const proof = row.reviewedInputIdentity;
+    if (!proof
+      || typeof proof.planFingerprint !== "string" || proof.planFingerprint.length === 0
+      || !proof.workflowPin
+      || typeof proof.workflowPin.nodeId !== "string" || proof.workflowPin.nodeId.length === 0
+      || typeof proof.workflowPin.irHash !== "string" || proof.workflowPin.irHash.length === 0
+      || typeof proof.runAttemptId !== "string" || proof.runAttemptId.length === 0
+      || typeof proof.attemptStartedAt !== "string" || proof.attemptStartedAt.length === 0) return refuse("incomplete-proof");
+    if (proof.attemptStartedAt !== row.startedAt) return refuse("proof-attempt-identity-mismatch");
+    /* 6. Workflow/node/attempt binding: row id and captured pin node id equal the running node id;
+       the captured pin equals a fresh pin over the CURRENT resolved IR. */
+    if (proof.workflowPin.nodeId !== node.id) return refuse("workflow-pin-mismatch");
+    const currentPin = await this.currentWorkflowIrPin(node, task, ir);
+    if (!currentPin) return refuse("current-workflow-unreadable");
+    if (proof.workflowPin.irHash !== currentPin.irHash || proof.workflowPin.columnId !== currentPin.columnId) return refuse("workflow-pin-mismatch");
+    /* 5b. Three-way plan-identity equality: recomputed-current == task anchor == captured proof.
+       Presence of an anchor is never binding — comparison is; unreadable current refuses. */
+    if (!task.approvedPlanFingerprint) return refuse("missing-approval-anchor");
+    const currentFingerprint = await this.currentPlanApprovalFingerprint(node, task);
+    if (currentFingerprint === undefined) return refuse("current-plan-unreadable");
+    if (currentFingerprint !== task.approvedPlanFingerprint || task.approvedPlanFingerprint !== proof.planFingerprint) return refuse("plan-identity-mismatch");
+    /* 7. Failure-ordering fence — negative log use only: a plan-review failure entry at the same
+       millisecond as, after, or unorderable against the candidate's completion is contradictory
+       evidence. Entries can REFUSE, never grant. */
+    for (const entry of task.log ?? []) {
+      if (entry.action !== "[pre-merge] Workflow step failed: Plan Review") continue;
+      const failureMs = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
+      if (Number.isNaN(failureMs) || failureMs >= completedMs) return refuse("failure-ordering-unprovable");
+    }
+    return { released: true };
+  }
+
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+  Terminal staleness (block-only): the attempt's captured plan fingerprint and workflow pin must
+  still equal the current recomputed values. Drift on EITHER axis, or an unreadable recompute after
+  a successful capture, proves the reviewer's inputs moved mid-attempt.
+  */
+  private async planReviewTerminalIdentityDrifted(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    ir: WorkflowIr,
+    proof: NonNullable<WorkflowStepResult["reviewedInputIdentity"]>,
+  ): Promise<boolean> {
+    const current = await this.currentPlanApprovalFingerprint(node, task);
+    if (current === undefined) return true;
+    if (current !== proof.planFingerprint) return true;
+    const freshPin = await this.currentWorkflowIrPin(node, task, ir);
+    /* FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25: a WIRED current-workflow reader that returns
+       nothing proves the current definition is unreadable, which is unprovable — not "unchanged". */
+    if (!freshPin) return true;
+    if (proof.workflowPin.irHash !== freshPin.irHash || proof.workflowPin.columnId !== freshPin.columnId) return true;
+    return false;
+  }
+
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-14:25:
+  Plan Review R3 — pin the CURRENT workflow definition for a Plan Review authority boundary. Prefers the
+  wired durable reader (independent of this run's run-start IR object); an unwired seam falls back to
+  the run-start IR, which is the only workflow knowledge a raw in-memory graph has. A wired reader
+  that yields nothing/throws returns undefined, and every caller treats undefined as a refusal.
+  */
+  private async currentWorkflowIrPin(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    runStartIr: WorkflowIr,
+  ): Promise<WorkflowIrPin | undefined> {
+    const primitives = this.deps.primitives as PrimitivesWithCurrentWorkflowReader | undefined;
+    const reader = primitives?.[PLAN_REVIEW_CURRENT_WORKFLOW_READER];
+    let ir: WorkflowIr | undefined = runStartIr;
+    if (typeof reader === "function") {
+    // FNXC:CurrentPlanReviewIdentity 2026-10-11-16:59: a 3-state resolution; a read failure or a
+    // thrown reader is UNKNOWN currentness — refuse, never assume unchanged.
+    let resolution: PlanReviewCurrentIrResolution;
+      try {
+        resolution = await reader(task.id);
+      } catch {
+        return undefined;
+      }
+      if (!resolution.ok) return undefined;
+      ir = resolution.ir;
+    }
+    try {
+      return computeWorkflowIrPin(ir, node.id);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Recompute the CURRENT plan fingerprint through the same primitives seam and normalization the
+   *  capture used. A fresh read may only ever BLOCK — callers treat undefined/unreadable as refusal. */
+  private async currentPlanApprovalFingerprint(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+  ): Promise<string | undefined> {
+    const current = await this.readPlanReviewArtifactContent(node, task);
+    if (current === undefined || current.trim().length === 0) return undefined;
+    try {
+      return computePlanApprovalFingerprint(current);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+  Plan Review: the single artifact-read seam for Plan Review identity. Reads through the optional
+  `deps.primitives` runtime-primitives seam built the way the default-node handlers build their
+  primitive context — production wires it to the SAME store reader the approval-anchor writer uses
+  (computePlanApprovalFingerprint normalization therefore matches on both sides). An absent/unwired
+  seam, a missing/unreadable/blank artifact, or a throwing read all return `undefined`, which means
+  no captured proof — fail-closed to a genuine review, never a defaulted identity. A `signal` may be
+  threaded by callers that hold one; reads never mutate anything.
+  */
+  private async readPlanReviewArtifactContent(
+    node: WorkflowIrNode,
+    task: TaskDetail,
+  ): Promise<string | undefined> {
+    const primitives = this.deps.primitives;
+    if (!primitives) return undefined;
+    try {
+      return await primitives.readArtifact(
+        primitiveNodeContext(
+          {
+            runId: this.deps.runId ?? `${task.id}:run`,
+            taskId: task.id,
+            workflowId: "plan-review-identity",
+          },
+          node,
+          {},
+          this.deps.signal,
+        ),
+        task,
+        "PROMPT.md",
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
   private async recordOptionalGroupStepResult(
     taskId: string,
     result: WorkflowStepResult,
@@ -2102,6 +2525,9 @@ export class WorkflowGraphExecutor {
           persisted: receipt.persisted,
           disposition: receipt.disposition,
           persistedResult: receipt.persistedResult,
+          // Plan Review: the satisfied-application disposition must survive normalization — dropping it
+          // here is exactly how a refused anchor application reached implementation undetected.
+          satisfiedApplication: receipt.satisfiedApplication,
         };
       }
       // Legacy in-memory seams return void after mutating their record array. Preserve that contract
@@ -2781,34 +3207,4 @@ export class WorkflowGraphExecutor {
     }
     return result;
   }
-}
-
-function recoverPassedPlanReviewFromLatestLog(task: TaskDetail): WorkflowStepResult | undefined {
-  /*
-   * FNXC:WorkflowLifecycle 2026-06-29-03:55:
-   * FN-7228 exposed persisted tasks where Plan Review completed successfully but
-   * later cleanup erased `workflowStepResults`, leaving the dashboard with an
-   * enabled Plan Review step and no status. Trust only the latest Plan Review
-   * terminal log: completed repairs the missing projection; failed still blocks
-   * and reruns/replans through the normal path.
-   */
-  let latest: { status: "passed" | "failed"; timestamp?: string; outcome?: string } | undefined;
-  for (const entry of task.log ?? []) {
-    if (entry.action === "[pre-merge] Workflow step completed: Plan Review") {
-      latest = { status: "passed", timestamp: entry.timestamp, outcome: entry.outcome };
-    } else if (entry.action === "[pre-merge] Workflow step failed: Plan Review") {
-      latest = { status: "failed", timestamp: entry.timestamp, outcome: entry.outcome };
-    }
-  }
-  if (latest?.status !== "passed") return undefined;
-  return {
-    workflowStepId: PLAN_REVIEW_GROUP_ID,
-    workflowStepName: "Plan Review",
-    phase: "pre-merge",
-    status: "passed",
-    verdict: "APPROVE",
-    ...(latest.outcome ? { notes: latest.outcome } : {}),
-    startedAt: latest.timestamp,
-    completedAt: latest.timestamp,
-  };
 }

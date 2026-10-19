@@ -20,6 +20,7 @@ import type {
 import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computePlanApprovalFingerprint,
+  computeWorkflowIrPin,
   isPlanReviewSatisfied,
   isUnavailablePlanLockError,
   PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC,
@@ -30,6 +31,8 @@ import {
   resolveTaskOutputLanguage,
   resolveUnprovenReviewApproval,
   resolveWorkflowIrForTask,
+  resolveWorkflowIrForTaskWithProvenance,
+  type ResolvedWorkflowIr,
   upsertWorkflowStepResult,
   applySupersededFindingIds,
   applySupersededPriorAttemptFindingIds,
@@ -42,12 +45,68 @@ import type { ImplementationExit } from "./implementation-exit.js";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
 import { WorkflowCustomNodeExecutionService } from "../workflows/workflow-custom-node-execution.js";
+import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
+import {
+  PLAN_REVIEW_CURRENT_WORKFLOW_READER,
+  type PlanReviewCurrentIrResolution,
+  type PlanReviewSatisfiedApplication,
+  type PrimitivesWithCurrentWorkflowReader,
+} from "../workflows/workflow-graph-executor.js";
 import {
   requiredArtifactReadFailedValue,
   workflowEntryArtifacts,
 } from "../execution/required-workflow-artifacts.js";
 import { getActiveNotificationService } from "../util/notifier.js";
 import { holdWorkflowAdmission, workflowAdmissionHoldReason } from "./workflow-admission-hold.js";
+
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-16:59:
+Plan Review R3 — production wiring for the graph's CURRENT-workflow reader, and the SHARED strict
+currentness resolver the approval-anchor seam also uses. The graph executor's own `ir` argument is a
+run-start snapshot, so recomputing a Plan Review workflow pin from it cannot observe a workflow
+definition replaced in the store while a reviewer was running; the durable resolution is the only
+authority. `resolveWorkflowIrForTaskWithProvenance` is used — never the bare-`.ir` form — because
+the general core resolver is fail-soft by contract (a throwing selection read, a
+deleted/malformed/throwing selected definition, or an unregistered builtin id all SUBSTITUTE the
+default coding IR invisibly to the caller). If a Plan Review's current definition is itself a
+default-equal workflow, that substitution is pin-IDENTICAL to the captured pin, so a read FAILURE
+could otherwise masquerade as "still current" and release or stamp on unknown evidence.
+Classify the provenance BEFORE accepting currentness:
+ - `source: "selection"` — a named selection whose definition was read successfully. Never refused,
+   even when the selected definition's content equals the built-in default (that is a read SUCCESS).
+ - `source: "default"` with `selectionAbsent: true` — a SUCCESSFUL selection read that found no
+   selection; the default workflow is legitimately authoritative. Never blanket-refused by
+   provenance alone. The IR-id cross-check is deliberately not a success signal either: an authored
+   IR's id may legitimately differ from the store-allocated workflow id (core comment on
+   `resolveWorkflowIrForTaskWithProvenance`), so id equality proves nothing either way.
+Anything else — a throwing selection read (reported as a plain default), a selected definition that
+is deleted/malformed/throwing, an unregistered builtin — is UNKNOWN currentness: `{ ok: false }`,
+which every Plan Review authority boundary treats as a refusal. Unreadable is unknown, and unknown
+blocks; a read success never is. This strict contract belongs to the Plan Review authority paths
+ONLY — the general resolver and all other consumers keep their fail-soft behavior byte-for-byte.
+*/
+async function resolvePlanReviewCurrentIr(store: TaskStore, taskId: string): Promise<PlanReviewCurrentIrResolution> {
+  let resolved: ResolvedWorkflowIr;
+  try {
+    resolved = await resolveWorkflowIrForTaskWithProvenance(store, taskId);
+  } catch {
+    return { ok: false, reason: "current-workflow-read-failed" };
+  }
+  if (resolved.source === "selection") return { ok: true, ir: resolved.ir };
+  if (resolved.source === "default" && resolved.selectionAbsent === true) return { ok: true, ir: resolved.ir };
+  return { ok: false, reason: "current-workflow-read-failed" };
+}
+
+export function withPlanReviewCurrentWorkflowReader(
+  primitives: WorkflowRuntimePrimitives,
+  store: TaskStore,
+): WorkflowRuntimePrimitives {
+  const withReader: PrimitivesWithCurrentWorkflowReader = {
+    ...primitives,
+    [PLAN_REVIEW_CURRENT_WORKFLOW_READER]: (taskId: string) => resolvePlanReviewCurrentIr(store, taskId),
+  };
+  return withReader;
+}
 
 export function buildWorkflowGateActivityMetadata(
   result: CoreWorkflowStepResult,
@@ -253,6 +312,112 @@ export function attemptStillPresentOrAbsent(
   return (results ?? []).every((entry) => entry.workflowStepId !== workflowStepId || entry.startedAt === startedAt);
 }
 
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-17:05:
+Plan Review R4 (review validation) — attempt-ownership truth at the anchor boundary. A nonempty run-token has no
+meaning: the ONLY genuine binding between a dispatch-captured run identity and the durable world is
+the PERSISTED plan-review row's `leaseOwner`, stamped by the real pending-lease claim writer. The
+terminal writer deliberately carries no leaseOwner (the row contract reserves it for claim rows), so
+while a satisfied terminal is being applied, the persisted row is still this attempt's pending lease
+— its leaseOwner/startedAt ARE the current ownership the proof must match. This is validated twice:
+against the lock's fresh read AND again at the real fenced apply-check, where a competing reclaim
+between the two reads must find no anchor. When no persisted row exists at all (e.g. a fail-soft
+claim that never persisted), ownership is UNPROVABLE and the anchor is refused — a reported
+production consequence, never a defaulted pass.
+*/
+function planReviewAnchorOwnershipHolds(
+  persistedRows: CoreWorkflowStepResult[] | undefined,
+  result: CoreWorkflowStepResult,
+): boolean {
+  const proof = result.reviewedInputIdentity;
+  if (!proof) return false;
+  const persisted = (persistedRows ?? []).find((entry) => entry.workflowStepId === result.workflowStepId);
+  if (!persisted) return false;
+  return persisted.leaseOwner === proof.runAttemptId && persisted.startedAt === proof.attemptStartedAt;
+}
+
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-17:05:
+Plan Review R4 (review validation) — original-time validity. The genuine attempt stamps a parseable ISO start time and
+a DISTINCT later completion time; an arbitrary token string was never a real attempt time. Anchor
+authority requires the row's own original startedAt/completedAt to parse and be strictly ordered —
+identical or reversed timing is impossible for a real completion and refuses.
+*/
+function planReviewOriginalTimesValid(result: CoreWorkflowStepResult): boolean {
+  const startedMs = Date.parse(result.startedAt ?? "");
+  const completedMs = Date.parse(result.completedAt ?? "");
+  return !Number.isNaN(startedMs) && !Number.isNaN(completedMs) && completedMs > startedMs;
+}
+
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-16:40:
+Plan Review (review validation) — the SECOND independent Plan Review authority: the approval-anchor persistence seam.
+A graph-side stale check AFTER this writer is insufficient because other satisfaction consumers
+already see the passed row and the current anchor, so a satisfied anchor may only be stamped when
+the result's DISPATCH-CAPTURED proof validates against the current state inside the existing
+planning-lifecycle and transaction fences. Every input is a fresh read that may only BLOCK:
+- proof complete (plan fingerprint + pin + run/attempt identity + attemptStartedAt);
+- the proof's attemptStartedAt equals the applied row's own startedAt and, when the fence names one,
+  the fenced attempt identity (a displaced attempt refuses);
+- the row's original started/completion times are parseable and strictly ordered (identical/reversed
+  or unparseable original timing refuses);
+- the proof's runAttemptId equals the CURRENT persisted plan-review row's genuine leaseOwner — the
+  real pending-lease claim writer's stamp, freshly re-validated again at the apply-check boundary;
+- the captured plan fingerprint equals the fingerprint recomputed from the PROMPT.md read under the
+  lock AND the pre-lock fingerprint (plan movement across the await chain refuses);
+- the captured workflow pin equals a fresh pin over the task's CURRENT strictly-resolved workflow
+  (a failed current-workflow read is UNKNOWN and blocks — never a fail-soft default substitution).
+Absent or invalid proof is never defaulted, copied, or inferred: the genuine row may still persist
+as honest history (exact verdict and timestamps preserved), but no anchor is stamped and no plan
+evidence is created.
+*/
+async function planReviewAnchorProofAllows(
+  deps: PersistWorkflowStepResultDeps,
+  taskId: string,
+  result: CoreWorkflowStepResult,
+  fence: WorkflowStepResultPersistFence,
+  preLockFingerprint: string,
+  underLockFingerprint: string | undefined,
+  persistedRows: CoreWorkflowStepResult[] | undefined,
+): Promise<{ allowed: true } | { allowed: false; reason: string }> {
+  const proof = result.reviewedInputIdentity;
+  if (!proof
+    || typeof proof.planFingerprint !== "string" || proof.planFingerprint.length === 0
+    || !proof.workflowPin
+    || typeof proof.workflowPin.nodeId !== "string" || proof.workflowPin.nodeId.length === 0
+    || typeof proof.workflowPin.irHash !== "string" || proof.workflowPin.irHash.length === 0
+    || typeof proof.runAttemptId !== "string" || proof.runAttemptId.length === 0
+    || typeof proof.attemptStartedAt !== "string" || proof.attemptStartedAt.length === 0) {
+    return { allowed: false, reason: "incomplete-proof" };
+  }
+  if (proof.attemptStartedAt !== result.startedAt) return { allowed: false, reason: "proof-attempt-identity-mismatch" };
+  if (typeof fence.requireAttemptStartedAt === "string" && proof.attemptStartedAt !== fence.requireAttemptStartedAt) {
+    return { allowed: false, reason: "fence-attempt-identity-mismatch" };
+  }
+  if (!planReviewOriginalTimesValid(result)) return { allowed: false, reason: "invalid-original-times" };
+  if (!planReviewAnchorOwnershipHolds(persistedRows, result)) {
+    return { allowed: false, reason: "attempt-ownership-unproven" };
+  }
+  if (underLockFingerprint === undefined) return { allowed: false, reason: "current-plan-unreadable-under-lock" };
+  if (underLockFingerprint !== preLockFingerprint) return { allowed: false, reason: "plan-moved-during-persistence" };
+  if (proof.planFingerprint !== underLockFingerprint) return { allowed: false, reason: "plan-identity-mismatch" };
+  if (proof.workflowPin.nodeId !== result.workflowStepId) return { allowed: false, reason: "workflow-pin-node-mismatch" };
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-16:59:
+  The anchor persistence authority applies the SAME strict currentness contract as the graph
+  release/terminal boundaries: only a successfully-read authoritative resolution (named selection,
+  or a successful no-selection default) may prove currentness. A read failure is UNKNOWN and blocks
+  — never a fail-soft default substitution that could pin-match a default-equal captured pin.
+  */
+  const currentResolution = await resolvePlanReviewCurrentIr(deps.store, taskId);
+  if (!currentResolution.ok) return { allowed: false, reason: "current-workflow-unresolvable" };
+  const currentPin = computeWorkflowIrPin(currentResolution.ir, result.workflowStepId);
+  if (proof.workflowPin.irHash !== currentPin.irHash || proof.workflowPin.columnId !== currentPin.columnId) {
+    return { allowed: false, reason: "workflow-pin-mismatch" };
+  }
+  return { allowed: true };
+}
+
 function attemptFenceAllows(
   fence: WorkflowStepResultPersistFence,
   results: CoreWorkflowStepResult[] | undefined,
@@ -390,6 +555,18 @@ export type WorkflowStepResultPersistOutcome = {
   persisted: boolean;
   disposition: "applied" | "fence-refused" | "scope-superseded" | "aborted" | "no-writer" | "error";
   persistedResult?: CoreWorkflowStepResult;
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-20:42:
+  Plan Review (review validation, Code Review finding `anchor-refusal-race-narrow`) — `disposition: "applied"`
+  ONLY describes the ROW write. For a Plan Review SATISFIED APPLICATION the anchor authority may
+  still REFUSE the satisfied application while the genuine passed row persists as honest history:
+  `anchor-proof-refused` (outer validation failed) or `apply-check-ownership-lost` (a competing
+  reclaim won the fenced apply-check after the outer proof had allowed). Preserved history is NOT
+  admission — the fresh graph admission blocks on any non-`"applied"` value, so a refused
+  satisfied application can never be laundered by a later successful graph-side read in the same
+  run. Set only when this invocation actually attempted a satisfied application; absent elsewhere.
+  */
+  satisfiedApplication?: PlanReviewSatisfiedApplication;
 };
 
 /**
@@ -431,6 +608,13 @@ export async function persistWorkflowStepResultWithOutcome(
     let activityResult = result;
     let activityResults: CoreWorkflowStepResult[] | undefined;
     let unavailablePlanLockDiagnostic: string | undefined;
+    /*
+    FNXC:CurrentPlanReviewIdentity 2026-10-11-20:42:
+    Plan Review — honest satisfied-application disposition for THIS attempt, decided by the three
+    anchor-authority outcomes below (outer refusal / apply-check reclaim / landed stamp) and
+    conveyed on the applied receipt so the graph's fresh admission sees the refusal.
+    */
+    let satisfiedApplication: PlanReviewSatisfiedApplication | undefined;
 
     const compute = (current: Task, options?: { requireScopeRevision?: number }): WorkflowStepResultPatch | null => {
       if (fence.signal?.aborted) {
@@ -477,29 +661,73 @@ export async function persistWorkflowStepResultWithOutcome(
           fenceRefused = true;
           return;
         }
+        /*
+        FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+        Plan Review: validate the dispatch-captured proof against the CURRENT plan (fresh read under the
+        lock), the CURRENT resolved workflow/node, and the fenced attempt identity BEFORE stamping a
+        satisfied anchor. A stale/unprovable application persists the genuine row as honest history
+        but writes no `approvedPlanFingerprint`, takes no spec lock, and reconciles no plan drift —
+        a reviewer dispatched against plan A can never certify plan B.
+        */
+        let underLockFingerprint: string | undefined;
         try {
-          await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
-        } catch (error) {
-          if (!isUnavailablePlanLockError(error)) throw error;
-          unavailablePlanLockDiagnostic = `${PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC} ${error.reason} (${error.unavailableSections.join(", ") || "unknown section"}).`;
-          activityResult = {
-            ...result,
-            status: "failed",
-            verdict: undefined,
-            output: unavailablePlanLockDiagnostic,
-            notes: unavailablePlanLockDiagnostic,
-          };
+          const lockedPrompt = await deps.readTaskArtifact(taskId, "PROMPT.md");
+          underLockFingerprint = lockedPrompt?.trim() ? computePlanApprovalFingerprint(lockedPrompt) : undefined;
+        } catch {
+          underLockFingerprint = undefined;
         }
+        const anchorProof = await planReviewAnchorProofAllows(deps, taskId, result, fence, fingerprint, underLockFingerprint, fresh?.workflowStepResults);
+        if (!anchorProof.allowed) {
+          // Plan Review: the satisfied application is refused at the outer proof; the genuine row may
+          // still apply below as honest history, but the receipt must say the refusal out loud.
+          satisfiedApplication = "anchor-proof-refused";
+        }
+        if (anchorProof.allowed) {
+          try {
+            await deps.store.lockCurrentPlanWhilePlanningLocked(taskId, fingerprint, prompt);
+          } catch (error) {
+            if (!isUnavailablePlanLockError(error)) throw error;
+            unavailablePlanLockDiagnostic = `${PLAN_LOCK_UNAVAILABLE_DIAGNOSTIC} ${error.reason} (${error.unavailableSections.join(", ") || "unknown section"}).`;
+            activityResult = {
+              ...result,
+              status: "failed",
+              verdict: undefined,
+              output: unavailablePlanLockDiagnostic,
+              notes: unavailablePlanLockDiagnostic,
+            };
+          }
+        }
+        let anchorStamped = false;
         const written = await writeWorkflowStepResultPatch(deps, taskId, (current) => {
           const patch = compute(current);
           if (patch === null) return null;
-          return unavailablePlanLockDiagnostic ? patch : { ...patch, approvedPlanFingerprint: fingerprint };
+          if (unavailablePlanLockDiagnostic || !anchorProof.allowed) return patch;
+          /*
+          FNXC:CurrentPlanReviewIdentity 2026-10-11-17:05:
+          Plan Review R4 — freshness-of-ownership at the APPLY-CHECK boundary. The outer read proved
+          ownership under the lifecycle lock; a competing reclaim landing across the remaining
+          await chain must not stamp. The genuine row still applies as honest history; only the
+          anchor authority is withheld when current persisted ownership no longer matches the
+          dispatch-captured identity.
+          */
+          if (!planReviewAnchorOwnershipHolds(current.workflowStepResults, result)) {
+            // Plan Review: the reclaim won the apply-check — row applies as history, receipt refuses.
+            satisfiedApplication = "apply-check-ownership-lost";
+            return patch;
+          }
+          anchorStamped = true;
+          return { ...patch, approvedPlanFingerprint: fingerprint };
         });
         if (!written.applied) {
           fenceRefused = true;
           return;
         }
-        if (!unavailablePlanLockDiagnostic) await deps.store.reconcileSpecDriftWhilePlanningLocked(written.task!);
+        // Drift reconciliation belongs to a LANDED anchor only — a stamp withheld at the
+        // apply-check boundary reconciles nothing.
+        if (!unavailablePlanLockDiagnostic && anchorStamped) {
+          satisfiedApplication = "applied";
+          await deps.store.reconcileSpecDriftWhilePlanningLocked(written.task!);
+        }
       });
     } else {
       const written = await writeWorkflowStepResultPatch(
@@ -558,7 +786,13 @@ export async function persistWorkflowStepResultWithOutcome(
         executorLog.warn(`[agent-activity] ${taskId}: failed to record workflow gate activity: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    return { scopeCurrent: true, persisted: true, disposition: "applied", persistedResult };
+    return {
+      scopeCurrent: true,
+      persisted: true,
+      disposition: "applied",
+      persistedResult,
+      ...(satisfiedApplication !== undefined ? { satisfiedApplication } : {}),
+    };
   } catch (error) {
     executorLog.warn(`[agent-activity] ${taskId}: failed to persist workflow step result: ${error instanceof Error ? error.message : String(error)}`);
     return { scopeCurrent: true, persisted: false, disposition: fence.signal?.aborted ? "aborted" : "error" };
@@ -888,7 +1122,10 @@ export async function executeWorkflowGraph(
         runId: resolvedRunId,
         isLiveSharedBranchMember: (nodeTask) =>
           deps.isLiveSharedBranchGroupMember(nodeTask),
-        primitives: deps.createAuthoritativeWorkflowPrimitives(settings, outputLanguage),
+        primitives: withPlanReviewCurrentWorkflowReader(
+          deps.createAuthoritativeWorkflowPrimitives(settings, outputLanguage),
+          deps.store,
+        ),
         seams: deps.createAuthoritativeWorkflowSeams(settings, outputLanguage),
         prepareNodeExecution: (node, nodeTask, requirement) =>
           deps.prepareGraphNodeExecution(node, nodeTask, settings, requirement),
