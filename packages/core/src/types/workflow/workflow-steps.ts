@@ -385,6 +385,8 @@ export interface WorkflowStepResult {
   read by any content-review/merge consumer by design. jsonb-additive: no SQL migration.
   */
   reviewedInputIdentity?: ReviewedInputIdentity;
+  /** FNXC:CurrentPlanReviewIdentity 2026-10-19-10:20: Durable refusal blocks this review across retries while retaining its genuine verdict and captured proof. */
+  planReviewApprovalRefused?: true;
   /** Arbitration provenance is only written by the fenced single-gate ruling writer. */
   arbitrationDecision?: "UPHOLD_REVIEW" | "UPHOLD_IMPLEMENTER" | "SPLIT";
   arbitrationBindingFindingCount?: number;

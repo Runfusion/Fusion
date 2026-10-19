@@ -303,6 +303,7 @@ type PlanReviewReleaseRefusal =
   | "multiple-candidates"
   | "not-passed"
   | "no-approving-verdict"
+  | "approval-application-refused"
   | "not-graph-authored"
   | "historical-carrier-marker"
   | "missing-original-times"
@@ -2323,6 +2324,7 @@ export class WorkflowGraphExecutor {
     if (candidates.length === 0) return refuse("no-current-candidate");
     if (candidates.length > 1) return refuse("multiple-candidates");
     const row = candidates[0];
+    if (row.planReviewApprovalRefused) return refuse("approval-application-refused");
     /* 2. Genuine terminal passed row only — every skipped carrier (operator bypass, arbitration
        release, fast-mode carrier, automated stale-callback waiver) refuses, however complete its
        shape and whatever anchor the task carries. */

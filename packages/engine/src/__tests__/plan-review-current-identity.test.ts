@@ -35,8 +35,9 @@ vi.mock("../environment/environment-capabilities.js", async (importOriginal) => 
 
 import "./executor-test-helpers.js";
 import type { Settings, TaskDetail, WorkflowIr, WorkflowStepResult } from "@fusion/core";
-import { FAST_MODE_BYPASS_ACTOR, computePlanApprovalFingerprint, computeWorkflowIrPin, resolveDefaultWorkflowIr } from "@fusion/core";
+import { getBuiltinWorkflow, applyPromptOverridesToIr, FAST_MODE_BYPASS_ACTOR, computePlanApprovalFingerprint, computeWorkflowIrPin, resolveDefaultWorkflowIr } from "@fusion/core";
 import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
+import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
 import { executeWorkflowStep } from "../executor/execute-workflow-step.js";
 import { runGraphCustomNode } from "../executor/run-graph-custom-node.js";
 import { discardWorkflowStepLease, persistWorkflowStepResultWithOutcome, withPlanReviewCurrentWorkflowReader } from "../executor/execute-workflow-graph.js";
@@ -366,6 +367,7 @@ function releaseReadyTask(ir: WorkflowIr, over: Partial<TaskDetail> = {}, rowOve
 }
 
 describe("Plan Review current-input identity (Plan Review KB-006 class)", () => {
+  afterEach(() => { vi.useRealTimers(); });
   it("KB-006: an older completed Plan Review log with no projection and no anchor cannot release implementation", async () => {
     const h = harness({ artifact: "# Revised plan\n\nCurrent plan content." });
     const task = baseTask({
@@ -519,13 +521,13 @@ describe("Plan Review current-input identity (Plan Review KB-006 class)", () => 
   });
 
   it("6. blocks implementation on a mid-reviewer plan edit and preserves the genuine verdict and original times", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-19T10:00:00.000Z"));
     const h = harness({ artifact: PLAN });
     const task = baseTask();
     const result = await h.run(task, planReviewIr(), {
       reviewerResult: async () => {
-        // A real reviewer session takes wall-clock time; the lease `startedAt` and the terminal
-        // `completedAt` land in different milliseconds, as production guarantees.
-        await new Promise((resolve) => setTimeout(resolve, 2));
+        vi.advanceTimersByTime(5000);
         // The reviewer edits/mutates the plan while its own session is running, then APPROVES.
         h.setArtifact("# Plan\n\ncontent the reviewer never saw");
         return { outcome: "success", value: "APPROVE" };
@@ -1449,7 +1451,7 @@ interface ProductionSinkRunOpts {
   applyBoundaryHook?: () => void;
 }
 
-function productionSinkHarness(opts: { artifact?: string; approvedPlanFingerprint?: string }) {
+function productionSinkHarness(opts: { artifact?: string; approvedPlanFingerprint?: string; builtinOverrides?: Record<string, string> }) {
   let artifact: string | undefined = opts.artifact;
   let failCurrentnessReads = 0;
   let applyBoundaryHook: (() => void) | undefined;
@@ -1494,6 +1496,8 @@ function productionSinkHarness(opts: { artifact?: string; approvedPlanFingerprin
     recordAgentActivity: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     getWorkflowDefinition: vi.fn(async (id: string) => (id === "wf-current-plan-review-current" ? { ir: resolvedDefinition } : undefined)),
+    getWorkflowSettingsProjectId: () => "review-fixture",
+    getWorkflowPromptOverridesAsync: async () => opts.builtinOverrides ?? {},
   };
   Object.defineProperty(store, "getTaskWorkflowSelectionAsync", {
     configurable: true,
@@ -1502,7 +1506,7 @@ function productionSinkHarness(opts: { artifact?: string; approvedPlanFingerprin
         failCurrentnessReads -= 1;
         throw new Error("transient durable selection read failure");
       }
-      return { workflowId: "wf-current-plan-review-current", stepIds: [] };
+      return { workflowId: opts.builtinOverrides ? "builtin:legacy-coding" : "wf-current-plan-review-current", stepIds: [] };
     },
   });
 
@@ -1541,6 +1545,18 @@ function productionSinkHarness(opts: { artifact?: string; approvedPlanFingerprin
   } as ConstructorParameters<typeof WorkflowGraphExecutor>[0]);
 
   return {
+    runBuiltin: async () => {
+      const seam = async () => ({ outcome: "success" as const });
+      const runner = new WorkflowGraphTaskRunner({
+        store: { ...store, getTaskWorkflowSelection: () => ({ workflowId: "builtin:legacy-coding", stepIds: [] }) } as never,
+        seams: { planning: seam, execute: seam, review: seam, merge: seam, schedule: seam },
+        runCustomNode: handler,
+        primitives: withPlanReviewCurrentWorkflowReader({ readArtifact: async () => artifact } as unknown as WorkflowRuntimePrimitives, store as never),
+        recordWorkflowStepResult: (taskId, result, fence) => persistWorkflowStepResultWithOutcome(persistDeps as never, taskId, result, fence as never),
+      });
+      reviewerResult = () => { vi.advanceTimersByTime(5000); return { outcome: "success", value: "APPROVE" }; };
+      return runner.run(task, settingsOn(), "plan-review");
+    },
     task,
     visits,
     logs,
@@ -1642,6 +1658,65 @@ describe("Plan Review refused satisfied application blocks the fresh graph admis
     expect(h.task.approvedPlanFingerprint).toBeUndefined();
     expect(h.reconcileCalls).toHaveLength(0);
     expect(h.logs.some((line) => line.includes("apply-check-ownership-lost") && line.includes("gate-unproven-plan-review-input"))).toBe(true);
+  });
+
+
+  it.each(["outer-proof", "apply-ownership"] as const)("a refused %s application with a retained anchor requires review again after recovery", async (refusal) => {
+    const ir = planReviewIr();
+    const h = productionSinkHarness({ artifact: PLAN, approvedPlanFingerprint: PLAN_FP });
+    await h.run(ir, {
+      reviewerResult: () => {
+        vi.advanceTimersByTime(5000);
+        return { outcome: "success", value: "APPROVE" };
+      },
+      ...(refusal === "outer-proof" ? { failCurrentnessReads: 1 } : {
+        applyBoundaryHook: () => {
+          const lease = h.rows().find((row) => row.status === "pending");
+          if (lease) lease.leaseOwner = "peer-reclaimer";
+        },
+      }),
+    });
+    expect(h.executeDispatches()).toBe(0);
+    expect(h.task.approvedPlanFingerprint).toBe(PLAN_FP);
+    expect(h.rows()[0]?.verdict).toBe("APPROVE");
+    expect(h.rows()[0]?.planReviewApprovalRefused).toBe(true);
+    expect(h.rows()[0]?.reviewedInputIdentity?.workflowPin).toEqual(computeWorkflowIrPin(ir, "plan-review"));
+
+    vi.advanceTimersByTime(5000);
+    await h.run(ir, {
+      reviewerResult: () => {
+        vi.advanceTimersByTime(5000);
+        return { outcome: "failure", value: "REVISE" };
+      },
+    });
+    expect(h.reviewerDispatches()).toBe(2);
+    expect(h.executeDispatches()).toBe(0);
+
+    vi.advanceTimersByTime(5000);
+    await h.run(ir, {
+      reviewerResult: () => {
+        vi.advanceTimersByTime(5000);
+        return { outcome: "success", value: "APPROVE" };
+      },
+    });
+    expect(h.reviewerDispatches()).toBe(3);
+    expect(h.executeDispatches()).toBe(1);
+    expect(h.rows()[0]?.planReviewApprovalRefused).toBeUndefined();
+  });
+
+
+  it.each(["planning", "execute"])("built-in %s prompt override uses one effective IR for dispatch and approval", async (nodeId) => {
+    const overrides = { [nodeId]: "Saved prompt override for " + nodeId };
+    const h = productionSinkHarness({ artifact: PLAN, builtinOverrides: overrides });
+    const result = await h.runBuiltin();
+    expect(result.reason).toBeUndefined();
+    expect(result.context?.["node:plan-review:outcome"]).toBe("success");
+    expect(result.context?.["node:plan-review:value"]).toBe("APPROVE");
+    expect(h.task.approvedPlanFingerprint).toBe(PLAN_FP);
+    expect(h.reconcileCalls).toHaveLength(1);
+    const row = h.rows().find((entry) => entry.workflowStepId === "plan-review");
+    const effective = applyPromptOverridesToIr(getBuiltinWorkflow("builtin:legacy-coding")!.ir as WorkflowIr, overrides);
+    expect(row?.reviewedInputIdentity?.workflowPin).toEqual(computeWorkflowIrPin(effective, "plan-review"));
   });
 
   it("RACE3. genuine complete current approval still releases through the same real adapter (control)", async () => {

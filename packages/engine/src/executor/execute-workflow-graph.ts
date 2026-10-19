@@ -632,7 +632,10 @@ export async function persistWorkflowStepResultWithOutcome(
         scopeSuperseded = true;
         return null;
       }
-      const resultForPersistence = unavailablePlanLockDiagnostic ? activityResult : result;
+      const evidence = unavailablePlanLockDiagnostic ? activityResult : result;
+      const resultForPersistence = isPlanReviewResult && isPlanReviewSatisfied(result) && deps.store.isBackendMode()
+        ? { ...evidence, planReviewApprovalRefused: satisfiedApplication === "applied" ? undefined : true as const }
+        : evidence;
       const unprovenApproval = resolveUnprovenReviewApproval(resultForPersistence, {
         workspace: current.workspaceWorktrees !== undefined,
       });
@@ -699,6 +702,11 @@ export async function persistWorkflowStepResultWithOutcome(
         }
         let anchorStamped = false;
         const written = await writeWorkflowStepResultPatch(deps, taskId, (current) => {
+          /* FNXC:CurrentPlanReviewIdentity 2026-10-19-10:20: Decide acceptance before building the durable row; a receipt alone cannot fence a later run. */
+          const ownsAttempt = planReviewAnchorOwnershipHolds(current.workflowStepResults, result);
+          satisfiedApplication = !anchorProof.allowed || unavailablePlanLockDiagnostic
+            ? "anchor-proof-refused"
+            : ownsAttempt ? "applied" : "apply-check-ownership-lost";
           const patch = compute(current);
           if (patch === null) return null;
           if (unavailablePlanLockDiagnostic || !anchorProof.allowed) return patch;
@@ -710,7 +718,7 @@ export async function persistWorkflowStepResultWithOutcome(
           anchor authority is withheld when current persisted ownership no longer matches the
           dispatch-captured identity.
           */
-          if (!planReviewAnchorOwnershipHolds(current.workflowStepResults, result)) {
+          if (!ownsAttempt) {
             // Plan Review: the reclaim won the apply-check — row applies as history, receipt refuses.
             satisfiedApplication = "apply-check-ownership-lost";
             return patch;

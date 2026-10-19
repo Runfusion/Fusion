@@ -413,6 +413,40 @@ pgDescribe("persistWorkflowStepResult Plan Review reset fence", () => {
   afterEach(h.afterEach);
   afterAll(h.afterAll);
 
+
+  it("persists refused approval as history across a PostgreSQL round trip with a retained anchor", async () => {
+    const store = h.store();
+    const subject = await store.createTask({ description: "Refused approval persistence" });
+    const plan = "## Mission\nApprove the task plan.\n";
+    const fingerprint = computePlanApprovalFingerprint(plan);
+    await store.updateTask(subject.id, {
+      workflowStepResults: [pending("plan-review", PLAN_ATTEMPT_START, LEASE_OWNER)],
+      approvedPlanFingerprint: fingerprint,
+    });
+    const accepted = await planReviewAcceptedResult(store, subject.id, plan, PLAN_ATTEMPT_START);
+    const selectionSpy = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValue(new Error("current workflow unavailable"));
+    try {
+      const outcome = await persistWorkflowStepResultWithOutcome(
+        { store, getRunContextFor: () => undefined, readTaskArtifact: async () => plan },
+        subject.id,
+        accepted,
+        { requireAttemptStartedAt: PLAN_ATTEMPT_START },
+      );
+      expect(outcome.persisted).toBe(true);
+      expect(outcome.satisfiedApplication).toBe("anchor-proof-refused");
+      const fresh = await store.getTask(subject.id);
+      expect(fresh?.approvedPlanFingerprint).toBe(fingerprint);
+      expect(fresh?.workflowStepResults?.[0]).toMatchObject({
+        status: "passed",
+        verdict: "APPROVE",
+        planReviewApprovalRefused: true,
+        reviewedInputIdentity: accepted.reviewedInputIdentity,
+      });
+    } finally {
+      selectionSpy.mockRestore();
+    }
+  });
+
   it("blocks an accepted Plan Review write behind Reset and refuses the fresh task row", async () => {
     const store = h.store();
     const subject = await store.createTask({ description: "Plan Review reset serialization" });
