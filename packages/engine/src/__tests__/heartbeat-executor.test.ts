@@ -254,6 +254,64 @@ describe("executeHeartbeat", () => {
     vi.useRealTimers();
   });
 
+
+  describe("terminal persistence serialization", () => {
+    it.each(["completed", "terminated"] as const)("serializes competing terminal writes when %s owns the boundary first", async (firstStatus) => {
+      const store = createStoreWithAgentForExec({ state: "paused" });
+      let row = { id: "terminal-race", agentId: "agent-001", status: "active", startedAt: "2026-10-20T00:00:00Z" } as AgentHeartbeatRun;
+      const activeHandle = { ...row };
+      let ended = false;
+      let reached!: () => void;
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => { reached = resolve; });
+      const resume = new Promise<void>((resolve) => { release = resolve; });
+      const writes: string[] = [];
+      store.getRunDetail = vi.fn(async () => ({ ...row }));
+      store.getActiveHeartbeatRun = vi.fn(async () => ended ? null : activeHandle);
+      store.endHeartbeatRun = vi.fn(async () => { ended = true; });
+      store.saveRun = vi.fn(async (next) => {
+        if (next.status === firstStatus && writes.length === 0) { reached(); await resume; }
+        writes.push(next.status);
+        row = { ...next };
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const complete = () => monitor.completeRun("agent-001", row.id, { status: "completed" });
+      const stop = () => monitor.stopRun("agent-001", { preservePausedState: true });
+      const first = firstStatus === "completed" ? complete() : stop();
+      await blocked;
+      const second = firstStatus === "completed" ? stop() : complete();
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(writes).toEqual([]);
+      } finally {
+        release();
+        await Promise.all([first, second]);
+      }
+      expect(row.status).toBe(firstStatus);
+      expect(writes).toEqual([firstStatus]);
+      if (firstStatus === "terminated") expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "active");
+    });
+    it("releases the terminal fence after a persistence failure", async () => {
+      const store = createStoreWithAgentForExec();
+      const active = { id: "terminal-save-failure", status: "active" } as AgentHeartbeatRun;
+      store.getRunDetail = vi.fn(async () => active);
+      store.getActiveHeartbeatRun = vi.fn(async () => active);
+      vi.mocked(store.saveRun).mockRejectedValueOnce(new Error("temporary run write failure"));
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await expect(monitor.completeRun("agent-001", active.id, { status: "completed" })).rejects.toThrow("temporary run write failure");
+      await monitor.stopRun("agent-001", { preservePausedState: true });
+      expect(store.saveRun).toHaveBeenLastCalledWith(expect.objectContaining({ status: "terminated" }));
+    });
+    it.each(["completed", "failed"] as const)("preserves an already %s run despite a stale active handle", async (status) => {
+      const store = createStoreWithAgentForExec();
+      store.getActiveHeartbeatRun = vi.fn(async () => ({ id: "settled-run", status: "active" } as AgentHeartbeatRun));
+      store.getRunDetail = vi.fn(async () => ({ id: "settled-run", status } as AgentHeartbeatRun));
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await monitor.stopRun("agent-001", { preservePausedState: true });
+      expect(store.saveRun).not.toHaveBeenCalled();
+    });
+  });
+
   describe("reports health check", () => {
     it("buildReportsHealthSection returns null when agent has no reports", async () => {
       const store = createStoreWithAgentForExec();

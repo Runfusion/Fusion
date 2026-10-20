@@ -791,6 +791,7 @@ export class HeartbeatMonitor {
   */
   private pendingHeartbeatRuns: Map<string, PendingHeartbeatRun> = new Map();
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
+  private agentTerminalLocks = new Map<string, Promise<unknown>>();
   private pollInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
   private agentUpdatedListener?: (agent: Agent) => void;
@@ -1651,6 +1652,29 @@ export class HeartbeatMonitor {
     }
   ): Promise<void> {
     const tracked = this.trackedAgents.get(agentId);
+    if (tracked?.runId === runId) tracked.eventFenceClosed = true;
+    return this.withAgentTerminalLock(agentId, () => this.completeRunWhileTerminalLocked(agentId, runId, result));
+  }
+
+  /** FNXC:HeartbeatTermination 2026-10-20-07:55: Serialize the durable terminal read/write and agent-state effects independently of the long-running session lock. */
+  private async withAgentTerminalLock<T>(agentId: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.agentTerminalLocks.get(agentId) ?? Promise.resolve();
+    const operation = previous.catch(() => undefined).then(action);
+    this.agentTerminalLocks.set(agentId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.agentTerminalLocks.get(agentId) === operation) this.agentTerminalLocks.delete(agentId);
+    }
+  }
+
+  /** FNXC:HeartbeatTermination 2026-10-20-07:55: The first terminal transition owns persistence and state effects; queued contenders re-read and preserve its terminal row. */
+  private async completeRunWhileTerminalLocked(
+    agentId: string,
+    runId: string,
+    result: Parameters<HeartbeatMonitor["completeRun"]>[2],
+  ): Promise<void> {
+    const tracked = this.trackedAgents.get(agentId);
     const ownsTrackedRun = tracked?.runId === runId;
     // Close the callback boundary before any persistence await. A provider may
     // settle concurrently with this terminal transition.
@@ -1952,6 +1976,11 @@ export class HeartbeatMonitor {
       return;
     }
 
+    return this.withAgentTerminalLock(agentId, () => this.stopPersistedRunWhileTerminalLocked(agentId, preservePausedState));
+  }
+
+  /** FNXC:HeartbeatTermination 2026-10-20-07:55: A persisted stop uses the completion fence too, and a stale active handle cannot rewrite an established terminal verdict. */
+  private async stopPersistedRunWhileTerminalLocked(agentId: string, preservePausedState: boolean): Promise<void> {
     const activeRun = await this.store.getActiveHeartbeatRun(agentId);
     if (!activeRun) {
       this.clearRunState(agentId);
@@ -1961,6 +1990,7 @@ export class HeartbeatMonitor {
     heartbeatLog.log(`Stopping persisted run ${activeRun.id} for ${agentId} (no tracked session)`);
 
     const existingRun = await this.store.getRunDetail(agentId, activeRun.id);
+    if (existingRun && (existingRun.status === "completed" || existingRun.status === "failed" || existingRun.status === "terminated")) return;
     if (existingRun) {
       await this.store.saveRun({
         ...existingRun,
