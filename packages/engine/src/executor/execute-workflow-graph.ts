@@ -1116,6 +1116,10 @@ export async function executeWorkflowGraph(
         localNodeId: deps.options.getLocalNodeId?.(),
         store: {
           ...deps.store,
+          // FNXC:CurrentPlanReviewIdentity 2026-10-20-07:50: TaskStore resolver methods live on its prototype; forward them with their original receiver.
+          getWorkflowSettingsProjectId: deps.store.getWorkflowSettingsProjectId?.bind(deps.store),
+          getWorkflowPromptOverrides: deps.store.getWorkflowPromptOverrides?.bind(deps.store),
+          getWorkflowPromptOverridesAsync: deps.store.getWorkflowPromptOverridesAsync?.bind(deps.store),
           /*
           FNXC:WorkflowSelection 2026-07-14-17:06:
           Graph execution must reuse the asynchronously resolved selection. A PostgreSQL TaskStore cannot provide that selection through the synchronous compatibility method, and substituting builtin:coding here would silently execute the wrong graph.

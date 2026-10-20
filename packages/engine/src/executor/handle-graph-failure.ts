@@ -22,6 +22,7 @@ import {
   resolveReboundTarget,
   resolveStepReopenPolicy,
   resolveWorkflowIrForTask,
+  resolveWorkflowIrForTaskWithProvenance,
   resolvePreMergeGateForTask,
   TransitionRejectionError,
 } from "@fusion/core";
@@ -44,6 +45,7 @@ import {
   rerouteFailedNoVerdictPreMergeGateToReview,
   rerouteUnrunPreMergeGateToReview,
 } from "../merge/pre-merge-gate-reseed.js";
+import { seedPreReleasePlanReviewContinuation } from "../plan-review-continuation.js";
 import { MERGE_BOUNDARY_RECOVERY_VALUE, MERGE_BOUNDARY_UNPROVEN_VALUE } from "../workflows/workflow-merge-nodes.js";
 import { emitMergeBoundaryUnprovenParked } from "./emit-merge-boundary-unproven-audit.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "../self-healing.js";
@@ -958,6 +960,38 @@ export async function handleGraphFailure(
       const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
       const mergeGraphFailure = isMergeGraphFailure(failedNode);
       const failureValue = graphFailureValue(result);
+      if (failureValue === "gate-unproven-plan-review-input" || failureValue === "gate-stale-review-input") {
+        /** FNXC:CurrentPlanReviewIdentity 2026-10-20-07:50: A refused approval is history, so explicitly seed a bounded real review instead of generic recovery or a synthetic failed verdict. */
+        let reason = "recovery-unavailable";
+        try {
+          const settings = await deps.store.getSettings();
+          if (live.deletedAt || live.paused || live.userPaused || deps.userCanceledTaskIds.has(live.id)
+            || settings.globalPause || settings.enginePaused) {
+            reason = "operator-hold";
+          } else if ((live.graphResumeRetryCount ?? 0) >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
+            reason = "retry-budget-exhausted";
+          } else {
+            const resolved = await resolveWorkflowIrForTaskWithProvenance(deps.store, live.id);
+            if (resolved.source !== "selection" && !(resolved.source === "default" && resolved.selectionAbsent === true)) {
+              reason = "current-workflow-unreadable";
+            } else {
+              const seeded = await seedPreReleasePlanReviewContinuation(deps.store, live, resolved.ir, { atomic: true });
+              reason = seeded.seeded ? "seeded" : seeded.reason ?? "conditional-seed-refused";
+              if (seeded.seeded) {
+                await deps.store.updateTask(live.id, { graphResumeRetryCount: (live.graphResumeRetryCount ?? 0) + 1 }, deps.getRunContextFor(live.id));
+              }
+            }
+          }
+        } catch {
+          reason = "recovery-unavailable";
+        }
+        await deps.store.logEntry(live.id, reason === "seeded"
+          ? "Plan Review identity changed — a fresh review continuation was seeded"
+          : "Plan Review identity recovery withheld — task remains held", reason, deps.getRunContextFor(live.id));
+        deps.activeWorktrees.delete(live.id);
+        await deps.persistTokenUsage(live.id);
+        return;
+      }
       /*
       FNXC:StepDependencyValidation 2026-10-01-02:31:
       Foreach validates persisted/parser-supplied edges before allocating an instance. Its typed
