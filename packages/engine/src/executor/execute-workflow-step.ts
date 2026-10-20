@@ -882,7 +882,26 @@ CRITICAL SCOPING RULES — read before doing anything else:
       : "settings.executionFallbackProvider/executionFallbackModelId or fallbackProvider/fallbackModelId";
     const fallbackLaneLabel = isReviewTypeWorkflowStep ? "validator" : "executor";
 
-    const timeoutMs = Math.max(60_000, settings.workflowStepTimeoutMs ?? 900_000);
+    /*
+     * FNXC:WorkflowStepTimeout 2026-10-20-07:04:
+     * `workflowStepTimeoutMs` is a MOVED setting: `BUILTIN_MOVED_WORKFLOW_SETTINGS` owns its
+     * declaration (default 900000) and the Workflow Editor persists an operator's value through the
+     * per-(workflow, project) setting-values store. The `settings` argument here is the RAW
+     * `store.getSettings()` map that `execute-workflow-graph.ts` loads, and that map no longer
+     * carries the key — so the previous `settings.workflowStepTimeoutMs ?? 900_000` resolved the
+     * declaration default for every dispatched step and a saved 1800000 (30 minutes) stayed inert.
+     * Resolve the task-selected effective settings through the canonical helper and read ONLY the
+     * timeout from that snapshot: a stored value overrides the raw base, a declaration default fills
+     * an absent base key without clobbering a legacy raw value, and the helper's never-throw contract
+     * leaves the raw base in place when the resolver's methods are absent or failing. A review-kind
+     * node reuses the snapshot its severity gate already resolved, so a review dispatch costs at most
+     * one merge either way. The 60000 floor and the 900000 read-site fallback literal (audited by
+     * `workflow-settings-fallback-alignment`) are unchanged. Unrelated consumers keep the raw map:
+     * model lanes, thinking levels, instructions and severity thresholds are deliberately untouched.
+     */
+    const resolvedTimeoutSettings = resolvedReviewSettings
+      ?? await mergeEffectiveSettingsWithProvenance(deps.store, task, settings);
+    const timeoutMs = Math.max(60_000, resolvedTimeoutSettings.settings.workflowStepTimeoutMs ?? 900_000);
     const dispatchLabel = stepOptions?.dispatchLabel?.trim() || undefined;
 
     /*
