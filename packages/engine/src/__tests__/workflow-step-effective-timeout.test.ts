@@ -71,6 +71,7 @@ function stepFixture(kind: "plan-review" | "code-review" | "prompt") {
       id: "graph:plan-review-step",
       name: "Plan Review",
       optionalGroupId: "plan-review",
+      reviewKind: "plan" as const,
     };
   }
   if (kind === "code-review") {
@@ -79,6 +80,7 @@ function stepFixture(kind: "plan-review" | "code-review" | "prompt") {
       id: "graph:code-review-step",
       name: "Code Review",
       optionalGroupId: "code-review",
+      reviewKind: "code" as const,
     };
   }
   return {
@@ -276,6 +278,10 @@ describe("workflow-step effective timeout (moved workflowStepTimeoutMs)", () => 
         step: stepFixture(kind),
       });
       await h.promptStarted;
+      if (kind !== "prompt") {
+        expect(h.selectionReads).toEqual([TASK_ID]);
+        expect(h.valuesReads).toEqual([{ workflowId: WORKFLOW_ID, projectId: PROJECT_ID }]);
+      }
       await vi.advanceTimersByTimeAsync(900_001);
       await drain();
       expect(sessionDisposed(h)).toBe(false);
