@@ -975,11 +975,11 @@ export async function handleGraphFailure(
             if (resolved.source !== "selection" && !(resolved.source === "default" && resolved.selectionAbsent === true)) {
               reason = "current-workflow-unreadable";
             } else {
-              const seeded = await seedPreReleasePlanReviewContinuation(deps.store, live, resolved.ir, { atomic: true });
+              const seeded = await seedPreReleasePlanReviewContinuation(deps.store, live, resolved.ir, { atomic: true, identityRecovery: {
+                expectedTaskUpdatedAt: live.updatedAt, expectedWorkflowStepResults: live.workflowStepResults ?? [],
+                expectedRetryCount: live.graphResumeRetryCount ?? 0, maxRetries: MAX_TRANSIENT_GRAPH_RESUME_RETRIES,
+              } });
               reason = seeded.seeded ? "seeded" : seeded.reason ?? "conditional-seed-refused";
-              if (seeded.seeded) {
-                await deps.store.updateTask(live.id, { graphResumeRetryCount: (live.graphResumeRetryCount ?? 0) + 1 }, deps.getRunContextFor(live.id));
-              }
             }
           }
         } catch {

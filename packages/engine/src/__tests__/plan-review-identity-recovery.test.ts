@@ -18,7 +18,7 @@ function recoveryHarness(options: { paused?: boolean; active?: boolean; exhauste
   store.getSettings.mockResolvedValue({ autoMerge: true, globalPause: false, enginePaused: false });
   store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "builtin:legacy-coding", stepIds: ["plan-review"] }));
   store.listWorkflowWorkItemsForTask = vi.fn(async () => options.active ? [{ id: "newer-review", state: "running", kind: "task" }] : []);
-  store.seedStrandedPlanReviewContinuation = vi.fn(async () => ({ seeded: true, workItemId: "fresh-plan-review" }));
+  store.seedStrandedPlanReviewContinuation = vi.fn(async (_input, options) => { task.graphResumeRetryCount = options.identityRecovery.expectedRetryCount + 1; return { seeded: true, workItemId: "fresh-plan-review" }; });
   store.updateTask.mockImplementation(async (_id, patch) => Object.assign(task, patch));
   const executor = new TaskExecutor(store as never, "/tmp/review-identity-recovery");
   return { task, store, executor };
@@ -31,7 +31,7 @@ describe("Plan Review identity failure recovery", () => {
     const originalHistory = structuredClone(h.task.workflowStepResults);
     await (h.executor as any).handleGraphFailure(h.task, { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan-review"], context: { "node:plan-review:value": value, "node:plan-review:outcome": "failure" } });
     expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
-    expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledWith(expect.objectContaining({ taskId: h.task.id, nodeId: "plan-review", state: "runnable", targetColumn: "todo" }));
+    expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledWith(expect.objectContaining({ taskId: h.task.id, nodeId: "plan-review", state: "runnable", targetColumn: "todo" }), { identityRecovery: expect.objectContaining({ expectedRetryCount: 0, maxRetries: 2, expectedWorkflowStepResults: originalHistory }) });
     expect(h.task.workflowStepResults).toEqual(originalHistory);
     expect(h.store.moveTask).not.toHaveBeenCalled();
     expect(h.task.graphResumeRetryCount).toBe(1);

@@ -27,7 +27,7 @@ export type StrandedHoldContinuationReason =
 export type ApprovedPlanReviewHandoffResult = {
   resumed: boolean;
   reason: "seeded" | "not-plan-in-place" | "awaiting-approval" | "paused" | "needs-replan"
-    | "active-continuation" | "plan-review-passed";
+    | "active-continuation" | "plan-review-passed" | "task-state-changed" | "retry-budget-exhausted";
   workItemId?: string;
 };
 
@@ -47,6 +47,7 @@ plan-review gate living in a WIP column) is a legitimate configuration — the r
 that bail as a quiet park, not an anomaly worth retries and warnings.
 */
 export type PlanReviewSeedBailReason =
+  | "task-state-changed" | "retry-budget-exhausted"
   | "no-pre-release-plan-review"
   | "active-continuation"
   | "plan-review-passed"
@@ -57,7 +58,7 @@ export async function seedPreReleasePlanReviewContinuation(
   store: TaskStore,
   task: Task,
   ir: WorkflowIr,
-  options: { atomic?: boolean; retirePredecessorId?: string } = {},
+  options: { atomic?: boolean; retirePredecessorId?: string; identityRecovery?: NonNullable<Parameters<TaskStore["seedStrandedPlanReviewContinuation"]>[1]>["identityRecovery"] } = {},
 ): Promise<{
   seeded: boolean;
   reason?: PlanReviewSeedBailReason;
@@ -125,8 +126,11 @@ export async function seedPreReleasePlanReviewContinuation(
   retire-predecessor + idle-recheck + successor-install must all land in ONE store
   transaction under the task lock for the handoff to be ordering-proof.
   */
-  if (options.retirePredecessorId) {
-    return store.seedStrandedPlanReviewContinuation(input, { retirePredecessorId: options.retirePredecessorId });
+  if (options.retirePredecessorId || options.identityRecovery) {
+    return store.seedStrandedPlanReviewContinuation(input, {
+      ...(options.retirePredecessorId ? { retirePredecessorId: options.retirePredecessorId } : {}),
+      ...(options.identityRecovery ? { identityRecovery: options.identityRecovery } : {}),
+    });
   }
   if (options.atomic) return store.seedStrandedPlanReviewContinuation(input);
   const item = await store.replaceActiveTaskWorkflowContinuation(input);
