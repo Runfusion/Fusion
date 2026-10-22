@@ -1,4 +1,10 @@
 import { defineConfig, type Plugin } from "vite";
+/*
+FNXC:DashboardVite 2026-09-04-04:42:
+@vitejs/plugin-react@6 requires vite ^8 (it imports vite/internal). Stay on
+plugin-react 5.x, the newest line compatible with this repo's vite ^6. A vite 8
+major is out of scope for the Dependabot plugin-react bump.
+*/
 import react from "@vitejs/plugin-react";
 import { dirname, resolve } from "node:path";
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync } from "node:fs";
