@@ -955,9 +955,27 @@ CRITICAL SCOPING RULES — read before doing anything else:
       language directive the heartbeat and chat paths already apply. `"auto"`/unset emits nothing.
       */
       const stepOperatorLanguageDirective = buildOperatorLanguageDirective(settings);
+      /*
+      FNXC:PromptSectionTotality 2026-10-22-15:29 (RUFU-707):
+      This line killed every prompt-bearing workflow step on a default-configured project. Measured on rtm3:
+      plan-review rows reading `Plan Review failed before producing a verdict: Cannot read properties of
+      undefined (reading 'trim') | at Array.filter | at runOnce (bin.js:296812:72) | at async
+      executeWorkflowStep (bin.js:297392:26)` on 28 cards (KUBE-028 completedAt 15:06:05Z, 15 priorAttempts).
+      `buildOperatorLanguageDirective` legitimately returns `string | undefined` — unset, empty, whitespace or
+      `"auto"` all emit nothing — and `DEFAULT_PROJECT_SETTINGS.operatorLanguage` IS `"auto"`, so the shipped
+      default was the crash value: an absent language directive is a supported configuration, not a missing
+      value, and section composition must be total over it. Filter nullish sections with the canonical
+      optional-chaining predicate already used in `execution/prompt-layers.ts`; the predicate only drops
+      sections, so a configured language keeps its prompt bytes exactly (RUFU-267).
+      Why `tsc` cannot catch this class: `resolveInstructionPartsForRole` is typed `AnyFn` in the executor deps
+      bag, so the array literal widens to `any[]` and `.trim()` on a `string | undefined` element typechecks.
+      The runtime predicate below is therefore the guard, pinned by
+      `__tests__/workflow-step-operator-language-totality.test.ts` and ratcheted by
+      `__tests__/prompt-composition-nullish-sites.test.ts`.
+      */
       const stepSystemPrompt = buildSystemPromptWithInstructions(
         systemPrompt,
-        [stepInstructionParts.configTime, stepOperatorLanguageDirective].filter((section) => section.trim()).join("\n\n"),
+        [stepInstructionParts.configTime, stepOperatorLanguageDirective].filter((section) => section?.trim()).join("\n\n"),
       );
       /*
       FNXC:PromptByteStability 2026-09-24-02:10 (RUFU-267):

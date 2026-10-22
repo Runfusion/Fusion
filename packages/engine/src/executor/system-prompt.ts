@@ -370,6 +370,6 @@ export function getExecutorSystemPrompt(settings: Settings): string {
     basePrompt,
     isResearchToolSurfaceEnabled(settings) ? getResearchGuidanceForSurface("executor") : "",
     getCompletionRecommendationGuidance(maximumRecommendations, requireTaskRecommendations),
-  ].filter((section) => section.trim());
+  ].filter((section) => section?.trim());
   return sections.join("\n\n");
 }

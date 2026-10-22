@@ -61,6 +61,6 @@ export async function resolveInstructionsForRole(
 ): Promise<string> {
   const parts = await resolveInstructionPartsForRole(deps, role, settings);
   return [parts.configTime, parts.memorySection, parts.performanceFeedback]
-    .filter((part) => part.trim())
+    .filter((part) => part?.trim())
     .join("\n\n");
 }

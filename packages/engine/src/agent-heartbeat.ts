@@ -3747,7 +3747,7 @@ export class HeartbeatMonitor {
           const resolvedParts = await resolveAgentInstructionPartsWithRatings(agent, rootDir, this.store, resolvedMemoryMode.mode);
           heartbeatConfigInstructions = resolvedParts.configTime;
           resolvedInstructionsText = [resolvedParts.configTime, resolvedParts.memorySection, resolvedParts.performanceFeedback]
-            .filter((part) => part.trim())
+            .filter((part) => part?.trim())
             .join("\n\n");
           heartbeatVolatile = {
             memorySection: resolvedParts.memorySection,

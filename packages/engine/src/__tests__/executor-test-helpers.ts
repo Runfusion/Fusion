@@ -465,6 +465,16 @@ vi.mock("../execution/step-session-executor.js", () => ({
       steerActiveSessions: mockSteerActiveSessions,
     };
   }),
+  /*
+  FNXC:ExecutorTestHarness 2026-10-22-15:31 (RUFU-707):
+  This factory replaces the whole module, so every export `executeWorkflowStep` reads has to be named here.
+  `workflowStepTaskIdentityLine` joined that module with RUFU-267 (the per-card identity line moved out of the
+  step's system prompt into its request tail), and the mock never gained it — every case in this harness died
+  on "No 'workflowStepTaskIdentityLine' export is defined on the mock". RUFU-707 exposed it because those cases
+  had been throwing one statement earlier (the nullish operator-language section) and never reached this line.
+  Wording mirrors the production builder; only the identity line matters to assertions.
+  */
+  workflowStepTaskIdentityLine: (taskId: string) => `You are executing steps for task ${taskId}.`,
   extractSection: (prompt: string, sectionName: string) => {
     const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const match = new RegExp(`^## ${escaped}\\s*$`, "m").exec(prompt);

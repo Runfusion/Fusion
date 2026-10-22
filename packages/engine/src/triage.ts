@@ -644,7 +644,7 @@ export function buildTriagePromptLayers(input: {
       isResearchToolSurfaceEnabled(input.settings)
         ? getResearchGuidanceForSurface("triage")
         : "",
-    ].filter((section) => section.trim()).join("\n\n"),
+    ].filter((section) => section?.trim()).join("\n\n"),
     pluginContributions: input.pluginContributions,
   });
 }
@@ -3887,7 +3887,7 @@ export class TriageProcessor {
           goalContext: triageGoalResolution.goalContext,
           identitySection: triageIdentitySection,
           policySections: [duplicatePolicyInstruction, planningDependencyInstruction]
-            .filter((section) => section.trim())
+            .filter((section) => section?.trim())
             .join("\n\n"),
         });
 
