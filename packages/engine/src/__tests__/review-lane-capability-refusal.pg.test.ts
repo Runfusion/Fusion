@@ -185,48 +185,49 @@ pgTest("review-lane capability refusal (PostgreSQL)", () => {
     });
   });
 
-  describe("the sweep honours the refusal instead of re-dispatching", () => {
-    it("stops dispatching a refused binding, names the refusal, and re-arms on the operator's edit", async () => {
+  /*
+  FNXC:LaneCapabilityWake 2026-10-22-16:02 (RUFU-766) — REWRITES both legs this describe shipped with:
+  RUFU-682's routing rule was "a lane that refused this binding is never offered it again". The measure was wrong:
+  the wake that minted the refusal scored the review-lane card with the IMPLEMENTATION bar, so the lane was refused
+  for lacking `executor` while being woken to review. On rtm3 (2026-10-22) that left KUBE-027/182/185/187 out of
+  review with `attempts=1` and zero new decline lines in 45 minutes of logs — the stop was permanent and
+  un-liftable because the signature the sweep compares against is the lane's own unchanged policy.
+
+  A refusal now binds only while the lane still fails the review bar. The sweep's pool is exactly the lanes that
+  carry the `reviewer` tag, so a pool member never fails it, and the durable consequence proven here is that a
+  witness written by the wrong bar cannot hold a card out of review. `declinedReviewersForTask` keeps honouring a
+  refusal for any caller that resolves no capability (the pre-RUFU-766 behaviour), which is where a genuine
+  mismatch still refuses — asserted in `review-lane-capability-refusal.test.ts` and, at the wake seam, in
+  `heartbeat-executor.test.ts`.
+  */
+  describe("the sweep stops treating a wrong-bar refusal as a standing refusal", () => {
+    it("keeps dispatching a review whose only refusal came from a lane that can review today", async () => {
       const { store, taskId } = await cardInReview();
-      const declined = lane(DECLINED_LANE);
+      const reviewer = lane(DECLINED_LANE);
       const calls: string[] = [];
 
       // Tick 1: nobody has refused yet, so the card gets reviewer work and the attempt opens.
-      const first = await sweepFor(store, [declined], calls).tick(new Date(Date.now() + 60_000));
+      const first = await sweepFor(store, [reviewer], calls).tick(new Date(Date.now() + 60_000));
       expect(first.dispatched).toEqual([taskId]);
       const [attemptRow] = await listReviewerRunsForTask(store, taskId);
       expect(attemptRow.status).toBe("running");
 
-      // The wake refuses the card on capability grounds, and the refusal lands on that attempt.
+      // The wake refuses the card and the refusal lands on that attempt — the rtm3 shape exactly.
       expect(await refuse(store, taskId, DECLINED_LANE)).toBe(true);
 
-      // Three further eligible ticks: no dispatch, no new attempt, and the card counted in its own bucket. The
-      // production failure was the opposite — `reviewer-busy`, then `parked … attempts=24`, forever.
+      // Eligible ticks after the witness: the bucket that used to be terminal is EMPTY, and the review is still
+      // offered. Before RUFU-766 this asserted `dispatched: []` with `capability-declined: 1` for three ticks and
+      // exactly one attempt row — a card frozen out of its own review by a refusal it never earned.
       for (let tick = 0; tick < 3; tick += 1) {
-        const result = await sweepFor(store, [declined], calls).tick(new Date(Date.now() + 60_000));
-        expect(result.dispatched).toEqual([]);
-        expect(result.classes["capability-declined"]).toBe(1);
-        expect(result.classes["reviewer-busy"]).toBe(0);
-        expect(result.classes.parked).toBe(0);
+        const result = await sweepFor(store, [reviewer], calls).tick(new Date(Date.now() + 60_000));
+        expect(result.classes["capability-declined"]).toBe(0);
+        expect(result.dispatched).toContain(taskId);
       }
-      expect(await listReviewerRunsForTask(store, taskId)).toHaveLength(1);
-
-      // The remedy the decline sentence names is editing this lane's roles or policy, and that edit IS the re-arm:
-      // the recorded signature no longer matches the lane, so the next eligible tick dispatches again. No timer,
-      // no manual row write, no lifecycle move.
-      const repairedCalls: string[] = [];
-      const repaired = await sweepFor(store, [lane(DECLINED_LANE, ["reviewer", "executor"])], repairedCalls)
-        .tick(new Date(Date.now() + 60_000));
-      expect(repaired.dispatched).toEqual([taskId]);
-      expect(repaired.classes["capability-declined"] ?? 0).toBe(0);
-      const rows = await listReviewerRunsForTask(store, taskId);
-      expect(rows).toHaveLength(2);
-      expect(rows[1]!.reworkRound).toBe(2);
+      expect((await listReviewerRunsForTask(store, taskId)).length).toBeGreaterThan(1);
     });
 
-    it("routes a refused card to a lane that never refused it", async () => {
+    it("re-arms on the operator's role edit, which is the lift the decline sentence names", async () => {
       const { store, taskId } = await cardInReview();
-      const declined = lane(DECLINED_LANE);
       await openReviewerRunForTask(store, {
         taskId,
         boardId: "custom:review-lane-refusal",
@@ -236,16 +237,17 @@ pgTest("review-lane capability refusal (PostgreSQL)", () => {
       });
       expect(await refuse(store, taskId, DECLINED_LANE)).toBe(true);
 
-      const calls: string[] = [];
-      const result = await sweepFor(store, [declined, lane(SIBLING_LANE)], calls)
-        .tick(new Date(Date.now() + 60_000));
+      // The witness is stamped with the lane's policy signature; the operator's edit changes it, and the edit is
+      // the lift. No timer, no manual row write, no lifecycle move.
+      expect(reviewerRunLaneDeclineSignature((await listReviewerRunsForTask(store, taskId))[0]))
+        .toBe(laneCapabilityDeclinePolicy(lane(DECLINED_LANE)));
 
-      // "Stop further dispatch to that binding" is per binding — the second lane has never been asked, so the card
-      // gets its review instead of waiting for an operator.
-      expect(result.dispatched).toEqual([taskId]);
-      const rows = await listReviewerRunsForTask(store, taskId);
-      expect(rows.map((row) => row.reviewerAgentId).sort()).toEqual([DECLINED_LANE, SIBLING_LANE].sort());
-      expect(rows.find((row) => row.reviewerAgentId === SIBLING_LANE)!.status).toBe("running");
+      const calls: string[] = [];
+      const repaired = await sweepFor(store, [lane(DECLINED_LANE, ["reviewer", "executor"])], calls)
+        .tick(new Date(Date.now() + 60_000));
+      expect(repaired.dispatched).toEqual([taskId]);
+      expect(repaired.classes["capability-declined"] ?? 0).toBe(0);
+      expect(calls).toContain(taskId);
     });
   });
 });

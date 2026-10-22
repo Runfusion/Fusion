@@ -15,6 +15,7 @@ import { AgentLogger } from "../agents/agent-logger.js";
 import { expectAppendAgentLog } from "./agent-log-assertions.js";
 import {
   TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION,
+  REVIEW_CAPABILITY_DECLINE_CODE,
   type AgentStore,
   type AgentHeartbeatRun,
   type TaskStore,
@@ -5371,6 +5372,102 @@ describe("executeHeartbeat", () => {
       await monitor.executeHeartbeat({ agentId: "agent-001", source: "automation" });
 
       expect(mockedCreateFnAgent).toHaveBeenCalledOnce();
+    });
+
+    /*
+    FNXC:LaneCapabilityWake 2026-10-22-15:58 (RUFU-766):
+    The rtm3 symptom at the production seam. On 2026-10-22 every project on that host had one lane tagged
+    `reviewer` only, and a review-lane card bound to it was scored with the implementation bar, so the wake that
+    had been dispatched TO REVIEW declined the lane for lacking `executor` (KUBE-027/182/185/187). These three
+    legs are the whole fix and its two guard rails: the review wake now runs, a non-review wake does not mint a
+    decline it has no evidence for, and a genuine review refusal still declines — in review vocabulary, without
+    touching the card.
+    */
+    it("runs the review session for a reviewer-only lane holding a card in its review lane", async () => {
+      const store = createStoreWithAgentForExec({
+        taskId: "KUBE-027",
+        role: "reviewer",
+        roles: ["reviewer"],
+        runtimeConfig: { enabled: true } as Agent["runtimeConfig"],
+      });
+      const taskStore = createLaneCapTaskStore({
+        getTask: vi.fn().mockResolvedValue(boundTaskRow("KUBE-027", { column: "in-review" })),
+      });
+      mockedCreateFnAgent.mockResolvedValue({ session: createMockAgentSession() as any });
+      const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/tmp" });
+
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "automation", wakePurpose: "review" });
+
+      expect(mockedCreateFnAgent).toHaveBeenCalledOnce();
+      expect(taskStore.recordRunAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ mutationType: "task:lane-capability-declined" }),
+      );
+    });
+
+    it("does not run the decline ceremony when a non-review wake finds the card in its review lane", async () => {
+      // Same lane and card as the leg above, minus the review purpose: the reviewer still may not run the card,
+      // but "a timer woke me" is not evidence that the lane cannot review. Pre-RUFU-766 this arm is what wrote
+      // the witness that held the card out of review permanently.
+      const card = boundTaskRow("KUBE-182", { column: "in-review" });
+      const store = createStoreWithAgentForExec({
+        taskId: "KUBE-182",
+        role: "reviewer",
+        roles: ["reviewer"],
+        runtimeConfig: { assignmentPolicy: "none" } as Agent["runtimeConfig"],
+      });
+      const taskStore = createLaneCapTaskStore({ getTask: vi.fn().mockResolvedValue(card) });
+      mockedCreateFnAgent.mockResolvedValue({ session: createMockAgentSession() as any });
+      const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/tmp" });
+
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "automation" });
+
+      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("declined bound task"));
+      expect(taskStore.recordRunAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ mutationType: "task:lane-capability-declined" }),
+      );
+    });
+
+    it("declines a genuine review refusal in review vocabulary and leaves the card untouched", async () => {
+      const card = boundTaskRow("KUBE-185", { column: "in-review" });
+      const before = { ...card };
+      const store = createStoreWithAgentForExec({
+        taskId: "KUBE-185",
+        role: "executor",
+        roles: ["executor"],
+        runtimeConfig: { enabled: true } as Agent["runtimeConfig"],
+      });
+      const taskStore = createLaneCapTaskStore({
+        getTask: vi.fn().mockResolvedValue(card),
+        updateTask: vi.fn().mockResolvedValue(card),
+      });
+      mockedCreateFnAgent.mockResolvedValue({ session: createMockAgentSession() as any });
+      const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/tmp" });
+
+      await monitor.executeHeartbeat({ agentId: "agent-001", source: "automation", wakePurpose: "review" });
+
+      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      // The sentence the operator called nonsense ('requires an "executor"-role agent') must not be producible
+      // for a review card any more.
+      expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("Review lane: `in-review`"));
+      expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining('requires an "executor"-role agent'));
+      expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mutationType: "task:lane-capability-declined",
+          taskId: "KUBE-185",
+          metadata: expect.objectContaining({
+            code: REVIEW_CAPABILITY_DECLINE_CODE,
+            purpose: "review",
+            column: "in-review",
+          }),
+        }),
+      );
+      // RUFU-685 half, asserted as behavior: a review decline neither unfrees the card nor freezes it.
+      expect(taskStore.updateTask).not.toHaveBeenCalled();
+      expect({ ...card }).toEqual(before);
+      expect(taskStore.recordRunAuditEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ mutationType: "task:external-block-parked" }),
+      );
     });
   });
 });

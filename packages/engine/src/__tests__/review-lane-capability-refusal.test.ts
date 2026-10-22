@@ -22,6 +22,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   evaluateImplementationTaskBind,
+  evaluateWakeCapabilityBind,
+  isReviewOwnedTask,
   laneCapabilityDeclinePolicy,
   LIFECYCLE_FALLBACK_IMPLEMENTATION_COLUMNS,
   reviewerRunLaneDeclineReason,
@@ -272,45 +274,109 @@ FNXC:ReviewDispatchRefusal 2026-10-15-17:35 (RUFU-682):
 The refusal is only honest while the wake really does refuse. These legs run the PRODUCTION bind evaluator over the
 production lane vocabulary — the same call the heartbeat wake gate makes — across every board shape, because the
 "sweep withheld a review that would have run" failure is strictly worse than the loop: it silently starves a lane
-that was working. Any board whose review lane the policy considers implementation-class refuses a reviewer-only
-lane; that is what makes the withheld dispatch a fact rather than a guess.
+that was working.
+
+FNXC:LaneCapabilityWake 2026-10-22-15:52 (RUFU-766) — REWRITES the measure these legs encoded:
+They used to assert that a reviewer-only lane is refused for a review-lane card, and called that "the wake's own
+verdict". It was the WRONG bar's verdict, not the wake's: the gate scored every wake with
+`evaluateImplementationTaskBind`, and `in-review` is implementation-class by lane vocabulary, so the reviewer was
+refused for the review it had been dispatched to perform, and RUFU-682 made that self-inflicted refusal binding
+(rtm3, 2026-10-22: KUBE-027/182/185/187 `capability-declined` with `attempts=1` and zero new decline lines in 45
+minutes of logs). The wake now declares its purpose and the bar follows it. `in-review` STAYS in the
+implementation set — that is the #2015 guarantee that a liaison lane cannot claim review cards.
 */
-describe("review-lane refusal: the refusal is the wake's own verdict", () => {
-  function wakeVerdict(column: string, implementationColumns?: ReadonlySet<string>) {
-    return evaluateImplementationTaskBind(
-      reviewerLane("agent-0031e775"),
-      { id: TASK_ID, column },
-      { explicitRouting: false, implementationColumns },
+describe("review-lane capability: the bar follows the wake's purpose", () => {
+  /** What the heartbeat wake gate now runs, verbatim in shape. */
+  function wakeVerdict(input: {
+    column: string;
+    purpose: "review" | "implementation";
+    reviewColumn?: string;
+    implementationColumns?: ReadonlySet<string>;
+    explicitRouting?: boolean;
+    lane?: Agent;
+  }) {
+    return evaluateWakeCapabilityBind(
+      input.lane ?? reviewerLane("agent-0031e775"),
+      { id: TASK_ID, column: input.column },
+      {
+        purpose: input.purpose,
+        reviewColumn: input.reviewColumn,
+        explicitRouting: input.explicitRouting === true,
+        implementationColumns: input.implementationColumns,
+      },
     );
   }
 
-  it("refuses a reviewer-only lane on the legacy review lane", () => {
-    expect(wakeVerdict("in-review").allowed).toBe(false);
+  it("admits a reviewer-only lane for a review wake on the legacy review lane", () => {
+    expect(wakeVerdict({ column: "in-review", purpose: "review", reviewColumn: "in-review" }).allowed).toBe(true);
+  });
+
+  it("admits it on a renamed board that names its review lane differently", () => {
+    expect(wakeVerdict({ column: "qa-acceptance", purpose: "review", reviewColumn: "qa-acceptance" }).allowed).toBe(true);
+  });
+
+  it("admits a reviewer whose assignmentPolicy is none — the pool filter, not the executor floor, owns eligibility", () => {
+    const liaisonReviewer = {
+      id: "agent-liaison",
+      name: "liaison",
+      role: "reviewer",
+      roles: ["reviewer"],
+      runtimeConfig: { enabled: true, assignmentPolicy: "none" },
+    } as unknown as Agent;
+    const verdict = wakeVerdict({ column: "in-review", purpose: "review", reviewColumn: "in-review", lane: liaisonReviewer });
+    expect(verdict.allowed).toBe(true);
+  });
+
+  it("still refuses a reviewer-only lane when the wake is not review-purpose", () => {
+    // The implementation verdict is unchanged byte-for-byte, so a reviewer still cannot implement.
+    expect(wakeVerdict({ column: "in-review", purpose: "implementation" }).allowed).toBe(false);
     expect(LIFECYCLE_FALLBACK_IMPLEMENTATION_COLUMNS).toContain("in-review");
   });
 
-  it("refuses it on a renamed board that names its review lane differently", () => {
-    expect(wakeVerdict("qa-acceptance", new Set(["qa-acceptance"])).allowed).toBe(false);
+  it("refuses a review purpose on a card that is not in its review lane — the purpose cannot be used to smuggle implementation work", () => {
+    expect(wakeVerdict({ column: "in-progress", purpose: "review", reviewColumn: "in-review" }).allowed).toBe(false);
+    expect(wakeVerdict({ column: "todo", purpose: "review", reviewColumn: "in-review" }).allowed).toBe(false);
   });
 
-  it("refuses it even when the card was durably assigned to that very lane", () => {
-    // Explicit routing widens the bar to executor/engineer, never to reviewer-only.
-    const verdict = evaluateImplementationTaskBind(
-      reviewerLane("agent-0031e775"),
-      { id: TASK_ID, column: "in-review" },
-      { explicitRouting: true, implementationColumns: new Set(["in-review"]) },
-    );
+  it("fails closed when the card's workflow cannot resolve a review lane", () => {
+    expect(wakeVerdict({ column: "in-review", purpose: "review", reviewColumn: undefined }).allowed).toBe(false);
+    expect(isReviewOwnedTask({ column: "in-review" }, null)).toBe(false);
+  });
+
+  it("refuses a lane that genuinely cannot review, so the bucket stays honest", () => {
+    const executorOnly = { id: "agent-exec", name: "exec", role: "executor", roles: ["executor"], runtimeConfig: { enabled: true } } as unknown as Agent;
+    const verdict = wakeVerdict({ column: "in-review", purpose: "review", reviewColumn: "in-review", lane: executorOnly });
     expect(verdict.allowed).toBe(false);
+    // The refusal names review terms; the implementation sentence told operators to grant the executor role.
+    expect(verdict.allowed === false && verdict.reason).not.toContain('requires an "executor"-role agent');
+    expect(verdict.allowed === false && verdict.reason).toContain('review task');
+  });
+});
+
+/*
+FNXC:LaneCapabilityWake 2026-10-22-15:52 (RUFU-766):
+Witness-lift legs. Signature equality alone kept rtm3's review lane shut: the recorded refusals were minted by the
+implementation bar, so a lane that carries the `reviewer` tag today is refusing nothing. The rule the sweep now
+applies is that a refusal binds only while the lane still fails the bar it was refused by.
+*/
+describe("review-lane witness: a refusal binds only while the lane still fails the review bar", () => {
+  const lane = reviewerLane("agent-0031e775");
+  const signature = laneCapabilityDeclinePolicy(lane);
+  const declinedMap = new Map([[lane.id, signature]]);
+  const witness = attempt({ failureReasons: [reviewerRunLaneDeclineReason(lane)] });
+
+  it("voids a refusal from a lane that satisfies the review bar today", () => {
+    const capable = new Map([[lane.id, true]]);
+    expect(declinedReviewersForTask([witness], declinedMap, capable).size).toBe(0);
   });
 
-  it("accepts a lane the policy considers capable, so a refusal is never blanket", () => {
-    const capable = { id: "agent-eng", name: "eng", role: "engineer", roles: ["reviewer", "engineer"], runtimeConfig: { enabled: true } } as unknown as Agent;
-    const verdict = evaluateImplementationTaskBind(
-      capable,
-      { id: TASK_ID, column: "in-review" },
-      { explicitRouting: true, implementationColumns: new Set(["in-review"]) },
-    );
-    expect(verdict.allowed).toBe(true);
+  it("honours the same refusal from a lane that still cannot review", () => {
+    const incapable = new Map([[lane.id, false]]);
+    expect([...declinedReviewersForTask([witness], declinedMap, incapable)]).toEqual([lane.id]);
+  });
+
+  it("keeps the pre-RUFU-766 behaviour for a caller that resolves no capability", () => {
+    expect([...declinedReviewersForTask([witness], declinedMap)]).toEqual([lane.id]);
   });
 });
 
@@ -349,9 +415,23 @@ describe("wake decline records the review refusal in the same call", () => {
   it("records the refusal without letting the ledger decide the decline", () => {
     const body = methodBody("recordLaneCapabilityDecline");
     expect(body).toContain("declineReviewerRunForLane(");
-    expect(body).toContain("reviewerRunLaneDeclineReason(");
+    /*
+    FNXC:LaneCapabilityWake 2026-10-22-15:52 (RUFU-766):
+    The reason builders moved behind one purpose-selecting descriptor so the review decline cannot reuse the
+    implementation sentence. The structural property is unchanged — the recorder still emits the ledger witness
+    itself, from that descriptor — so this guard follows the signature rather than the old symbol name.
+    */
+    expect(body).toContain("describeLaneCapabilityDecline(");
+    expect(body).toContain("descriptor.ledgerReason");
     // The refusal is best-effort: it is caught, and it returns before the ledger when no store is bound.
     expect(body).toContain("} catch (");
     expect(body).toContain("if (!this.taskStore) return;");
+  });
+
+  it("scores the wake through the single purpose-aware entry point", () => {
+    // No wake-path call site may go back to scoring a bound card with the implementation bar directly.
+    expect(occurrences("evaluateWakeCapabilityBind(")).toBeGreaterThanOrEqual(1);
+    const gate = source.slice(source.indexOf("if (declineable) {"));
+    expect(gate.slice(0, gate.indexOf("if (!taskId) {"))).not.toContain("evaluateImplementationTaskBind(");
   });
 });

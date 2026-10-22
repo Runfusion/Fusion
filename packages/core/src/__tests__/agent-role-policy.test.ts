@@ -13,6 +13,10 @@ import {
   isEngineerRoleAgent,
   isExecutorRoleAgent,
   isImplementationTask,
+  evaluateReviewTaskBind,
+  evaluateWakeCapabilityBind,
+  hasWorkflowRoleCapability,
+  isReviewOwnedTask,
 } from "../agents/agent-role-policy.js";
 
 describe("agent-role-policy", () => {
@@ -223,5 +227,55 @@ describe("resolved implementation-column vocabulary (RUFU-272)", () => {
     const liaisonNone = { id: "a-liaison", role: "executor" as const, runtimeConfig: { assignmentPolicy: "none" } };
     expect(evaluateImplementationTaskBind(liaisonNone, renamedTask, { explicitRouting: true, implementationColumns: resolved }).allowed).toBe(false);
     expect(evaluateImplementationTaskBind(liaisonNone, renamedTask, { explicitRouting: true }).allowed).toBe(true);
+  });
+});
+
+/*
+FNXC:LaneCapabilityWake 2026-10-22-15:55 (RUFU-766):
+RUFU-682 added `reviewer` to `REVIEW_AUTOMATION_ROLES` and declared review to be reviewer work, but left every
+wake path scoring a review-lane card with the implementation bar — and `in-review` is deliberately
+implementation-class, because that is what stops a liaison lane from claiming review work. So the review was
+"reviewer work" only in prose: on rtm3 all three projects had exactly one lane, tagged `reviewer` only, and every
+wake that ran the review refused the lane for lacking `executor` (KUBE-027/182/185/187), then RUFU-682 made that
+refusal durable. The bar now follows the wake's declared purpose.
+*/
+describe("wake-purpose capability binding (review vs implementation)", () => {
+  const reviewerOnly = { id: "a-rev", role: "reviewer" as const, roles: ["reviewer"] as never, runtimeConfig: { assignmentPolicy: "none" } };
+  const executorOnly = { id: "a-exec", role: "executor" as const, roles: ["executor"] as never, runtimeConfig: { assignmentPolicy: "auto" } };
+  const engineerReviewer = { id: "a-eng", role: "reviewer" as const, roles: ["reviewer", "engineer"] as never, runtimeConfig: { assignmentPolicy: "auto" } };
+  const reviewCard = { id: "KUBE-027", column: "in-review" };
+
+  it("the card is implementation-class by lane vocabulary and review-owned by workflow — both at once", () => {
+    expect(isImplementationTask(reviewCard)).toBe(true);
+    expect(isReviewOwnedTask(reviewCard, "in-review")).toBe(true);
+  });
+
+  it("review purpose admits a reviewer-only lane even at assignmentPolicy 'none'", () => {
+    expect(evaluateWakeCapabilityBind(reviewerOnly as never, reviewCard, { purpose: "review", reviewColumn: "in-review" }).allowed).toBe(true);
+    expect(evaluateWakeCapabilityBind(engineerReviewer as never, reviewCard, { purpose: "review", reviewColumn: "in-review" }).allowed).toBe(true);
+  });
+
+  it("review purpose refuses a lane with no `reviewer` tag — the bucket stays honest", () => {
+    expect(evaluateWakeCapabilityBind(executorOnly as never, reviewCard, { purpose: "review", reviewColumn: "in-review" }).allowed).toBe(false);
+    expect(hasWorkflowRoleCapability(executorOnly as never, "reviewer")).toBe(false);
+    expect(hasWorkflowRoleCapability(reviewerOnly as never, "reviewer")).toBe(true);
+  });
+
+  it("implementation purpose is byte-for-byte the old verdict", () => {
+    const before = evaluateImplementationTaskBind(reviewerOnly as never, reviewCard, { explicitRouting: true });
+    const after = evaluateWakeCapabilityBind(reviewerOnly as never, reviewCard, { purpose: "implementation", reviewColumn: "in-review", explicitRouting: true });
+    expect(after).toEqual(before);
+    expect(after.allowed).toBe(false);
+  });
+
+  it("an unresolvable review lane fails closed to the implementation bar", () => {
+    expect(evaluateWakeCapabilityBind(reviewerOnly as never, reviewCard, { purpose: "review", reviewColumn: undefined }).allowed).toBe(false);
+    expect(evaluateWakeCapabilityBind(reviewerOnly as never, reviewCard, { purpose: "review", reviewColumn: null }).allowed).toBe(false);
+    // A renamed board resolves its own lane name — the check is equality, not the legacy literal.
+    expect(evaluateWakeCapabilityBind(reviewerOnly as never, { id: "X", column: "qa-acceptance" }, { purpose: "review", reviewColumn: "qa-acceptance" }).allowed).toBe(true);
+  });
+
+  it("review purpose never leaks into a non-review-owned card", () => {
+    expect(evaluateWakeCapabilityBind(reviewerOnly as never, { id: "X", column: "in-progress" }, { purpose: "review", reviewColumn: "in-review" }).allowed).toBe(false);
   });
 });

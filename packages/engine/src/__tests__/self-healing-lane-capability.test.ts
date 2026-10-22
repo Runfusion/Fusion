@@ -281,3 +281,55 @@ describe("reconcileLaneCapabilityMisbinds", () => {
     expect(auditOnlyLane.taskId).toBe("FN-T1"); // untouched — not this sweep's business
   });
 });
+
+describe("reconcileLaneCapabilityMisbinds review-lane skip", () => {
+  /*
+  FNXC:LaneCapabilityReconciliation 2026-10-22-15:56 (RUFU-766):
+  The sweep decides with the IMPLEMENTATION verdict, and `in-review` is implementation-class by lane vocabulary on
+  purpose. Before RUFU-766 that made a review-lane card owned by its reviewer look like a misbind, so this pass
+  either moved the review to an executor lane or froze the card with the sentence telling the operator to grant
+  the reviewer the `executor` role. A card sitting in the lane its own workflow declares for review is a routing
+  fact, not a capability mismatch — the skip is the narrow review lane, never the broad implementation set.
+  */
+  it("leaves a review-lane card owned by a reviewer lane completely alone", async () => {
+    const card = strandedCard({ id: "KUBE-027", column: "in-review", assignedAgentId: auditOnlyLane.id });
+    const store = createFakeTaskStore([card]);
+    const agentStore = createFakeAgentStore([auditOnlyLane, autoExecutorLane]);
+
+    const count = await reconcileLaneCapabilityMisbinds(store as never, agentStore as never, neverLive);
+
+    expect(count).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(card.assignedAgentId).toBe("audit-lane");
+    // No decline freeze written: the freeze's remedy sentence is the implementation one.
+    expect(card.status).toBeNull();
+    expect(card.paused).toBe(false);
+    expect(card.externalBlock).toBeUndefined();
+    expect(store.auditEvents.map((entry) => entry.mutationType)).toEqual([]);
+  });
+
+  it("still repairs the same owner when the card is NOT in its review lane (the skip is narrow)", async () => {
+    const card = strandedCard({ id: "KUBE-184", column: "in-progress", assignedAgentId: auditOnlyLane.id });
+    const store = createFakeTaskStore([card]);
+    const agentStore = createFakeAgentStore([auditOnlyLane, autoExecutorLane]);
+
+    expect(await reconcileLaneCapabilityMisbinds(store as never, agentStore as never, neverLive)).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("KUBE-184", { assignedAgentId: "auto-exec" });
+  });
+
+  it("still repairs a review-lane card whose owner is not the review pool at all", async () => {
+    // Merge-orchestration-style ownership in a review lane keeps its pre-RUFU-766 behavior: the skip protects a
+    // card owned BY the review pool, not every card parked in the lane.
+    const card = strandedCard({ id: "KUBE-190", column: "in-review", assignedAgentId: "auto-exec" });
+    const store = createFakeTaskStore([card]);
+    const reviewerOnlyLane = { ...auditOnlyLane, id: "exec-pool", roles: ["executor"], role: "executor" } as unknown as Agent;
+    const agentStore = createFakeAgentStore([autoExecutorLane, reviewerOnlyLane]);
+
+    const count = await reconcileLaneCapabilityMisbinds(store as never, agentStore as never, neverLive);
+
+    // `auto-exec` is an eligible owner for an implementation-class card, so nothing is a misbind here either —
+    // the point is the verdict still runs (no blanket skip) and writes nothing it should not.
+    expect(count).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+});
