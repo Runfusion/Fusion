@@ -38,12 +38,13 @@ import {
   resolveEffectiveAgentPermissionPolicy,
   canAgentTakeImplementationTask,
   evaluateImplementationTaskBind,
+  evaluateWakeCapabilityBind,
+  isReviewOwnedTask,
+  describeLaneCapabilityDecline,
+  type WakePurpose,
   resolveTaskImplementationColumns,
-  formatLaneCapabilityDeclineReason,
   laneCapabilityDeclinePolicy,
   declineReviewerRunForLane,
-  reviewerRunLaneDeclineReason,
-  LANE_CAPABILITY_DECLINE_CODE,
   type WorkflowIr,
   resolvePersistAgentThinkingLog,
   resolveAgentMemoryInclusionMode,
@@ -359,6 +360,16 @@ export interface HeartbeatExecutionOptions {
   wakeMessage?: WakeMessageContext;
   /** Optional structured context persisted on the run record */
   contextSnapshot?: Record<string, unknown>;
+  /*
+  FNXC:LaneCapabilityWake 2026-10-22-15:47 (RUFU-766):
+  Which capability BAR scores the bound card — never which card is bound, never the routing decision. Omitting
+  it means `"implementation"`, i.e. the pre-existing verdict byte-for-byte. The review dispatch sweep passes
+  `"review"` because a review-lane card is implementation-class by lane vocabulary
+  (`IMPLEMENTATION_TASK_COLUMNS` includes `in-review` on purpose, so a liaison lane can never claim it), and
+  scoring the review with the implementation bar refused every reviewer-only lane for the review it was woken
+  to perform — then RUFU-682 made that self-inflicted refusal binding.
+  */
+  wakePurpose?: WakePurpose;
 }
 
 /*
@@ -2664,6 +2675,7 @@ export class HeartbeatMonitor {
       triggeringCommentIds,
       triggeringCommentType,
       wakeMessage,
+      wakePurpose,
     } = options;
 
     // Validate execution dependencies
@@ -3165,55 +3177,84 @@ export class HeartbeatMonitor {
               && activeRun!.id !== run.id
               && activeRun!.contextSnapshot?.taskId === wakeTaskId;
             if (!liveCarried) {
-              const wakeBindVerdict = evaluateImplementationTaskBind(agent, boundTask, {
+              /*
+              FNXC:LaneCapabilityWake 2026-10-22-15:47 (RUFU-766):
+              The revalidation now scores the bound card with the bar that matches the wake's PURPOSE, resolved
+              through the single core entry point so this call site and every bind surface cannot drift apart.
+              `reviewColumn` comes from the card's own workflow and fails closed: an unresolvable vocabulary
+              leaves `undefined`, which routes back to the implementation bar exactly as before.
+              */
+              const reviewColumn = (await resolveTaskLifecycleColumns(taskStore, wakeTaskId).catch(() => undefined))?.review;
+              const wakeBindVerdict = evaluateWakeCapabilityBind(agent, boundTask, {
+                purpose: wakePurpose ?? "implementation",
+                reviewColumn,
                 explicitRouting: boundTask.assignedAgentId === agent.id,
                 executorRoleOverride: boundTask.sourceMetadata?.executorRoleOverride === true,
                 implementationColumns: await resolveTaskImplementationColumns(taskStore, wakeTaskId),
               });
               if (!wakeBindVerdict.allowed) {
                 /*
-                FNXC:LaneCapabilityReviewRefusal 2026-10-15-17:30 (RUFU-682):
-                ONE call carries the whole refusal: the named decline line, the bounded audit row, and the review-ledger
-                witness. Pairing them structurally is deliberate — the audit row alone could not be acted on, and the
-                witness alone would let the log and the ledger disagree. The ledger half is what the review dispatch
-                sweep reads: an attempt left `running` is closed by `reconcile-stranded-reviewer-runs` as `engine-lost:`,
-                the one reason class the sweep's anti-loop budget EXEMPTS, so the same deterministic capability mismatch
-                was dispatched again forever (measured: SANE-484 at `attempt 24`, 9 declines, 9 engine-lost closes, 0
-                sessions and 0 merge rows across 5.5 h).
+                FNXC:LaneCapabilityWake 2026-10-22-15:48 (RUFU-766):
+                A refusal on a review-owned card by a wake that was NOT dispatched to review is a routing fact, not
+                a capability mismatch, and the decline ceremony must not run for it: the sentence, the audit row,
+                the ledger witness and the executor hand-off are all claims that the lane is unable, and a timer,
+                a manual wake, or a comment wake proves nothing about ability. Measured on rtm3, that ceremony is
+                what minted the witnesses now holding KUBE-027/182/185/187 out of review.
 
-                The witness never decides the decline and never touches the binding: a ledger that cannot be written
-                leaves the wake behaving exactly as it did before this change.
+                The card still must not execute here — a wake that did not ask for a review may not start or
+                re-start one — so the arm falls through to inbox/auto-claim exactly as a decline does, minus the
+                ceremony. A review-purpose refusal keeps the full ceremony: that one is a lane genuinely unable
+                to review, and it is the only thing that may write a review witness.
                 */
-                await this.recordLaneCapabilityDecline(agent, boundTask, run.id);
-                /*
-                FNXC:LaneCapabilityReviewRefusal 2026-10-15-21:15 (RUFU-685):
-                A declined binding still has to be dealt with, or the card is assigned to an agent that will
-                never run it: the decline named the mismatch and stopped the session, and nothing released the
-                assignment, so a queued card could sit claimed-by-nobody-forever while every later wake took the
-                same decline. The sanctioned release is the same durable seam the model used to be trusted with
-                (`fn_task_handoff_to_workflow_executor` → `handoffTaskToWorkflowExecutor`), which is why this path
-                now calls it directly instead of asking a session to do it: the refusal means the session must not
-                run at all, so a tool the run never opens cannot be the cure. Measured on the failing heartbeat
-                suite: the wake ended `status: completed, resultJson.reason: "no_assignment"` with zero sessions and
-                zero releases — the handoff invariant the suite encodes ('release durably, do not log ready') had
-                become unreachable.
+                const declinePurpose: WakePurpose = wakePurpose ?? "implementation";
+                const reviewOwnedCard = isReviewOwnedTask(boundTask, reviewColumn);
+                if (declinePurpose === "review" || !reviewOwnedCard) {
+                  await this.recordLaneCapabilityDecline(agent, boundTask, run.id, declinePurpose);
+                  if (declinePurpose === "review") {
+                    /*
+                    FNXC:LaneCapabilityWake 2026-10-22-15:48 (RUFU-766):
+                    No Workflow Executor hand-off on a review refusal. The release seam only accepts
+                    queued/hold-lane cards (`not_queered` otherwise), so for a card sitting in its review lane it
+                    can only refuse — and an attempt that could someday succeed would move the card away from the
+                    pool that owns the review, leaving a review-lane card with no owner. Asserted as behavior in
+                    `review-lane-capability-refusal.test.ts`: owner, column, branch, worktree, externalBlock and
+                    pause state all unchanged after a review-purpose decline.
+                    */
+                    heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} kept the review binding — the review lane owns this card's routing`);
+                  } else {
+                    /*
+                    FNXC:LaneCapabilityReviewRefusal 2026-10-15-21:15 (RUFU-685):
+                    A declined binding still has to be dealt with, or the card is assigned to an agent that will
+                    never run it: the decline named the mismatch and stopped the session, and nothing released the
+                    assignment, so a queued card could sit claimed-by-nobody-forever while every later wake took the
+                    same decline. The sanctioned release is the same durable seam the model used to be trusted with
+                    (`fn_task_handoff_to_workflow_executor` → `handoffTaskToWorkflowExecutor`), which is why this path
+                    now calls it directly instead of asking a session to do it: the refusal means the session must not
+                    run at all, so a tool the run never opens cannot be the cure. Measured on the failing heartbeat
+                    suite: the wake ended `status: completed, resultJson.reason: "no_assignment"` with zero sessions and
+                    zero releases — the handoff invariant the suite encodes ('release durably, do not log ready') had
+                    become unreachable.
 
-                The seam is its own authority on what may be released: it refuses `paused`, `checkout_held`,
-                `assigned_to_other`, and any card outside the queued/hold lane (`not_queued`) — so an RUFU-682
-                review-lane refusal stays bound and keeps its review routing, exactly as before. The attempt is
-                best-effort and outcome-logged: an AgentStore without the method, or a refusal, leaves the decline
-                behaving exactly as it did one commit ago.
-                */
-                const released = await Promise.resolve(
-                  this.store.handoffTaskToWorkflowExecutor?.(agentId, wakeTaskId, runContext),
-                ).catch((handoffErr: unknown) => {
-                  heartbeatLog.warn(`Lane-capability decline release failed for ${agentId}/${wakeTaskId}: ${handoffErr instanceof Error ? handoffErr.message : String(handoffErr)}`);
-                  return null;
-                });
-                if (released && !released.ok) {
-                  heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} kept the binding — Workflow Executor release refused (${released.reason})`);
-                } else if (released) {
-                  heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} released the queued card to Workflow Executor admission`);
+                    The seam is its own authority on what may be released: it refuses `paused`, `checkout_held`,
+                    `assigned_to_other`, and any card outside the queued/hold lane (`not_queued`) — so an RUFU-682
+                    review-lane refusal stays bound and keeps its review routing, exactly as before. The attempt is
+                    best-effort and outcome-logged: an AgentStore without the method, or a refusal, leaves the decline
+                    behaving exactly as it did one commit ago.
+                    */
+                    const released = await Promise.resolve(
+                      this.store.handoffTaskToWorkflowExecutor?.(agentId, wakeTaskId, runContext),
+                    ).catch((handoffErr: unknown) => {
+                      heartbeatLog.warn(`Lane-capability decline release failed for ${agentId}/${wakeTaskId}: ${handoffErr instanceof Error ? handoffErr.message : String(handoffErr)}`);
+                      return null;
+                    });
+                    if (released && !released.ok) {
+                      heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} kept the binding — Workflow Executor release refused (${released.reason})`);
+                    } else if (released) {
+                      heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} released the queued card to Workflow Executor admission`);
+                    }
+                  }
+                } else {
+                  heartbeatLog.log(`Wake on ${wakeTaskId} is not review-purpose and the card sits in its review lane; the wake neither runs it nor declines the lane`);
                 }
                 // Decline ≠ unbind by raw write: the release above is the only thing that may drop the binding.
                 taskId = undefined;
@@ -5677,15 +5718,17 @@ export class HeartbeatMonitor {
     agent: Agent,
     task: Pick<TaskDetail, "id" | "column">,
     runId: string,
+    purpose: WakePurpose,
   ): Promise<void> {
-    heartbeatLog.warn(`Agent ${agent.id} declined bound task ${task.id}: ${formatLaneCapabilityDeclineReason(agent, task)}`);
-    await this.auditLaneCapabilityDecline(agent.id, task.id, task.column, agent, runId);
+    const descriptor = describeLaneCapabilityDecline(agent, task, purpose);
+    heartbeatLog.warn(`Agent ${agent.id} declined bound task ${task.id}: ${descriptor.reason}`);
+    await this.auditLaneCapabilityDecline(agent.id, task.id, task.column, agent, runId, purpose, descriptor.auditCode);
     if (!this.taskStore) return;
     try {
       const refused = await declineReviewerRunForLane(this.taskStore, {
         taskId: task.id,
         reviewerAgentId: agent.id,
-        reason: reviewerRunLaneDeclineReason(agent),
+        reason: descriptor.ledgerReason,
         at: new Date().toISOString(),
       });
       if (refused) {
@@ -5702,6 +5745,8 @@ export class HeartbeatMonitor {
     column: string,
     agent: Agent,
     runId: string,
+    purpose: WakePurpose,
+    auditCode: string,
   ): Promise<void> {
     const key = `${agentId}:${taskId}:${laneCapabilityDeclinePolicy(agent)}`;
     const now = Date.now();
@@ -5718,7 +5763,8 @@ export class HeartbeatMonitor {
       domain: "database",
       mutationType: "task:lane-capability-declined",
       target: taskId,
-      metadata: { outcome: "declined", taskId, agentId, column, code: LANE_CAPABILITY_DECLINE_CODE },
+      // ids / counts / fixed enums only: the sentence lives on the agent log and the card's History, never here.
+      metadata: { outcome: "declined", taskId, agentId, column, code: auditCode, purpose },
     });
   }
 

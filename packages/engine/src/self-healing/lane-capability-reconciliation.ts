@@ -1,6 +1,8 @@
 import {
   isTaskNotFoundError,
   evaluateImplementationTaskBind,
+  isReviewOwnedTask,
+  resolveTaskLifecycleColumns,
   resolveTaskImplementationColumns,
   formatLaneCapabilityDeclineReason,
   buildLaneCapabilityFreezePatch,
@@ -90,6 +92,22 @@ export async function reconcileLaneCapabilityMisbinds(
 
     try {
       const implementationColumns = await resolveTaskImplementationColumns(store, slim.id, irCache, selectionCache);
+
+      /*
+      FNXC:LaneCapabilityReconciliation 2026-10-22-15:49 (RUFU-766):
+      A card sitting in its own review lane is a ROUTING fact, not a capability mismatch, and this sweep must
+      keep its hands off it. The owner verdict here is the implementation verdict, and `in-review` is
+      implementation-class by lane vocabulary on purpose — so before RUFU-766 this pass looked at a review-lane
+      card, found its owner without an executor tag, and either rebound it to an executor (moving the review
+      away from the pool that owns it) or froze it with `buildLaneCapabilityFreezePatch` whose remedy sentence
+      tells the operator to grant the reviewer the executor role. Both are worse than the wedge they repair.
+
+      The skip is the narrow review lane resolved from the card's own workflow, NOT the broad
+      implementation-column set: merge-orchestration and merge-blocker lanes keep every existing behavior.
+      An unresolvable vocabulary yields `undefined`, which skips nothing and keeps the legacy verdict.
+      */
+      const reviewColumn = (await resolveTaskLifecycleColumns(store, slim.id, irCache, selectionCache).catch(() => undefined))?.review;
+      if (isReviewOwnedTask(slim, reviewColumn)) continue;
 
       // Authoritative re-read (slim rows do not carry sourceMetadata / external-block payloads).
       const card = await store.getTask(slim.id);

@@ -1,7 +1,8 @@
 import {
   CODE_REVIEW_GROUP_ID,
   completeReviewerRunForTask,
-  formatLaneCapabilityDeclineReason,
+  formatReviewCapabilityDeclineReason,
+  hasWorkflowRoleCapability,
   invalidateReviewerRunsForTask,
   IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
   isEphemeralAgent,
@@ -135,16 +136,35 @@ two reviewers can share a policy signature, and a refusal by lane A is not a ref
 asked. The signature comparison is what keeps the refusal liftable: an operator who edits the lane's roles or
 assignment policy changes its signature, the recorded refusal stops matching, and the next tick routes again.
 No timer, no manual row edit, and no state for a sweep to forget on restart.
+
+FNXC:LaneCapabilityWake 2026-10-22-15:45 (RUFU-766):
+Signature equality alone was not enough, because the refusal it honours was sometimes minted by the WRONG BAR.
+Until RUFU-766 the heartbeat wake scored a review-lane card with the implementation predicate, so a reviewer-only
+lane refused reviews it was fully capable of performing, and the witness then bound that refusal indefinitely:
+measured on rtm3, KUBE-027/182/185/187 are `capability-declined` with zero new `declined bound task` lines in 45
+minutes of logs — the sweep is honouring a refusal whose cause never existed, and the only signature change that
+would lift it is granting the reviewer the executor role.
+
+So a recorded refusal binds only while the lane still FAILS the bar it was refused by. A lane that carries the
+`reviewer` tag today cannot be refusing this card on review-capability grounds, which voids the product-caused
+witnesses without touching a row and without weakening the ratchet for a genuine refusal (a lane that truly
+cannot review still binds, signature permitting).
 */
-/** The reviewers in `pool` whose CURRENT policy signature equals the one their refusal was recorded under. */
+/**
+ * The reviewers in `pool` whose CURRENT policy signature equals the one their refusal was recorded under AND
+ * who still fail the review bar. `reviewCapableByAgent` is optional so a caller that has not resolved the
+ * capability keeps the pre-RUFU-766 behaviour of honouring every signature-matched refusal.
+ */
 export function declinedReviewersForTask(
   rows: ReviewerRunRow[],
   policySignatureByAgent: ReadonlyMap<string, string>,
+  reviewCapableByAgent?: ReadonlyMap<string, boolean>,
 ): Set<string> {
   const declined = new Set<string>();
   for (const row of rows) {
     const signature = reviewerRunLaneDeclineSignature(row);
     if (signature === null) continue;
+    if (reviewCapableByAgent?.get(row.reviewerAgentId) === true) continue;
     if (policySignatureByAgent.get(row.reviewerAgentId) === signature) declined.add(row.reviewerAgentId);
   }
   return declined;
@@ -530,9 +550,21 @@ export class ReviewDispatchSweep {
     const pool = await this.resolveReviewerPool();
     const busyRunByReviewer = new Map<string, AgentHeartbeatRun | null>();
     const policyByReviewer = new Map<string, string>();
+    /*
+    FNXC:LaneCapabilityWake 2026-10-22-16:04 (RUFU-766):
+    A review refusal now binds only while the refusing lane still fails the REVIEW bar. The pool is by definition
+    the lanes carrying the `reviewer` tag, so no pool member fails it — which is the honest statement of what
+    RUFU-682's `capability-declined` bucket was actually withholding: never a lane genuinely unable to review,
+    always the wake's implementation-bar refusal of a lane it had just asked to review. The bucket and
+    `announceCapabilityDecline` stay for the caller shapes that resolve no capability (`declinedReviewersForTask`
+    keeps honouring signature-matched refusals for them) and as the fail-closed default; the genuine refusal
+    lives at the wake seam, in review vocabulary, and is covered by `heartbeat-executor.test.ts`.
+    */
+    const reviewCapableByReviewer = new Map<string, boolean>();
     for (const reviewer of pool) {
       busyRunByReviewer.set(reviewer.id, await this.options.agentStore.getActiveHeartbeatRun(reviewer.id));
       policyByReviewer.set(reviewer.id, laneCapabilityDeclinePolicy(reviewer));
+      reviewCapableByReviewer.set(reviewer.id, hasWorkflowRoleCapability(reviewer, "reviewer"));
     }
     /*
      * A reviewer given work during this tick is busy for the remainder of it: the snapshot above was taken
@@ -555,7 +587,7 @@ export class ReviewDispatchSweep {
        * for it, so the refusal is resolved before routing rather than after — dispatching to a refused binding to
        * then refuse it in the classifier would keep writing attempts, which is the loop this closes.
        */
-      const declined = declinedReviewersForTask(rows, policyByReviewer);
+      const declined = declinedReviewersForTask(rows, policyByReviewer, reviewCapableByReviewer);
       const { free, activeRun } = resolveReviewSlot({
         pool,
         busyRunByReviewer,
@@ -716,6 +748,13 @@ export class ReviewDispatchSweep {
         source: "automation",
         taskId: task.id,
         triggerDetail: "review-lane dispatch sweep",
+        /*
+        FNXC:LaneCapabilityWake 2026-10-22-15:45 (RUFU-766):
+        The wake's purpose travels as data, never as a `triggerDetail` string match downstream: it selects which
+        capability bar scores this card, not which card is bound. Without it the wake gate re-ran the
+        implementation predicate over a review-lane card and the reviewer declined its own assignment.
+        */
+        wakePurpose: "review",
       })
       .catch((error: unknown) => {
         this.closeUnfinishedRun(
@@ -786,9 +825,11 @@ export class ReviewDispatchSweep {
     this.refusalAnnounced.set(task.id, episode);
 
     const [first, ...rest] = lanes;
-    // The sentence names the lane, its roles/policy, the card, and the remedy; siblings are listed by id.
+    // The sentence names the lane, its roles, the card, and the review remedy; siblings are listed by id.
+    // RUFU-766: this is the review decline, so it must never read like the implementation refusal — the
+    // implementation sentence told operators waiting on a review to grant the reviewer the executor role.
     const sentence = first
-      ? formatLaneCapabilityDeclineReason(first, task)
+      ? formatReviewCapabilityDeclineReason(first, task)
       : `Review dispatch refused for ${task.id}: the lane that declined it is no longer configured.`;
     const action = rest.length > 0
       ? `${sentence} Also declined by: ${rest.map((lane) => lane.id).join(", ")}.`
