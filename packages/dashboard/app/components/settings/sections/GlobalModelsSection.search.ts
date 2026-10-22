@@ -45,6 +45,16 @@ export const globalModelsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-models",
+    key: "cheaperinferenceModelSync",
+    labelKey: "settings.globalModels.syncCheaperInferenceModelListAtStartup",
+    labelFallback: " Sync Cheaper Inference model list at startup ",
+    helpKey: "settings.globalModels.whenEnabledStartupFetchesTheLatestCheaperInferenceModels",
+    helpFallback:
+      " When enabled and a Cheaper Inference API key is set, startup fetches the latest available models from the Cheaper Inference API so model pickers include the Cheaper Inference catalog. Default: enabled. ",
+    keywords: ["refresh", "boot"],
+  },
+  {
+    sectionId: "global-models",
     key: "openrouterAppAttribution.referer",
     labelKey: "settings.globalModels.openRouterHTTPReferer",
     labelFallback: "OpenRouter HTTP-Referer",

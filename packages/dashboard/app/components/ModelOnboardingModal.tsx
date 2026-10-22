@@ -193,6 +193,16 @@ function getProviderInfoMap(t: (key: string, defaultValue: string) => string): R
         usageDescription: t("setup.apiKeyUsage.orcarouter", "Routes to multiple AI model providers through a single key"),
       },
     },
+    cheaperinference: {
+      description: t("setup.providerDesc.cheaperinference", "Cheaper Inference — OpenAI-compatible gateway for models from several labs"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.cheaperinference", "Cheaper Inference API Key"),
+        setupInstructions: t("setup.apiKeySetup.cheaperinference", "Create an API key from your Cheaper Inference dashboard."),
+        dashboardUrl: "https://cheaperinference.com",
+        inputPlaceholder: "ci_live_...",
+        usageDescription: t("setup.apiKeyUsage.cheaperinference", "Routes to multiple AI model providers through a single key"),
+      },
+    },
   };
 }
 
@@ -207,6 +217,7 @@ const PROVIDER_KEY_HINTS: Record<string, {
   "openai-codex": { pattern: /^sk-/, hint: "Starts with sk-", example: "sk-..." },
   openrouter: { pattern: /^sk-or-/, hint: "Starts with sk-or-", example: "sk-or-v1-..." },
   orcarouter: { pattern: /^sk-orca-/, hint: "Starts with sk-orca-", example: "sk-orca-..." },
+  cheaperinference: { pattern: /^ci_live_/, hint: "Starts with ci_live_", example: "ci_live_..." },
   google: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
   gemini: { pattern: /^AIza/, hint: "Starts with AIza", example: "AIza..." },
   minimax: { pattern: /^.{8,}$/, hint: "At least 8 characters", example: "..." },
@@ -231,6 +242,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "openai-codex": "OpenAI Codex",
   openrouter: "OpenRouter",
   orcarouter: "OrcaRouter",
+  cheaperinference: "Cheaper Inference",
   google: "Google",
   gemini: "Gemini",
   minimax: "MiniMax",
@@ -286,7 +298,7 @@ Keep Anthropic subscription OAuth and raw Anthropic API-key auth as separate fir
 FNXC:Onboarding 2026-07-18-03:40:
 The OpenAI Codex subscription card belongs in quick start (it was buried in Advanced), placed directly AFTER the Anthropic subscription and BEFORE the API-key options — subscription sign-ins are the primary first-run path, keys are the fallback.
 */
-const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "orcarouter", "ollama"] as const;
+const QUICK_START_PROVIDER_IDS = ["anthropic-subscription", "openai-codex", "anthropic-api-key", "anthropic", "openai", "google", "gemini", "openrouter", "orcarouter", "cheaperinference", "ollama"] as const;
 
 const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "anthropic",
@@ -298,6 +310,7 @@ const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "openai-codex",
   "openrouter",
   "orcarouter",
+  "cheaperinference",
   "gemini",
   "minimax",
   "kimi",

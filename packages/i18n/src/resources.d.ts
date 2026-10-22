@@ -6477,6 +6477,7 @@ export default interface Resources {
         "requireParameters": " Require parameters ",
         "requireParametersHint": "Default: disabled.",
         "startupModelSync": "Startup Model Sync",
+        "syncCheaperInferenceModelListAtStartup": " Sync Cheaper Inference model list at startup ",
         "syncOpenRouterModelListAtStartup": " Sync OpenRouter model list at startup ",
         "syncOpencodeGoModelListAtStartup": " Sync opencode-go model list at startup ",
         "syncOrcaRouterModelListAtStartup": " Sync OrcaRouter model list at startup ",
@@ -6487,6 +6488,7 @@ export default interface Resources {
         "useDefault": "Use default",
         "usedAutomaticallyIfThePrimaryDefaultModelHits": "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload. No default — unset.",
         "whenEnabledStartupFetchesTheLatestAvailableModels": " When enabled, startup fetches the latest available models from the OpenRouter API so model pickers always include the newest catalog. Default: enabled. ",
+        "whenEnabledStartupFetchesTheLatestCheaperInferenceModels": " When enabled and a Cheaper Inference API key is set, startup fetches the latest available models from the Cheaper Inference API so model pickers include the Cheaper Inference catalog. Default: enabled. ",
         "whenEnabledStartupFetchesTheLatestOrcaRouterModels": " When enabled, startup fetches the latest available models from the OrcaRouter API so model pickers include the OrcaRouter catalog. Default: enabled. ",
         "whenEnabledStartupRefreshesModelsThroughTheLocal": " When enabled, startup refreshes models through the local "
       },
@@ -10241,6 +10243,7 @@ export default interface Resources {
     "setup": {
       "apiKeyFormatError": "{{providerName}} keys should follow this format: {{hint}} (e.g. {{example}})",
       "apiKeyLabel": {
+        "cheaperinference": "Cheaper Inference API Key",
         "fallback": "API Key",
         "kimiCoding": "Kimi API Key",
         "minimax": "MiniMax API Key",
@@ -10258,6 +10261,7 @@ export default interface Resources {
       },
       "apiKeyRequired": "API key is required",
       "apiKeySetup": {
+        "cheaperinference": "Create an API key from your Cheaper Inference dashboard.",
         "fallback": "Enter your API key for this provider.",
         "kimiCoding": "Create your API key in the Moonshot platform account settings.",
         "minimax": "Generate an API key from the MiniMax platform developer console.",
@@ -10268,6 +10272,7 @@ export default interface Resources {
         "zai": "Create an API key in the Zhipu AI open platform account settings."
       },
       "apiKeyUsage": {
+        "cheaperinference": "Routes to multiple AI model providers through a single key",
         "fallback": "Used by Fusion to authenticate requests to this provider",
         "kimiCoding": "Used for Kimi/Moonshot AI models in task execution and planning",
         "minimax": "Used for MiniMax models in task execution",
@@ -10279,6 +10284,7 @@ export default interface Resources {
       },
       "providerDesc": {
         "anthropic": "Claude models — strong at reasoning, analysis, and code",
+        "cheaperinference": "Cheaper Inference — OpenAI-compatible gateway for models from several labs",
         "fallback": "AI provider — connect to start using AI models",
         "gemini": "Gemini models — multimodal with strong reasoning",
         "google": "Gemini models — multimodal with strong reasoning",

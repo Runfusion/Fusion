@@ -623,6 +623,35 @@ function OrcaRouterIcon({ size, color, label = "OrcaRouter" }: { size: number; c
   );
 }
 
+/*
+FNXC:CheaperInferenceProvider 2026-10-20-14:00:
+Cheaper Inference brand mark — the official two-shape icon from
+https://www.cheaperinference.com/icon.svg (a rounded "C" with a slanted bar),
+drawn with the provider color token like the other gateway marks.
+*/
+function CheaperInferenceIcon({ size, color, label = "Cheaper Inference" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="cheaperinference-icon"
+      aria-label={label}
+    >
+      <path
+        d="M9.107 2.786H15.429V8.839H9.589a3.213 3.213 0 0 0 0.321 6.375H15.214L9.434 20.994A9.107 9.107 0 1 1 9.107 2.786Z"
+        fill={color}
+      />
+      <path
+        d="M22.179 3.429H22.607a1.286 1.286 0 0 1 1.286 1.286V19.714a1.393 1.393 0 0 1 -1.393 1.393H17.464V8.143Z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
 // GitHub logo (Octocat mark) from SimpleIcons.
 function GitHubIcon({ size, color, label = "GitHub" }: { size: number; color: string; label?: string }) {
   return (
@@ -913,6 +942,8 @@ const providerConfig: Record<
   openrouter: { component: OpenRouterIcon, color: "var(--provider-openrouter)" },
   // OrcaRouter is a named gateway provider in the auth catalog and onboarding.
   orcarouter: { component: OrcaRouterIcon, color: "var(--provider-orcarouter)" },
+  // Cheaper Inference is a named gateway provider in the auth catalog and onboarding.
+  cheaperinference: { component: CheaperInferenceIcon, color: "var(--provider-cheaperinference)" },
   /*
   FNXC:ProviderIcon 2026-07-22-12:00:
   FN-8488 makes every static Authentication catalog ID resolve through a branded ProviderIcon entry. Brave Search and Tavily are API-key catalog providers, not custom provider names, so they must never reach the unknown Cpu fallback.

@@ -210,6 +210,16 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
         value={form.orcarouterModelSync !== false}
         onChange={(v) => setForm((f) => ({ ...f, orcarouterModelSync: v === true }))}
       />
+      <SettingsToggleRow
+        descriptor={{
+          key: "cheaperinferenceModelSync",
+          label: t("settings.globalModels.syncCheaperInferenceModelListAtStartup", " Sync Cheaper Inference model list at startup "),
+          help: t("settings.globalModels.whenEnabledStartupFetchesTheLatestCheaperInferenceModels", " When enabled and a Cheaper Inference API key is set, startup fetches the latest available models from the Cheaper Inference API so model pickers include the Cheaper Inference catalog. Default: enabled. "),
+          scope: "global",
+        }}
+        value={form.cheaperinferenceModelSync !== false}
+        onChange={(v) => setForm((f) => ({ ...f, cheaperinferenceModelSync: v === true }))}
+      />
       {/*
       FNXC:SettingsStyling 2026-07-15-17:35:
       Left on hand-rolled markup deliberately: its help text embeds a <code> element for the `opencode models opencode --refresh` command, and the primitives take help as a pre-translated string. Migrating it would mean either dropping the code formatting or splicing the command in as a bare literal, so the row keeps its markup until the descriptor can carry rich help.

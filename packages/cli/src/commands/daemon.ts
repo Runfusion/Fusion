@@ -81,7 +81,7 @@ import { createProjectScopedPackageManagerFactory } from "./skills-package-manag
 import { resolveProject } from "../project-context.js";
 import { startMigrationHoldingServer } from "./migration-holding-server.js";
 import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled } from "../plugins/bundled-plugin-install.js";
-import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
+import { handleCheaperInferenceApiKeySaved, handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 
@@ -914,6 +914,9 @@ export async function runDaemon(opts: DaemonOptions = {}) {
       maybeInstallClaudeSkillForNewProject(path);
     },
     onApiKeySaved: async (providerId: string) => {
+      if (providerId === "cheaperinference") {
+        return await handleCheaperInferenceApiKeySaved(dashboardAuthStorage, store, modelRegistry, (scope, message) => console.log(`[${scope}] ${message}`));
+      }
       if (providerId !== "opencode" && providerId !== "opencode-go") {
         return undefined;
       }
