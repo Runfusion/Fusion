@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import {
   computeWorkflowIrPin,
   disposeTaskBeforeReset,
+  isVerdictLessFailedGateRow,
   planTaskColumnRestart,
   RESTART_STAGE_FENCE_REASON,
   resolveTaskSymbolsForTask,
@@ -253,9 +254,9 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
       operator action that caused it.
       */
       const verdictlessGateIds = plan.discardedWorkflowStepIds.filter((stepId) => {
-        const rows = task.workflowStepResults?.[stepId];
-        const latest = Array.isArray(rows) ? rows[rows.length - 1] : rows;
-        return latest ? isVerdictLessFailedGateRow(latest) : false;
+        const rows = (task.workflowStepResults ?? []).filter((row) => row.workflowStepId === stepId);
+        const latest = rows[rows.length - 1];
+        return latest === undefined ? false : isVerdictLessFailedGateRow(latest);
       });
       await openVerdictlessGateRerunEpisode(store, taskId, verdictlessGateIds)
         .catch(() => undefined);

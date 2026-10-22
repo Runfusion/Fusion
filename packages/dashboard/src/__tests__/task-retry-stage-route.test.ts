@@ -426,7 +426,13 @@ describe("POST /tasks/:id/retry", () => {
     expect(getTaskMergeBlocker(row, { requiredPreMergeStepIds: new Set(["code-review"]), reviewColumns: new Set(["signoff"]) })).toBe(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
   });
 
-  it("re-arms the verdict-less re-run budget for every gate its operator restart discharges", async () => {
+  /*
+  FNXC:VerdictlessRerunEpisode 2026-10-22-18:05: the episode opens only for a gate whose discarded row
+  actually WAS verdict-less-failed. Reopening a budget that was never spent would both write noise into
+  the card's ledger and silently widen RUFU-449/RUFU-452's unattended bound past the operator action that
+  caused it. The fixture therefore carries `reviewKind`, the shape measured on rtm3's `code-review` row.
+  */
+  it("opens a verdict-less re-run episode for the verdict-less gate it discharges, and only that one", async () => {
     /*
     FNXC:VerdictlessRerunEpisode 2026-10-22-17:13 (measured on rtm3 2026-10-22, KUBE-190):
     The restart wrote FN-1711's `Revision budget reset for '<gate>' by operator retry` — the review
@@ -439,8 +445,8 @@ describe("POST /tasks/:id/retry", () => {
     const row = taskFixture({
       column: "signoff",
       workflowStepResults: [
-        { workflowStepId: "legacy-code-review", status: "failed" },
-        { workflowStepId: "legacy-plan-review", status: "passed" },
+        { workflowStepId: "legacy-code-review", status: "failed", reviewKind: "code" },
+        { workflowStepId: "legacy-plan-review", status: "passed", reviewKind: "plan" },
       ],
     });
     const { store } = createRestartStore(root, row);
