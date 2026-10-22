@@ -868,6 +868,10 @@ export {
   canAgentTakeImplementationTaskForExplicitRouting,
   canAgentTakeImplementationTaskForBacklogPickup,
   formatRoleMismatchReason,
+  formatReviewRoleMismatchReason,
+  isReviewOwnedTask,
+  evaluateReviewTaskBind,
+  evaluateWakeCapabilityBind,
   getAgentAssignmentPolicy,
   isAgentAutoAssignable,
   canAgentReceiveImplementationTasks,
@@ -881,7 +885,7 @@ export {
   assertImplementationTaskBindAllowed,
   AgentTaskRoutingPolicyError,
 } from "./agents/agent-role-policy.js";
-export type { AgentAssignmentPolicy, ImplementationTaskBindContext, ImplementationTaskBindVerdict, WorkflowRoleCapabilityOptions } from "./agents/agent-role-policy.js";
+export type { AgentAssignmentPolicy, ImplementationTaskBindContext, ImplementationTaskBindVerdict, WakeCapabilityBindContext, WakePurpose, WorkflowRoleCapabilityOptions } from "./agents/agent-role-policy.js";
 export { ReflectionStore } from "./agents/reflection-store.js";
 export type { ReflectionStoreEvents } from "./agents/reflection-store.js";
 export { MessageStore } from "./stores/message-store.js";
@@ -1213,7 +1217,8 @@ absent export surfaces as `reviewerRunLaneDeclineSignature is not a function` in
 (the failure mode FN-8651 documented for a barrel that is narrower than its gate files). Measured cost is this
 one already-loaded leaf — `agent-role-policy.ts` and `task-external-block.ts` are both in the gate closure today.
 */
-export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
+export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEW_CAPABILITY_DECLINE_CODE, REVIEW_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, formatReviewCapabilityDeclineReason, describeLaneCapabilityDecline, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
+export type { LaneCapabilityDeclineDescriptor } from "./tasks/lane-capability-decline.js";
 export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
 export type {
   TaskColumnRestartEntryNode,

@@ -1,5 +1,5 @@
 import type { Agent, Task } from "../types.js";
-import { formatRoleMismatchReason, getAgentAssignmentPolicy, type AgentAssignmentPolicyInput } from "../agents/agent-role-policy.js";
+import { formatRoleMismatchReason, formatReviewRoleMismatchReason, getAgentAssignmentPolicy, type AgentAssignmentPolicyInput, type WakePurpose } from "../agents/agent-role-policy.js";
 
 /** The partial-lane shape the policy accepts (`RoleTaggedAgent`, exported as `AgentAssignmentPolicyInput`). */
 type LaneInput = AgentAssignmentPolicyInput & Pick<Agent, "id">;
@@ -135,4 +135,63 @@ export function reviewerRunLaneDeclineSignature(row: { failureReasons?: string[]
     }
   }
   return null;
+}
+
+/*
+FNXC:LaneCapabilityWake 2026-10-22-15:44 (RUFU-766):
+The REVIEW half of the decline contract. `LANE_CAPABILITY_DECLINE_CODE` and `formatLaneCapabilityDeclineReason`
+are written for the implementation case, and the review wake was reusing that sentence — which is how a card
+waiting for review got a History line telling its remedy is to make the reviewer an executor.
+
+Only the words and the audit code differ. The ledger reason stays the byte-identical
+`reviewerRunLaneDeclineReason(agent)` (same prefix, same policy signature), because
+`declinedReviewersForTask`'s lift rule is that persisted signature compared against the lane's current one —
+re-keying the witness would silently free every genuine refusal this ratchet exists to hold.
+*/
+export const REVIEW_CAPABILITY_DECLINE_CODE = "review-lane-capability-mismatch";
+
+/** The review remedy. It never names the executor role — granting that is not how a review gets reviewed. */
+export const REVIEW_CAPABILITY_DECLINE_REMEDY =
+  'Remedy: grant this lane the "reviewer" role tag in its agent settings, or enable another reviewer lane for this board.';
+
+/** The one review-decline sentence shared by every surface (task History, agent log, run-audit reason). */
+export function formatReviewCapabilityDeclineReason(
+  agent: LaneInput,
+  task: Pick<Task, "id" | "column">,
+): string {
+  // Names the lane the card is actually sitting in, so an operator on a renamed board is not sent looking for `in-review`.
+  return `${formatReviewRoleMismatchReason(agent, task)} Review lane: \`${task.column}\`. ${REVIEW_CAPABILITY_DECLINE_REMEDY}`;
+}
+
+/** What one decline ceremony must say, code, and persist — selected by the wake's purpose, never by the lane. */
+export interface LaneCapabilityDeclineDescriptor {
+  /** The operator-visible sentence. */
+  reason: string;
+  /** The remedy clause alone — what an operator has to turn, without the refusal preamble. */
+  remedy: string;
+  /** The persisted classifier code (implementation and review declines are separately queryable). */
+  auditCode: string;
+  /** The ledger witness reason; identical for both purposes on purpose (see the block above). */
+  ledgerReason: string;
+}
+
+export function describeLaneCapabilityDecline(
+  agent: LaneInput,
+  task: Pick<Task, "id" | "column">,
+  purpose: WakePurpose,
+): LaneCapabilityDeclineDescriptor {
+  if (purpose === "review") {
+    return {
+      reason: formatReviewCapabilityDeclineReason(agent, task),
+      remedy: REVIEW_CAPABILITY_DECLINE_REMEDY,
+      auditCode: REVIEW_CAPABILITY_DECLINE_CODE,
+      ledgerReason: reviewerRunLaneDeclineReason(agent),
+    };
+  }
+  return {
+    reason: formatLaneCapabilityDeclineReason(agent, task),
+    remedy: LANE_CAPABILITY_DECLINE_REMEDY,
+    auditCode: LANE_CAPABILITY_DECLINE_CODE,
+    ledgerReason: reviewerRunLaneDeclineReason(agent),
+  };
 }

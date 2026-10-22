@@ -279,6 +279,81 @@ export interface ImplementationTaskBindContext {
 
 export type ImplementationTaskBindVerdict = { allowed: true } | { allowed: false; reason: string };
 
+/*
+FNXC:LaneCapabilityWake 2026-10-22-15:42 (RUFU-766):
+WHICH capability bar scores a card has always followed what the lane is being woken FOR. It did not: the
+heartbeat wake gate (RUFU-272) ran `evaluateImplementationTaskBind` on every bound card, and
+`IMPLEMENTATION_TASK_COLUMNS` contains `in-review` by design (a review-lane card is still product work that a
+liaison lane must never pick up). The two facts multiplied into a dead review lane: a reviewer-only lane — the
+shape every `Workflow Reviewer` on every host actually has — was refused for the review it was dispatched to
+perform, and RUFU-682 turned that self-inflicted refusal into a binding ledger witness.
+
+Measured on rtm3 (2026-10-22, read-only): KUBE-027/182/185/187 sit `capability-declined` with `attempts=1`
+while `declined bound task` appears 0 times in 45 min of logs — no lane refused anything new, the sweep is
+honouring a witness whose cause is gone. All three projects' reviewer lanes are `roles ["reviewer"]`, policy
+`auto`, so the recorded signature still equals the current one and the stop is un-liftable by the remedy the
+sentence names: the only signature change that admits a review is granting that lane the `executor` role, which
+also opens implementation auto-claim. No honest operator edit lifts it.
+
+The bar therefore follows the purpose. Review-owned work is scored by the reviewer tag; everything else keeps
+`evaluateImplementationTaskBind` byte-for-byte. `IMPLEMENTATION_TASK_COLUMNS` deliberately KEEPS `in-review`
+— removing it would let a liaison lane claim review cards, which is the guarantee #2015 exists for.
+*/
+
+/** What a wake was dispatched to do. Omitted means `"implementation"` — the pre-existing behavior. */
+export type WakePurpose = "review" | "implementation";
+
+/**
+ * True when the card sits in the review lane its OWN workflow declares. `reviewColumn` is null/undefined when
+ * the workflow cannot be resolved to a column vocabulary, which fails CLOSED to the implementation bar: a wake
+ * may never claim review purpose on a board whose review lane is unknown.
+ */
+export function isReviewOwnedTask(
+  task: Pick<Task, "column">,
+  reviewColumn: string | undefined | null,
+): boolean {
+  return reviewColumn != null && task.column === reviewColumn;
+}
+
+/**
+ * The review bar: does this lane carry the `reviewer` tag?
+ *
+ * Deliberately NOT the implementation floor. `hasWorkflowRoleCapability` applies the `assignmentPolicy: "none"`
+ * hard floor only to executor work (#2015 is about liaison lanes claiming product code); a reviewer's policy
+ * is not what makes it able to review, and the dispatch sweep's pool filter is already the eligibility
+ * authority for which lanes may be asked at all.
+ */
+export function evaluateReviewTaskBind(
+  agent: RoleTaggedAgent & Pick<Agent, "id">,
+  task: Pick<Task, "id" | "column">,
+): ImplementationTaskBindVerdict {
+  if (hasWorkflowRoleCapability(agent, "reviewer")) return { allowed: true };
+  return { allowed: false, reason: formatReviewRoleMismatchReason(agent, task) };
+}
+
+export interface WakeCapabilityBindContext extends ImplementationTaskBindContext {
+  /** Which bar scores the bound card. Never changes which card is bound. */
+  purpose: WakePurpose;
+  /** The card's workflow-declared review lane, or undefined when unresolvable (fails closed). */
+  reviewColumn: string | undefined | null;
+}
+
+/**
+ * The ONE dispatch entry point a wake uses: review purpose on a review-owned card takes the reviewer bar, and
+ * anything else — an implementation wake, or a review purpose on a card that is not in its review lane — keeps
+ * the implementation verdict exactly as it was.
+ */
+export function evaluateWakeCapabilityBind(
+  agent: RoleTaggedAgent & Pick<Agent, "id">,
+  task: Pick<Task, "id" | "column">,
+  context: WakeCapabilityBindContext,
+): ImplementationTaskBindVerdict {
+  if (context.purpose === "review" && isReviewOwnedTask(task, context.reviewColumn)) {
+    return evaluateReviewTaskBind(agent, task);
+  }
+  return evaluateImplementationTaskBind(agent, task, context);
+}
+
 export function evaluateImplementationTaskBind(
   agent: RoleTaggedAgent & Pick<Agent, "id">,
   task: Pick<Task, "id" | "column">,
@@ -337,4 +412,21 @@ export function formatRoleMismatchReason(
   }
   const roles = agentRoles(agent);
   return `Agent ${agent.id} has roles "${roles.join(", ") || "none"}"; implementation task ${task.id} requires an "executor"-role agent by default, with durable "engineer" supported only for explicit routing. Pass override=true to bypass.`;
+}
+
+/*
+FNXC:LaneCapabilityWake 2026-10-22-15:43 (RUFU-766):
+The review refusal must speak about review. Before this, a review wake refused with the implementation sentence
+(`… requires an "executor"-role agent …`), whose named remedy — grant the lane the executor role, or pass
+override=true — is nonsense for a card waiting to be reviewed: the operator reading the card's History is told
+to convert their reviewer into an executor. Never reuse this sentence for a review refusal; assert the review
+sentence contains none of those words.
+*/
+/** The review-role refusal, stated in review terms. Pair it with `REVIEW_CAPABILITY_DECLINE_REMEDY`. */
+export function formatReviewRoleMismatchReason(
+  agent: RoleTaggedAgent & Pick<Agent, "id">,
+  task: Pick<Task, "id" | "column">,
+): string {
+  const roles = agentRoles(agent);
+  return `Agent ${agent.id} has roles "${roles.join(", ") || "none"}"; review task ${task.id} requires a lane tagged "reviewer".`;
 }
