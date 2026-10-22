@@ -9,7 +9,7 @@ import {
   type Task,
   type TaskStore,
 } from "@fusion/core";
-import { isMergeActiveStatus, isStaleMergeActiveStatus, optionalStepRevisionResetOutcome, resolveColumnResumeNode } from "@fusion/engine";
+import { isMergeActiveStatus, isStaleMergeActiveStatus, openVerdictlessGateRerunEpisode, optionalStepRevisionResetOutcome, resolveColumnResumeNode } from "@fusion/engine";
 import { badRequest, conflict, notFound } from "../api-error.js";
 
 interface RestartTaskStageEngine {
@@ -236,6 +236,29 @@ export async function restartTaskStage(deps: RestartTaskStageDeps): Promise<Rest
           optionalStepRevisionResetOutcome(workflowStepId),
         ).catch(() => undefined);
       }
+      /*
+      FNXC:VerdictlessRerunEpisode 2026-10-22-17:13 (measured on rtm3 2026-10-22, KUBE-190):
+      The loop above resets the FN-1711 step-revision budget; it says nothing about the RUFU-217
+      verdict-less re-run budget, and that is the one a crashed review gate has usually spent. Measured:
+      14:48:26 operator Retry discarded the verdict-less `code-review` row, 14:48:29 wrote the revision
+      reset, 14:48:54 the node really ran, 14:49:13 it died verdict-less again — and the gate could never
+      be re-run by any lane again, because the three earlier strikes still stood. The operator's restart
+      is the episode boundary that budget was missing, so it is recorded for the same discarded gates.
+      Best-effort exactly like the marker above: a refused log write leaves the old episode's strikes
+      standing, which is the pre-fix behavior rather than a new hazard.
+
+      Scoped to the gates whose discarded row actually WAS verdict-less-failed. A restart that throws
+      away an approved or in-flight gate reopens a budget that was never spent, which would both write
+      noise into the card's ledger and quietly widen RUFU-449/RUFU-452's unattended bound past the
+      operator action that caused it.
+      */
+      const verdictlessGateIds = plan.discardedWorkflowStepIds.filter((stepId) => {
+        const rows = task.workflowStepResults?.[stepId];
+        const latest = Array.isArray(rows) ? rows[rows.length - 1] : rows;
+        return latest ? isVerdictLessFailedGateRow(latest) : false;
+      });
+      await openVerdictlessGateRerunEpisode(store, taskId, verdictlessGateIds)
+        .catch(() => undefined);
       const updated = await store.getTask(taskId);
       if (!updated) throw notFound(`Task ${taskId} not found after retry`);
       return updated;

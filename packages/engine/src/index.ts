@@ -15,7 +15,9 @@ export {
 export { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
 export {
   isFailedNoVerdictPreMergeReviewResult,
+  openVerdictlessGateRerunEpisode,
   rerouteFailedNoVerdictPreMergeGateToReview,
+  verdictlessGateEpisodeResetMarker,
 } from "./merge/pre-merge-gate-reseed.js";
 export { planningLivenessRegistry, registerPlanningLivenessProbe, isPlanningLive } from "./agents/planning-liveness.js";
 export {

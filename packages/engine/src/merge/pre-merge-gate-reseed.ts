@@ -21,9 +21,16 @@ verdict-less one. Remaining guards (RUFU-391 widened exactly two of them): opera
 excluded, idle-only seeding (an active continuation never gets doubled), and the RUFU-276 bounded-rerun
 budget. Content kind and workspace membership are NO LONGER guards here — see
 FNXC:NoVerdictWorkspaceSeed below for why this seed never needed them.
-A verdict-less target consumes a persistent per-(task, gate) rerun budget counted from fixed-marker
-task-log entries (see `MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS`); a missing target stays idle-only and
-unbudgeted exactly as FN-9243 shipped it, so that lane's behavior is byte-stable.
+A verdict-less target consumes a per-(task, gate) rerun budget counted from fixed-marker task-log
+entries (see `MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS`); a missing target stays idle-only and unbudgeted
+exactly as FN-9243 shipped it, so that lane's behavior is byte-stable.
+
+FNXC:VerdictlessRerunEpisode 2026-10-22-17:13:
+That budget is scoped to one review EPISODE, not to the card's lifetime. The original wording said
+"persistent", and persistent-without-a-boundary is what left 10 of 14 rtm3 `in-review` cards dead after
+an operator Retry that had already reset a different budget. See
+FNXC:VerdictlessRerunEpisode below for the marker, who may write it, and why the unattended bound is
+unchanged.
 */
 import {
   clampReviewGateEntry,
@@ -107,6 +114,68 @@ export function verdictlessGateRerunLogMarker(gateId: string): string {
 }
 
 /*
+FNXC:VerdictlessRerunEpisode 2026-10-22-17:13 (measured on rtm3 2026-10-22, kubernetes board):
+The three-strike budget had no episode boundary, so it was a lifetime sentence rather than a bounded
+retry window. Ten of that board's fourteen `in-review` cards sat with a verdict-less `code-review` row
+and exactly 3 strikes. KUBE-190 is the decisive trace: 14:48:26 operator dashboard Retry discarded the
+verdict-less row and armed the gate's own node, 14:48:29 wrote `Revision budget reset for
+'code-review' by operator retry` (a DIFFERENT counter — the FN-1711 step-revision budget), 14:48:54 the
+review node really ran, 14:49:13 it crashed verdict-less again, and from that moment no lane could ever
+re-run the gate again, because `countVerdictlessGateRerunAttempts` still counted the three strikes the
+*previous* episode had spent. The operator did the action the product offers and the card stayed dead.
+
+The repair is an episode, not a bigger number: strikes are counted from the newest operator-opened
+episode marker for that gate. This is the already-proven shape in
+`packages/engine/src/executor/optional-step-revision.ts` (`OPTIONAL_STEP_REVISION_RESET_MARKER` +
+`resetIndexFor`), which FN-1711 introduced for exactly the same append-only-log problem — "the card
+could never converge" — and it is what makes the contract `project-engine.ts` already asserts ("an
+operator click intentionally outranks the automatic budget") actually executed rather than merely
+stated.
+
+Only `restartTaskStage` writes this marker, and it has exactly one caller: the human
+`POST /api/tasks/:id/retry` route. No automatic lane may open an episode, so unattended operation keeps
+RUFU-449/RUFU-452's bound byte-for-byte — a gate that crashes with nobody watching is still stopped
+after three real runs. Each deliberate operator restart buys at most `MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS`
+further runs, then stops and reaches the operator again.
+
+The prefix is deliberately NOT a prefix of `verdictlessGateRerunLogMarker` (a `-episode]` segment sits
+where the strike marker's `]` is), so an episode line can never be counted as a strike by the
+`startsWith`-based tally.
+*/
+export const VERDICTLESS_GATE_EPISODE_RESET_MARKER_PREFIX = "[verdictless-gate-episode] gate '";
+
+/** Fixed per-gate episode marker; the quoted gate id carries no apostrophes (gate ids cannot). */
+export function verdictlessGateEpisodeResetMarker(gateId: string): string {
+  return `${VERDICTLESS_GATE_EPISODE_RESET_MARKER_PREFIX}${gateId}'`;
+}
+
+/**
+ * Closes the verdict-less re-run episode of each named gate and opens a fresh one, by appending the
+ * durable marker the strike tally resets on. Append-only by contract: the log is the budget's ledger
+ * (RUFU-452), so an episode boundary is recorded, never rewritten.
+ *
+ * Callers are operator-initiated restarts only. Best-effort at the call site, matching the sibling
+ * FN-1711 marker write — a refused log write leaves the previous episode's strikes standing, which is
+ * today's behavior, not a new hazard.
+ */
+export async function openVerdictlessGateRerunEpisode(
+  store: TaskStore,
+  taskId: string,
+  gateIds: Iterable<string>,
+): Promise<string[]> {
+  const opened: string[] = [];
+  for (const gateId of gateIds) {
+    await store.logEntry(
+      taskId,
+      `${verdictlessGateEpisodeResetMarker(gateId)} verdict-less re-run budget reopened — an explicit`
+      + ` operator restart opened a new ${MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS}-attempt episode for this gate`,
+    );
+    opened.push(gateId);
+  }
+  return opened;
+}
+
+/*
 FNXC:NoVerdictRerunBudget 2026-10-01-01:29 (RUFU-452):
 The budget counts from the DURABLE row, never from the `task` projection the caller handed us. An
 empty log is a PROJECTION, not an absence: every board read the recovery lanes run —
@@ -167,10 +236,25 @@ async function countVerdictlessGateRerunAttempts(
   gateId: string,
 ): Promise<number> {
   const marker = verdictlessGateRerunLogMarker(gateId);
+  const episodeMarker = verdictlessGateEpisodeResetMarker(gateId);
   // No `.catch`: a rejected read must not be mistaken for "no strikes" — see the FNXC note above.
   const live = await store.getTask(task.id);
   const log: TaskLogEntry[] = Array.isArray(live?.log) ? live.log : [];
-  return log.filter((entry) => typeof entry.action === "string" && entry.action.startsWith(marker)).length;
+  /*
+  FNXC:VerdictlessRerunEpisode 2026-10-22-17:13: strikes are this episode's, not this card's lifetime.
+  Scan backwards for the newest episode marker belonging to THIS gate and tally only what came after
+  it; an episode opened for a different gate resets nothing here.
+  */
+  let episodeStart = -1;
+  for (let index = log.length - 1; index >= 0; index -= 1) {
+    const action = log[index]?.action;
+    if (typeof action === "string" && action.startsWith(episodeMarker)) {
+      episodeStart = index;
+      break;
+    }
+  }
+  const window = episodeStart >= 0 ? log.slice(episodeStart + 1) : log;
+  return window.filter((entry) => typeof entry.action === "string" && entry.action.startsWith(marker)).length;
 }
 
 /*
@@ -359,6 +443,13 @@ async function seedPreMergeReviewIfIdle<Reason extends "no-unrun-gate" | "no-fai
   unrun lane, deliberately shared: total re-runs of one crashing gate are bounded across both lanes, not
   3 + 3. The counter accrues only when a seed actually lands, and the marker text names the lane, so the
   task log shows `rerun N of 3` instead of silence while the board shows an idle card.
+
+  FNXC:VerdictlessRerunEpisode 2026-10-22-17:13:
+  "Total" now means total within the current episode. Both lanes read the one counter, so an operator
+  restart that opens a new episode re-arms BOTH of them together — the deliberate alternative to RUFU-452's
+  own note routing this arm to a separate card, and the only shape that keeps `project-engine.ts`'s
+  "an operator click intentionally outranks the automatic budget" true without letting any automatic
+  lane open an episode for itself.
   */
   const rerunAttempts = await countVerdictlessGateRerunAttempts(store, task, node.id);
   if (rerunAttempts >= MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS) {

@@ -12,6 +12,7 @@ import {
   type Task,
   type TaskStore,
 } from "@fusion/core";
+import { verdictlessGateEpisodeResetMarker } from "@fusion/engine";
 import { createApiRoutes } from "../routes.js";
 import { request as performRequest } from "../test-request.js";
 
@@ -423,6 +424,35 @@ describe("POST /tasks/:id/retry", () => {
     expect(response.status).toBe(200);
     expect(row.workflowStepResults).toEqual([{ workflowStepId: "legacy-plan-review", status: "passed" }]);
     expect(getTaskMergeBlocker(row, { requiredPreMergeStepIds: new Set(["code-review"]), reviewColumns: new Set(["signoff"]) })).toBe(PRE_MERGE_STEPS_NOT_RUN_BLOCKER);
+  });
+
+  it("re-arms the verdict-less re-run budget for every gate its operator restart discharges", async () => {
+    /*
+    FNXC:VerdictlessRerunEpisode 2026-10-22-17:13 (measured on rtm3 2026-10-22, KUBE-190):
+    The restart wrote FN-1711's `Revision budget reset for '<gate>' by operator retry` — the review
+    REMEDIATION budget — and said nothing about the RUFU-217 verdict-less re-run budget, which is the one
+    a crashed review gate had already spent. Measured: 14:48:26 operator Retry, 14:48:29 revision reset,
+    14:48:54 the node really ran, 14:49:13 it died verdict-less again, and after that no lane could ever
+    re-run the gate. The operator's restart is the episode boundary that budget was missing.
+    */
+    const root = await mkdtemp(join(tmpdir(), "fusion-restart-stage-episode-"));
+    const row = taskFixture({
+      column: "signoff",
+      workflowStepResults: [
+        { workflowStepId: "legacy-code-review", status: "failed" },
+        { workflowStepId: "legacy-plan-review", status: "passed" },
+      ],
+    });
+    const { store } = createRestartStore(root, row);
+
+    expect((await postRetry(createApp(store))).status).toBe(200);
+
+    const lines = vi.mocked(store.logEntry).mock.calls.map((call) => String(call[1]));
+    expect(lines.filter((line) => line.includes(verdictlessGateEpisodeResetMarker("legacy-code-review")))).toHaveLength(1);
+    // A retained gate gets no episode: its history was not discharged, so its strikes still stand.
+    expect(lines.some((line) => line.includes(verdictlessGateEpisodeResetMarker("legacy-plan-review")))).toBe(false);
+    // Both budgets open together — the restart that discards a gate must not leave one counter spent.
+    expect(lines.some((line) => line.includes("Revision budget reset for 'legacy-code-review'"))).toBe(true);
   });
 
   it.each(["cancel", "patch", "replace"] as const)("keeps crash at %s fenced and a second HTTP request converges", async (failAt) => {
