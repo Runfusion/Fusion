@@ -971,7 +971,9 @@ export async function handleGraphFailure(
           for (let attempt = 0; attempt < 2; attempt++) {
             recoveryStage = "settings";
             const settings = await deps.store.getSettings();
-            if (recoveryTask.deletedAt || recoveryTask.paused || recoveryTask.userPaused || deps.userCanceledTaskIds.has(recoveryTask.id)
+            if (recoveryTask.status === "needs-replan") {
+              reason = "needs-replan";
+            } else if (recoveryTask.deletedAt || recoveryTask.paused || recoveryTask.userPaused || deps.userCanceledTaskIds.has(recoveryTask.id)
               || settings.globalPause || settings.enginePaused) {
               reason = "operator-hold";
             } else if ((recoveryTask.graphResumeRetryCount ?? 0) >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {

@@ -311,6 +311,18 @@ pgTest("FN-8592 conditional stranded Plan Review seed", () => {
       await expect(store.seedStrandedPlanReviewContinuation(continuation(task.id, "held-identity"), options)).resolves.toMatchObject({ seeded: false });
       expect((await store.getTask(task.id)).graphResumeRetryCount).toBe(hold === "exhausted" ? 2 : 0);
     });
+    it("refuses a pending replan even with a fresh matching recovery snapshot", async () => {
+      const { store, task, options } = await refusedTask();
+      await store.updateTask(task.id, { status: "needs-replan" });
+      const current = await store.getTask(task.id);
+      options.identityRecovery.expectedTaskUpdatedAt = current.updatedAt;
+      await expect(store.seedStrandedPlanReviewContinuation(continuation(task.id, "replan-identity"), options)).resolves.toMatchObject({ seeded: false, reason: "task-state-changed" });
+      const after = await store.getTask(task.id);
+      expect(after.status).toBe("needs-replan");
+      expect(after.graphResumeRetryCount).toBe(0);
+      expect(after.workflowStepResults).toEqual(current.workflowStepResults);
+      expect(await store.listWorkflowWorkItemsForTask(task.id)).toHaveLength(0);
+    });
     it("rolls back the retry charge if successor persistence fails", async () => {
       const { store, task, options } = await refusedTask();
       await h.layer().db.execute(sql.raw("CREATE FUNCTION project.reject_identity_recovery_seed() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'identity successor write rejected'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER reject_identity_recovery_seed BEFORE INSERT ON project.workflow_work_items FOR EACH ROW EXECUTE FUNCTION project.reject_identity_recovery_seed();"));

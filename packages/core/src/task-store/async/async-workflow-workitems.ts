@@ -498,7 +498,7 @@ export async function seedStrandedPlanReviewContinuation(
     const recovery = options.identityRecovery;
     /* FNXC:CurrentPlanReviewIdentity 2026-10-20-10:30: Only the exact refused/stale snapshot may bypass the historical-pass guard. Fence task edits and newer reviews under the task row lock; charge the bounded retry in this same transaction. */
     if (recovery) {
-      if (!task || task.deletedAt || task.paused || task.userPaused || task.status === "awaiting-approval"
+      if (!task || task.deletedAt || task.paused || task.userPaused || task.status === "awaiting-approval" || task.status === "needs-replan"
         || task.column !== input.sourceColumn || task.updatedAt !== recovery.expectedTaskUpdatedAt
         || !isDeepStrictEqual(results ?? [], recovery.expectedWorkflowStepResults)
         || (task.graphResumeRetryCount ?? 0) !== recovery.expectedRetryCount) {

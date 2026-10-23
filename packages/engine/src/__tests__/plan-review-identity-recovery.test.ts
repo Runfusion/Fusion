@@ -51,6 +51,17 @@ describe("Plan Review identity failure recovery", () => {
     expect(h.store.moveTask).not.toHaveBeenCalled();
     expect(h.task.graphResumeRetryCount).toBe(1);
   });
+  it.each(["gate-unproven-plan-review-input", "gate-stale-review-input"])("preserves a pending replan before the first %s recovery attempt", async (value) => {
+    const h = recoveryHarness();
+    Object.assign(h.task, { status: "needs-replan" });
+    const history = structuredClone(h.task.workflowStepResults);
+    await (h.executor as any).handleGraphFailure(h.task, { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan-review"], context: { "node:plan-review:value": value, "node:plan-review:outcome": "failure" } });
+    expect(h.store.seedStrandedPlanReviewContinuation).not.toHaveBeenCalled();
+    expect(h.task.graphResumeRetryCount).toBe(0);
+    expect(h.task.status).toBe("needs-replan");
+    expect(h.task.workflowStepResults).toEqual(history);
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+  });
   it.each([{ paused: true }, { active: true }, { exhausted: true }])("does not seed across an operator hold, active successor or exhausted budget (%j)", async (options) => {
     const h = recoveryHarness(options);
     await (h.executor as any).handleGraphFailure(h.task, { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan-review"], context: { "node:plan-review:value": "gate-stale-review-input", "node:plan-review:outcome": "failure" } });
