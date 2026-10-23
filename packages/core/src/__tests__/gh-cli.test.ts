@@ -20,6 +20,10 @@ import {
   runGhAsync,
   runGhJson,
   runGhJsonAsync,
+  isGhAuthenticated,
+  isGhAuthenticatedAsync,
+  isGhAvailableAsync,
+  resetGhAvailabilityCache,
   type GhErrorCode,
 } from "../cli/gh-cli.js";
 
@@ -480,5 +484,75 @@ describe("runGhAsync timeout / abort", () => {
     // Resolve normally — verifies no implicit timeout fires and shorts the call.
     cbRef.current?.(null, "ok\n", "");
     await expect(promise).resolves.toBe("ok\n");
+  });
+});
+
+describe("isGhAvailableAsync / isGhAuthenticatedAsync", () => {
+  type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void;
+  function stubExecFile(handler: (args: string[]) => { error?: Error; stdout?: string }) {
+    mockExecFile.mockReset();
+    mockExecFile.mockImplementation((_bin: string, args: string[], _opts: unknown, callback: ExecCallback) => {
+      const { error = null, stdout = "" } = handler(args);
+      setImmediate(() => callback(error, stdout, ""));
+      return {} as ReturnType<typeof import("node:child_process").execFile>;
+    });
+  }
+
+  it("reports authenticated from gh auth status without calling execFileSync", async () => {
+    resetGhAvailabilityCache();
+    mockExecFileSync.mockReset();
+    stubExecFile(() => ({ stdout: "github.com\n  Logged in to github.com account someone" }));
+
+    await expect(isGhAuthenticatedAsync()).resolves.toBe(true);
+    expect(mockExecFile).toHaveBeenCalledWith("gh", ["auth", "status"], expect.anything(), expect.any(Function));
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
+  it("reports false when gh fails", async () => {
+    resetGhAvailabilityCache();
+    stubExecFile(() => ({ error: new Error("command not found: gh") }));
+
+    await expect(isGhAvailableAsync()).resolves.toBe(false);
+    await expect(isGhAuthenticatedAsync()).resolves.toBe(false);
+  });
+
+  it("shares one spawn between concurrent callers and serves the cache afterwards", async () => {
+    resetGhAvailabilityCache();
+    stubExecFile(() => ({ stdout: "Logged in" }));
+
+    const [a, b] = await Promise.all([isGhAuthenticatedAsync(), isGhAuthenticatedAsync()]);
+    await isGhAuthenticatedAsync();
+
+    expect([a, b]).toEqual([true, true]);
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a check started before a reset restore its answer", async () => {
+    resetGhAvailabilityCache();
+    let finishOld: ((error: Error | null, stdout: string, stderr: string) => void) | undefined;
+    mockExecFile.mockReset();
+    mockExecFile.mockImplementation((_bin: string, _args: string[], _opts: unknown, callback: ExecCallback) => {
+      finishOld = callback;
+      return {} as ReturnType<typeof import("node:child_process").execFile>;
+    });
+    const old = isGhAuthenticatedAsync();
+    resetGhAvailabilityCache();
+    finishOld?.(null, "Logged in", "");
+    await expect(old).resolves.toBe(true);
+
+    mockExecFileSync.mockReset();
+    mockExecFileSync.mockReturnValue("You are not logged into any GitHub hosts");
+    expect(isGhAuthenticated()).toBe(false);
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares its cache with the sync helper", async () => {
+    resetGhAvailabilityCache();
+    mockExecFileSync.mockReset();
+    stubExecFile(() => ({ stdout: "Logged in" }));
+
+    await isGhAuthenticatedAsync();
+    expect(isGhAuthenticated()).toBe(true);
+    expect(mockExecFileSync).not.toHaveBeenCalled();
   });
 });

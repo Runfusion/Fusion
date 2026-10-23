@@ -15,6 +15,8 @@ export interface TrackedPr {
   isActive: boolean; // true if we've seen recent activity
   /** Buffered comments collected since last drain, used for follow-up task creation. */
   bufferedComments: PrComment[];
+  /** Set by finishMonitoring: no further polls, and a pending poll only buffers for the final drain. */
+  finishing?: boolean;
 }
 
 export interface PrComment {
@@ -53,6 +55,7 @@ interface PrMonitorOptions {
 export class PrMonitor {
   private trackedPrs = new Map<string, TrackedPr>();
   private intervals = new Map<string, ReturnType<typeof setInterval>>();
+  private pendingChecks = new Map<string, Promise<boolean>>();
   private newCommentsCallback?: OnNewCommentsCallback;
   private readonly ghClient: PrMonitorGhClient;
 
@@ -137,6 +140,35 @@ export class PrMonitor {
   }
 
   /**
+   * Finish monitoring a PR whose task left review: stop future polls, wait for a poll that is
+   * already waiting on gh, then drain everything it buffered and stop. Returns the drained comments.
+   *
+   * FNXC:GhAsyncChecks 2026-10-18-12:40: with async gh, a poll can still be in flight when the
+   * task leaves review. Draining before it lands would drop its comments from the closed-PR
+   * follow-up, so the final drain waits for it. Only the record that was finished is removed; a
+   * task that re-entered review in the meantime keeps its new monitoring.
+   */
+  async finishMonitoring(taskId: string): Promise<PrComment[]> {
+    const tracked = this.trackedPrs.get(taskId);
+    if (!tracked) return [];
+    tracked.finishing = true;
+    const timer = this.intervals.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      this.intervals.delete(taskId);
+    }
+    await this.pendingChecks.get(taskId)?.catch(() => false);
+    const comments = tracked.bufferedComments;
+    tracked.bufferedComments = [];
+    if (this.trackedPrs.get(taskId) === tracked) {
+      this.trackedPrs.delete(taskId);
+      this.pendingChecks.delete(taskId);
+      prMonitorLog.log(`Stopped monitoring task ${taskId}`);
+    }
+    return comments;
+  }
+
+  /**
    * Stop monitoring a PR.
    */
   stopMonitoring(taskId: string): void {
@@ -181,8 +213,8 @@ export class PrMonitor {
 
     const timeoutId = setTimeout(() => {
       this.checkForComments(taskId, tracked).then(() => {
-        // Reschedule if still tracked
-        if (this.trackedPrs.has(taskId)) {
+        // Reschedule only the record this poll belonged to, and never one being finished.
+        if (this.trackedPrs.get(taskId) === tracked && !tracked.finishing) {
           this.scheduleNextCheck(taskId, tracked);
         }
       });
@@ -191,7 +223,16 @@ export class PrMonitor {
     this.intervals.set(taskId, timeoutId);
   }
 
-  private async checkForComments(
+  private checkForComments(taskId: string, tracked: TrackedPr): Promise<boolean> {
+    const check = this.runCheckForComments(taskId, tracked);
+    this.pendingChecks.set(taskId, check);
+    void check.finally(() => {
+      if (this.pendingChecks.get(taskId) === check) this.pendingChecks.delete(taskId);
+    });
+    return check;
+  }
+
+  private async runCheckForComments(
     taskId: string,
     tracked: TrackedPr
   ): Promise<boolean> {
@@ -210,6 +251,11 @@ export class PrMonitor {
         prNumber: tracked.prInfo.number,
         since,
       });
+
+      // A stopped or replaced record must not publish. A record being finished still buffers, so
+      // finishMonitoring's drain includes comments that landed while this poll waited on gh.
+      const current = this.trackedPrs.get(taskId) === tracked;
+      if (!current && !tracked.finishing) return false;
 
       // Filter to only new comments (by ID)
       const newComments = tracked.lastCommentId
@@ -231,8 +277,8 @@ export class PrMonitor {
         // Mark as active since we found new comments
         tracked.isActive = true;
 
-        // Notify handler
-        if (this.newCommentsCallback) {
+        // Notify handler (not for a record being finished: its comments go to the closed-PR follow-up)
+        if (this.newCommentsCallback && !tracked.finishing && this.trackedPrs.get(taskId) === tracked) {
           try {
             await this.newCommentsCallback(taskId, tracked.prInfo, newComments);
           } catch (err) {

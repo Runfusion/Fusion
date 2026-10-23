@@ -1506,7 +1506,9 @@ export type {
 } from "./tasks/task-age-staleness.js";
 export {
   isGhAvailable,
+  isGhAvailableAsync,
   isGhAuthenticated,
+  isGhAuthenticatedAsync,
   resetGhAvailabilityCache,
   runGh,
   runGhAsync, 
