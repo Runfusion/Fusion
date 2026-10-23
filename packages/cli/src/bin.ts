@@ -646,7 +646,13 @@ function parsePrCreateOptions(args: string[]) {
   };
 }
 
-async function main() {
+/**
+ * FNXC:CliTestVelocity 2026-10-18-00:06:
+ * Expose the existing dispatcher so routing tests can invoke it without reloading
+ * the entrypoint and allocating another performance-cleanup interval per command.
+ * Normal CLI startup still awaits this same function below.
+ */
+export async function main() {
   const { cleanedArgs: args, projectName, skipOnboarding, quiet } = extractGlobalProjectFlag(process.argv.slice(2));
 
   // Print version and exit before any application imports. The leaf resolver

@@ -19,7 +19,7 @@ failure mode that turns it into an unreadable stack trace is worth pinning, sinc
 inscrutable ratchet failure is to disable it.
 */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
@@ -49,10 +49,21 @@ function runCensus(baselineContents: string, extraArgs: string[]): { status: num
   scratch = mkdtempSync(join(tmpdir(), "fusion-census-guard-"));
   const baselinePath = join(scratch, "baseline.json");
   writeFileSync(baselinePath, baselineContents);
+  /*
+  FNXC:LifecycleColumnCensus 2026-10-16-00:06:
+  Corruption diagnostics need one valid source file, not a scan of the whole repository.
+  Use the paired scan seams; keep the healthy real-baseline integration check below.
+  */
+  writeFileSync(join(scratch, "fixture.ts"), "export const value = 1;\n");
   try {
     const stdout = execFileSync("node", [SCRIPT, "--strict", ...extraArgs], {
       cwd: REPO_ROOT,
-      env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath },
+      env: {
+        ...process.env,
+        FUSION_CENSUS_BASELINE_PATH: baselinePath,
+        FUSION_CENSUS_FILE_ROOT: scratch,
+        FUSION_CENSUS_FILE_LIST: "fixture.ts",
+      },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -60,6 +71,8 @@ function runCensus(baselineContents: string, extraArgs: string[]): { status: num
   } catch (err) {
     const e = err as { status?: number; stderr?: string };
     return { status: e.status ?? 1, stderr: e.stderr ?? "" };
+  } finally {
+    expect(readFileSync(baselinePath, "utf8")).toBe(baselineContents);
   }
 }
 

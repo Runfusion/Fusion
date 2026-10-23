@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **5 active observation records** (entries 2, 13, 20, 21, and 22), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **6 active observation records** (entries 2, 13, 20, 21, 22, and the CLI dispatcher timeout below), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -328,6 +328,16 @@ FN-9551 ran the unchanged focused engine-pipeline-smoke Coding S17 file successf
 FN-9125 established that former entry 3 was not PostgreSQL-suite-adjacent: `plugin-runner.test.ts` used an in-memory mocked TaskStore and had no PostgreSQL/harness import. FN-9135 did not identify a root cause, but FN-9141's completed shuffled worker-reuse campaign reproduced and structurally fixed the logger mock-history fixture defect; the suite and its renamed-complete-lane dispatch coverage remain active. Entries 2 and 13 remain active, unreproduced PostgreSQL observations; entry 7 was closed on 2026-08-23 when the whole file was quarantined on a second sighting of a different test; entry 14 was closed on 2026-09-09 after deterministic diagnosis showed its assertions encoded FN-217-removed lifecycle behavior (see the archived record below). FN-9146 completed the later A×4/B×3/C×3 campaign without the entry 2 or entry 13 exact identities failing. Entry 1 reproduced under FN-9126 and again under FN-9146's A02–A04 lanes, then FN-9131 attributed the mechanism (harness demand scales with fan-out against a fixed cluster supply; the first test in a file eats the 15s budget) and shipped the structural queueing-admission fix, closing the record on 2026-09-12. The golden-template/advisory-lock lifecycle and schema-applier's inline baseline path are concrete architecture facts, not a demonstrated cause of these assertions. Core policy forbids inline PG quarantine: FN-9146's retained evidence for entries 2 and 13 is durable, but FN-9146 was archived on 2026-09-03 without a named successor, so those records are presently unowned; the next sighting follows normal escalation from an unowned state. entry 7 was closed on 2026-08-23 (see above). No source or fan-out change is justified before a diagnostic names a causal lifecycle seam. Entry 13 is a further unreproduced instance of that same 15s setup-hook mode, narrowed to the capped four-fork gate lane on a cold cluster. Entry 6 instead records a merge-gate eviction after a loaded-lane setup-hook timeout; `FNXC:PgTestTemplateDb 2026-07-19-17:20` and `FNXC:PgTestWorkerCap 2026-07-18-18:00` are already-landed mitigations for that mode, not new diagnoses to re-open. The Planning Mode entries are separate frontend timing observations.
 
 
+
+### CLI dispatcher cold-import timeout (first sighting)
+
+- **Status:** Active first sighting; retain the other 75 passing routing cases. A second sighting requires file-level quarantine, not a timeout increase.
+- **File:** `packages/cli/src/__tests__/bin.test.ts`
+- **Exact test:** `bin command routing and fallbacks > launches dashboard when no args are provided`
+- **Observed tree/SHA:** `0981a5aff21a1cef6f9b551c28af7b624ea34156` plus local uncommitted dispatcher-reuse refactor, observed 2026-10-18 UTC.
+- **Reproduction:** `pnpm --filter @runfusion/fusion exec vitest run src/__tests__/bin.test.ts --silent=passed-only --reporter=verbose`; one 15,007ms timeout, 75 passes, 22.53s file duration, 14.89s aggregate transform time.
+- **Evidence:** local `/tmp/kb-bin-after.log` (failure), `/tmp/kb-bin-after2.log` (diagnostic re-run: 76/76 passed in 10.03s). These logs are ephemeral, not CI artifacts.
+- **Investigation:** This is the first generic-command invocation, which dynamically loads the command barrel and its transitive graph. Cold transformation overhead is suspected, not proven; collect import/CPU timing if it recurs. No timeout, retry configuration, assertion, or exclusion changed. The entrypoint-reuse refactor removes repeated module loading, not the initial command graph import.
 
 ## Merge-gate eviction records
 

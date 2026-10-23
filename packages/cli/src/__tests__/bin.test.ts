@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -326,12 +326,28 @@ const originalExit = process.exit;
 const originalPiPackageDir = process.env.PI_PACKAGE_DIR;
 const originalSkipOnboardingEnv = process.env.FUSION_SKIP_ONBOARDING;
 
-let importCounter = 0;
+let bin: typeof import("../bin.js");
+
+/*
+ * FNXC:CliTestVelocity 2026-10-18-00:06:
+ * Load the dispatcher once, without auto-running it against Vitest's argv.
+ * Each invocation still reads current argv/env and reaches the real routing logic;
+ * avoid repeated entrypoint transforms and module-level timer allocation.
+ */
+beforeAll(async () => {
+  const previous = process.env.FUSION_CLI_SKIP_MAIN;
+  process.env.FUSION_CLI_SKIP_MAIN = "1";
+  try {
+    bin = await import("../bin.js");
+  } finally {
+    if (previous === undefined) delete process.env.FUSION_CLI_SKIP_MAIN;
+    else process.env.FUSION_CLI_SKIP_MAIN = previous;
+  }
+});
 
 async function runBin(args: string[]) {
   process.argv = ["node", "bin.ts", ...args];
-  importCounter += 1;
-  await import(/* @vite-ignore */ `../bin.ts?test=${importCounter}`);
+  await bin.main();
 }
 
 /*
@@ -345,18 +361,11 @@ function fixtureSecret(label: string): string {
 
 describe("bin command routing and fallbacks", () => {
   it("keeps an absent quiet flag undefined while stripping either quiet spelling", async () => {
-    const previous = process.env.FUSION_CLI_SKIP_MAIN;
-    process.env.FUSION_CLI_SKIP_MAIN = "1";
-    try {
-      const { extractGlobalProjectFlag } = await import("../bin.ts?quiet-parser");
-      expect(extractGlobalProjectFlag(["task", "list"]).quiet).toBeUndefined();
-      expect(extractGlobalProjectFlag(["task", "--quiet", "list"]).cleanedArgs).toEqual(["task", "list"]);
-      expect(extractGlobalProjectFlag(["serve", "-q", "--port", "0"]).cleanedArgs).toEqual(["serve", "--port", "0"]);
-      expect(extractGlobalProjectFlag(["--quiet", "serve", "--project", "name"]).cleanedArgs).toEqual(["serve", "--project", "name"]);
-    } finally {
-      if (previous === undefined) delete process.env.FUSION_CLI_SKIP_MAIN;
-      else process.env.FUSION_CLI_SKIP_MAIN = previous;
-    }
+    const { extractGlobalProjectFlag } = bin;
+    expect(extractGlobalProjectFlag(["task", "list"]).quiet).toBeUndefined();
+    expect(extractGlobalProjectFlag(["task", "--quiet", "list"]).cleanedArgs).toEqual(["task", "list"]);
+    expect(extractGlobalProjectFlag(["serve", "-q", "--port", "0"]).cleanedArgs).toEqual(["serve", "--port", "0"]);
+    expect(extractGlobalProjectFlag(["--quiet", "serve", "--project", "name"]).cleanedArgs).toEqual(["serve", "--project", "name"]);
   });
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
