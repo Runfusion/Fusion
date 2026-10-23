@@ -46,6 +46,7 @@ import {
   Minimize2,
 } from "lucide-react";
 import { ConversationHistory } from "./ConversationHistory";
+import { AiDisclosure } from "./AiDisclosure";
 import { ThinkingTrace } from "./ThinkingTrace";
 import { MailboxMessageContent } from "./MailboxMessageContent";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -849,6 +850,7 @@ export function MissionInterviewModal({
             </button>
           </div>
         </div>
+        <AiDisclosure kind="ai-interaction" className="planning-ai-disclosure" />
 
         <div className="planning-modal-body">
           {error && <div className="form-error planning-error">{error}</div>}
