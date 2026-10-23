@@ -32,7 +32,7 @@ describe("withRateLimitRetry rotation", () => {
   it("does not invoke rotation for non-limit, transient auth, or aborted work", async () => {
     const nextInstance = vi.fn();
     await expect(withRateLimitRetry(async () => { throw new Error("network 500"); }, { rotation: { providerId: "anthropic", nextInstance } })).rejects.toThrow("network 500");
-    await expect(withRateLimitRetry(async () => { throw new Error("401 authentication_error token expired"); }, { rotation: { providerId: "anthropic", nextInstance }, maxRetries: 0 })).rejects.toThrow("401");
+    await expect(withRateLimitRetry(async () => { throw new Error("401 authentication_error token expired"); }, { rotation: { providerId: "anthropic", nextInstance }, maxRetries: 0, authRetryDelayMs: 0 })).rejects.toThrow("401");
     const abort = new AbortController(); abort.abort();
     await expect(withRateLimitRetry(async () => { throw limited(); }, { rotation: { providerId: "anthropic", nextInstance }, signal: abort.signal })).rejects.toThrow("429");
     expect(nextInstance).not.toHaveBeenCalled();

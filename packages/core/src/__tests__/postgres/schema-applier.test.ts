@@ -446,6 +446,12 @@ async function setupFreshDb(): Promise<TestContext> {
   return setupTestDb(createEmptyPgTestDatabase);
 }
 
+/*
+FNXC:PgSchemaApplierIsolation 2026-10-17-00:02:
+Constraint and identity behavior needs an isolated migrated database, not a replay of every
+migration per case. Clone the golden baseline for these contracts; keep fresh-install and
+upgrade tests on empty databases, and retain plugin-hook execution where explicitly requested.
+*/
 async function setupBaselinedDb(): Promise<TestContext> {
   return setupTestDb(createBaselinedPgTestDatabase);
 }
@@ -2820,7 +2826,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with seque
   });
 
   it("maps AUTOINCREMENT columns to GENERATED ALWAYS AS IDENTITY", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     // attidentity = 'a' means GENERATED ALWAYS AS IDENTITY (PostgreSQL).
     const rows = (await ctx.db.execute(sql`
@@ -2849,7 +2855,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with seque
   });
 
   it("sequence continuity: consecutive inserts produce increasing IDs without collision", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       INSERT INTO project.usage_events (project_id, ts, kind) VALUES ('schema-test', '2026-01-01', 'test')
@@ -2931,7 +2937,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-005 CHECK constraints preserved and enfor
   });
 
   it("rejects an invalid secrets access_policy (CHECK enforced)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await expectPgError(
       ctx.db.execute(sql`
@@ -2943,7 +2949,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-005 CHECK constraints preserved and enfor
   });
 
   it("rejects an invalid agent_ratings score (BETWEEN 1 AND 5)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await expectPgError(
       ctx.db.execute(sql`
@@ -2955,7 +2961,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-005 CHECK constraints preserved and enfor
   });
 
   it("rejects an invalid nodes type (central DB)", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await expectPgError(
       ctx.db.execute(sql`
@@ -2967,7 +2973,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-005 CHECK constraints preserved and enfor
   });
 
   it("accepts valid values that satisfy the CHECK constraints", async () => {
-    ctx = await setupFreshDb();
+    ctx = await setupBaselinedDb();
     await applySchemaBaseline(ctx.db);
     await ctx.db.execute(sql`
       INSERT INTO project.secrets (id, key, value_ciphertext, nonce, access_policy, created_at, updated_at)

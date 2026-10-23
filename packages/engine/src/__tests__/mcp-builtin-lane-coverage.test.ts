@@ -25,6 +25,10 @@ type LedgerRow = { file: string; line: number; bucket: Bucket; expression: strin
  * This is intentionally a per-call-site ledger, not a file/count inventory. A resolver forwarding
  * scan cannot prove a lane passes a root-capable store, so each A row names its real expression and
  * type while D records direct callers that would otherwise bypass the runtime resolver.
+ *
+ * FNXC:MemoryMcpCoverage 2026-10-23-08:19:
+ * The heartbeat helper remains a single store-resolver call shared by A and C semantics. Keep both
+ * rows anchored to that physical call so deduplication preserves the all-roots bijection.
  */
 const LEDGER: LedgerRow[] = [
   ["packages/engine/src/executor/resolve-mcp-servers.ts",32,"A","deps.store","TaskStore","executor TaskStore"],
@@ -33,7 +37,7 @@ const LEDGER: LedgerRow[] = [
   ["packages/engine/src/merge/merger-ai.ts",565,"A","store","TaskStore","merger AI TaskStore"],
   ["packages/engine/src/merge/merger-ai.ts",638,"A","store","TaskStore","merger AI TaskStore"],
   ["packages/engine/src/merge/pr-response-run-ops.ts",112,"A","store","TaskStore","PR response TaskStore"],
-  ["packages/engine/src/agent-heartbeat.ts",201,"A","taskStore","nullable-root","heartbeat accepts a nullable root"],
+  ["packages/engine/src/agent-heartbeat.ts",210,"A","taskStore","nullable-root","heartbeat accepts a nullable root"],
   ["packages/engine/src/triage.ts",3555,"A","this.store","TaskStore","triage TaskStore"],
   ["packages/engine/src/scheduling/cron-runner.ts",1073,"A","store","TaskStore","cron TaskStore"],
   ["packages/engine/src/missions/mission-execution-loop.ts",1125,"A","this.taskStore","TaskStore","mission TaskStore"],
@@ -54,7 +58,7 @@ const LEDGER: LedgerRow[] = [
   ["packages/dashboard/src/agent-onboarding.ts",358,"B","store ?? {}",undefined,"pre-existing no-store degrade"],
   ["packages/dashboard/src/pr-metadata-generator.ts",398,"B","store ?? {}",undefined,"pre-existing no-store degrade"],
   ["packages/dashboard/src/insights-routes.ts",187,"B","params.taskStore ?? {}",undefined,"pre-existing no-store degrade"],
-  ["packages/engine/src/agent-heartbeat.ts",201,"C","taskStore","nullable-root","undefined or empty root omits only built-in"],
+  ["packages/engine/src/agent-heartbeat.ts",210,"C","taskStore","nullable-root","undefined or empty root omits only built-in"],
   ["packages/cli/src/commands/mcp.ts",136,"D","builtIns",undefined,"CLI list direct resolver",true],
   ["packages/cli/src/commands/mcp.ts",140,"D","builtIns",undefined,"CLI export direct resolver",true],
   ["packages/cli/src/commands/mcp.ts",144,"D","builtIns",undefined,"CLI validate direct resolver",true],

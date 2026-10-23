@@ -165,6 +165,31 @@ function createMockHeartbeatMonitor(): HeartbeatMonitor {
   } as unknown as HeartbeatMonitor;
 }
 
+/*
+FNXC:RoutineTestPerformance 2026-10-14-00:06:
+Concurrency and running-state tests must hold heartbeats at explicit start/release boundaries,
+not sleep on the real clock. Separate gates prove overlap and queue ordering without polling.
+*/
+function createHeartbeatGate() {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  return {
+    started: started.promise,
+    release: () => release.resolve(),
+    execute: async () => {
+      started.resolve();
+      await release.promise;
+      return {
+        id: "run-123",
+        agentId: "test-agent",
+        status: "completed" as const,
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+      };
+    },
+  };
+}
+
 function createRoutineRunner(options?: Partial<RoutineRunnerOptions>): RoutineRunner {
   return new RoutineRunner({
     ...options,
@@ -570,26 +595,22 @@ describe("RoutineRunner", () => {
       });
       const routineStore = createMockRoutineStore([routine]);
       const heartbeatMonitor = createMockHeartbeatMonitor();
-      // Make heartbeat slow
-      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
-        async () => {
-          await new Promise((r) => setTimeout(r, 50));
-          return {
-            id: "run-123",
-            agentId: "test-agent",
-            status: "completed" as const,
-            startedAt: new Date().toISOString(),
-            endedAt: new Date().toISOString(),
-          };
-        },
-      );
+      const first = createHeartbeatGate();
+      const second = createHeartbeatGate();
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(first.execute)
+        .mockImplementationOnce(second.execute);
       const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
       // Start two executions
-      const [result1, result2] = await Promise.all([
-        runner.executeRoutine("routine-parallel", "cron"),
-        runner.executeRoutine("routine-parallel", "cron"),
-      ]);
+      const promise1 = runner.executeRoutine("routine-parallel", "cron");
+      const promise2 = runner.executeRoutine("routine-parallel", "cron");
+      await Promise.all([first.started, second.started]);
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledTimes(2);
+      expect(routineStore.completeRoutineExecution).not.toHaveBeenCalled();
+      first.release();
+      second.release();
+      const [result1, result2] = await Promise.all([promise1, promise2]);
 
       // Both should succeed (parallel)
       expect(result1.success).toBe(true);
@@ -603,23 +624,15 @@ describe("RoutineRunner", () => {
       });
       const routineStore = createMockRoutineStore([routine]);
       const heartbeatMonitor = createMockHeartbeatMonitor();
-      // Make heartbeat slow
-      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
-        async () => {
-          await new Promise((r) => setTimeout(r, 100));
-          return {
-            id: "run-123",
-            agentId: "test-agent",
-            status: "completed" as const,
-            startedAt: new Date().toISOString(),
-            endedAt: new Date().toISOString(),
-          };
-        },
-      );
+      const first = createHeartbeatGate();
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(first.execute);
       const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
       // Start first execution
       const promise1 = runner.executeRoutine("routine-reject", "cron");
+
+      await first.started;
 
       // Immediately try second execution - should be rejected
       const result2 = await runner.executeRoutine("routine-reject", "cron");
@@ -628,7 +641,8 @@ describe("RoutineRunner", () => {
       expect(result2.error).toBe("Routine rejected — already running");
       expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledTimes(1); // Only first call
 
-      await promise1; // Clean up
+      first.release();
+      expect((await promise1).success).toBe(true);
     });
 
     it("queue policy: waits for existing execution to complete", async () => {
@@ -638,33 +652,32 @@ describe("RoutineRunner", () => {
       });
       const routineStore = createMockRoutineStore([routine]);
       const heartbeatMonitor = createMockHeartbeatMonitor();
-      let callCount = 0;
-      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
-        async () => {
-          callCount++;
-          await new Promise((r) => setTimeout(r, 50));
-          return {
-            id: "run-123",
-            agentId: "test-agent",
-            status: "completed" as const,
-            startedAt: new Date().toISOString(),
-            endedAt: new Date().toISOString(),
-          };
-        },
-      );
+      const first = createHeartbeatGate();
+      const second = createHeartbeatGate();
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(first.execute)
+        .mockImplementationOnce(second.execute);
       const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
       // Start first execution
-      const [result1, result2] = await Promise.all([
-        runner.executeRoutine("routine-queue", "cron"),
-        runner.executeRoutine("routine-queue", "cron"),
-      ]);
+      const promise1 = runner.executeRoutine("routine-queue", "cron");
+      await first.started;
+      const promise2 = runner.executeRoutine("routine-queue", "cron");
+      // Cross the asynchronous store-read boundary while the first run remains held.
+      await Promise.resolve();
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledTimes(1);
+      expect(routineStore.completeRoutineExecution).not.toHaveBeenCalled();
+      first.release();
+      await second.started;
+      expect(routineStore.completeRoutineExecution).toHaveBeenCalledTimes(1);
+      second.release();
+      const [result1, result2] = await Promise.all([promise1, promise2]);
 
       // Both should succeed (second waited for first)
       expect(result1.success).toBe(true);
       expect(result2.success).toBe(true);
       // Both heartbeats should have been called (sequential due to queue)
-      expect(callCount).toBe(2);
+      expect(heartbeatMonitor.executeHeartbeat).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -727,34 +740,27 @@ describe("RoutineRunner", () => {
       const routine2 = createMockRoutine({ id: "routine-count-2" });
       const routineStore = createMockRoutineStore([routine1, routine2]);
       const heartbeatMonitor = createMockHeartbeatMonitor();
-      // Make heartbeat slow to allow checking in-flight count
-      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
-        async () => {
-          await new Promise((r) => setTimeout(r, 100));
-          return {
-            id: "run-123",
-            agentId: "test-agent",
-            status: "completed" as const,
-            startedAt: new Date().toISOString(),
-            endedAt: new Date().toISOString(),
-          };
-        },
-      );
+      const first = createHeartbeatGate();
+      const second = createHeartbeatGate();
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(first.execute)
+        .mockImplementationOnce(second.execute);
       const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
       expect(runner.getInFlightCount()).toBe(0);
 
       // Start first execution
       const promise1 = runner.executeRoutine("routine-count-1", "cron");
-      // Allow microtask to complete to see the in-flight state
-      await new Promise((r) => setTimeout(r, 10));
+      await first.started;
       expect(runner.getInFlightCount()).toBe(1);
 
       // Start second execution (will run in parallel since policy is "parallel")
       const promise2 = runner.executeRoutine("routine-count-2", "cron");
-      await new Promise((r) => setTimeout(r, 10));
+      await second.started;
       expect(runner.getInFlightCount()).toBe(2);
 
+      first.release();
+      second.release();
       await Promise.all([promise1, promise2]);
       expect(runner.getInFlightCount()).toBe(0);
     });
@@ -763,28 +769,18 @@ describe("RoutineRunner", () => {
       const routine = createMockRoutine({ id: "routine-running" });
       const routineStore = createMockRoutineStore([routine]);
       const heartbeatMonitor = createMockHeartbeatMonitor();
-      // Make heartbeat slow to allow checking in-flight state
-      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>).mockImplementation(
-        async () => {
-          await new Promise((r) => setTimeout(r, 50));
-          return {
-            id: "run-123",
-            agentId: "test-agent",
-            status: "completed" as const,
-            startedAt: new Date().toISOString(),
-            endedAt: new Date().toISOString(),
-          };
-        },
-      );
+      const first = createHeartbeatGate();
+      (heartbeatMonitor.executeHeartbeat as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(first.execute);
       const runner = createRoutineRunner({ routineStore, heartbeatMonitor });
 
       expect(runner.isRoutineRunning("routine-running")).toBe(false);
 
       const promise = runner.executeRoutine("routine-running", "cron");
-      // Allow microtask to complete to see the in-flight state
-      await new Promise((r) => setTimeout(r, 10));
+      await first.started;
       expect(runner.isRoutineRunning("routine-running")).toBe(true);
 
+      first.release();
       await promise;
       expect(runner.isRoutineRunning("routine-running")).toBe(false);
     });

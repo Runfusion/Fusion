@@ -192,8 +192,14 @@ Dispatched session is a leak — that guarantee lives with the substitution seam
 */
 export const POST_MERGE_CI_REPOSITORY_PLACEHOLDER = "{{ciRepo}}";
 
+
+/*
+FNXC:PostMergeUnrelatedFailures 2026-10-06-22:45:
+Operator requirement: post-merge verification must not fail because of failing tests unrelated to the task.
+REVISE is limited to task-attributed regressions and in-progress post-landing runs, declared via blockingReason; the engine downgrades any other post-merge REVISE to APPROVE_WITH_NOTES.
+*/
 const FULL_SUITE_EVIDENCE_BLOCK = `## Required post-landing Full Suite evidence
-This enabled gate requires post-landing Full Suite evidence. Do NOT approve until its delivery record names all of the following:
+This enabled gate requires post-landing Full Suite evidence. Do NOT approve until its delivery record names all of the following that the completed run produced:
 1. The landed SHA and the first Full Suite push-to-main run at or after that SHA, including the run ID and run SHA.
 2. The completed conclusion for Pipeline smoke tier.
 3. The completed conclusion for every Test shard: 1/4, 2/4, 3/4, and 4/4.
@@ -205,7 +211,7 @@ Full Suite and Pipeline smoke are non-blocking signals. A failed lane requires a
 
 Judge failures against this task's landed changes. For evidence-backed unrelated failures, a linked follow-up with an accountable owner satisfies the disposition requirement; that follow-up may still be open, running, or failed. Do not require unrelated follow-up completion, disposition of the entire repository backlog, or a green non-blocking Full Suite before approving this task. You must perform this task's attribution from the available diff, logs, and failure artifact rather than defer it wholesale to the follow-up. If attribution remains unknown, name the specific failure and missing evidence that prevents the decision; a red shard count or an open follow-up alone is not a task regression.
 
-Pre-landing, unrelated-main, or partial evidence does not satisfy this contract. If the required run is still running or required evidence is unavailable, return REVISE and state that final completion remains blocked pending the post-landing evidence. Record verified evidence and every non-success disposition in the task delivery record before approving.`;
+Failing tests unrelated to this task never block completion. Return REVISE only for (a) a failure attributable to this task's landed change, with "blockingReason":"task-regression", or (b) a required post-landing run that is still in progress, with "blockingReason":"evidence-pending". Unrelated or unattributed failures, cancelled lanes, absent artifacts, and missing follow-up IDs are recorded in the delivery record and notes with APPROVE_WITH_NOTES. A REVISE without one of those two reasons is recorded as APPROVE_WITH_NOTES by the engine. Record verified evidence and every non-success disposition in the task delivery record before approving.`;
 
 /*
 FNXC:PostMergeEvidenceRequirement 2026-09-30-22:51 (RUFU-430):

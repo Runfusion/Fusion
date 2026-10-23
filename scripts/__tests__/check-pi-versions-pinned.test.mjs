@@ -4,6 +4,7 @@ import {
   PI_RUNTIME_PACKAGES,
   scanTrackedManifests,
   validateManifestSet,
+  validatePublishedClosure,
   validateWorkspaceOverrides,
 } from "../check-pi-versions-pinned.mjs";
 
@@ -102,5 +103,33 @@ describe("check-pi-versions-pinned", () => {
         `${packageName} must share the desktop closure pin`,
       );
     }
+  });
+
+  /*
+  FNXC:DependencyPinning 2026-10-23-05:33:
+  npm consumers of the published tarball never see pnpm overrides; a missing closure pin let pi-codemode@1.4.0 load beside pi-coding-agent@1.1.0 and crash the packed bin. Require every closure member in the published manifest at the override version.
+  */
+  it("requires the published manifest to pin the full Pi runtime closure", () => {
+    const overrides = Object.fromEntries(PI_RUNTIME_PACKAGES.map((packageName) => [packageName, PINNED_VERSION]));
+    const complete = { dependencies: { ...overrides } };
+
+    assert.deepEqual(validatePublishedClosure(complete, overrides), []);
+
+    const { "@earendil-works/pi-codemode": _omitted, ...withoutCodemode } = complete.dependencies;
+    assert.equal(
+      validatePublishedClosure({ dependencies: withoutCodemode }, overrides)
+        .some((violation) => violation.includes("pi-codemode") && violation.includes("must be declared")),
+      true,
+    );
+    assert.equal(
+      validatePublishedClosure({ dependencies: { ...complete.dependencies, "@earendil-works/pi-mcp": `^${PINNED_VERSION}` } }, overrides)
+        .some((violation) => violation.includes("pi-mcp") && violation.includes("exact semver")),
+      true,
+    );
+    assert.equal(
+      validatePublishedClosure({ dependencies: { ...complete.dependencies, "@earendil-works/pi-tui": OTHER_VERSION } }, overrides)
+        .some((violation) => violation.includes("pi-tui") && violation.includes("must match the workspace override")),
+      true,
+    );
   });
 });

@@ -34,6 +34,27 @@ describe("createGetAgentConfigTool", () => {
     agentStore = createMockAgentStore();
   });
 
+  it("uses only the requested exact ID for configuration lookup", async () => {
+    const report = createAgent({ id: "agent-duplicate-b", name: "Workflow Merger", reportsTo: "manager-1" });
+    vi.mocked(agentStore.getAgent).mockResolvedValue(report);
+    const resolveAgent = vi.fn();
+    const listAgents = vi.fn();
+    Object.assign(agentStore, { resolveAgent, listAgents });
+
+    const result = await createGetAgentConfigTool(agentStore, "manager-1").execute(
+      "session",
+      { agent_id: "agent-duplicate-b" },
+      undefined as never,
+      undefined as never,
+      undefined as never,
+    );
+
+    expect(agentStore.getAgent).toHaveBeenCalledWith("agent-duplicate-b");
+    expect(resolveAgent).not.toHaveBeenCalled();
+    expect(listAgents).not.toHaveBeenCalled();
+    expect(result.details).toEqual({ agent: report });
+  });
+
   it("returns full configuration for a direct report", async () => {
     const report = createAgent({
       id: "report-1",

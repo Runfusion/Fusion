@@ -102,6 +102,14 @@ printf "deploy report" | fn chat agent-abc123 --once --non-interactive
 
 A valid active lineage can bootstrap the first task for a hand-authored `defined` feature. The feature is linked to that exact task and promoted to `triaged`; later autonomous scheduler work still requires a `triaged` or `in-progress` feature.
 
+## Durable-agent identity lookup
+
+Agent IDs are authoritative and are resolved directly within the current project before display-name matching. `fn_agent_show`, configuration tools, and `GET /api/agents/:id` therefore continue to address the requested record even when legacy durable agents share a display name.
+
+Name-capable tools normalize display names by lowercasing and replacing non-alphanumeric runs with hyphens. A single durable match resolves normally; no match remains `not_found`. Multiple durable matches return `outcome: "ambiguous"` with the original query, normalized name, and lexically sorted `candidateAgentIds`. The dashboard shortname route returns the equivalent HTTP 409 payload with `code: "AMBIGUOUS_AGENT_NAME"`. Retry with one of the returned IDs rather than renaming, deleting, or guessing between records. Ephemeral/runtime rows do not make a durable display name ambiguous.
+
+Startup reconciliation may encounter multiple rows carrying the same built-in workflow-role provenance. It deterministically keeps the oldest valid `createdAt` owner (then the lexical ID as a tie-breaker) and removes only the duplicate row's built-in provenance markers. It does not delete or rename either agent or transfer task links, hierarchy, runtime settings, permissions, instructions, or other operator configuration, so the records can remain intentionally ambiguous by display name and independently usable by ID.
+
 ## Agent configuration updates from agents
 
 The `fn_agent_update` extension tool lets chat/extension callers update existing non-ephemeral agents in place instead of deleting and recreating them. It accepts `agent_id` plus any editable subset of:
@@ -1129,6 +1137,8 @@ For `wake-on-message` / `wake-on-message-forced` runs, Wake Delta also adds:
 
 And engine logs emit a structured correlation line keyed by `[wake-trigger-diagnostics]` with the triggering message metadata plus snapshot counters (`inboxUnreadCount`, `wakeMessageStillUnread`, `pendingRoomMessages`).
 
+For delayed delivery diagnosis, correlate the mailbox message ID with that line. A durable reconciliation may identify a newly visible CLI message; no eligible recipient means response mode, sender, or state gating declined it; and an active serialized run defers the coalesced wake until it can start. A run-start failure is logged separately. The engine must be running for reconciliation and CLI replies.
+
 **Debugging empty-inbox wake noise**
 
 1. `grep "\[wake-trigger-diagnostics\]" <engine-log>`
@@ -1305,12 +1315,12 @@ The `messageResponseMode` runtime configuration controls when agents are trigger
 
 | Mode | Behavior |
 |------|----------|
-| `immediate` | Agent wakes immediately when a message arrives (via hook callback) |
-| `on-heartbeat` | Agent processes messages during normal heartbeat runs only |
+| `immediate` | Agent wakes promptly when a message arrives; the running engine uses both its local hook and durable mailbox reconciliation. |
+| `on-heartbeat` | Agent processes ordinary messages during normal heartbeat runs only. A valid user forced wake may override this mode. |
 
 In the dashboard **Agent Settings** UI, this is surfaced as **Message Response Mode** with matching help text.
 
-**Important**: Both modes include messages in the execution prompt. The `immediate` mode additionally triggers an immediate heartbeat run when a message arrives, while `on-heartbeat` relies on the agent's next scheduled heartbeat.
+**Important**: Both modes include messages in the execution prompt. The `immediate` mode additionally triggers an on-demand heartbeat. A running engine reconciles unread durable mailbox records so messages written by short-lived CLI or other-process MessageStore instances are not dependent on their process-local hook. `on-heartbeat` relies on the next scheduled heartbeat unless a user-originated `wakeRecipient=true` message supplies a valid forced-wake override.
 
 ### One-off send-time immediate wake override
 

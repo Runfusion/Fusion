@@ -201,23 +201,21 @@ describe("plan output bounds (S5)", () => {
     // No plan line after the cap flagged.
     expect(thinking.length).toBe(before);
   });
-});
 
-  // Generous timeout: this test does CPU-bound string flooding (~25 plan
-  // events x 100 entries x 2k chars) and has timed out at the default 5s
-  // under loaded CI shards while passing easily in isolation.
-  it("a plan-ONLY stream stops emitting once the per-turn cap is crossed", { timeout: 20_000 }, async () => {
-    const { createEventBridge, PER_CHUNK_CAP_CHARS, PER_TURN_OUTPUT_CAP_CHARS, MAX_PLAN_ENTRIES } =
-      await import("../event-bridge.js");
+  /*
+  FNXC:AcpPlanBounds 2026-10-15-00:01:
+  One full-size entry saturates each plan event's output cap. Formatting 100 such
+  entries per event only creates discarded text; entry-count bounds are covered
+  separately. Keep the real per-turn limit and assertions without a timeout override.
+  */
+  it("a plan-ONLY stream stops emitting once the per-turn cap is crossed", () => {
     const thinking: string[] = [];
     const bridge = createEventBridge({ onThinking: (t) => thinking.push(t) });
-    // Each plan line is bounded by PER_CHUNK_CAP_CHARS; flood plan events only.
-    const bigEntry = "p".repeat(PER_CHUNK_CAP_CHARS);
-    const entries = Array.from({ length: MAX_PLAN_ENTRIES }, () => ({
-      content: bigEntry,
+    const entries = [{
+      content: "p".repeat(PER_CHUNK_CAP_CHARS),
       priority: "low",
       status: "pending",
-    }));
+    }];
     const floods = Math.ceil(PER_TURN_OUTPUT_CAP_CHARS / PER_CHUNK_CAP_CHARS) + 3;
     for (let i = 0; i < floods; i += 1) {
       bridge.handleSessionUpdate({ sessionUpdate: "plan", entries } as never);
@@ -230,4 +228,9 @@ describe("plan output bounds (S5)", () => {
     expect(thinking.length).toBe(after);
     // And the total emitted is bounded near the cap, not floods * cap.
     expect(thinking.length).toBeLessThan(floods);
+    const planOutput = thinking.filter((t) => !t.includes("output truncated"));
+    const totalEmitted = planOutput.reduce((sum, line) => sum + line.length, 0);
+    expect(totalEmitted).toBeGreaterThanOrEqual(PER_TURN_OUTPUT_CAP_CHARS);
+    expect(totalEmitted).toBeLessThan(PER_TURN_OUTPUT_CAP_CHARS + PER_CHUNK_CAP_CHARS);
   });
+});

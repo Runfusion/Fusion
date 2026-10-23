@@ -55,6 +55,14 @@ export interface RateLimitRetryOptions {
   baseDelayMs?: number;
   /** Upper bound on backoff delay in milliseconds (default: 120 000 — 2 min). */
   maxDelayMs?: number;
+  /*
+  FNXC:EngineAuthRetry 2026-10-11-00:33:
+  Flat delay before each transient-auth retry (default: AUTH_RETRY_DELAY_MS — 5 s).
+  Mirrors the configurable `baseDelayMs` so this separate auth budget is tunable too, and
+  so tests exercise the auth-retry branch deterministically with `authRetryDelayMs: 0`
+  instead of sitting through real 5 s sleeps (the former cost: AUTH_MAX_RETRIES × 5 s per case).
+  */
+  authRetryDelayMs?: number;
   /**
    * Called before each retry with the attempt number (1-based) and the
    * computed delay. Use this to log retry activity to the task and agent logs.
@@ -109,6 +117,7 @@ export async function withRateLimitRetry<T>(
     maxRetries = 3,
     baseDelayMs = 30_000,
     maxDelayMs = 120_000,
+    authRetryDelayMs = AUTH_RETRY_DELAY_MS,
     onRetry,
     signal,
     rotation,
@@ -143,8 +152,8 @@ export async function withRateLimitRetry<T>(
         // Don't consume a rate-limit attempt for an auth retry
         attempt--;
 
-        const jitter = AUTH_RETRY_DELAY_MS * 0.1 * (2 * Math.random() - 1); // ±10 %
-        const delay = Math.max(0, Math.round(AUTH_RETRY_DELAY_MS + jitter));
+        const jitter = authRetryDelayMs * 0.1 * (2 * Math.random() - 1); // ±10 %
+        const delay = Math.max(0, Math.round(authRetryDelayMs + jitter));
 
         onRetry?.(authRetries, delay, error);
 

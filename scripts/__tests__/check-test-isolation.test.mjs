@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync, spawn } from "node:child_process";
@@ -27,6 +27,13 @@ function runScript(args, options) {
     encoding: "utf8",
   });
 }
+
+test("root isolation wrappers preserve the baseline/full-suite/after-check contract", () => {
+  const scripts = JSON.parse(readFileSync(path.resolve("package.json"), "utf8")).scripts;
+  assert.equal(scripts.test, "node scripts/test-changed.mjs");
+  assert.equal(scripts["test:check-isolation"], "node scripts/check-test-isolation.mjs");
+  assert.match(scripts["test:isolated"], /^node scripts\/check-test-isolation\.mjs --before && pnpm test:full && node scripts\/check-test-isolation\.mjs$/);
+});
 
 test("passes when baseline and current state match", () => {
   withFixture(({ cwd, home }) => {

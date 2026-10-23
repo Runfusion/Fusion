@@ -56,9 +56,25 @@ describe("agent usage telemetry lane seam", () => {
     */
     const emitUsageEvent = vi.fn().mockResolvedValue(undefined);
     const appendRunLog = vi.fn().mockResolvedValue(undefined);
+    const contextSnapshot = { wakeReason: "durable-telemetry" };
+    let persistedRun: any;
+    const detailReads: any[] = [];
     const heartbeatStore = {
-      startHeartbeatRun: vi.fn().mockResolvedValue({ id: "run-1", agentId: "durable-agent", status: "active", startedAt: new Date().toISOString() }),
-      getRunDetail: vi.fn(), saveRun: vi.fn(), updateAgentState: vi.fn(), updateAgent: vi.fn(), endHeartbeatRun: vi.fn(),
+      startHeartbeatRun: vi.fn().mockImplementation(async (_agentId: string, initialMetadata = {}) => {
+        persistedRun = {
+          id: "run-1",
+          agentId: "durable-agent",
+          status: "active",
+          startedAt: new Date().toISOString(),
+          ...initialMetadata,
+        };
+        return persistedRun;
+      }),
+      getRunDetail: vi.fn().mockImplementation(async () => {
+        detailReads.push({ ...persistedRun });
+        return persistedRun;
+      }),
+      saveRun: vi.fn().mockImplementation(async (run: any) => { persistedRun = run; }), updateAgentState: vi.fn(), updateAgent: vi.fn(), endHeartbeatRun: vi.fn(),
       assignTask: vi.fn(), getBudgetStatus: vi.fn().mockResolvedValue({ isOverBudget: false, isOverThreshold: false, usagePercent: 0 }),
       getCachedAgent: vi.fn().mockReturnValue(null), getLastBlockedState: vi.fn(), setLastBlockedState: vi.fn(), clearLastBlockedState: vi.fn(),
       appendRunLog, getAgentsByReportsTo: vi.fn().mockResolvedValue([]), recordHeartbeat: vi.fn(),
@@ -71,10 +87,24 @@ describe("agent usage telemetry lane seam", () => {
       return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), subscribe: vi.fn() } } as any;
     });
     try {
-      await new HeartbeatMonitor({ store: heartbeatStore as any, taskStore, rootDir: "/repo" }).executeHeartbeat({ agentId: "durable-agent", source: "on_demand" });
+      await new HeartbeatMonitor({ store: heartbeatStore as any, taskStore, rootDir: "/repo" }).executeHeartbeat({
+        agentId: "durable-agent",
+        source: "on_demand",
+        contextSnapshot,
+      });
     } finally {
       sessionSpy.mockRestore();
     }
+
+    expect(detailReads[0]).toMatchObject({
+      id: "run-1",
+      agentId: "durable-agent",
+      status: "active",
+      processPid: process.pid,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      contextSnapshot,
+    });
 
     const events = emitUsageEvent.mock.calls.map(([event]) => event);
     expect(events).toHaveLength(3);
