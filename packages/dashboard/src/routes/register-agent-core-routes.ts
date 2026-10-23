@@ -6,6 +6,7 @@ import type { Request, Response } from "express";
 import type { Agent, AgentCapability, AgentUpdateInput, TaskStore, AgentPermissionPolicyRules, AgentPermissionPolicyDisposition, AgentPermissionPolicyToolRules } from "@fusion/core";
 import {
   ApprovalRequestStore,
+  AmbiguousAgentNameError,
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
   AGENT_PERMISSIONS,
   aggregateTaskTokenTotalsByAgentLinkAsync,
@@ -487,6 +488,28 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
 
       res.json({ agent });
     } catch (err: unknown) {
+      if (err instanceof AmbiguousAgentNameError) {
+        /*
+        FNXC:AgentIdentityResolution 2026-10-04-10:41:
+        Shortname conflicts are explicit 409 responses so desktop and mobile clients can retry with
+        one of the authoritative candidate IDs; exact-ID detail routes remain independent.
+        The dashboard api() client keeps only `error` and `details` on ApiRequestError, so the
+        ambiguity fields are mirrored under `details` while staying top-level for direct clients.
+        */
+        const ambiguity = {
+          code: err.code,
+          outcome: "ambiguous" as const,
+          query: err.query,
+          normalizedName: err.normalizedName,
+          candidateAgentIds: err.candidateAgentIds,
+        };
+        res.status(409).json({
+          error: "Ambiguous agent name",
+          ...ambiguity,
+          details: ambiguity,
+        });
+        return;
+      }
       if (err instanceof ApiError) {
         throw err;
       }

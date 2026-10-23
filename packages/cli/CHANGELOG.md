@@ -1,5 +1,260 @@
 # @runfusion/fusion
 
+## 0.78.0-beta.9
+
+### Patch Changes
+
+- a78fb0c: summary: Fix `fn` crashing on startup after a fresh npm install due to a mismatched Pi codemode package.
+  category: fix
+  dev: The published manifest now pins the full `@earendil-works/*` Pi runtime closure exactly; npm had resolved `pi-codemode@1.4.0` beside `pi-coding-agent@1.1.0`. `check-pi-versions-pinned` now requires every closure member in `packages/cli/package.json`.
+
+## 0.78.0-beta.8
+
+### Minor Changes
+
+- a6e65a5: summary: Let task-detail Chat explain pull request checks and merge blockers.
+  category: feature
+  dev: Adds a server-bound, read-only task pull request status reader.
+- 2848f5c: summary: Add Claude Opus 5.5 and Sonnet 5.5 model support.
+  category: feature
+  dev: Adds shared Anthropic and local Claude CLI catalog records with verified pricing.
+- 924f2b9: summary: Add SHA-fenced pull request readiness evidence for safe automation.
+  category: feature
+  dev: Stores provider-neutral current-head capability and merge-readiness snapshots.
+- 1677cc5: summary: Add Claude Opus 5.5 and Sonnet 5.5 model choices for Anthropic and Claude CLI users.
+  category: feature
+  dev: Adds upstream-first supplemental catalog records while preserving provider authentication configuration.
+- 8d1c0d4: summary: Support current OpenAI and Codex models with accurate usage estimates.
+  category: feature
+  dev: Adds provider-qualified prices and reachability coverage for pinned Pi 0.86.1 catalog rows.
+- c56ed9c: summary: Upgrade the bundled Pi runtime to version 1.0.2.
+  category: feature
+  dev: Pins the full desktop Pi runtime closure, including pi-mcp and pi-codemode, and requires Node.js 22.19.0 or later.
+- f362695: summary: Add current Claude 5.5 models to Anthropic and Claude CLI selectors.
+  category: feature
+  dev: Pi 1.1.0 supplies the maintained Anthropic catalog; unavailable or empty refreshes retain usable rows.
+
+### Patch Changes
+
+- 4d12221: summary: Prevent concurrent mission feature claims and duplicate cleanup from exhausting the PostgreSQL pool.
+  category: fix
+  dev: Resolves workflow archive lanes before entering feature-claim and duplicate-reconciliation transactions.
+- 95985a2: summary: Fix Claude 5.5 requests returning a 404 from Anthropic.
+  category: fix
+  dev: Registers the Anthropic SDK origin without a duplicate `/v1` path.
+- d1be43b: summary: Make built-in skill guides complete promptly from the CLI launcher.
+  category: fix
+  dev: Routes guide-only requests through a small built entry before the full command bundle.
+- 130fea7: summary: Restore Pi project configuration when CLI help starts.
+  category: fix
+  dev: Help again initializes the `.fusion` Pi configuration directory while built-in guides remain bootstrap-free.
+- 0c5f98e: summary: Run required post-merge verification before completing no-change merges.
+  category: fix
+  dev: Preserve the evidence gate while letting graph-owned verification run before finalization retries.
+- ded416d: summary: Keep landed manual-review tasks from being failed or paused automatically.
+  category: fix
+  dev: Preserves required review evidence while recovering ownership-proven landed empty-step tasks.
+- 0620ccf: summary: Preserve resumed task ownership during landed review recovery.
+  category: fix
+  dev: Fence asynchronous landed evidence with current-row validation and final session liveness before cleanup.
+- 3471d08: summary: Reconcile externally merged pull requests to completed tasks safely.
+  category: fix
+  dev: Persist provider merge evidence during pull request refreshes and avoid duplicate merge actions.
+- 41ce649: summary: Fix milestone and slice interview actions to apply to the selected item.
+  category: fix
+- 2e18a2c: summary: Prevent invalid planning dependency prose from blocking task creation.
+  category: fix
+  dev: Planning accepts only canonical task IDs as suggested dependencies while preserving core validation.
+- 361e12a: summary: Use Pi's Anthropic catalog for Claude model choices.
+  category: fix
+  dev: Removes Fusion's direct Anthropic and Claude CLI fallback catalog rows while retaining credential routing, pricing, and Claude Code identity floors.
+- 1c7cdbc: summary: Prevent landed and intentionally no-change tasks from deadlocking in review.
+  category: fix
+  dev: Persists merge proof before post-merge gates and recognizes approved empty-input Code Review sign-off.
+- 6e4ab56: summary: Automatically recover eligible stale code-review callbacks with durable receipt evidence.
+  category: fix
+  dev: Adds project-scoped stale callback waiver receipts and fail-closed validation.
+- a15ffc9: summary: Keep failed required post-merge checks out of the Done column.
+  category: fix
+  dev: Gate-mode post-merge workflow nodes now cross into Done only after durable approval.
+- 363281e: summary: Safely recover worktrees whose task branch is already in the current base.
+  category: fix
+  dev: Recovery compares branch reachability with the live integration base and only discards proven regenerable ignored output.
+- 29d362f: summary: Reject invalid Markdown step dependency references before execution.
+  category: fix
+  dev: Markdown dependency tokens now use validated 1-based parsed-step positions; JSON remains 0-based.
+- 51ed5ea: summary: Keep pull-request tasks waiting safely for external checks.
+  category: fix
+  dev: Persist current-head readiness waits and release them only after reconciled SHA-fenced evidence.
+- 93e5f53: summary: Close externally merged pull request tasks without replaying implementation.
+  category: fix
+  dev: Reconciles fresh current-head merge proof into graph-native post-merge closeout.
+- 036e478: summary: Stop incompatible inferred dependency bootstraps before repeated retries.
+  category: fix
+  dev: Shared task and merge bootstrap preflight reports runtime and dependency-group configuration requirements.
+- 007ec83: summary: Resume missing post-merge verification after confirmed landing.
+  category: fix
+  dev: Keeps pending, failed, skipped, duplicate, and non-approved post-merge evidence blocking.
+- af2c79e: summary: Restore mobile navigation after a focused chat keyboard is dismissed.
+  category: fix
+- d74ae7b: summary: Restore completed-state moves after approved post-merge workflow gates.
+  category: fix
+- adf9bea: summary: Use the installed Pi catalog for selectable Pi-backed models.
+  category: fix
+  dev: Removes Fusion-maintained fallback model rows after catalog refresh.
+- f518c96: summary: Restore Mailbox recommendation follow-up task creation.
+  category: fix
+- 7c4574a: summary: Keep mailbox recommendations readable when source tasks change.
+  category: fix
+  dev: New notices store a bounded display-only snapshot while creation stays live-source guarded.
+- 2cb4cd4: summary: Change a task assignee directly from task detail.
+  category: fix
+  dev: Reuses the existing project-scoped assignment picker and policy-enforced request path.
+- f8a4fc1: summary: Preserve stale review receipts during project partition promotion.
+  category: fix
+  dev: Migration 0086 now repairs its receipt task foreign key for safe project-id rekeys.
+- 05c7ae5: summary: Validate completed Mission features using landed revision and forge evidence.
+  category: fix
+  dev: Keeps repository and forge infrastructure failures retryable and inconclusive.
+- bb12f25: summary: Preserve stale worktree retry cleanup before retrying a task.
+  category: fix
+  dev: Aligns CLI retry sequencing with the task update fence.
+- 8bd8b73: summary: Keep archived skipped post-merge checks visibly blocking completion.
+  category: fix
+  dev: Recovery resumes required post-merge gates only when no durable result exists.
+- d5795d8: summary: Release executor-class work from durable heartbeat owners for normal execution.
+  category: fix
+  dev: Adds a fenced durable-agent handoff and unavailable-owner recovery while preserving user pauses.
+- 58244ab: summary: Restore Full Suite coverage for merge recovery and workflow worktrees.
+  category: fix
+  dev: Align shared engine and core fixtures with durable merge, workflow, and task-store contracts.
+- 23eff40: summary: Repair safe cleanup of post-merge task worktrees.
+  category: fix
+- 34019ef: summary: Show an accessible Meta Muse icon in authentication and model choices.
+  category: fix
+  dev: Maps the cataloged `meta` provider to a tokenized shared ProviderIcon mark while preserving unknown-provider fallback behavior.
+- 6a4ec69: summary: Keep standard and custom secret files safe during orphan cleanup.
+  category: fix
+- 60cc6cd: summary: Recover stranded cards at startup and escalate stale merge retries safely.
+  category: fix
+  dev: Adds typed recovery escalation and startup ownership passes while preserving lifecycle fences.
+- efd86c3: summary: Prevent stale Planning Mode dependency suggestions from blocking task creation.
+  category: fix
+- b3b8335: summary: Run required post-merge verification after a proven manual landing.
+  category: fix
+  dev: Keeps auto-merge disabled for landing while allowing graph-owned closeout recovery.
+- 69490de: summary: Retain valid AI-generated PR metadata when models wrap it in fences or prose.
+  category: fix
+  dev: PR metadata parsing now validates supported wrapped JSON before using deterministic fallback content.
+- fefbb2c: summary: Let Create PR wait for server-generated metadata instead of failing after 15 seconds.
+  category: fix
+- b01ad73: summary: Protect pull request conflict resolution from unpublished local base commits.
+  category: fix
+  dev: PR base selection now refreshes and prefers the verified remote-tracking branch, with local/remote divergence diagnostics.
+- b3970a5: summary: Preserve generated pull request metadata for large tasks and identify fallback drafts.
+  category: fix
+  dev: PR metadata fallback responses now include fixed timeout or parse-validation provenance with safe route diagnostics.
+- c6e6eb5: summary: Prevent dashboard project selection from creating repeated audit history.
+  category: fix
+- 8c3730a: summary: Keep workflow gate results and merge closeout decisions consistent after retries.
+  category: fix
+  dev: Shares the current required-gate admission projection across merge doors and Workflow Results.
+- cad6f4c: summary: Restore bundled Linux ICU compatibility links before local PostgreSQL starts.
+  category: fix
+  dev: Repairs missing ICU 60 SONAME links from the bundled ICU 60.2 payload.
+- c133c50: summary: Safely clear stale paused planning file-scope claims without resetting task history.
+  category: fix
+  dev: Persists an identity-fenced release receipt and re-evaluates blocked work through normal scheduling gates.
+- f90bb7c: summary: Recover valid PR metadata after unrelated code samples in AI responses.
+  category: fix
+  dev: Outer-object recovery now excludes fenced spans while preserving JSON/plain fence parsing.
+- 1e26fde: summary: Keep dashboard chat compatible with lightweight Pi runtime adapters.
+  category: fix
+  dev: Retain catalog protection when Pi exposes its internal models store.
+- 9b3f3a7: summary: Improve Planning Mode browser reliability during responsive plan review.
+  category: fix
+  dev: Closes Planning Mode browser fixture pages and Vite resources deterministically after Chromium checks.
+- 6c8004b: summary: Prevent stale file-scope releases from causing duplicate task scheduling.
+  category: fix
+  dev: Scheduler wakes only after an observed overlap blocker clears in a runnable parked lane.
+- 3d5e75a: summary: Restore stable merge approval results while retaining workflow review diagnostics.
+  category: fix
+  dev: Keeps selected workflow-result metadata on the detailed admission decision only.
+- da1add7: summary: Stop completed and paused agent heartbeats from continuing provider work.
+  category: fix
+  dev: Heartbeat completion now owns a terminal cancellation boundary and bounded progress protection.
+- 385244a: summary: Persist global Models thinking-level changes for work lanes.
+  category: fix
+  dev: Restores global save ownership for execution, planning, reviewer, and title-summarizer reasoning overrides.
+- c57777b: summary: Show formatted installation totals in Skills catalog cards.
+  category: fix
+- 8175665: summary: Record durable heartbeat activity reported during session setup.
+  category: fix
+  dev: Restores no-task heartbeat tool telemetry while retaining terminal callback fencing.
+- 0a427ca: summary: Make PostgreSQL test setup safer and macOS status diagnostics available.
+  category: fix
+  dev: Bounds dead-test database cleanup to proven inactive Fusion artifacts and keeps Darwin provisioning disabled.
+- f1c2a2e: summary: Preserve actionable diagnostics when pipeline smoke coverage is incomplete.
+  category: fix
+  dev: Pipeline-smoke reports now retain the in-flight scenario and stage without accepting partial coverage.
+- 85a9d50: summary: Keep restored Planning sessions synchronized after another tab advances a question.
+  category: fix
+  dev: Fence idle-session refreshes by durable load and turn ownership, and ignore replayed session updates.
+- d09efcd: summary: Preserve the latest Planning question after delayed duplicate responses on mobile.
+  category: fix
+  dev: Make the A→B→A reload and stale duplicate-reconciliation ordering deterministic across desktop and mobile tests.
+- 29aae30: summary: Resume older task plans with trailing step dependencies while rejecting ambiguous or invalid execution order.
+  category: fix
+  dev: Preserve strict positional prefix annotations and validate legacy suffix labels on contiguous numbered plans.
+- 32fb167: summary: Keep landed tasks awaiting verification in review instead of marking repeated reviews as task failures.
+  category: fix
+- d623cf8: summary: Post-merge verification no longer holds landed tasks in review because of unrelated failing tests.
+  category: fix
+  dev: Post-merge REVISE now blocks only with `blockingReason` `task-regression` or `evidence-pending`; any other post-merge REVISE is recorded as APPROVE_WITH_NOTES at the engine parse boundary.
+- 1dbaf6b: summary: Preserve skipped verification gates as blockers during recovery.
+  category: fix
+  dev: Archived attempts cannot implicitly restart or satisfy a required post-merge gate.
+- 2217097: summary: Prevent unavailable task owners from stalling execution and automatically recover nested workflow holds.
+  category: fix
+  dev: Check owner availability during admission and share node-instance resolution with periodic recovery.
+- acf81f8: summary: Keep checking delayed post-merge evidence with hourly backoff instead of permanently exhausting recovery.
+  category: fix
+  dev: Preserve failure history, retain ownership fences, and clear stale recovery errors when a recheck starts.
+- df959f3: summary: Recover tasks stranded after entering execution with an unavailable assigned agent.
+  category: fix
+  dev: Fence idle ownership handoff against workflow claims and resume the existing executor continuation in place.
+- b4cac07: summary: Publish landed tasks before waiting for hosted checks, and recover missed pushes automatically.
+  category: fix
+- 66a7e80: summary: Keep the selected replacement assignee and mobile actions in sync.
+  category: fix
+  dev: Recover the FN-9459 inline review changes omitted by branch-only landing.
+- 0ee2c83: summary: Restore the reviewed fix for auto-merge preference updates.
+  category: fix
+  dev: Recover the FN-9442 inline review edit omitted by branch-only landing.
+- 95e90ad: summary: Restore reviewed token-volume pricing and provider rates.
+  category: fix
+  dev: Recover the FN-9448 inline review changes verified against the installed Pi model registry.
+- 32fb167: summary: Resume recoverable work in place without invalidating its own retry or losing saved progress.
+  category: fix
+- b87fef6: summary: Resume missing post-merge verification instead of leaving already-merged tasks idle in review.
+  category: fix
+  dev: Fence recovery against task and workflow changes; preserve live continuations, human holds, and existing gate results.
+- d6cb8cb: summary: Preserve reviewer fixes and resume queued work while landed tasks finish verification.
+  category: fix
+  dev: Require committed review content, release landed file claims, enable evidence tools, and preserve merge proof on retry.
+- 7f111ff: summary: Recover stalled review checks without repeating failed reviews or requiring green non-blocking CI.
+  category: fix
+  dev: Bound delayed post-merge rechecks, fence pre-merge reseeding, and preserve actionable deterministic review failures.
+- c7e116f: summary: Stop repeatedly merging already-landed tasks that are waiting on post-merge verification.
+  category: fix
+  dev: Honor post-merge evidence at queue admission and clear stale landing activity without changing gate results.
+- 32fb167: summary: Keep parallel task commits on their own branches and recover renamed worktrees without losing work.
+  category: fix
+  dev: Scope commit-hook branch identity to each checkout and require ownership proof before rebinding task metadata.
+- dbfddd2: summary: Unblock queued work when a waiting task's file reservation prevents its prerequisites from starting.
+  category: fix
+  dev: Apply dependency readiness to dormant file-scope reservations across admission, blocker repair, and recovery.
+
 ## 0.78.0-beta.7
 
 ### Patch Changes

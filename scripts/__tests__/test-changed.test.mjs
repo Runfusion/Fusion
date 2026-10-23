@@ -56,11 +56,15 @@ import {
   createScopedAffectedMemoryEnvelopeEnv,
   deriveScopedAffectedBudgetMs,
   SCOPED_AFFECTED_BUDGET_CEILING_MS,
+  PRE_GATE_STAGE_BUDGET_MS,
+  runObservedStage,
+  runMaybeIsolated,
+  preparePreGateEnvironment,
 } from "../test-changed.mjs";
 
 import { deriveBudgetMs } from "../lib/run-vitest-watchdog.mjs";
 
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync, existsSync, utimesSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -1164,6 +1168,150 @@ test("createIsolatedHomeEnv: records raw/realpath basenames in allow-list set", 
 });
 
 // ---------------------------------------------------------------------------
+// FN-9568: bounded, observable pre-gate setup
+// ---------------------------------------------------------------------------
+
+test("runObservedStage: reports a named bounded setup timeout instead of silently waiting", async () => {
+  const lines = [];
+  await assert.rejects(
+    runObservedStage("isolation-before", () => new Promise(() => {}), {
+      budgetMs: 5,
+      log: (line) => lines.push(line),
+    }),
+    /stage=isolation-before exceeded budget 5ms/,
+  );
+  assert.equal(lines[0], "[test-changed] stage=isolation-before status=start");
+  assert.match(lines.at(-1), /stage=isolation-before status=failure elapsedMs=/);
+});
+
+test("runMaybeIsolated: no-change gate path completes checks before launching its gate child", async () => {
+  const events = [];
+  const stageLines = [];
+  await runMaybeIsolated("pnpm", ["test:gate"], {
+    env: { ...process.env, FUSION_TEST_DISABLE_ISOLATION_GUARD: "0" },
+    budgetMs: 50,
+    stageBudgetMs: 50,
+    stageLog: (line) => stageLines.push(line),
+    runIsolationCheckFn: async (before) => {
+      events.push(before ? "before-check" : "after-check");
+    },
+    runWatchedTestFn: async (command, args) => {
+      events.push(`child:${command} ${args.join(" ")}`);
+    },
+    pruneHomesFn: () => events.push("prune-homes"),
+    pruneWorkersFn: () => events.push("prune-workers"),
+    onBeforeAfterCheck: () => events.push("cleanup"),
+  });
+
+  assert.deepEqual(events, [
+    "before-check",
+    "child:pnpm test:gate",
+    "cleanup",
+    "prune-homes",
+    "prune-workers",
+    "after-check",
+  ]);
+  assert.ok(stageLines.some((line) => line.includes("stage=isolation-before status=finish")));
+  assert.ok(stageLines.some((line) => line.includes("stage=watchdog-spawn status=finish")));
+});
+
+test("runMaybeIsolated: bounded before-check failure prevents gate launch", async () => {
+  const events = [];
+  await assert.rejects(
+    runMaybeIsolated("pnpm", ["test:gate"], {
+      env: { ...process.env, FUSION_TEST_DISABLE_ISOLATION_GUARD: "0" },
+      stageBudgetMs: 5,
+      runIsolationCheckFn: () => new Promise(() => {}),
+      runWatchedTestFn: async () => events.push("gate"),
+      pruneHomesFn: () => events.push("prune-homes"),
+      pruneWorkersFn: () => events.push("prune-workers"),
+    }),
+    /stage=isolation-before exceeded budget 5ms/,
+  );
+  assert.deepEqual(events, [], "no child or post-run cleanup is legal before the required baseline completes");
+});
+
+test("runMaybeIsolated: gate failure still cleans up and runs the isolation after-check", async () => {
+  const events = [];
+  await assert.rejects(
+    runMaybeIsolated("pnpm", ["test:gate"], {
+      env: { ...process.env, FUSION_TEST_DISABLE_ISOLATION_GUARD: "0" },
+      runIsolationCheckFn: async (before) => events.push(before ? "before-check" : "after-check"),
+      runWatchedTestFn: async () => {
+        events.push("gate");
+        throw new Error("controlled gate failure");
+      },
+      onBeforeAfterCheck: () => events.push("cleanup"),
+      pruneHomesFn: () => events.push("prune-homes"),
+      pruneWorkersFn: () => events.push("prune-workers"),
+    }),
+    /controlled gate failure/,
+  );
+  assert.deepEqual(events, ["before-check", "gate", "cleanup", "prune-homes", "prune-workers", "after-check"]);
+});
+
+test("preparePreGateEnvironment: bounded skill sync names the blocked production boundary", async () => {
+  const lines = [];
+  await assert.rejects(
+    preparePreGateEnvironment({
+      forceFullSuite: false,
+      stageBudgetMs: 5,
+      stageLog: (line) => lines.push(line),
+      isSkillSyncCheckCachedFn: () => false,
+      runSkillSyncFn: () => new Promise(() => {}),
+      prepareArtifactsFn: async () => {
+        throw new Error("must not prepare artifacts after blocked skill sync");
+      },
+    }),
+    /stage=skill-sync-validation exceeded budget 5ms/,
+  );
+  assert.equal(lines[0], "[test-changed] stage=skill-sync-validation status=start");
+  assert.match(lines[1], /stage=skill-sync-validation status=failure elapsedMs=/);
+});
+
+test("preparePreGateEnvironment: bounded artifact setup names the blocked production boundary", async () => {
+  const lines = [];
+  await assert.rejects(
+    preparePreGateEnvironment({
+      forceFullSuite: false,
+      stageBudgetMs: 5,
+      stageLog: (line) => lines.push(line),
+      isSkillSyncCheckCachedFn: () => true,
+      prepareArtifactsFn: () => new Promise(() => {}),
+      createIsolatedHomeEnvFn: async () => {
+        throw new Error("must not create HOME after blocked artifacts");
+      },
+    }),
+    /stage=test-artifact-preparation exceeded budget 5ms/,
+  );
+  assert.equal(lines[0], "[test-changed] skill-sync check skipped (inputs unchanged since last pass).");
+  assert.equal(lines[1], "[test-changed] stage=test-artifact-preparation status=start");
+  assert.match(lines[2], /stage=test-artifact-preparation status=failure elapsedMs=/);
+});
+
+test("preparePreGateEnvironment: bounded isolated HOME creation fails before a gate can launch", async () => {
+  const lines = [];
+  await assert.rejects(
+    preparePreGateEnvironment({
+      forceFullSuite: false,
+      stageBudgetMs: 5,
+      stageLog: (line) => lines.push(line),
+      isSkillSyncCheckCachedFn: () => true,
+      prepareArtifactsFn: async () => {},
+      createIsolatedHomeEnvFn: () => new Promise(() => {}),
+    }),
+    /stage=isolated-home-create exceeded budget 5ms/,
+  );
+  assert.ok(lines.some((line) => line.includes("stage=test-artifact-preparation status=finish")));
+  assert.ok(lines.some((line) => line.includes("stage=isolated-home-create status=failure")));
+});
+
+test("pre-gate setup budget remains narrow and independent of test-lane watchdog budgets", () => {
+  assert.equal(PRE_GATE_STAGE_BUDGET_MS, 30_000);
+  assert.ok(PRE_GATE_STAGE_BUDGET_MS < deriveBudgetMs({ klass: "changed" }));
+});
+
+// ---------------------------------------------------------------------------
 // R5: mode-decision telemetry
 // ---------------------------------------------------------------------------
 
@@ -1516,8 +1664,10 @@ function makeChainRepo(dir) {
   git(dir, ["init", "-q"]);
   git(dir, ["config", "user.email", "t@t.t"]);
   git(dir, ["config", "user.name", "t"]);
+  git(dir, ["branch", "-M", "main"]);
   writeFileSync(path.join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   writeFileSync(path.join(dir, "tsconfig.base.json"), "{}\n");
+  writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "test-fixture", private: true }, null, 2));
   writeFileSync(path.join(dir, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
   mkdirSync(path.join(dir, ".changeset"), { recursive: true });
   writeFileSync(
@@ -1607,6 +1757,50 @@ const packageHashSnippet = (pkgName) => `(mod) => {
 FNXC:TestInfrastructure 2026-07-01-00:00:
 CI no longer routes through scripts/test-changed.mjs as an implicit full-suite trigger, so CI=true must not force mode=full. Keep paired full-trigger assertions here so this --print-mode subprocess guard proves full-suite mode remains explicit opt-in only.
 */
+test("integration: real no-change normal entry path reaches the requested gate after bounded setup", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "tc-normal-gate-"));
+  try {
+    makeChainRepo(dir);
+    const fakeBin = path.join(dir, "fake-bin");
+    const gateLog = path.join(dir, "pnpm-invocations.log");
+    mkdirSync(fakeBin, { recursive: true });
+    const fakePnpm = path.join(fakeBin, "pnpm");
+    writeFileSync(fakePnpm, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FUSION_TEST_GATE_LOG\"\nexit 0\n");
+    chmodSync(fakePnpm, 0o755);
+
+    const result = spawnSync(process.execPath, [scriptModulePath], {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        FUSION_PROJECT_DIR: dir,
+        FUSION_TEST_GATE_LOG: gateLog,
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+      },
+    });
+    assert.equal(result.status, 0, `normal entry failed:\n${result.stdout}\n${result.stderr}`);
+    assert.equal(result.signal, null, `normal entry exceeded its test-owned bound:\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /\[test-changed\] mode=gate reason=no-changes packages=0/);
+    const stageOrder = [
+      "stage=test-artifact-preparation status=start",
+      "stage=isolated-home-create status=finish",
+      "stage=isolation-before status=finish",
+      "stage=watchdog-spawn status=finish",
+      "stage=isolation-after status=finish",
+    ];
+    let priorOffset = -1;
+    for (const stage of stageOrder) {
+      const offset = result.stdout.indexOf(stage);
+      assert.ok(offset > priorOffset, `expected ${stage} after the previous production stage:\n${result.stdout}`);
+      priorOffset = offset;
+    }
+    assert.match(readFileSync(gateLog, "utf8"), /^test:gate$/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("integration: CI=true does not force the full suite (only --full / FUSION_TEST_FULL do)", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "tc-print-mode-"));
   try {

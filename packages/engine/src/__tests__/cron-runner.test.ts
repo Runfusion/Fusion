@@ -137,6 +137,28 @@ function createMockAutomationStore(schedules: ScheduledTask[] = []): AutomationS
   } as unknown as AutomationStore;
 }
 
+/*
+FNXC:SchedulerTests 2026-10-14-00:06:
+Concurrency guards must be checked while execution is provably pending, not after
+an arbitrary shell sleep. A deferred AI executor controls that boundary without
+starting subprocesses or spending wall-clock time waiting for them.
+*/
+function createPendingExecution() {
+  let release!: (output: string) => void;
+  let markStarted!: () => void;
+  const pending = new Promise<string>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const executor = vi.fn(() => {
+    markStarted();
+    return pending;
+  }) as unknown as AiPromptExecutor;
+  const schedule = createMockSchedule({
+    command: "",
+    steps: [makeStep({ type: "ai-prompt", prompt: "Controlled execution", command: undefined })],
+  });
+  return { executor, schedule, started, release };
+}
+
 describe("CronRunner", () => {
   let runner: CronRunner;
 
@@ -503,16 +525,17 @@ describe("CronRunner", () => {
 
     it("re-entrance guard prevents overlapping ticks", async () => {
       const store = createMockStore();
-      const schedule = createMockSchedule({ command: "sleep 0.1 && echo done" });
+      const { schedule, executor, started, release } = createPendingExecution();
       const automationStore = createMockAutomationStore([schedule]);
-      runner = new CronRunner(store, automationStore);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: executor });
 
-      // Start first tick
       const tick1 = runner.tick();
-      // Attempt second tick immediately
-      const tick2 = runner.tick();
-
-      await Promise.all([tick1, tick2]);
+      await started;
+      await runner.tick();
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+      release("done");
+      await tick1;
 
       // Should only have recorded one run (second tick was a no-op)
       expect(automationStore.recordRun).toHaveBeenCalledTimes(1);
@@ -563,16 +586,15 @@ describe("CronRunner", () => {
 
     it("prevents concurrent runs of the same schedule", async () => {
       const store = createMockStore();
-      const schedule = createMockSchedule({ command: "sleep 0.2 && echo done" });
+      const { schedule, executor, started, release } = createPendingExecution();
       const automationStore = createMockAutomationStore([schedule]);
-      runner = new CronRunner(store, automationStore);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: executor });
 
-      // Start execution
       const exec1 = runner.executeSchedule(schedule);
-
-      // in-flight set should contain the schedule
+      await started;
       expect(runner["inFlight"].has(schedule.id)).toBe(true);
-
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+      release("done");
       await exec1;
 
       // After completion, in-flight should be cleared
@@ -739,16 +761,16 @@ describe("CronRunner", () => {
   describe("concurrent schedule prevention in tick", () => {
     it("skips schedule already in-flight during tick", async () => {
       const store = createMockStore();
-      const schedule = createMockSchedule({ command: "sleep 0.3 && echo done" });
+      const { schedule, executor, started, release } = createPendingExecution();
       const automationStore = createMockAutomationStore([schedule]);
-      runner = new CronRunner(store, automationStore);
+      runner = new CronRunner(store, automationStore, { aiPromptExecutor: executor });
 
-      // Start first execution (will block for 300ms)
       const exec1 = runner.executeSchedule(schedule);
-
-      // Tick while execution in progress — should skip the in-flight schedule
+      await started;
       await runner.tick();
-
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect(automationStore.recordRun).not.toHaveBeenCalled();
+      release("done");
       await exec1;
 
       // Should only have recorded one run (tick skipped it)

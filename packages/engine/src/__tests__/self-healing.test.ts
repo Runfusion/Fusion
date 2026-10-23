@@ -151,8 +151,8 @@ vi.mock("../merge/post-landing-worktree-cleanup.js", () => ({
 import { SelfHealingManager, isBranchAheadOfBase, MAX_AUTO_MERGE_RETRIES, MAX_TASK_DONE_RETRIES } from "../self-healing.js";
 import { resolveAiMergeRootPath } from "../worktree/worktree-paths.js";
 import { cleanupLandedTaskWorktree } from "../merge/post-landing-worktree-cleanup.js";
-import { HEARTBEAT_ERROR_RECOVERY_METADATA_KEY, HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON, HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON, readHeartbeatErrorRetryCount } from "../agent-heartbeat.js";
-import { PlanningLifecycleLockTransportError, TaskDeletedError, TaskNotFoundError, TransitionRejectionError, type TaskStore, type Settings, type Task, type AgentStore, type Agent, type NotificationProvider } from "@fusion/core";
+import { HeartbeatMonitor, HEARTBEAT_ERROR_RECOVERY_METADATA_KEY, HEARTBEAT_ERROR_RETRY_EXHAUSTED_PAUSE_REASON, HEARTBEAT_ERROR_UNRECOVERABLE_PAUSE_REASON, readHeartbeatErrorRetryCount } from "../agent-heartbeat.js";
+import { PlanningLifecycleLockTransportError, TaskDeletedError, TaskNotFoundError, TransitionRejectionError, type TaskStore, type Settings, type Task, type AgentStore, type Agent, type AgentHeartbeatRun, type NotificationProvider } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -1788,6 +1788,52 @@ describe("SelfHealingManager", () => {
     it("returns 0 when no agentStore is configured", async () => {
       const result = await manager.recoverStaleHeartbeatRuns();
       expect(result).toBe(0);
+    });
+
+    it("preserves a monitor-created on-demand run during immediate recovery", async () => {
+      const runs = new Map<string, AgentHeartbeatRun>();
+      const endHeartbeatRun = vi.fn().mockResolvedValue(undefined);
+      const agentStore = {
+        getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+        startHeartbeatRun: vi.fn().mockImplementation(async (agentId: string, initialMetadata = {}) => {
+          const run = {
+            id: "run-on-demand",
+            agentId,
+            startedAt: new Date().toISOString(),
+            endedAt: null,
+            status: "active" as const,
+            ...initialMetadata,
+          } as AgentHeartbeatRun;
+          runs.set(run.id, run);
+          return run;
+        }),
+        getRunDetail: vi.fn().mockImplementation(async (_agentId: string, runId: string) => runs.get(runId) ?? null),
+        listActiveHeartbeatRuns: vi.fn().mockImplementation(async () => [...runs.values()].filter((run) => run.status === "active")),
+        saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => { runs.set(run.id, run); }),
+        endHeartbeatRun,
+        updateAgentState: vi.fn().mockResolvedValue(undefined),
+      } as unknown as AgentStore;
+      const monitor = new HeartbeatMonitor({ store: agentStore });
+      const contextSnapshot = { taskId: "FN-9566", projectId: "project-test" };
+      const run = await monitor.startRun("agent-fresh", {
+        source: "on_demand",
+        triggerDetail: "dashboard",
+        contextSnapshot,
+      });
+      const m = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+
+      await expect(m.recoverStaleHeartbeatRuns()).resolves.toBe(0);
+
+      expect(runs.get(run.id)).toMatchObject({
+        status: "active",
+        processPid: process.pid,
+        invocationSource: "on_demand",
+        triggerDetail: "dashboard",
+        contextSnapshot,
+      });
+      expect(agentStore.saveRun).not.toHaveBeenCalled();
+      expect(endHeartbeatRun).not.toHaveBeenCalled();
+      m.stop();
     });
 
     it("terminates active runs whose processPid does not match this process", async () => {

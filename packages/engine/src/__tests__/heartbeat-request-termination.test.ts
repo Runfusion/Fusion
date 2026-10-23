@@ -194,7 +194,7 @@ async function createFakeSdkEnv(): Promise<FakeSessionEnv> {
     name: "Heartbeat Fake",
     api: FAKE_PROVIDER_API,
     baseUrl: FAKE_PROVIDER_BASE_URL,
-    apiKey: "heartbeat-guard-not-a-real-credential",
+    apiKey: "test",
     models: [{
       id: "fake-agent",
       name: "Fake Agent",

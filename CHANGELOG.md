@@ -2,6 +2,96 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.9
+
+### Highlights
+
+- CLI: `fn` no longer crashes on startup after a fresh npm install
+- CLI: npm can no longer mix pi-codemode 1.4.0 with pi-coding-agent 1.1.0 on install
+- CLI: Every Pi runtime package is now pinned to an exact version in the published install
+- Release checks now block any build that leaves a Pi runtime package unpinned
+
+### Fixed
+
+- `fn` no longer crashes on startup after a fresh npm install. The cause was a mismatched Pi codemode package: npm had installed pi-codemode 1.4.0 next to pi-coding-agent 1.1.0. The published CLI now pins every package in the Pi runtime to an exact version, and release checks enforce this so the mismatch can't come back.
+
+## 0.78.0-beta.8
+
+### Highlights
+
+- Claude Opus 5.5 and Sonnet 5.5 now selectable for Anthropic and Claude CLI, with 404s fixed
+- Bundled Pi runtime upgraded to 1.0.2; the desktop runtime now requires Node.js 22.19.0 or later
+- Task-detail Chat can now explain pull request checks and merge blockers
+- Engine: unrelated failing tests no longer hold landed tasks in review during post-merge checks
+- Board: externally merged PRs close their tasks without replaying implementation
+
+### New
+
+- Claude Opus 5.5 and Sonnet 5.5 are available in the Anthropic and Claude CLI model selectors.
+- The bundled Pi runtime is now version 1.0.2. The full desktop runtime requires Node.js 22.19.0 or later.
+- Task-detail Chat can explain pull request checks and merge blockers.
+- Current OpenAI and Codex models are supported, with accurate usage estimates.
+- Pull request automation now acts on readiness evidence tied to the current head commit, so it never acts on stale check results.
+
+### Fixed
+
+- Claude 5.5 requests no longer return a 404 from Anthropic.
+- Post-merge verification no longer holds landed tasks in review because of unrelated failing tests.
+- Externally merged pull requests now close their tasks safely, without replaying implementation or triggering duplicate merges.
+- Landed tasks and tasks with no changes no longer deadlock in review. Repeated reviews are no longer recorded as task failures.
+- Already-landed tasks waiting on post-merge verification are no longer merged again.
+- Missing post-merge verification now resumes after a confirmed or manual landing instead of leaving merged tasks idle in review.
+- Failed, skipped, or archived required post-merge checks keep tasks out of the Done column. Approved gates move tasks to Done correctly again.
+- Delayed post-merge evidence is rechecked hourly instead of exhausting recovery permanently.
+- Landed tasks are published before the engine waits for hosted checks, and missed pushes are recovered automatically.
+- Pull request tasks wait safely for external checks.
+- Create PR now waits for server-generated metadata instead of failing after 15 seconds.
+- AI-generated PR metadata is kept when a model wraps it in code fences, prose, or unrelated code samples. Fallback drafts are now labeled.
+- Pull request conflict resolution is protected from unpublished local base commits.
+- You can change a task's assignee directly from task detail, and the selected replacement stays in sync on mobile.
+- Mobile navigation returns after a focused chat keyboard is dismissed.
+- Restored Planning sessions stay in sync when another tab advances a question. The latest question survives delayed duplicate responses on mobile.
+- Invalid or stale dependency suggestions in Planning Mode no longer block task creation.
+- Milestone and slice interview actions now apply to the selected item.
+- Mailbox recommendations can create follow-up tasks again and stay readable when their source tasks change.
+- Global Models thinking-level changes now persist for the execution, planning, reviewer, and title-summarizer lanes.
+- Claude and other Pi-backed model choices now come from the installed Pi catalog.
+- Dashboard chat works with lightweight Pi runtime adapters.
+- Built-in skill guides complete promptly from the CLI launcher, and CLI help sets up Pi project configuration again.
+- Completed and paused agent heartbeats no longer continue provider work.
+- Heartbeat activity reported during session setup is recorded.
+- Tasks no longer stall when their assigned agent is unavailable. Nested workflow holds and stranded cards recover automatically, including at startup.
+- Executor work held by durable heartbeat owners is released for normal execution.
+- Recoverable work resumes in place without invalidating its own retry or losing saved progress.
+- Stalled review checks recover without repeating failed reviews or requiring non-blocking CI to pass.
+- Eligible stale code-review callbacks recover automatically, backed by durable receipts.
+- Reviewer fixes are kept, and queued work resumes while landed tasks finish verification.
+- Landed manual-review tasks are no longer failed or paused automatically, and resumed task ownership is preserved during recovery.
+- Parallel task commits stay on their own branches. Renamed worktrees recover without losing work.
+- Worktrees whose task branch is already in the base branch are recovered safely. Post-merge worktree cleanup works again.
+- Stale file-scope releases no longer cause duplicate scheduling, and a waiting task's file reservation no longer blocks its prerequisites from starting.
+- Stale paused planning file-scope claims are cleared without resetting task history.
+- Concurrent mission feature claims and duplicate cleanup no longer exhaust the PostgreSQL connection pool.
+- Completed Mission features are validated against landed revisions and forge evidence.
+- Invalid Markdown step dependency references are rejected before execution. Older plans with trailing step dependencies still resume.
+- Incompatible inferred dependency bootstraps are stopped before they retry repeatedly.
+- Workflow gate results and merge closeout decisions stay consistent after retries, and merge approval results are stable again.
+- Stale worktree cleanup is preserved before a task is retried.
+- Standard and custom secret files stay safe during orphan cleanup.
+- Bundled Linux ICU compatibility links are restored before local PostgreSQL starts.
+- Stale review receipts are preserved when projects are promoted to their own data partition.
+- Selecting a project in the dashboard no longer creates repeated audit history.
+- Reviewed fixes are restored for auto-merge preference updates and token-volume pricing.
+- The Meta Muse icon now appears, with accessible labels, in authentication and model choices.
+- Skills catalog cards show formatted installation totals.
+
+### Internal
+
+- Full Suite coverage is restored for merge recovery and workflow worktrees.
+- PostgreSQL test setup is safer, and macOS status diagnostics are available.
+- Pipeline smoke reports keep actionable diagnostics when coverage is incomplete.
+- Planning Mode browser checks are more reliable during responsive plan review.
+
 ## 0.78.0-beta.7
 
 ### Highlights

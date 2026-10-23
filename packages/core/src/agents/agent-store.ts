@@ -128,6 +128,35 @@ import {
 
 const agentStoreLog = createLogger("agent-store");
 
+/**
+ * Raised when a normalized durable-agent display name identifies more than one record.
+ * Exact agent IDs never use this conflict path.
+ *
+ * FNXC:AgentIdentityResolution 2026-10-04-10:41:
+ * Durable display names are operator-editable and legacy data may contain duplicates. Name-capable
+ * surfaces must expose every matching ID in stable order rather than selecting a database-order
+ * winner or making unrelated exact-ID reads depend on a full roster scan.
+ */
+export class AmbiguousAgentNameError extends Error {
+  readonly code = "AMBIGUOUS_AGENT_NAME";
+
+  constructor(
+    readonly query: string,
+    readonly normalizedName: string,
+    readonly candidateAgentIds: string[],
+  ) {
+    super(`Agent name "${query}" is ambiguous; matching agent IDs: ${candidateAgentIds.join(", ")}`);
+    this.name = "AmbiguousAgentNameError";
+  }
+}
+
+function normalizeAgentLookupName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 /*
 FNXC:WorkflowAgentIdentities 2026-08-08-06:11:
 Only a unique subset of the two managed mirror names is an incomplete default bundle eligible for
@@ -190,6 +219,12 @@ export interface AgentStoreEvents {
   /** Emitted when a log entry is appended to a run's JSONL log. */
   "run:log": (agentId: string, runId: string, entry: AgentLogEntry) => void;
 }
+
+/** Ownership metadata that must be persisted with the initial active heartbeat-run row. */
+export type HeartbeatRunInitialMetadata = Pick<
+  AgentHeartbeatRun,
+  "invocationSource" | "triggerDetail" | "contextSnapshot" | "processPid"
+>;
 
 /** Options for AgentStore constructor */
 export interface AgentStoreOptions {
@@ -2654,9 +2689,19 @@ export class AgentStore extends EventEmitter {
    * Start a new heartbeat run for an agent.
    * Persists the run to structured storage as the source of truth.
    * @param agentId - The agent ID
+   * @param initialMetadata - Ownership metadata known before the run becomes observable.
    * @returns The created run
+   *
+   * FNXC:HeartbeatRunPersistence 2026-10-23-05:49:
+   * Monitor-owned active rows must contain their process ownership in the first
+   * durable write. Self-healing correctly terminates legacy rows with no owner,
+   * so a follow-up enrichment write creates a race that can terminate a live
+   * on-demand run before it begins execution.
    */
-  async startHeartbeatRun(agentId: string): Promise<AgentHeartbeatRun> {
+  async startHeartbeatRun(
+    agentId: string,
+    initialMetadata: HeartbeatRunInitialMetadata = {},
+  ): Promise<AgentHeartbeatRun> {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     const run: AgentHeartbeatRun = {
@@ -2665,6 +2710,7 @@ export class AgentStore extends EventEmitter {
       startedAt: now,
       endedAt: null,
       status: "active",
+      ...initialMetadata,
     };
 
     // Persist to structured storage as source of truth
@@ -2897,31 +2943,37 @@ export class AgentStore extends EventEmitter {
   }
 
   /**
-   * Resolve an agent by exact ID or normalized shortname derived from display name.
+   * Resolve an agent by authoritative exact ID or normalized durable display name.
    * @param shortname - Agent ID or normalized agent name
-   * @returns Matching agent when unambiguous; otherwise null
+   * @returns Matching agent, or null when no durable identity matches
+   * @throws {AmbiguousAgentNameError} when a normalized name matches multiple durable agents
    */
   async resolveAgent(shortname: string): Promise<Agent | null> {
-    const normalize = (value: string): string =>
-      value
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-
-    const all = await this.listAgents();
-
-    const exact = all.find((agent) => agent.id === shortname);
+    /*
+    FNXC:AgentIdentityResolution 2026-10-04-10:41:
+    Project-scoped IDs are authoritative and must remain readable even when legacy durable rows
+    share a display name. Only an ID miss may enumerate durable agents for normalized-name lookup.
+    */
+    const exact = await this.getAgent(shortname);
     if (exact) {
       return exact;
     }
 
-    const normalizedTarget = normalize(shortname);
+    const normalizedTarget = normalizeAgentLookupName(shortname);
     if (!normalizedTarget) {
       return null;
     }
 
-    const matches = all.filter((agent) => normalize(agent.name) === normalizedTarget);
-    return matches.length === 1 ? matches[0] : null;
+    const matches = (await this.listAgents())
+      .filter((agent) => normalizeAgentLookupName(agent.name) === normalizedTarget);
+    if (matches.length > 1) {
+      throw new AmbiguousAgentNameError(
+        shortname,
+        normalizedTarget,
+        matches.map((agent) => agent.id).sort((a, b) => a.localeCompare(b)),
+      );
+    }
+    return matches[0] ?? null;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -1582,24 +1582,20 @@ export class HeartbeatMonitor {
       heartbeatLog.warn(`Failed to check for existing active run for ${agentId}: ${msg} — continuing with new run`);
     }
 
-    const run = await this.store.startHeartbeatRun(agentId);
-    // Install the fence before the next await: AgentStore update events may
-    // request a stop while startRun is still enriching the durable row.
-    this.pendingHeartbeatRuns.set(agentId, { runId: run.id, cancellationRequested: false });
-
-    // Enrich with execution context
-    const enrichedRun: AgentHeartbeatRun = {
-      ...run,
+    // Ownership must be part of the initial active-row write. A later
+    // saveRun would leave a brief observable no-PID row that stale recovery
+    // correctly classifies as a legacy orphan.
+    const run = await this.store.startHeartbeatRun(agentId, {
       invocationSource: options?.source ?? "on_demand",
       triggerDetail: options?.triggerDetail ?? "manual",
       contextSnapshot: options?.contextSnapshot,
       processPid: process.pid,
-    };
+    });
+    // Install the fence before the next await: AgentStore update events may
+    // request a stop while startRun is checking the durable row.
+    this.pendingHeartbeatRuns.set(agentId, { runId: run.id, cancellationRequested: false });
 
-    // Save rich run data
-    await this.store.saveRun(enrichedRun);
-
-    // A cross-process pause can terminate this record while the enrichment
+    // A cross-process pause can terminate this record while the creation
     // write above is in flight. Do not revive that explicit operator intent.
     const pendingRun = this.pendingHeartbeatRuns.get(agentId);
     const persistedRun = await this.store.getRunDetail(agentId, run.id);
@@ -1610,7 +1606,7 @@ export class HeartbeatMonitor {
       || persistedRun?.status === "terminated"
     )) {
       pendingRun.cancellationRequested = true;
-      return enrichedRun;
+      return run;
     }
 
     // Transition agent to running state
@@ -1620,8 +1616,8 @@ export class HeartbeatMonitor {
       heartbeatLog.warn(`updateAgentState(running) failed for ${agentId}: ${startRunErr instanceof Error ? startRunErr.message : String(startRunErr)} — continuing`);
     }
 
-    this.onRunStarted?.(agentId, enrichedRun);
-    return enrichedRun;
+    this.onRunStarted?.(agentId, run);
+    return run;
   }
 
   /**

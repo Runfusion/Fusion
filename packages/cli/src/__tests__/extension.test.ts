@@ -161,6 +161,15 @@ async function seedAgent(
   return agent.id;
 }
 
+async function seedDuplicateDurableAgentNames(cwd: string, name: string): Promise<string[]> {
+  const agentStore = new AgentStore({ rootDir: join(cwd, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
+  await agentStore.init();
+  const first = await agentStore.createAgent({ name: `${name} first`, role: "merger", instructionsText: "first config" });
+  const second = await agentStore.createAgent({ name: `${name} second`, role: "merger", instructionsText: "second config" });
+  await h.store().getAsyncLayer()!.db.execute(drizzleSql`UPDATE project.agents SET name = ${name} WHERE id IN (${first.id}, ${second.id})`);
+  return [first.id, second.id].sort();
+}
+
 function linearWorkflowIr(name: string): WorkflowIr {
   return {
     version: "v2",
@@ -5257,6 +5266,41 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.details.agent.name).toBe("resolve-by-name");
     });
 
+    it("lists duplicate durable names, preserves exact-ID show, and reports stable ambiguity", async () => {
+      const candidateAgentIds = await seedDuplicateDurableAgentNames(tmpDir, "Duplicate Tool Agent");
+      const listTool = api.tools.get("fn_list_agents")!;
+      const showTool = api.tools.get("fn_agent_show")!;
+      const orgChartTool = api.tools.get("fn_agent_org_chart")!;
+
+      const listed = await listTool.execute("duplicate-list", {}, undefined, undefined, makeCtx(tmpDir));
+      expect(listed.details.agents.filter((agent: { name: string }) => agent.name === "Duplicate Tool Agent")
+        .map((agent: { id: string }) => agent.id).sort()).toEqual(candidateAgentIds);
+
+      for (const id of candidateAgentIds) {
+        const shown = await showTool.execute(`duplicate-show-${id}`, { id }, undefined, undefined, makeCtx(tmpDir));
+        expect(shown.isError).not.toBe(true);
+        expect(shown.details.agent.id).toBe(id);
+      }
+
+      const ambiguous = await showTool.execute("duplicate-show-name", { id: "duplicate_tool_agent" }, undefined, undefined, makeCtx(tmpDir));
+      expect(ambiguous.isError).toBe(true);
+      expect(ambiguous.details).toEqual({
+        outcome: "ambiguous",
+        error: "Ambiguous agent name",
+        query: "duplicate_tool_agent",
+        normalizedName: "duplicate-tool-agent",
+        candidateAgentIds,
+      });
+      const ambiguousRoot = await orgChartTool.execute(
+        "duplicate-root-name",
+        { root_agent_id: "Duplicate Tool Agent" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      expect(ambiguousRoot.details).toMatchObject({ outcome: "ambiguous", candidateAgentIds });
+    });
+
     it("surfaces lastError, pauseReason, and recovery counters", async () => {
       const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion"), asyncLayer: h.store().getAsyncLayer() });
       await agentStore.init();
@@ -5380,6 +5424,25 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.content[0].text).toContain("Workflow Merger");
       expect(result.content[0].text).toContain("Memory Keeper");
       expect(result.details.count).toBe(5);
+    });
+
+    it("keeps an ephemeral exact-ID root out of the chart unless ephemeral agents are included", async () => {
+      const ephemeralId = await seedAgent(tmpDir, { ephemeral: true, name: "ephemeral-root" });
+      const tool = api.tools.get("fn_agent_org_chart")!;
+
+      const hidden = await tool.execute("oc-eph-1", { root_agent_id: ephemeralId }, undefined, undefined, makeCtx(tmpDir));
+      expect(hidden.isError).toBe(true);
+      expect(hidden.details).toEqual({ error: "Root agent not found" });
+
+      const shown = await tool.execute(
+        "oc-eph-2",
+        { root_agent_id: ephemeralId, include_ephemeral: true },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+      expect(shown.isError).not.toBe(true);
+      expect(shown.content[0].text).toContain("ephemeral-root");
     });
 
     it("returns single agent for lone agent", async () => {

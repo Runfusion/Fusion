@@ -79,6 +79,30 @@ export function validateWorkspaceOverrides(overrides = {}) {
   return violations;
 }
 
+/*
+FNXC:DependencyPinning 2026-10-23-05:33:
+The release smoke's clean npm install of @runfusion/fusion crashed at startup because pi-coding-agent@1.1.0 declares `@earendil-works/pi-codemode: ^1.1.0`, npm resolved pi-codemode@1.4.0, and 1.4.0 removed the `MCP_TYPESCRIPT_PREAMBLE` export that coding-agent imports.
+pnpm workspace overrides never reach npm consumers of the published tarball, so the published manifest itself must declare every Pi runtime closure member at the exact override version; npm then hoists those pins and they satisfy every in-closure caret range.
+*/
+export const PUBLISHED_MANIFEST = "packages/cli/package.json";
+
+export function validatePublishedClosure(manifest, overrides = {}) {
+  const violations = [];
+  const dependencies = manifest?.dependencies ?? {};
+  for (const packageName of PI_RUNTIME_PACKAGES) {
+    const expected = overrides?.[packageName];
+    const declared = dependencies[packageName];
+    if (declared === undefined) {
+      violations.push(`${PUBLISHED_MANIFEST}: dependencies.${packageName} must be declared so npm installs cannot resolve a split Pi closure`);
+    } else if (!isExactSemver(declared)) {
+      violations.push(`${PUBLISHED_MANIFEST}: dependencies.${packageName} must be an exact semver, found ${JSON.stringify(declared)}`);
+    } else if (isExactSemver(expected) && declared !== expected) {
+      violations.push(`${PUBLISHED_MANIFEST}: dependencies.${packageName}=${declared} must match the workspace override ${expected}`);
+    }
+  }
+  return violations;
+}
+
 function listTrackedManifests() {
   const result = spawnSync("git", ["ls-files", "--", ...GUARDED_MANIFESTS], {
     encoding: "utf8",
@@ -158,6 +182,8 @@ export function scanTrackedManifests(files = listTrackedManifests(), options = {
 
   const workspaceOverrides = workspaceConfig?.overrides ?? {};
   violations.push(...validateWorkspaceOverrides(workspaceOverrides));
+  const published = manifests.find(({ filePath }) => filePath === PUBLISHED_MANIFEST);
+  if (published) violations.push(...validatePublishedClosure(published.manifest, workspaceOverrides));
 
   const manifestVersions = new Set(
     manifests.flatMap(({ manifest }) =>

@@ -23,7 +23,7 @@ Coverage (FN-5893 surfaces):
 The single-repo runAiMerge regression lives in the existing merger-ai*.test.ts (the
 extraction is byte-for-byte; runAiMerge is landOneRepo's single-repo caller).
 */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -40,10 +40,20 @@ const describeIfGit = hasGit ? describe : describe.skip;
 const TASK_ID = "FN-2001";
 const BRANCH = "fusion/fn-2001";
 
-function configureIdentity(dir: string): void {
-  execSync('git config user.email "test@example.com"', { cwd: dir, stdio: "pipe" });
-  execSync('git config user.name "Test"', { cwd: dir, stdio: "pipe" });
-}
+/*
+FNXC:TestPerf 2026-10-19-00:09:
+Real-git merge coverage must not pay two identity-configuration subprocesses for every
+linked worktree and clean room. Git inherits these scoped identity variables in every
+child process; restore the caller's environment after each test rather than leaking it
+into another suite. Repository setup and all real merge assertions stay unchanged.
+*/
+beforeEach(() => {
+  vi.stubEnv("GIT_AUTHOR_NAME", "Test");
+  vi.stubEnv("GIT_AUTHOR_EMAIL", "test@example.com");
+  vi.stubEnv("GIT_COMMITTER_NAME", "Test");
+  vi.stubEnv("GIT_COMMITTER_EMAIL", "test@example.com");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 interface RecordingStore extends EventEmitter {
   moveTaskCalls: Array<{ id: string; column: string }>;
@@ -125,7 +135,6 @@ function addRepoBranchWithEdit(fx: WorkspaceFixture, repoRel: string, content: s
   const repoDir = fx.repoPath(repoRel);
   const worktreePath = path.join(repoDir, ".wt-branch");
   fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
-  configureIdentity(worktreePath);
   writeFileSync(path.join(worktreePath, "feature.txt"), content, "utf-8");
   execSync("git add feature.txt", { cwd: worktreePath, stdio: "pipe" });
   execSync(`git commit -m "feat(${TASK_ID}): add feature in ${repoRel}"`, { cwd: worktreePath, stdio: "pipe" });
@@ -144,7 +153,6 @@ function addRegisteredTaskWorktreeWithEdit(
   const worktreePath = path.join(fx.rootDir, `.task-worktree-${repoRel}`);
   const baseCommitSha = fx.git(repoRel, "git rev-parse HEAD");
   fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
-  configureIdentity(worktreePath);
   writeFileSync(path.join(worktreePath, file), content, "utf-8");
   execSync(`git add ${file}`, { cwd: worktreePath, stdio: "pipe" });
   execSync(`git commit -m "feat(${TASK_ID}): linked task worktree feature"`, { cwd: worktreePath, stdio: "pipe" });
@@ -160,7 +168,6 @@ function addRepoRevertedBranch(fx: WorkspaceFixture, repoRel: string): void {
   const repoDir = fx.repoPath(repoRel);
   const worktreePath = path.join(repoDir, ".wt-revert");
   fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
-  configureIdentity(worktreePath);
   writeFileSync(path.join(worktreePath, "feature.txt"), "work\n", "utf-8");
   execSync("git add feature.txt", { cwd: worktreePath, stdio: "pipe" });
   execSync(`git commit -m "feat(${TASK_ID}): add feature in ${repoRel}"`, { cwd: worktreePath, stdio: "pipe" });
@@ -186,7 +193,6 @@ function makeConflictingRepoWithRegisteredWorktree(
   const worktreePath = path.join(fx.rootDir, `.task-worktree-${repoRel}`);
   const baseCommitSha = fx.git(repoRel, "git rev-parse HEAD");
   fx.git(repoRel, `git worktree add -b ${BRANCH} ${worktreePath} HEAD`);
-  configureIdentity(worktreePath);
   writeFileSync(path.join(worktreePath, "README.md"), "# branch-side change\n", "utf-8");
   execSync("git add README.md", { cwd: worktreePath, stdio: "pipe" });
   execSync(`git commit -m "feat(${TASK_ID}): branch README"`, { cwd: worktreePath, stdio: "pipe" });
@@ -200,7 +206,6 @@ function makeConflictingRepoWithRegisteredWorktree(
 /** A merge agent that performs the real squash in the clean room (no AI). */
 function squashMergeAgent(branch: string) {
   return async (cwd: string): Promise<void> => {
-    configureIdentity(cwd);
     try {
       execSync(`git merge --squash ${branch}`, { cwd, stdio: "pipe" });
     } catch {
@@ -588,7 +593,6 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
       // task branch off the integration branch with an edit
       const wt = path.join(repoDir, ".wt");
       fx.git(repo, `git worktree add -b ${BRANCH} ${wt} ${intBranch}`);
-      configureIdentity(wt);
       writeFileSync(path.join(wt, "feature.txt"), `${repo} feature\n`, "utf-8");
       execSync("git add feature.txt", { cwd: wt, stdio: "pipe" });
       execSync(`git commit -m "feat(${TASK_ID}): add"`, { cwd: wt, stdio: "pipe" });
