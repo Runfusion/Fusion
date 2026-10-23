@@ -4,6 +4,8 @@ import {
   isBuiltinWorkflowId,
   isFastExecutionMode,
   parseWorkflowIr,
+  resolveWorkflowIrById,
+  type WorkflowIrResolverStore,
 } from "@fusion/core";
 
 import {
@@ -69,7 +71,7 @@ export interface WorkflowGraphTaskRunResult {
 }
 
 /** The minimal store surface the runner needs — keeps tests fake-friendly. */
-export interface WorkflowGraphRunnerStore {
+export interface WorkflowGraphRunnerStore extends Partial<Pick<WorkflowIrResolverStore, "getWorkflowSettingsProjectId" | "getWorkflowPromptOverrides" | "getWorkflowPromptOverridesAsync">> {
   getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
   getTaskWorkflowSelectionAsync?(taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined>;
   getWorkflowDefinition(id: string): Promise<WorkflowDefinition | undefined>;
@@ -270,7 +272,10 @@ export class WorkflowGraphTaskRunner {
       FNXC:WorkflowExecution 2026-07-01-00:00:
       The linear WorkflowStep compiler was removed; the graph interpreter is the sole executor. `parseWorkflowIr` (which validates branching graphs via validateV2) is now the only IR validity gate here — there is no separate linear-compile pre-check to satisfy.
       */
-      validatedIr = parseWorkflowIr(definition.ir);
+      /* FNXC:CurrentPlanReviewIdentity 2026-10-19-10:20: Capture the same effective built-in IR (including saved prompt overrides) that the approval/currentness resolver checks. Keep custom definition errors fail-closed. */
+      validatedIr = parseWorkflowIr(isBuiltinWorkflowId(selection.workflowId)
+        ? await resolveWorkflowIrById(this.deps.store, selection.workflowId)
+        : definition.ir);
     } catch (err) {
       return this.failBeforeSideEffects(task.id, `invalid-ir: ${err instanceof Error ? err.message : String(err)}`);
     }

@@ -2938,7 +2938,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   ): Promise<{ seeded: boolean; reason?: "active-continuation" | "workflow-selection-changed" | "task-state-changed"; workItemId?: string }> {
     return seedWorkspaceCodeReviewContinuationIfIdleImpl(this, input);
   }
-  async seedStrandedPlanReviewContinuation(input: WorkflowWorkItemUpsertInput & { kind: "task" }, options: { retirePredecessorId?: string } = {}): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
+  async seedStrandedPlanReviewContinuation(input: WorkflowWorkItemUpsertInput & { kind: "task" }, options: Parameters<typeof seedStrandedPlanReviewContinuationImpl>[2] = {}): ReturnType<typeof seedStrandedPlanReviewContinuationImpl> {
     return seedStrandedPlanReviewContinuationImpl(this, input, options);
   }
   async transitionWorkflowWorkItem( id: string, state: WorkflowWorkItemState, patch: WorkflowWorkItemTransitionPatch = {}, tx?: import("./postgres/data-layer.js").DbTransaction, ): Promise<WorkflowWorkItem> {
