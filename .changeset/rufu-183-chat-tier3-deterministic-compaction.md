@@ -1,0 +1,7 @@
+---
+"@runfusion/fusion": minor
+---
+
+summary: Engine self-recovers chats stuck on pi's 'Already compacted' deadlock via deterministic history truncation.
+category: feature
+dev: RUFU-183 adds escalation tier 3 (`fallback`) to the chat-lane pre-overflow compaction gate — a zero-model-call deterministic truncation that runs at most once per send when the LLM tiers yield nothing. It plans so `digestTokens + keptTokens < compactionTarget - staticFloor` holds by construction, applies via Route A (public `appendCompaction(fromHook: true)` + `buildSessionContext()` + the sanctioned `session.state.messages` live-view install — never private `_appendEntry`, never `session.compact()`, never `newSession`), and sends only after `freshLoadedContextEstimate` proves the rebuild is under target; non-converging attempts keep the RUFU-182 honest refusal (floor-dominated re-attributes to `static-floor`, truncated-unproven carries the evidence). The `chat:pre-overflow-compaction` audit row keeps its four-valued `outcome` and gains count-only `droppedMessageCount`/`droppedTokens`/`floorTokens` keys on `tier=fallback` rows; tier 3 is never a ninth refusal reason. Tier 3 also honours the `chatPreOverflowCompactionEnabled` opt-out with the same parity as tiers 1-2 (disabled: zero session writes, zero audit rows). `project.chat_messages` write shape is unchanged. Operator surfaces (`metadata.contextTruncation` persistence, per-surface inline notices), the settings keys, and the dashboard gate ship in the dependent follow-up PR.
