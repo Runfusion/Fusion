@@ -203,13 +203,18 @@ describe("executeHeartbeat", () => {
         reason: "task_not_found",
       })),
       handoffTaskToWorkflowExecutor: vi.fn().mockResolvedValue({ ok: true, task: { id: "FN-001" } }),
-      startHeartbeatRun: vi.fn().mockResolvedValue({
-        id: "run-001",
-        agentId: "agent-001",
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        status: "active",
-      } as AgentHeartbeatRun),
+      startHeartbeatRun: vi.fn().mockImplementation(async (_agentId: string, initialMetadata = {}) => {
+        const run = {
+          id: "run-001",
+          agentId: "agent-001",
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          status: "active" as const,
+          ...initialMetadata,
+        } as AgentHeartbeatRun;
+        savedRuns.set(run.id, run);
+        return run;
+      }),
       saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => {
         savedRuns.set(run.id, run);
       }),
@@ -251,6 +256,34 @@ describe("executeHeartbeat", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+  describe("startRun persistence", () => {
+    it("creates an on-demand run with ownership metadata in its first write", async () => {
+      const store = createStoreWithAgentForExec();
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const contextSnapshot = { taskId: "FN-001", projectId: "project-test" };
+
+      const run = await monitor.startRun("agent-001", {
+        source: "on_demand",
+        triggerDetail: "dashboard",
+        contextSnapshot,
+      });
+
+      expect(store.startHeartbeatRun).toHaveBeenCalledWith("agent-001", {
+        processPid: process.pid,
+        invocationSource: "on_demand",
+        triggerDetail: "dashboard",
+        contextSnapshot,
+      });
+      expect(run).toMatchObject({
+        processPid: process.pid,
+        invocationSource: "on_demand",
+        triggerDetail: "dashboard",
+        contextSnapshot,
+      });
+      expect(store.saveRun).not.toHaveBeenCalled();
+    });
   });
 
   describe("reports health check", () => {
@@ -3960,8 +3993,12 @@ describe("executeHeartbeat", () => {
         endedAt: null,
         status: "active" as const,
       };
-      let persistedRun: AgentHeartbeatRun | undefined;
+      let persistedRun: AgentHeartbeatRun | undefined = activeRun;
       (store.getActiveHeartbeatRun as ReturnType<typeof vi.fn>).mockResolvedValue(activeRun);
+      (store.startHeartbeatRun as ReturnType<typeof vi.fn>).mockImplementation(async (_agentId: string, initialMetadata = {}) => {
+        persistedRun = { ...activeRun, ...initialMetadata } as AgentHeartbeatRun;
+        return persistedRun;
+      });
       (store.saveRun as ReturnType<typeof vi.fn>).mockImplementation(async (run: AgentHeartbeatRun) => {
         persistedRun = run;
       });
@@ -4436,15 +4473,18 @@ describe("executeHeartbeat", () => {
       // We need getRunDetail to return different runs for each call
       let runCount = 0;
       const concurrentSavedRuns: Map<string, AgentHeartbeatRun> = new Map();
-      (store.startHeartbeatRun as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      (store.startHeartbeatRun as ReturnType<typeof vi.fn>).mockImplementation(async (_agentId: string, initialMetadata = {}) => {
         runCount++;
-        return {
+        const run = {
           id: `run-${runCount}`,
           agentId: "agent-001",
           startedAt: new Date().toISOString(),
           endedAt: null,
-          status: "active",
+          status: "active" as const,
+          ...initialMetadata,
         } as AgentHeartbeatRun;
+        concurrentSavedRuns.set(run.id, run);
+        return run;
       });
       (store.saveRun as ReturnType<typeof vi.fn>).mockImplementation(async (run: AgentHeartbeatRun) => {
         concurrentSavedRuns.set(run.id, run);

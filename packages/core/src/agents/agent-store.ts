@@ -220,6 +220,12 @@ export interface AgentStoreEvents {
   "run:log": (agentId: string, runId: string, entry: AgentLogEntry) => void;
 }
 
+/** Ownership metadata that must be persisted with the initial active heartbeat-run row. */
+export type HeartbeatRunInitialMetadata = Pick<
+  AgentHeartbeatRun,
+  "invocationSource" | "triggerDetail" | "contextSnapshot" | "processPid"
+>;
+
 /** Options for AgentStore constructor */
 export interface AgentStoreOptions {
   /** Root directory for kb data (default: .fusion) */
@@ -2683,9 +2689,19 @@ export class AgentStore extends EventEmitter {
    * Start a new heartbeat run for an agent.
    * Persists the run to structured storage as the source of truth.
    * @param agentId - The agent ID
+   * @param initialMetadata - Ownership metadata known before the run becomes observable.
    * @returns The created run
+   *
+   * FNXC:HeartbeatRunPersistence 2026-10-23-05:49:
+   * Monitor-owned active rows must contain their process ownership in the first
+   * durable write. Self-healing correctly terminates legacy rows with no owner,
+   * so a follow-up enrichment write creates a race that can terminate a live
+   * on-demand run before it begins execution.
    */
-  async startHeartbeatRun(agentId: string): Promise<AgentHeartbeatRun> {
+  async startHeartbeatRun(
+    agentId: string,
+    initialMetadata: HeartbeatRunInitialMetadata = {},
+  ): Promise<AgentHeartbeatRun> {
     const runId = `run-${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     const run: AgentHeartbeatRun = {
@@ -2694,6 +2710,7 @@ export class AgentStore extends EventEmitter {
       startedAt: now,
       endedAt: null,
       status: "active",
+      ...initialMetadata,
     };
 
     // Persist to structured storage as source of truth
