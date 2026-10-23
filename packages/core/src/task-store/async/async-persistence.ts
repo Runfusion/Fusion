@@ -396,10 +396,11 @@ export async function readTaskRowsBySourceLineage(
   }).from(schema.project.tasks).where(and(scope, sql`(${predicates.reduce((left, right) => sql`${left} OR ${right}`)})`));
 }
 
+/** FNXC:TaskStoreMove 2026-10-19-11:20: Read a project-scoped task inside its transaction, optionally locking it through validation and commit. */
 export async function readTaskRowInTransaction(
   tx: DbTransaction,
   id: string,
-  options?: { includeDeleted?: boolean },
+  options?: { includeDeleted?: boolean; forUpdate?: boolean },
   projectId?: string,
 ): Promise<Record<string, unknown> | undefined> {
   const conditions = [
@@ -409,10 +410,11 @@ export async function readTaskRowInTransaction(
   if (!options?.includeDeleted) {
     conditions.push(ACTIVE_TASK_FILTER);
   }
-  const rows = await tx
+  const query = tx
     .select()
     .from(schema.project.tasks)
     .where(and(...conditions));
+  const rows = await (options?.forUpdate ? query.for("update") : query);
   return rows[0];
 }
 
