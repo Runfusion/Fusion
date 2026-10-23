@@ -118,6 +118,12 @@ pnpm build             # build workspace packages (excludes desktop/mobile; skip
 pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build (NOT the merge gate)
 ```
 
+### Normal-test pre-gate diagnostics
+
+`pnpm test` retains its normal merge-gate behavior when no changes are detected; `pnpm test:full` remains the only explicit full-suite request. Before it starts a gate or affected-package child, the runner prints structured `[test-changed] stage=<name> status=start|finish|failure elapsedMs=<n>` diagnostics for skill validation, test-artifact preparation, isolated-HOME creation, the isolation before-check, child watchdog launch, cleanup, pruning, and the isolation after-check.
+
+The isolation checker is run as a watched child for its before and after passes. Each pass has a 30-second fail-closed pre-gate budget: a stalled snapshot exits nonzero with its named stage rather than leaving the command silent, and it never bypasses the baseline, leak check, protected repository/HOME `.fusion` mutation check, or after-check recovery sequence. The direct `pnpm test:check-isolation` and explicit `pnpm test:isolated` wrappers retain their existing contracts.
+
 <!-- FNXC:TestInfrastructure 2026-06-25-00:00: verify:fast is the opt-in test-free verification path. docs/testing.md observes the broad test gate caught no recalled real bugs while consuming ~70% of shipping time in flake triage; typecheck+build+boot-smoke gives deterministic, flake-free signal without running tests. It changes no default — pnpm test, the merge gate, and CI are untouched; the full suite stays available and runs non-blocking. -->
 <!-- FNXC:TestInfrastructure 2026-06-26-00:49: verify:fast must bootstrap missing workspace dist artifacts and build @runfusion/fusion even when the CLI package is not in the changed-package set because package builds and the boot smoke invoke source-checkout wrappers that require dist outputs in fresh worktrees. -->
 <!-- FNXC:TestInfrastructure 2026-07-22-12:00: Cheap deterministic policy gates must fail before verify:fast's expensive work. Read canonical package.json pretest commands and invoke their validator entry points directly so test-free verification and the merge gate cannot drift. -->

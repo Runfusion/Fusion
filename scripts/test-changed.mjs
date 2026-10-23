@@ -7,13 +7,21 @@ import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { cpus, tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { ensureTestArtifacts } from "./ensure-test-artifacts.mjs";
 import { isSkillSyncCheckCached } from "./sync-fusion-skill-tools.mjs";
 import { computeContentHash, createRepoContentSnapshot } from "./lib/content-hash.mjs";
 import { deriveBudgetMs, runWithWatchdog } from "./lib/run-vitest-watchdog.mjs";
 
 /** Generous local full-suite budget (60min): far above a real full run, far below an infinite hang. */
 const FULL_SUITE_BUDGET_MS = 60 * 60 * 1000;
+
+/*
+FNXC:TestInfrastructure 2026-10-23-06:01:
+Normal `pnpm test` previously printed its gate decision and could then wait silently
+in pre-gate setup. Each externally spawned setup boundary now has a short,
+fail-closed budget and emits its name before work begins, so a stalled isolation
+snapshot cannot masquerade as a merge-gate stall or weaken the live-data guard.
+*/
+export const PRE_GATE_STAGE_BUDGET_MS = 30_000;
 
 /*
 FNXC:TestInfrastructure 2026-06-25-18:58:
@@ -28,6 +36,7 @@ export function deriveScopedAffectedBudgetMs(options = {}) {
 const currentFilePath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFilePath);
 const checkIsolationScript = path.join(scriptDir, "check-test-isolation.mjs");
+const ensureTestArtifactsScript = path.join(scriptDir, "ensure-test-artifacts.mjs");
 const require = createRequire(import.meta.url);
 
 function fastGlobSync(patterns, options) {
@@ -162,21 +171,15 @@ const SHARED_HASH_INPUT_PATHS = [
 /** @type {number} Max age (ms) for a cache entry to count as a pass. */
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-function run(command, commandArgs, options = {}) {
-  const result = spawnSync(command, commandArgs, {
-    cwd: rootDir,
-    stdio: "inherit",
-    ...options,
+async function run(command, commandArgs, options = {}) {
+  await runWatchedTest(command, commandArgs, {
+    env: options.env ?? process.env,
+    budgetMs: options.budgetMs ?? PRE_GATE_STAGE_BUDGET_MS,
+    label: options.label ?? `${command} ${commandArgs.join(" ")}`,
   });
-
-  if (result.status !== 0) {
-    const error = new Error(`${command} ${commandArgs.join(" ")} failed with exit code ${result.status ?? 1}`);
-    error.exitCode = result.status ?? 1;
-    throw error;
-  }
 }
 
-function runIsolationCheck(before = false, env = process.env, fastBefore = false) {
+async function runIsolationCheck(before = false, env = process.env, fastBefore = false, options = {}) {
   const args = [checkIsolationScript];
   // U3: the before-pass is the costly one (2s mutability probe). Use the cheap
   // `--before-fast` variant, which reuses the prior run's externally-active
@@ -192,7 +195,11 @@ function runIsolationCheck(before = false, env = process.env, fastBefore = false
   const checkEnv = ignoreNames
     ? { ...env, FUSION_TEST_ISOLATION_IGNORE_NAMES: ignoreNames }
     : env;
-  run(process.execPath, args, { env: checkEnv });
+  await runWatchedTest(process.execPath, args, {
+    env: checkEnv,
+    budgetMs: options.budgetMs ?? PRE_GATE_STAGE_BUDGET_MS,
+    label: before ? "test isolation before-check" : "test isolation after-check",
+  });
 }
 
 export function shouldRunIsolationGuard(env = process.env) {
@@ -403,25 +410,85 @@ async function runWatchedTest(command, commandArgs, { env, budgetMs, label } = {
   }
 }
 
-async function runMaybeIsolated(command, commandArgs, options = {}) {
-  const enabled = shouldRunIsolationGuard();
+function stageTimeoutError(stage, budgetMs) {
+  const error = new Error(`[test-changed] stage=${stage} exceeded budget ${budgetMs}ms`);
+  error.exitCode = 124;
+  return error;
+}
+
+export async function runObservedStage(stage, action, {
+  budgetMs = null,
+  log = console.log,
+  now = () => Date.now(),
+} = {}) {
+  const startedAt = now();
+  log(`[test-changed] stage=${stage} status=start`);
+  let timeout = null;
+  try {
+    const work = Promise.resolve().then(action);
+    const result = budgetMs === null
+      ? await work
+      : await Promise.race([
+        work,
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(stageTimeoutError(stage, budgetMs)), budgetMs);
+          timeout.unref?.();
+        }),
+      ]);
+    log(`[test-changed] stage=${stage} status=finish elapsedMs=${now() - startedAt}`);
+    return result;
+  } catch (error) {
+    log(`[test-changed] stage=${stage} status=failure elapsedMs=${now() - startedAt}`);
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export async function runMaybeIsolated(command, commandArgs, options = {}) {
+  const enabled = shouldRunIsolationGuard(options.env ?? process.env);
   /*
    * FNXC:TestInfrastructure 2026-06-15-12:12:
    * Conflict resolution for PR #1669 must keep main's per-run temp-root token so cleanup can distinguish live roots while still passing watchdog budgets and labels into async test invocations.
    */
   const env = { ...(options.env ?? process.env), [FUSION_TEST_RUN_TOKEN_ENV]: ensureFusionTestRunToken(options.env ?? process.env) };
-  const { onBeforeAfterCheck, budgetMs, label, ...spawnOptions } = options;
+  const {
+    onBeforeAfterCheck,
+    budgetMs,
+    label,
+    stageBudgetMs = PRE_GATE_STAGE_BUDGET_MS,
+    stageLog = console.log,
+    runIsolationCheckFn = runIsolationCheck,
+    runWatchedTestFn = runWatchedTest,
+    pruneHomesFn = pruneFusionTestHomes,
+    pruneWorkersFn = pruneFusionTestWorkers,
+    ...spawnOptions
+  } = options;
   void spawnOptions; // cwd/stdio defaults live in the watchdog/spawn path now
-  if (enabled) runIsolationCheck(true, env, /* fastBefore */ true);
+  if (enabled) {
+    await runObservedStage("isolation-before", () => runIsolationCheckFn(true, env, true, { budgetMs: stageBudgetMs }), {
+      budgetMs: stageBudgetMs,
+      log: stageLog,
+    });
+  }
   try {
-    await runWatchedTest(command, commandArgs, { env, budgetMs, label });
+    await runObservedStage("watchdog-spawn", () => runWatchedTestFn(command, commandArgs, { env, budgetMs, label }), {
+      log: stageLog,
+    });
   } finally {
     if (typeof onBeforeAfterCheck === "function") {
-      onBeforeAfterCheck();
+      await runObservedStage("isolated-home-cleanup", onBeforeAfterCheck, { log: stageLog });
     }
-    pruneFusionTestHomes();
-    pruneFusionTestWorkers();
-    if (enabled) runIsolationCheck(false, env);
+    await runObservedStage("isolated-home-prune", () => {
+      pruneHomesFn();
+      pruneWorkersFn();
+    }, { log: stageLog });
+    if (enabled) {
+      await runObservedStage("isolation-after", () => runIsolationCheckFn(false, env, false, { budgetMs: stageBudgetMs }), {
+        budgetMs: stageBudgetMs,
+        log: stageLog,
+      });
+    }
   }
 }
 
@@ -1199,8 +1266,7 @@ process.on("SIGTERM", () => {
   process.exit(143);
 });
 
-export function createIsolatedHomeEnv(env = process.env) {
-  const rawIsolatedHome = mkdtempSync(path.join(tmpdir(), "fusion-test-home-root-"));
+function createIsolatedHomeEnvForPath(rawIsolatedHome, env = process.env) {
   const isolatedHome = realpathSync(rawIsolatedHome);
   isolatedHomesToCleanup.add(rawIsolatedHome);
   isolatedHomesToCleanup.add(isolatedHome);
@@ -1228,6 +1294,75 @@ export function createIsolatedHomeEnv(env = process.env) {
   }
 
   return { env: nextEnv, isolatedHome };
+}
+
+export function createIsolatedHomeEnv(env = process.env) {
+  return createIsolatedHomeEnvForPath(mkdtempSync(path.join(tmpdir(), "fusion-test-home-root-")), env);
+}
+
+/*
+FNXC:TestInfrastructure 2026-10-23-06:21:
+The normal test entry point must not perform synchronous artifact preparation or
+HOME creation in its own event loop. Run both operations in bounded children so
+a blocked filesystem or git operation reports its named setup stage and cannot
+silently delay the merge-gate launch.
+*/
+async function prepareTestArtifactsUnderWatchdog({ budgetMs = PRE_GATE_STAGE_BUDGET_MS } = {}) {
+  await runWatchedTest(process.execPath, [ensureTestArtifactsScript], {
+    env: process.env,
+    budgetMs,
+    label: "test artifact preparation",
+  });
+}
+
+async function createIsolatedHomeEnvUnderWatchdog(env = process.env, { budgetMs = PRE_GATE_STAGE_BUDGET_MS } = {}) {
+  const responsePath = path.join(tmpdir(), `fusion-test-home-response-${randomUUID()}.json`);
+  try {
+    await runWatchedTest(process.execPath, [currentFilePath, "--create-isolated-home", responsePath], {
+      env,
+      budgetMs,
+      label: "isolated HOME creation",
+    });
+    const response = JSON.parse(readFileSync(responsePath, "utf8"));
+    if (typeof response?.isolatedHome !== "string" || response.isolatedHome.length === 0) {
+      throw new Error("isolated HOME creation returned no path");
+    }
+    return createIsolatedHomeEnvForPath(response.isolatedHome, env);
+  } finally {
+    rmSync(responsePath, { force: true });
+  }
+}
+
+export async function preparePreGateEnvironment({
+  forceFullSuite,
+  env = process.env,
+  root = rootDir,
+  stageBudgetMs = PRE_GATE_STAGE_BUDGET_MS,
+  stageLog = console.log,
+  isSkillSyncCheckCachedFn = isSkillSyncCheckCached,
+  runSkillSyncFn = ({ budgetMs }) => run("pnpm", ["sync:fusion-skill:check"], { budgetMs }),
+  prepareArtifactsFn = prepareTestArtifactsUnderWatchdog,
+  createIsolatedHomeEnvFn = createIsolatedHomeEnvUnderWatchdog,
+} = {}) {
+  if (forceFullSuite || !isSkillSyncCheckCachedFn(root)) {
+    await runObservedStage("skill-sync-validation", () => runSkillSyncFn({ budgetMs: stageBudgetMs }), {
+      budgetMs: stageBudgetMs,
+      log: stageLog,
+    });
+  } else {
+    stageLog("[test-changed] skill-sync check skipped (inputs unchanged since last pass).");
+  }
+
+  await runObservedStage("test-artifact-preparation", () => prepareArtifactsFn({ budgetMs: stageBudgetMs }), {
+    budgetMs: stageBudgetMs,
+    log: stageLog,
+  });
+
+  return runObservedStage(
+    "isolated-home-create",
+    () => createIsolatedHomeEnvFn(env, { budgetMs: stageBudgetMs }),
+    { budgetMs: stageBudgetMs, log: stageLog },
+  );
 }
 
 export function createTestProcessEnv(env = process.env) {
@@ -1694,24 +1829,24 @@ export async function main(argv = process.argv.slice(2)) {
       // prune and no real risk of a leak — but we still run a single cheap
       // before/after guard pass to preserve the invariant that every `pnpm test`
       // verifies isolation.
-      runIsolationCheck(true, process.env, /* fastBefore */ true);
-      runIsolationCheck(false, process.env);
+      await runObservedStage("isolation-before", () => runIsolationCheck(true, process.env, /* fastBefore */ true), {
+        budgetMs: PRE_GATE_STAGE_BUDGET_MS,
+      });
+      await runObservedStage("isolation-after", () => runIsolationCheck(false, process.env), {
+        budgetMs: PRE_GATE_STAGE_BUDGET_MS,
+      });
     }
     return;
   }
 
-  // There is work to do — pay the fixed setup cost now.
-  // U3: skip the skill-sync check spawn when its inputs are unchanged since the
-  // last passing run. Full runs (CI / --full) always run it unconditionally so
-  // the gate never goes silent on the path that actually enforces it.
-  if (forceFullSuite || !isSkillSyncCheckCached(rootDir)) {
-    run("pnpm", ["sync:fusion-skill:check"]);
-  } else {
-    console.log("[test-changed] skill-sync check skipped (inputs unchanged since last pass).");
-  }
-  ensureTestArtifacts(rootDir);
-
-  const { env: isolatedHomeEnv, isolatedHome } = createIsolatedHomeEnv(fullSuiteEnv);
+  // There is work to do — pay the fixed setup cost now. Each boundary runs
+  // through a child/watchdog or has its own observed deadline, so no synchronous
+  // setup operation can leave the normal gate path silently stalled.
+  const { env: isolatedHomeEnv, isolatedHome } = await preparePreGateEnvironment({
+    forceFullSuite,
+    env: fullSuiteEnv,
+    root: rootDir,
+  });
 
   const cleanupIsolatedHome = () => {
     cleanupIsolatedHomePath(isolatedHome);
@@ -1912,11 +2047,24 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
-  main().catch((error) => {
-    if (error?.exitCode) {
-      process.exit(error.exitCode);
+  const isolatedHomeResponsePath = process.argv[2] === "--create-isolated-home" ? process.argv[3] : null;
+  if (isolatedHomeResponsePath) {
+    try {
+      // This helper process must not register its exit cleanup handler: ownership
+      // transfers to the parent after it records the path in the response file.
+      const isolatedHome = realpathSync(mkdtempSync(path.join(tmpdir(), "fusion-test-home-root-")));
+      writeFileSync(isolatedHomeResponsePath, JSON.stringify({ isolatedHome }), "utf8");
+    } catch (error) {
+      console.error(error);
+      process.exitCode = 1;
     }
-    console.error(error);
-    process.exit(1);
-  });
+  } else {
+    main().catch((error) => {
+      if (error?.exitCode) {
+        process.exit(error.exitCode);
+      }
+      console.error(error);
+      process.exit(1);
+    });
+  }
 }
