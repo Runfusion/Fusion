@@ -690,6 +690,22 @@ same DB plateaus at 1.28 GiB across 18 concurrent full-project reads and returns
 the allocation is pinned only while engine consumers overlap: one fully parsed board is ~0.58 GiB for 2417
 rows, ~240 KB of heap per Task against ~30 KB of stored row. Treat this path as retention-capable, not transient.
 
+FNXC:MemoryDiagnosis 2026-10-23-21:24 (RUFU-627):
+What this block does NOT claim: no heap-LIMIT breach was ever measured. Every figure above is a used-side
+measurement; a headroom sentence requires sampling `v8.getHeapStatistics().heap_size_limit` (or the
+runbook's `fusion_retention_heap_used_bytes` / `fusion_retention_heap_limit_bytes` pair) in the same run,
+and the withdrawn `0.904 GiB` retained, `0.343 GiB` as a limit, and `213 MB` per-parse figures are not
+derivable from this evidence and must not reappear.
+
+Two figures in the original operator diagnosis are corrected here rather than carried forward, because the
+code contradicts them. (1) `AutoClaimSnapshotManager` does not retain a whole-board `tasks` array plus a
+`tasksById` map: `AutoClaimSnapshot.tasks` is a `ReadonlyArray<AutoClaimCandidate>` and the id index is
+local to `rebuildFrom`, so what is pinned is candidate rows — which carry the FULL `description`, not a
+first line (`descriptionFirstLine` is carried alongside it). (2) `search_vector` is already absent from the
+list projection (`ListReadSearchVectorOmission 2026-10-09-20:07` replaced the `SELECT *`), so its share of
+the stored 73.6 MB of row bytes is a stored-table cost, not a per-parse cost. The remaining per-parse wins
+are in-flight coalescing and declared field sets, not omitting that column again.
+
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-28-18:05 (PR #2479 review, P2):
 ONE IR cache for the whole list pass. Without it, every paused row resolved
