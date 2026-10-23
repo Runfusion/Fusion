@@ -195,10 +195,37 @@ export type WorkflowStepResult =
   | { allPassed: false; revisionRequested: false; feedback: string; stepName: string }
   | { allPassed: false; revisionRequested: true; feedback: string; stepName: string };
 
+/*
+FNXC:PostMergeUnrelatedFailures 2026-10-06-22:45:
+Post-merge verification must not hold a landed task in review because of failing tests the task did not cause.
+Full Suite is a non-blocking signal; FN-9437, FN-9512 and FN-9514 were stranded in review by REVISE verdicts citing unrelated red shards, a cancelled shard, missing timing artifacts, and circular "accountable follow-up" links.
+Prompt guidance alone did not stop that, so the engine enforces it: a post-merge REVISE blocks only when the reviewer declares `blockingReason` as a regression introduced by this task's landed change, or as post-landing evidence that is still being produced (a run in progress).
+Any other post-merge REVISE (unrelated or unattributed failures, cancelled lanes, absent artifacts, missing follow-up IDs, or no declared reason) is recorded as APPROVE_WITH_NOTES with the reviewer's notes preserved.
+*/
+/** Reasons a post-merge verification REVISE is allowed to keep blocking task completion. */
+export type PostMergeBlockingReason = "task-regression" | "evidence-pending";
+
+const POST_MERGE_BLOCKING_REASONS: ReadonlySet<string> = new Set<PostMergeBlockingReason>(["task-regression", "evidence-pending"]);
+
+export function normalizePostMergeBlockingReason(value: unknown): PostMergeBlockingReason | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return POST_MERGE_BLOCKING_REASONS.has(normalized) ? normalized as PostMergeBlockingReason : undefined;
+}
+
+/** Downgrade a post-merge REVISE that is not attributed to this task's regression or to pending evidence. */
+export function applyPostMergeBlockingGate<V extends WorkflowStepVerdict>(input: {
+  verdict: V;
+  blockingReason?: PostMergeBlockingReason;
+}): { verdict: V | "APPROVE_WITH_NOTES"; downgraded: boolean } {
+  if (input.verdict !== "REVISE" || input.blockingReason) return { verdict: input.verdict, downgraded: false };
+  return { verdict: "APPROVE_WITH_NOTES", downgraded: true };
+}
+
 export function parseWorkflowStepVerdict(
   rawOutput: string,
   options: { optionalGroupId?: string } = {},
-): { verdict: WorkflowStepVerdict; notes: string; findings?: WorkflowReviewFinding[]; supersededFindingSourceWorkflowStepId?: string; supersededFindingIds?: string[] } | null {
+): { verdict: WorkflowStepVerdict; notes: string; findings?: WorkflowReviewFinding[]; supersededFindingSourceWorkflowStepId?: string; supersededFindingIds?: string[]; blockingReason?: PostMergeBlockingReason } | null {
   const trimmed = rawOutput.trim();
   const candidates: string[] = [];
   const fencedMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
@@ -213,7 +240,7 @@ export function parseWorkflowStepVerdict(
 
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
     try {
-      const parsed = JSON.parse(candidates[i]) as { verdict?: unknown; notes?: unknown; findings?: unknown; supersededFindingIds?: unknown; supersededFindingSourceWorkflowStepId?: unknown };
+      const parsed = JSON.parse(candidates[i]) as { verdict?: unknown; notes?: unknown; findings?: unknown; supersededFindingIds?: unknown; supersededFindingSourceWorkflowStepId?: unknown; blockingReason?: unknown };
       if (!parsed || typeof parsed.verdict !== "string") continue;
       /*
       FNXC:ReviewLeniency 2026-07-01-23:30:
@@ -242,12 +269,14 @@ export function parseWorkflowStepVerdict(
       const findings = normalizeWorkflowReviewFindings(parsed.findings);
       const supersededFindingIds = normalizeSupersededFindingIds(parsed.supersededFindingIds);
       const supersededFindingSourceWorkflowStepId = normalizeSupersededFindingIds([parsed.supersededFindingSourceWorkflowStepId])?.[0];
+      const blockingReason = normalizePostMergeBlockingReason(parsed.blockingReason);
       return {
         verdict,
         notes: typeof parsed.notes === "string" ? parsed.notes : "",
         ...(findings ? { findings } : {}),
         ...(supersededFindingSourceWorkflowStepId && supersededFindingIds ? { supersededFindingSourceWorkflowStepId } : {}),
         ...(supersededFindingSourceWorkflowStepId && supersededFindingIds ? { supersededFindingIds } : {}),
+        ...(blockingReason ? { blockingReason } : {}),
       };
     } catch {
       // continue
@@ -310,6 +339,7 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
   findings?: WorkflowReviewFinding[];
   supersededFindingSourceWorkflowStepId?: string;
   supersededFindingIds?: string[];
+  blockingReason?: PostMergeBlockingReason;
   malformed?: boolean;
   notesMissing?: boolean;
 } {
@@ -342,6 +372,7 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
       ...(!notes ? { notesMissing: true } : {}),
       ...(parsed.findings ? { findings: parsed.findings } : {}),
       ...(parsed.supersededFindingSourceWorkflowStepId && parsed.supersededFindingIds ? { supersededFindingSourceWorkflowStepId: parsed.supersededFindingSourceWorkflowStepId, supersededFindingIds: parsed.supersededFindingIds } : {}),
+      ...(parsed.blockingReason ? { blockingReason: parsed.blockingReason } : {}),
     };
   }
 
