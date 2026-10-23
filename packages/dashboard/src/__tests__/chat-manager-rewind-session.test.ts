@@ -280,8 +280,23 @@ describe("ChatManager.rewindSessionForEdit — pi session context seam (real Ses
     }));
 
     const reopened = SessionManager.open((await chatStore.getSession(session.id))!.cliSessionFile!);
-    const contextTexts = extractText(reopened.buildSessionContext());
+    const context = reopened.buildSessionContext();
+    const contextTexts = extractText(context);
     expect(contextTexts.filter((text) => text === prefix)).toHaveLength(1);
+
+    /*
+    FNXC:ChatCancellation 2026-09-12-20:54:
+    RUFU-230: a baked streamed prefix is an INTERRUPTED turn, so the reopened pi transcript must record it with
+    `stopReason: "aborted"` rather than `"stop"`. Honest state is load-bearing, not cosmetic: the done-handler
+    authoritative-reply join filters aborted/error slices, which is what stops this prefix from being prepended to
+    the next turn's persisted reply (the "Sk" before "Skúsim — priamo." ghost).
+    */
+    const bakedAssistant = context.messages.find((message: any) =>
+      message.role === "assistant"
+      && Array.isArray(message.content)
+      && message.content.some((part: any) => part?.type === "text" && part.text === prefix));
+    expect(bakedAssistant).toBeDefined();
+    expect(bakedAssistant.stopReason).toBe("aborted");
 
     __resetChatState();
   });
