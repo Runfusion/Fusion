@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
+import { getBuiltinWorkflow, parseWorkflowIr } from "@fusion/core";
+import { executorLog } from "../logger.js";
+import { seedPreReleasePlanReviewContinuation } from "../plan-review-continuation.js";
+import { resolvePlanningContinuationCandidate } from "../runtimes/in-process-runtime.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 /** FNXC:CurrentPlanReviewIdentity 2026-10-20-07:50: Exercise the real failure sink and atomic continuation seam while preserving the genuine prior verdict. */
-function recoveryHarness(options: { paused?: boolean; active?: boolean; exhausted?: boolean } = {}) {
+function recoveryHarness(options: { paused?: boolean; active?: boolean; exhausted?: boolean; wip?: boolean } = {}) {
   const task = {
     id: "REVIEW-IDENTITY-1", title: "Review the current plan", description: "", column: "todo",
     status: null, steps: [], currentStep: 0, dependencies: [], log: [],
@@ -20,6 +24,17 @@ function recoveryHarness(options: { paused?: boolean; active?: boolean; exhauste
   store.listWorkflowWorkItemsForTask = vi.fn(async () => options.active ? [{ id: "newer-review", state: "running", kind: "task" }] : []);
   store.seedStrandedPlanReviewContinuation = vi.fn(async (_input, options) => { task.graphResumeRetryCount = options.identityRecovery.expectedRetryCount + 1; return { seeded: true, workItemId: "fresh-plan-review" }; });
   store.updateTask.mockImplementation(async (_id, patch) => Object.assign(task, patch));
+  if (options.wip) {
+    const source = getBuiltinWorkflow("builtin:legacy-coding")!.ir;
+    const ir = typeof source === "string" ? parseWorkflowIr(source) : structuredClone(source);
+    if (ir.version !== "v2") throw new Error("Expected a column-native workflow fixture");
+    task.column = "active-review";
+    ir.columns ??= [];
+    ir.columns.push({ id: task.column, name: "Active review", traits: [{ trait: "wip" }] });
+    ir.nodes.find((node) => node.id === "plan-review")!.column = task.column;
+    store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "custom:wip-review", stepIds: ["plan-review"] });
+    store.getWorkflowDefinition = vi.fn(async () => ({ ir }));
+  }
   const executor = new TaskExecutor(store as never, "/tmp/review-identity-recovery");
   return { task, store, executor };
 }
@@ -99,5 +114,41 @@ describe("Plan Review identity recovery snapshot races", () => {
     });
     await fail(h);
     expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
+  });
+});
+
+/** FNXC:CurrentPlanReviewIdentity 2026-10-23-06:34: Identity recovery is valid in either hold or WIP columns and must remain consumable by the normal continuation drain. */
+describe("WIP Plan Review identity recovery", () => {
+  beforeEach(resetExecutorMocks);
+  it.each(["gate-unproven-plan-review-input", "gate-stale-review-input"])("resumes %s in the same WIP column", async (value) => {
+    const h = recoveryHarness({ wip: true });
+    const history = structuredClone(h.task.workflowStepResults);
+    await (h.executor as any).handleGraphFailure(h.task, { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan-review"], context: { "node:plan-review:value": value, "node:plan-review:outcome": "failure" } });
+    expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
+    const [input] = h.store.seedStrandedPlanReviewContinuation.mock.calls[0];
+    expect(input).toMatchObject({ nodeId: "plan-review", kind: "task", state: "runnable", sourceColumn: "active-review", targetColumn: "active-review" });
+    expect(resolvePlanningContinuationCandidate({ ...input, id: "resumed-review" } as never, h.task as never).kind).toBe("actionable");
+    expect(h.task.column).toBe("active-review");
+    expect(h.task.workflowStepResults).toEqual(history);
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.task.graphResumeRetryCount).toBe(1);
+  });
+  it("keeps ordinary planning handoffs pre-release only", async () => {
+    const h = recoveryHarness({ wip: true });
+    const ir = (await h.store.getWorkflowDefinition("custom:wip-review"))!.ir;
+    await expect(seedPreReleasePlanReviewContinuation(h.store as never, h.task as never, ir as never, { atomic: true })).resolves.toMatchObject({ seeded: false, reason: "no-pre-release-plan-review" });
+    expect(h.store.seedStrandedPlanReviewContinuation).not.toHaveBeenCalled();
+  });
+  it.each(["settings", "continuation-seed", "task-reload"])("logs the failing %s stage while preserving the unavailable outcome", async (stage) => {
+    const h = recoveryHarness();
+    if (stage === "settings") h.store.getSettings.mockRejectedValue(new Error("settings read failed"));
+    if (stage === "continuation-seed") h.store.seedStrandedPlanReviewContinuation.mockRejectedValue(new Error("seed failed"));
+    if (stage === "task-reload") h.store.seedStrandedPlanReviewContinuation.mockImplementationOnce(async () => {
+      h.store.getTask.mockRejectedValue(new Error("task read failed"));
+      return { seeded: false, reason: "task-state-changed" };
+    });
+    await (h.executor as any).handleGraphFailure(h.task, { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan-review"], context: { "node:plan-review:value": "gate-stale-review-input", "node:plan-review:outcome": "failure" } });
+    expect(executorLog.warn).toHaveBeenCalledWith(h.task.id + ": Plan Review identity recovery failed during " + stage);
+    expect(h.store.logEntry.mock.calls.some((call) => call[0] === h.task.id && call[1] === "Plan Review identity recovery withheld — task remains held" && call[2] === "recovery-unavailable")).toBe(true);
   });
 });

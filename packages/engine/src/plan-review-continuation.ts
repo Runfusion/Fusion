@@ -1,6 +1,8 @@
 import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computeWorkflowIrPin,
+  PLAN_REVIEW_GROUP_ID,
+  resolveColumnFlags,
   isTaskBlockedOnApproval,
   isPlanReviewSatisfied,
   isUnplannedSeedPrompt,
@@ -64,7 +66,12 @@ export async function seedPreReleasePlanReviewContinuation(
   reason?: PlanReviewSeedBailReason;
   workItemId?: string;
 }> {
-  const node = resolvePreReleasePlanReviewNode(ir);
+  /** FNXC:CurrentPlanReviewIdentity 2026-10-23-06:34: Identity refusals may resume the current WIP review in place; ordinary planning handoffs remain pre-release only. */
+  const inPlaceWipNode = options.identityRecovery && ir.version === "v2"
+    ? ir.nodes.find((candidate) => candidate.id === PLAN_REVIEW_GROUP_ID && candidate.column === task.column
+      && ir.columns?.some((column) => column.id === candidate.column && resolveColumnFlags(column).countsTowardWip === true))
+    : undefined;
+  const node = resolvePreReleasePlanReviewNode(ir) ?? inPlaceWipNode;
   if (!node || node.column !== task.column) return { seeded: false, reason: "no-pre-release-plan-review" };
   /*
   FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):

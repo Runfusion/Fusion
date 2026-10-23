@@ -963,11 +963,13 @@ export async function handleGraphFailure(
       if (failureValue === "gate-unproven-plan-review-input" || failureValue === "gate-stale-review-input") {
         /** FNXC:CurrentPlanReviewIdentity 2026-10-20-07:50: A refused approval is history, so explicitly seed a bounded real review instead of generic recovery or a synthetic failed verdict. */
         let reason = "recovery-unavailable";
+        let recoveryStage = "settings";
         try {
           /** FNXC:CurrentPlanReviewIdentity 2026-10-23-05:34: Retry one rejected snapshot with fresh fences; never retry a changed review history, lifecycle owner or operator hold. */
           let recoveryTask = live;
           const refusedHistory = JSON.stringify(live.workflowStepResults ?? []);
           for (let attempt = 0; attempt < 2; attempt++) {
+            recoveryStage = "settings";
             const settings = await deps.store.getSettings();
             if (recoveryTask.deletedAt || recoveryTask.paused || recoveryTask.userPaused || deps.userCanceledTaskIds.has(recoveryTask.id)
               || settings.globalPause || settings.enginePaused) {
@@ -975,10 +977,12 @@ export async function handleGraphFailure(
             } else if ((recoveryTask.graphResumeRetryCount ?? 0) >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
               reason = "retry-budget-exhausted";
             } else {
+              recoveryStage = "workflow";
               const resolved = await resolveWorkflowIrForTaskWithProvenance(deps.store, recoveryTask.id);
               if (resolved.source !== "selection" && !(resolved.source === "default" && resolved.selectionAbsent === true)) {
                 reason = "current-workflow-unreadable";
               } else {
+                recoveryStage = "continuation-seed";
                 const seeded = await seedPreReleasePlanReviewContinuation(deps.store, recoveryTask, resolved.ir, { atomic: true, identityRecovery: {
                   expectedTaskUpdatedAt: recoveryTask.updatedAt, expectedWorkflowStepResults: recoveryTask.workflowStepResults ?? [],
                   expectedRetryCount: recoveryTask.graphResumeRetryCount ?? 0, maxRetries: MAX_TRANSIENT_GRAPH_RESUME_RETRIES,
@@ -987,6 +991,7 @@ export async function handleGraphFailure(
               }
             }
             if (reason !== "task-state-changed" || attempt > 0) break;
+            recoveryStage = "task-reload";
             const current = await deps.store.getTask(live.id);
             if (!current || current.column !== live.column || current.status === "needs-replan"
               || JSON.stringify(current.workflowStepResults ?? []) !== refusedHistory) break;
@@ -994,6 +999,7 @@ export async function handleGraphFailure(
           }
         } catch {
           reason = "recovery-unavailable";
+          executorLog.warn(`${live.id}: Plan Review identity recovery failed during ${recoveryStage}`);
         }
         await deps.store.logEntry(live.id, reason === "seeded"
           ? "Plan Review identity changed — a fresh review continuation was seeded"
