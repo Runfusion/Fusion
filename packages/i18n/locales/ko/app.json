@@ -1556,7 +1556,10 @@
     "collapseArchivedTitle": "보관된 작업 접기",
     "expandArchivedLabel": "보관된 작업 펼치기",
     "expandArchivedTitle": "보관된 작업 펼치기",
-    "failedToArchive": "작업 보관에 실패했습니다"
+    "failedToArchive": "작업 보관에 실패했습니다",
+    "archiveAllMessage_one": "",
+    "archivedTasks_one": "",
+    "archivedTasksWithSkips_one": ""
   },
   "commandCenter": {
     "activity": {
@@ -3438,7 +3441,6 @@
     "statusReplan": "재계획",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": "",
     "archiveSelected": "선택한 작업 보관",
     "archiveSelectedTitle": "완료된 선택 작업 보관",
     "archiveUnavailable": "보관 작업을 사용할 수 없습니다",
@@ -3451,7 +3453,10 @@
     "bulkDeleteArchiveSummary": "{{archived}}개 보관, {{deleted}}개 삭제, {{failed}}개 실패",
     "bulkDeleteNoTasks": "선택한 작업 중 삭제할 수 있는 작업이 없습니다(보관된 작업 제외)",
     "bulkDeleteWithDoneMessage": "작업 {{deletable}}개를 삭제하거나, 완료된 작업 {{done}}개를 보관하고 나머지를 삭제하시겠습니까?",
-    "lineageArchiveMessage": "{{taskId}}에는 원본 부모로 참조하는 계보 하위 작업이 {{children}}개 있습니다.\n\n먼저 이 참조를 해제하고 보관하시겠습니까?"
+    "lineageArchiveMessage": "{{taskId}}에는 원본 부모로 참조하는 계보 하위 작업이 {{children}}개 있습니다.\n\n먼저 이 참조를 해제하고 보관하시겠습니까?",
+    "bulkArchiveDone_one": "",
+    "bulkArchiveMessage_one": "",
+    "bulkDeleteSummary_one": ""
   },
   "mailbox": {
     "agent": "에이전트",
@@ -6412,7 +6417,8 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "chatContextBudgetHelp": ""
     },
     "merge": {
       "abort": "",
