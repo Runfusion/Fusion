@@ -20,6 +20,7 @@ import {
   resolveTaskSeamPrompt,
   resolveValidatorFallbackModel,
   matchStepHeadings,
+  buildOperatorLanguageDirective,
 } from "@fusion/core";
 import { recordRetry } from "../errors/retry-burned-logger.js";
 import { createAssistantStreamCapture } from "./assistant-text-capture.js";
@@ -429,6 +430,7 @@ export async function reviewStep(
     agentInstructions: reviewerInstructions,
     memorySection,
     pluginContributions: reviewerPluginContributions,
+    operatorLanguageDirective: buildOperatorLanguageDirective(liveSettings),
   });
   const reviewerSystemPromptFinal = collapsePromptLayers(layers);
 

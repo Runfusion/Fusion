@@ -636,6 +636,38 @@ describe("buildAgentChatPrompt", () => {
     expect(prompt).toContain("The team values short progress updates.");
     expect(prompt).toContain("## Project Memory\n\nProject preference: avoid force pushes.");
   });
+
+  /*
+  FNXC:OperatorLanguage 2026-09-15-07:18:
+  Chat turns only mirror the operator's language by accident of the model; the explicit global
+  operatorLanguage setting must produce a directive in the rebuilt system prompt, and — the
+  byte-identical-promise regression guard — produce NOTHING when unset/auto.
+  */
+  it("injects the operator-language directive when the setting names a language", async () => {
+    const agent = makeAgent({ name: "Avery", role: "reviewer" });
+    const prompt = await buildAgentChatPrompt({
+      agent,
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      settings: { operatorLanguage: "sk" },
+    });
+    expect(prompt).toContain("## Operator Language");
+    expect(prompt).toContain("Slovak (slovenčina)");
+  });
+
+  it("omits the operator-language directive for auto/unset settings", async () => {
+    const agent = makeAgent({ name: "Avery", role: "reviewer" });
+    const base = await buildAgentChatPrompt({ agent, rootDir: testDir, basePrompt: "You are a chat assistant." });
+    const auto = await buildAgentChatPrompt({
+      agent,
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      settings: { operatorLanguage: "auto" },
+    });
+    expect(base).not.toContain("## Operator Language");
+    expect(auto).toBe(base);
+  });
+
 });
 
 describe("buildSystemPromptWithInstructions", () => {
