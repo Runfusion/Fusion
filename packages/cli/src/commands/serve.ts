@@ -82,7 +82,7 @@ import {
 } from "./llama-cpp-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
-import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
+import { handleCheaperInferenceApiKeySaved, handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 import { phaseTime } from "../startup-phase.js";
@@ -1044,6 +1044,9 @@ export async function runServe(
       maybeInstallClaudeSkillForNewProject(path);
     },
     onApiKeySaved: async (providerId: string) => {
+      if (providerId === "cheaperinference") {
+        return await handleCheaperInferenceApiKeySaved(dashboardAuthStorage, store, modelRegistry, (scope, message) => console.log(`[${scope}] ${message}`));
+      }
       if (providerId !== "opencode" && providerId !== "opencode-go") {
         return undefined;
       }

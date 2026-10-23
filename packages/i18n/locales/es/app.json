@@ -6292,6 +6292,8 @@
       "whenEnabledStartupFetchesTheLatestAvailableModels": "",
       "syncOrcaRouterModelListAtStartup": "",
       "whenEnabledStartupFetchesTheLatestOrcaRouterModels": "",
+      "syncCheaperInferenceModelListAtStartup": "",
+      "whenEnabledStartupFetchesTheLatestCheaperInferenceModels": "",
       "whenEnabledStartupRefreshesModelsThroughTheLocal": "",
       "commaSeparatedValuesSentToOpenRouterModelSyncOutputModalities": "",
       "openRouterRoutingOrderHint": "",

@@ -6,6 +6,9 @@ const OPENROUTER_DEFAULT_REFERER = "https://runfusion.ai";
 const OPENROUTER_DEFAULT_TITLE = "Fusion";
 const ORCAROUTER_MODELS_URL = "https://api.orcarouter.ai/v1/models";
 const ORCAROUTER_DEFAULT_BASE_URL = "https://api.orcarouter.ai/v1";
+const CHEAPER_INFERENCE_MODELS_URL = "https://api.cheaperinference.com/v1/models";
+const CHEAPER_INFERENCE_DEFAULT_BASE_URL = "https://api.cheaperinference.com/v1";
+const CHEAPER_INFERENCE_MODELS_TIMEOUT_MS = 15_000;
 const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
 
 type ModelConfig = {
@@ -55,6 +58,7 @@ interface OpenRouterProviderPreferences {
 interface SettingsLike {
   openrouterModelSync?: boolean;
   orcarouterModelSync?: boolean;
+  cheaperinferenceModelSync?: boolean;
   opencodeGoModelSync?: boolean;
   openrouterAppAttribution?: { referer?: string; title?: string };
   openrouterModelFilters?: OpenRouterModelFilters;
@@ -255,6 +259,84 @@ async function syncOrcaRouterModels(options: StartupSyncOptions): Promise<void> 
   log("orcarouter", `Synced ${models.length} models from OrcaRouter API`);
 }
 
+/*
+FNXC:CheaperInferenceProvider 2026-10-20-14:00:
+Fusion ships Cheaper Inference as a named OpenAI-compatible gateway provider,
+mirroring the OrcaRouter catalog-sync pattern. The Cheaper Inference `/v1/models`
+catalog requires a bearer key, so sync runs only when a key is stored. The catalog
+rows carry `type`, `context_length`, `max_output_tokens`, `capabilities` and
+per-million `pricing` fields instead of the OpenRouter shape, so they get their own
+mapping; only `type: "text"` rows are chat models. Model IDs are bare
+(`gpt-5.4-mini`) and are accepted verbatim on `POST /v1/chat/completions`.
+Registration uses `api: "openai-completions"` and the same `apiKey` reference
+convention as OpenRouter and OrcaRouter (`CHEAPER_INFERENCE_API_KEY`); the key
+stored in the dashboard is used at request time. Sync is gated by
+`cheaperinferenceModelSync` (default true). Startup skips sync when no key is
+stored, so saving a key runs the same sync (`handleCheaperInferenceApiKeySaved`).
+The catalog request has an abort deadline that also covers the body read, so a
+stalled request cannot block the syncs that run after it.
+*/
+function toCheaperInferenceModels(json: {
+  data?: Array<{
+    id: string;
+    type?: string;
+    context_length?: number;
+    max_output_tokens?: number;
+    capabilities?: { vision?: boolean; reasoning?: boolean };
+    pricing?: Record<string, unknown>;
+  }>;
+}): ModelConfig[] {
+  const perMillion = (value: unknown): number => {
+    const n = parseFloat(typeof value === "string" ? value : "0");
+    return Number.isNaN(n) ? 0 : n;
+  };
+  return (json.data || [])
+    .filter((model) => model.id && (model.type ?? "text") === "text")
+    .map((model) => ({
+      id: model.id,
+      name: model.id,
+      reasoning: model.capabilities?.reasoning === true,
+      input: model.capabilities?.vision === true ? ["text", "image"] : ["text"],
+      cost: {
+        input: perMillion(model.pricing?.input_per_million),
+        output: perMillion(model.pricing?.output_per_million),
+        cacheRead: perMillion(model.pricing?.cache_read_input_per_million),
+        cacheWrite: perMillion(model.pricing?.cache_write_input_per_million),
+      },
+      contextWindow: model.context_length || 128000,
+      maxTokens: model.max_output_tokens || 16384,
+    }));
+}
+
+async function syncCheaperInferenceModels(
+  options: Pick<StartupSyncOptions, "authStorage" | "modelRegistry" | "log">,
+): Promise<void> {
+  const { authStorage, modelRegistry, log } = options;
+  const apiKey = await authStorage.getApiKey("cheaperinference");
+  if (!apiKey) {
+    return;
+  }
+
+  const response = await fetch(CHEAPER_INFERENCE_MODELS_URL, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(CHEAPER_INFERENCE_MODELS_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    log("cheaperinference", `Failed to sync models: HTTP ${response.status}`);
+    return;
+  }
+
+  const models = toCheaperInferenceModels(await response.json() as Parameters<typeof toCheaperInferenceModels>[0]);
+  modelRegistry.registerProvider("cheaperinference", {
+    baseUrl: CHEAPER_INFERENCE_DEFAULT_BASE_URL,
+    apiKey: "CHEAPER_INFERENCE_API_KEY",
+    api: "openai-completions",
+    models,
+  });
+  log("cheaperinference", `Synced ${models.length} models from Cheaper Inference API`);
+}
+
 export function normalizeOpencodeGoModel(modelId: string): ModelConfig {
   const trimmed = modelId.trim();
   // Strip the provider prefix (opencode/ or opencode-go/) — the Pi SDK
@@ -391,6 +473,15 @@ export async function syncStartupModels(options: StartupSyncOptions): Promise<vo
     }
   }
 
+  if (settings.cheaperinferenceModelSync !== false) {
+    try {
+      await syncCheaperInferenceModels(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      options.log("cheaperinference", `Failed to sync models: ${message}`);
+    }
+  }
+
   if (settings.opencodeGoModelSync !== false) {
     const opencodeGoApiKey = await options.authStorage.getApiKey("opencode-go") ?? await options.authStorage.getApiKey("opencode");
     await refreshOpencodeGoModels({ modelRegistry: options.modelRegistry, log: options.log, apiKey: opencodeGoApiKey });
@@ -415,4 +506,27 @@ export async function handleOpencodeGoApiKeySaved(
   }
   const opencodeGoKey = await dashboardLegacyCredentialStorage.getApiKey("opencode-go") ?? await dashboardLegacyCredentialStorage.getApiKey("opencode");
   return await refreshOpencodeGoModels({ modelRegistry, log, apiKey: opencodeGoKey });
+}
+
+/**
+ * Shared handler for the onApiKeySaved callback when a Cheaper Inference key is
+ * saved. Startup skips the catalog sync while no key is stored, so this runs it
+ * after the first key is saved, respecting the cheaperinferenceModelSync setting.
+ */
+export async function handleCheaperInferenceApiKeySaved(
+  dashboardLegacyCredentialStorage: AuthStorageLike,
+  store: { getSettings: () => Promise<SettingsLike> },
+  modelRegistry: ModelRegistryLike,
+  log: (scope: string, message: string) => void,
+): Promise<void> {
+  const settings = await store.getSettings();
+  if (settings.cheaperinferenceModelSync === false) {
+    return;
+  }
+  try {
+    await syncCheaperInferenceModels({ authStorage: dashboardLegacyCredentialStorage, modelRegistry, log });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log("cheaperinference", `Failed to sync models: ${message}`);
+  }
 }

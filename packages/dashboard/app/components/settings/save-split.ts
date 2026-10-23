@@ -235,6 +235,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "openrouterModelSync",
     "openrouterProviderPreferences",
     "orcarouterModelSync",
+    "cheaperinferenceModelSync",
     /*
     FNXC:SettingsThinkingPersistence 2026-10-13-02:13:
     Every global lane Thinking selector must be owned by both Models section save sets.
@@ -286,6 +287,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "openrouterModelSync",
     "openrouterProviderPreferences",
     "orcarouterModelSync",
+    "cheaperinferenceModelSync",
     "executionGlobalProvider",
     "executionGlobalModelId",
     "executionGlobalThinkingLevel",

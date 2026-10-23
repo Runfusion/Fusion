@@ -6652,6 +6652,8 @@
       "whenEnabledStartupFetchesTheLatestAvailableModels": " Quando ativado, a inicialização busca os modelos mais recentes disponíveis na API do OpenRouter para que os seletores de modelo sempre incluam o catálogo mais atual. Padrão: ativado. ",
       "syncOrcaRouterModelListAtStartup": " Sincronizar lista de modelos do OrcaRouter na inicialização ",
       "whenEnabledStartupFetchesTheLatestOrcaRouterModels": " Quando ativado, a inicialização busca os modelos mais recentes disponíveis na API do OrcaRouter para que os seletores de modelo incluam o catálogo do OrcaRouter. Padrão: ativado. ",
+      "syncCheaperInferenceModelListAtStartup": " Sincronizar lista de modelos do Cheaper Inference na inicialização ",
+      "whenEnabledStartupFetchesTheLatestCheaperInferenceModels": " Quando ativado e uma chave de API do Cheaper Inference estiver definida, a inicialização busca os modelos mais recentes disponíveis na API do Cheaper Inference para que os seletores de modelo incluam o catálogo do Cheaper Inference. Padrão: ativado. ",
       "whenEnabledStartupRefreshesModelsThroughTheLocal": " Quando ativado, a inicialização atualiza os modelos por meio do fluxo local do ",
       "commaSeparatedValuesSentToOpenRouterModelSyncOutputModalities": "Valores separados por vírgula enviados à sincronização de modelos do OpenRouter. Sem padrão — não definido (sem filtro).",
       "openRouterRoutingOrderHint": "Sem padrão — não definido (aplica-se a ordem de roteamento padrão do próprio OpenRouter).",

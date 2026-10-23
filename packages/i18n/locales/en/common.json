@@ -160,6 +160,7 @@
   "setup": {
     "apiKeyFormatError": "{{providerName}} keys should follow this format: {{hint}} (e.g. {{example}})",
     "apiKeyLabel": {
+      "cheaperinference": "Cheaper Inference API Key",
       "fallback": "API Key",
       "kimiCoding": "Kimi API Key",
       "minimax": "MiniMax API Key",
@@ -177,6 +178,7 @@
     },
     "apiKeyRequired": "API key is required",
     "apiKeySetup": {
+      "cheaperinference": "Create an API key from your Cheaper Inference dashboard.",
       "fallback": "Enter your API key for this provider.",
       "kimiCoding": "Create your API key in the Moonshot platform account settings.",
       "minimax": "Generate an API key from the MiniMax platform developer console.",
@@ -187,6 +189,7 @@
       "zai": "Create an API key in the Zhipu AI open platform account settings."
     },
     "apiKeyUsage": {
+      "cheaperinference": "Routes to multiple AI model providers through a single key",
       "fallback": "Used by Fusion to authenticate requests to this provider",
       "kimiCoding": "Used for Kimi/Moonshot AI models in task execution and planning",
       "minimax": "Used for MiniMax models in task execution",
@@ -198,6 +201,7 @@
     },
     "providerDesc": {
       "anthropic": "Claude models — strong at reasoning, analysis, and code",
+      "cheaperinference": "Cheaper Inference — OpenAI-compatible gateway for models from several labs",
       "fallback": "AI provider — connect to start using AI models",
       "gemini": "Gemini models — multimodal with strong reasoning",
       "google": "Gemini models — multimodal with strong reasoning",
