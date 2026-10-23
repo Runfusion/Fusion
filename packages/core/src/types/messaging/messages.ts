@@ -200,6 +200,16 @@ export interface MessageFilter {
   archived?: boolean;
   /** Maximum number of messages to return */
   limit?: number;
-  /** Number of messages to skip (for pagination) */
+  /** Number of messages to skip (for positional pagination). */
   offset?: number;
+  /**
+   * Continue below this newest-first `(createdAt, id)` row. This stable cursor
+   * avoids positional-page drift when newer messages arrive during traversal.
+   */
+  before?: { createdAt: string; id: string };
+  /**
+   * Return rows newer than this newest-first `(createdAt, id)` watermark.
+   * Callers pair this with `before` to inspect a bounded snapshot interval.
+   */
+  after?: { createdAt: string; id: string };
 }

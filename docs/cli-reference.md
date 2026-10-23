@@ -1146,7 +1146,8 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--
 - `fn chat <agent-id>` starts an interactive mailbox-conversation REPL.
 - `fn chat <agent-id> <message…>` sends one message and waits for a reply (`--once` implied).
 - Messages are sent as `user-to-agent` records from CLI user `cli` with `metadata.wakeRecipient=true`, `metadata.kind="cli-chat"`, and a durable `metadata.conversationId`.
-- This is MessageStore mail plus polling, not token-streaming SSE. Replies are printed only when they carry the active conversation ID or reply to a known thread message.
+- A running engine reconciles this durable mailbox record and promptly requests an on-demand wake, even though the short-lived CLI writer cannot invoke the engine process's local MessageStore hook. The forced wake may override `on-heartbeat` mode only because it is user-originated.
+- This is MessageStore mail plus polling, not token-streaming SSE. Replies are printed only when they carry the active conversation ID or reply to a known thread message. If no engine is running, or a recipient is paused, in error, or otherwise ineligible, the CLI can time out while the message remains unread; correlate its ID with `[wake-trigger-diagnostics]` in engine logs when diagnosing delivery.
 - Agents replying through `fn_send_message` should pass `reply_to_message_id`; replies default to the original sender only when that parent message was addressed to the replying agent.
 - One-shot chat has a reply deadline independent of the polling interval. Interactive chat tracks each outbound message independently: it prints a timeout for an unanswered request, clears that request, and continues the REPL for later messages.
 

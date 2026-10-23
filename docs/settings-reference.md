@@ -1637,7 +1637,7 @@ Common heartbeat/runtime keys on `runtimeConfig` include:
 | `heartbeatIntervalMs` | `number` | Per-agent heartbeat interval |
 | `heartbeatTimeoutMs` | `number` | Per-agent heartbeat timeout |
 | `maxConcurrentRuns` | `number` | Per-agent concurrent heartbeat limit |
-| `messageResponseMode` | `"immediate" \| "on-heartbeat"` | Wake on message immediately or process during periodic heartbeat |
+| `messageResponseMode` | `"immediate" \| "on-heartbeat"` | `immediate` promptly wakes through local-hook and durable mailbox reconciliation when an engine runs; `on-heartbeat` processes ordinary mail on the periodic heartbeat, except for valid user forced wakes. |
 | `heartbeatScopeDiscipline` | `"strict" \| "lite" \| "off"` | Per-agent override for heartbeat prompt scope-discipline mode; unset inherits project `heartbeatScopeDiscipline` (`strict` default). |
 | `heartbeatPromptTemplate` | `"default" \| "compact"` | Per-agent override for heartbeat execution-prompt trim template; unset inherits project `heartbeatPromptTemplate` (`default`). |
 | `runMissedHeartbeatOnStartup` | `boolean` | Default `false`. When enabled, startup triggers one catch-up heartbeat if the agent's `lastHeartbeatAt` is older than its resolved heartbeat interval (server was down across a scheduled tick). |

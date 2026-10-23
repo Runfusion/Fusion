@@ -10,8 +10,9 @@
  * SQLite → PostgreSQL notes (VAL-SCHEMA-004):
  *   The `metadata` column is jsonb in PostgreSQL, so Drizzle returns it
  *   already-parsed as a JS value. The `read` boolean column is kept as integer
- *   (0/1). The SQLite `rowid DESC` tie-breaker maps to PostgreSQL `ctid`
- *   (physical row order) which is approximated by `createdAt DESC, id DESC`.
+ *   (0/1). Inbox pagination uses the shared logical `createdAt DESC, id DESC`
+ *   order so a persisted `(createdAt, id)` cursor remains stable across SQLite
+ *   and PostgreSQL while newer rows are inserted.
  *
  * Transition context (see library/satellite-store-migration-pattern.md):
  *   `getDatabase()` still returns the sync `Database` until the coordinated
@@ -241,6 +242,14 @@ export async function queryMessagesByParticipant(
   }
   if (filter?.read !== undefined) {
     conditions.push(eq(schema.project.messages.read, filter.read ? 1 : 0));
+  }
+  if (filter?.before) {
+    const { createdAt, id } = filter.before;
+    conditions.push(sql`(${schema.project.messages.createdAt} < ${createdAt} OR (${schema.project.messages.createdAt} = ${createdAt} AND ${schema.project.messages.id} < ${id}))`);
+  }
+  if (filter?.after) {
+    const { createdAt, id } = filter.after;
+    conditions.push(sql`(${schema.project.messages.createdAt} > ${createdAt} OR (${schema.project.messages.createdAt} = ${createdAt} AND ${schema.project.messages.id} > ${id}))`);
   }
   conditions.push(archivedCondition(filter?.archived));
   const limit = filter?.limit ?? 100;

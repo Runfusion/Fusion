@@ -84,6 +84,15 @@ import {
 const MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES = 3;
 
 /*
+FNXC:AgentHeartbeat 2026-10-23-06:14:
+CLI MessageStore instances persist mail through PostgreSQL but their process-local hooks cannot wake the engine-owned monitor. Reconcile the durable unread inbox on a bounded monitor-owned cadence, while retaining the hook as the same-process fast path.
+*/
+const MAILBOX_WAKE_RECONCILIATION_INTERVAL_MS = 1_000;
+const MAILBOX_WAKE_RECONCILIATION_INBOX_LIMIT = 10;
+/** Bound one scan while rotating its inbox page on later monitor ticks. */
+const MAILBOX_WAKE_RECONCILIATION_MAX_PAGES = 10;
+
+/*
 FNXC:HeartbeatTerminalBoundary 2026-10-13-02:14:
 A heartbeat completion is a user-visible terminal boundary, not a suggestion for the provider. Pi only honors a tool batch's terminate hint when every result opts in, so the monitor owns a completion latch and aborts the session after the completion tool settles. This prevents mixed batches or a non-cooperative provider from buying another turn after fn_heartbeat_done.
 */
@@ -791,6 +800,36 @@ export class HeartbeatMonitor {
   private pendingHeartbeatRuns: Map<string, PendingHeartbeatRun> = new Map();
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
   private pollInterval: NodeJS.Timeout | null = null;
+  private mailboxWakeInterval: NodeJS.Timeout | null = null;
+  private mailboxWakeReconciling = false;
+  /** Invalidates reconciliation continuations that outlive a monitor lifecycle. */
+  private mailboxWakeGeneration = 0;
+  /*
+  FNXC:AgentHeartbeat 2026-10-23-06:39:
+  New unread rows can shift a newest-first offset forward forever, leaving an
+  older forced CLI wake behind an advancing positional page. Retain the last
+  inspected `(createdAt, id)` instead so each bounded scan resumes below a
+  stable durable row regardless of later inbox inserts.
+  */
+  private mailboxWakePageCursors: Map<string, { createdAt: string; id: string }> = new Map();
+  /*
+  FNXC:AgentHeartbeat 2026-10-23-06:49:
+  A stable older-page cursor cannot see mail inserted above it while backlog traversal
+  is in progress. Retain the newest observed watermark too, so each bounded scan
+  checks the newly inserted interval before resuming the older cursor without
+  returning to moving offset pagination.
+  */
+  private mailboxWakeNewestCursors: Map<string, { createdAt: string; id: string }> = new Map();
+  /*
+  FNXC:AgentHeartbeat 2026-10-23-07:03:
+  An above-watermark interval can itself exceed one bounded page. Keep a stable
+  upper head and a descending page cursor so ordinary mail cannot indefinitely
+  hide a forced CLI wake behind the first full page.
+  */
+  private mailboxWakeAbovePageCursors: Map<string, { createdAt: string; id: string }> = new Map();
+  private mailboxWakeAboveHeads: Map<string, { createdAt: string; id: string }> = new Map();
+  /** One serialized wake per recipient coalesces hook and durable observations. */
+  private pendingMailboxWakes: Map<string, Message> = new Map();
   private isRunning = false;
   private agentUpdatedListener?: (agent: Agent) => void;
   /**
@@ -1238,6 +1277,7 @@ export class HeartbeatMonitor {
     if (this.isRunning) return;
 
     this.isRunning = true;
+    const mailboxWakeGeneration = ++this.mailboxWakeGeneration;
     /*
     FNXC:HeartbeatTerminalBoundary 2026-10-13-02:14:
     CLI and extension processes can only persist a pause intent. The runtime
@@ -1255,6 +1295,10 @@ export class HeartbeatMonitor {
     eventStore.on?.("agent:updated", this.agentUpdatedListener);
     if (this.messageStore) {
       this.messageStore.setMessageToAgentHook(this.handleMessageToAgent.bind(this));
+      void this.reconcileUnreadMailboxWakes(mailboxWakeGeneration);
+      this.mailboxWakeInterval = setInterval(() => {
+        void this.reconcileUnreadMailboxWakes(mailboxWakeGeneration);
+      }, MAILBOX_WAKE_RECONCILIATION_INTERVAL_MS);
     }
     // Warm heartbeat multiplier cache for sync health paths before reconcile.
     void this.warmHeartbeatMultiplierCache();
@@ -1452,10 +1496,20 @@ export class HeartbeatMonitor {
     if (!this.isRunning) return;
 
     this.isRunning = false;
+    ++this.mailboxWakeGeneration;
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
+    if (this.mailboxWakeInterval) {
+      clearInterval(this.mailboxWakeInterval);
+      this.mailboxWakeInterval = null;
+    }
+    this.pendingMailboxWakes.clear();
+    this.mailboxWakePageCursors.clear();
+    this.mailboxWakeNewestCursors.clear();
+    this.mailboxWakeAbovePageCursors.clear();
+    this.mailboxWakeAboveHeads.clear();
   }
 
   /**
@@ -2161,12 +2215,11 @@ export class HeartbeatMonitor {
   }
 
   private async deliverMessageToAgent(message: Message): Promise<void> {
-    if (message.toType !== "agent") {
-      return;
-    }
+    if (!this.isRunning || message.toType !== "agent") return;
 
     const agent = await this.configStore.getAgent(message.toId);
-    if (!agent) {
+    if (!this.isRunning || !agent) {
+      heartbeatLog.log(`[mailbox-wake-reconciliation] messageId=${message.id} agentId=${message.toId} outcome=recipient-missing`);
       return;
     }
 
@@ -2175,31 +2228,131 @@ export class HeartbeatMonitor {
     // messageResponseMode setting. Agent-to-agent traffic must respect the
     // recipient's configured behavior to prevent agents from forcing wakes
     // on each other.
-    const senderForcedWake =
-      message.metadata?.wakeRecipient === true && message.fromType === "user";
+    const senderForcedWake = message.metadata?.wakeRecipient === true && message.fromType === "user";
     if (!senderForcedWake && runtimeConfig?.messageResponseMode !== "immediate") {
+      heartbeatLog.log(`[mailbox-wake-reconciliation] messageId=${message.id} agentId=${agent.id} outcome=on-heartbeat`);
       return;
     }
 
     const validStates = new Set(["active", "idle", "running"]);
     if (!validStates.has(agent.state)) {
+      heartbeatLog.log(`[mailbox-wake-reconciliation] messageId=${message.id} agentId=${agent.id} outcome=ineligible-state state=${agent.state}`);
       return;
     }
 
+    this.scheduleMailboxWake(message, senderForcedWake);
+  }
+
+  /** Reconcile durable mail written by a CLI or another process without its local hook. */
+  private async reconcileUnreadMailboxWakes(generation = this.mailboxWakeGeneration): Promise<void> {
+    if (!this.isRunning || generation !== this.mailboxWakeGeneration || !this.messageStore || this.mailboxWakeReconciling) return;
+    this.mailboxWakeReconciling = true;
+    try {
+      const agents = await this.configStore.listAgents();
+      for (const agent of agents) {
+        if (!this.isRunning || generation !== this.mailboxWakeGeneration || agent.state === "paused" || agent.state === "error") continue;
+        try {
+          let before = this.mailboxWakePageCursors.get(agent.id);
+          const newest = this.mailboxWakeNewestCursors.get(agent.id);
+          if (before && newest) {
+            let aboveBefore = this.mailboxWakeAbovePageCursors.get(agent.id);
+            const newlyArrived = await this.messageStore.getInbox(agent.id, "agent", {
+              read: false,
+              limit: MAILBOX_WAKE_RECONCILIATION_INBOX_LIMIT,
+              after: newest,
+              ...(aboveBefore ? { before: aboveBefore } : {}),
+            });
+            if (!this.isRunning || generation !== this.mailboxWakeGeneration) return;
+            if (!this.mailboxWakeAboveHeads.has(agent.id) && newlyArrived[0]) {
+              this.mailboxWakeAboveHeads.set(agent.id, {
+                createdAt: newlyArrived[0].createdAt,
+                id: newlyArrived[0].id,
+              });
+            }
+            for (const message of newlyArrived) {
+              await this.deliverMessageToAgent(message);
+              aboveBefore = { createdAt: message.createdAt, id: message.id };
+              this.mailboxWakeAbovePageCursors.set(agent.id, aboveBefore);
+              if (!this.isRunning || generation !== this.mailboxWakeGeneration || this.pendingMailboxWakes.has(agent.id)) break;
+            }
+            if (newlyArrived.length < MAILBOX_WAKE_RECONCILIATION_INBOX_LIMIT && !this.pendingMailboxWakes.has(agent.id)) {
+              const aboveHead = this.mailboxWakeAboveHeads.get(agent.id);
+              if (aboveHead) this.mailboxWakeNewestCursors.set(agent.id, aboveHead);
+              this.mailboxWakeAbovePageCursors.delete(agent.id);
+              this.mailboxWakeAboveHeads.delete(agent.id);
+            }
+            if (this.pendingMailboxWakes.has(agent.id)) continue;
+          }
+          for (let page = 0; page < MAILBOX_WAKE_RECONCILIATION_MAX_PAGES; page += 1) {
+            const unread = await this.messageStore.getInbox(agent.id, "agent", {
+              read: false,
+              limit: MAILBOX_WAKE_RECONCILIATION_INBOX_LIMIT,
+              ...(before ? { before } : {}),
+            });
+            if (!this.isRunning || generation !== this.mailboxWakeGeneration) return;
+            if (unread.length === 0) {
+              this.mailboxWakePageCursors.delete(agent.id);
+              this.mailboxWakeNewestCursors.delete(agent.id);
+              break;
+            }
+            if (!this.mailboxWakeNewestCursors.has(agent.id)) {
+              this.mailboxWakeNewestCursors.set(agent.id, {
+                createdAt: unread[0].createdAt,
+                id: unread[0].id,
+              });
+            }
+            for (const message of unread) {
+              await this.deliverMessageToAgent(message);
+              before = { createdAt: message.createdAt, id: message.id };
+              this.mailboxWakePageCursors.set(agent.id, before);
+              if (!this.isRunning || generation !== this.mailboxWakeGeneration || this.pendingMailboxWakes.has(agent.id)) break;
+            }
+            if (!this.isRunning || generation !== this.mailboxWakeGeneration || this.pendingMailboxWakes.has(agent.id) || unread.length < MAILBOX_WAKE_RECONCILIATION_INBOX_LIMIT) {
+              if (unread.length < MAILBOX_WAKE_RECONCILIATION_INBOX_LIMIT && !this.pendingMailboxWakes.has(agent.id)) {
+                this.mailboxWakePageCursors.delete(agent.id);
+                this.mailboxWakeNewestCursors.delete(agent.id);
+              }
+              break;
+            }
+          }
+        } catch (error) {
+          heartbeatLog.warn(`Durable mailbox wake reconciliation failed for ${agent.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } catch (error) {
+      heartbeatLog.warn(`Durable mailbox wake reconciliation scan failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.mailboxWakeReconciling = false;
+    }
+  }
+
+  private scheduleMailboxWake(message: Message, forced: boolean): void {
+    if (!this.isRunning) return;
+    const existing = this.pendingMailboxWakes.get(message.toId);
+    if (existing) {
+      heartbeatLog.log(`[mailbox-wake-reconciliation] messageId=${message.id} agentId=${message.toId} outcome=coalesced pendingMessageId=${existing.id}`);
+      return;
+    }
+    this.pendingMailboxWakes.set(message.toId, message);
+    heartbeatLog.log(`[mailbox-wake-reconciliation] messageId=${message.id} agentId=${message.toId} outcome=scheduled forced=${forced}`);
     void this.executeHeartbeat({
       agentId: message.toId,
       source: "on_demand",
-      triggerDetail: senderForcedWake ? "wake-on-message-forced" : "wake-on-message",
+      triggerDetail: forced ? "wake-on-message-forced" : "wake-on-message",
       wakeMessage: {
         messageId: message.id,
         fromType: message.fromType,
         fromId: message.fromId,
-        forced: senderForcedWake,
+        forced,
         createdAt: message.createdAt,
       },
     }).catch((error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       heartbeatLog.warn(`Wake-on-message heartbeat failed for ${message.toId}: ${errorMessage}`);
+    }).finally(() => {
+      if (this.pendingMailboxWakes.get(message.toId)?.id === message.id) {
+        this.pendingMailboxWakes.delete(message.toId);
+      }
     });
   }
 

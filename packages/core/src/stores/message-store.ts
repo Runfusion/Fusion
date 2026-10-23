@@ -478,6 +478,14 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       whereClauses.push("read = ?");
       params.push(filter.read ? 1 : 0);
     }
+    if (filter?.before) {
+      whereClauses.push("(createdAt < ? OR (createdAt = ? AND id < ?))");
+      params.push(filter.before.createdAt, filter.before.createdAt, filter.before.id);
+    }
+    if (filter?.after) {
+      whereClauses.push("(createdAt > ? OR (createdAt = ? AND id > ?))");
+      params.push(filter.after.createdAt, filter.after.createdAt, filter.after.id);
+    }
     whereClauses.push(filter?.archived === true ? "archived = 1" : "(archived = 0 OR archived IS NULL)");
 
     const whereSql = whereClauses.join(" AND ");
@@ -487,7 +495,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     const rows = this.db!.prepare(`
       SELECT * FROM messages
       WHERE ${whereSql}
-      ORDER BY createdAt DESC, rowid DESC
+      ORDER BY createdAt DESC, id DESC
       LIMIT ? OFFSET ?
     `).all(...params, limit, offset);
 
