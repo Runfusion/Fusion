@@ -218,9 +218,15 @@ describe("RoutineScheduler", () => {
       const routineRunner = createMockRoutineRunner();
       scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner);
 
+      /*
+      FNXC:TestVelocity 2026-10-18-00:10:
+      Await the actual initial tick rather than sleeping; startup must dispatch synchronously
+      and finish its routine work without depending on the host's timer scheduling.
+      */
+      const tick = vi.spyOn(scheduler, "tick");
       scheduler.start();
-      // Wait for the tick to complete
-      await new Promise((r) => setTimeout(r, 10));
+      expect(tick).toHaveBeenCalledOnce();
+      await tick.mock.results[0].value;
       scheduler.stop();
 
       expect(routineRunner.handleCatchUp).toHaveBeenCalled();
@@ -325,9 +331,18 @@ describe("RoutineScheduler", () => {
       const routine = createMockRoutine({ id: "routine-reentrant" });
       const routineStore = createMockRoutineStore([routine]);
       const routineRunner = createMockRoutineRunner();
-      // Make execution slow
+      /*
+      FNXC:TestVelocity 2026-10-18-00:10:
+      Hold execution at a controlled barrier so overlap is proven while work is in flight,
+      without a real-time sleep or relying on two ticks racing before execution begins.
+      */
+      let markStarted!: () => void;
+      let releaseExecution!: () => void;
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      const execution = new Promise<void>((resolve) => { releaseExecution = resolve; });
       vi.mocked(routineRunner.executeRoutine).mockImplementation(async () => {
-        await new Promise((r) => setTimeout(r, 50));
+        markStarted();
+        await execution;
         return {
           routineId: "routine-reentrant",
           success: true,
@@ -338,9 +353,15 @@ describe("RoutineScheduler", () => {
       });
       scheduler = createRoutineScheduler(createMockTaskStore(), routineStore, routineRunner);
 
-      // Start two ticks concurrently
-      const [tick1, tick2] = [scheduler.tick(), scheduler.tick()];
-      await Promise.all([tick1, tick2]);
+      const tick1 = scheduler.tick();
+      try {
+        await started;
+        await scheduler.tick();
+        expect(routineRunner.executeRoutine).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseExecution();
+        await tick1;
+      }
 
       // Should only have executed once (second tick was blocked by re-entrance guard)
       expect(routineRunner.executeRoutine).toHaveBeenCalledTimes(1);

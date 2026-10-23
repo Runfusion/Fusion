@@ -471,6 +471,53 @@ describe("GhostBug ghost-bug task-revision caller regression", () => {
   });
 
 
+  /** FNXC:GhostBugPreflight 2026-10-23-05:34: A real positive probe cannot authorize a plan or task episode replaced while the probe awaited. */
+  it.each(["title", "description", "prompt", "branch", "checkout", "paused", "status", "missing"])("does not release a positive probe after a concurrent %s change", async (change) => {
+    const id = "BUG-031";
+    const written = specFor(id);
+    const rootDir = await fixtureRoot(id, written);
+    const task = taskFixture({ id, branch: "fusion/T-1", baseCommitSha: MAIN_SHA });
+    const harness = createStoreHarness({ task: { ...task } });
+    const probe = revisionExec({ constructPresentOn: [REVISION_SHA], branchTip: REVISION_SHA });
+    let changed = false;
+    await runFinalize(harness, rootDir, task, written, async (argv, options) => {
+      const answer = await probe(argv, options);
+      if (!changed && argv[1] === "grep" && argv[4] === "ghost_target_fn") {
+        changed = true;
+        if (change === "title") harness.applyRowChange({ title: "New plan title" });
+        if (change === "description") harness.applyRowChange({ description: "Different cited code" });
+        if (change === "prompt") await writeFile(join(rootDir, ".fusion", "tasks", id, "PROMPT.md"), "A different current plan");
+        if (change === "branch") harness.applyRowChange({ branch: "fusion/newer" });
+        if (change === "checkout") harness.applyRowChange({ checkoutLeaseEpoch: 2 });
+        if (change === "paused") harness.applyRowChange({ paused: true, userPaused: true });
+        if (change === "status") harness.applyRowChange({ status: "needs-replan" });
+        if (change === "missing") vi.mocked(harness.store.getTask).mockResolvedValue(null as never);
+      }
+      return answer;
+    });
+    expect(changed).toBe(true);
+    expect(harness.commits).toEqual([]);
+    expect(harness.auditRows.some((row) => row.mutationType === "task:ghost-bug-preflight-superseded")).toBe(true);
+    expect(harness.row.column).toBe(task.column);
+    expect(harness.row.pausedReason).not.toBe("ghost-bug-preflight-unverified");
+  });
+
+  it("allows a positive probe after an unrelated activity-log update", async () => {
+    const id = "BUG-032";
+    const written = specFor(id);
+    const rootDir = await fixtureRoot(id, written);
+    const task = taskFixture({ id, branch: "fusion/T-1" });
+    const harness = createStoreHarness({ task: { ...task } });
+    const probe = revisionExec({ constructPresentOn: [REVISION_SHA], branchTip: REVISION_SHA });
+    await runFinalize(harness, rootDir, task, written, async (argv, options) => {
+      const answer = await probe(argv, options);
+      if (argv[1] === "grep" && argv[4] === "ghost_target_fn") await harness.store.logEntry(id, "Unrelated progress");
+      return answer;
+    });
+    expectReleased(harness);
+    expect(harness.row.log.some((entry) => entry.action === "Unrelated progress")).toBe(true);
+  });
+
   it.each([undefined, null, ""])("archives a bug-fix task with a missing or blank title (%s)", async (title) => {
     const written = specFor("BUG-022");
     const rootDir = await fixtureRoot("BUG-022", written);

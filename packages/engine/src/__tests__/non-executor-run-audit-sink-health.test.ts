@@ -279,15 +279,28 @@ describe("FN-9175 non-executor audit sink health", () => {
          fence (see the note below), so it must clear the merge door first. An unspecified optional-step
          list makes the door refuse on the workflow's default-on Plan/Code Review groups before any
          fence is constructed, leaving `fences` empty and `recordAudit` undefined. */
-      const task = { id: "FN-9175", title: "merge", description: "", column: "in-review", branch: "missing-fn-9175", enabledWorkflowSteps: [], steps: [{ name: "Ship", status: "done" }], currentStep: 1, workflowStepResults: [], dependencies: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      const store = { ...sink.host, getTask: vi.fn().mockResolvedValue(task), getSettings: vi.fn().mockResolvedValue({ integrationBranch: "main" }), getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined), getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]), getProjectId: vi.fn(() => "audit-sink-health"), updateTask: vi.fn().mockResolvedValue(undefined), logEntry: vi.fn().mockResolvedValue(undefined), appendAgentLog: vi.fn().mockResolvedValue(undefined) };
+      const task = { id: "FN-9175", title: "merge", description: "", column: "in-review", branch: "missing-fn-9175", baseCommitSha: "a".repeat(40), enabledWorkflowSteps: [], steps: [{ name: "Ship", status: "done" }], currentStep: 1, workflowStepResults: [], dependencies: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      const store = { getTask: vi.fn().mockResolvedValue(task), getSettings: vi.fn().mockResolvedValue({ integrationBranch: "main" }), getTaskWorkflowSelection: vi.fn().mockReturnValue(undefined), getStaleReviewCallbackWaiverReceipts: vi.fn().mockResolvedValue([]), getProjectId: vi.fn(() => "audit-sink-health"), updateTask: vi.fn().mockResolvedValue(undefined), logEntry: vi.fn().mockResolvedValue(undefined), appendAgentLog: vi.fn().mockResolvedValue(undefined) };
       // The missing branch is intentional: runAiMerge constructs its real generation fence before
       // git rejects the branch, allowing this test to exercise the closure the production path gave it.
+      /*
+      FNXC:RunAudit 2026-10-19-00:01:
+      Discover the production fence with telemetry absent, then attach the hostile sink before
+      invoking its callback. Setup's unrelated git auditing must not pay real two-second waits;
+      hostile fence emissions remain exercised below under the shared fake-clock harness.
+      */
       const mergeError = await runAiMerge(store as any, process.cwd(), task.id).then(() => "resolved", (error) => String(error));
       expect(mergeError).not.toBe("resolved");
+      Object.assign(store, sink.host);
       const recordAudit = mergerAiAuditCapture.fences.at(-1)?.recordAudit;
       expect(recordAudit).toBeTypeOf("function");
       await expect(settleBounded(sink, () => recordAudit!("orphan", "suppressed", 1))).resolves.toBeUndefined();
+      if (sink.recordRunAuditEvent) {
+        expect(sink.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+          mutationType: "merge:orphan-write-fenced",
+          metadata: { taskId: task.id, category: "orphan", interaction: "suppressed", suppressedCount: 1 },
+        }));
+      }
     });
 
     it("rethrows an aborted PR sync before its production audit helper writes", () => {

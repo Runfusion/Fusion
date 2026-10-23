@@ -5635,6 +5635,13 @@ export class TriageProcessor {
     ctx: GhostBugEpisodeContext,
   ): Promise<"released" | "terminate"> {
     if (decision.decision === "pass") {
+      /** FNXC:GhostBugPreflight 2026-10-23-05:34: A positive probe belongs to its consumed plan, just like an archive; superseded evidence must not release newer work. */
+      const live = await this.store.getTask(ctx.task.id).catch(() => null);
+      const current = await this.ghostBugEpisodeStillCurrent(live, ctx, { requirePromptArtifact: true });
+      if (!current.ok) {
+        await this.recordGhostBugStaleCompletion(ctx, current.reason);
+        return "terminate";
+      }
       planLog.log(`${ctx.task.id}: ghost-bug preflight passed (${decision.passKind ?? "pass"}: ${decision.reason}) — releasing normally.`);
       return "released";
     }

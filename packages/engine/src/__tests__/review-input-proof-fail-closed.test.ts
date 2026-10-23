@@ -34,6 +34,16 @@ vi.mock("../worktree/review-diff-fingerprint.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../worktree/review-diff-fingerprint.js")>(),
   resolveContentReviewInputProof: mocks.resolveProof,
 }));
+/*
+FNXC:ReviewEmptyContent 2026-10-06-23:20:
+The empty-content auto-approve path calls probeReviewCheckout against the step's worktree, which is process.cwd() here.
+Unmocked, it shells `git status` on the real repo checkout, so the suite only passed when the developer's working tree happened to be clean and returned REVISE during ordinary local development.
+This suite's subject is the content-proof contract, not checkout cleanliness (no test here asserts the uncommitted-refusal path), so pin the probe to clean and keep the assertion environment-independent.
+*/
+vi.mock("../worktree/review-checkout-clean.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../worktree/review-checkout-clean.js")>(),
+  probeReviewCheckout: vi.fn(async () => ({ state: "clean" as const })),
+}));
 
 import { persistWorkflowStepResultWithOutcome } from "../executor/execute-workflow-graph.js";
 import { executeWorkflowStep, type ExecuteWorkflowStepDeps } from "../executor/execute-workflow-step.js";

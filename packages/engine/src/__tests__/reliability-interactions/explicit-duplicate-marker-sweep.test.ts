@@ -1,10 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 // FNXC:SqliteRemoval 2026-07-14: hasPg guard added — makeReliabilityFixture requires PG after SQLite removal (VAL-REMOVAL-005).
-import { hasGit, hasPg, makeReliabilityFixture, type ReliabilityFixture } from "./_helpers.js";
+import { hasGit, hasPg, git, type ReliabilityFixture } from "./_helpers.js";
+import { DEFAULT_SETTINGS, type Settings } from "@fusion/core";
+import { createSharedPgTaskStoreTestHarness } from "../../../../core/src/__test-utils__/pg-test-harness.js";
+import { SelfHealingManager } from "../../self-healing.js";
+
+type MarkerFixture = Pick<ReliabilityFixture, "rootDir" | "store" | "task" | "manager">;
 
 const FULL_SPEC = `# Task: FN-7000 - Example\n\n## Mission\nThis spec mentions duplicate handling, but it is not a redirect marker.\n`;
 
@@ -13,7 +18,7 @@ function duplicateStub(canonicalId: string): string {
 }
 
 async function createPromptTask(
-  fx: ReliabilityFixture,
+  fx: MarkerFixture,
   input: { id: string; column: "triage" | "todo" | "in-review"; title?: string; prompt: string; sourceType?: "api" | "dashboard_ui" },
 ) {
   /*
@@ -38,17 +43,62 @@ async function createPromptTask(
 
 const canRun = hasGit && hasPg;
 (canRun ? describe : describe.skip)("reliability interactions: explicit duplicate marker sweep", () => {
-  const fixtures: ReliabilityFixture[] = [];
+  /*
+  FNXC:DuplicateMarkerTestSpeed 2026-10-17-00:09:
+  Marker sweeps need real persisted rows and prompt files, not a fresh database and git
+  repository for every case. Reuse the canonical shared PG harness: its per-case reset
+  clears tables, identities, caches, and task directories. Keep full maintenance dispatch
+  and real git in the two integration cases; only fixture provisioning is shared.
+  */
+  const h = createSharedPgTaskStoreTestHarness({ prefix: "fusion_duplicate_marker", projectId: "marker-sweep" });
+  const fixtures: MarkerFixture[] = [];
+
+  beforeAll(async () => {
+    await h.beforeAll();
+    git(h.rootDir(), "git init -b main");
+    git(h.rootDir(), 'git config user.email "test@example.com"');
+    git(h.rootDir(), 'git config user.name "Test User"');
+    await writeFile(join(h.rootDir(), "README.md"), "# fixture\n", "utf-8");
+    git(h.rootDir(), 'git add README.md && git commit -m "chore: init"');
+  });
+  beforeEach(h.beforeEach);
+  afterAll(h.afterAll);
+
+  async function makeMarkerFixture(input: { settings?: Partial<Settings> } = {}): Promise<MarkerFixture> {
+    const store = h.store();
+    await store.updateSettings({
+      ...DEFAULT_SETTINGS,
+      mergeStrategy: "direct",
+      autoMerge: true,
+      includeTaskIdInCommit: false,
+      commitAuthorEnabled: false,
+      useAiMergeCommitSummary: false,
+      ...input.settings,
+    });
+    const task = await store.createTask({
+      id: "FN-4361-T",
+      title: "FN-4361-T",
+      description: "reliability fixture task",
+      column: "in-review",
+      branch: "fusion/fn-4361-t",
+      branchWriteOrigin: "engine",
+      baseBranch: "main",
+      prompt: "## File Scope\n- packages/engine/src/__tests__/reliability-interactions/**/*.ts\n",
+      steps: [],
+    });
+    return { rootDir: h.rootDir(), store, task, manager: new SelfHealingManager(store, { rootDir: h.rootDir(), getExecutingTaskIds: () => new Set() }) };
+  }
 
   afterEach(async () => {
     vi.restoreAllMocks();
     while (fixtures.length) {
-      await fixtures.pop()!.cleanup();
+      fixtures.pop()!.manager.stop();
     }
+    await h.afterEach();
   });
 
   it("resolves an FN-5217-style stuck marker task during maintenance", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -70,7 +120,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("does not disturb unrelated in-review tasks when autoMerge is false", async () => {
-    const fx = await makeReliabilityFixture({ settings: { autoMerge: false, taskPrefix: "FN" } });
+    const fx = await makeMarkerFixture({ settings: { autoMerge: false, taskPrefix: "FN" } });
     fixtures.push(fx);
 
     await fx.store.updateTask(fx.task.id, {
@@ -89,7 +139,7 @@ const canRun = hasGit && hasPg;
   });
 
   it.each(["missing", "done", "archived", "soft-deleted"] as const)("cleans an inactive %s canonical marker instead of parking a hidden decision", async (state) => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
     let canonicalId = "FN-9999";
@@ -126,7 +176,7 @@ const canRun = hasGit && hasPg;
     ["dashboard user", "dashboard_ui", "needs-replan"],
     ["programmatic source", "api", "needs-replan"],
   ] as const)("handles a repeated inactive marker from a %s according to provenance", async (_label, sourceType, expectedStatus) => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Completed canonical", description: "canonical", column: "done" });
@@ -153,7 +203,7 @@ const canRun = hasGit && hasPg;
     ["implicit user pause", { paused: true, pausedReason: null }],
     ["unrelated pause", { paused: true, pausedReason: "awaiting-approval" }],
   ])("preserves a %s while an inactive marker is encountered", async (_label, pause) => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
     const duplicate = await createPromptTask(fx, { id: "FN-5301", column: "triage", prompt: duplicateStub("FN-9999") });
     await fx.store.updateTask(duplicate.id, pause);
@@ -168,7 +218,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("does not re-pause a same-canonical Keep acknowledgement during maintenance", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -192,7 +242,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("still prompts when a marker names a different active canonical", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
     const originalCanonical = await fx.store.createTask({ title: "Original canonical", description: "original", column: "todo" });
@@ -212,7 +262,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("preserves a user pause while cleaning an acknowledged marker", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -231,7 +281,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("leaves full specs untouched", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
     fixtures.push(fx);
 
     const duplicate = await createPromptTask(fx, { id: "FN-5302", column: "todo", prompt: FULL_SPEC });
@@ -250,7 +300,7 @@ const canRun = hasGit && hasPg;
     forcing `enabled = true` in resolveExplicitDuplicateMarkerTasks left all 16 cases green. With the
     resolution mode set, that same mutation deletes the duplicate and this case fails.
     */
-    const fx = await makeReliabilityFixture({ settings: { resolveExplicitDuplicateMarkerEnabled: false, taskPrefix: "FN", triageDuplicateResolution: "delete" } as never });
+    const fx = await makeMarkerFixture({ settings: { resolveExplicitDuplicateMarkerEnabled: false, taskPrefix: "FN", triageDuplicateResolution: "delete" } as never });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -273,7 +323,7 @@ const canRun = hasGit && hasPg;
   });
 
   it("caps work at 50 tasks per sweep", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
@@ -297,7 +347,7 @@ const canRun = hasGit && hasPg;
   }, 20_000);
 
   it("fails open when one delete throws and continues processing later tasks", async () => {
-    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
+    const fx = await makeMarkerFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "delete" } });
     fixtures.push(fx);
 
     const canonical = await fx.store.createTask({ title: "Canonical", description: "canonical", column: "todo" });
