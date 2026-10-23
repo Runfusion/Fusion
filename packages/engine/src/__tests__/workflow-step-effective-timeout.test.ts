@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "./executor-test-helpers.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TaskExecutor } from "../executor.js";
 import {
   createMockStore,
@@ -20,6 +22,11 @@ fake timers, so the assertion is on the ACTUAL armed `setTimeout`: still pending
 900001 ms, and genuinely timed out / disposed at the stored 1800000 ms.
 */
 
+const { mkdtempSync, rmSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+
+let fixtureRoot: string;
+let fixtureWorktree: string;
+
 const PROJECT_ID = "timeout-project";
 const FOREIGN_PROJECT_ID = "other-timeout-project";
 const TASK_ID = "TASK-TIMEOUT-1";
@@ -37,7 +44,7 @@ function taskFixture(overrides: Record<string, unknown> = {}) {
     title: "Honor the selected workflow step timeout",
     description: "The dispatched step must arm the operator's stored timeout.",
     column: "in-progress" as const,
-    worktree: "/tmp/workflow-timeout-worktree",
+    worktree: fixtureWorktree,
     branch: "fusion/workflow-timeout",
     baseCommitSha: "abc123",
     dependencies: [],
@@ -191,7 +198,7 @@ function harness(storeOptions: HarnessOptions) {
   };
   mockedCreateFnAgent.mockImplementation(async () => ({ session }) as never);
 
-  const executor = new TaskExecutor(store as never, "/tmp/test", {
+  const executor = new TaskExecutor(store as never, fixtureRoot, {
     agentStore: { getAgent: vi.fn().mockResolvedValue(null), createAgent: vi.fn() },
   } as never);
 
@@ -207,7 +214,7 @@ function harness(storeOptions: HarnessOptions) {
   }).executeWorkflowStep(
     storeOptions.task ? taskFixture(storeOptions.task) : taskFixture(),
     storeOptions.step ?? stepFixture("prompt"),
-    "/tmp/workflow-timeout-worktree",
+    fixtureWorktree,
     rawSettings,
     undefined,
     storeOptions.stepOptions,
@@ -235,6 +242,8 @@ async function expectStillRunning(h: ReturnType<typeof harness>, upToMs: number)
 
 describe("workflow-step effective timeout (moved workflowStepTimeoutMs)", () => {
   beforeEach(() => {
+    fixtureRoot = mkdtempSync(join(tmpdir(), "fusion-workflow-timeout-"));
+    fixtureWorktree = join(fixtureRoot, "worktree");
     resetExecutorMocks();
     mockedExecSync.mockImplementation(() => Buffer.from(""));
     vi.useFakeTimers();
@@ -242,6 +251,7 @@ describe("workflow-step effective timeout (moved workflowStepTimeoutMs)", () => 
 
   afterEach(() => {
     vi.useRealTimers();
+    rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
   it("keeps the 900001st millisecond harmless and disposes at the stored 1800000ms", async () => {
