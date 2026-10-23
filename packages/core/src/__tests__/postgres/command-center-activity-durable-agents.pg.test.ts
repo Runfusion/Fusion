@@ -91,17 +91,44 @@ pgDescribe("durable agent Activity analytics", () => {
       id: "durable-e2e", name: "Durable E2E", role: "executor", state: "active",
       soul: "Coordinate the project.", createdAt: IN_RANGE, updatedAt: IN_RANGE,
     } as Agent;
+    /*
+    FNXC:HeartbeatTestFixture 2026-10-23-08:30:
+    FN-9566 makes creation-time ownership observable before HeartbeatMonitor's
+    first detail read. Persist this active fixture row immediately so the
+    monitor path cannot mistake an absent row for a completed heartbeat.
+    */
     const runs = new Map<string, AgentHeartbeatRun>();
+    const startHeartbeatRun = vi.fn(async (_agentId: string, initialMetadata = {}) => {
+      const run = {
+        id: "durable-e2e-run",
+        agentId: agent.id,
+        startedAt: IN_RANGE,
+        endedAt: null,
+        status: "active" as const,
+        ...initialMetadata,
+      } as AgentHeartbeatRun;
+      runs.set(run.id, run);
+      return run;
+    });
+    const saveRun = vi.fn(async (run: AgentHeartbeatRun) => { runs.set(run.id, run); });
+    const endHeartbeatRun = vi.fn(async (runId: string, status: "completed" | "terminated") => {
+      const existing = runs.get(runId);
+      if (existing) runs.set(runId, { ...existing, endedAt: IN_RANGE, status });
+    });
+    let firstDetailRead: AgentHeartbeatRun | undefined;
+    const getRunDetail = vi.fn(async (_agentId: string, runId: string) => {
+      const run = runs.get(runId);
+      firstDetailRead ??= run ? { ...run } : undefined;
+      return run ?? null;
+    });
     const agentStore = {
       getAgent: vi.fn(async () => agent),
       getCachedAgent: vi.fn(() => null),
       getBudgetStatus: vi.fn(async () => ({ allowed: true, budget: { period: "daily", limit: 0, used: 0, remaining: 0 } })),
-      startHeartbeatRun: vi.fn(async () => ({ id: "durable-e2e-run", agentId: agent.id, startedAt: IN_RANGE, endedAt: null, status: "active" })),
-      endHeartbeatRun: vi.fn(async (_agentId: string, runId: string, patch: Partial<AgentHeartbeatRun>) => {
-        runs.set(runId, { id: runId, agentId: agent.id, startedAt: IN_RANGE, endedAt: IN_RANGE, status: "completed", ...patch } as AgentHeartbeatRun);
-      }),
-      saveRun: vi.fn(async (run: AgentHeartbeatRun) => { runs.set(run.id, run); }),
-      getRunDetail: vi.fn(async (_agentId: string, runId: string) => runs.get(runId) ?? { id: runId, agentId: agent.id, startedAt: IN_RANGE, endedAt: IN_RANGE, status: "completed" }),
+      startHeartbeatRun,
+      endHeartbeatRun,
+      saveRun,
+      getRunDetail,
       updateAgentState: vi.fn(async () => undefined),
       updateAgent: vi.fn(async () => undefined),
       recordHeartbeat: vi.fn(async () => undefined),
@@ -124,6 +151,24 @@ pgDescribe("durable agent Activity analytics", () => {
     })
       .executeHeartbeat({ agentId: agent.id, source: "on_demand" });
     expect(result.status).toBe("completed");
+    expect(startHeartbeatRun).toHaveBeenCalledWith(agent.id, expect.objectContaining({
+      processPid: process.pid,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      contextSnapshot: undefined,
+    }));
+    expect(getRunDetail).toHaveBeenCalledWith(agent.id, "durable-e2e-run");
+    expect(getRunDetail.mock.invocationCallOrder[0]).toBeLessThan(saveRun.mock.invocationCallOrder[0]);
+    expect(firstDetailRead).toMatchObject({
+      id: "durable-e2e-run",
+      agentId: agent.id,
+      endedAt: null,
+      status: "active",
+      processPid: process.pid,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      contextSnapshot: undefined,
+    });
 
     const activity = await aggregateActivityAnalytics(layer, { from: "2000-01-01T00:00:00.000Z", to: "2100-01-01T00:00:00.000Z" });
     expect(activity.sessions).toBeGreaterThan(0);
