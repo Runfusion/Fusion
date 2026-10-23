@@ -165,6 +165,11 @@ FNXC:AgentSkillDetailOrdering 2026-10-05-08:54:
 FN-9506 records the shard-three Agent Detail badge observation after a controlled pending-discovery
 repair. Keep the first-sighting record active so a second appearance follows the file-level
 quarantine rule rather than silently treating a deterministic test repair as a policy exemption.
+
+FNXC:SystemControlsScrollFlake 2026-10-23-09:39:
+FN-9573 records a dashboard shard-only manual-scroll observation after both the exact historical
+backfill lane and focused file passed at the reported SHA. Pin it as active so a second sighting
+requires the deletion-ratchet quarantine instead of silently discarding the scroll invariant.
 */
 test("observed-flake register active count, escalation state, and owners stay synchronized", () => {
   const register = readFileSync(registerPath, "utf8");
@@ -198,6 +203,10 @@ test("observed-flake register active count, escalation state, and owners stay sy
     {
       heading: "22. Pipeline smoke Coding S17 post-merge restart",
       status: "Active first sighting — recorded 2026-10-15 by FN-9551; no quarantine.",
+    },
+    {
+      heading: "23. System Controls rebuild-tail manual-scroll preservation",
+      status: "Active first sighting — recorded 2026-10-23 by FN-9573; no quarantine.",
     },
   ]);
 });

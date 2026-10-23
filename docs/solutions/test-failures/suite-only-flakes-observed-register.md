@@ -19,7 +19,7 @@ tags:
 
 # Observed suite-only flakes register
 
-This register has **6 active observation records** (entries 2, 13, 20, 21, 22, and the CLI dispatcher timeout below), all **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
+This register has **6 active observation records** (entries 2, 13, 20, 21, 22, and 23), plus the separately maintained active CLI dispatcher timeout below; all are **active first sightings**. Entries 1, 15, and 18 closed after structural fixes with recorded verification, and stay in place below for campaign and first-sighting evidence. Entries 7 and 14 below are closed and retained for cross-reference only. It also has **1 merge-gate eviction record** (entry 6) and **12 archived closed records**. Only the active section drives quarantine and escalation decisions; the other sections preserve historical evidence.
 
 <!--
 FNXC:TestFlakeRegister 2026-08-19-11:14:
@@ -322,6 +322,18 @@ FN-9506 reproduced the pending-to-resolved transition with a deferred discovery 
 The retained `pipeline-smoke-report` artifact recorded a watchdog timeout at 175018 ms against the unchanged 175000 ms budget. It retained 40 completed records, last completed `S17/builtin:coding/merge-in-flight`, and exactly one missing key: `S17/builtin:coding/post-merge`. The report contained no malformed line and no Vitest result JSON, proving the producer was still executing rather than accepting a partial census.
 
 FN-9551 ran the unchanged focused engine-pipeline-smoke Coding S17 file successfully in 48.1 s and `pnpm smoke:pipeline` successfully in 152924 ms with all 41 unique passing records; Coding S17 post-merge completed once in 5769 ms. The incident did not reproduce locally. FN-9550 changes only PostgreSQL cleanup/status support and does not cross this runner or S17 execution path. The smoke report now retains a redacted start event so a future watchdog failure names the in-flight scenario, `scenario-execution` stage, and elapsed time while the 41-record census still fails closed. The file retains five real Git/PostgreSQL restart stages and valuable production coverage, so this first isolated observation is registered rather than quarantined. A second sighting requires same-change file-level quarantine under the deletion ratchet.
+
+### 23. System Controls rebuild-tail manual-scroll preservation
+
+- **Status:** Active first sighting — recorded 2026-10-23 by FN-9573; no quarantine.
+- **File:** `packages/dashboard/app/components/command-center/__tests__/SystemControlsArea.test.tsx`
+- **Exact test:** `SystemControlsArea layout integration > keeps manually scrolled rebuild output in place while SSE lines grow`
+- **Observed tree/SHA:** Full Suite run [39925899487](https://github.com/Runfusion/Fusion/actions/runs/39925899487), shard-1 job `120322070883`, `3bba3080bc9ca08bb1986a97c8aa38cac25bb7a4`.
+- **Observed frequency:** One hosted dashboard backfill-1 sighting; the focused file and exact historical backfill workload passed in a clean detached worktree at the reported SHA.
+
+The hosted job exposes only a generic process-failure annotation; GitHub restricts the downloadable log, so its expected/received scroll values are unavailable. FN-9573 reran the subject file first and then `pnpm --filter @fusion/dashboard run test:quality:app:backfill-1` at the reported SHA; both passed. The focused check proves the reachable ordering: an SSE line, synchronous manual unpin at scroll position 100, geometry growth, a second SSE line that retains 100, then a near-bottom re-pin and a third line that follows the new 700-pixel bottom. The equivalent server-log path passes too.
+
+Production tracing found separate synchronous rebuild and server-log follow refs, with their respective line-effects as the only auto-follow writers. Job hydration, adoption, reconnect reconciliation, duplicate suppression, cap handling, and terminal handling do not reset an ordinary manually unpinned line tail. No product or fixture defect was reproduced, no timeout/retry/skip/assertion weakening was made, and FN-9570's engine MCP ledger-only files do not overlap this dashboard surface. This high-value multi-case file remains active rather than quarantined. A second sighting requires a same-change file-level quarantine in `scripts/lib/test-quarantine.json` and `quarantinedDashboardTests` under the deletion ratchet.
 
 ### Common shape and investigated result
 
