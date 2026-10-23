@@ -117,7 +117,12 @@ export const DASHBOARD_RUNTIME_PLUGIN_PACKAGES = [
 
 export async function buildDashboardRuntimePlugins(): Promise<void> {
   await buildPackage("packages/plugin-sdk");
-  await Promise.all(DASHBOARD_RUNTIME_PLUGIN_PACKAGES.map((relativePath) => buildPackage(relativePath)));
+  // Each plugin starts a separate TypeScript compiler. Keep only one compiler
+  // resident so small build hosts do not multiply the shared type graph's memory.
+  // Awaiting each exit also prevents later plugins from starting after a failure.
+  for (const relativePath of DASHBOARD_RUNTIME_PLUGIN_PACKAGES) {
+    await buildPackage(relativePath);
+  }
 }
 
 export async function buildDashboard(): Promise<void> {
