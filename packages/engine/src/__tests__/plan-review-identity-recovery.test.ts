@@ -43,3 +43,61 @@ describe("Plan Review identity failure recovery", () => {
     expect(h.task.workflowStepResults[0].verdict).toBe("APPROVE");
   });
 });
+
+/** FNXC:CurrentPlanReviewIdentity 2026-10-23-05:34: A snapshot refusal may be a benign concurrent edit, but a retry must preserve newer owners and the durable retry budget. */
+describe("Plan Review identity recovery snapshot races", () => {
+  beforeEach(resetExecutorMocks);
+  async function fail(h: ReturnType<typeof recoveryHarness>, value = "gate-stale-review-input") {
+    await (h.executor as any).handleGraphFailure(h.task, { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan-review"], context: { "node:plan-review:value": value, "node:plan-review:outcome": "failure" } });
+  }
+  it.each(["gate-unproven-plan-review-input", "gate-stale-review-input"])("retries %s once with fresh fencing values", async (value) => {
+    const h = recoveryHarness();
+    const seed = h.store.seedStrandedPlanReviewContinuation.getMockImplementation()!;
+    h.store.seedStrandedPlanReviewContinuation.mockImplementationOnce(async () => {
+      h.task.updatedAt = "2026-10-23T05:34:00.000Z";
+      return { seeded: false, reason: "task-state-changed" };
+    }).mockImplementation(seed);
+    await fail(h, value);
+    expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledTimes(2);
+    expect(h.store.seedStrandedPlanReviewContinuation.mock.calls[1][1]).toEqual({ identityRecovery: expect.objectContaining({ expectedTaskUpdatedAt: h.task.updatedAt, expectedRetryCount: 0 }) });
+    expect(h.task.graphResumeRetryCount).toBe(1);
+    expect(h.task.workflowStepResults[0].verdict).toBe("APPROVE");
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+  });
+  it("stops after a second snapshot refusal", async () => {
+    const h = recoveryHarness();
+    h.store.seedStrandedPlanReviewContinuation.mockResolvedValue({ seeded: false, reason: "task-state-changed" });
+    await fail(h);
+    expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledTimes(2);
+    expect(h.task.graphResumeRetryCount).toBe(0);
+  });
+  it.each(["paused", "userPaused", "deleted", "exhausted", "active", "approval", "replan", "column", "history", "enginePaused"])("respects a concurrent %s change", async (change) => {
+    const h = recoveryHarness();
+    h.store.seedStrandedPlanReviewContinuation.mockImplementationOnce(async () => {
+      if (change === "paused") h.task.paused = true;
+      if (change === "userPaused") Object.assign(h.task, { userPaused: true });
+      if (change === "deleted") Object.assign(h.task, { deletedAt: "2026-10-23T05:34:00Z" });
+      if (change === "exhausted") h.task.graphResumeRetryCount = 2;
+      if (change === "active") h.store.listWorkflowWorkItemsForTask.mockResolvedValue([{ id: "newer", kind: "task", state: "running" }]);
+      if (change === "approval") Object.assign(h.task, { status: "awaiting-approval" });
+      if (change === "replan") Object.assign(h.task, { status: "needs-replan" });
+      if (change === "column") h.store.getTask.mockResolvedValue({ ...h.task, column: "in-progress" });
+      if (change === "history") h.store.getTask.mockResolvedValue({ ...h.task, workflowStepResults: [] });
+      if (change === "enginePaused") h.store.getSettings.mockResolvedValue({ enginePaused: true });
+      return { seeded: false, reason: "task-state-changed" };
+    });
+    await fail(h);
+    expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+  });
+  it.each(["missing", "unreadable"])("does not retry when the fresh task is %s", async (state) => {
+    const h = recoveryHarness();
+    h.store.seedStrandedPlanReviewContinuation.mockImplementationOnce(async () => {
+      if (state === "missing") h.store.getTask.mockResolvedValue(null);
+      else h.store.getTask.mockRejectedValue(new Error("read unavailable"));
+      return { seeded: false, reason: "task-state-changed" };
+    });
+    await fail(h);
+    expect(h.store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
+  });
+});

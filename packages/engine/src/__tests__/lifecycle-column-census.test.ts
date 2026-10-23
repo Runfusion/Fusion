@@ -12,7 +12,10 @@ lifecycle-column census must catch, and every form it must NOT count — because
 
 Each case below is one of those, plus the comment-prose case that inflated two files' counts.
 */
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   DELIBERATE_MARKER,
@@ -29,19 +32,30 @@ import {
 import { execFileSync as memoExecFileSync, spawnSync } from "node:child_process";
 
 /*
-FNXC:LifecycleColumnCensus 2026-07-31-17:12 (test wall-time — memoize identical full-repo census spawns):
-The census CLI parses every tracked source file to a TypeScript AST on each invocation (~2s for ~1960
-files). This suite spawned that identical read-only scan repeatedly — the `--json` census four times
-and the plain report twice — all against the same repo state within one run, so their output is
-deterministic and shareable. Memoizing a spawn's OUTPUT keyed by its exact argv collapses those
-duplicate full-AST scans to one apiece WITHOUT changing any assertion: every test still reads the same
-census result it read before, just from cache. This is the shared-harness discipline AGENTS.md's
-"Do Not Add Slow Tests" rule asks for, applied to existing spawns, not test-timeout appeasement.
-Only deterministic real-repo, default-env, no-baseline-override READS use this cache; baseline-mutating
-(`--update-baseline`/`--strict` fixtures) and env-varying (`--claims` with a stubbed `gh`) spawns keep
-their own process, since their output depends on inputs the argv cache cannot key on. These read-only
-commands always exit 0 (they report, never gate), so a cache miss cannot swallow a nonzero exit.
+FNXC:LifecycleColumnCensus 2026-10-16-00:06:
+Baseline and claims cases test CLI behavior, not repository discovery. Scan a fixed guard fixture
+through the existing root/list seam instead of repeatedly parsing the live repository. Keep the
+separate real-repository strict check below; fixture counts cannot disappear as production changes.
 */
+const censusTempDirs: string[] = [];
+function censusTempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  censusTempDirs.push(dir);
+  return dir;
+}
+afterAll(() => {
+  for (const dir of censusTempDirs) rmSync(dir, { recursive: true, force: true });
+});
+let fixtureEnv: Record<string, string> | undefined;
+function censusFixtureEnv(): Record<string, string> {
+  if (fixtureEnv) return fixtureEnv;
+  const root = censusTempDir("fusion-census-behavior-");
+  const file = "pkg/src/guarded.ts";
+  mkdirSync(join(root, "pkg/src"), { recursive: true });
+  writeFileSync(join(root, file), 'export const ready = (task: { column: string }) => task.column === "todo";\n');
+  fixtureEnv = { FUSION_CENSUS_FILE_ROOT: root, FUSION_CENSUS_FILE_LIST: file };
+  return fixtureEnv;
+}
 const MEMO_CENSUS_CLI_PATH = new URL("../../../../scripts/lifecycle-column-census.mjs", import.meta.url).pathname;
 const MEMO_CENSUS_REPO_ROOT = new URL("../../../..", import.meta.url).pathname;
 const readOnlyCensusCache = new Map<string, string>();
@@ -52,6 +66,7 @@ function readOnlyCensus(args: string[]): string {
   const out = memoExecFileSync("node", [MEMO_CENSUS_CLI_PATH, ...args], {
     encoding: "utf8",
     cwd: MEMO_CENSUS_REPO_ROOT,
+    env: { ...process.env, ...censusFixtureEnv() },
     maxBuffer: 32 * 1024 * 1024,
   }) as string;
   readOnlyCensusCache.set(key, out);
@@ -495,88 +510,39 @@ describe("the baseline can always be re-recorded", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require("node:fs");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require("node:os");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const path = require("node:path");
 
     const repoRoot = new URL("../../../..", import.meta.url).pathname;
 
     function runCli(args: string[], baseline: unknown): { status: number; stdout: string } {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-census-"));
+      const dir = censusTempDir("fusion-census-");
       const baselinePath = path.join(dir, "baseline.json");
       fs.writeFileSync(baselinePath, JSON.stringify(baseline));
       try {
         const stdout = execFileSync("node", [cliPath, ...args], {
           encoding: "utf8",
-          /* The CLI globs with `git ls-files` relative to CWD, and vitest runs from the
-             package dir where that finds nothing — the run then exits on "file list is
-             EMPTY". Without this the rise test would pass for the wrong reason. */
           cwd: repoRoot,
-          env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath },
+          env: { ...process.env, ...censusFixtureEnv(), FUSION_CENSUS_BASELINE_PATH: baselinePath },
         }) as string;
         return { status: 0, stdout, ...{ baselinePath } } as never;
       } catch (err) {
         const e = err as { status?: number; stdout?: string };
         return { status: e.status ?? -1, stdout: e.stdout ?? "", ...{ baselinePath } } as never;
-      } finally {
-        // Read-back happens in the caller via the returned path; cleanup is per-test.
       }
     }
 
-    /*
-    FNXC:LifecycleColumnCensus 2026-07-31-23:59 (the fixture rotted, and it took main red with it):
-    These two cases pinned the FILE `self-healing.ts` and the NUMBER 1 — "stale baseline says 1, tree
-    has more". Conversions took that file to exactly 1, so `toBeGreaterThan(1)` failed and `main` went
-    red on a test whose subject (does `--update-baseline` write on a rise?) had not changed at all.
-
-    Measured on a clean detached `origin/main`: 1 failed | 39 passed, with nothing from this branch
-    applied. The backlog shrinking is the POINT of this program, so any fixture keyed to a specific
-    file's count is guaranteed to expire — the only question is which cycle.
-
-    So the target and the number are now DERIVED: ask the census which file currently holds guards,
-    then construct a baseline one below that file's real count. The rise is manufactured rather than
-    assumed, and the assertion is exact (`toBe(real)`) instead of an open inequality that was only ever
-    a proxy for it. Same discipline as the self-syncing fixture below — a test about control flow must
-    not depend on how much work the fleet has finished.
-    */
-    /*
-    FNXC:LifecycleColumnCensus 2026-07-31-20:40 (what `null` costs, recorded so a green run is not misread):
-    Returns null when the census reports NO file with guards — the state the tree is in now that the
-    backlog reached 0. The two cases below then assert `totals.column === 0` and return early, which is
-    the honest thing to do: with nothing to inflate there is no rise to manufacture.
-
-    But it means those two cases **stop exercising what their names say** at zero backlog. "exits 0 and
-    REWRITES the baseline even when the count rose" and "exits 1 and LEAVES the baseline alone on a
-    rise" are about the CLI's ordering and exit codes; at zero they assert the backlog is empty. If the
-    write-before-exit ordering regressed — the exact bug those cases were written for — both would
-    still pass.
-
-    Worth stating because zero is not a state to wait out. It is the terminal state of this program, so
-    the vacuity is permanent, and this file already legislates against exactly that ("Anti-vacuity: an
-    empty exclusion list would make the assertion below trivially true").
-
-    The durable fix is to stop deriving the fixture from production state — point the scan at a
-    synthetic tree via a file-list override, the way `FUSION_CENSUS_BASELINE_PATH` already lets the
-    baseline be faked. Recorded rather than done here: it needs a content-root correction in the CLI
-    too (`triageFindings` and the sync-resolver check read via `join(REPO_ROOT, …)`, the SCRIPT's
-    location, so an overridden list changes which paths are listed and not where they are read).
-    */
-    function fileWithGuards(): { file: string; count: number } | null {
+    function fileWithGuards(): { file: string; count: number } {
       const out = readOnlyCensus(["--json"]);
       const parsed = JSON.parse(out) as { byFile: [string, number][] };
       const entry = parsed.byFile.find(([, count]) => count > 0);
-      return entry ? { file: entry[0], count: entry[1] } : null;
+      expect(entry).toBeDefined();
+      return { file: entry![0], count: entry![1] };
     }
 
     it("exits 0 and REWRITES the baseline under --update-baseline, even when the count rose", () => {
       /* The case the ordering bug broke: a rise used to exit before the write, so the
          one command whose whole job is re-recording could not re-record. */
       const target = fileWithGuards();
-      if (!target) {
-        const current = JSON.parse(readOnlyCensus(["--json"]));
-        expect(current.totals.column).toBe(0);
-        return;
-      }
       const { file, count } = target;
       const stale = { totals: { column: count - 1, role: 0, status: 0, deliberate: 0 }, byFile: { [file]: count - 1 }, byColumnId: {}, queryByFile: {} };
       const r = runCli(["--strict", "--update-baseline"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
@@ -595,11 +561,6 @@ describe("the baseline can always be re-recorded", () => {
 
     it("exits 1 and LEAVES the baseline alone on a rise without --update-baseline", () => {
       const target = fileWithGuards();
-      if (!target) {
-        const current = JSON.parse(readOnlyCensus(["--json"]));
-        expect(current.totals.column).toBe(0);
-        return;
-      }
       const { file, count } = target;
       const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { [file]: count - 1 }, byColumnId: {}, queryByFile: {} };
       const r = runCli(["--strict"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
@@ -620,7 +581,7 @@ describe("the baseline can always be re-recorded", () => {
     this flag exists to prevent (three overlapping conversions on self-healing.ts, two on executor.ts).
     */
     function runWithStubbedGh(stub: string, extraArgs: string[] = []): string {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-census-gh-"));
+      const dir = censusTempDir("fusion-census-gh-");
       const ghPath = path.join(dir, "gh");
       fs.writeFileSync(ghPath, stub);
       fs.chmodSync(ghPath, 0o755);
@@ -628,7 +589,7 @@ describe("the baseline can always be re-recorded", () => {
         return execFileSync("node", [cliPath, "--claims", ...extraArgs], {
           encoding: "utf8",
           cwd: repoRoot,
-          env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+          env: { ...process.env, ...censusFixtureEnv(), PATH: `${dir}${path.delimiter}${process.env.PATH}` },
         }) as string;
       } catch (err) {
         return (err as { stdout?: string }).stdout ?? "";
