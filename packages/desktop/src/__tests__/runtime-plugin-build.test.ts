@@ -36,7 +36,7 @@ beforeEach(() => {
 
 async function exit(index: number, code = 0): Promise<void> {
   children[index].emit("exit", code);
-  // Flush the runWorkspaceBin -> buildPackage -> caller promise boundaries.
+  // FNXC:DesktopBuildMemory 2026-10-23-12:00: Flush the runWorkspaceBin -> buildPackage -> caller promise boundaries.
   await Promise.resolve();
   await Promise.resolve();
 }
