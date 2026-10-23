@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { InteractiveAiSession, InteractiveAiSessionEvent, PlanningQuestion } from "@fusion/core";
-import { CeOrchestrator, CeTurnInProgressError } from "../session/orchestrator.js";
+import { CE_EVENTS, CeOrchestrator, CeTurnInProgressError } from "../session/orchestrator.js";
 import { makeHarness, pgDescribe, type TestHarness } from "./_harness.js";
 
 /*
@@ -119,6 +119,18 @@ pgDescribe("turn admission (single in-flight turn per session)", () => {
 
     const started = await orch.start("brainstorm", { openingMessage: "kick off" });
     const id = started.session.id;
+    const emitEvent = h.ctx.emitEvent;
+    let terminalResume: Promise<unknown> | undefined;
+    h.ctx.emitEvent = (event, data) => {
+      emitEvent(event, data);
+      /*
+       * FNXC:CompoundEngineeringConcurrency 2026-10-23-10:49:
+       * A completion push is externally observable before the detached finalizer
+       * runs. Resume from that observer to deterministically cover the stale-token
+       * interval without changing timing, retries, or worker configuration.
+       */
+      if (event === CE_EVENTS.completed) terminalResume = orch.resume(id);
+    };
 
     // Detached answer returns immediately with the turn running in background…
     const accepted = await orch.answer(id, "q1", "north", { detach: true });
@@ -132,8 +144,11 @@ pgDescribe("turn admission (single in-flight turn per session)", () => {
     await vi.waitFor(async () => {
       const state = await orch.getState(id);
       expect(state?.status).toBe("completed");
+      expect(terminalResume).toBeDefined();
     });
-    // Background settle released the slot.
+    // The completion observer must not see a stale reservation as HTTP-409-equivalent.
+    await expect(terminalResume).resolves.toMatchObject({ session: { status: "completed" } });
+    // Background settlement also leaves a subsequent resume admitted.
     const resumed = await orch.resume(id);
     expect(resumed.session.status).toBe("completed");
     expect(gated.answerCalls()).toBe(1);

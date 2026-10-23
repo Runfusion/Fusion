@@ -73,6 +73,10 @@ const MAX_PERSISTED_ACTIVITY_TURN_CHARS = 4000;
 const INTERACTIVE_AI_UNAVAILABLE_MESSAGE =
   "Session cannot be continued in this process: interactive AI sessions are unavailable (no factory on this context). Resume from a route context with the engine loaded.";
 
+function isTerminalSessionStatus(status: CeSessionStatus): boolean {
+  return status === "completed" || status === "error" || status === "interrupted";
+}
+
 /** Excludes liveness-only timestamps so a drained heartbeat cannot supersede a terminal fallback. */
 function durableSessionMutationFingerprint(session: CeSession): string {
   return JSON.stringify({
@@ -315,6 +319,11 @@ export class CeOrchestrator {
    * and add — so two overlapping entries cannot both pass the guard.
    */
   private readonly turnReservations = new Map<string, symbol>();
+  /**
+   * FNXC:CompoundEngineeringConcurrency 2026-10-23-10:49:
+   * Detached turns whose durable state may be observable before their final reservation cleanup runs.
+   */
+  private readonly detachedTurnSettlements = new Map<string, Promise<void>>();
 
   constructor(deps: OrchestratorDeps) {
     this.ctx = deps.ctx;
@@ -587,14 +596,16 @@ export class CeOrchestrator {
         releaseTurn();
         throw err;
       }
-      const turn = Promise.resolve()
-        .then(() => this.runOpeningTurn(
+      const turn = this.trackDetachedTurn(
+        session.id,
+        Promise.resolve().then(() => this.runOpeningTurn(
           session.id,
           stage,
           opts.openingMessage,
           (active) => { accepted = active; },
-        ))
-        .finally(releaseTurn);
+        )),
+        releaseTurn,
+      );
       this.detachTurn(() => accepted, "opening turn", turn);
       return { session: accepted };
     }
@@ -703,9 +714,11 @@ export class CeOrchestrator {
         // resume(detach): mark the row active immediately while the background
         // turn re-creates the handle and converges through persisted state.
         const accepted = await this.store.updateAsync(sessionId, { status: "active", currentQuestion: null, error: null }) ?? session;
-        const turn = Promise.resolve()
-          .then(() => this.runAnswerTurn(accepted, questionId, response))
-          .finally(releaseTurn);
+        const turn = this.trackDetachedTurn(
+          sessionId,
+          Promise.resolve().then(() => this.runAnswerTurn(accepted, questionId, response)),
+          releaseTurn,
+        );
         releaseHandedOff = true;
         this.detachTurn(() => accepted, "answer turn", turn);
         return { session: accepted };
@@ -766,7 +779,17 @@ export class CeOrchestrator {
     // Turn admission FIRST, synchronously — a resume racing an in-flight
     // opening/answer turn (mobile re-entry, double-tapped Resume) must not
     // rehydrate a second live handle over the one the running turn is using.
-    const releaseTurn = this.reserveTurn(sessionId);
+    let releaseTurn: (() => void) | undefined;
+    try {
+      releaseTurn = this.reserveTurn(sessionId);
+    } catch (error) {
+      if (!(error instanceof CeTurnInProgressError)) throw error;
+      const settlement = this.detachedTurnSettlements.get(sessionId);
+      const session = await this.requireSession(sessionId);
+      if (!settlement || !isTerminalSessionStatus(session.status)) throw error;
+      await settlement;
+      releaseTurn = this.reserveTurn(sessionId);
+    }
     let releaseHandedOff = false;
     try {
       const session = await this.requireSession(sessionId);
@@ -804,7 +827,7 @@ export class CeOrchestrator {
         return { session: next };
       }
 
-      const rehydration = (async (): Promise<CeStepResult> => {
+      const rehydration = async (): Promise<CeStepResult> => {
         try {
           await this.rehydrate(session);
         } catch (err) {
@@ -814,20 +837,21 @@ export class CeOrchestrator {
         }
         const next = await this.store.updateAsync(sessionId, { status: "awaiting_input", error: null }) ?? session;
         return { session: next };
-      })().finally(releaseTurn);
-      releaseHandedOff = true;
+      };
 
       if (opts.detach) {
         // Rehydration replays the conversation against the live model and can be
         // slow; the route posture marks the session active and converges via
         // push/poll.
         const next = await this.store.updateAsync(sessionId, { status: "active", error: null }) ?? session;
-        this.detachTurn(() => next, "rehydration", rehydration);
+        const turn = this.trackDetachedTurn(sessionId, rehydration(), releaseTurn);
+        releaseHandedOff = true;
+        this.detachTurn(() => next, "rehydration", turn);
         return { session: next };
       }
-      return await rehydration;
+      return await rehydration();
     } finally {
-      if (!releaseHandedOff) releaseTurn();
+      if (!releaseHandedOff) releaseTurn?.();
     }
   }
 
@@ -1258,6 +1282,25 @@ export class CeOrchestrator {
     const s = await this.store.getAsync(sessionId);
     if (!s) throw new Error(`CE session not found: ${sessionId}`);
     return s;
+  }
+
+  /**
+   * FNXC:CompoundEngineeringConcurrency 2026-10-23-10:49:
+   * Detached turns persist terminal rows before their Promise.finally reservation
+   * cleanup. Retain the owned settlement promise so a resume that sees that row
+   * waits for cleanup instead of surfacing a false busy conflict; identity checks
+   * keep an older turn from deleting a newer turn's tracked settlement.
+   */
+  private trackDetachedTurn<T>(sessionId: string, operation: Promise<T>, releaseTurn: () => void): Promise<T> {
+    const completed = operation.finally(releaseTurn);
+    const settlement = completed.then(() => undefined, () => undefined);
+    this.detachedTurnSettlements.set(sessionId, settlement);
+    void settlement.then(() => {
+      if (this.detachedTurnSettlements.get(sessionId) === settlement) {
+        this.detachedTurnSettlements.delete(sessionId);
+      }
+    });
+    return completed;
   }
 
   /**
