@@ -116,6 +116,7 @@ import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels, resolveExecutorFallbackThinkingLevel } from "./agents/agent-session-helpers.js";
+import { createHeartbeatPromptAttemptRunner, installHeartbeatTerminationHooks } from "./agents/heartbeat-termination-hooks.js";
 import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildSessionSkillContextSync } from "./cli-runtime/session-skill-context.js";
@@ -799,6 +800,7 @@ export class HeartbeatMonitor {
   */
   private pendingHeartbeatRuns: Map<string, PendingHeartbeatRun> = new Map();
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
+  private agentTerminalLocks = new Map<string, Promise<unknown>>();
   private pollInterval: NodeJS.Timeout | null = null;
   private mailboxWakeInterval: NodeJS.Timeout | null = null;
   private mailboxWakeReconciling = false;
@@ -1700,6 +1702,29 @@ export class HeartbeatMonitor {
     }
   ): Promise<void> {
     const tracked = this.trackedAgents.get(agentId);
+    if (tracked?.runId === runId) tracked.eventFenceClosed = true;
+    return this.withAgentTerminalLock(agentId, () => this.completeRunWhileTerminalLocked(agentId, runId, result));
+  }
+
+  /** FNXC:HeartbeatTermination 2026-10-20-07:55: Serialize the durable terminal read/write and agent-state effects independently of the long-running session lock. */
+  private async withAgentTerminalLock<T>(agentId: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.agentTerminalLocks.get(agentId) ?? Promise.resolve();
+    const operation = previous.catch(() => undefined).then(action);
+    this.agentTerminalLocks.set(agentId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.agentTerminalLocks.get(agentId) === operation) this.agentTerminalLocks.delete(agentId);
+    }
+  }
+
+  /** FNXC:HeartbeatTermination 2026-10-20-07:55: The first terminal transition owns persistence and state effects; queued contenders re-read and preserve its terminal row. */
+  private async completeRunWhileTerminalLocked(
+    agentId: string,
+    runId: string,
+    result: Parameters<HeartbeatMonitor["completeRun"]>[2],
+  ): Promise<void> {
+    const tracked = this.trackedAgents.get(agentId);
     const ownsTrackedRun = tracked?.runId === runId;
     // Close the callback boundary before any persistence await. A provider may
     // settle concurrently with this terminal transition.
@@ -2001,6 +2026,11 @@ export class HeartbeatMonitor {
       return;
     }
 
+    return this.withAgentTerminalLock(agentId, () => this.stopPersistedRunWhileTerminalLocked(agentId, preservePausedState));
+  }
+
+  /** FNXC:HeartbeatTermination 2026-10-20-07:55: A persisted stop uses the completion fence too, and a stale active handle cannot rewrite an established terminal verdict. */
+  private async stopPersistedRunWhileTerminalLocked(agentId: string, preservePausedState: boolean): Promise<void> {
     const activeRun = await this.store.getActiveHeartbeatRun(agentId);
     if (!activeRun) {
       this.clearRunState(agentId);
@@ -2010,6 +2040,7 @@ export class HeartbeatMonitor {
     heartbeatLog.log(`Stopping persisted run ${activeRun.id} for ${agentId} (no tracked session)`);
 
     const existingRun = await this.store.getRunDetail(agentId, activeRun.id);
+    if (existingRun && (existingRun.status === "completed" || existingRun.status === "failed" || existingRun.status === "terminated")) return;
     if (existingRun) {
       await this.store.saveRun({
         ...existingRun,
@@ -2953,6 +2984,11 @@ export class HeartbeatMonitor {
         let heartbeatSummary: string | undefined;
         let heartbeatCompletionLatched = false;
         let heartbeatProgressBudgetExhausted = false;
+        const heartbeatRetryAbortController = new AbortController();
+        const shouldStopHeartbeat = (): boolean => heartbeatCompletionLatched
+          || heartbeatProgressBudgetExhausted
+          || heartbeatRetryAbortController.signal.aborted
+          || isRunCancellationRequested();
         let heartbeatSession: { abort?: () => void | Promise<void> } | undefined;
         let stdoutExcerpt = "";
 
@@ -2977,6 +3013,7 @@ export class HeartbeatMonitor {
             && !heartbeatProgressBudgetExhausted;
         };
         const stopHeartbeatSession = (): void => {
+          heartbeatRetryAbortController.abort();
           // AgentSession.abort is the supported Pi cancellation entry point. It is
           // intentionally best effort: completeRun still fences any late settlement.
           void Promise.resolve(heartbeatSession?.abort?.()).catch((error: unknown) => {
@@ -3513,7 +3550,6 @@ export class HeartbeatMonitor {
         }
 
         // Create agent session
-        const heartbeatRetryAbortController = new AbortController();
         let { session } = await createResolvedAgentSession({
           sessionPurpose: "heartbeat",
           runtimeHint: extractRuntimeHint(agent.runtimeConfig),
@@ -3561,8 +3597,10 @@ export class HeartbeatMonitor {
           ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
           actionGateContext: this.buildActionGateContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
           permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
+          onSessionCreated: (created) => installHeartbeatTerminationHooks(created, shouldStopHeartbeat),
         });
         heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
+        installHeartbeatTerminationHooks(session, shouldStopHeartbeat);
         // A pause can land during asynchronous session construction. Dispose
         // without tracking and never dispatch its first provider turn.
         if (isRunCancellationRequested()) {
@@ -4075,7 +4113,8 @@ export class HeartbeatMonitor {
           if (isRunCancellationRequested()) {
             return (await this.store.getRunDetail(agentId, run.id))!;
           }
-          await withRateLimitRetry(async () => promptWithFallback(session, executionPrompt), {
+          const runPromptAttempt = createHeartbeatPromptAttemptRunner(shouldStopHeartbeat);
+          await withRateLimitRetry(async () => runPromptAttempt(() => promptWithFallback(session, executionPrompt)), {
             signal: heartbeatRetryAbortController.signal,
             rotation: this.credentialRotator && heartbeatSessionModels.defaultProvider ? {
               providerId: heartbeatSessionModels.defaultProvider,
@@ -4131,9 +4170,11 @@ export class HeartbeatMonitor {
                   ...(skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
                   actionGateContext: this.buildActionGateContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
                   permanentAgentGating: this.buildPermanentAgentGatingContext(agent, taskId, run.id, heartbeatModelSettings?.defaultAgentPermissionPolicy),
+                  onSessionCreated: (created) => installHeartbeatTerminationHooks(created, shouldStopHeartbeat),
                 });
                 session = created.session;
                 heartbeatSession = session as unknown as { abort?: () => void | Promise<void> };
+                installHeartbeatTerminationHooks(session, shouldStopHeartbeat);
                 /*
                 FNXC:CommandCenterActivity 2026-08-09-15:06:
                 Credential rotation constructs a replacement AgentSession, so it owns a new
@@ -4159,6 +4200,13 @@ export class HeartbeatMonitor {
             },
           });
           if (dispatchedRotation) rotationEvent?.recordOutcome("rotation-succeeded");
+
+          // A stopped run must not mark its inbox read or record a successful checkpoint.
+          // completeRun's existing terminal fence remains authoritative for its persisted status.
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
 
           // Capture real per-session token counts from pi-coding-agent's
           // SessionStats. Falls back to a 4-chars-per-token estimate of output
@@ -4194,6 +4242,11 @@ export class HeartbeatMonitor {
 
           await flushAgentLogger();
 
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
+
           // Mark messages as read after successful processing (only if messages were included in prompt)
           if (pendingMessages.length > 0 && this.messageStore) {
             try {
@@ -4201,6 +4254,11 @@ export class HeartbeatMonitor {
             } catch (markReadErr) {
               heartbeatLog.warn(`Failed to mark messages as read for ${agentId}: ${markReadErr instanceof Error ? markReadErr.message : String(markReadErr)}`);
             }
+          }
+
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
           }
 
           // Complete run successfully
@@ -4225,6 +4283,11 @@ export class HeartbeatMonitor {
             resultJson: completionResultJson,
             stdoutExcerpt: stdoutExcerpt || undefined,
           });
+
+          if (isRunCancellationRequested()
+            || (heartbeatRetryAbortController.signal.aborted && !heartbeatCompletionLatched && !heartbeatProgressBudgetExhausted)) {
+            return (await this.store.getRunDetail(agentId, run.id))!;
+          }
 
           if (shouldRecordSelfImprove && this.selfImproveService) {
             try {
