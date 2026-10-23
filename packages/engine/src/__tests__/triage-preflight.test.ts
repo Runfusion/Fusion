@@ -97,8 +97,13 @@ function fakeGit(config: FakeGitConfig) {
       }
       case "status":
         return ok(config.statusFor?.(options?.cwd ?? "") ?? "");
-      case "ls-tree":
+      case "ls-tree": {
+        if (argv.includes("-z")) {
+          const path = argv[argv.length - 1].replace(/^:\(literal\)/, "");
+          return ok((config.blobPaths ?? []).includes(path) ? path + "\0" : "");
+        }
         return ok((config.tree ?? []).join("\n"));
+      }
       case "show":
         return config.show !== undefined ? ok(config.show) : miss();
       case "grep": {
@@ -570,6 +575,43 @@ describe("triage-preflight", () => {
 
     const ownedWorktreesRoot = () => join(root, ".fusion", "worktrees");
     const isOwned = (candidate: string) => candidate === ownedWorktreesRoot() || candidate.startsWith(`${ownedWorktreesRoot()}${sep}`);
+
+    /** FNXC:GhostBugPreflight 2026-10-23-06:39: Real Git distinguishes absent tree paths from corrupt revisions; pathspec syntax must never turn a literal citation into a match. */
+    it("archives a missing file citation after a successful real-Git control", async () => {
+      const exec = createGhostBugProbeExec();
+      const sha = gitSetup(["rev-parse", "fusion/T-1"]);
+      const oldProbe = await exec(["git", "cat-file", "-e", sha + ":packages/ghost/src/missing.ts"], { cwd: root });
+      expect(oldProbe.exitCode).not.toBe(0);
+      expect(oldProbe.stderr).not.toBe("");
+      await expect(runGhostBugPreflight(task, "`packages/ghost/src/missing.ts`", { rootDir: root, exec, branch: "fusion/T-1" })).resolves.toMatchObject({ decision: "archive", reason: GHOST_BUG_ARCHIVE_REASON });
+    });
+    it("finds a branch-only file while main does not contain it", async () => {
+      gitSetup(["checkout", "fusion/T-1"]);
+      await mkdir(join(root, "packages", "ghost", "src"), { recursive: true });
+      await writeFile(join(root, "packages", "ghost", "src", "branch-only.ts"), "export const branchOnly = true;\n");
+      gitSetup(["add", "."]);
+      gitSetup(["commit", "-m", "branch-only cited file"]);
+      gitSetup(["checkout", "main"]);
+      await expect(runGhostBugPreflight(task, "packages/ghost/src/branch-only.ts", { rootDir: root, exec: createGhostBugProbeExec(), branch: "fusion/T-1" })).resolves.toMatchObject({ decision: "pass", passKind: "verified-present" });
+    });
+    it("matches spaces and brackets literally and does not expand a wildcard citation", async () => {
+      await writeFile(join(root, "path with space.ts"), "export const spaced = true;\n");
+      await writeFile(join(root, "literal[one].ts"), "export const literal = true;\n");
+      await mkdir(join(root, "src"));
+      await writeFile(join(root, "src", "real.ts"), "export const real = true;\n");
+      gitSetup(["add", "."]);
+      gitSetup(["commit", "-m", "literal paths"]);
+      const sha = gitSetup(["rev-parse", "HEAD"]);
+      const paths = ["path with space.ts", "literal[one].ts", "src/*.ts", "packages/ghost/src/missing.ts"];
+      const findings = await probeCitedConstructs(paths.map((filePath) => ({ kind: "identifier" as const, raw: filePath, filePath })), { cwd: root, exec: createGhostBugProbeExec(), revision: { ...REVISION, sha } });
+      expect(findings.map((finding) => finding.matched)).toEqual([true, true, false, false]);
+      expect(findings.every((finding) => !finding.probeError)).toBe(true);
+    });
+    it("treats an invalid real revision as a probe error, never definitive absence", async () => {
+      const [finding] = await probeCitedConstructs([{ kind: "identifier", raw: "packages/ghost/src/missing.ts", filePath: "packages/ghost/src/missing.ts" }], { cwd: root, exec: createGhostBugProbeExec(), revision: { ...REVISION, sha: "f".repeat(40) } });
+      expect(finding.matched).toBe(false);
+      expect(finding.probeError).toBe("probe_command_failed");
+    });
 
     it("positive rule: a proven task branch with an absent owned worktree resolves to immutable objects at the proven root", async () => {
       const target = await resolveProbeTarget(

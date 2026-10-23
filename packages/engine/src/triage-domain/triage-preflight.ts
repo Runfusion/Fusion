@@ -766,11 +766,20 @@ export async function probeCitedConstructs(
     cited raw value stays discrete argv data.
     */
     const revision = opts.revision.sha;
-    const argv = construct.kind === "identifier" && construct.filePath
-      ? ["git", "cat-file", "-e", `${revision}:${construct.filePath}`]
+    const filePath = construct.kind === "identifier" ? construct.filePath : undefined;
+    const argv = filePath
+      ? ["git", "ls-tree", "--full-tree", "--name-only", "-z", revision, "--", `:(literal)${filePath}`]
       : ["git", "grep", "-qF", "-e", construct.raw, revision, "--", ":/"];
     try {
-      findings.push(classifyProbe(construct, await opts.exec(argv, { cwd: opts.cwd, timeoutMs })));
+      const result = await opts.exec(argv, { cwd: opts.cwd, timeoutMs });
+      /** FNXC:GhostBugPreflight 2026-10-23-06:39: ls-tree succeeds with an empty listing for an absent literal path; cat-file reports both absence and Git failures as fatal errors. */
+      if (filePath && result.exitCode === 0 && result.stderr.trim().length === 0) {
+        findings.push({ construct, matched: result.stdout.split("\0").includes(filePath), output: truncateOutput(result.stdout.replaceAll("\0", "\n")) });
+      } else {
+        findings.push(filePath
+          ? { construct, matched: false, output: truncateOutput(result.stdout), probeError: result.exitCode === undefined ? "exit_code_unavailable" : "probe_command_failed" }
+          : classifyProbe(construct, result));
+      }
     } catch (error) {
       findings.push({
         construct,
