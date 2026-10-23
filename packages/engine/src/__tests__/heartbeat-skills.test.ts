@@ -119,7 +119,12 @@ describe("executeHeartbeat — skill selection resolver contract (FN-1510/FN-151
       ...agentData,
     } as Agent;
 
-    // Track saved runs so getRunDetail returns the most recent state
+    /*
+    FNXC:HeartbeatTestFixture 2026-10-23-07:09:
+    FN-9566 persists heartbeat ownership during creation, before the monitor's
+    first detail read. Keep this stateful double aligned so monitor-path tests
+    observe the active startup row before later saveRun updates it.
+    */
     const savedRuns: Map<string, AgentHeartbeatRun> = new Map();
 
     return {
@@ -131,24 +136,23 @@ describe("executeHeartbeat — skill selection resolver contract (FN-1510/FN-151
         mockAgent.taskId = taskId;
         return mockAgent;
       }),
-      startHeartbeatRun: vi.fn().mockResolvedValue({
-        id: "run-001",
-        agentId: "agent-001",
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        status: "active",
-      } as AgentHeartbeatRun),
+      startHeartbeatRun: vi.fn().mockImplementation(async (_agentId: string, initialMetadata = {}) => {
+        const run = {
+          id: "run-001",
+          agentId: "agent-001",
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          status: "active" as const,
+          ...initialMetadata,
+        } as AgentHeartbeatRun;
+        savedRuns.set(run.id, run);
+        return run;
+      }),
       saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => {
         savedRuns.set(run.id, run);
       }),
       getRunDetail: vi.fn().mockImplementation(async (_agentId: string, runId: string) => {
-        return savedRuns.get(runId) ?? {
-          id: runId,
-          agentId: "agent-001",
-          startedAt: new Date().toISOString(),
-          endedAt: new Date().toISOString(),
-          status: "completed" as const,
-        };
+        return savedRuns.get(runId);
       }),
       getRatingSummary: vi.fn().mockResolvedValue(undefined),
       endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
@@ -186,6 +190,24 @@ describe("executeHeartbeat — skill selection resolver contract (FN-1510/FN-151
     const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
     const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+    const startRun = store.startHeartbeatRun as ReturnType<typeof vi.fn>;
+    const getRunDetail = store.getRunDetail as ReturnType<typeof vi.fn>;
+    const saveRun = store.saveRun as ReturnType<typeof vi.fn>;
+    expect(startRun).toHaveBeenCalledWith("agent-001", expect.objectContaining({
+      processPid: process.pid,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+    }));
+    expect(getRunDetail).toHaveBeenCalledWith("agent-001", "run-001");
+    expect(getRunDetail.mock.invocationCallOrder[0]).toBeLessThan(saveRun.mock.invocationCallOrder[0]);
+    await expect(getRunDetail.mock.results[0]!.value).resolves.toMatchObject({
+      id: "run-001",
+      status: "active",
+      processPid: process.pid,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+    });
 
     expect(mockedCreateFnAgent).toHaveBeenCalled();
     const options = mockedCreateFnAgent.mock.calls[0]![0];
@@ -346,7 +368,12 @@ describe("executeHeartbeat — skill selection non-fatal (FN-1510/FN-1511)", () 
       ...agentData,
     } as Agent;
 
-    // Track saved runs so getRunDetail returns the most recent state
+    /*
+    FNXC:HeartbeatTestFixture 2026-10-23-07:09:
+    FN-9566 persists heartbeat ownership during creation, before the monitor's
+    first detail read. Keep this stateful double aligned so monitor-path tests
+    observe the active startup row before later saveRun updates it.
+    */
     const savedRuns: Map<string, AgentHeartbeatRun> = new Map();
 
     return {
@@ -358,24 +385,23 @@ describe("executeHeartbeat — skill selection non-fatal (FN-1510/FN-1511)", () 
         mockAgent.taskId = taskId;
         return mockAgent;
       }),
-      startHeartbeatRun: vi.fn().mockResolvedValue({
-        id: "run-001",
-        agentId: "agent-001",
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        status: "active",
-      } as AgentHeartbeatRun),
+      startHeartbeatRun: vi.fn().mockImplementation(async (_agentId: string, initialMetadata = {}) => {
+        const run = {
+          id: "run-001",
+          agentId: "agent-001",
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          status: "active" as const,
+          ...initialMetadata,
+        } as AgentHeartbeatRun;
+        savedRuns.set(run.id, run);
+        return run;
+      }),
       saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => {
         savedRuns.set(run.id, run);
       }),
       getRunDetail: vi.fn().mockImplementation(async (_agentId: string, runId: string) => {
-        return savedRuns.get(runId) ?? {
-          id: runId,
-          agentId: "agent-001",
-          startedAt: new Date().toISOString(),
-          endedAt: new Date().toISOString(),
-          status: "completed" as const,
-        };
+        return savedRuns.get(runId);
       }),
       getRatingSummary: vi.fn().mockResolvedValue(undefined),
       endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
@@ -415,6 +441,17 @@ describe("executeHeartbeat — skill selection non-fatal (FN-1510/FN-1511)", () 
 
     expect(result).toBeDefined();
     expect(result.status).toBe("completed");
+
+    const getRunDetail = store.getRunDetail as ReturnType<typeof vi.fn>;
+    const saveRun = store.saveRun as ReturnType<typeof vi.fn>;
+    expect(getRunDetail.mock.invocationCallOrder[0]).toBeLessThan(saveRun.mock.invocationCallOrder[0]);
+    await expect(getRunDetail.mock.results[0]!.value).resolves.toMatchObject({
+      id: "run-001",
+      status: "active",
+      processPid: process.pid,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+    });
   });
 
   it("heartbeat completes when agent has various skill configurations", async () => {
@@ -505,6 +542,12 @@ describe("HeartbeatMonitor observability — prompt persistence + run-scoped log
       ...agentData,
     } as Agent;
 
+    /*
+    FNXC:HeartbeatTestFixture 2026-10-23-07:09:
+    FN-9566 persists heartbeat ownership during creation, before the monitor's
+    first detail read. Keep this stateful double aligned so monitor-path tests
+    observe the active startup row before later saveRun updates it.
+    */
     const savedRuns: Map<string, AgentHeartbeatRun> = new Map();
 
     return {
@@ -516,24 +559,23 @@ describe("HeartbeatMonitor observability — prompt persistence + run-scoped log
         mockAgent.taskId = taskId;
         return mockAgent;
       }),
-      startHeartbeatRun: vi.fn().mockResolvedValue({
-        id: "run-obs-001",
-        agentId: "agent-001",
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        status: "active",
-      } as AgentHeartbeatRun),
+      startHeartbeatRun: vi.fn().mockImplementation(async (_agentId: string, initialMetadata = {}) => {
+        const run = {
+          id: "run-obs-001",
+          agentId: "agent-001",
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          status: "active" as const,
+          ...initialMetadata,
+        } as AgentHeartbeatRun;
+        savedRuns.set(run.id, run);
+        return run;
+      }),
       saveRun: vi.fn().mockImplementation(async (run: AgentHeartbeatRun) => {
         savedRuns.set(run.id, run);
       }),
       getRunDetail: vi.fn().mockImplementation(async (_agentId: string, runId: string) => {
-        return savedRuns.get(runId) ?? {
-          id: runId,
-          agentId: "agent-001",
-          startedAt: new Date().toISOString(),
-          endedAt: new Date().toISOString(),
-          status: "completed" as const,
-        };
+        return savedRuns.get(runId);
       }),
       getRatingSummary: vi.fn().mockResolvedValue(undefined),
       endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
@@ -563,6 +605,17 @@ describe("HeartbeatMonitor observability — prompt persistence + run-scoped log
 
     const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
     const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+    const getRunDetail = store.getRunDetail as ReturnType<typeof vi.fn>;
+    const saveRun = store.saveRun as ReturnType<typeof vi.fn>;
+    expect(getRunDetail.mock.invocationCallOrder[0]).toBeLessThan(saveRun.mock.invocationCallOrder[0]);
+    await expect(getRunDetail.mock.results[0]!.value).resolves.toMatchObject({
+      id: "run-obs-001",
+      status: "active",
+      processPid: process.pid,
+      invocationSource: "timer",
+      triggerDetail: "manual",
+    });
 
     // saveRun should have been called with both prompt fields populated
     const saveRunCalls = (store.saveRun as ReturnType<typeof vi.fn>).mock.calls;
