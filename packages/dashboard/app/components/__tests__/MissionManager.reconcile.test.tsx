@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
+import { SWR_CACHE_KEYS } from "../../utils/swrCache";
 import { MissionManager } from "../MissionManager";
 
 const fetchMissions = vi.fn();
@@ -16,7 +18,9 @@ const fetchValidationRuns = vi.fn();
 const fetchAiSessions = vi.fn();
 const fetchAiSession = vi.fn();
 const fetchMissionInterviewDrafts = vi.fn();
+let viewportMode: "desktop" | "mobile" = "desktop";
 
+vi.mock("../hooks/useViewportMode", () => ({ useViewportMode: () => viewportMode }));
 vi.mock("../../hooks/useNavigationHistory", () => ({ useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }) }));
 vi.mock("../../sse-bus", () => ({ subscribeSse: vi.fn(() => vi.fn()) }));
 vi.mock("../MissionInterviewModal", () => ({ MissionInterviewModal: () => null }));
@@ -49,6 +53,8 @@ function mission(id = "M-1") {
   };
 }
 const result = (planned = [{ featureId: "F-1", action: "status" as const }]) => ({ missionsScanned: 1, featuresScanned: 1, statusUpdates: 1, badgeRepairs: 0, badgeRepairsSkipped: 0, terminalRepairs: 0, terminalSkipped: 0, conflicts: 0, failures: 0, planned });
+const MISSION_CACHE_KEY = `${SWR_CACHE_KEYS.MISSIONS_PREFIX}p1`;
+const originalMatchMediaDescriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
 
 /*
 FNXC:MissionReconcileControl 2026-08-11-06:49:
@@ -56,25 +62,58 @@ Exercise the rendered control rather than an exported handler so dry-run gating,
 and selection-boundary response suppression remain user-visible contracts.
 */
 describe("MissionManager reconcile control", () => {
-  beforeEach(() => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+  function setViewport(width: number) {
+    viewportMode = width <= 768 ? "mobile" : "desktop";
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: query.includes("max-width: 600px") ? width <= 600
+          : query.includes("max-width: 768px") ? width <= 768
+            : query.includes("min-width: 769px") ? width >= 769 && width <= 1024 : false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+      })),
+    });
     window.dispatchEvent(new Event("resize"));
+  }
+
+  function clearMissionCache() {
+    localStorage.removeItem(MISSION_CACHE_KEY);
+  }
+
+  beforeEach(() => {
+    setViewport(1280);
     vi.clearAllMocks();
+    clearMissionCache();
     fetchMissions.mockResolvedValue([mission("M-1"), mission("M-2")].map((item) => ({ ...item, milestones: [] })));
     fetchMission.mockImplementation(async (id: string) => mission(id));
     fetchMissionsHealth.mockResolvedValue({}); fetchMissionEvents.mockResolvedValue([]); fetchAssertions.mockResolvedValue([]);
     fetchMilestoneValidation.mockResolvedValue(null); fetchMilestoneValidationTelemetry.mockResolvedValue({ rollup: null, validationTelemetry: { validationRounds: [], totalRuns: 0 }, validationContract: null, fixFeatures: [] });
     fetchValidationLoopState.mockResolvedValue(null); fetchValidationRuns.mockResolvedValue([]); fetchAiSessions.mockResolvedValue([]); fetchAiSession.mockResolvedValue(null); fetchMissionInterviewDrafts.mockResolvedValue([]);
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    clearMissionCache();
+    if (originalMatchMediaDescriptor) Object.defineProperty(window, "matchMedia", originalMatchMediaDescriptor);
+    else delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia;
+  });
 
   function renderManager(addToast = vi.fn(), targetMissionId = "M-1") {
     const rendered = render(<ConfirmDialogProvider><MissionManager isOpen isInline onClose={() => {}} addToast={addToast} projectId="p1" targetMissionId={targetMissionId} /></ConfirmDialogProvider>);
     return { ...rendered, addToast };
   }
 
+  function seedMissionCache() {
+    localStorage.setItem(
+      MISSION_CACHE_KEY,
+      JSON.stringify({ savedAt: Date.now(), data: [mission("M-1"), mission("M-2")].map(({ milestones, ...summary }) => summary) }),
+    );
+  }
+
   it.each([1280, 640])("previews at %ipx without applying", async (width) => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: width }); window.dispatchEvent(new Event("resize"));
+    setViewport(width);
     reconcileMission.mockResolvedValue(result()); renderManager();
     await screen.findByText("Feature title"); fireEvent.click(screen.getByTestId("mission-reconcile-now"));
     await screen.findByText(/Feature title — status/);
@@ -164,37 +203,111 @@ describe("MissionManager reconcile control", () => {
     m2.resolve(mission("M-2")); await screen.findByText("Mission two");
   });
 
-  it("silently discards preview resolution and rejection in the pre-commit switch window", async () => {
+  it.each([1280, 640])("silently discards preview resolution and rejection in the pre-commit switch window at %ipx", async (width) => {
+    setViewport(width);
     const preview = deferred<ReturnType<typeof result>>(); const m2 = deferred<ReturnType<typeof mission>>();
+    seedMissionCache();
     reconcileMission.mockReturnValue(preview.promise);
     fetchMission.mockImplementation((id: string) => id === "M-2" ? m2.promise : Promise.resolve(mission(id)));
-    const { addToast, container } = renderManager(); await screen.findByText("Feature title");
+    const { addToast, container, rerender } = renderManager();
+    await screen.findByText("Feature title");
     fireEvent.click(screen.getByTestId("mission-reconcile-now")); await waitFor(() => expect(reconcileMission).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Open mission Mission two" }));
-    preview.resolve(result()); await act(async () => {});
+    const m1Fetches = () => fetchMission.mock.calls.filter(([id]) => id === "M-1").length;
+    const fetchesBeforeSettlement = m1Fetches();
+    if (width <= 768) {
+      await act(async () => rerender(<ConfirmDialogProvider><MissionManager isOpen isInline onClose={() => {}} addToast={addToast} projectId="p1" targetMissionId="M-2" /></ConfirmDialogProvider>));
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "Open mission Mission two" }));
+    }
+    await act(async () => { preview.resolve(result()); });
     expect(container.querySelector(".mission-detail__reconcile-panel")).toBeNull(); expect(addToast).not.toHaveBeenCalled();
-    m2.resolve(mission("M-2")); await screen.findByText("Mission two");
+    expect(m1Fetches()).toBe(fetchesBeforeSettlement);
+    m2.resolve(mission("M-2")); await act(async () => {});
 
     const rejected = deferred<ReturnType<typeof result>>(); reconcileMission.mockReturnValueOnce(rejected.promise);
     fireEvent.click(screen.getByTestId("mission-reconcile-now")); await waitFor(() => expect(reconcileMission).toHaveBeenCalledTimes(2));
-    fireEvent.click(screen.getByRole("button", { name: "Open mission Mission one" }));
+    const beforeReject = m1Fetches();
+    if (width <= 768) {
+      await act(async () => rerender(<ConfirmDialogProvider><MissionManager isOpen isInline onClose={() => {}} addToast={addToast} projectId="p1" targetMissionId="M-1" /></ConfirmDialogProvider>));
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "Open mission Mission one" }));
+    }
     rejected.reject(new Error("stale preview")); await act(async () => {});
+    expect(container.querySelector(".mission-detail__reconcile-panel")).toBeNull();
     expect(addToast).not.toHaveBeenCalledWith("stale preview", "error");
+    /*
+    FNXC:MissionReconcileControl 2026-10-23-09:59:
+    Selecting M-1 loads its detail once. A stale preview rejection must not add a second reload.
+    */
+    expect(m1Fetches()).toBe(beforeReject + 1);
   });
 
-  it("refuses a same-batch retained-panel apply click so no write reaches the abandoned mission", async () => {
+  it("keeps a cold mission cache empty until missions load", () => {
+    fetchMissions.mockImplementation(() => new Promise(() => {}));
+    renderManager();
+    expect(screen.getByText("Loading missions...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open mission Mission two" })).toBeNull();
+  });
+
+  it("hydrates only an explicitly seeded mission cache", async () => {
+    seedMissionCache();
+    fetchMissions.mockImplementation(() => new Promise(() => {}));
+    renderManager();
+    expect(screen.getByRole("button", { name: "Open mission Mission two" })).toBeInTheDocument();
+    await screen.findByText("Feature title");
+  });
+
+  it.each(["stale", "malformed"] as const)("ignores a %s p1 mission cache entry", (kind) => {
+    localStorage.setItem(MISSION_CACHE_KEY, kind === "stale"
+      ? JSON.stringify({
+        savedAt: Date.now() - (25 * 60 * 60 * 1000),
+        data: [mission("M-1"), mission("M-2")].map(({ milestones, ...summary }) => summary),
+      })
+      : "{not valid json");
+    fetchMissions.mockImplementation(() => new Promise(() => {}));
+    renderManager();
+    expect(screen.getByText("Loading missions...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open mission Mission two" })).toBeNull();
+    if (kind === "stale") expect(localStorage.getItem(MISSION_CACHE_KEY)).toBeNull();
+  });
+
+  it("does not hydrate an expired cache after a project switch", async () => {
+    const staleProjectKey = `${SWR_CACHE_KEYS.MISSIONS_PREFIX}p2`;
+    localStorage.setItem(staleProjectKey, JSON.stringify({
+      savedAt: Date.now() - (25 * 60 * 60 * 1000),
+      data: [{ ...mission("M-2"), id: "M-stale", title: "Stale mission", milestones: [] }],
+    }));
+    fetchMissions.mockImplementation(() => new Promise(() => {}));
+    const { rerender } = renderManager();
+    rerender(<ConfirmDialogProvider><MissionManager isOpen isInline onClose={() => {}} addToast={vi.fn()} projectId="p2" targetMissionId="M-1" /></ConfirmDialogProvider>);
+    await act(async () => {});
+    expect(screen.getByText("Loading missions...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open mission Stale mission" })).toBeNull();
+    expect(localStorage.getItem(staleProjectKey)).toBeNull();
+  });
+
+  it.each([1280, 640])("refuses a same-batch retained-panel apply click so no write reaches the abandoned mission at %ipx", async (width) => {
+    setViewport(width);
     const m2 = deferred<ReturnType<typeof mission>>();
+    seedMissionCache();
     reconcileMission.mockResolvedValue(result());
     fetchMission.mockImplementation((id: string) => id === "M-2" ? m2.promise : Promise.resolve(mission(id)));
-    renderManager(); await screen.findByText("Feature title");
+    const { rerender } = renderManager();
+    await screen.findByText("Feature title");
     fireEvent.click(screen.getByTestId("mission-reconcile-now")); await screen.findByTestId("mission-reconcile-apply");
-    const row = screen.getByRole("button", { name: "Open mission Mission two" });
     const apply = screen.getByTestId("mission-reconcile-apply");
-    // The panel is synchronously released after the row event; this same-batch click is the
-    // reachable production path that still invokes the old handler before React re-renders it.
-    await act(async () => { fireEvent.click(row); fireEvent.click(apply); });
+    act(() => {
+      if (width <= 768) {
+        // Commit the parent deep-link switch, then dispatch the retained panel's handler in this batch.
+        flushSync(() => rerender(<ConfirmDialogProvider><MissionManager isOpen isInline onClose={() => {}} addToast={vi.fn()} projectId="p1" targetMissionId="M-2" /></ConfirmDialogProvider>));
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: "Open mission Mission two" }));
+      }
+      // Keep the old panel's handler in this selection batch, as a retained mobile tap can do.
+      fireEvent.click(apply);
+    });
     expect(reconcileMission).not.toHaveBeenCalledWith("M-1", { dryRun: false }, "p1");
-    m2.resolve(mission("M-2")); await screen.findByText("Mission two");
+    m2.resolve(mission("M-2")); await act(async () => {});
   });
 
   it("releases abandoned busy state but does not let a stale finally clobber a newer request", async () => {

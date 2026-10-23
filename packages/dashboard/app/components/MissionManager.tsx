@@ -1,5 +1,5 @@
 import "./MissionManager.css";
-import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -123,7 +123,7 @@ import {
   type MissionReconcilePassResult,
 } from "../api";
 import type { AutopilotState, MissionInterviewDraftSummary } from "./mission-types";
-import { readCache, SWR_CACHE_KEYS, writeCache } from "../utils/swrCache";
+import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { isNativeStructureDragEnabled, serializeNativeStructureRef } from "../utils/nativeStructureDrag";
 
@@ -870,7 +870,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const isActive = isOpen;
   const cacheSuffix = projectId ?? "";
   const missionsCacheKey = `${SWR_CACHE_KEYS.MISSIONS_PREFIX}${cacheSuffix}`;
-  const initialMissions = readCache<MissionWithSummary[]>(missionsCacheKey);
+  /*
+  FNXC:MissionReconcileControl 2026-10-23-10:19:
+  Mission-list hydration shares the dashboard default cache-age boundary. Expired mission snapshots
+  must not seed controls for a mission the server may no longer expose; loading still revalidates
+  every accepted cached list immediately.
+  */
+  const initialMissions = readCache<MissionWithSummary[]>(missionsCacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
   const [missions, setMissions] = useState<MissionWithSummary[]>(() => (Array.isArray(initialMissions) ? initialMissions : []));
   const [selectedMission, setSelectedMission] = useState<MissionWithHierarchy | null>(null);
   const [selectedMissionIntentId, setSelectedMissionIntentId] = useState<string | null>(null);
@@ -1192,6 +1198,17 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   cannot alter a new mission, while a selection boundary owns synchronous busy/preview release.
   */
   const reconcileRequestGenerationRef = useRef(0);
+  const renderedTargetMissionIdRef = useRef<string | undefined>(targetMissionId);
+  /*
+  FNXC:MissionReconcileControl 2026-10-23-09:59:
+  A prop-driven deep link replaces mission intent before effects run. Fence retained controls during
+  that render so an input event cannot write to the detail being replaced before the layout commit.
+  */
+  if (targetMissionId && renderedTargetMissionIdRef.current !== targetMissionId) {
+    renderedTargetMissionIdRef.current = targetMissionId;
+    reconcileRequestGenerationRef.current += 1;
+    selectedMissionIntentRef.current = targetMissionId;
+  }
   const invalidateReconcileRequests = useCallback((nextIntentMissionId: string | null) => {
     reconcileRequestGenerationRef.current += 1;
     selectedMissionIntentRef.current = nextIntentMissionId;
@@ -1649,7 +1666,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [missionEvents]);
 
   useEffect(() => {
-    const cachedMissions = readCache<MissionWithSummary[]>(missionsCacheKey);
+    const cachedMissions = readCache<MissionWithSummary[]>(missionsCacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
     const hasCachedMissions = Array.isArray(cachedMissions) && cachedMissions.length > 0;
     setMissions(Array.isArray(cachedMissions) ? cachedMissions : []);
     setLoading(!hasCachedMissions);
@@ -1677,12 +1694,18 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   */
   // Auto-load target mission when specified
   const targetLoadedRef = useRef<string | null>(null);
-  useEffect(() => {
+  /*
+  FNXC:MissionReconcileControl 2026-10-23-09:59:
+  A target-mission change is a visible selection boundary. Commit its intent before paint so a
+  retained reconciliation panel cannot dispatch for the mission that the new deep link replaced.
+  */
+  useLayoutEffect(() => {
     if (isActive && targetMissionId && targetLoadedRef.current !== targetMissionId && missions.length > 0) {
       targetLoadedRef.current = targetMissionId;
+      invalidateReconcileRequests(targetMissionId);
       loadMissionDetail(targetMissionId);
     }
-  }, [isActive, targetMissionId, missions, loadMissionDetail]);
+  }, [isActive, targetMissionId, missions, invalidateReconcileRequests, loadMissionDetail]);
 
   // Reset target tracking when modal closes
   useEffect(() => {
