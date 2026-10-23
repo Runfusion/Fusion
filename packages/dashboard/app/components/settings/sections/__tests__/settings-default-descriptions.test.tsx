@@ -120,6 +120,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   opencodeGoModelSync: "globalModels.flowAndPublishesThemUnderTheOpencodeGo",
   /* FNXC:SettingsHelp 2026-08-23-20:45: OrcaRouter catalog sync ships its own SettingsToggleRow help in GlobalModelsSection. */
   orcarouterModelSync: "globalModels.whenEnabledStartupFetchesTheLatestOrcaRouterModels",
+  /* FNXC:SettingsHelp 2026-10-14-12:00: Atlas Cloud catalog sync ships its own SettingsToggleRow help in GlobalModelsSection. */
+  atlascloudModelSync: "globalModels.whenEnabledStartupFetchesTheLatestAtlasCloudModels",
   openrouterAppAttribution: "globalModels.leaveEmptyToOmitThisHeaderDefaultHttps",
   openrouterModelFilters: "globalModels.commaSeparatedValuesSentToOpenRouterModelSync",
   openrouterProviderPreferences: "globalModels.openRouterRoutingOrderHint",

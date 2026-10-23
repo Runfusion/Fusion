@@ -202,6 +202,16 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
       />
       <SettingsToggleRow
         descriptor={{
+          key: "atlascloudModelSync",
+          label: t("settings.globalModels.syncAtlasCloudModelListAtStartup", " Sync Atlas Cloud model list at startup "),
+          help: t("settings.globalModels.whenEnabledStartupFetchesTheLatestAtlasCloudModels", " When enabled, startup fetches the latest available models from the Atlas Cloud API so model pickers include the Atlas Cloud catalog. Default: enabled. "),
+          scope: "global",
+        }}
+        value={form.atlascloudModelSync !== false}
+        onChange={(v) => setForm((f) => ({ ...f, atlascloudModelSync: v === true }))}
+      />
+      <SettingsToggleRow
+        descriptor={{
           key: "orcarouterModelSync",
           label: t("settings.globalModels.syncOrcaRouterModelListAtStartup", " Sync OrcaRouter model list at startup "),
           help: t("settings.globalModels.whenEnabledStartupFetchesTheLatestOrcaRouterModels", " When enabled, startup fetches the latest available models from the OrcaRouter API so model pickers include the OrcaRouter catalog. Default: enabled. "),

@@ -167,6 +167,7 @@
       "openai": "",
       "openrouter": "",
       "orcarouter": "",
+      "atlascloud": "",
       "zai": ""
     },
     "apiKeyPlaceholder": {
@@ -184,6 +185,7 @@
       "openai": "",
       "openrouter": "",
       "orcarouter": "",
+      "atlascloud": "",
       "zai": ""
     },
     "apiKeyUsage": {
@@ -194,6 +196,7 @@
       "openai": "",
       "openrouter": "",
       "orcarouter": "",
+      "atlascloud": "",
       "zai": ""
     },
     "providerDesc": {
@@ -210,6 +213,7 @@
       "openaiCodex": "",
       "openrouter": "",
       "orcarouter": "",
+      "atlascloud": "",
       "zai": ""
     }
   },
