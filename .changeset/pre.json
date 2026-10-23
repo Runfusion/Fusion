@@ -242,6 +242,7 @@
     "mobile-idle-animations",
     "mobile-nav-balanced-spacing",
     "mobile-nav-group-spacing",
+    "pin-pi-runtime-closure",
     "post-merge-review-waiting-status",
     "post-merge-unrelated-failures",
     "preserve-skipped-evidence-gates",

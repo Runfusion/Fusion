@@ -2,6 +2,19 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.78.0-beta.9
+
+### Highlights
+
+- CLI: `fn` no longer crashes on startup after a fresh npm install
+- CLI: npm can no longer mix pi-codemode 1.4.0 with pi-coding-agent 1.1.0 on install
+- CLI: Every Pi runtime package is now pinned to an exact version in the published install
+- Release checks now block any build that leaves a Pi runtime package unpinned
+
+### Fixed
+
+- `fn` no longer crashes on startup after a fresh npm install. The cause was a mismatched Pi codemode package: npm had installed pi-codemode 1.4.0 next to pi-coding-agent 1.1.0. The published CLI now pins every package in the Pi runtime to an exact version, and release checks enforce this so the mismatch can't come back.
+
 ## 0.78.0-beta.8
 
 ### Highlights

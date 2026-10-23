@@ -1,5 +1,12 @@
 # runfusion.ai
 
+## 0.78.0-beta.9
+
+### Patch Changes
+
+- Updated dependencies [a78fb0c]
+  - @runfusion/fusion@0.78.0-beta.9
+
 ## 0.78.0-beta.8
 
 ### Patch Changes
