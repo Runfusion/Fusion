@@ -93,6 +93,7 @@ import {
 import { isWorkflowStepSkillDiscoverable, mergeAdditionalSkillPaths } from "./skill-path-helpers.js";
 import { createSeenSteeringIds } from "./task-predicates.js";
 import {
+  applyPostMergeBlockingGate,
   parseWorkflowStepNotesRepair,
   parseWorkflowStepOutput,
   workflowStepVerdictNoNotesNotice,
@@ -732,6 +733,10 @@ CRITICAL SCOPING RULES — read before doing anything else:
     and adding one reaches the parser, step results, merge admission and the dashboard — out of
     proportion to a prompt repair, so the honest case is expressed with the values that already exist.
     */
+    // FNXC:PostMergeUnrelatedFailures 2026-10-06-22:45: Post-merge REVISE must name why it blocks; the parse boundary downgrades any other REVISE.
+    const postMergeBlockingRule = workflowStep.phase === "post-merge"
+      ? "\n  - A REVISE MUST include \"blockingReason\": \"task-regression\" when a failure is attributable to this task's landed change, or \"evidence-pending\" when the required post-landing run is still in progress. Failing tests or lanes unrelated to this task, cancelled lanes, absent artifacts, and unknown attribution never block: return APPROVE_WITH_NOTES and record them in notes. A REVISE without one of those two reasons is recorded as APPROVE_WITH_NOTES."
+      : "";
     const verdictBlock = requireVerdict
       ? `
 
@@ -748,7 +753,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
   - verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
   - notes MUST contain one to three non-empty sentences naming what was checked and why the verdict was reached. An empty notes string is a protocol violation.
   - For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"I checked the diff scope and found no UI file changes, so this review is out of scope."}
-  - If you CANNOT SEE the change you were asked to review — the described files appear absent, or the scope you were given looks empty when work was expected — that is NOT an approval and NOT out-of-scope. Return REVISE and state plainly in notes what you looked for and where. Never describe that situation in prose alone: a response with no verdict cannot be acted on and is treated as a failed review.${reviewFindingsContract ? "\n  - Every finding MUST carry a `severity`. Put each blocking issue in `findings` — prose in `notes` alone does not block.\n  - Omit resolution (or use open) for work still needed; use resolved-in-review only for an issue you fixed in this session.\n  - supersededFindingIds may list only IDs from one named Prior Findings result that you re-verified no longer apply; include that result’s workflow step ID in supersededFindingSourceWorkflowStepId; never list your own findings." : ""}${blockingSeverityRule}
+  - If you CANNOT SEE the change you were asked to review — the described files appear absent, or the scope you were given looks empty when work was expected — that is NOT an approval and NOT out-of-scope. Return REVISE and state plainly in notes what you looked for and where. Never describe that situation in prose alone: a response with no verdict cannot be acted on and is treated as a failed review.${reviewFindingsContract ? "\n  - Every finding MUST carry a `severity`. Put each blocking issue in `findings` — prose in `notes` alone does not block.\n  - Omit resolution (or use open) for work still needed; use resolved-in-review only for an issue you fixed in this session.\n  - supersededFindingIds may list only IDs from one named Prior Findings result that you re-verified no longer apply; include that result’s workflow step ID in supersededFindingSourceWorkflowStepId; never list your own findings." : ""}${blockingSeverityRule}${postMergeBlockingRule}
 
   If you cannot produce the object above for any reason, begin your entire response with the line REQUEST REVISION so it can still be read as a revision request. This is a degraded path, not an alternative: every review is expected to end with the JSON object.`
       : `
@@ -1341,7 +1346,19 @@ CRITICAL SCOPING RULES — read before doing anything else:
               threshold: reviewBlockingSeverity,
             })
             : undefined;
-          const effectiveVerdict = (gated?.verdict ?? parsed.verdict) as typeof parsed.verdict;
+          const severityVerdict = (gated?.verdict ?? parsed.verdict) as typeof parsed.verdict;
+          // FNXC:PostMergeUnrelatedFailures 2026-10-06-22:45: Unrelated or unattributed post-merge failures never block completion; see applyPostMergeBlockingGate.
+          const postMergeGated = workflowStep.phase === "post-merge"
+            ? applyPostMergeBlockingGate({ verdict: severityVerdict, blockingReason: parsed.blockingReason })
+            : undefined;
+          const effectiveVerdict = (postMergeGated?.verdict ?? severityVerdict) as typeof parsed.verdict;
+          if (postMergeGated?.downgraded) {
+            await deps.store.logEntry(
+              task.id,
+              `[post-merge] ${workflowStep.name} returned REVISE without attributing it to a regression introduced by this task or to pending post-landing evidence — recorded as APPROVE_WITH_NOTES.`,
+              parsed.notes,
+            );
+          }
           if (gated?.downgraded) {
             await deps.store.logEntry(
               task.id,
