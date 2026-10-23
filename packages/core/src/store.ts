@@ -876,6 +876,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private patchnodeReconcileMemo: { promise: Promise<PatchnodeReconcileResult>; startedAt: number } | null = null;
   public startupSlimListMemo = new Map<string, { expiresAt: number; promise: Promise<Task[]> }>();
   /*
+  FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+  Identical in-flight, non-paginated board reads share ONE promise. Keyed by the same read-shape
+  key the startup memo builds (`listReadShapeKey`), so the two key domains cannot drift, and
+  per-`TaskStore` so project scoping is inherent. Entries live exactly as long as the fetch — the
+  reader deletes its own entry in a `finally` — and there is deliberately NO TTL: a TTL is what
+  makes a shared read serve stale state, which is the RUFU-201 collision the memo's `includeDeleted`
+  dimension exists to prevent. Unlike the memo this map is active regardless of `store.isWatching`,
+  because the growth it removes happens in the long-lived processes that watch.
+  */
+  public listReadInFlight = new Map<string, Promise<Task[]>>();
+  /*
   FNXC:StartupSlimListMemo 2026-09-08-21:35 (RUFU-201):
   The TTL was 2.5 s, tuned so a stale board snapshot could not outlive a real change. That made the
   memo useless for its actual job — absorbing a burst of near-identical board reads taken seconds
@@ -994,7 +1005,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     mutation) is the path that emits an event but writes no artifact.
     */
     const invalidateStartupListMemo = (): void => {
-      this.clearStartupSlimListMemo();
+      this.clearListReadCaches();
     };
     this.on("task:created", invalidateStartupListMemo);
     this.on("task:updated", invalidateStartupListMemo);
@@ -2267,8 +2278,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async listStrandedRefinements(options?: { freshnessThresholdMs?: number; }): Promise<Array<{ task: Task; reasons: Array<"untriaged-stale" | "awaiting-approval" | "failed" | "stuck-killed" | "recovery-backoff">; nextRecoveryAt?: string; ageMs: number; }>> {
     return listStrandedRefinementsImpl(this, options);
   }
-  public clearStartupSlimListMemo(): void {
+  /*
+  FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+  `clearListReadCaches()` is the canonical invalidation seam; `clearStartupSlimListMemo()` keeps its
+  name and delegates, so the four existing mutation call sites stay valid. Deleting an in-flight
+  entry does not cancel the fetch — it only stops LATER callers from joining it. That is the whole
+  correctness argument: a caller that starts after a committed write re-issues and observes it,
+  while a caller already joined resolves with the snapshot it joined.
+  */
+  public clearListReadCaches(): void {
     this.startupSlimListMemo.clear();
+    this.listReadInFlight.clear();
+  }
+
+  public clearStartupSlimListMemo(): void {
+    this.clearListReadCaches();
   }
   async listTasksModifiedSince( since: string, limit?: number, opts?: { includeArchived?: boolean }, ): Promise<{ tasks: Task[]; hasMore: boolean }> {
     /*

@@ -607,6 +607,21 @@ export interface ListTasksOptions {
   /** Select the SQL page by creation or latest completion-lane entry. */
   sort?: "created-asc" | "completion-desc" | "completion-date-desc" | "queue-order" | "intake-desc";
   startupMemo?: boolean;
+  /*
+  FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+  Default `true` for a non-paginated list read: an identical read already in flight is joined
+  instead of re-issued. Pass `coalesce: false` where freshness beats sharing — the idempotency and
+  duplicate-probe lookups that must see a just-committed write (planning claim recovery, signal-task
+  dedupe, GitHub/GitLab duplicate probes). Ignored by paginated reads, which are never coalesced.
+  */
+  coalesce?: boolean;
+  /**
+   * INTERNAL to this module — set only by the coalescing seam on its own re-entrant fetch. It marks
+   * the one call that performs the real read behind a shared promise, so `recordReadCall` counts the
+   * read once for the caller that started it instead of once for the outer call and once again for the
+   * fetch it delegated to. Callers must never set it.
+   */
+  coalescedFetch?: boolean;
   /** Caller-owned per-pass workflow IR cache; shared only within one read pass. */
   irCache?: Map<string, WorkflowIr>;
   /** Observed definition reads issued during this list pass (zero for warm/builtin IRs). */
@@ -801,13 +816,77 @@ async function finalizeSlimListTask(store: TaskStore, task: Task, slim: boolean)
   }
 }
 
+/*
+FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+One read-shape key, built here and used by BOTH the startup memo and the in-flight coalescing map,
+so the two key domains cannot drift. Its dimensions are exactly the memo's six.
+
+FNXC:StartupSlimListMemo 2026-09-09-03:55 (RUFU-201 code-review remediation):
+`includeDeleted` is a result-shape dimension and is not optional. Soft deletion stamps the historical
+`archived` sentinel column, so a non-`includeArchived` read hides tombstones via the column filter as
+well; the shapes that actually diverge are `includeArchived: true` reads (admin/forensic surfaces, e.g.
+`?includeDeleted=true`), where only `deleted_at IS NULL` separates live from forensic. Sharing one
+entry across that pair serves either caller the other's tombstone set — a wrong-payload defect, not a
+perf win. The RUFU-201 TTL raise (2.5 s -> 15 s) had widened that window sixfold.
+
+Deliberately absent: `cursor`, `limit`, `offset`, `after*`. Those reads are excluded by the
+non-paginated gate instead, and a dimension the memo does not carry is exactly the drift this helper
+exists to prevent.
+*/
+export function listReadShapeKey(options?: ListTasksOptions): string {
+  return [
+    (options?.includeArchived ?? false) ? "all" : "active",
+    options?.column ?? "*",
+    options?.columns?.join(",") ?? "*",
+    options?.excludeColumns?.join(",") ?? "*",
+    options?.sort ?? "created-asc",
+    // FNXC:ListTasksDeriveOptOut 2026-09-08-20:58 (RUFU-201): a derived snapshot must never
+    // serve an opted-out caller, nor a raw one the board. `derive` is part of the result shape.
+    options?.derive !== false ? "derive" : "raw",
+    options?.includeDeleted ? "deleted" : "live",
+  ].join(":");
+}
+
+/*
+FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+Coalescing gate. Shares the memo's non-paginated gate — `limit`/`offset` both undefined — for slim
+and full rows alike, because the measured growth happens in processes that `watch()` and the admission
+lanes read `slim: false`. A paginated read is never coalesced: the shape key does not describe a page,
+so a promise keyed by it would serve one page's rows to a caller that asked for another. Keyset cursors
+(`afterCreatedAt`/`afterId`/`afterQueueKey`/`afterIntakeKey`) are the same hazard in a different shape
+and are excluded for the same reason — not by becoming key dimensions.
+*/
+function isCoalescableListRead(options?: ListTasksOptions): boolean {
+  return (options?.coalesce ?? true)
+    && options?.limit === undefined
+    && options?.offset === undefined
+    && options?.afterCreatedAt === undefined
+    && options?.afterId === undefined
+    && options?.afterQueueKey === undefined
+    && options?.afterIntakeKey === undefined;
+}
+
 export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions): Promise<Task[]> {
     /*
-    FNXC:ReadAttribution 2026-10-21-00:36 (RUFU-756):
-    4 338 index scans on `tasks` in a 75 s window (58 per second) while the measured allocation is
-    row parsing. The caller cannot be recovered from a heap or CPU profile, so it is captured here.
+    FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+    A joiner returns before `recordReadCall`, so the attribution counter counts the ONE underlying
+    read instead of one per caller — which is the number this path's cost is actually proportional
+    to, and what Step 3's per-evaluation assertions measure. The starter still records once, and a
+    memo hit still records as it did before this change.
     */
-    recordReadCall(store, "listTasks");
+    const coalesceKey = isCoalescableListRead(options) ? listReadShapeKey(options) : null;
+    if (coalesceKey) {
+      const joined = store.listReadInFlight.get(coalesceKey);
+      if (joined) return await joined;
+    }
+    if (options?.coalescedFetch !== true) {
+      /*
+      FNXC:ReadAttribution 2026-10-21-00:36 (RUFU-756):
+      4 338 index scans on `tasks` in a 75 s window (58 per second) while the measured allocation is
+      row parsing. The caller cannot be recovered from a heap or CPU profile, so it is captured here.
+      */
+      recordReadCall(store, "listTasks");
+    }
     /*
     FNXC:TaskArchiveRemoval 2026-09-04-18:25:
     Ordinary task reads are live-only by default. Cold archive snapshots remain available solely to
@@ -822,27 +901,7 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     const startupMemoEnabled = options?.startupMemo ?? (!store.isWatching && slim);
 
     if (startupMemoEnabled && slim && options?.limit === undefined && options?.offset === undefined) {
-      const memoKey = [
-        includeArchived ? "all" : "active",
-        columnFilter ?? "*",
-        options?.columns?.join(",") ?? "*",
-        options?.excludeColumns?.join(",") ?? "*",
-        options?.sort ?? "created-asc",
-        // FNXC:ListTasksDeriveOptOut 2026-09-08-20:58 (RUFU-201): a derived snapshot must never
-        // serve an opted-out caller, nor a raw one the board. `derive` is part of the result shape.
-        deriveUiSignals ? "derive" : "raw",
-        /*
-        FNXC:StartupSlimListMemo 2026-09-09-03:55 (RUFU-201 code-review remediation):
-        `includeDeleted` is a result-shape dimension of the memo key. Soft deletion stamps the
-        historical `archived` sentinel column, so a non-`includeArchived` read hides tombstones via
-        the column filter as well; the shapes that actually diverge are `includeArchived: true`
-        reads (admin/forensic surfaces, e.g. `?includeDeleted=true`), where only `deleted_at IS
-        NULL` separates live from forensic. Sharing one entry across that pair serves either caller
-        the other's tombstone set for up to one TTL. The collision pre-dated RUFU-201 but its TTL
-        raise (2.5 s -> 15 s) widened the wrong-payload window sixfold.
-        */
-        options?.includeDeleted ? "deleted" : "live",
-      ].join(":");
+      const memoKey = listReadShapeKey(options);
       const now = Date.now();
       const cached = store.startupSlimListMemo.get(memoKey);
       if (cached && cached.expiresAt > now) {
@@ -877,6 +936,34 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
       } catch (error) {
         store.startupSlimListMemo.delete(memoKey);
         throw error;
+      }
+    }
+
+    if (coalesceKey) {
+      /*
+      FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+      Register-then-delegate: the registered promise re-enters this seam with `coalesce: false`, so
+      the real fetch path stays one code path and the entry is published synchronously in the caller's
+      own tick — a second identical read issued in the same tick is guaranteed to join it rather than
+      race past it. The entry is deleted only if it is still OURS, so a cache clear followed by a new
+      fetch is never destroyed by the older fetch settling late.
+
+      The shared result is frozen once at fill (the memo's KTD-4 rule): N consumers receive one
+      materialization, so a consumer that mutated the board in place would corrupt the others'
+      snapshot. Freezing makes that fail loudly instead.
+      */
+      const sharedFetch = (async (): Promise<Task[]> => {
+        const rows = await listTasksImpl(store, { ...options, coalesce: false, coalescedFetch: true });
+        for (const row of rows) Object.freeze(row);
+        return Object.freeze(rows) as Task[];
+      })();
+      store.listReadInFlight.set(coalesceKey, sharedFetch);
+      try {
+        return await sharedFetch;
+      } finally {
+        if (store.listReadInFlight.get(coalesceKey) === sharedFetch) {
+          store.listReadInFlight.delete(coalesceKey);
+        }
       }
     }
 

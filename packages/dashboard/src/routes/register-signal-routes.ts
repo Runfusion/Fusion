@@ -110,7 +110,13 @@ async function findExistingSignalTask(
   provider: SignalProvider,
   externalId: string,
 ): Promise<Task | undefined> {
-  const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  /*
+  FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+  Signal-delivery dedupe is an idempotency lookup: two deliveries of the same external id arriving
+  back-to-back must not have the second one served a snapshot taken before the first committed its
+  card, or the dedupe silently produces a duplicate.
+  */
+  const tasks = await store.listTasks({ slim: true, includeArchived: false, coalesce: false });
   return tasks.find((t) => {
     const meta = t.source?.sourceMetadata as Record<string, unknown> | undefined;
     return (

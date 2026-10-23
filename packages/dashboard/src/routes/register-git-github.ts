@@ -4348,7 +4348,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
 
       // Check if already imported
-      const existingTasks = await scopedStore.listTasks({ slim: false, includeArchived: false });
+      // FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627): an import dedupe probe must see a
+      // card committed moments ago, so it opts out of sharing an in-flight board read.
+      const existingTasks = await scopedStore.listTasks({ slim: false, includeArchived: false, coalesce: false });
       const sourceUrl = issue.html_url;
       for (const existingTask of existingTasks) {
         if (isGitHubIssueAlreadyImported(existingTask, { owner, repo, issueNumber, sourceUrl })) {
@@ -4598,7 +4600,8 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore } = await getProjectContext(req);
 
       // Get existing tasks to check for duplicates
-      const existingTasks = await scopedStore.listTasks({ slim: false, includeArchived: false });
+      // FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627): duplicate probe — freshness beats sharing.
+      const existingTasks = await scopedStore.listTasks({ slim: false, includeArchived: false, coalesce: false });
       const projectSettings = await scopedStore.getSettings();
       const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(scopedStore, projectSettings);
 
@@ -5101,7 +5104,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       }
 
       // Check if already imported
-      const existingTasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
+      // FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627): an import dedupe probe must see a
+      // card committed moments ago, so it opts out of sharing an in-flight board read.
+      const existingTasks = await scopedStore.listTasks({ slim: true, includeArchived: false, coalesce: false });
       const sourceUrl = pr.html_url;
       for (const existingTask of existingTasks) {
         if (existingTask.description.includes(sourceUrl)) {

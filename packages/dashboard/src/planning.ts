@@ -4552,6 +4552,12 @@ export async function createTaskFromPlanSession(
 
   let claimEpoch = session.taskCreationEpoch ?? 0;
   const currentProposalClaimId = () => planningProposalClaimId(sessionId, claimEpoch);
+  /*
+  FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
+  A planning claim-recovery scan asks "did MY write land?" — both this lookup and the `allTasks`
+  re-scan below run right after a creation, so they must not be served a board snapshot that another
+  caller started before the commit. Freshness beats sharing here.
+  */
   const findCreatedTask = async (): Promise<Task | undefined> =>
   /*
   FNXC:BoardReadExcludeLog 2026-10-12-21:19 (RUFU-615 tranche 6): a V8 sampling heap profile of the live dashboard
@@ -4561,7 +4567,7 @@ export async function createTaskFromPlanSession(
   changing which rows or fields it can observe; the shared loader already falls back to `timing_total_ms` +
   `log_recent` for the log-derived signals.
   */
-    (await store.listTasks({ includeArchived: false, excludeLog: true })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
+    (await store.listTasks({ includeArchived: false, excludeLog: true, coalesce: false })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
   const markSessionComplete = async (): Promise<void> => {
     const current = await getSession(sessionId);
     if (current && !current.validated) {
@@ -4585,7 +4591,7 @@ export async function createTaskFromPlanSession(
   failing closed so we never fork on a hiccup.
   */
   const clearStaleLinkedTask = async (staleTaskId: string): Promise<boolean> => {
-    const allTasks = await store.listTasks({ includeArchived: false, excludeLog: true }).catch(() => null);
+    const allTasks = await store.listTasks({ includeArchived: false, excludeLog: true, coalesce: false }).catch(() => null);
     if (allTasks === null || allTasks.some((candidate) => candidate.id === staleTaskId)) return false;
     diagnostics.warn("Planning session linked task no longer exists; advancing creation epoch", {
       sessionId,

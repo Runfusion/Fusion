@@ -240,11 +240,47 @@ pnpm pg:test:down -- --port 25432
 
 Note: a skipped `pgDescribe` block is **not** PostgreSQL verification evidence — see `docs/testing.md`.
 
+## In-flight coalescing of identical board reads (RUFU-627)
+
+The memo answers one process shape: a short-lived CLI that reads the board a few times at startup
+(`!store.isWatching && slim`). The production growth is the opposite shape — a long-lived server whose
+`isWatching` is true, where scheduler sweeps, admission snapshots and board polling each parse the whole
+board, ~0.58 GiB per parsed 2 417-row board. RUFU-627 adds the mechanism that gate cannot reach.
+
+| Mechanism | Lives for | Gate | Consults `isWatching` | Invalidation |
+| --- | --- | --- | --- | --- |
+| `startupSlimListMemo` | one TTL (15 s) | `!isWatching && slim`, non-paginated | yes | TTL + `clearListReadCaches()` |
+| `listReadInFlight` | exactly as long as the fetch | non-paginated, slim or full | **no** | `clearListReadCaches()`, entry dropped in `finally` |
+
+Both build their key from the same helper, `listReadShapeKey`, whose six dimensions are the memo's:
+`includeArchived`, `column`, `columns`, `excludeColumns`, `sort`, `derive`, `includeDeleted`. That
+shared helper is the point — a key built twice is how the RUFU-201 tombstone collision happened.
+
+**Why there is no TTL on the in-flight map.** A TTL makes a shared read serve stale state. An entry lives
+exactly as long as the fetch it represents, so a joiner gets the same bytes the starter was already
+going to get. `clearListReadCaches()` (which `clearStartupSlimListMemo()` now delegates to) drops the
+entry on every `task:created|updated|deleted`, and dropping an entry never cancels the fetch — it only
+stops *later* callers from joining. That is the whole correctness argument and it is the mutation test:
+a caller that starts after a committed write re-issues and sees the write, while a caller already joined
+resolves with the snapshot it joined.
+
+**Read shapes that must not share.** Paginated and keyset reads (`limit`, `offset`, `afterCreatedAt`,
+`afterId`, `afterQueueKey`, `afterIntakeKey`) are excluded by the gate, not by becoming key dimensions —
+the shape key does not describe a page, so a promise keyed by it would serve one page to a caller that
+asked for another. Callers that must observe their own just-committed write pass `coalesce: false`:
+the planning claim-recovery lookups (`planning.ts`, `register-planning-subtask-routes.ts`), signal-delivery
+dedupe (`register-signal-routes.ts`), and the GitHub import dedupe probes.
+
+**A shared board is frozen.** One array is handed to N consumers, so it is `Object.freeze`d at fill, like
+the memo's snapshots. A caller that wants to sort, reverse or splice copies first
+(`[...rows].sort(...)`); it must not be served by unfreezing the shared rows.
+
 ## Do not
 
 - Do not default `derive` to `false`, and do not convert a dashboard/API board-feed caller. Board parity
   is the hard constraint.
-- Do not unfreeze memo rows to silence a `TypeError` from a mutating caller.
+- Do not unfreeze memo or coalesced rows to silence a `TypeError` from a mutating caller — copy the array.
+- Do not give `listReadInFlight` a TTL, and do not coalesce a paginated or keyset read.
 - Do not add a caller to the converted set without writing its field-read audit in its own FNXC comment.
 - Do not pass `excludeLog` as a way to shed the log column *while still deriving*. It is ignored, by
   design; the badges would silently go empty instead.
