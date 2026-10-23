@@ -81,6 +81,8 @@ export const tasks = projectSchema.table("tasks", {
   blockedBy: text("blocked_by"),
   overlapBlockedBy: text("overlap_blocked_by"),
   fileScopeLeaseRelease: jsonb("file_scope_lease_release"),
+  /** Trigger-maintained (migration 0090): the subset of `log` slim-list signals read. Never written by the app. */
+  logSignalEntries: jsonb("log_signal_entries"),
   queuedLogEpisodeSignature: text("queued_log_episode_signature"),
   paused: integer("paused").default(0),
   userPaused: integer("user_paused").default(0),
