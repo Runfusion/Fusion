@@ -8,6 +8,7 @@ import {
   createTaskStoreForBackend,
   drizzleSql,
   AgentStore,
+  AmbiguousAgentNameError,
   ReflectionStore,
   isEphemeralAgent,
   evaluateImplementationTaskBind,
@@ -738,11 +739,42 @@ async function getAgentStore(cwd: string): Promise<AgentStore> {
   return new AgentStore({ rootDir: getFusionDir(cwd), asyncLayer: requireProjectLayer(projectStore, "CLI AgentStore") });
 }
 
-type ManagerEvaluationToolErrorResult = {
+type AgentIdentityToolErrorResult = {
   content: Array<{ type: "text"; text: string }>;
   isError: true;
   details: Record<string, unknown>;
 };
+
+/*
+FNXC:AgentIdentityResolution 2026-10-04-10:41:
+Every published name-capable agent tool uses one ambiguity contract. Candidate IDs are safe identity
+metadata and let operators retry with an authoritative exact ID without exposing agent configuration.
+*/
+async function resolveAgentIdentityForTool(
+  agentStore: AgentStore,
+  query: string,
+): Promise<{ agent: Agent; error?: never } | { agent?: never; error: AgentIdentityToolErrorResult } | { agent: null; error?: never }> {
+  try {
+    return { agent: await agentStore.resolveAgent(query) };
+  } catch (error) {
+    if (!(error instanceof AmbiguousAgentNameError)) throw error;
+    return {
+      error: {
+        content: [{ type: "text", text: error.message }],
+        isError: true,
+        details: {
+          outcome: "ambiguous",
+          error: "Ambiguous agent name",
+          query: error.query,
+          normalizedName: error.normalizedName,
+          candidateAgentIds: error.candidateAgentIds,
+        },
+      },
+    };
+  }
+}
+
+type ManagerEvaluationToolErrorResult = AgentIdentityToolErrorResult;
 
 type ManagerEvaluationTargetResolution =
   | { kind: "error"; response: ManagerEvaluationToolErrorResult }
@@ -754,7 +786,9 @@ async function resolveManagerEvaluationTarget(
   agentId: string,
   ctx: ExtensionCallerContext,
 ): Promise<ManagerEvaluationTargetResolution> {
-  const target = await agentStore.resolveAgent(agentId);
+  const resolved = await resolveAgentIdentityForTool(agentStore, agentId);
+  if (resolved.error) return { kind: "error", response: resolved.error };
+  const target = resolved.agent;
   if (!target) {
     return {
       kind: "error",
@@ -907,7 +941,7 @@ async function isEphemeralCallerAgent(cwd: string, callerAgentId: string | undef
 
     const agentStore = await getAgentStore(cwd);
     await agentStore.init();
-    const agent = await agentStore.resolveAgent(callerAgentId);
+    const agent = await agentStore.getAgent(callerAgentId);
     if (!agent) return true;
     return isEphemeralAgent(agent);
   } catch {
@@ -1137,7 +1171,7 @@ async function applyAgentPolicyGateForExtensionTool(
       try {
         const agentStore = await getAgentStore(cwd);
         await agentStore.init();
-        agentRow = await agentStore.resolveAgent(callerAgentId);
+        agentRow = await agentStore.getAgent(callerAgentId);
       } catch {
         // Unknown/unreadable agent row: fall through to the project default policy (still an
         // agent principal — never an operator).
@@ -5873,7 +5907,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         let callerRow: { name?: string; role?: string } | null = null;
         if (provisionPrincipal.kind === "agent") {
           try {
-            callerRow = await agentStore.resolveAgent(callerAgentId);
+            callerRow = await agentStore.getAgent(callerAgentId);
           } catch {
             callerRow = null;
           }
@@ -6060,7 +6094,9 @@ export default function kbExtension(pi: ExtensionAPI) {
         return invalid("max_workflow_sessions", "max_workflow_sessions must be at least 1");
       }
 
-      const target = (await agentStore.getAgent(params.agent_id)) ?? (await agentStore.resolveAgent(params.agent_id));
+      const resolvedTarget = await resolveAgentIdentityForTool(agentStore, params.agent_id);
+      if (resolvedTarget.error) return resolvedTarget.error;
+      const target = resolvedTarget.agent;
       if (!target) {
         return {
           content: [{ type: "text" as const, text: `Agent '${params.agent_id}' not found` }],
@@ -6106,7 +6142,9 @@ export default function kbExtension(pi: ExtensionAPI) {
           }
           resolvedReportsTo = undefined;
         } else {
-          const manager = await agentStore.resolveAgent(params.reportsTo);
+          const resolvedManager = await resolveAgentIdentityForTool(agentStore, params.reportsTo);
+          if (resolvedManager.error) return resolvedManager.error;
+          const manager = resolvedManager.agent;
           if (!manager) {
             return invalid("reportsTo", `Manager '${params.reportsTo}' not found`, { agentId: target.id });
           }
@@ -6234,7 +6272,9 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const target = await agentStore.resolveAgent(params.agent_id);
+      const resolvedTarget = await resolveAgentIdentityForTool(agentStore, params.agent_id);
+      if (resolvedTarget.error) return resolvedTarget.error;
+      const target = resolvedTarget.agent;
       if (!target) {
         return {
           content: [{ type: "text" as const, text: `Agent '${params.agent_id}' not found` }],
@@ -6480,7 +6520,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         let callerRow: { name?: string; role?: string } | null = null;
         if (provisionPrincipal.kind === "agent") {
           try {
-            callerRow = await agentStore.resolveAgent(callerAgentId);
+            callerRow = await agentStore.getAgent(callerAgentId);
           } catch {
             callerRow = null;
           }
@@ -6967,7 +7007,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
 
-      const agent = await agentStore.resolveAgent(params.id);
+      const resolvedAgent = await resolveAgentIdentityForTool(agentStore, params.id);
+      if (resolvedAgent.error) return resolvedAgent.error;
+      const agent = resolvedAgent.agent;
       if (!agent) {
         return {
           content: [{ type: "text", text: `Agent '${params.id}' not found` }],
@@ -7080,8 +7122,22 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       // If root_agent_id specified, show subtree via chain-of-command + reports
       if (params.root_agent_id) {
-        const rootAgent = await agentStore.resolveAgent(params.root_agent_id);
+        const resolvedRoot = await resolveAgentIdentityForTool(agentStore, params.root_agent_id);
+        if (resolvedRoot.error) return resolvedRoot.error;
+        const rootAgent = resolvedRoot.agent;
         if (!rootAgent) {
+          return {
+            content: [{ type: "text", text: `Agent '${params.root_agent_id}' not found` }],
+            isError: true,
+            details: { error: "Root agent not found" },
+          };
+        }
+        /*
+        FNXC:AgentIdentityResolution 2026-10-04-18:20:
+        Exact-ID resolution now reaches ephemeral agents directly, but the org chart excludes them by
+        default. Keep that filter for an exact-ID root so the chart never shows an excluded agent.
+        */
+        if (!includeEphemeral && isEphemeralAgent(rootAgent)) {
           return {
             content: [{ type: "text", text: `Agent '${params.root_agent_id}' not found` }],
             isError: true,

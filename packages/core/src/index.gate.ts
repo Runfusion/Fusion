@@ -750,7 +750,7 @@ export {
   validateColumnAgentBindings,
   ColumnAgentBindingError,
 } from "./agents/column-agent-binding-validation.js";
-export { AgentStore, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS, formatCurrentTaskLine } from "./agents/agent-store.js";
+export { AgentStore, AmbiguousAgentNameError, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS, formatCurrentTaskLine } from "./agents/agent-store.js";
 export type { AgentStoreEvents } from "./agents/agent-store.js";
 export {
   isImplementationTask,
