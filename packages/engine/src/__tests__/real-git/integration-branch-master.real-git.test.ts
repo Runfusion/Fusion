@@ -33,8 +33,29 @@ describeIfGit("integration branch resolution (real git, master)", () => {
 
   it("resolves origin/HEAD and respects explicit override", async () => {
     const repo = setupRepo();
+    git(repo, "git branch trunk");
     await expect(resolveIntegrationBranch(repo, {})).resolves.toBe("master");
     await expect(resolveIntegrationBranch(repo, { integrationBranch: "trunk" })).resolves.toBe("trunk");
+  });
+
+  it("falls back to origin/HEAD when the configured branch does not exist", async () => {
+    const repo = setupRepo();
+    // No `ghost` branch exists locally or in refs/remotes/origin.
+    await expect(resolveIntegrationBranch(repo, { integrationBranch: "ghost" })).resolves.toBe("master");
+    // A local branch that exists keeps priority.
+    git(repo, "git branch trunk");
+    await expect(resolveIntegrationBranch(repo, { integrationBranch: "trunk" })).resolves.toBe("trunk");
+  });
+
+  it("materializes a configured branch that exists only as a remote-tracking ref", async () => {
+    const repo = setupRepo();
+    // refs/remotes/origin/develop exists, refs/heads/develop does not. The configured
+    // branch is authoritative: the resolver materializes refs/heads/develop from the
+    // remote-tracking ref (FN-183) so consumers like `git worktree add` find a local ref.
+    git(repo, "git update-ref refs/remotes/origin/develop HEAD");
+    await expect(resolveIntegrationBranch(repo, { integrationBranch: "develop" })).resolves.toBe("develop");
+    await expect(resolveIntegrationBranch(repo, { integrationBranch: "develop" })).resolves.toBe("develop");
+    git(repo, "git rev-parse --verify refs/heads/develop");
   });
 
   it("inspects branch conflicts against master without disturbing dirty root worktree", async () => {
