@@ -141,11 +141,11 @@ import {
 import { WorkspaceEnvironmentError } from "./merge/workspace-integration-target.js";
 import {
   formatAdmissionCapacityQueuedReason,
-  persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
   resolveAgentCapacityLimit,
   type CapacityEmptinessProof,
 } from "./concurrency/concurrency.js";
+import { openCapacityAdmissionPass } from "./concurrency/capacity-admission-snapshot.js";
 import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
 import { clearOwnedMergeStamp } from "./merge/clear-orphaned-merge-stamp.js";
 import {
@@ -5096,13 +5096,22 @@ export class ProjectEngine {
               /*
               FNXC:AdmissionClaimReadLogFree 2026-10-12-07:58 (memory: the read behind the supervised restarts):
               The merge lane shared the triage poll's shape: a `slim: false` board read whose only consumer is
-              `persistedTopLevelAgentTaskIdsFromStore`, i.e. `id`/`status`/`workflowStepResults`. `log` was
+              `capacity-admission-snapshot.ts` (which delegates to `persistedTopLevelAgentTaskIdsFromStore`),
+              i.e. `id`/`status`/`workflowStepResults`. `log` was
               therefore SELECTed (125 MB across 2 417 live rows), parsed by `rowToTask`, and thrown away. The
               predicate chain in `@fusion/core/agents/live-agent-count.ts` contains no `task.log` read, so the
               claim count cannot depend on the column; see the matching block in `triage.ts`.
               */
               const tasks = await store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
-              const ids = await persistedTopLevelAgentTaskIdsFromStore(store, tasks, undefined, mergeEmptinessProof);
+              /*
+              FNXC:CapacityAdmissionSnapshot 2026-10-25-20:41 (RUFU-627 Step 3):
+              Same engine-side reuse as the triage lane: this memoized claim snapshot fans out over the whole
+              board, so its workflow identities resolve through one pass-scoped cache pair instead of one
+              selection read per card. It is opened inside the memoized arm on purpose — a second call after
+              a selection write must re-derive, not reuse (RUFU-073).
+              */
+              const admissionPass = await openCapacityAdmissionPass(store, tasks);
+              const ids = (await admissionPass.runningAgentTaskIds(tasks, mergeEmptinessProof)).agentTaskIds;
               return { count: ids.length, ids };
             })();
             /*

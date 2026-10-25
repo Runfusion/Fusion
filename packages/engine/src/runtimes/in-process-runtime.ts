@@ -99,11 +99,11 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation, type PlanReviewSeedBailReason } from "../plan-review-continuation.js";
 import {
   formatAdmissionCapacityQueuedReason,
-  persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
   resolveAgentCapacityLimit,
   type CapacityEmptinessProof,
 } from "../concurrency/concurrency.js";
+import { openCapacityAdmissionPass } from "../concurrency/capacity-admission-snapshot.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
@@ -933,13 +933,23 @@ export async function admitPlanningContinuation(input: {
     `log_recent` for the log-derived signals.
     */
     const tasks = await input.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
-    const ids = await persistedTopLevelAgentTaskIdsFromStore(input.store, tasks, undefined, capacityEmptinessProof);
+    /*
+    FNXC:CapacityAdmissionSnapshot 2026-10-25-20:41 (RUFU-627 Step 3):
+    This snapshot is re-read inside the serialized coordinator drain, so it opens its OWN pass per
+    invocation — shared across invocations it must not be, precisely because the drain re-reads to see a
+    selection write committed since the dispatch attempt (RUFU-073). Within one invocation the fan-out
+    now resolves each card's workflow identity at most once instead of once per row per call.
+    */
+    const admissionPass = await openCapacityAdmissionPass(input.store, tasks);
+    const ids = (await admissionPass.runningAgentTaskIds(tasks, capacityEmptinessProof)).agentTaskIds;
     return { count: ids.length, ids };
   };
   // Resuming another node of an already-live task is a same-slot handoff, not a
   // new admission. Check only this fully hydrated task here; the project-wide
   // snapshot belongs inside the serialized coordinator drain below.
-  const taskAlreadyActive = (await persistedTopLevelAgentTaskIdsFromStore(input.store, [input.task], undefined, capacityEmptinessProof))
+  const taskAlreadyActive = (await (await openCapacityAdmissionPass(input.store, [input.task]))
+    .runningAgentTaskIds([input.task], capacityEmptinessProof))
+    .agentTaskIds
     .includes(input.task.id);
   if (taskAlreadyActive) {
     await dispatchPlanningContinuationIfCurrent({

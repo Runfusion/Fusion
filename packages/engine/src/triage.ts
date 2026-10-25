@@ -228,7 +228,6 @@ import {
   computeTopLevelConcurrencyClaimedFromStore,
   formatAdmissionCapacityQueuedReason,
   dropPreHeldExecutorSlot,
-  persistedTopLevelAgentTaskIdsFromStore,
   projectAdmissionCoordinator,
   registerPreHeldExecutorSlot,
   releasePreHeldAdmissionReservation,
@@ -238,6 +237,7 @@ import {
   type AgentSemaphore,
   type CapacityEmptinessProof,
 } from "./concurrency/concurrency.js";
+import { openCapacityAdmissionPass } from "./concurrency/capacity-admission-snapshot.js";
 /* FNXC:TaskFollowUp 2026-09-17-16:10: FN-513 — the bounded source-task context a follow-up's planning session receives. */
 import {
   formatFollowUpContextUnavailableSection,
@@ -2756,11 +2756,19 @@ export class TriageProcessor {
       released slot. `rootDir` is the stable per-project identity this processor already holds.
       */
       const capacityEmptinessProof: CapacityEmptinessProof = { rootDir: this.rootDir, settings };
+      /*
+      FNXC:CapacityAdmissionSnapshot 2026-10-25-20:41 (RUFU-627 Step 3):
+      This throttle evaluation is ONE admission decision over `allTasks`, so its two capacity facts — the
+      claimed count and the holder id set the audit row names — now share one pass-scoped cache pair
+      instead of each allocating a fresh IR cache and resolving every card's workflow identity per row.
+      */
+      const admissionPass = await openCapacityAdmissionPass(this.store, allTasks);
       const claimed = await computeTopLevelConcurrencyClaimedFromStore({
-        store: this.store,
+        store: admissionPass.store,
         tasks: allTasks,
         pendingSpecifyCount,
         emptinessProof: capacityEmptinessProof,
+        caches: admissionPass.caches,
       });
       /*
       FNXC:CapacityModel 2026-07-31-11:10 (PR #2562 review — coderabbit; CORRECTED):
@@ -2802,7 +2810,7 @@ export class TriageProcessor {
           gate: "maxConcurrent",
           limit: maxConcurrent,
           claimed,
-          holderTaskIds: await persistedTopLevelAgentTaskIdsFromStore(this.store, allTasks, undefined, capacityEmptinessProof),
+          holderTaskIds: (await admissionPass.runningAgentTaskIds(allTasks, capacityEmptinessProof)).agentTaskIds,
         });
         planLog.log(
           `Plan throttled by ${blockedBy}: eligible=${triageTasks.length} [${eligibleIds.join(", ")}], ` +
@@ -3067,7 +3075,15 @@ export class TriageProcessor {
             const row = fresh.find((task) => task.id === id);
             if (!row || row.status !== "planning") pending++;
           }
-          const ids = await persistedTopLevelAgentTaskIdsFromStore(this.store, fresh, undefined, capacityEmptinessProof);
+          /*
+          FNXC:CapacityAdmissionSnapshot 2026-10-25-20:41 (RUFU-627 Step 3):
+          `getFreshClaimSnapshot` is re-invoked by the coordinator for `claimed` AND `claimedTaskIds`, so
+          its fan-out cost is paid per call. Each invocation opens its OWN pass (never a shared one): the
+          method exists precisely to observe a selection write committed since the previous claim read, and
+          a cached pass would hide it (RUFU-073).
+          */
+          const ids = (await (await openCapacityAdmissionPass(this.store, fresh))
+            .runningAgentTaskIds(fresh, capacityEmptinessProof)).agentTaskIds;
           return { count: ids.length + pending, ids: [...new Set([...ids, ...this.processing])] };
         })();
         await projectAdmissionCoordinator.admitNext({
