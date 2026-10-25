@@ -127,11 +127,16 @@ projection: `log` is still selected, and on the live board it is the heaviest co
 full-board sweep therefore still moved ~14 MB per pass. `ListTasksOptions.excludeLog` drops that column
 from the projection for a caller that provably never reads it.
 
-It is **only effective alongside `derive: false`**. With derivation on, `log` is a derivation *input* —
-`stalledReview` and `timedExecutionMs` are computed from log entries before any wire stripping — so
-passing `excludeLog` with derivation on is a documented no-op rather than a silent badge regression
-(`FNXC:TaskStoreReads 2026-07-05-15:30` is the incident that restored the log read for exactly that
-reason).
+It WAS **only effective alongside `derive: false`**, and that gate is gone. With derivation on, `log`
+had been a derivation *input* — `stalledReview`, `inReviewStall(ed)` and `timedExecutionMs` were
+computed from log entries before any wire stripping — so `excludeLog` with derivation on was a
+documented no-op rather than a silent badge regression (`FNXC:TaskStoreReads 2026-07-05-15:30` is the
+incident that restored the log read for exactly that reason). RUFU-615 removed the reason: those five
+figures are now maintained at WRITE time into `timing_total_ms` + `log_recent`
+(`task-store/task-log-projections.ts`), so a deriving caller can ask for a `log`-free row and keep
+byte-identical badges. `task-log-projections.pg.test.ts` proves the identity; `slim` now implies the
+drop, and the `slim` veto that used to guard it was protecting a column nothing could read (`task.log`
+is assigned `[]` on both slim paths, so no slim consumer could ever have observed an entry).
 
 **Use `excludeLog`, not `slim`, to shed the log column.** `slim` bundles the drop with
 `finalizeSlimListTask`, which re-parses `PROMPT.md` for every task whose persisted `steps` is empty, via
@@ -150,9 +155,9 @@ Two rejections worth repeating:
   `hasAutoHealableVerificationBufferFailure` reads `task.log`. The drop must stay per-call-site and
   explicit.
 
-The startup memo needs no key extension: it is gated on `slim`, so a non-slim `excludeLog` read can
-never enter it, and for slim-eligible shapes the effective decision depends only on `derive`, which is
-already a key component.
+The startup memo needs no key extension for `excludeLog` on its own: it is gated on `slim`, and `slim`
+implies the drop, so within the memo's gate the effective decision is constant. It did need the
+dimensions RUFU-627 added — see the read-shape key section below.
 
 ## Converted call sites and their field-read audit
 
@@ -252,9 +257,21 @@ board, ~0.58 GiB per parsed 2 417-row board. RUFU-627 adds the mechanism that ga
 | `startupSlimListMemo` | one TTL (15 s) | `!isWatching && slim`, non-paginated | yes | TTL + `clearListReadCaches()` |
 | `listReadInFlight` | exactly as long as the fetch | non-paginated, slim or full | **no** | `clearListReadCaches()`, entry dropped in `finally` |
 
-Both build their key from the same helper, `listReadShapeKey`, whose six dimensions are the memo's:
+Both build their key from the same helper, `listReadShapeKey`. Its first six dimensions are the memo's:
 `includeArchived`, `column`, `columns`, `excludeColumns`, `sort`, `derive`, `includeDeleted`. That
 shared helper is the point — a key built twice is how the RUFU-201 tombstone collision happened.
+
+**The six were the memo's complete set, not the map's.** The memo's gate pins `slim` and it never sees
+`compactBoardFeed`, so those two could not diverge inside it. The in-flight map has no such gate: it
+coalesces slim and full reads alike, so the memo's key let an overlapping `{slim: true}` and
+`{slim: false}` read share one promise and hand the joiner a row of the wrong shape (a `slim: false`
+joiner of a `slim: true` fetch received `log: []` plus a `timedExecutionMs` it never asked for).
+RUFU-627 found that while adding the `fields` dimension and fixed it in the same change: the key now
+carries `slim`, the EFFECTIVE log decision (`excludeLog || slim`), `compactBoardFeed`, and the
+canonical spelling of `fields`. The rule is now stated over the key itself instead of inherited from
+the memo — **every dimension that changes the result shape is a dimension of this key** — and the memo
+merely gains segments it cannot vary within its own gate. Paginated and keyset reads stay excluded by
+the gate rather than becoming dimensions: a shape key cannot describe which page a promise holds.
 
 **Why there is no TTL on the in-flight map.** A TTL makes a shared read serve stale state. An entry lives
 exactly as long as the fetch it represents, so a joiner gets the same bytes the starter was already
@@ -275,6 +292,80 @@ dedupe (`register-signal-routes.ts`), and the GitHub import dedupe probes.
 the memo's snapshots. A caller that wants to sort, reverse or splice copies first
 (`[...rows].sort(...)`); it must not be served by unfreezing the shared rows.
 
+## Declared field sets (`fields`) — RUFU-627
+
+Coalescing removes duplicate parses; it does not shrink one parse. The measured cost was in the decode:
+~240 KB of heap per `Task` against ~30 KB of stored row, in a path where `rowToTask`, `DataRow` and
+`fromJson` held 1.327 GiB of the production process's still-live samples. `ListTasksOptions.fields` is
+the second lever: a caller names the wide fields it reads, and the SELECT stops carrying the ones it
+does not.
+
+**The rules that make it safe** (`ListTasksOptions.fields` in `reads.ts`, `TaskListReadField` in
+`async/async-persistence.ts`):
+
+- The union is **closed** — `log | description | summary | steps | attachments | workflowStepResults |
+  source`. `source` is a FAMILY (`sourceType`, `sourceAgentId`, `sourceRunId`, `sourceSessionId`,
+  `sourceMessageId`, `sourceParentTaskId`, `sourceMetadata`, plus the six `sourceIssue*` columns the
+  `Task.sourceIssue` object is assembled from). `acceptanceCriteria` is NOT in it: there is no such
+  column on `tasks` — it exists only on the archive tables — so no live list row can source it.
+- Everything the union does not name stays selected: identity, lane, status, timestamps, `queueBoost`,
+  `nextRecoveryAt`, `dependencies`, `timing_total_ms`, `log_recent`. A declared read is therefore a
+  strict **subset** of today's row, never a different row, and absent `fields` returns the pre-existing
+  projection objects by reference (`list-tasks-field-declaration.pg.test.ts` asserts `toBe`).
+- A declaration also suppresses **enrichment** for an undeclared field. `slim` re-parses `PROMPT.md`
+  for every card with empty persisted `steps`; a read that does not declare `steps` must not pay one
+  file read per card for a value it said it does not read, so the sync is skipped and `steps` stays `[]`.
+  Leaving that sync in place would have made the flag able to *add* an unbounded per-pass fan-out.
+- Declaring a field set is a **read shape**, so it is a key dimension and a projection-cache key built
+  from one shared spelling helper. Two overlapping reads with different sets never share a fetch.
+- Column-level, not post-parse: the claim is about the executed SELECT. `log` and
+  `workflow_step_results` are jsonb stored out of line and compressed (`pg_column_size` vs
+  `octet_length(...::text)` in the same test), so a client-side strip would still transfer and decode
+  all of it. Only the SELECT can prevent that.
+- It is NOT a licence to narrow a SHARED loader. `log`, `workflow_step_results` and `source_metadata`
+  stay in every undeclared projection (RUFU-615's constraint: engine self-healing reads `task.log`
+  markers off list-loaded rows). Only a call site with a written field-read audit may declare.
+
+### Sites converted to declared fields, and the rest of the `slim` census
+
+Converted in this change, each with its audit in its own FNXC comment at the call site:
+
+| Site | Declared | Why that set |
+| --- | --- | --- |
+| `triage.ts` import near-duplicate comparator | `description` | maps `id`/`title`/`description`/`column`/`createdAt` into `NearDuplicateCandidate`; `resolveTerminalColumnsForTasks` adds `id`/`column` only |
+| `triage.ts` FN-5152 planning near-duplicate comparator | `description`, `source` | same candidate shape **plus** `sourceMetadata.fileScope`; `source` is declared whole because `rowToTask` also derives `Task.branchContext` from that column |
+| `scheduling/auto-claim-snapshot.ts` `resolveFreshAutoClaimCandidates` | `description` | candidacy reads `column`/`status`/`paused`/`userPaused`/`assignedAgentId`/`checkedOutBy`/`deletedAt`/`dependencies` (all narrow) + `id`/`title`/`description`/`createdAt`/`columnMovedAt`/`queueBoost`; `AutoClaimCandidate` has no `steps` field, so today's PROMPT.md parse produced a value `toAutoClaimCandidate` discards |
+| `scheduling/auto-claim-snapshot.ts` `rebuild` | `description` | same read-set, documented by the RUFU-201 FNXC above it. Converted together with the leg above so the file's two board scans cannot disagree about a field set their shared predicates cannot distinguish |
+
+Not converted, recorded so the decision is written down rather than re-litigated per site:
+
+| Census group (measured on this tree) | Count | Decision |
+| --- | --- | --- |
+| `slim` + `excludeLog`, derivation ON (RUFU-615 tranches 3-7: `self-healing.ts`, `merger.ts`, `executor/*`, `merge/*`, `worktree/*`, `agent-heartbeat.ts`, `agent-tools.ts`, `usage-limit-detector.ts`, `eval/*`, `backlog-pressure-reporter.ts`, `plugin-trait-adapter.ts`) | ~100 | `excludeLog` already took the heaviest column. `fields` needs a per-site field audit that none of them has yet, and the remaining wide fields (`steps`, `workflowStepResults`, `attachments`, `source`) are read by some of them — converting in bulk is how RUFU-201's `description`/`attachments` loss happened. Next tranche: per-file, with the count in this table lowered as each lands. |
+| `slim` + `derive: false` + `excludeLog` (`triage.ts` 1069 / 1447 / 2713, `scheduler.ts` 2576 / 2658 / 2659, `healing/gridlock-detector.ts`, `scheduling/review-dispatch-sweep.ts`, `project-engine.ts`, `task-store/lifecycle-ops.ts`) | 10 | Cheapest next conversions, but NOT mechanical: 1069/2713 feed `discoverReadyPlanningTasks`, which reads `steps` (`isTaskStillInPlanningStage`) and — at 2713 — `workflowStepResults` as the only live-agent signal, so their declared set is `description, steps, source` (plus `workflowStepResults` at 2713), not the minimal one. `gridlock-detector` names `sourceMetadata` in its own audit. Declaring them is a per-site edit with its own count line here. (`execution/hold-release.ts` is the same read WITHOUT `slim`, so it is not in this census at all — RUFU-201 converted its `derive`/`excludeLog` half.) |
+| `slim` with neither `excludeLog` nor `derive: false` (`triage.ts` 5211 `fn_task_list`, `scheduler.ts` 2040, `agents/agent-reflection.ts`) | 3 | These are the sites the `list-tasks-slim-excludes-log.test.ts` ratchet is for; `excludeLog` first, `fields` after. **Ratchet status:** the census in this change measures 3 and `MAX_UNCONVERTED_SLIM_SCANS` is 2, so that test is red on `main` independently of this change — a deterministic pre-existing failure, recorded here rather than quietly widened. |
+| CLI / dashboard / core non-engine `slim` reads (`cli/src/*`, `dashboard/src/*`, `core/src/*`) | ~35 | Out of RUFU-627's scope: mostly one-shot CLI reads (the memo already serves them) or single-card lookups, where a declaration costs a reviewer more attention than it saves bytes. |
+
+### Verification
+
+- `packages/core/src/__tests__/postgres/list-tasks-field-declaration.pg.test.ts` — the SELECT-level
+difference (rendered SQL text plus the returned row key set, so the reader cannot be accused of a
+client-side strip), the reference-identity of the undeclared projections, TOAST evidence, the
+non-coalescing pair in both directions, the `slim` / `compactBoardFeed` / `excludeLog` shape guards, and
+the zero-`parseStepsFromPrompt` leg with its control.
+- `packages/core/src/__tests__/postgres/list-read-projection-parity.pg.test.ts` — for every member of
+the union, the declared row carries exactly that member's columns and none of any other member's, while
+the narrow columns survive even `fields: []`; the assembled `Task` stops carrying the undeclared fields;
+and reading a declared shape between two reads of the two board feeds' own option bags leaves those
+reads byte-equal (the shared projection cache and shape key cannot leak a narrow row onto a board read).
+- `packages/dashboard/src/routes/__tests__/task-list-wire-shape-never-declares-fields.test.ts` — the
+HTTP boundary: `GET /tasks` (plain, lane-scoped, searched) and `GET /tasks/page` never pass a declared
+set, and every field the store returned reaches the wire.
+
+The file this task's spec named, `packages/core/src/__tests__/task-store-list-read-parity.test.ts`, does
+not exist on this tree; the field-parity contract it is described as carrying lives in
+`list-read-projection-parity.pg.test.ts`, which is what the first bullet above extends.
+
 ## Do not
 
 - Do not default `derive` to `false`, and do not convert a dashboard/API board-feed caller. Board parity
@@ -282,9 +373,19 @@ the memo's snapshots. A caller that wants to sort, reverse or splice copies firs
 - Do not unfreeze memo or coalesced rows to silence a `TypeError` from a mutating caller — copy the array.
 - Do not give `listReadInFlight` a TTL, and do not coalesce a paginated or keyset read.
 - Do not add a caller to the converted set without writing its field-read audit in its own FNXC comment.
-- Do not pass `excludeLog` as a way to shed the log column *while still deriving*. It is ignored, by
-  design; the badges would silently go empty instead.
-- Do not reach for `slim: true` when all you want is the log column dropped — `slim` adds a per-task
-  PROMPT.md parse and blanks fields the caller may still be reading.
+- Do not pass `excludeLog` hoping to shed the log column while a badge still computes FROM it. That was
+  the pre-RUFU-615 rule and it was right then: the five log-derived figures were computed from the
+  column. They now read `timing_total_ms` + `log_recent`, so the drop is safe — but a NEW signal that
+  derives from `log` must be wired to those projections too, or `excludeLog` blanks it silently.
+- Do not drop `log`, `workflow_step_results` or `source_metadata` from an undeclared (shared)
+  projection, and do not add a new member to `TaskListReadField` without naming the columns it owns
+  and the test that proves the omission is observable only to a caller that asked for it.
+- Do not declare a field set on a read whose consumers include a derivation you still need: `fields`
+  narrows what the derivation sees, so `retrySummary` and `reviewBypass` come out empty when
+  `workflowStepResults` is undeclared. Either declare the input or opt out of deriving — quietly
+  serving a badge computed from nothing is the failure mode to avoid.
 - Do not treat `ListTasksOptions.excludeColumns` as a column projection. It is a lane filter, and it
   disables the `archived` narrowing.
+- Do not reach for `slim: true` when all you want is the log column dropped — `slim` bundles the drop
+  with the PROMPT.md steps sync and the `timedExecutionMs` figure, and it blanks `log` on the way out.
+  `excludeLog` is the narrow flag; `fields: ["description"]` is the one that also sheds the rest.

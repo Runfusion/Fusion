@@ -138,7 +138,7 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
 }
 
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {countLiveTasks, readCompletedTaskPage, readTaskRow, readLiveTaskRows, readTaskRowByProposalClaimId, readTaskRowsBySourceLineage} from "./async/async-persistence.js";
+import {countLiveTasks, readCompletedTaskPage, readTaskRow, readLiveTaskRows, readTaskRowByProposalClaimId, readTaskRowsBySourceLineage, normalizeTaskListReadFields, type TaskListReadField} from "./async/async-persistence.js";
 import {buildTsqueryFragment, liveSearchPredicate, searchTasksTsvector, searchTasksLike} from "./async/async-search.js";
 import {
   getArchivedTask,
@@ -599,6 +599,28 @@ export interface ListTasksOptions {
   includeArchived?: boolean;
   /** Omit heavy detail fields for board-style consumers. */
   slim?: boolean;
+  /*
+  FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+  Declare the WIDE fields this caller reads, and the SELECT stops sending the ones it does not.
+  Omitted means today's row. Declared means the same row minus the undeclared wide columns — never a
+  different row, and never a field the caller named (see `TaskListReadField` in
+  `async/async-persistence.ts` for the closed union and the column each member owns).
+
+  Two consequences a converted caller must own, both enforced rather than documented-only:
+  1. A declared field set is part of the read SHAPE, so it is a dimension of `listReadShapeKey`. A
+     `fields` read can never join a differently-declared one, memo or in-flight.
+  2. Declaring a field set also stops the reader from ENRICHING an undeclared field. `slim` re-parses
+     PROMPT.md for every card whose persisted `steps` is empty; a read that does not declare `steps`
+     must not pay that per-card file read for a value it said it does not read, so the sync is
+     skipped and `steps` stays `[]`. Skipping is the point: the alternative is a per-board fan-out of
+     file reads behind a flag whose purpose is to shed work.
+
+  It is NOT a licence to drop a column from a SHARED loader: `log`, `workflow_step_results` and
+  `source_metadata` stay in every undeclared projection (RUFU-615's constraint — engine self-healing
+  reads `task.log` markers off list-loaded rows). Only a call site with a written field-read audit
+  may declare a narrower set.
+  */
+  fields?: readonly TaskListReadField[];
   /** Restrict to one or several custom-capable column ids. */
   column?: ColumnId;
   columns?: readonly ColumnId[];
@@ -798,9 +820,16 @@ reconcile the same shape.
 FNXC:TaskDetailPromptResilience 2026-07-10-16:00 (merge port from main):
 an unreadable PROMPT.md must not reject this Promise.all and 500 the
 entire board list — degrade to the persisted (empty) steps and log.
+
+FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+`stepsDeclared` is the caller's declaration, and it gates the PROMPT.md sync. That sync exists to
+restore a value the persisted row lacks, so running it for a field the caller declared it does not
+read would trade a dropped column for one `existsSync` + `readFile` per card — the unbounded per-pass
+file-read fan-out this file's own `slim` documentation warns about. A declared read without `steps`
+therefore returns the `rowToTask` default (`[]`) and performs ZERO parses.
 */
-async function finalizeSlimListTask(store: TaskStore, task: Task, slim: boolean): Promise<Task> {
-  if (!slim || task.steps.length > 0) {
+async function finalizeSlimListTask(store: TaskStore, task: Task, slim: boolean, stepsDeclared: boolean): Promise<Task> {
+  if (!slim || !stepsDeclared || task.steps.length > 0) {
     return task;
   }
   try {
@@ -819,7 +848,23 @@ async function finalizeSlimListTask(store: TaskStore, task: Task, slim: boolean)
 /*
 FNXC:ListReadInFlightCoalescing 2026-10-23-21:24 (RUFU-627):
 One read-shape key, built here and used by BOTH the startup memo and the in-flight coalescing map,
-so the two key domains cannot drift. Its dimensions are exactly the memo's six.
+so the two key domains cannot drift. Its dimensions were the memo's six.
+
+FNXC:ListReadShapeDimensions 2026-10-25-23:31 (RUFU-627):
+The six were the MEMO's complete set, and the memo does not need more because its gate
+(`!isWatching && slim`) already pins `slim`, and a compacted or log-free feed never reached it. The
+in-flight map has no such gate — it coalesces slim and full rows alike — so the same six were NOT
+enough for the second consumer of this helper: `{slim: true}` and `{slim: false}` of every other
+identical dimension shared one promise, and the caller whose shape the starter did not ask for was
+served the other's rows (a `slim: false` joiner of a `slim: true` fetch received `log: []` and
+`timedExecutionMs`, i.e. a silently board-shaped row). `compactBoardFeed` and `excludeLog` have the
+same defect, and `fields` would have inherited it. So the rule is now stated over the key itself
+rather than inherited from the memo: every dimension that changes the RESULT SHAPE is a dimension of
+this key. `slim`, `log`, `compact` and `fields` are added; the memo gains segments it can never vary
+within its own gate, which costs it nothing and keeps one helper authoritative (Decision 1).
+
+Paginated and keyset reads stay excluded by the gate, not by becoming dimensions: a promise keyed by
+a shape cannot describe WHICH page it holds.
 
 FNXC:StartupSlimListMemo 2026-09-09-03:55 (RUFU-201 code-review remediation):
 `includeDeleted` is a result-shape dimension and is not optional. Soft deletion stamps the historical
@@ -844,6 +889,18 @@ export function listReadShapeKey(options?: ListTasksOptions): string {
     // serve an opted-out caller, nor a raw one the board. `derive` is part of the result shape.
     options?.derive !== false ? "derive" : "raw",
     options?.includeDeleted ? "deleted" : "live",
+    /*
+    FNXC:ListReadShapeDimensions 2026-10-25-23:31 (RUFU-627):
+    The four result-shape dimensions the memo's six could not carry, because the memo's own gate made
+    them constant. Order is irrelevant; distinctness is the whole contract. `log` uses the EFFECTIVE
+    decision (`excludeLog` or `slim`), matching `effectiveExcludeLog` below, because that is the
+    value that decides whether `Task.log` arrives as entries or as `[]`. `fields` is spelled by the
+    same helper that builds the projection cache, so two callers cannot declare one set two ways.
+    */
+    (options?.slim ?? false) ? "slim" : "full",
+    (options?.excludeLog === true || (options?.slim ?? false)) ? "nolog" : "log",
+    options?.compactBoardFeed ? "compact" : "wide",
+    normalizeTaskListReadFields(options?.fields),
   ].join(":");
 }
 
@@ -895,6 +952,13 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     */
     const includeArchived = options?.includeArchived ?? false;
     const slim = options?.slim ?? false;
+    /*
+    FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+    Whether the caller declared `steps` decides TWO things below: the SQL column (in
+    `resolveLiveTaskRowProjection`) and whether the slim PROMPT.md sync may run at all. An undeclared
+    read behaves as today.
+    */
+    const stepsDeclared = options?.fields === undefined || options.fields.includes("steps");
     const columnFilter = options?.column;
     // FNXC:ListTasksDeriveOptOut 2026-09-08-20:58 (RUFU-201): see `derive` on ListTasksOptions.
     const deriveUiSignals = options?.derive !== false;
@@ -1042,6 +1106,13 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     const effectiveExcludeLog = options?.excludeLog === true || slim;
     const filteredRows = await readLiveTaskRows(layer, {
       ...(effectiveExcludeLog ? { excludeLog: true } : {}),
+      /*
+      FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+      Passed through verbatim: this layer decides the column set, and the row→Task decode below needs
+      no branch for it because an undeclared column simply never arrives. Spread-guarded so an
+      undeclared read sends the SAME options object shape it sends today.
+      */
+      ...(options?.fields ? { fields: options.fields } : {}),
       includeDeleted: options?.includeDeleted,
       column: columnFilter ?? undefined,
       columns: options?.columns,
@@ -1101,7 +1172,7 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
         served a stale signal, and the contract the zero-derivation-count regression test pins.
         */
         if (effectiveExcludeLog) task.log = [];
-        return finalizeSlimListTask(store, task, slim);
+        return finalizeSlimListTask(store, task, slim, stepsDeclared);
       }
       const {
         settings,
@@ -1220,7 +1291,7 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
         task.log = [];
       }
       if (options?.compactBoardFeed) compactBoardFeedRow(task);
-      return finalizeSlimListTask(store, task, slim);
+      return finalizeSlimListTask(store, task, slim, stepsDeclared);
     }));
     // Sort by createdAt, then by numeric ID suffix for tie-breaking
     /*

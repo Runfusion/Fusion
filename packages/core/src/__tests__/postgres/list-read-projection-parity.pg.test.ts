@@ -29,6 +29,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import { readLiveTaskRows } from "../../task-store/async/async-persistence.js";
+import type { TaskListReadField } from "../../task-store/async/async-persistence.js";
 import * as schema from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
@@ -164,5 +165,203 @@ pgTest("live list projections omit only the never-addressed columns", () => {
     const detailed = await store.getTask("FN-PROJ-3");
     expect(detailed!.log.length).toBeGreaterThan(0);
     expect(detailed!.workflowStepResults?.length).toBeGreaterThan(0);
+  });
+
+  /*
+  FNXC:ListReadFieldDeclaration 2026-10-25-23:39 (RUFU-627):
+  A declared read must be a strict SUBSET of this row, field-for-field, and the undeclared row must
+  stay the whole schema minus `searchVector`. The SAFETY half of that is this matrix: for every member
+  of the closed union, the read that declares it gets that member's columns back EXACTLY as the full
+  row has them, and gets none of any other member's. The narrow columns are asserted in the same loop,
+  because the claim is "subset", not "only these": identity, lane, and the write-time projections
+  (`timing_total_ms`, `log_recent`) stay in every shape, and a declaration that quietly dropped one of
+  them would otherwise look identical to a correct one at the Task level.
+
+  The column sets are written out literally (like OMITTED_FROM_LIST_READS above) rather than imported
+  from `TASK_LIST_READ_FIELD_COLUMNS`, so changing what a member owns is a review-visible edit here too
+  — the same argument this file already makes for the omission set.
+  */
+  const DECLARED_FIELD_CASES: Array<{ field: TaskListReadField; columns: readonly string[] }> = [
+    { field: "log", columns: ["log"] },
+    { field: "description", columns: ["description"] },
+    { field: "summary", columns: ["summary"] },
+    { field: "steps", columns: ["steps"] },
+    { field: "attachments", columns: ["attachments"] },
+    { field: "workflowStepResults", columns: ["workflowStepResults"] },
+    {
+      field: "source",
+      columns: [
+        "sourceType",
+        "sourceAgentId",
+        "sourceRunId",
+        "sourceSessionId",
+        "sourceMessageId",
+        "sourceParentTaskId",
+        "sourceMetadata",
+        "sourceIssueProvider",
+        "sourceIssueRepository",
+        "sourceIssueExternalIssueId",
+        "sourceIssueNumber",
+        "sourceIssueUrl",
+        "sourceIssueClosedAt",
+      ],
+    },
+  ];
+  const ALWAYS_SELECTED_PROBE_COLUMNS = ["id", "column", "status", "createdAt", "queueBoost", "timingTotalMs", "logRecent", "dependencies"] as const;
+
+  /** One card with EVERY declarable field populated, so no leg can pass on an empty column. */
+  async function seedWideCard(taskId: string): Promise<void> {
+    const store = h.store();
+    await store.createTaskWithReservedId(
+      { description: "declared-field probe description body", title: "Wide card", column: "todo" },
+      { taskId, applyDefaultWorkflowSteps: false },
+    );
+    await store.updateTask(taskId, {
+      summary: "a persisted completion summary",
+      steps: [{ index: 0, heading: "Step 1: Probe", description: "Body", status: "pending" }] as never,
+      log: [{ timestamp: new Date().toISOString(), action: "execution.started" }] as never,
+      workflowStepResults: [{ id: "step-1", stepIndex: 0, stepName: "Implement", status: "approved", verdict: "APPROVE", output: "shipped" }] as never,
+    });
+    // `attachments` and the `source*` columns are not reachable through `updateTask`, so the fixture
+    // seeds them the way the store does: straight into the jsonb/text columns.
+    await h.layer().db
+      .update(schema.project.tasks)
+      .set({
+        attachments: [{ name: "probe.png", url: "/tmp/probe.png" }] as never,
+        sourceType: "automation",
+        sourceAgentId: "agent-probe",
+        sourceRunId: "run-probe",
+        sourceMetadata: { fileScope: ["packages/core/src/task-store/reads.ts"] } as never,
+        sourceIssueProvider: "gitlab",
+        sourceIssueRepository: "grp/app",
+        sourceIssueExternalIssueId: "42",
+        sourceIssueNumber: 42,
+        sourceIssueUrl: "https://example.invalid/42",
+      } as never)
+      .where(eq(schema.project.tasks.id, taskId));
+  }
+
+  it("a declared field selects exactly its own columns and keeps every narrow column", async () => {
+    await seedWideCard("FN-PROJ-4");
+    const layer = h.layer();
+    const [full] = await readLiveTaskRows(layer, {});
+    expect(full).toBeDefined();
+
+    // The fixture must be load-bearing: every declarable column is populated, so dropping one is a
+    // real omission rather than an empty-value agreement.
+    for (const { columns } of DECLARED_FIELD_CASES) {
+      for (const column of columns) {
+        expect(full![column], `fixture left ${column} empty`).not.toBeUndefined();
+      }
+    }
+
+    for (const { field, columns } of DECLARED_FIELD_CASES) {
+      const [row] = await readLiveTaskRows(layer, { fields: [field] });
+      expect(row, `declared read for ${field} returned no row`).toBeDefined();
+      for (const column of columns) {
+        expect(row![column], `${field} did not return its own column ${column}`).toEqual(full![column]);
+      }
+      for (const other of DECLARED_FIELD_CASES) {
+        if (other.field === field) continue;
+        for (const column of other.columns) {
+          expect(Object.keys(row!), `${field} dragged in ${column}`).not.toContain(column);
+        }
+      }
+      for (const column of ALWAYS_SELECTED_PROBE_COLUMNS) {
+        expect(Object.keys(row!), `${field} lost narrow column ${column}`).toContain(column);
+      }
+    }
+
+    // Declaring EVERY member is the shape-declaration equivalence: the projection is the same set of
+    // columns the undeclared read sends, so a declaration can only ever lose, never reshape.
+    const allDeclared = await readLiveTaskRows(layer, { fields: DECLARED_FIELD_CASES.map((c) => c.field) });
+    expect(Object.keys(allDeclared[0]!).sort()).toEqual(Object.keys(full!).sort());
+
+    // And the narrowest declaration keeps the narrow columns while losing every wide one.
+    const noneDeclared = await readLiveTaskRows(layer, { fields: [] });
+    const wide = DECLARED_FIELD_CASES.flatMap((c) => [...c.columns]);
+    for (const column of wide) expect(Object.keys(noneDeclared[0]!)).not.toContain(column);
+    for (const column of ALWAYS_SELECTED_PROBE_COLUMNS) expect(Object.keys(noneDeclared[0]!)).toContain(column);
+  });
+
+  it("the Task a declared read assembles stops carrying the undeclared fields", async () => {
+    await seedWideCard("FN-PROJ-5");
+    const store = h.store();
+
+    const undeclared = await store.listTasks({ includeArchived: false, startupMemo: false });
+    expect(undeclared).toHaveLength(1);
+    expect(undeclared[0]!.description).toContain("declared-field probe");
+    expect(undeclared[0]!.summary).toBeDefined();
+    expect(undeclared[0]!.attachments).toBeDefined();
+    expect(undeclared[0]!.workflowStepResults?.length).toBeGreaterThan(0);
+    expect(undeclared[0]!.log.length).toBeGreaterThan(0);
+    expect(undeclared[0]!.sourceType).toBe("automation");
+
+    /*
+    Where `Task` forces a default, the observable claim is the DEFAULT plus the column's absence, which
+    is why the SQL-level leg in `list-tasks-field-declaration.pg.test.ts` exists next to this one:
+    `rowToTask` cannot tell "empty history" from "column not selected" (`log`/`steps` both become `[]`),
+    and a caller that must know the difference has to look at the row it was handed, not the Task.
+    */
+    const declared = await store.listTasks({ includeArchived: false, startupMemo: false, fields: ["description"] });
+    expect(declared).toHaveLength(1);
+    expect(declared[0]!.description).toContain("declared-field probe");
+    expect(declared[0]!.summary).toBeUndefined();
+    expect(declared[0]!.attachments).toBeUndefined();
+    expect(declared[0]!.workflowStepResults).toBeUndefined();
+    expect(declared[0]!.sourceType).toBeUndefined();
+    expect(declared[0]!.log).toEqual([]);
+    expect(declared[0]!.steps).toEqual([]);
+    // Narrow identity survives: the read is still addressable, still lane-placed, still orderable.
+    expect(declared[0]!.id).toBe("FN-PROJ-5");
+    expect(declared[0]!.column).toBe("todo");
+    expect(declared[0]!.createdAt).toBe(undeclared[0]!.createdAt);
+  });
+
+  /*
+  FNXC:ListReadFieldDeclaration 2026-10-25-23:39 (RUFU-627):
+  `GET /tasks` (`register-task-workflow-routes.ts`) and `GET /tasks/page` are the two feeds the desktop
+  board and the mobile board poll, and neither declares fields — the first passes an option bag that
+  names `slim`/`excludeLog`/`compactBoardFeed` and never `fields`, the second goes through
+  `listCurrentTasksPage`, whose options type has no `fields` at all. What a declared read could still
+  have cost them is a SHARED cache: the projection cache and the in-flight/memo keys are module- and
+  store-scoped, so a collision would have served a board feed a narrow row. This leg is that guard, in
+  the order that makes it real — read the board shape, read a declared shape, read the board shape
+  again — and the route bags are spelled literally so a change to them is a change here too.
+  */
+  it("a declared read cannot change what the board routes emit", async () => {
+    await seedWideCard("FN-PROJ-6");
+    const store = h.store();
+
+    const getTasksBag = { slim: true, excludeLog: true, compactBoardFeed: true, includeArchived: false, startupMemo: false } as const;
+    const before = await store.listTasks(getTasksBag);
+    const declared = await store.listTasks({ slim: true, includeArchived: false, startupMemo: false, fields: ["description"] });
+    const after = await store.listTasks(getTasksBag);
+
+    expect(before).toHaveLength(1);
+    expect(declared[0]!.workflowStepResults).toBeUndefined();
+    expect(after).toEqual(before);
+    // The board feed's own shape is unchanged too: compacted bodies, `log` blanked by `slim`, and the
+    // description it renders — none of it moved because a different caller declared a narrower read.
+    expect(after[0]!.description).toContain("declared-field probe");
+    expect(after[0]!.log).toEqual([]);
+    expect(after[0]!.summary).toBeUndefined();
+    expect((after[0]!.workflowStepResults ?? []).length).toBeGreaterThan(0);
+
+    /*
+    `GET /tasks/page` reaches the store through `listCurrentTasksPage`, whose own option bag is
+    `slim` + `excludeLog` + `compactBoardFeed` + `limit` + `sort` — it names no `fields` and its options
+    type has no such member, so no declaration can reach it. Asserted rather than narrated, and against
+    the shape the route actually ships (a slim, compacted board row): description present, `log` blanked
+    by `slim`, `summary` dropped by the compaction, step identities kept.
+    */
+    const page = await store.listCurrentTasksPage({ limit: 10 });
+    expect(page.tasks.map((task) => task.id)).toContain("FN-PROJ-6");
+    const paged = page.tasks.find((task) => task.id === "FN-PROJ-6")!;
+    expect(paged.description).toContain("declared-field probe");
+    expect(paged.log).toEqual([]);
+    expect(paged.summary).toBeUndefined();
+    expect((paged.workflowStepResults ?? []).length).toBeGreaterThan(0);
+    expect(paged.sourceType).toBe("automation");
   });
 });

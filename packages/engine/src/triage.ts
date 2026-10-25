@@ -3064,10 +3064,15 @@ export class TriageProcessor {
           discarded — this consumer reads `id`, `status` and `workflowStepResults` and nothing else, and
           `live-agent-count.ts` (the predicate it feeds) contains ZERO `task.log` reads.
 
-          Why not `slim: true`: slim omits `workflowStepResults`, which is the ONLY live-agent signal for a
-          card whose ordinary status is null, and it re-syncs `steps` from PROMPT.md. Why dropping the column
-          is safe at all: the five log-derived board figures are read from `timing_total_ms` + `log_recent`
-          (RUFU-615), so `excludeLog` cannot blank a badge even with derivation on.
+          Why not `slim: true`: this consumer's only signal is `workflowStepResults`, and `slim` re-syncs
+          `steps` from PROMPT.md for every card whose persisted steps are empty — a per-card file read for a
+          value this loop discards. (An earlier sentence here claimed `slim` OMITS `workflowStepResults`; it
+          never did — the slim SQL projection keeps that column, as this file's own RUFU-201 note at the
+          poll read records. Corrected rather than carried, because RUFU-627's `fields` declaration is now
+          the way to drop that column deliberately, and a wrong reason for not using `slim` would point the
+          next reader at the wrong lever.) Why dropping `log` is safe at all: the five log-derived board
+          figures are read from `timing_total_ms` + `log_recent` (RUFU-615), so `excludeLog` cannot blank a
+          badge even with derivation on.
           */
           const fresh = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
           let pending = 0;
@@ -3173,7 +3178,22 @@ export class TriageProcessor {
       const nowMs = Date.now();
       // Both near-duplicate comparators in this file map identity/title/description/column/createdAt only
       // (RUFU-615's projection contract is why `excludeLog` costs no signal). See FNXC:AdmissionClaimReadLogFree.
-      const listed = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
+      /*
+      FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627) — field-read audit, this read:
+      `description` is the ONLY wide field this comparator touches. What it maps out of each row is
+      `id`, `title`, `description`, `column`, `createdAt` (the `NearDuplicateCandidate` shape below);
+      `resolveTerminalColumnsForTasks` adds `id` and `column`; `findNearDuplicates` reads the mapped
+      candidate, never the row. So `steps`, `summary`, `attachments` and `workflowStepResults` are
+      pure transfer cost here, and on the full (non-slim) shape they arrive for every card on the
+      board on every imported-issue plan.
+
+      What the declaration does change, and it is stated rather than hidden: derivation still runs
+      (dropping derivation from this read is RUFU-201's decision, not this one's), and two derived
+      badges are fed by `workflowStepResults` — `retrySummary` and `reviewBypass` — so they come out
+      empty on THIS read's rows. Nothing downstream reads them: the comparator's output is the
+      `NearDuplicateCandidate` list plus a `sourceMetadataPatch` write on the incoming task.
+      */
+      const listed = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true, fields: ["description"] });
       const isTerminalCandidate = await resolveTerminalColumnsForTasks(this.store, listed);
       const candidates = listed
         .filter((candidate) => candidate.id !== task.id)
@@ -6328,7 +6348,17 @@ export class TriageProcessor {
           const nowMs = Date.now();
           // Log-free on purpose: the FN-5152 candidate shape is identity/title/description/column/createdAt/
           // fileScope. See FNXC:AdmissionClaimReadLogFree on this file's claim read.
-          const listed = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true });
+          /*
+          FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627) — field-read audit, this read:
+          Same candidate shape as the import comparator above, PLUS `sourceMetadata.fileScope` (the
+          shared-token score is joined by file scope here), which is why `source` is declared alongside
+          `description`: `source` is the family `sourceMetadata` belongs to, and it is declared whole
+          because `rowToTask` also derives `Task.branchContext` from that one column. `steps`,
+          `summary` and `attachments` are not read by this comparator or by
+          `resolveTerminalColumnsForTasks` (`id`, `column`) and stay undeclared. As above,
+          `retrySummary` / `reviewBypass` come out empty on these rows and nothing reads them.
+          */
+          const listed = await this.store.listTasks({ slim: false, includeArchived: false, excludeLog: true, fields: ["description", "source"] });
           /* FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-engine tail): a FINISHED card passed this
              dedup filter on a renamed board, so completed work was offered as a duplicate candidate. */
           const isTerminalCandidate = await resolveTerminalColumnsForTasks(this.store, listed);

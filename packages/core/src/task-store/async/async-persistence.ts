@@ -129,6 +129,141 @@ export const TASK_SLIM_PROJECTION: Record<string, PgColumn> = Object.fromEntries
     .map(([key, value]) => [key, value as PgColumn]),
 );
 
+/*
+FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+A list-read consumer may now DECLARE the wide fields it reads, so the SELECT stops carrying the ones
+it throws away. The union is closed on purpose: an open `string[]` would let a typo become a silent
+column drop, and the whole value of the mechanism is that the set of droppable columns is enumerable
+and reviewable in one place.
+
+The membership of each member is stated with the schema, not invented:
+- `log` (jsonb, ~42.7% of live row bytes measured live), `description` / `summary` (text), `steps`,
+  `attachments`, `workflowStepResults` (jsonb) are each ONE column of that name.
+- `source` is a FAMILY, not a column. Design Decision 7 named it, and the `tasks` table has no
+  `source` column, so it means every `source*` column plus `sourceMetadata` — including the six
+  `sourceIssue*` columns, because `rowToTask` assembles them into the single `Task.sourceIssue`
+  object (dropping one of the six silently degrades that object to undefined, so they are
+  declared together or not at all). `sourceMetadata` also feeds `Task.branchContext`.
+- `effectiveNodeSource` is deliberately NOT in the family: it is a narrow text column that names a
+  workflow node, not provenance of the card, and keeping it always-selected makes a declared read
+  cheaper to reason about than a family that also costs a node resolution.
+- Design Decision 7 also listed `acceptanceCriteria`. There is NO such column on `tasks` — it
+  exists only on the archive/other tables (`project.ts` task_archive rows), so a `Task` field by
+  that name is never sourced from a live list row. Naming it here would promise a projection that
+  cannot exist, so it is omitted, with this sentence as the evidence.
+
+Every column NOT named by any member stays in every projection, declared or not: identity, lane,
+status, timestamps, `queueBoost`, `nextRecoveryAt`, `dependencies`, `timing_total_ms`, `log_recent`
+and the rest are narrow, and the derived board signals plus every engine sweep read them. A
+declared read is therefore always a strict SUBSET of today's row, never a different row.
+*/
+export type TaskListReadField =
+  | "log"
+  | "description"
+  | "summary"
+  | "steps"
+  | "attachments"
+  | "workflowStepResults"
+  | "source";
+
+/** The task-table columns each declared field owns. See the FNXC block above. */
+export const TASK_LIST_READ_FIELD_COLUMNS: Record<TaskListReadField, readonly string[]> = {
+  log: ["log"],
+  description: ["description"],
+  summary: ["summary"],
+  steps: ["steps"],
+  attachments: ["attachments"],
+  workflowStepResults: ["workflowStepResults"],
+  source: [
+    "sourceType",
+    "sourceAgentId",
+    "sourceRunId",
+    "sourceSessionId",
+    "sourceMessageId",
+    "sourceParentTaskId",
+    "sourceMetadata",
+    "sourceIssueProvider",
+    "sourceIssueRepository",
+    "sourceIssueExternalIssueId",
+    "sourceIssueNumber",
+    "sourceIssueUrl",
+    "sourceIssueClosedAt",
+  ],
+};
+
+/** Every column a declaration is allowed to drop. Anything else is always selected. */
+const LIST_READ_DECLARABLE_COLUMNS: ReadonlySet<string> = new Set(
+  Object.values(TASK_LIST_READ_FIELD_COLUMNS).flat(),
+);
+
+/**
+ * Canonical spelling of a declared field set: deduped, sorted, comma-joined; `wide` when absent.
+ *
+ * FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627): exported because the read-shape key in
+ * `task-store/reads.ts` uses THIS function, so the projection cache and the coalescing/memo key
+ * cannot spell the same declaration two ways — the same one-helper rule that keeps the memo and the
+ * in-flight map from drifting. `[]` is distinct from absent: it declares "none of the wide fields",
+ * which is a narrower row than today's, and must never be served one.
+ */
+export function normalizeTaskListReadFields(fields?: readonly TaskListReadField[]): string {
+  if (fields === undefined) return "wide";
+  const names = [...new Set(fields)].sort();
+  return names.length === 0 ? "none" : names.join(",");
+}
+
+/*
+FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+Projections are derived from the STATIC schema and never mutated, so the resolved shapes are cached
+at module scope — bounded by 2 log-modes x the subsets of a seven-member union, and keyed by the
+canonical spelling above. This is not a read cache: it holds no rows and no mutable state, only
+Column references.
+*/
+const LIST_READ_PROJECTION_CACHE = new Map<string, Record<string, PgColumn>>();
+
+/**
+ * The column set a live list read sends, for one option bag.
+ *
+ * Exported for the same reason `TASK_READ_PROJECTION` / `TASK_SLIM_PROJECTION` are (RUFU-615): the
+ * acceptance claim is about the EXECUTED SELECT, and a test that rebuilds the projection locally
+ * proves nothing about what the reader sends. Exporting the function the reader itself calls makes
+ * the SQL text a real observable.
+ *
+ * `fields` absent returns the pre-existing objects IDENTICALLY (same reference), so every caller
+ * that does not declare fields is byte-for-byte on today's shape.
+ */
+export function resolveLiveTaskRowProjection(
+  options?: ReadLiveTaskRowsOptions,
+): Record<string, PgColumn> {
+  const fields = options?.fields;
+  if (fields === undefined) {
+    return options?.excludeLog ? TASK_SLIM_PROJECTION : TASK_READ_PROJECTION;
+  }
+  const excludeLog = options?.excludeLog === true;
+  const key = `${excludeLog ? "nolog" : "log"}:${normalizeTaskListReadFields(fields)}`;
+  const cached = LIST_READ_PROJECTION_CACHE.get(key);
+  if (cached) return cached;
+  const declared = new Set<string>();
+  for (const field of fields) {
+    // An unrecognised member selects nothing (the columns stay dropped), which is the safe
+    // direction: a typo can lose a field a consumer will notice, never invent a column.
+    for (const column of TASK_LIST_READ_FIELD_COLUMNS[field as TaskListReadField] ?? []) {
+      declared.add(column);
+    }
+  }
+  const projection = Object.fromEntries(
+    Object.entries(TASK_READ_PROJECTION).filter(([column]) => {
+      if (!LIST_READ_DECLARABLE_COLUMNS.has(column)) return true;
+      if (!declared.has(column)) return false;
+      // `excludeLog` still wins over a declaration that names `log`: the projection gate is what
+      // decided the transfer, and a caller may not buy back the column with a flag that means
+      // "declared read-set".
+      return !(excludeLog && column === "log");
+    }),
+  );
+  LIST_READ_PROJECTION_CACHE.set(key, projection);
+  return projection;
+}
+
 /**
  * FNXC:TaskStorePersistence 2026-06-24-13:07:
  * The task-table columns that are `jsonb` in PostgreSQL (VAL-SCHEMA-004). In
@@ -568,6 +703,14 @@ export async function readCompletedTaskPage(
 
 export interface ReadLiveTaskRowsOptions {
   excludeLog?: boolean;
+  /*
+  FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+  The wide fields this read is allowed to see. Absent means today's projection, byte-identical and
+  the same object reference; present means "select every column EXCEPT the undeclared wide ones",
+  so the result is a strict subset of the undeclared row. `log` stays out either way when
+  `excludeLog` is set. See `TaskListReadField` for what each member owns and why the union is closed.
+  */
+  fields?: readonly TaskListReadField[];
   includeDeleted?: boolean;
   column?: string;
   columns?: readonly string[];
@@ -682,26 +825,27 @@ export async function readLiveTaskRows(
     if (offset > 0) q = q.offset(offset);
     return q;
   };
-  if (options?.excludeLog) {
-    // FNXC:TaskStoreReads 2026-06-26-11:45:
-    // Select every column except `log` via a Drizzle `.select({...projection})`
-    // query. Drizzle emits correct snake_case SQL identifiers for each Column
-    // chunk (avoiding the earlier camelCase-vs-snake_case bug) and returns rows
-    // keyed by the TS property name so the downstream `pgRowToTaskRow` /
-    // `rowToTask` deserializers work unchanged. `log` is restored to `[]` when
-    // a single task is fetched in full via `readTaskRow`.
-    let query = layer.db.select(TASK_SLIM_PROJECTION).from(schema.project.tasks).$dynamic();
-    if (liveFilter) query = query.where(liveFilter);
-    const rows = await applyPagination(query);
-    return rows as unknown as Record<string, unknown>[];
-  }
-  let query = layer.db.select(TASK_READ_PROJECTION).from(schema.project.tasks).$dynamic();
+  const projection = resolveLiveTaskRowProjection(options);
+  /*
+  FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627):
+  One query path for all three shapes. Until now `excludeLog` had its own branch and the default had
+  another; both now ask `resolveLiveTaskRowProjection` for the column set, which returns
+  `TASK_SLIM_PROJECTION` / `TASK_READ_PROJECTION` BY REFERENCE when no `fields` is declared — so an
+  undeclared read sends exactly the SQL it sent before, and a declared read differs only in the wide
+  columns its caller did not name.
+
+  Rows still come back keyed by the camelCase TS property name (why these projections are built from
+  Column objects and not `Object.keys`), so `pgRowToTaskRow` / `rowToTask` work unchanged: an
+  undeclared column is simply absent from the row and its `Task` field takes the default a
+  column-less read already takes today (`log` / `steps` -> [], `description` -> undefined).
+  */
+  let query = layer.db.select(projection).from(schema.project.tasks).$dynamic();
   /*
   FNXC:ListReadSearchVectorOmission 2026-10-09-20:07:
   Was `layer.db.select()` — i.e. `SELECT *`, which shipped the stored `search_vector`
   tsvector (17.0% of live row bytes, 5.0 KiB/card measured live) on every list read for a
   value no deserializer can address. The explicit projection drops it and nothing else;
-  `log` remains here because the deriving consumers need it (see the note on
+  `log` remains in the undeclared full shape because the deriving consumers need it (see the note on
   TASK_READ_PROJECTION for why the slim branch keeps dropping it too).
   */
   if (liveFilter) query = query.where(liveFilter);

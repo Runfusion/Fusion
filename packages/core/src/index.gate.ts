@@ -1027,6 +1027,10 @@ export {
 } from "./duplicates/duplicate-guard.js";
 export type { TaskDependencyMutation } from "./store.js";
 export type { ListTasksOptions } from "./task-store/reads.js";
+/* FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627): `ListTasksOptions.fields` is typed by a closed union
+   owned by the projection site, and a type that is not exported cannot be named by a caller that wants a
+   shared constant array, only written inline. Exported from BOTH barrels so they stay in parity. */
+export type { TaskListReadField } from "./task-store/async/async-persistence.js";
 export {
   findSameAgentDuplicates,
   computeParentIntentClaimId,

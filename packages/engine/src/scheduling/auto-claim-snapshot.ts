@@ -164,7 +164,22 @@ export async function resolveFreshAutoClaimCandidates(
   /* FNXC:ListTasksDeriveOptOut 2026-10-09-20:25: derive:false for the reason documented on
      * AutoClaimSnapshotManager.rebuild — this path decides candidacy from stored state only. */
   // FNXC:ListTasksExcludeLog 2026-10-12-16:20 (RUFU-615 tranche 4): this scan never reads task log or markers (no non-logger `.log` token in the file), so `slim` must not pay for hydrating the whole board's log. See list-tasks-slim-excludes-log.test.ts.
-  const allTasks = await taskStore.listTasks({ slim: true, derive: false, excludeLog: true });
+  /*
+  FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627) — field-read audit, this read:
+  The read-set is `isRunnableAutoClaimCandidate` (`column`, `status`, `paused`, `userPaused`,
+  `assignedAgentId`, `checkedOutBy`, `deletedAt`, `dependencies`) + `resolveAutoClaimLifecycleRoles`
+  (`id`) + `toAutoClaimCandidate` (`id`, `title`, `description`, `createdAt`, `columnMovedAt`) +
+  `compareTasksByQueueOrder` (`queueBoost`, age, `id`), and every one of those except `description` is
+  a narrow column that no declaration can drop. So `description` is the single wide field this read
+  needs — which matters because a candidate keeps the FULL body, not the first line (Step 5 is about
+  that), so this is the one column worth transferring and the rest are not.
+
+  Not declaring `steps` also drops the per-card PROMPT.md sync that `slim` otherwise performs, because
+  a declared field the caller does not read must not be re-derived from another source (see
+  `finalizeSlimListTask`). Nothing on this path can observe that: `AutoClaimCandidate` has no `steps`
+  field at all, so today's parse exists only to produce a value `toAutoClaimCandidate` discards.
+  */
+  const allTasks = await taskStore.listTasks({ slim: true, derive: false, excludeLog: true, fields: ["description"] });
   const tasksById = new Map(allTasks.map((task) => [task.id, task]));
   const rolesByTask = await resolveAutoClaimLifecycleRoles(taskStore, allTasks);
   const resolvedAt = now();
@@ -244,8 +259,15 @@ export class AutoClaimSnapshotManager {
     state, so `derive: false` is behaviour-preserving here and strictly cheaper. Lifecycle roles
     are still resolved by `resolveAutoClaimLifecycleRoles`, which owns its own IR cache and is
     unaffected by what the list pass prefetches.
+
+    FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627): `fields: ["description"]` extends that
+    audit to the projection, with the SAME read-set this comment already enumerates — `description` is
+    the only wide field in it. The two auto-claim reads are converted together on purpose: leaving one
+    on the undeclared shape would make the file's two board scans disagree about a field set their
+    shared predicates cannot distinguish, and this one is the hotter of the pair (TTL plus every
+    fingerprint invalidation).
     */
-    const allTasks = await this.taskStore.listTasks({ slim: true, derive: false, excludeLog: true });
+    const allTasks = await this.taskStore.listTasks({ slim: true, derive: false, excludeLog: true, fields: ["description"] });
     const tasksById = new Map(allTasks.map((candidate) => [candidate.id, candidate]));
     const rolesByTask = await resolveAutoClaimLifecycleRoles(this.taskStore, allTasks);
     const now = this.now();
