@@ -78,7 +78,6 @@
   "packages/dashboard/src/server.ts": 2883,
   "packages/dashboard/src/usage.ts": 2435,
   "packages/engine/src/__tests__/cron-runner.test.ts": 2334,
-  "packages/engine/src/__tests__/executor-prompt.test.ts": 2838,
   "packages/engine/src/__tests__/executor-worktree.test.ts": 2946,
   "packages/engine/src/__tests__/heartbeat-executor.test.ts": 4545,
   "packages/engine/src/__tests__/heartbeat-scheduler.test.ts": 3346,
