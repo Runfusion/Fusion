@@ -210,6 +210,11 @@ RUN mkdir -p /var/run/tailscale /home/node/.tailscale \
   && chown node:node /var/run/tailscale /home/node/.tailscale /var/log/tailscaled.log
 
 COPY --chmod=0755 scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# FNXC:DockerCli 2026-10-26-02:09: `fn` on PATH, so `docker exec -it <container> fn task list` works
+# against the running deployment instead of only the dashboard. It resolves the same roots as the
+# entrypoint above (FUSION_APP_ROOT / FUSION_FROM_SOURCE + FUSION_SOURCE_ROOT) rather than pinning
+# /app, so a source-updated container answers CLI questions from the build it is actually serving.
+COPY --chmod=0755 scripts/docker-fn.sh /usr/local/bin/fn
 
 USER node
 

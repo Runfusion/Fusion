@@ -76,6 +76,31 @@ call `POST /api/auth/login` with `{"provider":"openai-codex","method":"browser"}
 the paste-back/callback behavior. The temporary callback listener validates OAuth `state`, but
 prefer publishing it only on a trusted network.
 
+## Run `fn` inside the container
+
+The image puts `fn` on `PATH`, so an operator can drive the running deployment from inside the
+container instead of only through the dashboard:
+
+```bash
+docker exec -it <container> fn project list
+docker exec -it <container> fn --help
+```
+
+It is a wrapper, not a symlink to `/app/packages/cli/dist/bin.js`, and it resolves exactly the roots the
+entrypoint resolves — `FUSION_APP_ROOT` (default `/app`), or `FUSION_SOURCE_ROOT` (default
+`/home/node/fusion`) when `FUSION_FROM_SOURCE=1`. A pinned symlink would make a source-updated container
+answer CLI questions from the image-baked build while serving the updated source: two Fusion versions
+over one PostgreSQL registry. A missing source build fails loudly rather than falling back, because a
+silently-wrong tree is indistinguishable from success.
+
+Verified against a running container: `fn project list` attached to the embedded cluster the dashboard was
+already using (connect 2 ms, schema apply 168 ms, no `initdb`, no second postmaster) and the dashboard
+stayed at `/api/health` 200.
+
+**`fn dashboard`, `fn serve`, and `fn daemon` in a container that is already running one starts a second
+engine against the same board** — a second scheduler claiming, executing, and merging the same cards.
+Read and single-shot commands are what this is for.
+
 ## Helper script
 
 `scripts/run-container.sh` runs the container with a complete argument list — the OAuth callback
