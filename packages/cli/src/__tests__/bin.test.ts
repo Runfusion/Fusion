@@ -448,7 +448,9 @@ describe("bin command routing and fallbacks", () => {
     delete process.env.PI_PACKAGE_DIR;
     delete process.env.FUSION_SKIP_ONBOARDING;
     ttyState.isTTYAvailable = true;
-    onboardEnv.centralDbPath = join(mkdtempSync(join(tmpdir(), "fn-bin-onboard-")), "fusion-central.db");
+    dashboardCliState.shouldSupervise = false;
+    onboardEnv.settingsDir = mkdtempSync(join(tmpdir(), "fn-bin-onboard-"));
+    onboardEnv.centralDbPath = join(onboardEnv.settingsDir, "fusion-central.db");
     process.exit = vi.fn(((code?: number) => {
       throw new Error(`process.exit:${code ?? 0}`);
     }) as typeof process.exit);
@@ -457,6 +459,8 @@ describe("bin command routing and fallbacks", () => {
   afterEach(() => {
     process.argv = originalArgv;
     process.exit = originalExit;
+    rmSync(onboardEnv.settingsDir, { recursive: true, force: true });
+    onboardEnv.settingsDir = "";
 
     if (originalPiPackageDir === undefined) {
       delete process.env.PI_PACKAGE_DIR;
