@@ -370,8 +370,45 @@ export interface MoveTaskOptions {
   recoveryRehome?: boolean;
 }
 
+/*
+FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+A destructive automated decision (today: the ghost-bug archive) needs its EXPLANATION to commit with
+the transition it justifies, in ONE transaction. Two facts make the obvious shapes wrong:
+
+1. A post-move `logEntry` is a GUARANTEED loss — `logEntryImpl` rejects archived-lane writes on both
+   persistence branches (`task-store/audit-ops.ts`). So the entry must be committed BEFORE/with the
+   move, not after it.
+2. Writing the entry inside a `moveTaskIf` PREDICATE is not a fence: `withTaskLock` is an in-process
+   promise chain (`task-store/moves.ts` documents the multi-node shape: several nodes on one
+   PostgreSQL database), and `moveTaskInternal` then upserts from the OLDER captured row — so a
+   predicate-side append can be silently overwritten, and the two writes still leave a crash window.
+
+This type is the third shape: the decision travels as DATA to the move's own transaction, where it is
+appended to the FRESH in-transaction row and re-fenced after `acquireTaskAdvisoryXactLock`. Either the
+entry and the column transition commit together, or neither does — and a stale caller gets an honest
+`moved: false` rather than a clobber.
+
+Deliberately narrow: opt-in, engine-internal, and reachable only through `moveTaskIf`. It adds no
+plain-move bypass and no new dashboard/HTTP surface.
+*/
+export interface FencedMoveDecision {
+  /** The decision record to append. Created only for a decision the caller has already proven current. */
+  entry: { action: string; outcome?: string };
+  /**
+   * Expected-row fence, captured by the caller from the row IT just read. Re-checked inside the move
+   * transaction against the fresh row — the outer in-process predicate is not a SQL fence.
+   */
+  expected: TaskAtomicPersistFence & {
+    expectedColumn: ColumnId;
+    /** Captured semantic identity fields compared against the fresh row alongside the revision fence. */
+    identity?: Partial<Pick<Task, "status" | "executionStartedAt" | "paused" | "userPaused" | "branch" | "worktree" | "baseCommitSha" | "title" | "description">>;
+  };
+}
+
 /** @internal Extracted to task-store/moves.ts */
 export interface MoveTaskInternalOptions {
+  /** @internal Fenced inside moveTaskInternal's own transaction. Absent = byte-identical legacy path. */
+  fencedDecision?: FencedMoveDecision;
   fromHandoff: boolean;
   /** @internal Fence-validated inside moveTaskInternal's transaction for terminal-failure recovery. */
   terminalFailureApply?: {
@@ -1960,13 +1997,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async resetTaskPublication( id: string, intakeColumn: ColumnId, options?: { description?: string }, ): Promise<Task> {
     return resetTaskPublicationImpl(this, id, intakeColumn, options);
   }
+  /*
+  FNXC:GhostBugPreflight 2026-10-11-13:20 (GhostBug):
+  `fencedDecision` is OPTIONAL and its absence is the byte-identical legacy path. When supplied, the
+  decision entry is appended to the fresh in-transaction row and committed WITH the column transition
+  (see `FencedMoveDecision`); an expected-row mismatch at that in-transaction fence persists NEITHER
+  the decision NOR the move and reports `{ moved: false }`.
+  */
   async moveTaskIf(
     id: string,
     toColumn: ColumnId,
     predicate: (live: Task) => boolean | Promise<boolean>,
     options?: MoveTaskOptions,
+    fencedDecision?: FencedMoveDecision,
   ): Promise<MoveTaskIfResult> {
-    return moveTaskIfImpl(this, id, toColumn, predicate, options);
+    return moveTaskIfImpl(this, id, toColumn, predicate, options, fencedDecision);
   }
   async handoffToReview(taskId: string, opts: HandoffToReviewOptions): Promise<Task> {
     return handoffToReviewImpl(this, taskId, opts);

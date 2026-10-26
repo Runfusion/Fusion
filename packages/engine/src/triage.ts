@@ -316,6 +316,7 @@ import { execFile, type ExecFileOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import {
   createAgentTask,
@@ -340,7 +341,20 @@ import {
   getResearchGuidanceForSurface,
   isResearchToolSurfaceEnabled,
 } from "./execution/tool-availability.js";
-import { runGhostBugPreflight, type ExecResult, type ProbeExec } from "./triage-domain/triage-preflight.js";
+import {
+  isBugFixShape,
+  isGhostBugUnverifiedReason,
+  reResolveProbeRevisionAtBoundary,
+  resolveGhostBugPreflightTarget,
+  ghostBugPreflightConstructs,
+  runGhostBugPreflightAtTarget,
+  type GhostBugDecision,
+  type ExecResult,
+  type ProbeExec,
+  type ResolvedProbeRevision,
+} from "./triage-domain/triage-preflight.js";
+import { isInsideConfiguredWorktreesDir } from "./worktree/worktree-paths.js";
+import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 import { runConfiguredCommand } from "./executor/configured-command.js";
 import { resolveGraphNodeSessionBoundary } from "./executor/run-graph-custom-node.js";
 import {
@@ -354,7 +368,6 @@ import {
   resolveWorktreeDependencyReadiness,
   type WorktreeDependencyReadiness,
 } from "./worktree/worktree-dependency-install.js";
-import { archiveAsGhostBug } from "./self-healing.js";
 import {
   TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
   buildInactiveDuplicateClearFeedback,
@@ -423,6 +436,13 @@ export interface TriageProcessorOptions {
   planning falls back to the repo root exactly as before.
   */
   acquirePlanningWorktree?: (taskId: string) => Promise<string | null>;
+  /*
+  FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+  Injection seam for the ghost-bug probe subprocess. Optional and defaulting to the real production
+  adapter (`createGhostBugProbeExec()`), so behaviour is unchanged when unwired; a caller that does
+  inject one is a test that needs deterministic per-revision git responses.
+  */
+  ghostBugProbeExec?: ProbeExec;
 }
 
 /**
@@ -530,6 +550,100 @@ function isOrphanedLegacyTriageRow(column: string, declaresTriage: boolean): boo
   return column === "triage" && !declaresTriage;
 }
 
+/**
+ * FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+ * The ONE visible pause reason an operator sees for a card the ghost-bug preflight could not prove.
+ * Deliberately a single constant rather than one per internal cause: the card explains itself in one
+ * glance, and the specific fixed reason code (`preflight_timeout`, `worktree_provenance_dirty`, …)
+ * travels in the paired HISTORY entry and the bounded audit row, never in the pause reason.
+ */
+const GHOST_BUG_HOLD_PAUSE_REASON = "ghost-bug-preflight-unverified";
+
+/*
+FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+`getTaskActivityLogEntryLimit()` / `truncateTaskLogOutcome` are NOT exported from `@fusion/core`, so
+this replicates the SAME limits `packages/core/src/task-store/comments.ts` owns
+(`DEFAULT_TASK_ACTIVITY_LOG_ENTRY_LIMIT` 1000, outcome 4000). Kept as named constants with the source
+file cited: an in-transaction hold may only ever grow the history to the cap the store itself enforces,
+otherwise the hold would silently truncate more than an ordinary `logEntry` would.
+*/
+const TASK_ACTIVITY_LOG_ENTRY_LIMIT = 1_000;
+const TASK_ACTIVITY_LOG_OUTCOME_LIMIT = 4_000;
+
+/** Append a decision entry to an existing task log, preserving prior entries and the store's cap. */
+function appendCappedTaskLogEntry(
+  existing: Task["log"],
+  entry: { action: string; outcome?: string },
+): Task["log"] {
+  const outcome = entry.outcome && entry.outcome.length > TASK_ACTIVITY_LOG_OUTCOME_LIMIT
+    ? `${entry.outcome.slice(0, TASK_ACTIVITY_LOG_OUTCOME_LIMIT)}\n... outcome truncated to ${TASK_ACTIVITY_LOG_OUTCOME_LIMIT} characters ...`
+    : entry.outcome;
+  const appended = [...(existing ?? []), {
+    timestamp: new Date().toISOString(),
+    action: entry.action,
+    ...(outcome !== undefined ? { outcome } : {}),
+  }];
+  return appended.slice(-TASK_ACTIVITY_LOG_ENTRY_LIMIT);
+}
+
+/** The row fields a ghost-bug episode compares. `updatedAt` is deliberately ABSENT — see the capture site. */
+type GhostBugRowSnapshot = Pick<
+  Task,
+  "column" | "status" | "checkedOutBy" | "checkoutNodeId" | "checkoutLeaseEpoch" | "executionStartedAt" | "paused" | "userPaused" | "branch" | "worktree" | "baseCommitSha"
+>;
+
+/** The three consumed inputs — the exact strings this planning pass handed to the preflight. */
+type GhostBugConsumedInputs = { title: string; description: string; promptContent: string };
+
+/** Everything a decision boundary needs to prove it still owns the card. */
+interface GhostBugEpisodeContext {
+  task: Task;
+  consumed: GhostBugConsumedInputs;
+  planningInputDigest: string;
+  dispatchSnapshot: GhostBugRowSnapshot;
+  /** Engine-process-local attempt ownership. `undefined` on recovery-initiated finalizes. */
+  planningGeneration: number | undefined;
+  revision: ResolvedProbeRevision | undefined;
+  probeCwd: string;
+  /**
+   * FNXC:GhostBugPreflight 2026-10-11-17:05 (GhostBug, review validation): set only when the probe target runs
+   * inside an EXISTING declared worktree — the later destructive boundary (archive re-resolution)
+   * re-verifies repository identity at exactly this path before dispatching any command.
+   */
+  worktreeCwd: string | undefined;
+  runContext: { runId: string; agentId: string };
+  /** Fixed internal reason code carried into the hold's history entry and audit row. */
+  reasonCode: string;
+}
+
+/**
+ * FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+ * `TaskAtomicPersistFence` captured from a row the boundary itself has JUST read. Never from an
+ * earlier-captured snapshot: the fence's whole purpose is "do not write if the row moved since I
+ * looked", and a stale token would make that permanently false.
+ */
+function ghostBugPersistFenceFromRow(live: Task) {
+  return {
+    expectedUpdatedAt: live.updatedAt,
+    expectedCheckedOutBy: live.checkedOutBy ?? null,
+    expectedCheckoutNodeId: live.checkoutNodeId ?? null,
+    expectedCheckoutLeaseEpoch: live.checkoutLeaseEpoch ?? 0,
+  };
+}
+
+/** Bounded, argv-only timeout wrapper for a subprocess the destructive boundary cannot afford to hang on. */
+async function withProbeTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export type GhostBugExecFile = (file: string, args: string[], options: ExecFileOptions) => Promise<{ stdout: string; stderr: string }>;
 
 /**
@@ -550,7 +664,7 @@ export function createGhostBugProbeExec(
       const result = await runExecFile(argv[0]!, argv.slice(1), {
         cwd: options?.cwd,
         timeout: options?.timeoutMs,
-        maxBuffer: 1024 * 1024,
+        maxBuffer: (argv[1] === "ls-tree" || argv[1] === "show") ? 16 * 1024 * 1024 : 1024 * 1024,
         shell: false,
       });
       return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
@@ -5121,6 +5235,634 @@ export class TriageProcessor {
     );
   }
 
+  /* ────────────────────────────────────────────────────────────────────────────
+   * Ghost-bug preflight guard (GhostBug)
+   *
+   * FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+   * The invariant this section exists to hold: a card moves only on fully-proven evidence produced by
+   * the STILL-CURRENT planning episode — in whichever direction that evidence points. A definitive
+   * match on the task's own proven revision releases normally; a genuine, control-verified absence on
+   * that revision archives; and anything unproven holds. What may never happen is a decision from an
+   * episode that has been superseded touching a newer row at all.
+   *
+   * Why the episode fence must be a DATABASE fence and not just this engine's bookkeeping: `store.withTaskLock`
+   * is an in-process promise chain, while a shared central PostgreSQL database is a supported
+   * multi-node deployment shape. The outer `withPlanningLifecycleLock` serializes this project's
+   * planning passes in-process too — real, but still in-process. So the destructive boundaries carry a
+   * durable expected-revision check: the archive through the move transaction's own re-check, and the
+   * hold through `updateTaskUnlocked`'s `persistFence`.
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * The single shared episode predicate. Used by BOTH destructive boundaries — the archive commit and
+   * the hold write — so a reversible pause cannot sneak past a check the irreversible archive requires:
+   * a pause still mutates newer work, so it earns the same consumed-input proof.
+   */
+  private async ghostBugEpisodeStillCurrent(
+    live: Task | null,
+    ctx: GhostBugEpisodeContext,
+    opts: { requirePromptArtifact: boolean },
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (!live || live.id !== ctx.task.id) return { ok: false, reason: "task_identity_changed_during_probe" };
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    BIND THE BYTES ACTUALLY CONSUMED. The probes greped the dispatch snapshot's title/description and
+    the `written` PROMPT string; a live row whose title/description now differ is a DIFFERENT
+    observation, and a stale task object carrying pre-edit bytes must never be credited as a current
+    result. Exact string equality is the cheap, sufficient check — `planningInputDigest` stays the
+    dispatch-time binding RECORD for audit, not a re-derivation from a fresh read.
+    */
+    if ((live.title ?? "") !== ctx.consumed.title || (live.description ?? "") !== ctx.consumed.description) {
+      return { ok: false, reason: "task_identity_changed_during_probe" };
+    }
+
+    for (const key of Object.keys(ctx.dispatchSnapshot) as (keyof GhostBugRowSnapshot)[]) {
+      if (live[key] !== ctx.dispatchSnapshot[key]) return { ok: false, reason: "task_identity_changed_during_probe" };
+    }
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    Real attempt ownership, synchronous and in-memory, so it is safe to consult under a task lock.
+    UNDEFINED is honest: a recovery-initiated finalize has no captured generation, and then the
+    consumed-input snapshot plus the SQL compare-and-set carry the separation. This fence is
+    ENGINE-PROCESS-LOCAL — correct for reset-then-replan in this process; cross-process separation is
+    the row snapshot + consumed-input equality + the durable fence. Recorded, never overclaimed.
+    */
+    if (ctx.planningGeneration !== undefined && this.resetFence.isStale(ctx.task.id, ctx.planningGeneration)) {
+      return { ok: false, reason: "task_identity_changed_during_probe" };
+    }
+
+    if (opts.requirePromptArtifact) {
+      /*
+      FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+      The authoritative PROMPT.md artifact this pass published, re-read and compared BYTE FOR BYTE.
+      A pure `readFile` (no public store call, so it is legal under the task lock), and it is
+      serialized against every finalizer-path PROMPT publication because those publications take the
+      same task lock via `runIfStillPlanningUnderTaskLock`.
+
+      Honest bound: a publication that BYPASSES the task lock (e.g. the reset-fenced publication seam
+      in agent-tools, which deliberately throws and owns its own fence) and completes AFTER this read
+      is not caught. The enforced bound is that finalizer-serialized publications are atomic; this is
+      recorded as a residual, not claimed away.
+      */
+      const authoritative = await readFile(join(this.rootDir, relativePromptPath(ctx.task.id)), "utf-8")
+        .catch(() => null);
+      if (authoritative !== ctx.consumed.promptContent) {
+        return { ok: false, reason: "task_identity_changed_during_probe" };
+      }
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+   * THE BLOCKING OUTCOME: pause the card AND its explanation, in ONE atomic conditional write.
+   *
+   * Deliberately NOT `store.pauseTask`: `pauseTaskImpl` honours `expectedUpdatedAt` only on the
+   * UNPAUSE branch, so a getTask-then-pause sequence is an unconditional write that can clobber newer
+   * fields and history. Deliberately NOT a `logEntry` after the pause either: the pause claim and its
+   * explanation must never be separable across a lock-release boundary, so the history entry rides the
+   * same patch. The lock-assuming `updateTaskUnlocked` pair is the sanctioned nested write here (it
+   * takes no lock itself), matching the existing pattern in this file.
+   */
+  private async applyGhostBugHoldIfEpisodeCurrent(ctx: GhostBugEpisodeContext): Promise<"applied" | "superseded" | "not-applied"> {
+    const store = this.store;
+    if (typeof store.withTaskLock !== "function" || typeof store.readTaskForMove !== "function") return "not-applied";
+
+    return store.withTaskLock(ctx.task.id, async () => {
+      const live = await store.readTaskForMove(ctx.task.id).catch(() => null);
+      if (!live) return "not-applied";
+      if (!await this.ghostBugEpisodeStillCurrent(live, ctx, { requirePromptArtifact: true }).then((guard) => guard.ok)) {
+        return "superseded";
+      }
+
+      const reasonCode = isGhostBugUnverifiedReason(ctx.reasonCode) ? ctx.reasonCode : "preflight_error";
+      try {
+        const updated = await store.updateTaskUnlocked(
+          ctx.task.id,
+          {
+            paused: true,
+            pausedByAgentId: "triage",
+            pausedReason: GHOST_BUG_HOLD_PAUSE_REASON,
+            log: appendCappedTaskLogEntry(live.log, {
+              action: `Ghost-bug preflight could not verify the cited code — task held for operator review (${reasonCode}).`,
+              outcome: JSON.stringify({
+                reasonCode,
+                revisionSource: ctx.revision?.source ?? null,
+                revisionSha: ctx.revision?.sha ?? null,
+                planningInputDigest: ctx.planningInputDigest,
+              }),
+            }),
+          },
+          ctx.runContext,
+          () => true,
+          ghostBugPersistFenceFromRow(live),
+        );
+        /*
+        FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+        The applied RECEIPT is re-checked from the row the write itself returned — pause AND history.
+        A pause claim that did not actually land must never be reported as a durable hold.
+        */
+        const applied = updated?.paused === true
+          && updated.pausedReason === GHOST_BUG_HOLD_PAUSE_REASON
+          && (updated.log ?? []).some((entry) => entry.action.startsWith("Ghost-bug preflight could not verify"));
+        return applied ? "applied" : "not-applied";
+      } catch {
+        /*
+        FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+        A zero-row SQL fence match throws `TaskAtomicPersistGuardRefusedError`. That is a CROSS-PROCESS
+        supersession: nothing was written, so the honest answer is `not-applied` — never a swallowed
+        false hold claim, and the caller still does not release.
+        */
+        return "not-applied";
+      }
+    });
+  }
+
+  /** Terminate without touching the newer episode: no archive, no release, no hold, no task-row write. */
+  private async recordGhostBugStaleCompletion(ctx: GhostBugEpisodeContext, reason: string): Promise<void> {
+    planLog.warn(`${ctx.task.id}: ghost-bug preflight decision superseded by a newer planning episode (${reason}) — no archive, no hold, no release performed.`);
+    await emitBoundedRunAudit(this.store, {
+      taskId: ctx.task.id,
+      agentId: ctx.runContext.agentId,
+      runId: ctx.runContext.runId,
+      domain: "database",
+      mutationType: "task:ghost-bug-preflight-superseded",
+      target: ctx.task.id,
+      metadata: {
+        taskId: ctx.task.id,
+        reason,
+        decisionReasonCode: ctx.reasonCode,
+        revisionSource: ctx.revision?.source ?? null,
+      },
+    }, { log: planLog });
+  }
+
+  /**
+   * Route an unresolved preflight outcome: hold when this episode still owns the card, terminate when
+   * it does not. In BOTH cases the card is NOT released — an unproven check never hands work to an
+   * executor, and a stale attempt never mutates the newer episode.
+   */
+  private async holdForGhostBugUnverified(ctx: GhostBugEpisodeContext): Promise<void> {
+    const holdOutcome = await this.applyGhostBugHoldIfEpisodeCurrent(ctx);
+    if (holdOutcome === "superseded") {
+      await this.recordGhostBugStaleCompletion(ctx, ctx.reasonCode);
+      return;
+    }
+    if (holdOutcome === "not-applied") {
+      /*
+      FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+      PERSISTENCE-HONESTY: the write was refused or did not apply. No durable-hold claim is made, no
+      task-log write is attempted, and the card is STILL not released. The visible record is the
+      planLog line plus a bounded audit row naming the failure.
+      */
+      planLog.warn(`${ctx.task.id}: ghost-bug preflight could not hold the task (${ctx.reasonCode}) — release withheld, operator action required.`);
+      await emitBoundedRunAudit(this.store, {
+        taskId: ctx.task.id,
+        agentId: ctx.runContext.agentId,
+        runId: ctx.runContext.runId,
+        domain: "database",
+        mutationType: "task:ghost-bug-preflight-unverified",
+        target: ctx.task.id,
+        metadata: {
+          taskId: ctx.task.id,
+          reasonCode: ctx.reasonCode,
+          revisionSource: ctx.revision?.source ?? null,
+          holdOutcome: "not-applied",
+        },
+      }, { log: planLog });
+      return;
+    }
+
+    planLog.warn(`${ctx.task.id}: ghost-bug preflight could not verify the cited code (${ctx.reasonCode}) — task held, not released, not archived.`);
+    await emitBoundedRunAudit(this.store, {
+      taskId: ctx.task.id,
+      agentId: ctx.runContext.agentId,
+      runId: ctx.runContext.runId,
+      domain: "database",
+      mutationType: "task:ghost-bug-preflight-unverified",
+      target: ctx.task.id,
+      metadata: {
+        taskId: ctx.task.id,
+        reasonCode: ctx.reasonCode,
+        revisionSource: ctx.revision?.source ?? null,
+        holdOutcome: "applied",
+      },
+    }, { log: planLog });
+  }
+
+  /**
+   * The full guard. Returns `"terminate"` when the card must NOT proceed to the planning handoff.
+   */
+  private async runGhostBugPreflightGuard(task: Task, written: string, settings: Settings): Promise<"released" | "terminate"> {
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-14:20 (GhostBug):
+    THE GENUINELY-INAPPLICABLE GATES RUN FIRST, BEFORE ANY STORE READ OR SUBPROCESS. Both are pure
+    string checks over the consumed inputs; running them here means a task this check cannot apply to
+    releases on the exact same code path it always did, with no new row read, no new subprocess, and no
+    new pause surface. Deferring them to the resolver would make every non-bug-shaped finalize pay a
+    dispatch-snapshot read it does not need — and would turn a missing store seam into a blocker for
+    work that was never a candidate for this detector.
+    */
+    if (!isBugFixShape({ title: task.title ?? null, description: task.description ?? "" })) {
+      return "released";
+    }
+    const citedConstructs = ghostBugPreflightConstructs(written);
+    if (!citedConstructs) {
+      return "released";
+    }
+
+    const runId = generateSyntheticRunId("triage", task.id);
+    const runContext = { runId, agentId: task.assignedAgentId ?? "triage" };
+    const exec = this.options.ghostBugProbeExec ?? createGhostBugProbeExec();
+    const probeTimeoutMs = 5_000;
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    ONE immutable consumed-input snapshot, built from the exact in-scope values the preflight
+    consumes at this call site (`task.title`, `task.description`, the `written` PROMPT string this pass
+    published) and passed UNCHANGED into the resolver. The digest is computed over those consumed
+    strings ONCE at dispatch as the binding record; it is never recomputed from a fresh independent
+    row read, because a fresh read is a different observation rather than a proof of sameliness.
+    */
+    const consumed: GhostBugConsumedInputs = {
+      title: task.title ?? "",
+      description: task.description ?? "",
+      promptContent: written,
+    };
+    const planningInputDigest = createHash("sha256").update(JSON.stringify([
+      consumed.title,
+      consumed.description,
+      consumed.promptContent,
+    ])).digest("hex");
+
+    const baseCtx = (): GhostBugEpisodeContext => ({
+      task,
+      consumed,
+      planningInputDigest,
+      dispatchSnapshot: dispatched,
+      planningGeneration,
+      revision: resolvedRevision,
+      probeCwd,
+      worktreeCwd: probeWorktreeCwd,
+      runContext,
+      reasonCode: "preflight_error",
+    });
+
+    let resolvedRevision: ResolvedProbeRevision | undefined;
+    let probeCwd = this.rootDir;
+    let probeWorktreeCwd: string | undefined;
+    const planningGeneration = this.activePlanningGenerations.get(task.id);
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    DISPATCH SNAPSHOT. Captured here — after `updatePlanningStateIfStillCurrent` has committed this
+    pass's planning state, and before any probe subprocess starts — from ONE fresh read, so the
+    boundary compares against what the row actually says rather than what the entry snapshot said.
+
+    `updatedAt` is deliberately EXCLUDED from the compared episode fields: `logEntryImpl` advances it on
+    BOTH persistence branches (`packages/core/src/task-store/audit-ops.ts` ~line 353 task-json branch;
+    ~line 455 SQL fast path), so comparing it as an episode signal would make an otherwise-unchanged
+    legitimate archive invalidate itself. It returns only as the DURABLE revision token of the SQL
+    fence, captured from the row each boundary has just read.
+    */
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-14:20 (GhostBug):
+    `Promise.resolve(...)` wrapper, not a bare `.catch` on the call: a store adapter that does not
+    implement the seam returns `undefined` rather than a rejected promise, and a missing dispatch
+    snapshot is exactly the case this guard must not guess about — so it routes to the same honest
+    `terminate` instead of throwing inside finalize.
+    */
+    const snapshotRow = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
+    if (!snapshotRow) {
+      planLog.warn(`${task.id}: ghost-bug preflight could not read the dispatch row — release withheld (dispatch_snapshot_unavailable).`);
+      await emitBoundedRunAudit(this.store, {
+        taskId: task.id,
+        agentId: runContext.agentId,
+        runId,
+        domain: "database",
+        mutationType: "task:ghost-bug-preflight-unverified",
+        target: task.id,
+        metadata: { taskId: task.id, reasonCode: "dispatch_snapshot_unavailable", holdOutcome: "not-attempted" },
+      }, { log: planLog });
+      return "terminate";
+    }
+    /* Captured once, so `baseCtx` (defined above, invoked only below) closes over the const. */
+    const dispatched: GhostBugRowSnapshot = {
+      column: snapshotRow.column,
+      status: snapshotRow.status,
+      checkedOutBy: snapshotRow.checkedOutBy,
+      checkoutNodeId: snapshotRow.checkoutNodeId,
+      checkoutLeaseEpoch: snapshotRow.checkoutLeaseEpoch,
+      executionStartedAt: snapshotRow.executionStartedAt,
+      paused: snapshotRow.paused,
+      userPaused: snapshotRow.userPaused,
+      branch: snapshotRow.branch,
+      worktree: snapshotRow.worktree,
+      baseCommitSha: snapshotRow.baseCommitSha,
+    };
+
+    try {
+      /* Gate 1/2 (pure) then provenance + ownership resolution. Any provenance failure is unverified. */
+      const target = await withProbeTimeout(
+        resolveGhostBugPreflightTarget(
+          { title: consumed.title, description: consumed.description },
+          consumed.promptContent,
+          { branch: snapshotRow.branch, baseCommitSha: snapshotRow.baseCommitSha, worktree: snapshotRow.worktree },
+          {
+            rootDir: this.rootDir,
+            exec,
+            resolvedForRunId: runId,
+            timeoutMs: probeTimeoutMs,
+            isOwnedWorktreePath: (candidate) => isInsideConfiguredWorktreesDir(this.rootDir, settings, candidate),
+          },
+        ),
+        15_000,
+      );
+      if (target === "timeout") {
+        await this.holdForGhostBugUnverified({ ...baseCtx(), reasonCode: "preflight_timeout" });
+        return "terminate";
+      }
+      if (target.kind === "inapplicable") {
+        // Reaching one of the two pure gates from the resolver is a re-check, not a new decision.
+        planLog.log(`${task.id}: ghost-bug preflight not applicable (${target.reason}) — releasing normally.`);
+        return "released";
+      }
+      if (target.kind === "decision") {
+        await this.holdForGhostBugUnverified({ ...baseCtx(), reasonCode: target.decision.reason });
+        return "terminate";
+      }
+      resolvedRevision = target.target.revision;
+      probeCwd = target.target.cwd;
+      /*
+      FNXC:GhostBugPreflight 2026-10-11-17:30 (GhostBug, review validation): the destructive archive boundary
+      re-verifies identity at exactly THIS path — a target backed by a relied-upon existing worktree
+      carries it; a root-probed target leaves it undefined and the boundary is correctly a no-op.
+      */
+      probeWorktreeCwd = target.target.worktreeCwd;
+      if (target.target.declaredWorktreeUnreliedUpon) {
+        planLog.warn(`${task.id}: ghost-bug preflight cannot use the declared worktree — verification proceeds against immutable commit objects of the proven revision only.`);
+      }
+
+      const decision = await withProbeTimeout(
+        runGhostBugPreflightAtTarget(citedConstructs, target.target, { timeoutMs: probeTimeoutMs, exec, rootDir: this.rootDir }),
+        15_000,
+      );
+      if (decision === "timeout") {
+        await this.holdForGhostBugUnverified({ ...baseCtx(), reasonCode: "preflight_timeout" });
+        return "terminate";
+      }
+      return await this.dispatchGhostBugDecision(decision, baseCtx());
+    } catch (error: unknown) {
+      /*
+      FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+      A throw anywhere in the preflight/decision/boundary phases maps to the SAME blocking hold as any
+      other unproven outcome. It used to log "failed open" and release; an exception is not evidence
+      that cited code exists, so it can never be a pass.
+      */
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: ghost-bug preflight errored (${message}) — treated as unverified, release withheld.`);
+      await this.holdForGhostBugUnverified({ ...baseCtx(), reasonCode: "preflight_error" });
+      return "terminate";
+    }
+  }
+
+  /** Route a produced decision. The only non-terminating return is a legitimate `pass` or `archive`. */
+  private async dispatchGhostBugDecision(
+    decision: GhostBugDecision,
+    ctx: GhostBugEpisodeContext,
+  ): Promise<"released" | "terminate"> {
+    if (decision.decision === "pass") {
+      /** FNXC:GhostBugPreflight 2026-10-23-05:34: A positive probe belongs to its consumed plan, just like an archive; superseded evidence must not release newer work. */
+      const live = await this.store.getTask(ctx.task.id).catch(() => null);
+      const current = await this.ghostBugEpisodeStillCurrent(live, ctx, { requirePromptArtifact: true });
+      if (!current.ok) {
+        await this.recordGhostBugStaleCompletion(ctx, current.reason);
+        return "terminate";
+      }
+      planLog.log(`${ctx.task.id}: ghost-bug preflight passed (${decision.passKind ?? "pass"}: ${decision.reason}) — releasing normally.`);
+      return "released";
+    }
+    if (decision.decision === "unverified") {
+      await this.holdForGhostBugUnverified({ ...ctx, reasonCode: decision.reason });
+      return "terminate";
+    }
+
+    // ── Archive: the destructive path. Everything below must hold at the moment of commit. ──
+    const revision = decision.revision ?? ctx.revision;
+    if (!revision) {
+      await this.holdForGhostBugUnverified({ ...ctx, reasonCode: "revision_unresolved" });
+      return "terminate";
+    }
+    const archiveCtx: GhostBugEpisodeContext = { ...ctx, revision, reasonCode: decision.reason };
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    FAST PRE-CHECKS — fail-fast only, NOT the fence. Fresh episode proof (consumed inputs, row
+    snapshot, generation, authoritative PROMPT artifact) plus a branch-target re-resolve. Two fixed
+    classes of refusal, because "not now" and "not ours" route differently:
+    • EPISODE-SUPERSEDED (inputs/row/generation/PROMPT moved): a newer episode owns the card. Nothing
+      of ours may touch it — no archive, no release, and NO hold either.
+    • SAME-EPISODE TARGET LOSS (row + artifact unchanged, but the ref moved or the re-resolve
+      errored/timed out): still our episode, so the reversible hold is the correct disposition.
+    */
+    const preCheckRow = await this.store.getTask(ctx.task.id).catch(() => null);
+    const preCheck = await this.ghostBugEpisodeStillCurrent(preCheckRow, archiveCtx, { requirePromptArtifact: true });
+    if (!preCheck.ok) {
+      await this.recordGhostBugStaleCompletion(archiveCtx, preCheck.reason);
+      return "terminate";
+    }
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-17:05 (GhostBug, review validation personal-evidence counterexample):
+    The archive-boundary re-resolution is a production COMMAND GROUP at the probe cwd, so it earns the
+    same observable repository-identity fence as the probe and control groups (no-op at the proven
+    project root, mandatory when a relied-upon declared worktree backs the target). A foreign clone
+    substituted under an owned-looking path may neither approve nor deny the archive target: a failed
+    boundary routes exactly like a re-resolve failure — the same-episode `revision_moved_during_probe`
+    hold — and never as a revision mismatch justifying an archive.
+    */
+    const reResolved = await withProbeTimeout(
+      reResolveProbeRevisionAtBoundary(revision, {
+        rootDir: this.rootDir,
+        exec: this.options.ghostBugProbeExec ?? createGhostBugProbeExec(),
+        timeoutMs: 5_000,
+        target: { cwd: ctx.probeCwd, worktreeCwd: ctx.worktreeCwd },
+      }),
+      6_000,
+    );
+    if (reResolved === "timeout" || !reResolved.ok) {
+      await this.holdForGhostBugUnverified({ ...archiveCtx, reasonCode: "revision_moved_during_probe" });
+      return "terminate";
+    }
+    if (reResolved.sha !== revision.sha) {
+      await this.holdForGhostBugUnverified({ ...archiveCtx, reasonCode: "revision_moved_during_probe" });
+      return "terminate";
+    }
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    THE DECISION IS DATA, NEVER A SIDE EFFECT. It is built here and handed to the conditional-move
+    seam, which appends it to the FRESH in-transaction row and commits it WITH the column transition
+    and the move's own `task:move` audit row. Neither the pre-check nor this predicate performs a task
+    write: an in-predicate `updateTaskUnlocked` append plus the move is two commits, and the move
+    upserts the older captured row — so that shape can lose the explanation it just wrote.
+
+    Truthful-at-write-time wording: the entry says a decision was ACCEPTED and an archive was taken, so
+    it is only ever constructed once every proof above still holds, and the transaction re-proves it.
+    */
+    const expected = preCheckRow!;
+    let refusalClass: "episode-superseded" | "same-episode-target-loss" | undefined;
+    const moved = await this.store.moveTaskIf(
+      ctx.task.id,
+      await fusionCore.resolveArchiveTargetForTask(this.store, ctx.task.id),
+      (live) => {
+        // Pure boolean over the row the seam just re-read — no store mutation inside a predicate.
+        if (live.id !== ctx.task.id || live.column !== expected.column) {
+          refusalClass = "episode-superseded";
+          return false;
+        }
+        return true;
+      },
+      { moveSource: "engine", recoveryRehome: true },
+      {
+        entry: {
+          action: `Ghost-bug preflight accepted archive decision — ${decision.reason} on ${revision.source} ${revision.sha}; archiving.`,
+          outcome: JSON.stringify({
+            reason: decision.reason,
+            revisionSource: revision.source,
+            revisionSha: revision.sha,
+            planningInputDigest: ctx.planningInputDigest,
+            findings: decision.findings.slice(0, 10).map((finding) => ({
+              raw: finding.construct.raw,
+              kind: finding.construct.kind,
+              matched: finding.matched,
+              ...(finding.probeError ? { probeError: finding.probeError } : {}),
+            })),
+          }),
+        },
+        expected: {
+          ...ghostBugPersistFenceFromRow(expected),
+          expectedColumn: expected.column,
+          identity: {
+            status: expected.status,
+            executionStartedAt: expected.executionStartedAt,
+            paused: expected.paused,
+            userPaused: expected.userPaused,
+            branch: expected.branch,
+            worktree: expected.worktree,
+            baseCommitSha: expected.baseCommitSha,
+            title: expected.title,
+            description: expected.description,
+          },
+        },
+      },
+    );
+
+    if (!moved.moved) {
+      /*
+      FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+      An honest `moved: false` from the transaction's own expected-row re-check means NEITHER the
+      decision NOR the transition persisted. There is nothing to roll back and nothing to claim, so the
+      routing is the stale-equivalent one: no archive-side bookkeeping, no release, and no hold of a
+      row a newer commit now owns.
+      */
+      await this.recordGhostBugStaleCompletion(archiveCtx, refusalClass ?? "task_identity_changed_during_probe");
+      return "terminate";
+    }
+
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    POST-COMMIT VISIBILITY — SEPARATE ENTITIES ONLY. The archive has committed; the task's own history
+    already carries the decision (it committed inside the move). What remains is board-level
+    visibility: a `recordActivity` activity row (a distinct entity — no archived-lane gate, no task-row
+    write, no `updatedAt` self-write), the detached bounded audit row, and the mailbox message.
+
+    NO `logEntry` CALL EXISTS ANYWHERE BELOW THIS POINT. Not because it is fenced, but because
+    production rejects an archived-row log write on both branches, so issuing one would be a guaranteed
+    loss. If any of these three rejections happen, the archive still landed: the gap is recorded
+    honestly, never rolled back, and never reported as if the record landed.
+    */
+    try {
+      await this.store.recordActivity({
+        type: "task:auto-archived-ghost-bug",
+        taskId: ctx.task.id,
+        taskTitle: ctx.consumed.title,
+        details: "Cited construct not found on the task's proven revision",
+        metadata: {
+          reason: decision.reason,
+          revisionSource: revision.source,
+          revisionSha: revision.sha,
+          findings: decision.findings.slice(0, 10),
+        },
+      });
+    } catch (error: unknown) {
+      this.recordGhostBugVisibilityGap(ctx.task.id, "activity", error);
+    }
+
+    const definitive = decision.findings.filter((finding) => !finding.probeError);
+    void Promise.resolve()
+      .then(() => createRunAuditor(this.store, {
+        taskId: ctx.task.id,
+        agentId: "triage",
+        runId: generateSyntheticRunId("ghost-bug", ctx.task.id),
+        phase: "triage",
+        source: "triage",
+      }).database({
+        type: "task:auto-archived-ghost-bug-visibility",
+        target: ctx.task.id,
+        metadata: {
+          taskId: ctx.task.id,
+          reason: decision.reason,
+          revisionSource: revision.source,
+          revisionSha: revision.sha,
+          constructCount: decision.findings.length,
+          definitiveCount: definitive.length,
+          missingCount: definitive.filter((finding) => !finding.matched).length,
+          controlOutcome: "matched",
+        },
+      }))
+      .catch(() => undefined);
+
+    try {
+      const sendMessageOnce = this.options.messageStore?.sendMessageOnce?.bind(this.options.messageStore);
+      if (sendMessageOnce) {
+        const constructsCited = decision.findings.map((finding) => `\`${finding.construct.raw}\``).join(", ");
+        await sendMessageOnce({
+          fromId: "system",
+          fromType: "system",
+          toId: fusionCore.DASHBOARD_USER_ID,
+          toType: "user",
+          type: "system",
+          content: `**Task ${ctx.task.id} was auto-archived as a ghost bug**\n\n${ctx.consumed.title || "Untitled task"}\n\nReason: ${decision.reason}\n\nVerified revision: ${revision.source} ${revision.sha}\n\nCited constructs: ${constructsCited || "none"}`,
+          metadata: { mailKind: "message", taskId: ctx.task.id },
+        }, `ghost-bug-archive:${ctx.task.id}`);
+      }
+    } catch (error: unknown) {
+      this.recordGhostBugVisibilityGap(ctx.task.id, "mailbox", error);
+    }
+
+    planLog.log(`${ctx.task.id} auto-archived as ghost bug (verified against ${revision.source} ${revision.sha})`);
+    return "terminate";
+  }
+
+  /** A landed archive whose visibility record was refused: record the GAP, never roll back or claim delivery. */
+  private recordGhostBugVisibilityGap(taskId: string, entity: "activity" | "mailbox", error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    planLog.warn(`${taskId}: ghost-bug archive landed but its ${entity} visibility record was refused (${message}) — archive NOT rolled back, record not delivered.`);
+    void emitBoundedRunAudit(this.store, {
+      taskId,
+      agentId: "triage",
+      runId: generateSyntheticRunId("ghost-bug", taskId),
+      domain: "database",
+      mutationType: "task:auto-archived-ghost-bug-visibility-gap",
+      target: taskId,
+      metadata: { taskId, entity },
+    }, { log: planLog });
+  }
+
   private async finalizeApprovedTaskBody(
     task: Task,
     writtenInput: string,
@@ -5442,44 +6184,25 @@ export class TriageProcessor {
       return;
     }
 
-    try {
-      const preflightDecision = await Promise.race([
-        runGhostBugPreflight(
-          { title: task.title ?? "", description: task.description ?? "" },
-          written,
-          {
-            cwd: this.rootDir,
-            exec: createGhostBugProbeExec(),
-          },
-        ),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
-      ]);
+    /*
+    FNXC:GhostBugPreflight 2026-10-11-13:30 (GhostBug):
+    NO FAIL-OPEN PATH REMAINS ON THIS ROUTE.
 
-      if (preflightDecision && preflightDecision.decision === "archive") {
-        await archiveAsGhostBug(this.store, task.id, task.title ?? "", preflightDecision, {
-          messageStore: this.options.messageStore,
-        });
-        const auditor = createRunAuditor(this.store, {
-          taskId: task.id,
-          agentId: task.assignedAgentId ?? "triage",
-          runId: generateSyntheticRunId("triage", task.id),
-          phase: "triage",
-          source: "triage",
-        });
-        await auditor.database({
-          type: "task:auto-archived-ghost-bug",
-          target: task.id,
-          metadata: {
-            reason: preflightDecision.reason,
-            findings: preflightDecision.findings.slice(0, 10),
-          },
-        });
-        planLog.log(`${task.id} auto-archived as ghost bug`);
-        return;
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: ghost-bug preflight failed open: ${message}`);
+    The shape this replaces: a 15s timeout resolved `null` and fell through to the release; a throw
+    logged "ghost-bug preflight failed open" and fell through to the release; and an archive decision
+    was applied by `archiveAsGhostBug`, whose `store.logEntry` on an archived-lane row is a GUARANTEED
+    rejection (`task-store/audit-ops.ts` rejects archived writes on BOTH persistence branches), so the
+    archived card kept no explanation of why it had vanished.
+
+    Now: a proven `pass` (genuinely-inapplicable or verified-present) releases as before; an
+    incomplete, errored, timed-out, or ambiguous proof holds the card with ONE fixed visible reason; a
+    legitimate archive commits its decision INSIDE the move's own transaction; and a decision whose
+    episode or consumed inputs have been superseded performs NO task-row mutation at all.
+    */
+    const ghostBugOutcome = await this.runGhostBugPreflightGuard(task, written, settings);
+    if (ghostBugOutcome === "terminate") {
+      /* Release and code dispatch are both prevented; the card stays in planning under its own guard. */
+      return;
     }
 
     // FN-5152: post-PROMPT near-duplicate backstop (fail-open, bounded) before triage→todo transition.
