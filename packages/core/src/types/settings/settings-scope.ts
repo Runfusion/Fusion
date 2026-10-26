@@ -565,6 +565,10 @@ export interface GlobalSettings {
    *  `https://api.orcarouter.ai/v1/models` into model pickers so operators can
    *  select OrcaRouter-hosted models by name. Default: true. */
   orcarouterModelSync?: boolean;
+  /** When true (default), startup syncs the Atlas Cloud model catalog from
+   *  `https://api.atlascloud.ai/v1/models` into model pickers so operators can
+   *  select Atlas Cloud-hosted models by name. Default: true. */
+  atlascloudModelSync?: boolean;
   /** When true (default), checks npm for new versions of @runfusion/fusion and
    *  shows update notices in the CLI and dashboard. The actual cadence is
    *  governed by `updateCheckFrequency`. Disabled = no automatic checks at all. */

@@ -39,13 +39,15 @@ describe("startup-model-sync", () => {
         json: vi.fn().mockResolvedValue(response.body ?? { data: [] }),
       });
     }
-    // OrcaRouter sync runs alongside OpenRouter by default; give it a benign
-    // catalog response so OpenRouter-focused tests do not consume an undefined mock.
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: vi.fn().mockResolvedValue({ data: [] }),
-    });
+    // OrcaRouter and Atlas Cloud sync run alongside OpenRouter by default; give them
+    // benign catalog responses so OpenRouter-focused tests do not consume an undefined mock.
+    for (let i = 0; i < 2; i++) {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ data: [] }),
+      });
+    }
     vi.stubGlobal("fetch", fetchMock);
   }
 
@@ -95,7 +97,7 @@ describe("startup-model-sync", () => {
     const registerProvider = vi.fn();
 
     await syncStartupModels({
-      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false, orcarouterModelSync: false }),
+      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false, orcarouterModelSync: false, atlascloudModelSync: false }),
       authStorage: { getApiKey: vi.fn() },
       modelRegistry: { registerProvider },
       log: vi.fn(),
@@ -153,6 +155,57 @@ describe("startup-model-sync", () => {
     expect(orcaCall?.[1]).toEqual({
       headers: { Authorization: "Bearer sk-orca-secret" },
     });
+  });
+
+  it("syncs Atlas Cloud models as a named OpenAI-compatible provider", async () => {
+    mockOpenRouterFetchSequence({
+      ok: true,
+      body: {
+        data: [{
+          id: "deepseek-ai/deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          context_length: 1000000,
+          max_output_length: 65536,
+          input_modalities: ["text", "image"],
+          supported_features: ["tools", "reasoning"],
+          pricing: { prompt: "0.00000014", completion: "0.00000028" },
+        }],
+      },
+    });
+
+    const registerProvider = vi.fn();
+    const log = vi.fn();
+    const getApiKey = vi.fn().mockResolvedValue("test-key");
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        atlascloudModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey },
+      modelRegistry: { registerProvider },
+      log,
+    });
+
+    expect(getApiKey).toHaveBeenCalledWith("atlascloud");
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]?.[0]).toBe("https://api.atlascloud.ai/v1/models");
+    expect(calls[0]?.[1]).toEqual({ headers: { Authorization: "Bearer test-key" } });
+    const atlasCall = registerProvider.mock.calls.find(([name]) => name === "atlascloud");
+    expect(atlasCall?.[1]).toMatchObject({
+      baseUrl: "https://api.atlascloud.ai/v1",
+      apiKey: "ATLASCLOUD_API_KEY",
+      api: "openai-completions",
+    });
+    expect(atlasCall?.[1].models[0]).toMatchObject({
+      id: "deepseek-ai/deepseek-v4-flash",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 65536,
+    });
+    expect(log).toHaveBeenCalledWith("atlascloud", expect.stringContaining("Synced 1 models"));
   });
 
   it("sends default OpenRouter attribution headers", async () => {
