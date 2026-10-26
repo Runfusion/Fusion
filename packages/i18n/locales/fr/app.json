@@ -6244,7 +6244,10 @@
       "noLimitOnAgentToolOutput": "",
       "noLimitOnAgentToolOutputHint": "",
       "quickAddSubmitOnEnter": "",
-      "quickAddSubmitOnEnterHint": ""
+      "quickAddSubmitOnEnterHint": "",
+      "operatorLanguage": "",
+      "operatorLanguageHint": "",
+      "operatorLanguageAuto": ""
     },
     "globalModels": {
       "modelOverrides": "",
