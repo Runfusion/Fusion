@@ -244,4 +244,67 @@ describe("PrMonitor", () => {
       expect(result).toEqual([]);
     });
   });
+
+  describe("finishMonitoring (async gh polls)", () => {
+    const lateComment: PrComment = {
+      id: 201,
+      body: "one more thing",
+      user: { login: "reviewer" },
+      created_at: "2024-01-02T00:00:00.000Z",
+      updated_at: "2024-01-02T00:00:00.000Z",
+      html_url: "https://example.com/201",
+    };
+
+    function deferredFetch() {
+      let resolve!: (comments: PrComment[]) => void;
+      fetchComments.mockImplementationOnce(() => new Promise<PrComment[]>((r) => { resolve = r; }));
+      return (comments: PrComment[]) => resolve(comments);
+    }
+
+    it("waits for a poll still waiting on gh and drains what it found", async () => {
+      const onNew = vi.fn();
+      monitor.onNewComments(onNew);
+      const land = deferredFetch();
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync();
+
+      const finished = monitor.finishMonitoring("FN-001");
+      land([lateComment]);
+
+      await expect(finished).resolves.toEqual([lateComment]);
+      expect(onNew).not.toHaveBeenCalled();
+      expect(monitor.getTrackedPrs().has("FN-001")).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchComments).toHaveBeenCalledTimes(1);
+    });
+
+    it("drops a poll that lands after a plain stop", async () => {
+      const onNew = vi.fn();
+      monitor.onNewComments(onNew);
+      const land = deferredFetch();
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync();
+
+      monitor.stopMonitoring("FN-001");
+      land([lateComment]);
+      await flushAsync();
+      await flushAsync();
+
+      expect(onNew).not.toHaveBeenCalled();
+      expect(monitor.drainComments("FN-001")).toEqual([]);
+    });
+
+    it("keeps monitoring that restarted while an earlier record was finishing", async () => {
+      const land = deferredFetch();
+      monitor.startMonitoring("FN-001", "owner", "repo", mockPrInfo);
+      await flushAsync();
+
+      const finished = monitor.finishMonitoring("FN-001");
+      monitor.startMonitoring("FN-001", "owner", "repo", { ...mockPrInfo, number: 43 });
+      land([lateComment]);
+
+      await expect(finished).resolves.toEqual([lateComment]);
+      expect(monitor.getTrackedPrs().get("FN-001")?.prInfo.number).toBe(43);
+    });
+  });
 });

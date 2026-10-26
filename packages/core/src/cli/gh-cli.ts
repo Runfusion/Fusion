@@ -89,6 +89,10 @@ const GH_CHECK_TTL_MS = 60_000;
 
 let cachedAvailable: { value: boolean; at: number } | undefined;
 let cachedAuthenticated: { value: boolean; at: number } | undefined;
+let availableInFlight: Promise<boolean> | undefined;
+let authenticatedInFlight: Promise<boolean> | undefined;
+/** Bumped by resetGhAvailabilityCache so a check started before a reset never writes its answer. */
+let ghCheckGeneration = 0;
 
 /**
  * Reset the in-memory cache. Call after operations that legitimately change
@@ -98,6 +102,9 @@ let cachedAuthenticated: { value: boolean; at: number } | undefined;
 export function resetGhAvailabilityCache(): void {
   cachedAvailable = undefined;
   cachedAuthenticated = undefined;
+  availableInFlight = undefined;
+  authenticatedInFlight = undefined;
+  ghCheckGeneration++;
 }
 
 /**
@@ -142,6 +149,57 @@ export function isGhAuthenticated(): boolean {
   }
   cachedAuthenticated = { value, at: Date.now() };
   return value;
+}
+
+/*
+FNXC:GhAsyncChecks 2026-10-18-01:20:
+Long-running daemon loops (the PR comment monitor polls every tracked PR every 30 s) must not
+block the event loop on `gh`. These async twins share the sync helpers' cache, so a fresh sync
+or async result serves both, and concurrent callers share one in-flight spawn.
+*/
+function execFileStdout(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("gh", args, { encoding: "utf-8", timeout: DEFAULT_GH_TIMEOUT_MS }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(String(stdout ?? ""));
+    });
+  });
+}
+
+/** Async {@link isGhAvailable}: same answer and cache, without blocking the event loop. */
+export function isGhAvailableAsync(): Promise<boolean> {
+  if (cachedAvailable && Date.now() - cachedAvailable.at < GH_CHECK_TTL_MS) {
+    return Promise.resolve(cachedAvailable.value);
+  }
+  if (!availableInFlight) {
+    const generation = ghCheckGeneration;
+    const pending = execFileStdout(["--version"]).then(() => true, () => false).then((value) => {
+      if (generation === ghCheckGeneration) cachedAvailable = { value, at: Date.now() };
+      if (availableInFlight === pending) availableInFlight = undefined;
+      return value;
+    });
+    availableInFlight = pending;
+  }
+  return availableInFlight;
+}
+
+/** Async {@link isGhAuthenticated}: same answer and cache, without blocking the event loop. */
+export function isGhAuthenticatedAsync(): Promise<boolean> {
+  if (cachedAuthenticated && Date.now() - cachedAuthenticated.at < GH_CHECK_TTL_MS) {
+    return Promise.resolve(cachedAuthenticated.value);
+  }
+  if (!authenticatedInFlight) {
+    const generation = ghCheckGeneration;
+    const pending = execFileStdout(["auth", "status"])
+      .then((out) => out.includes("Logged in") || out.includes("Authenticated"), () => false)
+      .then((value) => {
+        if (generation === ghCheckGeneration) cachedAuthenticated = { value, at: Date.now() };
+        if (authenticatedInFlight === pending) authenticatedInFlight = undefined;
+        return value;
+      });
+    authenticatedInFlight = pending;
+  }
+  return authenticatedInFlight;
 }
 
 /**
