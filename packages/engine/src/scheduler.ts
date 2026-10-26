@@ -2536,24 +2536,33 @@ export class Scheduler {
    * and multi-WIP workflows keep their declared symbols exclusively held.
    */
   private async renewActiveMissionSymbolLocks(tasks: Task[]): Promise<void> {
+    /*
+    FNXC:WorkflowIrReads 2026-10-18-16:40:
+    This runs on every poll over every listed task. It used to resolve each task's workflow before
+    checking whether the task declares any symbols at all, so one poll cost one workflow-definition read
+    per card even though almost none hold symbol locks; on a live board that was about a quarter of all
+    workflow-definition reads. Check the declaration first, and share one per-pass IR cache across the
+    tasks that do need a workflow (docs/solutions/workflow-selection-per-tick-cache.md).
+    */
+    const irCache = new Map<string, WorkflowIr>();
     for (const task of tasks) {
+      // TaskStore normalizes durable declarations on write; renewal deliberately
+      // reads that field rather than the prompt so an explicit declaration clear
+      // can never recreate a lock.
+      const symbols = [...new Set((task.declaredSymbols ?? []).filter((symbol): symbol is string => typeof symbol === "string" && symbol.trim().length > 0))];
+      if (symbols.length === 0) continue;
       /* DELIBERATE-LITERAL — seeds the trait resolution immediately below, which overwrites it
          whenever the workflow resolves; the literal survives only as the documented fallback for an
          unresolvable workflow. Reviewed 2026-07-30-20:40. */
       let isImplementationColumn = task.column === "in-progress";
       try {
-        const ir = await resolveWorkflowIrForTask(this.store, task.id);
+        const ir = await resolveWorkflowIrForTask(this.store, task.id, irCache);
         const column = (ir as WorkflowIrV2).columns?.find((candidate) => candidate.id === task.column);
         if (column) isImplementationColumn = resolveColumnFlags(column).countsTowardWip === true;
       } catch {
         // Preserve the legacy in-progress fallback if workflow resolution is unavailable.
       }
       if (!isImplementationColumn) continue;
-      // TaskStore normalizes durable declarations on write; renewal deliberately
-      // reads that field rather than the prompt so an explicit declaration clear
-      // can never recreate a lock.
-      const symbols = [...new Set((task.declaredSymbols ?? []).filter((symbol): symbol is string => typeof symbol === "string" && symbol.trim().length > 0))];
-      if (symbols.length === 0) continue;
 
       // A direct mission/slice link is sufficient for renewal. Feature-only links
       // are resolved through the store when available, without re-evaluating

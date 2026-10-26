@@ -241,6 +241,47 @@ describe("Scheduler workflow cutover", () => {
     expect(store.renewSymbolLocks).toHaveBeenCalledWith(["pkg/a.ts#A"], "FN-custom-symbol-owner", 10 * 60_000);
   });
 
+  it("does not resolve workflows for tasks without declared symbols during lock renewal", async () => {
+    const plain = [1, 2, 3].map((n) => task({ id: `FN-plain-${n}`, column: "in-progress", missionId: "M-1" }));
+    const store = storeWith(plain, {}, {
+      selections: Object.fromEntries(plain.map((t) => [t.id, "custom:wip"])),
+      definitions: { "custom:wip": { version: "v2", name: "wip", columns: [], nodes: [], edges: [] } as unknown as WorkflowIr },
+    });
+    const scheduler = new Scheduler(store);
+
+    await (scheduler as unknown as { renewActiveMissionSymbolLocks(tasks: Task[]): Promise<void> }).renewActiveMissionSymbolLocks(plain);
+
+    expect(store.getWorkflowDefinition).not.toHaveBeenCalled();
+    expect(store.renewSymbolLocks).not.toHaveBeenCalled();
+  });
+
+  it("reads a shared custom workflow once per renewal pass", async () => {
+    const owners = [1, 2, 3].map((n) => task({
+      id: `FN-owner-${n}`,
+      column: "implementing",
+      missionId: "M-1",
+      sliceId: "SL-1",
+      declaredSymbols: [`pkg/${n}.ts#S`],
+    }));
+    const workflow = {
+      version: "v2",
+      name: "custom-wip",
+      columns: [{ id: "implementing", name: "Implementing", traits: [{ trait: "wip", config: { limit: 3 } }] }],
+      nodes: [],
+      edges: [],
+    } as unknown as WorkflowIr;
+    const store = storeWith(owners, {}, {
+      selections: Object.fromEntries(owners.map((t) => [t.id, "custom:wip"])),
+      definitions: { "custom:wip": workflow },
+    });
+    const scheduler = new Scheduler(store);
+
+    await (scheduler as unknown as { renewActiveMissionSymbolLocks(tasks: Task[]): Promise<void> }).renewActiveMissionSymbolLocks(owners);
+
+    expect(store.getWorkflowDefinition).toHaveBeenCalledTimes(1);
+    expect(store.renewSymbolLocks).toHaveBeenCalledTimes(3);
+  });
+
   it("uses the workflow sweep for todo pickup even when stale workflowColumns=false is persisted", async () => {
     const ready = task({ id: "FN-100" });
     const store = storeWith([ready]);
