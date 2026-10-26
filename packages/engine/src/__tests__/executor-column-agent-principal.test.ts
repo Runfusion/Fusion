@@ -383,6 +383,128 @@ describe("column-agent principal alignment (plan U5)", () => {
       expect(executeSpy).toHaveBeenCalledTimes(1);
       expect(executeSpy.mock.calls[0][0]).toMatchObject({ id: "FN-STEP" });
     });
+  // ── completed work must never be re-executed by a heartbeat re-dispatch ──────
+  //
+  // Both passes admit through one shared gate, so one guard closes both: a card
+  // whose work is already complete takes the SAME fast-path the startup sweep
+  // (resume-orphaned) and the unpause sweep use — recovery, never execute(). The
+  // claim is released in every outcome (success / refusal / throw), because
+  // holding it wedges the completed-task watchdog and the next sweep.
+  describe.each([
+    ["pass 1 (assigned agent)", "agent-X"],
+    ["pass 2 (effective column agent)", "agent-Y"],
+  ] as const)("resumeTaskForAgent %s with completed work", (_label, assignedTo) => {
+    function completedWorkStore() {
+      return resumeStore(
+        singleSessionTask({
+          id: "FN-COMP",
+          assignedAgentId: assignedTo,
+          steps: [{ name: "Implement", status: "done" }],
+          currentStep: 0,
+        }),
+        irWithExecuteSeamColumn(OVERRIDE_COL),
+      );
+    }
+
+    function completedWorkExecutor() {
+      const store = completedWorkStore();
+      return makeExecutor(store, {
+        "agent-Y": makeAssignedAgent(),
+        "agent-X": makeColumnAgent(),
+      });
+    }
+
+    it("routes to completed-task recovery instead of execute()", async () => {
+      const { executor } = completedWorkExecutor();
+      const executeSpy = vi.spyOn(executor, "execute").mockResolvedValue(undefined as any);
+      const recoverSpy = vi.spyOn(executor, "recoverCompletedTask").mockResolvedValue(true as any);
+
+      await executor.resumeTaskForAgent("agent-X");
+
+      // No re-execution of finished work…
+      expect(executeSpy).not.toHaveBeenCalled();
+      // …and the existing repair actually ran on this card.
+      expect(recoverSpy).toHaveBeenCalledTimes(1);
+      expect(recoverSpy.mock.calls[0][0]).toMatchObject({ id: "FN-COMP" });
+    });
+
+    it.each([
+      ["recovery succeeds", async () => true],
+      ["recovery refuses", async () => false],
+      ["recovery throws", async () => { throw new Error("boom"); }],
+    ])("releases the recoveringCompleted claim when %s", async (_case, behaviour) => {
+      const { executor } = completedWorkExecutor();
+      vi.spyOn(executor, "execute").mockResolvedValue(undefined as any);
+      vi.spyOn(executor, "recoverCompletedTask").mockImplementation(behaviour as any);
+
+      // The dispatch is fire-and-forget, so the claim is released when that promise chain settles.
+      // Fake timers drain it deterministically: a real `setTimeout` here made this assertion depend
+      // on wall-clock scheduling rather than on the code under test.
+      vi.useFakeTimers();
+      try {
+        await executor.resumeTaskForAgent("agent-X");
+        await vi.runAllTimersAsync();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect((executor as any).recoveringCompleted.has("FN-COMP")).toBe(false);
+    });
+
+    it("does not recover twice while recovery already holds the claim", async () => {
+      const { executor } = completedWorkExecutor();
+      (executor as any).recoveringCompleted.add("FN-COMP");
+      const executeSpy = vi.spyOn(executor, "execute").mockResolvedValue(undefined as any);
+      const recoverSpy = vi.spyOn(executor, "recoverCompletedTask").mockResolvedValue(true as any);
+
+      await executor.resumeTaskForAgent("agent-X");
+
+      expect(executeSpy).not.toHaveBeenCalled();
+      expect(recoverSpy).not.toHaveBeenCalled();
+    });
+
+    it("still dispatches incomplete work normally", async () => {
+      const store = resumeStore(
+        singleSessionTask({ id: "FN-PART", assignedAgentId: assignedTo }),
+        irWithExecuteSeamColumn(OVERRIDE_COL),
+      );
+      const { executor } = makeExecutor(store, {
+        "agent-Y": makeAssignedAgent(),
+        "agent-X": makeColumnAgent(),
+      });
+      const executeSpy = vi.spyOn(executor, "execute").mockResolvedValue(undefined as any);
+      const recoverSpy = vi.spyOn(executor, "recoverCompletedTask").mockResolvedValue(true as any);
+
+      await executor.resumeTaskForAgent("agent-X");
+
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+      expect(executeSpy.mock.calls[0][0]).toMatchObject({ id: "FN-PART" });
+      expect(recoverSpy).not.toHaveBeenCalled();
+    });
+
+    it("still dispatches a merge-owned card normally", async () => {
+      const store = resumeStore(
+        singleSessionTask({
+          id: "FN-MERGE",
+          assignedAgentId: assignedTo,
+          steps: [{ name: "Implement", status: "done" }],
+          mergeDetails: { prUrl: "https://example.test/pr/1" },
+        }),
+        irWithExecuteSeamColumn(OVERRIDE_COL),
+      );
+      const { executor } = makeExecutor(store, {
+        "agent-Y": makeAssignedAgent(),
+        "agent-X": makeColumnAgent(),
+      });
+      const executeSpy = vi.spyOn(executor, "execute").mockResolvedValue(undefined as any);
+      const recoverSpy = vi.spyOn(executor, "recoverCompletedTask").mockResolvedValue(true as any);
+
+      await executor.resumeTaskForAgent("agent-X");
+
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+      expect(recoverSpy).not.toHaveBeenCalled();
+    });
+  });
   });
 
   // ── (b) Reverse direction: isAgentEffectivelyExecuting (R6) ───────────────
@@ -657,4 +779,5 @@ describe("column-agent principal alignment (plan U5)", () => {
       expect((executor as any).resolveEffectivePrincipalId(taskB, taskB)).toBe("agent-Z");
     });
   });
+
 });
