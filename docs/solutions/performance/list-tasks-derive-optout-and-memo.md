@@ -335,7 +335,7 @@ Converted in this change, each with its audit in its own FNXC comment at the cal
 | `triage.ts` import near-duplicate comparator | `description` | maps `id`/`title`/`description`/`column`/`createdAt` into `NearDuplicateCandidate`; `resolveTerminalColumnsForTasks` adds `id`/`column` only |
 | `triage.ts` FN-5152 planning near-duplicate comparator | `description`, `source` | same candidate shape **plus** `sourceMetadata.fileScope`; `source` is declared whole because `rowToTask` also derives `Task.branchContext` from that column |
 | `scheduling/auto-claim-snapshot.ts` `resolveFreshAutoClaimCandidates` | `description` | candidacy reads `column`/`status`/`paused`/`userPaused`/`assignedAgentId`/`checkedOutBy`/`deletedAt`/`dependencies` (all narrow) + `id`/`title`/`description`/`createdAt`/`columnMovedAt`/`queueBoost`; `AutoClaimCandidate` has no `steps` field, so today's PROMPT.md parse produced a value `toAutoClaimCandidate` discards |
-| `scheduling/auto-claim-snapshot.ts` `rebuild` | `description` | same read-set, documented by the RUFU-201 FNXC above it. Converted together with the leg above so the file's two board scans cannot disagree about a field set their shared predicates cannot distinguish |
+| `scheduling/auto-claim-snapshot.ts` `rebuild` | **`[]` — zero wide fields** | Step 5 moved this one. The retained snapshot record no longer owns card text (`RetainedAutoClaimCandidate`), so this pass reads only `isRunnableAutoClaimCandidate` + queue-order + lifecycle-role columns and can declare nothing. Before Step 5 it declared `description` for the body and first line the record used to keep. |
 
 Not converted, recorded so the decision is written down rather than re-litigated per site:
 
@@ -345,6 +345,44 @@ Not converted, recorded so the decision is written down rather than re-litigated
 | `slim` + `derive: false` + `excludeLog` (`triage.ts` 1069 / 1447 / 2713, `scheduler.ts` 2576 / 2658 / 2659, `healing/gridlock-detector.ts`, `scheduling/review-dispatch-sweep.ts`, `project-engine.ts`, `task-store/lifecycle-ops.ts`) | 10 | Cheapest next conversions, but NOT mechanical: 1069/2713 feed `discoverReadyPlanningTasks`, which reads `steps` (`isTaskStillInPlanningStage`) and — at 2713 — `workflowStepResults` as the only live-agent signal, so their declared set is `description, steps, source` (plus `workflowStepResults` at 2713), not the minimal one. `gridlock-detector` names `sourceMetadata` in its own audit. Declaring them is a per-site edit with its own count line here. (`execution/hold-release.ts` is the same read WITHOUT `slim`, so it is not in this census at all — RUFU-201 converted its `derive`/`excludeLog` half.) |
 | `slim` with neither `excludeLog` nor `derive: false` (`triage.ts` 5211 `fn_task_list`, `scheduler.ts` 2040, `agents/agent-reflection.ts`) | 3 | These are the sites the `list-tasks-slim-excludes-log.test.ts` ratchet is for; `excludeLog` first, `fields` after. **Ratchet status:** the census in this change measures 3 and `MAX_UNCONVERTED_SLIM_SCANS` is 2, so that test is red on `main` independently of this change — a deterministic pre-existing failure, recorded here rather than quietly widened. |
 | CLI / dashboard / core non-engine `slim` reads (`cli/src/*`, `dashboard/src/*`, `core/src/*`) | ~35 | Out of RUFU-627's scope: mostly one-shot CLI reads (the memo already serves them) or single-card lookups, where a declaration costs a reviewer more attention than it saves bytes. |
+
+### The retained auto-claim snapshot is a second shape (`RetainedAutoClaimCandidate`) — RUFU-627 Step 5
+
+`fields` narrows what a READ carries. A cache that holds the result narrows nothing, so Step 5 gave the
+auto-claim snapshot its own record type, because the two shapes answer different questions:
+
+| Shape | Owned by | Carries card text? | Why |
+| --- | --- | --- | --- |
+| `AutoClaimCandidate` | a consumer, after `resolveFreshAutoClaimCandidates` | yes: `title`, `description`, `descriptionFirstLine` | `agent-heartbeat.ts:3527` scores role + soul words against `title` + full `description`, and 4763 renders `title ?? descriptionFirstLine` into the prompt |
+| `RetainedAutoClaimCandidate` = `Omit<…, "title" \| "description" \| "descriptionFirstLine">` | `AutoClaimSnapshot.tasks` (30 s cache) | **no** | both consumers (`agent-heartbeat.ts:3498`, `heartbeat-wake-signals.ts:269`) hand the array to `resolveFreshAutoClaimCandidates`, which reads `id` and rebuilds the rest from the canonical row |
+
+**Why the cache must not hold the text, not merely "does not need" it.** FN-6850 exists because a
+superseded triage task reached a heartbeat prompt from this 30-second cache with its old identity text
+(FN-6812). Its rule is: never render a cached card's identity text without re-resolving it. The old
+shape retained exactly that text — up to 50 full card bodies, since the snapshot is bounded at 50 rows
+and was measured at that bound on the live board — so the cache was storage for the one thing its own
+governing rule forbids displaying. Making the cache incapable of holding it converts "I grepped, nobody
+reads it" into a compile error at the field access, which is the only form of that claim that survives
+the next consumer.
+
+Dropping the three text members is also what let the **hottest** read in the file — `rebuild`, fired on
+the TTL *and* on every auto-claim fingerprint invalidation — declare `fields: []`. The two auto-claim
+reads still disagree about `description` on purpose: the fresh one produces the resolved candidate that
+the prompt and the relevance score consume, so it must keep carrying the body.
+
+What stays retained and why: `id`, `createdAt`, `columnMovedAt`, `baseScore`, `column`. Those are the
+queue-order and lane scalars the snapshot exists to compute, and FN-509 ranks BEFORE the 50-row bound,
+so removing them would change which 50 cards a snapshot may contain to save five scalars per row.
+
+Pinned by `packages/engine/src/__tests__/auto-claim-snapshot-retention.test.ts`: the retained record's
+own key set asserted on a populated board (a long `description` plus populated `workflowStepResults`),
+the two reads' declarations asserted from the option bags they actually received (`[]` vs
+`["description"]`), the resolved candidate still delivering body and first line, one read per TTL window
+and zero reads for an empty candidate set, plus the duplicate-id and undefined-optional boards. Whether
+`fields: []` removes columns from the executed SELECT is proven one layer down in
+`list-tasks-field-declaration.pg.test.ts`, which reads rendered SQL; this file asserts the declaration,
+and neither claim is load-bearing alone. Control run: mapping the rebuild back to the full candidate and
+restoring `fields: ["description"]` reddens three of its five legs.
 
 ### Verification
 

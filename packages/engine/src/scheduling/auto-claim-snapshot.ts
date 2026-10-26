@@ -5,6 +5,11 @@ import { createLogger, type Logger } from "../logger.js";
 /**
  * In-memory only by design (FN-4401): 30s TTL + event invalidation are enough,
  * and filesystem persistence would couple this cache to storage/multi-project concerns.
+ *
+ * This is the shape a CONSUMER holds — it exists only after `resolveFreshAutoClaimCandidates`
+ * has re-resolved the candidate against a canonical row, which is what makes its text safe to
+ * render (FNXC:AutoClaim 2026-06-21-10:35, FN-6850). The retained cache shape is the separate
+ * `RetainedAutoClaimCandidate` below; `AutoClaimSnapshot.tasks` is typed with that one.
  */
 export interface AutoClaimCandidate {
   id: string;
@@ -17,9 +22,40 @@ export interface AutoClaimCandidate {
   column: Task["column"];
 }
 
+/*
+FNXC:AutoClaimRetention 2026-10-26-01:32 (RUFU-627 Step 5):
+What the 30-second cache may retain, as a TYPE. FN-6850 already forbids RENDERING a cached card's
+identity text without re-resolving it (that is how FN-6812's superseded triage task reached a
+heartbeat prompt), and every consumer of this cache obeys that: both `agent-heartbeat.ts:3498` and
+`heartbeat-wake-signals.ts:269` hand the whole retained array to `resolveFreshAutoClaimCandidates`,
+which reads exactly ONE field off each retained record — `id` — and rebuilds title, description,
+first line, score and lane from the canonical row. So the cache held up to 50 full card bodies
+(a snapshot was measured at the 50-row bound on the live board) that no reader could consume without
+violating the rule that forces re-resolution in the first place.
+
+Dropping the three text members does three things at once, and the third is the reason this is typed
+rather than commented:
+1. The retained set stops being card-text storage — the array keeps bounded scalars only.
+2. `AutoClaimSnapshotManager.rebuild` no longer needs the wide `description` column at all, so its
+   board read — the hottest read in this file, fired on the TTL AND on every fingerprint
+   invalidation — declares `fields: []` and stops transferring spec bodies it would discard.
+3. A future consumer that wants cached card text does not get a silently-empty string: it gets a
+   compile error at the field access, because the only sanctioned source of that text is a resolved
+   candidate. The old shape made the leak invisible; asserting "nobody reads it" was a claim about
+   call sites, and this makes it a claim about the type.
+
+What stays: `id`, `createdAt`, `columnMovedAt`, `baseScore`, `column`. Those are the queue-order and
+lane scalars the snapshot exists to compute and bound (FN-509 ranks BEFORE the 50-row cut), and each
+is a scalar — dropping them would change the bound's semantics to save nothing measurable.
+*/
+export type RetainedAutoClaimCandidate = Omit<
+  AutoClaimCandidate,
+  "title" | "description" | "descriptionFirstLine"
+>;
+
 export interface AutoClaimSnapshot {
   generatedAt: number;
-  tasks: ReadonlyArray<AutoClaimCandidate>;
+  tasks: ReadonlyArray<RetainedAutoClaimCandidate>;
 }
 
 interface AutoClaimSnapshotManagerOptions {
@@ -127,6 +163,23 @@ export async function resolveAutoClaimLifecycleRoles(
 }
 
 export function toAutoClaimCandidate(task: Task, now: number): AutoClaimCandidate {
+  return {
+    ...toRetainedAutoClaimCandidate(task, now),
+    // The three members a RESOLVED candidate adds, and the only place card text enters this module's
+    // output types — from a canonical row, never from the retained cache. See `RetainedAutoClaimCandidate`.
+    title: task.title ?? null,
+    description: task.description,
+    descriptionFirstLine: extractDescriptionFirstLine(task.description),
+  };
+}
+
+/*
+FNXC:AutoClaimRetention 2026-10-26-01:32 (RUFU-627 Step 5): the retained shape, built by `rebuild`.
+Derived from the SAME helper as the full candidate on purpose: `baseScore` is queue semantics, and the
+two shapes must not be able to disagree about how age turns into a score. `descriptionFirstLine` is
+computed here for the resolved shape and is NOT stored in the cache — see `RetainedAutoClaimCandidate`.
+*/
+export function toRetainedAutoClaimCandidate(task: Task, now: number): RetainedAutoClaimCandidate {
   const reference = task.columnMovedAt ?? task.createdAt;
   const ageMs = Math.max(0, now - Date.parse(reference));
   const ageHours = ageMs / (1000 * 60 * 60);
@@ -134,9 +187,6 @@ export function toAutoClaimCandidate(task: Task, now: number): AutoClaimCandidat
   const baseScore = Math.max(0, Math.min(5, Math.floor(ageHours / 24)));
   return {
     id: task.id,
-    title: task.title ?? null,
-    description: task.description,
-    descriptionFirstLine: extractDescriptionFirstLine(task.description),
     createdAt: task.createdAt,
     columnMovedAt: task.columnMovedAt,
     baseScore,
@@ -154,7 +204,7 @@ The fresh slim list intentionally includes archived rows by default so the share
 */
 export async function resolveFreshAutoClaimCandidates(
   taskStore: Pick<TaskStore, "listTasks"> & WorkflowIrResolverStore,
-  candidates: ReadonlyArray<AutoClaimCandidate>,
+  candidates: ReadonlyArray<RetainedAutoClaimCandidate>,
   now: () => number = Date.now,
 ): Promise<AutoClaimCandidate[]> {
   if (candidates.length === 0) {
@@ -170,9 +220,14 @@ export async function resolveFreshAutoClaimCandidates(
   `assignedAgentId`, `checkedOutBy`, `deletedAt`, `dependencies`) + `resolveAutoClaimLifecycleRoles`
   (`id`) + `toAutoClaimCandidate` (`id`, `title`, `description`, `createdAt`, `columnMovedAt`) +
   `compareTasksByQueueOrder` (`queueBoost`, age, `id`), and every one of those except `description` is
-  a narrow column that no declaration can drop. So `description` is the single wide field this read
-  needs — which matters because a candidate keeps the FULL body, not the first line (Step 5 is about
-  that), so this is the one column worth transferring and the rest are not.
+  a narrow column that no declaration can drop.
+
+  FNXC:AutoClaimRetention 2026-10-26-01:32 (RUFU-627 Step 5): `description` stays declared HERE while
+  `rebuild` dropped it, and the asymmetry is the point. This pass produces the RESOLVED candidate, and
+  a resolved candidate's body is genuinely read: `agent-heartbeat.ts:3527` scores it through
+  `taskRelevanceScore` (agent role + soul words against `title` + full `description`), and 4763 renders
+  `title ?? descriptionFirstLine` into the heartbeat prompt. That is the FN-6850 path — text read AFTER
+  re-resolution — so this read must carry the body, and it is the only auto-claim read that may.
 
   Not declaring `steps` also drops the per-card PROMPT.md sync that `slim` otherwise performs, because
   a declared field the caller does not read must not be re-derived from another source (see
@@ -260,14 +315,24 @@ export class AutoClaimSnapshotManager {
     are still resolved by `resolveAutoClaimLifecycleRoles`, which owns its own IR cache and is
     unaffected by what the list pass prefetches.
 
-    FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627): `fields: ["description"]` extends that
-    audit to the projection, with the SAME read-set this comment already enumerates — `description` is
-    the only wide field in it. The two auto-claim reads are converted together on purpose: leaving one
-    on the undeclared shape would make the file's two board scans disagree about a field set their
-    shared predicates cannot distinguish, and this one is the hotter of the pair (TTL plus every
-    fingerprint invalidation).
+    FNXC:ListReadFieldDeclaration 2026-10-25-23:31 (RUFU-627): `fields` extended that audit to the
+    projection; at that point this read still needed `description` because the retained record carried
+    the body and its first line.
+
+    FNXC:AutoClaimRetention 2026-10-26-01:32 (RUFU-627 Step 5): the retained record no longer holds
+    card text (see `RetainedAutoClaimCandidate`), so the read-set of THIS pass is now
+    `isRunnableAutoClaimCandidate` (`column`, `status`, `paused`, `userPaused`, `assignedAgentId`,
+    `checkedOutBy`, `deletedAt`, `dependencies`) + `resolveAutoClaimLifecycleRoles` (`id`) +
+    `compareTasksByQueueOrder` (`queueBoost`, `createdAt`, `columnMovedAt`, `id`) +
+    `toRetainedAutoClaimCandidate` (`id`, `createdAt`, `columnMovedAt`, `column`) — every one of them a
+    narrow column. So it declares `fields: []`: not "the cheap subset" but zero wide columns, which on
+    a board whose `description` bodies are spec-sized is the difference between shipping 50 specs and
+    shipping none. This is the hotter of the file's two board scans (TTL plus every fingerprint
+    invalidation), and the two remain converted together so their shared predicates cannot disagree
+    about a field set: the sibling below still declares `description`, because a RESOLVED candidate is
+    what the heartbeat prompt and relevance score consume it from.
     */
-    const allTasks = await this.taskStore.listTasks({ slim: true, derive: false, excludeLog: true, fields: ["description"] });
+    const allTasks = await this.taskStore.listTasks({ slim: true, derive: false, excludeLog: true, fields: [] });
     const tasksById = new Map(allTasks.map((candidate) => [candidate.id, candidate]));
     const rolesByTask = await resolveAutoClaimLifecycleRoles(this.taskStore, allTasks);
     const now = this.now();
@@ -279,7 +344,7 @@ export class AutoClaimSnapshotManager {
          Relevance scoring downstream remains a filter, not a way past an older admissible card. */
       .sort(compareTasksByQueueOrder)
       .slice(0, 50)
-      .map((candidate) => toAutoClaimCandidate(candidate, now));
+      .map((candidate) => toRetainedAutoClaimCandidate(candidate, now));
 
     const snapshot: AutoClaimSnapshot = {
       generatedAt: now,
