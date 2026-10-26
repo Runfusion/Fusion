@@ -160,6 +160,7 @@
   "setup": {
     "apiKeyFormatError": "",
     "apiKeyLabel": {
+      "cheaperinference": "",
       "fallback": "",
       "kimiCoding": "",
       "minimax": "",
@@ -177,6 +178,7 @@
     },
     "apiKeyRequired": "",
     "apiKeySetup": {
+      "cheaperinference": "",
       "fallback": "",
       "kimiCoding": "",
       "minimax": "",
@@ -187,6 +189,7 @@
       "zai": ""
     },
     "apiKeyUsage": {
+      "cheaperinference": "",
       "fallback": "",
       "kimiCoding": "",
       "minimax": "",
@@ -198,6 +201,7 @@
     },
     "providerDesc": {
       "anthropic": "",
+      "cheaperinference": "",
       "fallback": "",
       "gemini": "",
       "google": "",

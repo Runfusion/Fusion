@@ -160,6 +160,7 @@
   "setup": {
     "apiKeyFormatError": "As chaves da {{providerName}} devem seguir este formato: {{hint}} (ex.: {{example}})",
     "apiKeyLabel": {
+      "cheaperinference": "",
       "fallback": "Chave de API",
       "kimiCoding": "Chave de API do Kimi",
       "minimax": "Chave de API do MiniMax",
@@ -177,6 +178,7 @@
     },
     "apiKeyRequired": "A chave de API é obrigatória",
     "apiKeySetup": {
+      "cheaperinference": "",
       "fallback": "Digite sua chave de API para este provedor.",
       "kimiCoding": "Crie sua chave de API nas configurações de conta da plataforma Moonshot.",
       "minimax": "Gere uma chave de API no console de desenvolvedor da plataforma MiniMax.",
@@ -187,6 +189,7 @@
       "zai": "Crie uma chave de API nas configurações de conta da plataforma aberta da Zhipu AI."
     },
     "apiKeyUsage": {
+      "cheaperinference": "",
       "fallback": "Usada pelo Fusion para autenticar solicitações a este provedor",
       "kimiCoding": "Usada para modelos Kimi/Moonshot AI na execução e no planejamento de tarefas",
       "minimax": "Usada para modelos MiniMax na execução de tarefas",
@@ -198,6 +201,7 @@
     },
     "providerDesc": {
       "anthropic": "Modelos Claude — fortes em raciocínio, análise e código",
+      "cheaperinference": "",
       "fallback": "Provedor de IA — conecte-se para começar a usar modelos de IA",
       "gemini": "Modelos Gemini — multimodais com forte raciocínio",
       "google": "Modelos Gemini — multimodais com forte raciocínio",

@@ -443,6 +443,12 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("orcarouterModelSync")).toBe(false);
   });
 
+  it("keeps Cheaper Inference model sync global with an enabled default", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.cheaperinferenceModelSync).toBe(true);
+    expect(isGlobalSettingsKey("cheaperinferenceModelSync")).toBe(true);
+    expect(isProjectSettingsKey("cheaperinferenceModelSync")).toBe(false);
+  });
+
   it("defaults stale high fan-out blocker escalation age threshold", () => {
     expect(DEFAULT_PROJECT_SETTINGS.staleHighFanoutBlockerAgeThresholdMs).toBe(2 * 60 * 60 * 1000);
     expect(isProjectSettingsKey("staleHighFanoutBlockerAgeThresholdMs")).toBe(true);

@@ -6338,6 +6338,8 @@
       "whenEnabledStartupFetchesTheLatestAvailableModels": " When enabled, startup fetches the latest available models from the OpenRouter API so model pickers always include the newest catalog. Default: enabled. ",
       "syncOrcaRouterModelListAtStartup": " Sync OrcaRouter model list at startup ",
       "whenEnabledStartupFetchesTheLatestOrcaRouterModels": " When enabled, startup fetches the latest available models from the OrcaRouter API so model pickers include the OrcaRouter catalog. Default: enabled. ",
+      "syncCheaperInferenceModelListAtStartup": " Sync Cheaper Inference model list at startup ",
+      "whenEnabledStartupFetchesTheLatestCheaperInferenceModels": " When enabled and a Cheaper Inference API key is set, startup fetches the latest available models from the Cheaper Inference API so model pickers include the Cheaper Inference catalog. Default: enabled. ",
       "whenEnabledStartupRefreshesModelsThroughTheLocal": " When enabled, startup refreshes models through the local ",
       "commaSeparatedValuesSentToOpenRouterModelSyncOutputModalities": "Comma-separated values sent to OpenRouter model sync. No default — unset (unfiltered).",
       "openRouterRoutingOrderHint": "No default — unset (OpenRouter's own default routing order applies).",

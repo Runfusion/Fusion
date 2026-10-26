@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
 }));
 
-import { normalizeOpencodeGoModel, parseOpencodeModelsOutput, refreshOpencodeGoModels, syncStartupModels } from "../startup-model-sync.js";
+import { handleCheaperInferenceApiKeySaved, normalizeOpencodeGoModel, parseOpencodeModelsOutput, refreshOpencodeGoModels, syncStartupModels } from "../startup-model-sync.js";
 
 type MockProcess = EventEmitter & {
   stdout: EventEmitter;
@@ -41,6 +41,12 @@ describe("startup-model-sync", () => {
     }
     // OrcaRouter sync runs alongside OpenRouter by default; give it a benign
     // catalog response so OpenRouter-focused tests do not consume an undefined mock.
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: [] }),
+    });
+    // Cheaper Inference sync also runs by default when a key is stored.
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -95,7 +101,7 @@ describe("startup-model-sync", () => {
     const registerProvider = vi.fn();
 
     await syncStartupModels({
-      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false, orcarouterModelSync: false }),
+      getSettings: vi.fn().mockResolvedValue({ openrouterModelSync: false, opencodeGoModelSync: false, orcarouterModelSync: false, cheaperinferenceModelSync: false }),
       authStorage: { getApiKey: vi.fn() },
       modelRegistry: { registerProvider },
       log: vi.fn(),
@@ -153,6 +159,193 @@ describe("startup-model-sync", () => {
     expect(orcaCall?.[1]).toEqual({
       headers: { Authorization: "Bearer sk-orca-secret" },
     });
+  });
+
+  it("syncs Cheaper Inference text models as a named OpenAI-compatible provider", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "gpt-5.4-mini",
+            type: "text",
+            context_length: 400000,
+            max_output_tokens: 128000,
+            capabilities: { vision: true, reasoning: true },
+            pricing: {
+              input_per_million: "0.487500",
+              output_per_million: "2.925000",
+              cache_read_input_per_million: "0.048750",
+              cache_write_input_per_million: "0.487500",
+            },
+          },
+          { id: "image-model", type: "image" },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const registerProvider = vi.fn();
+    const log = vi.fn();
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        cheaperinferenceModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue("ci_live_test") },
+      modelRegistry: { registerProvider },
+      log,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("https://api.cheaperinference.com/v1/models", {
+      headers: { Authorization: "Bearer ci_live_test" },
+      signal: expect.any(AbortSignal),
+    });
+    expect(registerProvider).toHaveBeenCalledWith("cheaperinference", {
+      baseUrl: "https://api.cheaperinference.com/v1",
+      apiKey: "CHEAPER_INFERENCE_API_KEY",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.4-mini",
+          name: "gpt-5.4-mini",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 0.4875, output: 2.925, cacheRead: 0.04875, cacheWrite: 0.4875 },
+          contextWindow: 400000,
+          maxTokens: 128000,
+        },
+      ],
+    });
+    expect(log).toHaveBeenCalledWith("cheaperinference", "Synced 1 models from Cheaper Inference API");
+  });
+
+  it("skips Cheaper Inference sync when no API key is stored", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const registerProvider = vi.fn();
+
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        cheaperinferenceModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue(undefined) },
+      modelRegistry: { registerProvider },
+      log: vi.fn(),
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(registerProvider).not.toHaveBeenCalled();
+  });
+
+  it("aborts a stalled Cheaper Inference catalog read and continues with later syncs", async () => {
+    const deadline = new AbortController();
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init: { signal: AbortSignal }) => ({
+      ok: true,
+      status: 200,
+      // The body never arrives; only the request signal can end the read.
+      json: () => new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(new Error("The operation was aborted due to timeout")));
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    mockSpawn.mockImplementation(() => {
+      const proc = createSpawnProcess();
+      queueMicrotask(() => {
+        proc.stdout.emit("data", Buffer.from("opencode/foo\n"));
+        proc.emit("exit", 0);
+      });
+      return proc;
+    });
+
+    const registerProvider = vi.fn();
+    const log = vi.fn();
+    try {
+      const run = syncStartupModels({
+        getSettings: vi.fn().mockResolvedValue({
+          openrouterModelSync: false,
+          orcarouterModelSync: false,
+          cheaperinferenceModelSync: true,
+          opencodeGoModelSync: true,
+        }),
+        authStorage: { getApiKey: vi.fn().mockResolvedValue("ci_live_test") },
+        modelRegistry: { registerProvider },
+        log,
+      });
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      deadline.abort();
+      await run;
+      expect(timeoutSpy).toHaveBeenCalledWith(15_000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+
+    expect(log).toHaveBeenCalledWith("cheaperinference", expect.stringContaining("Failed to sync models"));
+    expect(registerProvider).not.toHaveBeenCalledWith("cheaperinference", expect.anything());
+    expect(registerProvider).toHaveBeenCalledWith("opencode-go", expect.anything());
+  });
+
+  it("syncs Cheaper Inference models after its API key is saved", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ data: [{ id: "gpt-5.4-mini", type: "text" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const registerProvider = vi.fn();
+    const log = vi.fn();
+
+    await handleCheaperInferenceApiKeySaved(
+      { getApiKey: vi.fn().mockResolvedValue("ci_live_test") },
+      { getSettings: vi.fn().mockResolvedValue({}) },
+      { registerProvider },
+      log,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith("https://api.cheaperinference.com/v1/models", expect.objectContaining({
+      headers: { Authorization: "Bearer ci_live_test" },
+    }));
+    expect(registerProvider).toHaveBeenCalledWith("cheaperinference", expect.objectContaining({
+      models: [expect.objectContaining({ id: "gpt-5.4-mini" })],
+    }));
+    expect(log).toHaveBeenCalledWith("cheaperinference", "Synced 1 models from Cheaper Inference API");
+  });
+
+  it("skips Cheaper Inference key-save sync when disabled by settings", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const registerProvider = vi.fn();
+
+    await handleCheaperInferenceApiKeySaved(
+      { getApiKey: vi.fn().mockResolvedValue("ci_live_test") },
+      { getSettings: vi.fn().mockResolvedValue({ cheaperinferenceModelSync: false }) },
+      { registerProvider },
+      vi.fn(),
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(registerProvider).not.toHaveBeenCalled();
+  });
+
+  it("logs Cheaper Inference key-save sync failures without throwing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network")));
+    const log = vi.fn();
+
+    await expect(handleCheaperInferenceApiKeySaved(
+      { getApiKey: vi.fn().mockResolvedValue("ci_live_test") },
+      { getSettings: vi.fn().mockResolvedValue({}) },
+      { registerProvider: vi.fn() },
+      log,
+    )).resolves.toBeUndefined();
+
+    expect(log).toHaveBeenCalledWith("cheaperinference", "Failed to sync models: network");
   });
 
   it("sends default OpenRouter attribution headers", async () => {

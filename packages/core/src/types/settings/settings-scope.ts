@@ -565,6 +565,11 @@ export interface GlobalSettings {
    *  `https://api.orcarouter.ai/v1/models` into model pickers so operators can
    *  select OrcaRouter-hosted models by name. Default: true. */
   orcarouterModelSync?: boolean;
+  /** When true (default), startup syncs the Cheaper Inference model catalog from
+   *  `https://api.cheaperinference.com/v1/models` into model pickers so operators
+   *  can select Cheaper Inference models by name. Sync runs only when a
+   *  Cheaper Inference API key is configured. Default: true. */
+  cheaperinferenceModelSync?: boolean;
   /** When true (default), checks npm for new versions of @runfusion/fusion and
    *  shows update notices in the CLI and dashboard. The actual cadence is
    *  governed by `updateCheckFrequency`. Disabled = no automatic checks at all. */

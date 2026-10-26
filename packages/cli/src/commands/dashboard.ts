@@ -161,7 +161,7 @@ import { getCachedUpdateStatus, isUpdateCheckEnabled } from "../update-cache.js"
 import { resolveSelfExtension } from "./self-extension.js";
 import { ensureBundledCursorRuntimePluginInstalled, ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
-import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
+import { handleCheaperInferenceApiKeySaved, handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 import { DASHBOARD_STARTUP_STATUS, runTuiStartupPrelude } from "./dashboard-startup-chain.js";
 import { boundedPhaseTime, phaseTime, StartupPhaseTimeoutError } from "../startup-phase.js";
@@ -2518,6 +2518,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         maybeInstallClaudeSkillForNewProject(path);
       },
       onApiKeySaved: async (providerId: string) => {
+        if (providerId === "cheaperinference") {
+          return await handleCheaperInferenceApiKeySaved(dashboardAuthStorage, store, modelRegistry, (scope, message) => logSink.log(message, scope));
+        }
         if (providerId !== "opencode" && providerId !== "opencode-go") {
           return undefined;
         }
@@ -2879,6 +2882,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         maybeInstallClaudeSkillForNewProject(path);
       },
       onApiKeySaved: async (providerId: string) => {
+        if (providerId === "cheaperinference") {
+          return await handleCheaperInferenceApiKeySaved(dashboardAuthStorage, store, modelRegistry, (scope, message) => logSink.log(message, scope));
+        }
         if (providerId !== "opencode" && providerId !== "opencode-go") {
           return undefined;
         }
