@@ -1,6 +1,8 @@
 import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   computeWorkflowIrPin,
+  PLAN_REVIEW_GROUP_ID,
+  resolveColumnFlags,
   isTaskBlockedOnApproval,
   isPlanReviewSatisfied,
   isUnplannedSeedPrompt,
@@ -27,7 +29,7 @@ export type StrandedHoldContinuationReason =
 export type ApprovedPlanReviewHandoffResult = {
   resumed: boolean;
   reason: "seeded" | "not-plan-in-place" | "awaiting-approval" | "paused" | "needs-replan"
-    | "active-continuation" | "plan-review-passed";
+    | "active-continuation" | "plan-review-passed" | "task-state-changed" | "retry-budget-exhausted";
   workItemId?: string;
 };
 
@@ -47,6 +49,7 @@ plan-review gate living in a WIP column) is a legitimate configuration — the r
 that bail as a quiet park, not an anomaly worth retries and warnings.
 */
 export type PlanReviewSeedBailReason =
+  | "task-state-changed" | "retry-budget-exhausted"
   | "no-pre-release-plan-review"
   | "active-continuation"
   | "plan-review-passed"
@@ -57,13 +60,18 @@ export async function seedPreReleasePlanReviewContinuation(
   store: TaskStore,
   task: Task,
   ir: WorkflowIr,
-  options: { atomic?: boolean; retirePredecessorId?: string } = {},
+  options: { atomic?: boolean; retirePredecessorId?: string; identityRecovery?: NonNullable<Parameters<TaskStore["seedStrandedPlanReviewContinuation"]>[1]>["identityRecovery"] } = {},
 ): Promise<{
   seeded: boolean;
   reason?: PlanReviewSeedBailReason;
   workItemId?: string;
 }> {
-  const node = resolvePreReleasePlanReviewNode(ir);
+  /** FNXC:CurrentPlanReviewIdentity 2026-10-23-06:34: Identity refusals may resume the current WIP review in place; ordinary planning handoffs remain pre-release only. */
+  const inPlaceWipNode = options.identityRecovery && ir.version === "v2"
+    ? ir.nodes.find((candidate) => candidate.id === PLAN_REVIEW_GROUP_ID && candidate.column === task.column
+      && ir.columns?.some((column) => column.id === candidate.column && resolveColumnFlags(column).countsTowardWip === true))
+    : undefined;
+  const node = resolvePreReleasePlanReviewNode(ir) ?? inPlaceWipNode;
   if (!node || node.column !== task.column) return { seeded: false, reason: "no-pre-release-plan-review" };
   /*
   FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
@@ -125,8 +133,11 @@ export async function seedPreReleasePlanReviewContinuation(
   retire-predecessor + idle-recheck + successor-install must all land in ONE store
   transaction under the task lock for the handoff to be ordering-proof.
   */
-  if (options.retirePredecessorId) {
-    return store.seedStrandedPlanReviewContinuation(input, { retirePredecessorId: options.retirePredecessorId });
+  if (options.retirePredecessorId || options.identityRecovery) {
+    return store.seedStrandedPlanReviewContinuation(input, {
+      ...(options.retirePredecessorId ? { retirePredecessorId: options.retirePredecessorId } : {}),
+      ...(options.identityRecovery ? { identityRecovery: options.identityRecovery } : {}),
+    });
   }
   if (options.atomic) return store.seedStrandedPlanReviewContinuation(input);
   const item = await store.replaceActiveTaskWorkflowContinuation(input);

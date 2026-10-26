@@ -6,6 +6,7 @@
  */
 
 import type { WorkflowStepNotRunReason } from "../../workflows/workflow-step-results.js";
+import type { WorkflowIrPin } from "../../workflows/workflow-ir-resolver.js";
 import type { ThinkingLevel } from "../board/board.js";
 
 /*
@@ -290,6 +291,26 @@ export interface WorkflowStepInput {
   migratedFragmentId?: string;
 }
 
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+Plan Review: the four elements that bind a Plan Review result to the exact inputs it was actually
+dispatched against. Every value is captured BEFORE the reviewer runs — the plan fingerprint from
+`computePlanApprovalFingerprint` over the materialized reviewer snapshot, the workflow pin from
+`computeWorkflowIrPin` over the resolved IR — and carried unchanged through the terminal write.
+A terminal/persistence-time re-read may only ever compare against these values to BLOCK, never
+replace them. All elements are required: an incomplete proof is treated as no proof.
+*/
+export interface ReviewedInputIdentity {
+  /** Fingerprint (computePlanApprovalFingerprint) of the exact plan content supplied to the reviewer. */
+  planFingerprint: string;
+  /** Workflow pin (nodeId + irHash + columnId) resolved at dispatch time, reused from WorkflowIrPin. */
+  workflowPin: WorkflowIrPin;
+  /** Reviewer run/attempt identity that owns this review (the lease owner that claimed the gate). */
+  runAttemptId: string;
+  /** Exact ISO-8601 start time of this attempt; must equal the carrying row's own startedAt. */
+  attemptStartedAt: string;
+}
+
 /** Result of a workflow step execution on a task. */
 export interface WorkflowStepResult {
   /** ID of the workflow step that ran (e.g., "WS-001") */
@@ -348,6 +369,24 @@ export interface WorkflowStepResult {
    * changed-since summary. It is absent on legacy results written before this field existed.
    */
   reviewedCommitSha?: string;
+  /*
+  FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+  Plan Review (stale approval class): a completed Plan Review must never release implementation or
+  stamp the approved-plan anchor unless it provably reviewed the exact plan content and workflow
+  definition that are still current. Task-log prose is never identity, and `approvedPlanFingerprint`
+  is recomputed at persistence time, so neither can bind a review to what it actually inspected.
+  This object is the sole plan-input proof carrier: captured BEFORE the reviewer is dispatched from
+  the materialized reviewer snapshot (never re-derived or re-stamped at terminal time), persisted
+  with the lease claim, and carried unchanged into the fenced terminal write.
+  Presence proves the attempt's reviewed input was captured before dispatch; absence — every
+  pre-existing row and every unprovable attempt — means no release authority and no anchor
+  application, i.e. a genuine fresh review instead. `reviewInputFingerprint` above keeps its
+  exclusive content-review meaning and is never written on a plan-review row; this field is not
+  read by any content-review/merge consumer by design. jsonb-additive: no SQL migration.
+  */
+  reviewedInputIdentity?: ReviewedInputIdentity;
+  /** FNXC:CurrentPlanReviewIdentity 2026-10-19-10:20: Durable refusal blocks this review across retries while retaining its genuine verdict and captured proof. */
+  planReviewApprovalRefused?: true;
   /** Arbitration provenance is only written by the fenced single-gate ruling writer. */
   arbitrationDecision?: "UPHOLD_REVIEW" | "UPHOLD_IMPLEMENTER" | "SPLIT";
   arbitrationBindingFindingCount?: number;

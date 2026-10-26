@@ -25,6 +25,7 @@
  */
 import { and, asc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import * as schema from "../../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
 import { projectScopeFor, recordRunAuditEventWithinTransaction } from "../../postgres/data-layer.js";
@@ -452,8 +453,8 @@ export async function seedWorkspaceCodeReviewContinuationIfIdle(
 export async function seedStrandedPlanReviewContinuation(
   layer: AsyncDataLayer,
   input: WorkflowWorkItemUpsertInput & { kind: "task" },
-  options: { retirePredecessorId?: string } = {},
-): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
+  options: { retirePredecessorId?: string; identityRecovery?: { expectedTaskUpdatedAt: string; expectedWorkflowStepResults: WorkflowStepResult[]; expectedRetryCount: number; maxRetries: number } } = {},
+): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed" | "task-state-changed" | "retry-budget-exhausted"; workItemId?: string }> {
   return layer.transactionImmediate(async (tx) => withTaskWorkflowSerialization(tx, layer.projectId, input.taskId, async () => {
     /*
     FNXC:PlanningHandoffAtomicity 2026-08-13-03:49:
@@ -488,12 +489,26 @@ export async function seedStrandedPlanReviewContinuation(
       ? active.filter((row) => row.id !== options.retirePredecessorId)
       : active;
     if (blocking.length > 0) return { seeded: false, reason: "active-continuation" as const };
-    const taskRows = await tx.select({ workflowStepResults: schema.project.tasks.workflowStepResults }).from(schema.project.tasks).where(and(
+    const taskRows = await tx.select().from(schema.project.tasks).where(and(
       projectScopeFor(schema.project.tasks.projectId, layer.projectId),
       eq(schema.project.tasks.id, input.taskId),
-    )).limit(1);
-    const results = taskRows[0]?.workflowStepResults as WorkflowStepResult[] | null | undefined;
-    if (results?.some(isPlanReviewSatisfied)) return { seeded: false, reason: "plan-review-passed" as const };
+    )).limit(1).for("update");
+    const task = taskRows[0];
+    const results = task?.workflowStepResults as WorkflowStepResult[] | null | undefined;
+    const recovery = options.identityRecovery;
+    /* FNXC:CurrentPlanReviewIdentity 2026-10-20-10:30: Only the exact refused/stale snapshot may bypass the historical-pass guard. Fence task edits and newer reviews under the task row lock; charge the bounded retry in this same transaction. */
+    if (recovery) {
+      if (!task || task.deletedAt || task.paused || task.userPaused || task.status === "awaiting-approval" || task.status === "needs-replan"
+        || task.column !== input.sourceColumn || task.updatedAt !== recovery.expectedTaskUpdatedAt
+        || !isDeepStrictEqual(results ?? [], recovery.expectedWorkflowStepResults)
+        || (task.graphResumeRetryCount ?? 0) !== recovery.expectedRetryCount) {
+        return { seeded: false, reason: "task-state-changed" as const };
+      }
+      if (recovery.expectedRetryCount >= recovery.maxRetries) return { seeded: false, reason: "retry-budget-exhausted" as const };
+    }
+    if (results?.some((row) => isPlanReviewSatisfied(row) && (!recovery || row.workflowStepId !== input.nodeId))) {
+      return { seeded: false, reason: "plan-review-passed" as const };
+    }
     if (options.retirePredecessorId) {
       const predRows = await tx.select().from(schema.project.workflowWorkItems).where(and(
         projectScopeFor(schema.project.workflowWorkItems.projectId, layer.projectId),
@@ -504,6 +519,11 @@ export async function seedStrandedPlanReviewContinuation(
       if (pred && !isTerminalWorkflowWorkItemState(normalizeWorkflowWorkItemState(pred.state))) {
         await transitionWorkflowWorkItem(layer, pred.id, "succeeded", { leaseOwner: null, leaseExpiresAt: null, lastError: null }, tx);
       }
+    }
+    if (recovery) {
+      await tx.update(schema.project.tasks).set({ graphResumeRetryCount: recovery.expectedRetryCount + 1, updatedAt: new Date().toISOString() }).where(and(
+        projectScopeFor(schema.project.tasks.projectId, layer.projectId), eq(schema.project.tasks.id, input.taskId),
+      ));
     }
     const item = await upsertWorkflowWorkItem(layer, input, tx);
     return { seeded: true, workItemId: item.id };

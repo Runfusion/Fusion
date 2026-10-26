@@ -83,6 +83,64 @@ describe("authoritative gate-result routing", () => {
     expect(logs).not.toContain("[pre-merge] Workflow step completed: Review");
   });
 
+  /*
+  Plan Review (2026-10-11): the log-derived Plan Review reconstruction is deleted, so the two former
+  reconstructed-gate cases are repurposed as interruption/persistence-refusal coverage for the
+  genuine dispatch path: a genuine attempt whose terminal write is refused yields
+  gate-persistence-unavailable, and a cancellation racing the terminal write keeps the engine-pause
+  abort contract.
+  */
+  it("holds a genuine Plan Review attempt when its terminal row is not applied", async () => {
+    const logs: string[] = [];
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: async () => ({ outcome: "success", value: "APPROVE" }) },
+      recordWorkflowStepResult: async (_id, result) => result.status === "pending"
+        ? { scopeCurrent: true, persisted: true, disposition: "applied", persistedResult: result }
+        : { scopeCurrent: true, persisted: false, disposition: "fence-refused" },
+      logTaskEntry: (message) => logs.push(message),
+    });
+    const result = await executor.run(
+      { ...task(), enabledWorkflowSteps: [PLAN_REVIEW_GROUP_ID] },
+      settings,
+      {
+        ...graph,
+        nodes: graph.nodes.map((node) => node.id === "review" ? { ...node, id: PLAN_REVIEW_GROUP_ID } : node),
+        edges: [{ from: "start", to: PLAN_REVIEW_GROUP_ID }],
+      },
+    );
+    expect(result).toMatchObject({ outcome: "failure", context: { [`node:${PLAN_REVIEW_GROUP_ID}:value`]: "gate-persistence-unavailable" } });
+    expect(logs).not.toContain("[pre-merge] Workflow step already passed: Plan Review");
+  });
+
+  it("preserves the engine-pause abort contract when cancellation races a genuine Plan Review terminal write", async () => {
+    const controller = new AbortController();
+    const executor = new WorkflowGraphExecutor({
+      signal: controller.signal,
+      handlers: { prompt: async () => ({ outcome: "success", value: "APPROVE" }) },
+      recordWorkflowStepResult: async (_id, result) => {
+        if (result.status === "pending") {
+          return { scopeCurrent: true, persisted: true, disposition: "applied", persistedResult: result };
+        }
+        controller.abort();
+        return { scopeCurrent: true, persisted: false, disposition: "aborted" };
+      },
+    });
+    const result = await executor.run(
+      { ...task(), enabledWorkflowSteps: [PLAN_REVIEW_GROUP_ID] },
+      settings,
+      {
+        ...graph,
+        nodes: graph.nodes.map((node) => node.id === "review" ? { ...node, id: PLAN_REVIEW_GROUP_ID } : node),
+        edges: [{ from: "start", to: PLAN_REVIEW_GROUP_ID }],
+      },
+    );
+    expect(result).toMatchObject({
+      outcome: "failure",
+      context: { [`node:${PLAN_REVIEW_GROUP_ID}:abortKind`]: "engine-pause" },
+    });
+    expect(result.context[`node:${PLAN_REVIEW_GROUP_ID}:value`]).not.toBe("gate-persistence-unavailable");
+  });
+
   it("holds required gates on a wired persistence refusal without inventing REVISE", async () => {
     const executor = new WorkflowGraphExecutor({
       handlers: { prompt: async () => ({ outcome: "success", value: "APPROVE", contextPatch: { verdictRequired: true } }) },
@@ -108,55 +166,6 @@ describe("authoritative gate-result routing", () => {
     expect(result.context["node:review:value"]).toBe("workspace-review-superseded");
   });
 
-  it("holds reconstructed Plan Review when its repaired terminal row is not applied", async () => {
-    const logs: string[] = [];
-    const reconstructedTask = {
-      ...task(),
-      workflowStepResults: undefined,
-      enabledWorkflowSteps: [PLAN_REVIEW_GROUP_ID],
-      log: [{ action: "[pre-merge] Workflow step completed: Plan Review", timestamp: new Date().toISOString() }],
-    };
-    const executor = new WorkflowGraphExecutor({
-      handlers: { prompt: async () => ({ outcome: "success" }) },
-      recordWorkflowStepResult: async () => ({ scopeCurrent: true, persisted: false, disposition: "fence-refused" }),
-      logTaskEntry: (message) => logs.push(message),
-    });
-    const result = await executor.run(reconstructedTask, settings, {
-      ...graph,
-      nodes: graph.nodes.map((node) => node.id === "review" ? { ...node, id: PLAN_REVIEW_GROUP_ID } : node),
-      edges: [{ from: "start", to: PLAN_REVIEW_GROUP_ID }],
-    });
-    expect(result).toMatchObject({ outcome: "failure", context: { [`node:${PLAN_REVIEW_GROUP_ID}:value`]: "gate-persistence-unavailable" } });
-    expect(logs).not.toContain("[pre-merge] Workflow step already passed: Plan Review");
-  });
-
-  it("preserves reconstructed Plan Review cancellation while its terminal persistence is pending", async () => {
-    const controller = new AbortController();
-    const reconstructedTask = {
-      ...task(),
-      workflowStepResults: undefined,
-      enabledWorkflowSteps: [PLAN_REVIEW_GROUP_ID],
-      log: [{ action: "[pre-merge] Workflow step completed: Plan Review", timestamp: new Date().toISOString() }],
-    };
-    const executor = new WorkflowGraphExecutor({
-      signal: controller.signal,
-      handlers: { prompt: async () => ({ outcome: "success" }) },
-      recordWorkflowStepResult: async () => {
-        controller.abort();
-        return { scopeCurrent: true, persisted: false, disposition: "aborted" };
-      },
-    });
-    const result = await executor.run(reconstructedTask, settings, {
-      ...graph,
-      nodes: graph.nodes.map((node) => node.id === "review" ? { ...node, id: PLAN_REVIEW_GROUP_ID } : node),
-      edges: [{ from: "start", to: PLAN_REVIEW_GROUP_ID }],
-    });
-    expect(result).toMatchObject({
-      outcome: "failure",
-      context: { [`node:${PLAN_REVIEW_GROUP_ID}:abortKind`]: "engine-pause" },
-    });
-    expect(result.context[`node:${PLAN_REVIEW_GROUP_ID}:value`]).not.toBe("gate-persistence-unavailable");
-  });
 
   it("fails standalone required review nodes from their durable terminal row", async () => {
     const standaloneGraph: WorkflowIr = {

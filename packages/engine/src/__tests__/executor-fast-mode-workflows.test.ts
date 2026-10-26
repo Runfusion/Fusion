@@ -128,6 +128,32 @@ describe("fast mode workflow/runtime invariants", () => {
     }
   });
 
+
+  it("forwards prototype-defined workflow prompt resolvers to the production graph runner", async () => {
+    const { store, executor } = makeExecutorForTask(task());
+    const overrides = { planning: "Saved planning prompt" };
+    const prototype = Object.create(Object.getPrototypeOf(store));
+    Object.defineProperties(prototype, {
+      getWorkflowSettingsProjectId: { value: function () { expect(this).toBe(store); return "workflow-project"; } },
+      getWorkflowPromptOverrides: { value: function () { expect(this).toBe(store); return overrides; } },
+      getWorkflowPromptOverridesAsync: { value: async function () { expect(this).toBe(store); return overrides; } },
+    });
+    for (const key of ["getWorkflowSettingsProjectId", "getWorkflowPromptOverrides", "getWorkflowPromptOverridesAsync"]) delete (store as any)[key];
+    Object.setPrototypeOf(store, prototype);
+    let forwarded: any;
+    const run = vi.spyOn(WorkflowGraphTaskRunner.prototype, "run").mockImplementation(async function () {
+      forwarded = (this as any).deps.store;
+      return { disposition: "completed", outcome: "success", visitedNodeIds: ["start"] };
+    });
+    try {
+      await (executor as any).executeWorkflowGraph(task());
+      expect(run).toHaveBeenCalledOnce();
+      expect(forwarded.getWorkflowSettingsProjectId()).toBe("workflow-project");
+      expect(forwarded.getWorkflowPromptOverrides("builtin:coding")).toEqual(overrides);
+      await expect(forwarded.getWorkflowPromptOverridesAsync("builtin:coding")).resolves.toEqual(overrides);
+    } finally { run.mockRestore(); }
+  });
+
   it("rehydrates a held direct-graph principal fence into the runner", async () => {
     const selected = { workflowId: "WF-fenced-resume", stepIds: [] };
     const { store, executor } = makeExecutorForTask(task());

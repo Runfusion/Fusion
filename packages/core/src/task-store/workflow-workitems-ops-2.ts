@@ -39,7 +39,7 @@ export async function seedWorkspaceCodeReviewContinuationIfIdleImpl(
   return seedWorkspaceCodeReviewContinuationIfIdleAsync(store.asyncLayer!, input);
 }
 
-export async function seedStrandedPlanReviewContinuationImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput & { kind: "task" }, options: { retirePredecessorId?: string } = {}): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
+export async function seedStrandedPlanReviewContinuationImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput & { kind: "task" }, options: Parameters<typeof seedStrandedPlanReviewContinuationAsync>[2] = {}): ReturnType<typeof seedStrandedPlanReviewContinuationAsync> {
   /*
   FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
   Stranded plan-review continuation seed is PostgreSQL-only (withTaskWorkflowSerialization). The SQLite transactionImmediate fallback is deleted.

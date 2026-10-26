@@ -18,6 +18,7 @@ Symptom verification (AGENTS.md "Fix the invariant, not the repro"):
                       holds (PLAN_REVIEW_LEASE_HELD_VALUE) for the lease owner.
 */
 import { describe, expect, it } from "vitest";
+import { computePlanApprovalFingerprint, computeWorkflowIrPin } from "@fusion/core";
 import type { TaskDetail, WorkflowIr, WorkflowStepResult } from "@fusion/core";
 
 import {
@@ -74,6 +75,36 @@ interface Harness {
   run: (task: TaskDetail) => ReturnType<WorkflowGraphExecutor["run"]>;
 }
 
+/*
+FNXC:CurrentPlanReviewIdentity 2026-10-11-11:50:
+Plan Review: a settled-passed Plan Review releases the graph gate only through the full current-evidence
+contract. This shared factory is the single fixture point where the release-eligible row is
+constructed: dispatch-captured proof over the same artifact content the wired primitives seam
+returns, the current workflow pin, and attempt identity matching the row's own startedAt.
+*/
+const settledPlanArtifact = "# Plan\n\napproved by triage";
+function settledPlanReviewRow(): WorkflowStepResult {
+  const startedAt = "2026-07-19T00:00:00.000Z";
+  const completedAt = "2026-07-19T00:00:05.000Z";
+  return {
+    workflowStepId: "plan-review",
+    workflowStepName: "Plan Review",
+    phase: "pre-merge",
+    source: "optional-group",
+    status: "passed",
+    verdict: "APPROVE",
+    startedAt,
+    completedAt,
+    reviewedInputIdentity: {
+      planFingerprint: computePlanApprovalFingerprint(settledPlanArtifact),
+      workflowPin: computeWorkflowIrPin(planReviewIr(), "plan-review"),
+      runAttemptId: "triage-episode-run",
+      attemptStartedAt: startedAt,
+    },
+  };
+}
+const settledPlanAnchor = () => computePlanApprovalFingerprint(settledPlanArtifact);
+
 function harness(opts: { now?: number } = {}): Harness {
   const logs: string[] = [];
   const recorded: WorkflowStepResult[] = [];
@@ -89,8 +120,11 @@ function harness(opts: { now?: number } = {}): Harness {
     runId: "run-under-test",
     logTaskEntry: (msg: string) => { logs.push(msg); },
     recordWorkflowStepResult: (_taskId, result) => { recorded.push(result); },
+    primitives: {
+      readArtifact: async () => settledPlanArtifact,
+    },
     ...(opts.now !== undefined ? { runLoopNowForTests: () => opts.now! } : {}),
-  } as ConstructorParameters<typeof WorkflowGraphExecutor>[0]);
+  } as unknown as ConstructorParameters<typeof WorkflowGraphExecutor>[0]);
   return {
     reviewerDispatches: () => reviewer,
     executeDispatches: () => execute,
@@ -158,7 +192,21 @@ describe("Plan Review single owner + lease (U3)", () => {
     expect(result.outcome).toBe("success");
   });
 
-  it("skips a settled (passed) Plan Review without dispatching a reviewer (existing dedup preserved)", async () => {
+  it("skips a settled (passed) Plan Review without dispatching a reviewer (release contract satisfied)", async () => {
+    const h = harness();
+    const task = baseTask({
+      approvedPlanFingerprint: settledPlanAnchor(),
+      workflowStepResults: [settledPlanReviewRow()],
+    });
+
+    const result = await h.run(task);
+
+    expect(h.reviewerDispatches()).toBe(0);
+    expect(result.outcome).toBe("success"); // proceeds straight to execute
+    expect(h.executeDispatches()).toBe(1);
+  });
+
+  it("reruns a reviewer for a bare passed row that carries no dispatch-captured proof (Plan Review fail-closed)", async () => {
     const h = harness();
     const task = baseTask({
       workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "passed" }],
@@ -166,8 +214,9 @@ describe("Plan Review single owner + lease (U3)", () => {
 
     const result = await h.run(task);
 
-    expect(h.reviewerDispatches()).toBe(0);
-    expect(result.outcome).toBe("success"); // proceeds straight to execute
+    // The old shape-only release is gone: every pre-proof row dispatches one genuine review.
+    expect(h.reviewerDispatches()).toBe(1);
+    expect(result.outcome).toBe("success");
     expect(h.executeDispatches()).toBe(1);
   });
 

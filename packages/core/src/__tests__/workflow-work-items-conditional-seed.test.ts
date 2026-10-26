@@ -272,6 +272,71 @@ pgTest("FN-8592 conditional stranded Plan Review seed", () => {
     });
   });
 
+
+  describe("identity refusal recovery transaction", () => {
+    /** FNXC:CurrentPlanReviewIdentity 2026-10-20-10:30: Persist a genuine historical approval before exercising the real conditional writer. */
+    async function refusedTask(refused = true) {
+      const store = h.store();
+      const task = await store.createTask({ description: "review identity recovery", column: "todo" });
+      await store.updateTask(task.id, { workflowStepResults: [{ workflowStepId: "plan-review", status: "passed", verdict: "APPROVE", phase: "pre-release", source: "optional-group", reviewKind: "plan", startedAt: "2026-10-19T00:00:00Z", completedAt: "2026-10-19T00:00:01Z", ...(refused ? { planReviewApprovalRefused: true } : {}) } as any] });
+      const current = await store.getTask(task.id);
+      return { store, task: current, options: { identityRecovery: { expectedTaskUpdatedAt: current.updatedAt, expectedWorkflowStepResults: current.workflowStepResults ?? [], expectedRetryCount: current.graphResumeRetryCount ?? 0, maxRetries: 2 } } };
+    }
+    it.each([true, false])("seeds a new review while preserving the refused/stale passed verdict (%s)", async (refused) => {
+      const { store, task, options } = await refusedTask(refused);
+      await expect(store.seedStrandedPlanReviewContinuation(continuation(task.id, "identity"), options)).resolves.toMatchObject({ seeded: true });
+      const fresh = await store.getTask(task.id);
+      expect(fresh.workflowStepResults).toEqual(task.workflowStepResults);
+      expect(fresh.graphResumeRetryCount).toBe(1);
+      expect((await store.listWorkflowWorkItemsForTask(task.id)).filter((row) => row.state === "runnable")).toHaveLength(1);
+    });
+    it("charges only the winner when two recovery attempts compete", async () => {
+      const { store, task, options } = await refusedTask();
+      const results = await Promise.all([store.seedStrandedPlanReviewContinuation(continuation(task.id, "first-identity"), options), store.seedStrandedPlanReviewContinuation(continuation(task.id, "second-identity"), options)]);
+      expect(results.filter((result) => result.seeded)).toHaveLength(1);
+      expect((await store.getTask(task.id)).graphResumeRetryCount).toBe(1);
+    });
+    it("refuses a newer review snapshot without mutating history or charging a retry", async () => {
+      const { store, task, options } = await refusedTask();
+      await store.updateTask(task.id, { workflowStepResults: [{ ...task.workflowStepResults![0], planReviewApprovalRefused: undefined, completedAt: "2026-10-20T00:00:01Z" }] });
+      await expect(store.seedStrandedPlanReviewContinuation(continuation(task.id, "outdated-identity"), options)).resolves.toMatchObject({ seeded: false, reason: "task-state-changed" });
+      expect((await store.getTask(task.id)).graphResumeRetryCount).toBe(0);
+      expect(await store.listWorkflowWorkItemsForTask(task.id)).toHaveLength(0);
+    });
+    it.each(["paused", "exhausted", "active"] as const)("refuses %s recovery without charging a retry", async (hold) => {
+      const { store, task, options } = await refusedTask();
+      if (hold === "paused") await store.updateTask(task.id, { paused: true });
+      if (hold === "exhausted") { await store.updateTask(task.id, { graphResumeRetryCount: 2 }); options.identityRecovery.expectedRetryCount = 2; options.identityRecovery.expectedTaskUpdatedAt = (await store.getTask(task.id)).updatedAt; }
+      if (hold === "active") await store.upsertWorkflowWorkItem(continuation(task.id, "active-identity", "workflow-step"));
+      await expect(store.seedStrandedPlanReviewContinuation(continuation(task.id, "held-identity"), options)).resolves.toMatchObject({ seeded: false });
+      expect((await store.getTask(task.id)).graphResumeRetryCount).toBe(hold === "exhausted" ? 2 : 0);
+    });
+    it("refuses a pending replan even with a fresh matching recovery snapshot", async () => {
+      const { store, task, options } = await refusedTask();
+      await store.updateTask(task.id, { status: "needs-replan" });
+      const current = await store.getTask(task.id);
+      options.identityRecovery.expectedTaskUpdatedAt = current.updatedAt;
+      await expect(store.seedStrandedPlanReviewContinuation(continuation(task.id, "replan-identity"), options)).resolves.toMatchObject({ seeded: false, reason: "task-state-changed" });
+      const after = await store.getTask(task.id);
+      expect(after.status).toBe("needs-replan");
+      expect(after.graphResumeRetryCount).toBe(0);
+      expect(after.workflowStepResults).toEqual(current.workflowStepResults);
+      expect(await store.listWorkflowWorkItemsForTask(task.id)).toHaveLength(0);
+    });
+    it("rolls back the retry charge if successor persistence fails", async () => {
+      const { store, task, options } = await refusedTask();
+      await h.layer().db.execute(sql.raw("CREATE FUNCTION project.reject_identity_recovery_seed() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'identity successor write rejected'; END; $$ LANGUAGE plpgsql; CREATE TRIGGER reject_identity_recovery_seed BEFORE INSERT ON project.workflow_work_items FOR EACH ROW EXECUTE FUNCTION project.reject_identity_recovery_seed();"));
+      try {
+        await expect(store.seedStrandedPlanReviewContinuation(continuation(task.id, "failing-identity"), options)).rejects.toMatchObject({ cause: expect.objectContaining({ message: "identity successor write rejected" }) });
+        expect((await store.getTask(task.id)).graphResumeRetryCount).toBe(0);
+        expect((await store.getTask(task.id)).workflowStepResults).toEqual(task.workflowStepResults);
+        expect(await store.listWorkflowWorkItemsForTask(task.id)).toHaveLength(0);
+      } finally {
+        await h.layer().db.execute(sql.raw("DROP TRIGGER IF EXISTS reject_identity_recovery_seed ON project.workflow_work_items; DROP FUNCTION IF EXISTS project.reject_identity_recovery_seed();"));
+      }
+    });
+  });
+
   it("allows terminal continuations and non-passed Plan Review results", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "terminal continuation owner", column: "todo" });
