@@ -3067,6 +3067,70 @@ describe("createFnAgent", () => {
     debugSpy.mockRestore();
   });
 
+
+  it.each([
+    ["model fallback", "429 rate limit"],
+    ["thinking recovery", "400 Unsupported value for reasoning_effort"],
+  ])("retains heartbeat request fences through %s", async (_scenario, errorMessage) => {
+    const { createPiAgentSessionRaw } = await import("../pi.js");
+    const { installHeartbeatTerminationHooks, createHeartbeatPromptAttemptRunner } = await import("../agents/heartbeat-termination-hooks.js");
+    let stopping = false;
+    let providerRequests = 0;
+    const makeSession = (primary: boolean) => {
+      const agent: any = {};
+      return {
+        agent, subscribe: vi.fn(), dispose: vi.fn(), setThinkingLevel: vi.fn(),
+        prompt: vi.fn(async () => {
+          if (primary) throw new Error(errorMessage);
+          await agent.prepareRequest({}, undefined);
+          providerRequests++;
+          stopping = true;
+          expect(await agent.finishTurn({}, undefined)).toEqual({ action: "end" });
+        }),
+      };
+    };
+    const first = makeSession(true);
+    const replacement = makeSession(false);
+    createAgentSessionMock.mockResolvedValueOnce({ session: first }).mockResolvedValueOnce({ session: replacement });
+    const configure = vi.fn((session) => installHeartbeatTerminationHooks(session, () => stopping));
+    const { session } = await createPiAgentSessionRaw({
+      cwd: "/tmp", systemPrompt: "heartbeat", tools: "readonly",
+      defaultProvider: "zai", defaultModelId: "glm-5.1",
+      fallbackProvider: "openai-codex", fallbackModelId: "gpt-5.3-codex",
+      defaultThinkingLevel: "high", onSessionCreated: configure,
+    });
+    await createHeartbeatPromptAttemptRunner(() => stopping)(() => (session as any).promptWithFallback("heartbeat"));
+    expect(configure).toHaveBeenCalledTimes(2);
+    expect(providerRequests).toBe(1);
+    await session.dispose();
+  });
+
+  it.each(["429 rate limit", "400 Unsupported value for reasoning_effort"])("blocks a replacement's first request when stopped during its creation (%s)", async (errorMessage) => {
+    const { createPiAgentSessionRaw } = await import("../pi.js");
+    const { installHeartbeatTerminationHooks, createHeartbeatPromptAttemptRunner } = await import("../agents/heartbeat-termination-hooks.js");
+    let stopping = false;
+    let providerRequests = 0;
+    const primary = { prompt: vi.fn(async () => { throw new Error(errorMessage); }), agent: {}, subscribe: vi.fn(), dispose: vi.fn(), setThinkingLevel: vi.fn() };
+    const replacement: any = { agent: {}, subscribe: vi.fn(), dispose: vi.fn(), setThinkingLevel: vi.fn() };
+    const replacementPrompt = vi.fn(async () => { await replacement.agent.prepareRequest({}, undefined); providerRequests++; });
+    replacement.prompt = replacementPrompt;
+    createAgentSessionMock.mockResolvedValueOnce({ session: primary }).mockImplementationOnce(async () => {
+      stopping = true;
+      return { session: replacement };
+    });
+    const { session } = await createPiAgentSessionRaw({
+      cwd: "/tmp", systemPrompt: "heartbeat", tools: "readonly",
+      defaultProvider: "zai", defaultModelId: "glm-5.1",
+      fallbackProvider: "openai-codex", fallbackModelId: "gpt-5.3-codex",
+      defaultThinkingLevel: "high",
+      onSessionCreated: (created) => installHeartbeatTerminationHooks(created, () => stopping),
+    });
+    await createHeartbeatPromptAttemptRunner(() => stopping)(() => (session as any).promptWithFallback("heartbeat"));
+    expect(replacementPrompt).toHaveBeenCalledOnce();
+    expect(providerRequests).toBe(0);
+    await session.dispose();
+  });
+
   it("retains a durable host-tool principal through a fallback session replacement", async () => {
     const primaryPrompt = vi.fn().mockRejectedValue(new Error("401 unauthorized: invalid api key"));
     const observedFallbackPrincipals: unknown[] = [];

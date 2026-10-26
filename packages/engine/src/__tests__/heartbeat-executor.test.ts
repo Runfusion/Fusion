@@ -11,6 +11,7 @@ import {
   HEARTBEAT_NO_TASK_PROCEDURE,
   getAgentSoulWords,
 } from "../agent-heartbeat.js";
+import * as heartbeatTokenUsage from "../execution/session-token-usage.js";
 import { AgentLogger } from "../agents/agent-logger.js";
 import { expectAppendAgentLog } from "./agent-log-assertions.js";
 import {
@@ -256,6 +257,64 @@ describe("executeHeartbeat", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+
+  describe("terminal persistence serialization", () => {
+    it.each(["completed", "terminated"] as const)("serializes competing terminal writes when %s owns the boundary first", async (firstStatus) => {
+      const store = createStoreWithAgentForExec({ state: "paused" });
+      let row = { id: "terminal-race", agentId: "agent-001", status: "active", startedAt: "2026-10-20T00:00:00Z" } as AgentHeartbeatRun;
+      const activeHandle = { ...row };
+      let ended = false;
+      let reached!: () => void;
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => { reached = resolve; });
+      const resume = new Promise<void>((resolve) => { release = resolve; });
+      const writes: string[] = [];
+      store.getRunDetail = vi.fn(async () => ({ ...row }));
+      store.getActiveHeartbeatRun = vi.fn(async () => ended ? null : activeHandle);
+      store.endHeartbeatRun = vi.fn(async () => { ended = true; });
+      store.saveRun = vi.fn(async (next) => {
+        if (next.status === firstStatus && writes.length === 0) { reached(); await resume; }
+        writes.push(next.status);
+        row = { ...next };
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const complete = () => monitor.completeRun("agent-001", row.id, { status: "completed" });
+      const stop = () => monitor.stopRun("agent-001", { preservePausedState: true });
+      const first = firstStatus === "completed" ? complete() : stop();
+      await blocked;
+      const second = firstStatus === "completed" ? stop() : complete();
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(writes).toEqual([]);
+      } finally {
+        release();
+        await Promise.all([first, second]);
+      }
+      expect(row.status).toBe(firstStatus);
+      expect(writes).toEqual([firstStatus]);
+      if (firstStatus === "terminated") expect(store.updateAgentState).not.toHaveBeenCalledWith("agent-001", "active");
+    });
+    it("releases the terminal fence after a persistence failure", async () => {
+      const store = createStoreWithAgentForExec();
+      const active = { id: "terminal-save-failure", status: "active" } as AgentHeartbeatRun;
+      store.getRunDetail = vi.fn(async () => active);
+      store.getActiveHeartbeatRun = vi.fn(async () => active);
+      vi.mocked(store.saveRun).mockRejectedValueOnce(new Error("temporary run write failure"));
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await expect(monitor.completeRun("agent-001", active.id, { status: "completed" })).rejects.toThrow("temporary run write failure");
+      await monitor.stopRun("agent-001", { preservePausedState: true });
+      expect(store.saveRun).toHaveBeenLastCalledWith(expect.objectContaining({ status: "terminated" }));
+    });
+    it.each(["completed", "failed"] as const)("preserves an already %s run despite a stale active handle", async (status) => {
+      const store = createStoreWithAgentForExec();
+      store.getActiveHeartbeatRun = vi.fn(async () => ({ id: "settled-run", status: "active" } as AgentHeartbeatRun));
+      store.getRunDetail = vi.fn(async () => ({ id: "settled-run", status } as AgentHeartbeatRun));
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      await monitor.stopRun("agent-001", { preservePausedState: true });
+      expect(store.saveRun).not.toHaveBeenCalled();
+    });
   });
 
   describe("startRun persistence", () => {
@@ -4024,6 +4083,51 @@ describe("executeHeartbeat", () => {
       expect(appendAgentLog).not.toHaveBeenCalled();
     });
 
+
+    it.each(["token accounting", "logger flush", "inbox write"])("does not record success effects after cancellation during %s", async (phase) => {
+      const store = createStoreWithAgentForExec();
+      const mockSession = createMockAgentSession();
+      let promptReturned = false;
+      mockSession.prompt = vi.fn(async () => { promptReturned = true; });
+      mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+      let reached!: () => void;
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { reached = resolve; });
+      const resume = new Promise<void>((resolve) => { release = resolve; });
+      let gated = false;
+      const gate = async () => { if (!gated) { gated = true; reached(); await resume; } };
+      const tokenSpy = vi.spyOn(heartbeatTokenUsage, "accumulateSessionTokenUsage");
+      if (phase === "token accounting") tokenSpy.mockImplementation(gate);
+      const flush = AgentLogger.prototype.flush;
+      const flushSpy = vi.spyOn(AgentLogger.prototype, "flush").mockImplementation(async function () {
+        if (phase === "logger flush" && promptReturned) await gate();
+        return flush.call(this);
+      });
+      const markAllAsRead = vi.fn(async () => { if (phase === "inbox write") await gate(); });
+      const messageStore = {
+        setMessageToAgentHook: vi.fn(), getInbox: vi.fn().mockReturnValue([createMessage({ id: "pending-inbox", fromId: "agent-2", content: "Process this message" })]),
+        markAllAsRead,
+      } as unknown as MessageStore;
+      const recordSelfImprove = vi.fn();
+      const monitor = new HeartbeatMonitor({
+        store, taskStore: mockTaskStore, messageStore, rootDir: "/tmp",
+        selfImproveService: { shouldRunSelfImprove: vi.fn().mockResolvedValue(true), getSelfImprovePrompt: vi.fn().mockResolvedValue("Reflect"), recordSelfImprove } as any,
+      });
+      const execution = monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+      try {
+        await pending;
+        await monitor.stopRun("agent-001", { preservePausedState: true });
+      } finally {
+        release();
+      }
+      const result = await execution;
+      tokenSpy.mockRestore();
+      flushSpy.mockRestore();
+      expect(result.status).toBe("terminated");
+      expect(markAllAsRead).toHaveBeenCalledTimes(phase === "inbox write" ? 1 : 0);
+      expect(recordSelfImprove).not.toHaveBeenCalled();
+    });
+
     it("fences late session callbacks after an operator stop terminalizes the run", async () => {
       const store = createStoreWithAgentForExec();
       const appendAgentLog = vi.fn().mockResolvedValue(undefined);
@@ -4163,6 +4267,50 @@ describe("executeHeartbeat", () => {
   });
 
   describe("fn_heartbeat_done tool", () => {
+    it("installs request and turn fences driven by the monitor's completion latch", async () => {
+      const store = createStoreWithAgentForExec();
+      const mockSession = {
+        ...createMockAgentSession(),
+        agent: { prepareRequest: vi.fn(), finishTurn: vi.fn() },
+      };
+      let doneTool: any;
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        doneTool = opts.customTools[opts.customTools.length - 1];
+        return { session: mockSession as any };
+      });
+      mockSession.prompt.mockImplementation(async () => {
+        await doneTool.execute("done", {});
+        await expect(mockSession.agent.prepareRequest({} as never, undefined as never))
+          .rejects.toThrow("Heartbeat termination requested");
+        await expect(mockSession.agent.finishTurn({} as never, undefined as never))
+          .resolves.toEqual({ action: "end" });
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+      expect(result.status).toBe("completed");
+      expect(mockSession.abort).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces a genuine retryable failure after completion without dispatching another attempt", async () => {
+      const store = createStoreWithAgentForExec();
+      const mockSession = createMockAgentSession();
+      let doneTool: any;
+      mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+        doneTool = opts.customTools[opts.customTools.length - 1];
+        return { session: mockSession as any };
+      });
+      mockSession.prompt.mockImplementation(async () => {
+        await doneTool.execute("done", {});
+        throw new Error("429 rate limit after completion");
+      });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+      expect(result.status).toBe("failed");
+      expect(result.stderrExcerpt).toContain("429 rate limit after completion");
+      expect(mockSession.prompt).toHaveBeenCalledTimes(1);
+      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    });
+
     it("captures summary from fn_heartbeat_done in resultJson", async () => {
       const store = createStoreWithAgentForExec();
       let capturedDoneTool: any;

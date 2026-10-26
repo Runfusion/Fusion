@@ -1145,6 +1145,8 @@ export interface AgentOptions {
   /** Last-chance abort hook fired immediately before `createAgentSession`.
    *  See `AgentRuntimeOptions.beforeSpawnSession`. */
   beforeSpawnSession?: () => Promise<void> | void;
+  /** FNXC:HeartbeatTermination 2026-10-19-11:15: Configure every newly created SDK session, including model and thinking-level recovery replacements, before dispatch. */
+  onSessionCreated?: (session: AgentSession) => void;
   /** Callback fired when runtime falls back from primary model to fallback model. */
   onFallbackModelUsed?: (payload: FallbackModelUsedPayload) => Promise<void> | void;
   /** Optional task context for fallback notifications. */
@@ -3089,6 +3091,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       if (modelOverride && !(result.session as AgentSession & { model?: unknown }).model) {
         (result.session as AgentSession & { model?: typeof modelOverride }).model = modelOverride;
       }
+      options.onSessionCreated?.(result.session);
       return result;
     } catch (error) {
       await mcpToolset?.dispose();
