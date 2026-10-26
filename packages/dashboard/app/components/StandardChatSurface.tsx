@@ -615,6 +615,67 @@ function StandardChatMessageEditComposer({
   );
 }
 
+/*
+FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+RUFU-183 Step 6 — the operator notice for a tier-3 deterministic truncation. When the chat
+overflow guard could not compact via either LLM tier and instead truncated old history
+deterministically, the dashboard seam persists the rescue evidence on the NEW assistant
+message (`metadata.contextTruncation`); this is the single shared renderer for that
+notice, so every surface that renders a persisted chat message (main ChatView, room
+transcripts, task-planner tab — all via StandardChatMessageItem) discloses it without a
+per-surface fork. Both breakpoints need no separate markup: the notice is a wrapping text
+strip inside the existing message column.
+*/
+
+/** Parsed, render-safe form of the persisted `metadata.contextTruncation` payload. */
+export interface ChatContextTruncationEvidence {
+  droppedMessageCount: number;
+  droppedTokens: number;
+  contextTokensAfter: number | null;
+}
+
+/**
+ * Validate the JSON-sourced truncation evidence before rendering. A payload whose counts
+ * are not finite numbers is not operator information — return null and render nothing
+ * rather than an invented notice. `contextTokensAfter: null` is meaningful (the honest
+ * re-measurement was unavailable) and renders an explicit unproven suffix.
+ */
+function parseContextTruncationEvidence(raw: unknown): ChatContextTruncationEvidence | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const droppedMessageCount = record.droppedMessageCount;
+  const droppedTokens = record.droppedTokens;
+  if (typeof droppedMessageCount !== "number" || !Number.isFinite(droppedMessageCount) || droppedMessageCount <= 0) return null;
+  if (typeof droppedTokens !== "number" || !Number.isFinite(droppedTokens) || droppedTokens < 0) return null;
+  const contextTokensAfter = record.contextTokensAfter;
+  if (contextTokensAfter !== null && contextTokensAfter !== undefined && (typeof contextTokensAfter !== "number" || !Number.isFinite(contextTokensAfter))) return null;
+  return {
+    droppedMessageCount,
+    droppedTokens,
+    contextTokensAfter: typeof contextTokensAfter === "number" ? contextTokensAfter : null,
+  };
+}
+
+/** Inline notice strip (design tokens only; mirrors the budget-exhausted notice pattern). */
+export function ChatContextTruncationNotice({ evidence }: { evidence: ChatContextTruncationEvidence }) {
+  const { t } = useTranslation("app");
+  return (
+    <div className="chat-context-truncation-notice" role="note" data-testid="chat-context-truncation-notice">
+      <span>
+        {t("chat.contextTruncationNotice", {
+          count: evidence.droppedMessageCount,
+          tokens: evidence.droppedTokens,
+          defaultValue_one: "To fit the context window, {{count}} older message ({{tokens}} tokens) was dropped from this conversation's history.",
+          defaultValue_other: "To fit the context window, {{count}} older messages ({{tokens}} tokens) were dropped from this conversation's history.",
+        })}
+      </span>
+      {evidence.contextTokensAfter === null && (
+        <span className="chat-context-truncation-notice__unproven">{t("chat.contextTruncationUnproven", "The reduced context size could not be verified.")}</span>
+      )}
+    </div>
+  );
+}
+
 export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   message,
   forcePlain,
@@ -689,6 +750,14 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
   }, [editedText, isSavingEdit, message.content, message.id, onEditMessage]);
 
   const failureInfo = isAssistantMessage ? message.failureInfo : undefined;
+  /*
+   * FNXC:ChatContextGuardTier3 2026-09-04-22:51:
+   * RUFU-183: the tier-3 rescue evidence rides the persisted row's metadata; parse it once
+   * per message so the notice renders below the body in EVERY assistant branch — normal
+   * reply, interrupted partial, empty body, or failure row (a rescue that preceded a later
+   * provider failure still must disclose that history was permanently dropped).
+   */
+  const contextTruncationEvidence = isAssistantMessage ? parseContextTruncationEvidence(message.metadata?.contextTruncation) : null;
   /*
    * FNXC:ChatEmptyMessage 2026-07-10-00:00:
    * Empty assistant responses, including Grok CLI runs that finish with no text, must show a muted "No message" placeholder instead of a blank bubble. Only final persisted assistant messages with no renderable body qualify; tool calls, thinking output, attachments, or failure info already carry meaningful content and must not trigger the placeholder.
@@ -786,6 +855,7 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
       ) : (
         isAssistantMessage ? assistantBody : <div className="chat-message-content">{renderedUserContent}</div>
       )}
+      {contextTruncationEvidence && <ChatContextTruncationNotice evidence={contextTruncationEvidence} />}
       {hasAssistantFooterRow && (
         <div className={`chat-message-thinking-row${hasVisibleAssistantFooterContent ? "" : " chat-message-thinking-row--collapsed"}`}>
           {message.thinkingOutput && <StandardThinkingDisclosure thinking={message.thinkingOutput} />}
