@@ -40,6 +40,7 @@
     "pg:test:status": "node scripts/pg-test-server.mjs status",
     "pg:test:down": "node scripts/pg-test-server.mjs down",
     "smoke:boot": "node scripts/boot-smoke.mjs",
+    "heap:floor": "node scripts/lib/heap-floor-probe.mjs",
     "local": "node scripts/start-local.mjs",
     "dev": "node scripts/dev-with-memory.mjs",
     "dev:watch": "node scripts/dev-with-memory.mjs --watch",

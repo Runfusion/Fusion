@@ -1110,6 +1110,38 @@ arguments unchanged: shard telemetry uses `--reporter=json` plus a package-relat
 not select a reporter; a successful artifact set must include parseable, non-empty desktop
 `testResults` under `packages/desktop/.timings/`.
 
+### Heap-floor probe: the bounded board-read measurement
+
+`FUSION_PG_TEST_URL_BASE=postgresql://localhost:25537 pnpm heap:floor` (`scripts/lib/heap-floor-probe.mjs`,
+operator-run, needs a Postgres so it is not in CI) answers the one board-read question a seconds-long lane
+can answer: **N genuinely-overlapping same-shape whole-board reads must cost one underlying fetch**,
+counted by the production attribution seam below the coalescing, with the same overlap at
+`coalesce: false` required to cost one fetch per reader so the first rule cannot be satisfied by a broken
+counter. It also bounds the transient peak against one materialization measured in the same run — never
+against an absolute GiB figure or a ratio to the heap limit.
+
+Three rules keep this lane from becoming a slope claim in disguise:
+
+- **Leg A must overlap.** Every reader promise in a group is created before any is awaited. A sequential
+  loop cannot demonstrate coalescing — it never has two reads in flight — and the curve it draws is the
+  shape of the loop, not of the fix. An earlier sequential shadow of this question measured a flat curve
+  and looked like a fix working. **Leg B (sequential) is a plateau control**; assert it does not climb,
+  and never quote it as evidence that coalescing works.
+- **GC between samples, at the baseline only.** Sampling the baseline live was measured to be wrong (the
+  first group reported a peak of exactly 0). Collecting at the transient peak is what hides the mechanism,
+  so post-GC `retainedBytes` is reported for context and is deliberately not an assertion.
+- **The in-proc lane is `scripts/__tests__/heap-floor-probe.test.mjs`** (runs under `pnpm test:scripts`),
+  which exercises the probe's verdict against an injected store: the overlap rule, its non-coalescing
+  failure mode, per-leg concurrency attribution, and the factor rule reporting `gated` rather than
+  `passed` without a sampler. It proves the probe can fail. It does not prove the store coalesces —
+  `packages/core/src/__tests__/postgres/list-tasks-inflight-coalescing.pg.test.ts` owns that claim.
+
+Measured figures, the calibration limitation, and the exact sentence this probe licenses ("four
+overlapping same-shape board reads now cost one fetch instead of four") are in
+[`docs/solutions/performance/heap-floor-probe-runbook.md`](solutions/performance/heap-floor-probe-runbook.md).
+The `/metrics` soak over hours stays the only sanctioned way to write a heap-headroom sentence; do not add
+a slope assertion to this lane to make it quotable.
+
 ## Weekly test velocity baseline
 
 FN-6612 tracks feedback-loop velocity as signal-per-second, not as a new blocking gate. Refresh the weekly baseline from a clean worktree with:
