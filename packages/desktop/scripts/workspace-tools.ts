@@ -117,7 +117,14 @@ export const DASHBOARD_RUNTIME_PLUGIN_PACKAGES = [
 
 export async function buildDashboardRuntimePlugins(): Promise<void> {
   await buildPackage("packages/plugin-sdk");
-  await Promise.all(DASHBOARD_RUNTIME_PLUGIN_PACKAGES.map((relativePath) => buildPackage(relativePath)));
+  /**
+   * FNXC:DesktopBuildMemory 2026-10-23-12:00:
+   * Each plugin starts a separate TypeScript compiler. Keep one compiler resident
+   * to limit duplicated type-graph memory and stop admission on the first failure.
+   */
+  for (const relativePath of DASHBOARD_RUNTIME_PLUGIN_PACKAGES) {
+    await buildPackage(relativePath);
+  }
 }
 
 export async function buildDashboard(): Promise<void> {
