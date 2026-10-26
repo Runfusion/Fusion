@@ -460,6 +460,9 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
       includeDeleted: options?.includeDeleted,
       column: columnFilter ?? undefined,
       excludeColumn: !columnFilter && !includeArchived ? "archived" : undefined,
+      // FNXC:TaskLogSignalEntries 2026-10-18-18:00: slim rows drop their log before returning; read
+      // only the trigger-maintained subset the signals below can use.
+      ...(slim ? { signalLog: true } : {}),
       ...(boundedMergedPrefix !== undefined
         ? { limit: boundedMergedPrefix, offset: 0 }
         : sqlPaginated

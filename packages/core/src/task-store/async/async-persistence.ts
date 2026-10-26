@@ -74,7 +74,7 @@ export const ACTIVE_TASK_FILTER: SQL = isNull(schema.project.tasks.deletedAt);
 const TASK_SLIM_PROJECTION: Record<string, PgColumn> = Object.fromEntries(
   Object.entries(schema.project.tasks)
     .filter(([, value]) => is(value, Column))
-    .filter(([key]) => key !== "log")
+    .filter(([key]) => key !== "log" && key !== "logSignalEntries")
     .map(([key, value]) => [key, value as PgColumn]),
 );
 
@@ -436,7 +436,7 @@ export async function readTaskRowInTransaction(
  */
 export async function readLiveTaskRows(
   layer: AsyncDataLayer,
-  options?: { excludeLog?: boolean; includeDeleted?: boolean; column?: string; excludeColumn?: string; limit?: number; offset?: number },
+  options?: { excludeLog?: boolean; includeDeleted?: boolean; column?: string; excludeColumn?: string; limit?: number; offset?: number; signalLog?: boolean },
 ): Promise<Record<string, unknown>[]> {
   // FNXC:TaskStoreForensicRead 2026-06-26-15:20:
   // VAL-DATA-006 — Forensic reads surface soft-deleted rows when explicitly
@@ -486,6 +486,24 @@ export async function readLiveTaskRows(
     if (offset > 0) q = q.offset(offset);
     return q;
   };
+  if (options?.signalLog && !options.excludeLog) {
+    /*
+    FNXC:TaskLogSignalEntries 2026-10-18-18:00:
+    Slim lists read `log_signal_entries` (migration 0090, trigger-maintained) in place of the whole
+    log: the in-order subset their timing and stall derivations can read. COALESCE keeps a row
+    correct if the column were ever null.
+    */
+    let query = layer.db
+      .select({
+        ...TASK_SLIM_PROJECTION,
+        log: sql<unknown>`COALESCE(${schema.project.tasks.logSignalEntries}, ${schema.project.tasks.log})`,
+      })
+      .from(schema.project.tasks)
+      .$dynamic();
+    if (liveFilter) query = query.where(liveFilter);
+    const rows = await applyPagination(query);
+    return rows as unknown as Record<string, unknown>[];
+  }
   if (options?.excludeLog) {
     // FNXC:TaskStoreReads 2026-06-26-11:45:
     // Select every column except `log` via a Drizzle `.select({...projection})`

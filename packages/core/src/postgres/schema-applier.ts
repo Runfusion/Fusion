@@ -91,7 +91,7 @@ touches no data; it must advance in the same change that ships a new migration f
 /* FNXC:OverlapWaitSynchronization 2026-09-17-00:22: advance the ceiling so an upgraded project has the durable wait table before any overlap-marker transition tries to record into it. Renumbered 0074->0084 (2026-09-18): upstream's own migrations 0074 (FN-323 project notes) through 0083 (FN-514) are absent from this branch by design (it excludes their source commits), but the numeric slots are real and must not be reused, or a database that ran the real 0074..0083 would be misread as compatible with this branch's different 0074. */
 /* FNXC:PullRequestReadiness 2026-10-04-23:13: upgraded stores must materialize SHA-fenced readiness evidence before PR readers use it. */
 /* FNXC:RecoveryVisibility 2026-10-06-15:51: durable reseed diagnostics must exist before task rows are read by board hosts. */
-export const SCHEMA_BASELINE_VERSION = "0089";
+export const SCHEMA_BASELINE_VERSION = "0090";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -285,6 +285,8 @@ export const PULL_REQUEST_READINESS_VERSION = "0087";
 /** FN-9512: privacy-safe route code for a recovery owner that has reseeded work. */
 export const RECOVERY_DISPOSITION_VERSION = "0088";
 export const FILE_SCOPE_LEASE_RELEASE_VERSION = "0089";
+/** Trigger-maintained subset of task logs that slim board lists read. */
+export const TASK_LOG_SIGNAL_ENTRIES_VERSION = "0090";
 
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
@@ -558,6 +560,7 @@ const STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_MIGRATION_PATH = join(MIGRATIONS_DIR
 const PULL_REQUEST_READINESS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0087_fn_9439_pull_request_readiness.sql");
 const RECOVERY_DISPOSITION_MIGRATION_PATH = join(MIGRATIONS_DIR, "0088_fn_9512_recovery_disposition.sql");
 const FILE_SCOPE_LEASE_RELEASE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0089_fn_9529_file_scope_lease_release.sql");
+const TASK_LOG_SIGNAL_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0090_task_log_signal_entries.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -707,6 +710,7 @@ export async function applySchemaBaseline(
     const pullRequestReadinessAlreadyApplied = applied.includes(PULL_REQUEST_READINESS_VERSION);
     const recoveryDispositionAlreadyApplied = applied.includes(RECOVERY_DISPOSITION_VERSION);
     const fileScopeLeaseReleaseAlreadyApplied = applied.includes(FILE_SCOPE_LEASE_RELEASE_VERSION);
+    const taskLogSignalEntriesAlreadyApplied = applied.includes(TASK_LOG_SIGNAL_ENTRIES_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -1695,6 +1699,18 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(FILE_SCOPE_LEASE_RELEASE_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${FILE_SCOPE_LEASE_RELEASE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    const taskLogSignalEntriesExists = ((await tx.execute(sql`
+      SELECT to_regclass('project.tasks') IS NULL
+        OR (EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'log_signal_entries')
+          AND (EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'tasks_log_signal_entries' AND tgrelid = to_regclass('project.tasks'))
+            OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'log'))) AS present
+    `)) as unknown as Array<{ present: boolean }>)[0]?.present === true;
+    if (!taskLogSignalEntriesAlreadyApplied || !taskLogSignalEntriesExists) {
+      const migrationSql = await readFile(TASK_LOG_SIGNAL_ENTRIES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_LOG_SIGNAL_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };
