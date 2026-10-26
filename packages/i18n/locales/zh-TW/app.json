@@ -1556,7 +1556,10 @@
     "collapseArchivedTitle": "收合已封存工作",
     "expandArchivedLabel": "展開已封存工作",
     "expandArchivedTitle": "展開已封存工作",
-    "failedToArchive": "封存工作失敗"
+    "failedToArchive": "封存工作失敗",
+    "archiveAllMessage_one": "",
+    "archivedTasks_one": "",
+    "archivedTasksWithSkips_one": ""
   },
   "commandCenter": {
     "activity": {
@@ -3438,7 +3441,6 @@
     "statusReplan": "重新規劃",
     "statusWaiting": "",
     "statusWaitingOn": "",
-    "bulkDeleteSummary": "",
     "archiveSelected": "封存所選工作",
     "archiveSelectedTitle": "封存已完成的所選工作",
     "archiveUnavailable": "封存操作無法使用",
@@ -3451,7 +3453,10 @@
     "bulkDeleteArchiveSummary": "已封存 {{archived}} 個，已刪除 {{deleted}} 個，失敗 {{failed}} 個",
     "bulkDeleteNoTasks": "沒有可刪除的所選工作（不包括已封存工作）",
     "bulkDeleteWithDoneMessage": "要刪除 {{deletable}} 個工作，還是封存 {{done}} 個已完成工作並刪除其餘工作？",
-    "lineageArchiveMessage": "{{taskId}} 有 {{children}} 個譜系子工作將其參照為來源父項。\n\n要先解除這些參照再繼續封存嗎？"
+    "lineageArchiveMessage": "{{taskId}} 有 {{children}} 個譜系子工作將其參照為來源父項。\n\n要先解除這些參照再繼續封存嗎？",
+    "bulkArchiveDone_one": "",
+    "bulkArchiveMessage_one": "",
+    "bulkDeleteSummary_one": ""
   },
   "mailbox": {
     "agent": "代理",
@@ -6412,7 +6417,8 @@
       "qmdInstallFailed": "",
       "qmdInstallUnavailable": "",
       "saveBeforeCompacting": "",
-      "saveBeforeSwitching": ""
+      "saveBeforeSwitching": "",
+      "chatContextBudgetHelp": ""
     },
     "merge": {
       "abort": "",
