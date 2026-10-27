@@ -3617,7 +3617,13 @@ export class TriageProcessor {
           if (isReplan) {
             // Prefer explicit re-specification feedback logged by comment-triggered
             // and approval-invalidation flows; fall back to legacy revision logs.
-            const feedbackLogEntry = [...task.log]
+            /**
+             * FNXC:ReplanFeedback 2026-10-27-21:47:
+             * The scheduler's slim task row has an empty log. Use the already loaded
+             * full task so explicit revision feedback reaches the planner instead of
+             * disappearing or yielding to an older user comment.
+             */
+            const feedbackLogEntry = [...(currentTask.log ?? task.log ?? [])]
               .reverse()
               .find((entry) =>
                 entry.action === "User comment requested re-specification of planned task"
