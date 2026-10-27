@@ -3615,18 +3615,38 @@ export class TriageProcessor {
           let planReviewFeedbackHistory: string[] | undefined;
 
           if (isReplan) {
-            // Prefer explicit re-specification feedback logged by comment-triggered
-            // and approval-invalidation flows; fall back to legacy revision logs.
-            const feedbackLogEntry = [...task.log]
+            /**
+             * FNXC:ReplanFeedback 2026-10-27-21:47:
+             * The scheduler's slim task row has an empty log. Use the already loaded
+             * full task so explicit revision feedback reaches the planner instead of
+             * disappearing or yielding to an older user comment.
+             */
+            const feedbackLogEntry = [...(currentTask.log ?? task.log ?? [])]
               .reverse()
               .find((entry) =>
                 entry.action === "User comment requested re-specification of planned task"
                 || entry.action === "User comment invalidated spec approval — task needs re-specification"
-                || (entry.action === "AI spec revision requested" && !isPlanReviewRevisionLog(entry))
+                || entry.action === "AI spec revision requested"
                 || entry.action === TRIAGE_STUCK_RESUME_LOG_ACTION
                 || entry.action === TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION
               );
-            feedback = feedbackLogEntry?.outcome;
+            /**
+             * FNXC:ReplanFeedback 2026-10-27-22:29:
+             * A newer Plan Review marker supersedes older explicit feedback and comments.
+             * Use its durable verdict, never the truncated activity preview; an explicit
+             * revision logged after that marker still wins.
+             */
+            const latestPlanReviewRevise = [...(currentTask.workflowStepResults || [])]
+              .reverse()
+              .find((result) =>
+                (result.workflowStepId === PLAN_REVIEW_GROUP_ID || result.workflowStepName === "Plan Review")
+                && result.verdict === "REVISE"
+                && Boolean((result.notes ?? result.output)?.trim()),
+              );
+            const latestFeedbackIsPlanReview = Boolean(feedbackLogEntry && isPlanReviewRevisionLog(feedbackLogEntry));
+            feedback = latestFeedbackIsPlanReview
+              ? latestPlanReviewRevise?.notes ?? latestPlanReviewRevise?.output
+              : feedbackLogEntry?.outcome;
 
             /*
             FNXC:Triage 2026-06-27-16:18:
@@ -3652,33 +3672,20 @@ export class TriageProcessor {
               feedback = undefined;
             }
 
-            // Ensure the latest user feedback is always actionable for re-plans.
-            if (!feedback) {
+            // FNXC:ReplanFeedback 2026-10-27-22:29: A review marker also fences older user comments.
+            if (!feedback && !latestFeedbackIsPlanReview) {
               const latestUserComment = [...(detail.comments || [])]
                 .reverse()
                 .find((comment) => comment.author === "user");
               feedback = latestUserComment?.text;
             }
 
-            /*
-            FNXC:PlanReviewReplan 2026-08-04-06:35 (FN-8768):
-            When re-planning and neither an explicit user/AI re-specification comment nor a
-            user comment supplied feedback, fall back to the most recent Plan Review REVISE
-            verdict recorded in `workflowStepResults`. The pre-execution Plan Review gate
-            (runPlanReviewBeforeExecution) stores its rejection reasoning there authoritatively
-            (it is upserted every cycle and never evicted by the activity-log cap), so this
-            keeps the planner regenerating against the reviewer's actual objections instead of
-            reproducing the same rejected plan with `feedback: undefined` and looping. Explicit
-            comment-derived feedback still wins because this only runs when none was found.
-            */
+            /**
+             * FNXC:ReplanFeedback 2026-10-27-22:29:
+             * Retain the durable fallback for tasks whose bounded activity log no longer
+             * contains a review marker. Newer explicit feedback keeps precedence.
+             */
             if (!feedback) {
-              const latestPlanReviewRevise = [...(currentTask.workflowStepResults || [])]
-                .reverse()
-                .find((result) =>
-                  (result.workflowStepId === PLAN_REVIEW_GROUP_ID || result.workflowStepName === "Plan Review")
-                  && result.verdict === "REVISE"
-                  && Boolean((result.notes ?? result.output)?.trim()),
-                );
               feedback = latestPlanReviewRevise?.notes ?? latestPlanReviewRevise?.output ?? feedback;
             }
 

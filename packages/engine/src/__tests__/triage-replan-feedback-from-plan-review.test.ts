@@ -69,7 +69,7 @@ function toDetail(task: Task): TaskDetail {
   return {
     ...task,
     attachments: [],
-    comments: [],
+    comments: (task as Partial<TaskDetail>).comments ?? [],
     log: task.log ?? [],
   } as TaskDetail;
 }
@@ -267,4 +267,164 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     expect(capturedPrompt).toContain("Existing Specification");
     expect(capturedPrompt).toContain("Keep this under surgical revision");
   });
+});
+
+/**
+ * FNXC:ReplanFeedback 2026-10-27-21:47:
+ * The scheduler passes specifyTask() a `listTasks({ slim: true })` row, and the slim
+ * serializer always returns `log: []`. The feedback lookup must therefore read the log
+ * of the freshly loaded task, otherwise `spec/revise` feedback never reaches the planner.
+ */
+function slimRow(task: Task): Task {
+  return { ...task, log: [] } as Task;
+}
+
+describe("triage replan feedback when the scheduler passes a slim task row", () => {
+  let rootDir: string | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession();
+  });
+
+  afterEach(async () => {
+    await cleanup(rootDir);
+    rootDir = undefined;
+  });
+
+  async function capturePromptFor(task: Task, slim = true): Promise<string | undefined> {
+    rootDir = await createRoot(task.id);
+    await writeFile(
+      join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md"),
+      "# Existing plan\n\nKeep this body under surgical revision.\n",
+      "utf-8",
+    );
+    const harness = createMutableStore(task);
+    const processor = new TriageProcessor(harness.store, rootDir);
+    let capturedPrompt: string | undefined;
+    mockPromptWithFallback.mockImplementationOnce(async (_session: unknown, agentPrompt: string) => {
+      capturedPrompt = agentPrompt;
+      processor.markStuckAborted(task.id);
+    });
+    await processor.specifyTask(slim ? slimRow(harness.currentTask) : harness.currentTask);
+    return capturedPrompt;
+  }
+
+  it("delivers spec/revise feedback that exists only in the stored task log", async () => {
+    const revision = "SPEC-REVISE-MARKER: replace Step 2 with the exact requested wording.";
+    const prompt = await capturePromptFor(createTask({
+      id: "FN-REPLAN-SLIM-REVISE",
+      log: [{ timestamp: "2026-10-27T19:06:31.000Z", action: "AI spec revision requested", outcome: revision }],
+    }));
+
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain(revision);
+    expect(prompt).toContain("Existing Specification");
+    expect(prompt).toContain("Keep this body under surgical revision");
+  });
+
+  it("prefers a newer spec/revise over an older user comment", async () => {
+    const revision = "SPEC-REVISE-MARKER: newest revision must win.";
+    const staleComment = "STALE-COMMENT-MARKER: superseded note from an earlier day.";
+    const task = createTask({
+      id: "FN-REPLAN-SLIM-PRECEDENCE",
+      log: [{ timestamp: "2026-10-27T15:30:00.000Z", action: "AI spec revision requested", outcome: revision }],
+    });
+    (task as Partial<TaskDetail>).comments = [
+      { id: "c1", text: staleComment, author: "user", createdAt: "2026-10-26T10:00:00.000Z" },
+    ] as TaskDetail["comments"];
+    const prompt = await capturePromptFor(task);
+
+    expect(prompt).toBeDefined();
+    const revisionFeedback = prompt?.split("## Revision Feedback", 2)[1];
+    expect(revisionFeedback).toBeDefined();
+    expect(revisionFeedback).toContain(revision);
+    expect(revisionFeedback?.split("\n\n## ", 1)[0]).not.toContain(staleComment);
+  });
+
+  it("still excludes Plan Review revision previews from the log lookup", async () => {
+    const reviseNotes = "PLAN-REVIEW-REVISE-MARKER: durable reviewer notes.";
+    const prompt = await capturePromptFor(createTask({
+      id: "FN-REPLAN-SLIM-PLAN-REVIEW",
+      log: [{
+        timestamp: "2026-10-27T12:00:00.000Z",
+        action: "AI spec revision requested",
+        outcome: "Revision source: plan-review/plan-review\nTRUNCATED-PREVIEW-MUST-NOT-WIN",
+      }],
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        status: "failed",
+        verdict: "REVISE",
+        notes: reviseNotes,
+      }],
+    }));
+
+    expect(prompt).toContain(reviseNotes);
+    expect(prompt).not.toContain("TRUNCATED-PREVIEW-MUST-NOT-WIN");
+  });
+
+  it.each([true, false])("uses durable review notes after an older explicit revision (slim=%s)", async (slim) => {
+    const oldRevision = "OLD-EXPLICIT-MUST-NOT-WIN";
+    const notes = "CURRENT-REVIEW-NOTES: fix the missing cancellation path.";
+    const task = createTask({
+      log: [
+        { timestamp: "2026-10-27T11:00:00.000Z", action: "AI spec revision requested", outcome: oldRevision },
+        { timestamp: "2026-10-27T12:00:00.000Z", action: "AI spec revision requested", outcome: "Revision source: plan-review/plan-review\nPREVIEW-MUST-NOT-LEAK" },
+      ],
+      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "failed", verdict: "REVISE", notes }],
+    });
+    const prompt = await capturePromptFor(task, slim);
+    expect(prompt).toContain(notes);
+    expect(prompt).not.toContain(oldRevision);
+    expect(prompt).not.toContain("PREVIEW-MUST-NOT-LEAK");
+    expect(prompt).toContain("Existing Specification");
+    expect(prompt).toContain("Keep this body under surgical revision");
+  });
+
+  it.each([true, false])("uses durable review notes before an older user comment (slim=%s)", async (slim) => {
+    const notes = "CURRENT-REVIEW-NOTES: add the lifecycle audit.";
+    const oldComment = "OLD-USER-COMMENT-MUST-NOT-WIN";
+    const task = createTask({
+      log: [{ timestamp: "2026-10-27T12:00:00.000Z", action: "AI spec revision requested", outcome: "Plan Review requested a planning revision before execution.\nPREVIEW-MUST-NOT-LEAK" }],
+      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "failed", verdict: "REVISE", output: notes }],
+    });
+    (task as Partial<TaskDetail>).comments = [{ id: "old", text: oldComment, author: "user", createdAt: "2026-10-26T10:00:00.000Z" }] as TaskDetail["comments"];
+    const prompt = await capturePromptFor(task, slim);
+    expect(prompt).toContain(notes);
+    expect(prompt).not.toContain("PREVIEW-MUST-NOT-LEAK");
+    const feedback = prompt?.split("## Revision Feedback", 2)[1]?.split("\n\n## ", 1)[0];
+    expect(feedback).toBeDefined();
+    expect(feedback).not.toContain(oldComment);
+  });
+
+  it.each([true, false])("preserves an explicit revision after the review marker (slim=%s)", async (slim) => {
+    const revision = "LATEST-EXPLICIT-REVISION: use the requested replacement.";
+    const oldReview = "OLDER-REVIEW-MUST-NOT-WIN";
+    const prompt = await capturePromptFor(createTask({
+      log: [
+        { timestamp: "2026-10-27T12:00:00.000Z", action: "AI spec revision requested", outcome: "Revision source: plan-review/plan-review\nPREVIEW-MUST-NOT-LEAK" },
+        { timestamp: "2026-10-27T13:00:00.000Z", action: "AI spec revision requested", outcome: revision },
+      ],
+      workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "failed", verdict: "REVISE", notes: oldReview }],
+    }), slim);
+    expect(prompt).toContain(revision);
+    expect(prompt).not.toContain(oldReview);
+    expect(prompt).not.toContain("PREVIEW-MUST-NOT-LEAK");
+  });
+
+
+  it.each([true, false])("does not revive an old comment when a review marker has no durable feedback (slim=%s)", async (slim) => {
+    const task = createTask({
+      log: [{ timestamp: "2026-10-27T12:00:00.000Z", action: "AI spec revision requested", outcome: "Revision source: plan-review/plan-review\nPREVIEW-MUST-NOT-LEAK" }],
+      workflowStepResults: [],
+    });
+    (task as Partial<TaskDetail>).comments = [{ id: "old", text: "OLD-USER-COMMENT-MUST-NOT-WIN", author: "user", createdAt: "2026-10-26T10:00:00.000Z" }] as TaskDetail["comments"];
+    const prompt = await capturePromptFor(task, slim);
+    expect(prompt).toBeDefined();
+    expect(prompt).not.toContain("PREVIEW-MUST-NOT-LEAK");
+    expect(prompt).not.toContain("## Revision Feedback");
+  });
+
 });
