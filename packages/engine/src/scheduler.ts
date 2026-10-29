@@ -1081,6 +1081,20 @@ export interface SchedulerOptions {
   maxWorktrees?: number;
   /** Milliseconds between scheduling polls. Default: 15000 */
   pollIntervalMs?: number;
+  /*
+  FNXC:CapacitySlotCost 2026-10-29-12:02 (RUFU-698 Step 2):
+  Clock for the hold-release sweep's budget accounting. Production keeps the real clock (`Date.now`).
+  The seam exists because the sweep's ONLY budget instrument is elapsed `now()` deltas: a board-scale
+  fit verdict — does a ~300-card sweep complete inside `SWEEP_BUDGET_MS` while driving the REAL
+  reservation closure? — is otherwise inexpressible, because a 249-card sweep over a test store
+  measures ~27 ms of real time and the only way to make real time cross a 10 s budget is to sleep
+  for 10 s, which the standing no-slow-tests rule forbids.
+
+  Charging a modelled per-read latency to THIS clock is what the card's Measurement Contract calls
+  Class C: a valid fit verdict ("this board fits the budget iff a read costs at most N ms"), never a
+  production latency figure. Default behavior is byte-identical to the previous hardcoded `Date.now()`.
+  */
+  holdReleaseClock?: () => number;
   /**
    * Shared concurrency semaphore. When provided, the scheduler uses
    * `semaphore.availableCount` to avoid scheduling more tasks than the
@@ -3314,7 +3328,8 @@ export class Scheduler {
       };
 
       const result = await runHoldReleaseSweep(this.store, {
-        now: () => Date.now(),
+        // FNXC:CapacitySlotCost 2026-10-29-12:02 (RUFU-698 Step 2): real clock in production; see `SchedulerOptions.holdReleaseClock`.
+        now: this.options.holdReleaseClock ?? (() => Date.now()),
         selectionCache,
         reserveSlot: async (task, _target, pass?: HoldReleasePass): Promise<SlotReservation | null> => {
           /*
