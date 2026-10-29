@@ -474,6 +474,16 @@ export async function wakePlannerLiveDeferredContinuations(deps: {
 /** The FIFO due-poll batch size. Named because the starvation the deferral above
  *  prevents is a property of this bound, so the two belong in one place. */
 export const DUE_PLANNING_CONTINUATION_BATCH_LIMIT = 20;
+/*
+FNXC:ContinuationDrainFairness 2026-10-29-10:55 (RUFU-812):
+How long a capacity-refused continuation leaves the due window before it may be tried again.
+The batch limit above is deliberately small and the due poll is ordered by task queue rank, so the
+only thing that makes the window advance is a refused row leaving the due set. Without a stamp the
+refused head is re-listed and re-refused every pass and rows beyond the limit are never read.
+Kept short on purpose: a freed slot is reclaimed by the next pass after the backoff, while a full
+rotation of a 156-row due set costs ceil(156 / 20) = 8 passes.
+*/
+export const CAPACITY_REFUSAL_DEFER_MS = 5_000;
 /** A drain is only force-opened after this long without an owning-pass progress mark. */
 export const CONTINUATION_DRAIN_STALL_MS = 300_000;
 
@@ -620,7 +630,9 @@ export interface DuePlanningContinuationDrainDeps {
   /** `item` is passed only so the caller's failure log can keep naming the work
    *  item verbatim; the extraction is otherwise a byte-for-byte body move. */
   /** Return false when shared capacity rejected this item; later FIFO items
-   *  cannot fit either, so the bounded pass stops without repeating snapshots. */
+   *  cannot fit either, so the bounded pass stops without repeating snapshots. The
+   *  pass still stamps the refused row through `defer` before stopping, otherwise
+   *  the stop starves every later item (RUFU-812). */
   dispatch: (task: Task, item: WorkflowWorkItem) => boolean | void | Promise<boolean | void>;
   nowMs: () => number;
   warn: (message: string) => void;
@@ -680,7 +692,31 @@ export async function drainDuePlanningContinuations(
     const deferral = resolveParkedContinuationDeferral(resolved, deps.nowMs());
     if (deferral) await deps.defer(deferral);
     if (resolved.kind !== "actionable") continue;
-    if (await deps.dispatch(resolved.task, resolved.item) === false) break;
+    if (await deps.dispatch(resolved.task, resolved.item) === false) {
+      /*
+      FNXC:ContinuationDrainFairness 2026-10-29-10:55 (RUFU-812):
+      A capacity refusal used to stop the pass and write nothing, so the refused row stayed
+      `runnable` with a NULL `retryAfter` and a NULL lease. That is the exact durable signature
+      measured on the live board: 156 due continuations, 0 with a `retryAfter`, 95 of them
+      `plan-review`, oldest 81 days. The due poll reads `limit 20` ordered by task queue rank, so
+      the refused head was re-listed and re-refused on every pass forever and rows 21..156 were
+      never read at all — no card could reach Plan Review, which is how a card with a valid
+      `approved_plan_fingerprint` ends up with zero `workflow_step_results` rows.
+      Stamping the refused row is the same FIFO protection the operator-parked deferral above
+      already uses; the batch-limit comment says the starvation is a property of the bound, and a
+      refusal was the one examined-but-not-moved case that never got the stamp.
+      The stop itself is kept: a genuine global-capacity refusal stays true for every later FIFO
+      item within the same pass. The CAS `expectedState` means a row another lane already moved is
+      left alone, and the accepted cost is that a slot freed microseconds later is picked up on the
+      next pass, not this one.
+      */
+      await deps.defer({
+        itemId: resolved.item.id,
+        expectedState: resolved.item.state,
+        retryAfter: new Date(deps.nowMs() + CAPACITY_REFUSAL_DEFER_MS).toISOString(),
+      });
+      break;
+    }
   }
 }
 
