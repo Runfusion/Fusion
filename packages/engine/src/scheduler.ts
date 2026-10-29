@@ -292,6 +292,25 @@ const COORDINATION_SAFE_SCOPE_PREFIXES = [
 ];
 
 const DEFAULT_DISPATCH_OSCILLATION_SETTLE_MS = 5_000;
+
+/*
+FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823):
+The legs a scheduling pass walks, in order. This exists because the 600 s re-entrance watchdog could
+previously only say that a pass was old: with ~20 project schedulers sharing one process, 66 force-open
+warnings in three hours named no board and no leg, so the leak could not be attributed even to a lane.
+`hold-release-sweep` is deliberately one label — it is the leg whose 10 s budget RUFU-698 measures, and
+it subsumes the reservation/dispatch work reached from it.
+*/
+type SchedulePassPhase =
+  | "idle"
+  | "board-read"
+  | "mission-symbol-locks"
+  | "hold-release-sweep"
+  | "post-sweep-reread"
+  | "advisory-reporters";
+
+/** A pass at or above this wall clock gets one info line; healthy passes stay silent. */
+const SLOW_SCHEDULE_PASS_LOG_MS = 30_000;
 const DEFAULT_DISPATCH_OSCILLATION_THRESHOLD = 5;
 const DEFAULT_DISPATCH_OSCILLATION_WINDOW_MS = 60_000;
 
@@ -1202,6 +1221,13 @@ export class Scheduler {
   private running = false;
   private scheduling = false;
   private schedulingSince = 0;
+  /*
+  FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823):
+  The schedule watchdog force-opens its re-entrance guard after 600 s and named only the elapsed time, so an operator reading `previous pass still marked in-flight after 600s` could not say WHICH board was stuck or WHERE inside the pass it sat. The sibling continuation-drain watchdog already solves this with a `workflowContinuationDrainPhase` label (in-process-runtime.ts); this field gives `schedule()` the same property. Measured need: 66 force-open warnings in one 3-hour window across a 20-project process, with no way to attribute a single one of them.
+
+  The phase is diagnostic state only. No read path, badge, or lifecycle decision derives from it, and it is cleared with the guard so a finished pass never reports a stale leg.
+  */
+  private schedulingPhase: SchedulePassPhase = "idle";
   private immediateSchedulePending = false;
   private wasWorktreeLimited = false;
   private wasGlobalPaused = false;
@@ -2556,16 +2582,33 @@ export class Scheduler {
    * both could start tasks whose file scopes overlap — defeating the
    * overlap detection that relies on `inProgressScopes` being accurate.
    */
+  /**
+   * Describe a stuck scheduling pass for the watchdog warning.
+   *
+   * FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823): extracted from the warn call so the
+   * operator-facing sentence is assertable as one string and so identity + phase cannot be dropped by
+   * a later edit to the log call. Follows the RUFU-372 rule: a stall must name the thing that stalled,
+   * not only that something stalled.
+   */
+  private describeStuckPass(stuckMs: number): string {
+    return (
+      `schedule watchdog: previous pass still marked in-flight after ${Math.round(stuckMs / 1000)}s `
+      + `(project=${this.store.getRootDir()} leg=${this.schedulingPhase}) `
+      + `— forcing the guard open so dispatch resumes`
+    );
+  }
+
   async schedule(): Promise<void> {
     if (!this.running) return;
     if (this.scheduling) {
       /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. Dispatch prep runs real git work per candidate, so the threshold is generous. */
       const stuckMs = this.schedulingSince > 0 ? Date.now() - this.schedulingSince : 0;
       if (stuckMs < 600_000) return;
-      schedulerLog.warn(`schedule watchdog: previous pass still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open so dispatch resumes`);
+      schedulerLog.warn(this.describeStuckPass(stuckMs));
     }
     this.scheduling = true;
     this.schedulingSince = Date.now();
+    this.schedulingPhase = "board-read";
 
     try {
       /*
@@ -2600,6 +2643,7 @@ export class Scheduler {
       // Refresh the poll interval if the persisted setting has changed
       this.refreshPollInterval(settings.pollIntervalMs);
 
+      this.schedulingPhase = "mission-symbol-locks";
       await this.renewActiveMissionSymbolLocks(tasks);
 
       // Global pause (hard stop): halt all scheduling activity
@@ -2644,6 +2688,7 @@ export class Scheduler {
       Workflow columns graduated from Experimental and are now the scheduler's only dispatch model. The hold/release sweep owns todo→in-progress pickup, so do not fall through into the legacy pull-from-todo dispatcher after the sweep runs.
       */
       if (shouldRunWorkflowColumnScheduler(settings)) {
+        this.schedulingPhase = "hold-release-sweep";
         await this.runHoldReleaseSweepPass(tasks, settings);
         /*
         FNXC:ListTasksDeriveOptOut 2026-09-08-23:08 (RUFU-201 — post-sweep re-read):
@@ -2667,6 +2712,7 @@ export class Scheduler {
         another process already moved means a double dispatch, so both tick reads keep a
         guaranteed-fresh read instead of inheriting that ceiling.
         */
+        this.schedulingPhase = "post-sweep-reread";
         // FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the post-sweep re-read keeps the SAME
         // read shape as the pass above, so the two comparisons see the same fields.
         tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false, excludeLog: true });
@@ -2675,6 +2721,7 @@ export class Scheduler {
         settings = await this.store.getSettings();
         await this.emitHighOverlapFanoutWarnings(tasks);
 
+        this.schedulingPhase = "advisory-reporters";
         const staleWarningWindows = [settings.staleInProgressWarningMs, settings.staleInReviewWarningMs]
           .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
         const minWarningMs = staleWarningWindows.length > 0 ? Math.min(...staleWarningWindows) : 0;
@@ -2711,8 +2758,21 @@ export class Scheduler {
     } catch (err) {
       schedulerLog.error("Scheduling error:", err);
     } finally {
+      /*
+      FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823): before this existed the pass emitted no
+      duration at all, so "is 600 s of in-flight a leak, or honest work on a 2 417-row board" was
+      unanswerable from the log. One bounded line per SLOW pass (not per tick) names the project and the
+      wall clock. SLOW_SCHEDULE_PASS_LOG_MS keeps healthy passes silent so this cannot flood.
+      */
+      const passMs = this.schedulingSince > 0 ? Date.now() - this.schedulingSince : 0;
+      this.schedulingPhase = "idle";
       this.scheduling = false;
       this.schedulingSince = 0;
+      if (passMs >= SLOW_SCHEDULE_PASS_LOG_MS) {
+        schedulerLog.log(
+          `schedule pass finished in ${Math.round(passMs / 1000)}s (project=${this.store.getRootDir()})`,
+        );
+      }
       if (this.running && this.immediateSchedulePending) {
         this.immediateSchedulePending = false;
         void this.schedule();
