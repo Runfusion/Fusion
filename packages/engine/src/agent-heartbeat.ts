@@ -64,6 +64,7 @@ import {
   isReviewColumnRole,
   isTerminalColumnRole,
   readHeartbeatRecoveryState,
+  loadWorkspaceConfig,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
@@ -134,7 +135,7 @@ FN-7672 requires durable agent error recovery to stay classification-gated: only
 FNXC:HeartbeatRecovery 2026-07-15-08:50:
 heartbeat-model-unavailable parks from assignment/on-demand runs were terminal until a human Retry, even when the next attempt succeeds with unchanged credentials (false "model unavailable" / registry / credential-probe blips). Admit those parks to the same bounded heartbeatErrorRecovery budget as error-state recovery so the engine auto-retries like operator Retry, while genuine missing credentials re-park after the budget exhausts.
 */
-import { acquireTaskWorktree, WorktreeBaseRefreshError } from "./worktree/worktree-acquisition.js";
+import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees, WorktreeBaseRefreshError } from "./worktree/worktree-acquisition.js";
 import { isTaskBranchBaseDivergedError } from "./worktree/task-base-resolution.js";
 /* RUFU-200: the phantom re-arm guard reuses the scheduler's dependency-satisfaction verdict rather
    than writing a second one — `getUnmetSchedulingDependencies` is the authority the scheduler, the
@@ -4188,20 +4189,63 @@ export class HeartbeatMonitor {
             */
             wakeSuperseded = await this.observeDisposalBarrierForWake(taskStore, agentId, taskDetail.id, source);
             if (!wakeSuperseded) {
-              const acquisition = await acquireTaskWorktree({
-                task: taskDetail,
-                rootDir,
-                store: taskStore,
-                settings: heartbeatModelSettings ?? {},
-                logger: heartbeatLog,
-                audit,
-                runContext,
-                runInitCommand: false,
-                secretsStore: this.secretsStore,
-                refreshStaleBase: true,
-              });
-              sessionCwd = acquisition.worktreePath;
-              overlapResumeDelivery = acquisition.overlapResumeDelivery;
+              /*
+              FNXC:Worktree 2026-10-29-11:28 (RUFU-805, routing decision from 2026-10-27-14:55 SANE-613):
+              A workspace project's root is not a Git repository — the repositories are sibling members
+              listed in `.fusion/workspace.json` — so the single-repo primitive below builds the
+              aggregate `.fusion/worktrees/<task>` path with no repository leg under it. The session
+              then dies on its first Git call with `fatal: not a git repository (or any parent up to
+              mount point /)` and the card parks on the three-strike acquisition cap, which is how
+              every workspace card in the saneca project came to stand still (SANE-485/486/586/593/
+              595/601, and a fresh SANE-613 in 57 seconds with no leg in any repo). The executor and
+              the graph custom-node seam already take the per-repository branch and root the session
+              in the task directory that holds those legs (executor/run-implementation.ts), so this is
+              the last full-task wake path that was missing it.
+              Fail-soft: `loadWorkspaceConfig` returns null for a missing or malformed config, and an
+              empty `repos` list is treated the same way — mirroring the executor's `hasWorkspaceRepos`
+              guard — so single-repository projects keep the arm below byte-for-byte and never reach
+              the "has no configured repositories" throw.
+              Named limitations, deliberate and not accidental:
+              1. `acquireWorkspaceTaskWorktrees` returns only `{ task, taskWorktreeDir }`, so the
+                 workspace arm cannot forward `overlapResumeDelivery`. Do not "fix" this by inventing a
+                 second return value without giving the workspace seam an overlap-resume owner.
+              2. `addActiveWorktree` and an explicit `registry` are not passed: the heartbeat runtime
+                 has no counterpart yet, so a heartbeat-held leg is not advertised to the executor's
+                 holder-liveness bookkeeping (it still falls back to the process-wide registry).
+              */
+              const workspaceConfig = await loadWorkspaceConfig(rootDir);
+              if (workspaceConfig && workspaceConfig.repos.length > 0) {
+                const workspaceAcquisition = await acquireWorkspaceTaskWorktrees({
+                  workspaceConfig,
+                  workspaceRootDir: rootDir,
+                  task: taskDetail,
+                  store: taskStore,
+                  settings: heartbeatModelSettings ?? {},
+                  logger: heartbeatLog,
+                  audit,
+                  runContext,
+                  secretsStore: this.secretsStore,
+                  refreshStaleBase: true,
+                  // Heartbeat wakes never install dependencies, on either arm (RUFU-805 Step 1).
+                  runInitCommand: false,
+                });
+                sessionCwd = workspaceAcquisition.taskWorktreeDir;
+              } else {
+                const acquisition = await acquireTaskWorktree({
+                  task: taskDetail,
+                  rootDir,
+                  store: taskStore,
+                  settings: heartbeatModelSettings ?? {},
+                  logger: heartbeatLog,
+                  audit,
+                  runContext,
+                  runInitCommand: false,
+                  secretsStore: this.secretsStore,
+                  refreshStaleBase: true,
+                });
+                sessionCwd = acquisition.worktreePath;
+                overlapResumeDelivery = acquisition.overlapResumeDelivery;
+              }
             }
           } catch (worktreeErr) {
             const detail = worktreeErr instanceof Error ? worktreeErr.message : String(worktreeErr);
