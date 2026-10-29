@@ -84,6 +84,8 @@ const PRESERVED_ORPHAN_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}-[0-9a-f]{
  * Worktree acquisition contract:
  * - `runInitCommand=true` runs the dependency bootstrap for fresh and reusable task worktrees.
  * - Heartbeat task runs pass `runInitCommand=false` and never install dependencies.
+ * - That rule is arm-independent: the workspace seam threads the caller's flag down to every
+ *   per-repository leg, so a heartbeat workspace wake installs nothing either (RUFU-805).
  * - Native worktrees are task-id-pinned; Worktrunk owns its own directory layout.
  */
 export interface AcquireTaskWorktreeOptions {
@@ -1579,6 +1581,13 @@ export interface AcquireWorkspaceTaskWorktreesOptions {
   holderLiveProbe?: AcquireWorkspaceRepoWorktreeOptions["holderLiveProbe"];
   /** Execution callers opt in after repository acquisition; planning, review, and merge remain unchanged. */
   refreshStaleBase?: boolean;
+  /**
+   * FNXC:Worktree 2026-10-29-11:28 (RUFU-805):
+   * Forwarded to every per-repository leg. Omitting it preserves the historical `true`, so the
+   * executor and the graph custom-node seam keep running the dependency bootstrap. Heartbeat
+   * passes `false` because the acquisition contract forbids a heartbeat wake from installing.
+   */
+  runInitCommand?: boolean;
 }
 
 export interface AcquireWorkspaceRepoWorktreeOptions {
@@ -1609,6 +1618,8 @@ export interface AcquireWorkspaceRepoWorktreeOptions {
   validateTaskBeforeCreate?: (freshTask: Task) => Promise<void>;
   /** Explicit destination used by a workspace task-directory acquisition. */
   worktreePath?: string;
+  /** Per-repository dependency-bootstrap gate; defaults to `true` when omitted. */
+  runInitCommand?: boolean;
 }
 
 /*
@@ -2024,7 +2035,16 @@ export async function acquireWorkspaceRepoWorktree(
       runConfiguredCommand,
       ensureDependencyReadiness,
       taskEnv,
-      runInitCommand: true,
+      /*
+      FNXC:Worktree 2026-10-29-11:28 (RUFU-805):
+      This was hardcoded `true`, so the only workspace callers were execution-shaped ones and the flag
+      never mattered. A heartbeat wake is the first workspace caller that must NOT install, and it
+      supplies no `ensureDependencyReadiness` — with the constant in place the workspace arm would
+      have run dependency readiness per leg (real install commands, a 600 s budget each) against the
+      documented contract that heartbeat runs never install. `?? true` keeps every existing caller
+      byte-identical.
+      */
+      runInitCommand: opts.runInitCommand ?? true,
     });
 
     /*
@@ -2371,6 +2391,7 @@ export async function acquireWorkspaceTaskWorktrees(
       ensureDependencyReadiness: opts.ensureDependencyReadiness,
       taskEnv: opts.taskEnv,
       worktreePath: legacyLayout ? undefined : resolveWorkspaceRepoWorktreePath(taskWorktreeDir, repoRelPath),
+      runInitCommand: opts.runInitCommand,
     });
     opts.addActiveWorktree?.(opts.task.id, acquired.worktreePath);
     current = await opts.store.getTask(opts.task.id);
