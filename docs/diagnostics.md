@@ -299,6 +299,30 @@ with `capacity_refused=0`: the same tail was re-skipped forever. Pair it with `s
 slot:claim-snapshot=large`, which is the signature of per-candidate whole-board re-derivation.
 -->
 
+## Hold-release per-reservation cost (RUFU-698)
+
+The original report inferred "about 2 s per reservation" from `slot=12074ms` alongside `released=0, held=5`. That inference is **retired**: it divided a bucket by a call count nothing printed, and the first seam that could print both operands measured something else entirely. One row per number, each labeled with the class defined in the card's Measurement Contract:
+
+| # | Number | Value | Class | What it is, and what it is not |
+|---|--------|-------|-------|--------------------------------|
+| 1 | Production wall clock per reservation | **no measurement available** | **A** | No run has produced one. The gated bench now refuses to be quoted as a cost source while reserving nothing (it asserts `slot-calls=0` on its timing passes and asserts `slot-calls>0` plus a non-empty `slot-detail` on one reservation-bearing pass). Do not substitute row 2 or 3 for this cell. |
+| 2 | Store round-trips per reservation | **~7** (6.99) | **B** | Measured by running the production closure. A 300-candidate board that reaches the reservation line performs 3 011 counted store reads; the same board with a full WIP pool — where the sweep's own capacity pre-check refuses every card *before* the line — performs 914. The difference (2 097) over 300 reservations is the leg. *Caveat:* the differential spans the whole pass, so it includes the release the reservation performs; the board-wide per-candidate IR resolve (~3 reads/candidate) is present in both runs and therefore excluded by construction. A work shape, never a latency. |
+| 3 | Per-read latency at which a ~300-candidate board fits the default budget | **≤ ~8.3 ms** | **C** | The sweep charges budget only for reads inside its own window: at 5 ms/read a 300-candidate pass reported `evaluate 6005ms`, i.e. ~1 203 charged in-sweep reads (~4/candidate), so the ceiling is `10 000 ÷ 1 203`. Measured behavior at the two ends: **1 ms/read → pass ≈ 1.2 s, 300 released, no truncation**; **12 ms/read → `budget-truncated unevaluated>0`, next pass `rotated-deferred>0`, third pass clears it**. A fit verdict only. |
+
+Fit verdict recorded on the card's own terms: at board scale the reported overrun **is not reproducible** under this model, so the conditional Step 3 (cutting one dominant leg) **did not land** and `SWEEP_BUDGET_MS` is untouched. The evidence for that verdict is `packages/engine/src/__tests__/hold-release-sweep-budget-fit.test.ts`, which drives `Scheduler.schedule()` — the earlier scale test stubbed `reserveSlot`, and a stub measures the stub.
+
+Reading row 2 against a live line: `slot-calls` times ~7 is the store round-trip count a pass pays in the leg, so `slot ÷ slot-calls` on a deploy line is now a latency-per-round-trip question ("why does one read cost N ms here") rather than a missing-work question. If that per-read latency is what is large, the suspects are checkout-emptiness proofs and the whole-board claim read, not the reservation's own logic.
+
+<!--
+FNXC:CapacitySlotCost 2026-10-29-12:02 (RUFU-698 Step 2):
+This table exists because the plan's own acceptance numbers were unreachable: the scale test stubbed the
+reservation and the gated bench never performs one, so the only reservation cost ever quoted was an
+inference from counters. Every number above names its measurement class, because a Class B work shape or
+a Class C modelled charge quoted as a production latency would repeat the original error in a new outfit.
+No Class A figure is recorded here on purpose — "no measurement available" is the honest cell, and the
+bench guard added in this card is what keeps a future run from filling it with a fabricated value.
+-->
+
 ## `/metrics` observability endpoint (RUFU-081)
 
 The dashboard HTTP server exposes **`GET /metrics`** — a plain-text Prometheus exposition endpoint (`text/plain; version=0.0.4; charset=utf-8`) serving the system / runtime / Fusion-domain measurements that earlier CPU and UI-responsiveness diagnoses had to collect by hand (`curl /api/health` for event-loop latency, `ps` for child-process cadence, `psql` for query rate, RAM-usage sampling for RSS). A `curl /metrics` returns the same numbers a Prometheus/Grafana scrape would consume; no OTLP collector or `prom-client` dependency is involved — the module serializes Prometheus text in-process.
