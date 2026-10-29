@@ -44,6 +44,7 @@ Fusion currently has two related but distinct memory systems:
 | `MEMORY_AUDIT_PATH` | `.fusion/memory/memory-audit.md` | `memory-insights.ts` |
 | `MEMORY_LONG_TERM_BYTE_BUDGET` | `32768` (32 KiB) | `packages/engine/src/memory/memory-budget.ts` |
 | `MEMORY_LONG_TERM_MAINTENANCE_MAX_BYTES` | `8388608` (8 MiB) | `packages/engine/src/memory/memory-budget.ts` |
+| `MAX_MEMORY_LENGTH` | `50000` characters (UTF-16 code units, not bytes) | `packages/engine/src/agents/agent-instructions.ts` |
 
 ### 1.3 Exported Surface (Post-Migration)
 
@@ -101,7 +102,9 @@ Runtime backend resolution uses an internal `MemorySettings` shape with `memoryB
    disagree about what "over budget" means. An append that breaches it still succeeds: the confirmation
    message reports measured bytes, budget, percentage, and entry count instead of refusing to record the
    lesson. Daily-layer files keep their original unmeasured confirmation wording, because the budget is a
-   long-term working-set bound and daily files are rolling dated logs.
+   long-term working-set bound and daily files are rolling dated logs. "Over budget" is a write-time and
+   maintenance statement only — what actually reaches a model is decided by the injection clamp,
+   invariant 9.
 8. Long-term memory maintenance is **default-on and loss-free**. It runs from self-healing (startup
    recovery plus maintenance batch 1) rather than from the optional `Memory Keeper` runtime lane, which
    built-in provisioning seeds disabled. It collapses only `## ` sections that are exact duplicates,
@@ -109,6 +112,23 @@ Runtime backend resolution uses an internal `MemorySettings` shape with `memoryB
    unless a memory backup covering that file succeeded in the same pass after the bytes were read.
    Within-budget files are never rewritten. See `docs/run-audit.md` → *Long-term memory budget
    maintenance* for the `memory:long-term-*` rows this emits.
+9. **The budget and the injection clamp are two different numbers governing two different surfaces.**
+   `MEMORY_LONG_TERM_BYTE_BUDGET` (32 KiB) is the **write-time** working-set budget: `fn_memory_append`
+   reports against it and `reconcile-long-term-memory-budget` consolidates against it. `MAX_MEMORY_LENGTH`
+   (50,000 characters, `packages/engine/src/agents/agent-instructions.ts`) is the **injection-time** clamp
+   that decides what actually enters a prompt. Neither implies the other: a file can sit under budget and
+   still be clamped, and "over budget" must never be read as "everything is in the prompt". The clamp is
+   measured in **characters**, not bytes, so multi-byte memory costs more context than the number suggests.
+   Since RUFU-443 the full-render clamp is order-aware — it keeps the file preamble plus the **newest**
+   `## ` sections that fit (a heading-less input keeps its tail, never its head, because `fn_memory_append`
+   writes at the end) — and every omission is announced inside the rendered `## Agent Memory` section with
+   the omitted section and character counts plus the `fn_memory_search` / `fn_memory_get` retrieval path.
+   Loss was previously visible only as a server-side `log.warn`, so an agent could not tell that the
+   lessons it had just written were absent from its own context.
+   A **third**, session-level number (`memoryCapChars`, `CHAT_MEMORY_CAP_CHARS` = 8,000 chars on the chat
+   path) keeps its existing self-announcing bounded-index contract. RUFU-443 changed no constant: 50,000
+   characters is roughly 14K tokens, which is what a 64K-context chat model can afford inline
+   (`FNXC:ChatContextBudget 2026-08-20-11:56`).
 
 ---
 

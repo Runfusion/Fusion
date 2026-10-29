@@ -18,6 +18,7 @@ import { buildRequestVolatileContext } from "../execution/prompt-layers.js";
 import { createLogger } from "../logger.js";
 import { readAgentMemoryWorkspaceLongTerm } from "../agent-tools.js";
 import { buildMemoryIndex, buildMemoryHeadingIndex, clampUtf8 } from "./agent-memory-index.js";
+import { parseMemoryFile, renderMemoryFile } from "../memory/memory-budget.js";
 
 const log = createLogger("agent-instructions");
 
@@ -37,6 +38,182 @@ function trimAndClamp(value: string, maxLength: number, label: string, agentId: 
 
   log.warn(`${label} exceeded max length for agent ${agentId}; truncating to ${maxLength} chars`);
   return trimmed.slice(0, maxLength);
+}
+
+/** Result of the order-aware inline memory clamp (see {@link clampMemoryKeepingNewest}). */
+type MemoryClampResult = {
+  /** Content safe to render: at most `maxLength` characters, newest entries always present. */
+  text: string;
+  /** Character length of the trimmed input before clamping. */
+  totalChars: number;
+  /** `## ` section count of the input (0 for a heading-less blob). */
+  totalSections: number;
+  /** Sections entirely absent from {@link text}. */
+  omittedSections: number;
+  /** Characters of the trimmed input that did not make it into {@link text}. */
+  omittedChars: number;
+};
+
+const EMPTY_CLAMP: MemoryClampResult = { text: "", totalChars: 0, totalSections: 0, omittedSections: 0, omittedChars: 0 };
+
+/**
+ * Keep the LAST `maxChars` characters of `value`, cut on a code-point boundary.
+ *
+ * This is the tail-side mirror of `clampUtf8` (`./agent-memory-index.ts`) with one deliberate
+ * difference: the unit is JS string length (UTF-16 code units), the same unit the inline memory
+ * budget is expressed and compared in (`trimmed.length <= maxLength`, per
+ * `FNXC:ChatContextBudget 2026-09-16-12:40`, which fixed the byte-vs-code-unit disagreement in the
+ * chat demote branch). Mixing bytes and chars here would re-open that defect. A leading low
+ * surrogate is dropped so a cut never renders `\uFFFD`.
+ */
+function keepNewestChars(value: string, maxChars: number): string {
+  if (maxChars <= 0) return "";
+  if (value.length <= maxChars) return value;
+  const tail = value.slice(value.length - maxChars);
+  const first = tail.charCodeAt(0);
+  return first >= 0xdc00 && first <= 0xdfff ? tail.slice(1) : tail;
+}
+
+/**
+ * Order-aware inline memory clamp: prefer the NEWEST entries instead of the oldest.
+ *
+ * FNXC:MemoryInlineClamp 2026-10-29-12:55 (RUFU-443):
+ * `trimAndClamp` returns `trimmed.slice(0, maxLength)`, i.e. the HEAD of the file. Because
+ * `fn_memory_append` writes at the END of a long-term memory file, that head-slice inverts recency:
+ * the freshest lesson is structurally guaranteed to be the first thing dropped. Measured on
+ * production `.fusion/agent-memory/agent-6774b4e6/MEMORY.md` (365,204 chars): the render cut at
+ * exactly 50,000 chars mid-sentence (`… the grep signature is a repeated\n  `reason: "`), 174 of 205
+ * sections (85%) never reached the prompt, and nothing in the prompt said they existed — the only
+ * trace was a server-side `log.warn`.
+ *
+ * Contract:
+ * - Fits (chars) → byte-identical pass-through, zero omissions (no notice may ever fire here).
+ * - Over budget, structured → keep the file preamble plus the NEWEST suffix of `## ` sections that
+ *   fits, in original relative order, reusing `parseMemoryFile`/`renderMemoryFile` so kept sections
+ *   are byte-for-byte source (no re-derivation of `## ` parsing, and no dedupe — collapsing is
+ *   RUFU-279's maintenance lane).
+ * - Over budget, newest section alone too large → keep that section's tail (preamble first, when it
+ *   fits): the newest content is never dropped wholesale.
+ * - Over budget, no `## ` headings → keep the tail characters, not the head.
+ *
+ * Pure and deterministic (no Date, no randomness, no I/O) so a repeated same-role build stays
+ * byte-stable; the omission is reported by the caller in-prompt, never only in the log.
+ *
+ * Cost: the over-budget path parses the whole file once (measured 82 ms on the largest production
+ * file, 6.9 MB / 15,986 sections) to reuse `parseMemoryFile` rather than re-deriving `## ` parsing.
+ * That is the same order as the file read + `.trim()` already paid upstream, and the append tool
+ * parses these files on every write via `countMemoryEntries`. The within-budget path never parses.
+ *
+ * Deliberately NOT changed here (forbidden dispositions of RUFU-443): `MAX_MEMORY_LENGTH` is not
+ * raised (`FNXC:ChatContextBudget 2026-08-20-11:56` records why 50,000 chars ≈ 14K tokens is the
+ * chat-window-safe number), `fn_memory_append` does not refuse writes, and no memory file on disk is
+ * reordered or trimmed without RUFU-279's backup gate. The relationship between this clamp and
+ * `MEMORY_LONG_TERM_BYTE_BUDGET` is documented in `docs/memory-plugin-contract.md` §1.2/§1.5.
+ */
+function clampMemoryKeepingNewest(trimmed: string, maxLength: number): MemoryClampResult {
+  if (!trimmed) return EMPTY_CLAMP;
+  if (maxLength <= 0) return { ...EMPTY_CLAMP, totalChars: trimmed.length, omittedChars: trimmed.length };
+  if (trimmed.length <= maxLength) {
+    return { text: trimmed, totalChars: trimmed.length, totalSections: 0, omittedSections: 0, omittedChars: 0 };
+  }
+
+  const parts = parseMemoryFile(trimmed);
+  if (parts.sections.length === 0) {
+    const text = keepNewestChars(trimmed, maxLength);
+    return {
+      text,
+      totalChars: trimmed.length,
+      totalSections: 0,
+      omittedSections: 0,
+      omittedChars: trimmed.length - text.length,
+    };
+  }
+
+  const totalSections = parts.sections.length;
+  const allLines = [...parts.preamble, ...parts.sections.flatMap((section) => section.lines)];
+  const lineCount = allLines.length;
+  const preambleLines = parts.preamble.length;
+  const newlineLen = parts.newline.length;
+  const trailing = parts.trailingNewline ? newlineLen : 0;
+
+  // Prefix sums over line lengths → the exact rendered length of any section suffix, so the search
+  // never allocates a candidate string per section (production files carry 890+ sections).
+  const prefix = new Array<number>(lineCount + 1).fill(0);
+  for (let i = 0; i < lineCount; i += 1) prefix[i + 1] = prefix[i] + allLines[i]!.length;
+
+  const sectionStart: number[] = [];
+  let cursor = preambleLines;
+  for (const section of parts.sections) {
+    sectionStart.push(cursor);
+    cursor += section.lines.length;
+  }
+
+  // `renderMemoryFile(parts, sections.slice(i))` renders preamble + lines[i..end] joined by the
+  // file's newline, so its length is the two line sums plus (keptLines - 1) separators.
+  const renderedLength = (sectionIndex: number): number => {
+    const start = sectionStart[sectionIndex]!;
+    const keptLines = preambleLines + (lineCount - start);
+    const separators = Math.max(0, keptLines - 1) * newlineLen;
+    return prefix[preambleLines] + (prefix[lineCount] - prefix[start]) + separators + trailing;
+  };
+
+  // Suffixes only grow as the start index moves older, so the first index that breaks the budget
+  // ends the search; the smallest still-fitting index keeps the most history without exceeding it.
+  let keptFrom = -1;
+  for (let i = totalSections - 1; i >= 0; i -= 1) {
+    if (renderedLength(i) > maxLength) break;
+    keptFrom = i;
+  }
+
+  if (keptFrom < 0) {
+    // Even the newest section alone (plus preamble) exceeds the budget: keep that section's tail.
+    const newest = parts.sections[totalSections - 1]!;
+    const preambleBlock = preambleLines > 0 ? parts.preamble.join(parts.newline) : "";
+    const tail = keepNewestChars(newest.text, maxLength - (preambleBlock ? preambleBlock.length + newlineLen : 0));
+    const text = preambleBlock && tail ? `${preambleBlock}${parts.newline}${tail}` : keepNewestChars(newest.text, maxLength);
+    return {
+      text,
+      totalChars: trimmed.length,
+      totalSections,
+      omittedSections: totalSections - 1,
+      omittedChars: trimmed.length - text.length,
+    };
+  }
+
+  const text = renderMemoryFile(parts, parts.sections.slice(keptFrom));
+  return {
+    text,
+    totalChars: trimmed.length,
+    totalSections,
+    omittedSections: keptFrom,
+    omittedChars: trimmed.length - text.length,
+  };
+}
+
+/**
+ * Render the agent-visible omission notice for one clamped memory input.
+ *
+ * FNXC:MemoryInlineClamp 2026-10-29-12:55 (RUFU-443): AC1 — an omission must never be silent. The
+ * numbers come from the same {@link MemoryClampResult} that produced the render, so the notice cannot
+ * disagree with what the prompt actually contains, and it names the retrieval path (`fn_memory_search`
+ * then `fn_memory_get`) instead of leaving the agent to guess that the file is longer than what it sees.
+ *
+ * FNXC:MemoryInlineClamp 2026-10-29-13:26 (RUFU-443): the first number is the ACTUAL kept length
+ * (`totalChars - omittedChars`), not `maxLength`. A kept section suffix lands short of the budget
+ * whenever the next-oldest section does not fit (whole sections are kept, never split), so quoting the
+ * budget as if it were the retained size overstated how much of the file the agent has — the same
+ * class of imprecision this card exists to remove. The budget is still stated, as its own number.
+ */
+function formatMemoryClampNotice(scopeLabel: string, clamp: MemoryClampResult, maxLength: number): string {
+  const keptChars = clamp.totalChars - clamp.omittedChars;
+  const omitted =
+    clamp.totalSections > 0
+      ? `${clamp.omittedSections} of ${clamp.totalSections} older sections (${clamp.omittedChars} chars) are NOT in this prompt`
+      : `${clamp.omittedChars} chars of heading-less text are NOT in this prompt`;
+  return (
+    `_${scopeLabel}: kept the newest ${keptChars} of ${clamp.totalChars} chars within the ${maxLength}-char inline memory budget, so ${omitted}._ ` +
+    `The newest entries are always kept; read the omitted ones with fn_memory_search, then fn_memory_get._`
+  );
 }
 
 function isPathTraversal(path: string): boolean {
@@ -282,6 +459,33 @@ async function formatMemorySection(
     }
   }
 
+  /*
+  FNXC:MemoryInlineClamp 2026-10-29-12:55 (RUFU-443):
+  The full-render tail is the ONLY place the newest-keeping clamp is applied. The `inlineTrimmed` /
+  `workspaceTrimmed` head-slice pre-clamp above stays exactly as it was: it is the emptiness guard and
+  the `combinedChars` branch-selection input, and it is what feeds the `memoryCapChars` bounded-index
+  branch, so which branch renders and everything that branch emits stay byte-identical to today. That
+  branch is left head-slice-pre-clamped by decision — the operator's AC1 is scoped to full mode, the
+  branch already self-announces through its own "exceeds this session's …-char context budget" notice
+  (so nothing is silently lost there), and re-pointing its input would make `buildMemoryHeadingIndex`
+  lose the headings its pinned test asserts. The residual (an index built from oldest-first headings
+  when the source exceeds the clamp) is deferred to a follow-up card rather than absorbed here.
+  */
+  const inlineClamp = clampMemoryKeepingNewest(memory.trim(), MAX_MEMORY_LENGTH);
+  const workspaceClamp = clampMemoryKeepingNewest(workspaceMemory.trim(), MAX_MEMORY_LENGTH);
+  if (inlineClamp.omittedChars > 0) {
+    log.warn(
+      `memory newest-kept clamp for agent ${agentId}: inline memory kept the newest ${MAX_MEMORY_LENGTH} of ${inlineClamp.totalChars} chars, ` +
+        `omitted ${inlineClamp.omittedSections}/${inlineClamp.totalSections} sections (${inlineClamp.omittedChars} chars)`,
+    );
+  }
+  if (workspaceClamp.omittedChars > 0) {
+    log.warn(
+      `memory newest-kept clamp for agent ${agentId}: workspace memory kept the newest ${MAX_MEMORY_LENGTH} of ${workspaceClamp.totalChars} chars, ` +
+        `omitted ${workspaceClamp.omittedSections}/${workspaceClamp.totalSections} sections (${workspaceClamp.omittedChars} chars)`,
+    );
+  }
+
   const lines = [
     "## Agent Memory",
     "",
@@ -291,16 +495,23 @@ async function formatMemorySection(
     "",
   ];
 
-  if (inlineTrimmed) {
-    lines.push(inlineTrimmed);
+  if (inlineClamp.text) {
+    if (inlineClamp.omittedChars > 0) {
+      lines.push(formatMemoryClampNotice("Inline agent memory", inlineClamp, MAX_MEMORY_LENGTH), "");
+    }
+    lines.push(inlineClamp.text);
   }
 
-  if (workspaceTrimmed) {
-    if (!inlineTrimmed) {
-      lines.push(`_Source: ${memoryWorkspaceDisplayPath(agentId)}_`, "", workspaceTrimmed);
+  if (workspaceClamp.text) {
+    if (!inlineClamp.text) {
+      lines.push(`_Source: ${memoryWorkspaceDisplayPath(agentId)}_`, "");
     } else {
-      lines.push("", "### Long-term Workspace Memory", "", workspaceTrimmed);
+      lines.push("", "### Long-term Workspace Memory", "");
     }
+    if (workspaceClamp.omittedChars > 0) {
+      lines.push(formatMemoryClampNotice("Workspace memory", workspaceClamp, MAX_MEMORY_LENGTH), "");
+    }
+    lines.push(workspaceClamp.text);
   }
 
   return lines.join("\n");

@@ -15,6 +15,7 @@ import {
   type Settings,
 } from "@fusion/core";
 import {
+  MAX_MEMORY_LENGTH,
   resolveAgentInstructions,
   resolveAgentInstructionsWithRatings,
   buildAgentChatPrompt,
@@ -943,18 +944,31 @@ describe("diagnostics logging", () => {
     expect(result.length).toBe(10_000 + "## Soul\n\n".length);
   });
 
-  it("logs exactly once when oversized memory is truncated", async () => {
+  /*
+  FNXC:MemoryInlineClamp 2026-10-29-13:05 (RUFU-443):
+  Oversized memory now warns twice by design: the pre-clamp truncation warn (which still feeds the
+  emptiness guard, branch selection, and the bounded-index branch) plus the newest-kept clamp warn that
+  names what the agent-visible render actually dropped. This fixture is a uniform "m" blob, so its head
+  and tail slices are byte-identical and the retained-content assertion carries the same meaning it
+  always did — it is not weakened. The new assertion pins that the loss is now ALSO visible in the
+  prompt, which is exactly what was missing before.
+  */
+  it("logs the truncation warn and the newest-kept clamp warn when oversized memory is clamped", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const memory = "m".repeat(50_010);
     const agent = makeAgent({ memory });
 
     const result = await resolveAgentInstructions(agent, testDir);
 
-    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
     expect(warnSpy.mock.calls[0]?.[0]).toContain("agent-instructions");
     expect(warnSpy.mock.calls[0]?.[0]).toContain("memory exceeded max length");
+    expect(warnSpy.mock.calls[1]?.[0]).toContain("agent-instructions");
+    expect(warnSpy.mock.calls[1]?.[0]).toContain("memory newest-kept clamp");
+    expect(warnSpy.mock.calls[1]?.[0]).toContain("omitted 0/0 sections (10 chars)");
     expect(result).toContain("## Agent Memory");
     expect(result).toContain(memory.slice(0, 50_000));
+    expect(result).toContain("kept the newest 50000 of 50010 chars within the 50000-char inline memory budget");
   });
 
   it("logs exactly once when instructionsPath is too long", async () => {
@@ -1349,5 +1363,279 @@ describe("buildAgentChatPrompt per-turn memory recall (RUFU-120 B.2)", () => {
     expect(prompt).toContain("## Memory Recall");
     expect(prompt).not.toContain("notes/focus-ledger.md");
     expect(prompt).not.toContain("t.md");
+  });
+});
+
+/*
+ * FNXC:MemoryInlineClamp 2026-10-29-13:15 (RUFU-443):
+ * The inline memory clamp used to return the HEAD of the file, so every `fn_memory_append` — which
+ * writes at the END — pushed its own lesson out of the prompt. Measured on a production
+ * `.fusion/agent-memory/agent-6774b4e6/MEMORY.md` (365,204 chars): 174 of 205 sections (85%) never
+ * arrived, the cut landed mid-sentence, and nothing in the prompt said the rest existed. Every case
+ * below asserts on the RENDERED output of the two observable entry points
+ * (`resolveAgentInstructions` full mode, `buildAgentChatPrompt` capped path), never on an internal
+ * constant; `MAX_MEMORY_LENGTH` is imported only to size fixtures and to bound-check rendered output.
+ */
+
+/** Zero-padded so entry N's sentinel is never a substring of another entry's sentinel. */
+function padEntry(index: number): string {
+  return String(index).padStart(3, "0");
+}
+
+/**
+ * A memory file shaped like the production ones: preamble, then `sectionCount` distinct `## `
+ * entries of > 260 chars each (real boundaries for the section-suffix clamp to respect) totaling
+ * above the inline budget, with zero exact duplicates and a unique sentinel on the newest entry.
+ * ~313 chars/section × 220 sections ≈ 69K chars — just over budget, far below a production megabyte
+ * (FN-5048: no slow fixtures).
+ */
+function sectionedMemory(
+  sectionCount: number,
+  options: { newestSentinel?: string; prefix?: string } = {},
+): string {
+  const prefix = options.prefix ?? "OLD-SENTINEL";
+  const filler = "filler ".repeat(40);
+  let out = "# Agent Memory\n\n<!-- durable notes below -->\n\n";
+  for (let i = 1; i <= sectionCount; i += 1) {
+    const sentinel =
+      i === sectionCount ? (options.newestSentinel ?? "NEWEST-SENTINEL") : `${prefix}-${padEntry(i)}`;
+    out += `## Lesson ${padEntry(i)}\n\n${sentinel} ${filler}\n`;
+  }
+  return out;
+}
+
+const WORKSPACE_CLAMP_NOTICE =
+  /_Workspace memory: kept the newest (\d+) of (\d+) chars within the (\d+)-char inline memory budget, so (\d+) of (\d+) older sections \((\d+) chars\) are NOT in this prompt/;
+const INLINE_CLAMP_NOTICE =
+  /_Inline agent memory: kept the newest (\d+) of (\d+) chars within the (\d+)-char inline memory budget, so (\d+) of (\d+) older sections \((\d+) chars\) are NOT in this prompt/;
+const BLOB_CLAMP_NOTICE =
+  /_(?:Workspace memory|Inline agent memory): kept the newest (\d+) of (\d+) chars within the (\d+)-char inline memory budget, so (\d+) chars of heading-less text are NOT in this prompt/;
+
+/** How many of a fixture's sections actually reached the rendered prompt (newest entry included). */
+function presentSentinelCount(
+  rendered: string,
+  sectionCount: number,
+  options: { prefix?: string; newestSentinel?: string } = {},
+): number {
+  const prefix = options.prefix ?? "OLD-SENTINEL";
+  const newest = options.newestSentinel ?? "NEWEST-SENTINEL";
+  let present = 0;
+  for (let i = 1; i <= sectionCount; i += 1) {
+    const sentinel = i === sectionCount ? newest : `${prefix}-${padEntry(i)}`;
+    if (rendered.includes(sentinel)) present += 1;
+  }
+  return present;
+}
+
+async function writeWorkspaceMemory(rootDir: string, content: string, agentId = "agent-test"): Promise<void> {
+  await mkdir(join(rootDir, ".fusion", "agent-memory", agentId), { recursive: true });
+  await writeFile(join(rootDir, ".fusion", "agent-memory", agentId, "MEMORY.md"), content, "utf-8");
+}
+
+describe("inline long-term memory clamp keeps the newest entries (RUFU-443)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "agent-instr-clamp-"));
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("keeps the newest workspace sections and announces the omitted range in full mode", async () => {
+    const sections = 220;
+    const memory = sectionedMemory(sections);
+    expect(memory.length).toBeGreaterThan(MAX_MEMORY_LENGTH);
+    await writeWorkspaceMemory(testDir, memory);
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "" }), testDir);
+    const notice = result.match(WORKSPACE_CLAMP_NOTICE);
+    expect(notice).not.toBeNull();
+    const [, keptChars, totalChars, budget, omittedSections, totalSections, omittedChars] = notice!;
+
+    // The symptom: the freshest lesson used to be exactly what got cut.
+    expect(result).toContain("NEWEST-SENTINEL");
+    expect(result).not.toContain("OLD-SENTINEL-001");
+    expect(result).toContain("<!-- durable notes below -->"); // preamble survives with the newest suffix
+
+    // The notice must agree with what the prompt actually contains, section by section and char by char.
+    expect(Number(budget)).toBe(MAX_MEMORY_LENGTH);
+    expect(Number(totalChars)).toBe(memory.trim().length);
+    expect(Number(totalSections)).toBe(sections);
+    const present = presentSentinelCount(result, sections);
+    expect(present).toBeGreaterThan(0);
+    expect(present).toBeLessThan(sections);
+    expect(Number(omittedSections)).toBe(sections - present);
+
+    // The rendered body is the last thing in the collapsed output, so its real length is measurable
+    // (the notice line is matched by a prefix scan because the regex above covers only its first half).
+    const noticeLine = result.split("\n").find((line) => line.startsWith("_Workspace memory:")) ?? "";
+    const rendered = result.slice(result.indexOf(noticeLine) + noticeLine.length + 2);
+    expect(rendered.length).toBeLessThanOrEqual(MAX_MEMORY_LENGTH);
+    expect(Number(omittedChars)).toBe(memory.trim().length - rendered.length);
+    // The headline number is the REAL retained length, not the budget: a kept section suffix stops
+    // short of `maxLength` whenever the next-oldest section does not fit whole.
+    expect(Number(keptChars)).toBe(rendered.length);
+    expect(Number(keptChars)).toBeLessThanOrEqual(MAX_MEMORY_LENGTH);
+  });
+
+  it("keeps the newest entries of an oversized inline agent.memory", async () => {
+    const sections = 220;
+    const memory = sectionedMemory(sections, { prefix: "OLD-INLINE" });
+
+    const result = await resolveAgentInstructions(makeAgent({ memory }), testDir);
+    const notice = result.match(INLINE_CLAMP_NOTICE);
+    expect(notice).not.toBeNull();
+
+    expect(result).toContain("NEWEST-SENTINEL");
+    expect(result).not.toContain("OLD-INLINE-001");
+    expect(Number(notice![2])).toBe(memory.trim().length);
+    expect(Number(notice![4])).toBe(sections - presentSentinelCount(result, sections, { prefix: "OLD-INLINE" }));
+  });
+
+  it("keeps the newest entries and announces the loss for both inputs oversized at once", async () => {
+    const sections = 220;
+    await writeWorkspaceMemory(testDir, sectionedMemory(sections, { newestSentinel: "NEWEST-WORKSPACE" }));
+
+    const result = await resolveAgentInstructions(
+      makeAgent({ memory: sectionedMemory(sections, { newestSentinel: "NEWEST-INLINE", prefix: "OLD-INLINE" }) }),
+      testDir,
+    );
+
+    expect(result).toContain("NEWEST-INLINE");
+    expect(result).toContain("NEWEST-WORKSPACE");
+    expect(result).toContain("### Long-term Workspace Memory");
+    expect(result).not.toContain("OLD-INLINE-001");
+    expect(result).not.toContain("OLD-SENTINEL-001");
+    expect(result.match(INLINE_CLAMP_NOTICE)).not.toBeNull();
+    expect(result.match(WORKSPACE_CLAMP_NOTICE)).not.toBeNull();
+  });
+
+  it("keeps the newest entries on the chat path when a cap is set but does not bite (full-render fall-through)", async () => {
+    const sections = 220;
+    const memory = sectionedMemory(sections);
+    await writeWorkspaceMemory(testDir, memory);
+
+    // Cap above the combined (pre-clamped) size, so the bounded-index branch is NOT selected and the
+    // full render is reached with a > 50K source — the shape that used to be silently head-sliced.
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({ name: "Avery", memory: "" }),
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      memoryCapChars: 60_000,
+    });
+
+    expect(prompt).not.toContain("exceeds this session's 60000-char context budget");
+    expect(prompt).toContain("NEWEST-SENTINEL");
+    expect(prompt).not.toContain("OLD-SENTINEL-001");
+    const notice = prompt.match(WORKSPACE_CLAMP_NOTICE);
+    expect(notice).not.toBeNull();
+    expect(Number(notice![2])).toBe(memory.trim().length);
+    expect(Number(notice![4])).toBe(sections - presentSentinelCount(prompt, sections));
+  });
+
+  /*
+   * FNXC:MemoryInlineClamp 2026-10-29-13:15 (RUFU-443) — the PR1 scope decision, pinned:
+   * the `memoryCapChars` bounded-index branch deliberately keeps its head-slice pre-clamp (it already
+   * self-announces through its own budget notice, and re-pointing it would rewrite the heading
+   * contract its own tests assert). This case names the accepted residual — the index enumerates
+   * oldest-first headings only — so the deferred contract is visible rather than implied.
+   */
+  it("leaves the bounded-index branch's oldest-first heading index unchanged (deferred contract)", async () => {
+    const sections = 220;
+    await writeWorkspaceMemory(testDir, sectionedMemory(sections));
+
+    const prompt = await buildAgentChatPrompt({
+      agent: makeAgent({ name: "Avery", memory: "" }),
+      rootDir: testDir,
+      basePrompt: "You are a chat assistant.",
+      memoryCapChars: 4_000,
+    });
+
+    expect(prompt).toContain("exceeds this session's 4000-char context budget");
+    expect(prompt).toContain("## Agent Memory Index (use fn_memory_search / fn_memory_get to read)");
+    expect(prompt).toContain('"Lesson 001"'); // oldest-first, from the head-slice pre-clamp
+    expect(prompt).not.toContain('"Lesson 220"'); // beyond the pre-clamp, as before RUFU-443
+    expect(prompt).not.toContain("NEWEST-SENTINEL");
+    expect(prompt).not.toContain("inline memory budget"); // the full-render notice is not this branch's
+  });
+
+  it("renders under-budget memory verbatim with no notice", async () => {
+    const memory = sectionedMemory(4);
+    expect(memory.length).toBeLessThan(MAX_MEMORY_LENGTH);
+    await writeWorkspaceMemory(testDir, memory);
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "" }), testDir);
+
+    expect(result).toContain(memory.trim());
+    expect(result).toContain("Lesson 004");
+    expect(result).not.toContain("inline memory budget");
+    expect(result).not.toContain("are NOT in this prompt");
+  });
+
+  it("keeps the tail of a heading-less oversized blob and announces the dropped head", async () => {
+    const blob = `HEAD-MARKER ${"z".repeat(MAX_MEMORY_LENGTH)} TAIL-MARKER`;
+    await writeWorkspaceMemory(testDir, blob);
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "" }), testDir);
+
+    expect(result).toContain("TAIL-MARKER");
+    expect(result.endsWith("TAIL-MARKER")).toBe(true);
+    expect(result).not.toContain("HEAD-MARKER");
+    expect(result.match(BLOB_CLAMP_NOTICE)).not.toBeNull();
+  });
+
+  it("does not dedupe duplicated sections while clamping (consolidation is RUFU-279's lane)", async () => {
+    const duplicate = "## Repeat Lesson\n\nDUP-SENTINEL filler filler\n";
+    const memory = `${sectionedMemory(200)}${duplicate.repeat(3)}${duplicate.slice(0, -1)}`;
+    await writeWorkspaceMemory(testDir, memory);
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "" }), testDir);
+
+    expect((result.match(/DUP-SENTINEL/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((result.match(/## Repeat Lesson/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("clamps multi-byte content on code-point boundaries", async () => {
+    // BMP content: the inline budget is char-counted (see `FNXC:ChatContextBudget 2026-09-16-12:40`
+    // for the byte/char disagreement this convention deliberately does NOT re-open).
+    const bmpResult = await resolveAgentInstructions(
+      makeAgent({ memory: "記".repeat(MAX_MEMORY_LENGTH + 10_000) }),
+      testDir,
+    );
+    const bmpRun = bmpResult.match(/記+/)?.[0] ?? "";
+    expect(bmpRun.length).toBeGreaterThan(MAX_MEMORY_LENGTH - 50);
+    expect(bmpRun.length).toBeLessThanOrEqual(MAX_MEMORY_LENGTH);
+    expect(bmpResult).not.toContain("\uFFFD");
+
+    // Astral content: the tail cut lands mid surrogate pair, which must never render U+FFFD.
+    const surrogateMemory = `${"😀".repeat(30_000)}TAIL-M`;
+    const emojiResult = await resolveAgentInstructions(makeAgent({ memory: surrogateMemory }), testDir);
+    expect(emojiResult).not.toContain("\uFFFD");
+    expect(emojiResult.endsWith("TAIL-M")).toBe(true);
+    expect((emojiResult.match(/😀+/)?.[0] ?? "").length * 2).toBeLessThanOrEqual(MAX_MEMORY_LENGTH * 2);
+  });
+
+  it("is deterministic for the same input (prompt-cache stability)", async () => {
+    await writeWorkspaceMemory(testDir, sectionedMemory(220));
+    const agent = makeAgent({ memory: sectionedMemory(60, { prefix: "OLD-INLINE" }) });
+
+    const first = await resolveAgentInstructions(agent, testDir);
+    const second = await resolveAgentInstructions(agent, testDir);
+
+    expect(second).toBe(first);
+  });
+
+  it("still honors inclusionMode off and index over the new clamp", async () => {
+    await writeWorkspaceMemory(testDir, sectionedMemory(220));
+    const agent = makeAgent({ memory: "" });
+
+    expect(await resolveAgentInstructions(agent, testDir, undefined, "off")).toBe("");
+
+    const indexMode = await resolveAgentInstructions(agent, testDir, undefined, "index");
+    expect(indexMode).toContain("index mode");
+    expect(indexMode).not.toContain("NEWEST-SENTINEL");
+    expect(indexMode).not.toContain("inline memory budget");
   });
 });
