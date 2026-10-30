@@ -5396,9 +5396,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           await scopedStore.lockCurrentPlanWhilePlanningLocked(task.id, approvedPlanFingerprint, approvedPrompt);
         }
 
+        /*
+        FNXC:WorkflowIrPin 2026-10-30-06:15:
+        Approval releases the plan through a fresh Plan Review continuation resolved against the
+        current IR, never through the pin of the run that parked the card. A Plan Review REVISE,
+        a return comment or `spec/revise` re-parks the card with the pin its replan left behind
+        (`plan-replan` in the planning column) or an older implementation pin. Clear all three
+        fields in the same writes as the hold so no consumer (advanced-triage self-healing,
+        planner recovery, drift detection) resumes the approved plan at that stale node.
+        */
         const approvalPatch = {
           status: null,
           approvedPlanFingerprint: approvedPlanFingerprint ?? null,
+          workflowIrPin: null,
+          workflowIrPinNodeId: null,
+          workflowIrPinColumnId: null,
           ...(approvedWorkflowStepResults ? { workflowStepResults: approvedWorkflowStepResults } : {}),
         } satisfies Parameters<TaskStore["updateTask"]>[1];
 
