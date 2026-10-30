@@ -2827,10 +2827,14 @@ describe("POST /tasks/:id/approve-plan", () => {
     FNXC:SpecLockApproval 2026-08-15-05:10:
     A readable PROMPT.md is now mandatory at approval (unreadable is a 409), so the persisted
     patch always carries the real fingerprint hash of the approved on-disk plan — never null.
+    FNXC:WorkflowIrPin 2026-10-30-06:15: the same patch clears the pre-approval workflow IR pin.
     */
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: null,
       approvedPlanFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      workflowIrPin: null,
+      workflowIrPinNodeId: null,
+      workflowIrPinColumnId: null,
     });
     expect(res.body.column).toBe("todo");
     expect(res.body.status).toBeUndefined();
