@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskRecommendation } from "@fusion/core";
 import { createTaskFromRecommendation } from "../api";
+import { AiDisclosure } from "./AiDisclosure";
 import "./TaskRecommendationsTab.css";
 
 export function TaskRecommendationsTab({
@@ -78,6 +79,7 @@ export function TaskRecommendationsTab({
 
   return (
     <section className="task-recommendations" aria-label={t("taskDetail.recommendations.title", "Recommendations")}>
+      {recommendations.length > 0 ? <AiDisclosure kind="ai-assisted-analysis" compact /> : null}
       {recommendations.length === 0 ? (
         /* FNXC:TaskRecommendations 2026-08-12-23:01: TaskDetailModal content-gates this tab, so this empty branch is unreachable by default and only defends an already-open tab whose resolved snapshot empties. */
         <p className="task-recommendations__empty">{t("taskDetail.recommendations.empty", "No recommendations were produced for this task.")}</p>
