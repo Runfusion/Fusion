@@ -92,7 +92,7 @@ describe("decidePlannerRecovery — confirmation gating (FN-7513)", () => {
   });
 
   it("keeps bounded-recovery decisions requiresConfirmation: false", () => {
-    const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal: "progressing" }) });
+    const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal: "stuck" }) });
     expect(decision.action).toBe("inject_guidance");
     expect(decision.requiresConfirmation).toBe(false);
     expect(decision.sideEffectClass).toBe("bounded_recovery");

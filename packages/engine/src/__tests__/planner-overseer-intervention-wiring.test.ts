@@ -231,7 +231,7 @@ pgDescribe("FN-7551 — overseer decision points populate the intervention timel
   it("reviewer stage dispatches inject_guidance and emits an inject-guidance steering entry", async () => {
     const task = await seedTask("in-review");
     const { controllerWithSnapshot } = wireRealEngineOverseer(store);
-    const controller = controllerWithSnapshot(observation({ taskId: task.id, stage: "reviewer", signal: "progressing" }));
+    const controller = controllerWithSnapshot(observation({ taskId: task.id, stage: "reviewer", signal: "blocked" }));
 
     const decision = await controller.tick(task);
     expect(decision?.action).toBe("inject_guidance");
