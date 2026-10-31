@@ -398,16 +398,13 @@ export default defineConfig({
             inMemoryDb. These tests exercise the SQLite Database class being deleted in this feature.
             Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
             */
-            // SQLite-path gate test evicted + quarantined (see engine-core comment + ledger).
-            "src/__tests__/agent-activity-writers.test.ts",
             /*
-            FNXC:ExecutorPauseResumeQuarantine 2026-10-05-17:10:
-            FN-9510's second full-suite sighting again observed zero agent creations only under
-            shard-wide mock/process interference. Keep the whole high-coverage file out of
-            engine-default until the deletion-ratchet deadline rather than weakening its resume
-            assertion or changing the production lifecycle fence.
+            FNXC:EngineTests 2026-10-31-11:02:
+            Retire the expired activity-writer and executor-prompt quarantines in lockstep
+            with their deleted files and ledger rows under the existing 14-day policy.
+            Historical failure records remain in Git and the observed-flake register;
+            the engine-core gate, lifecycle behavior and timeout budgets are unchanged.
             */
-            "src/__tests__/executor-prompt.test.ts",
             "node_modules/**",
             "dist/**",
             // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 rescued the final seven VAL-REMOVAL-005 holdouts by awaiting PG audit reads and modeling async collaborators. Their paired ledger entries and excludes were removed only after targeted green runs.
