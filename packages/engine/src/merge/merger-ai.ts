@@ -117,6 +117,17 @@ import { accumulateSessionTokenUsage } from "../execution/session-token-usage.js
 import { moveTaskToContainedBackwardTarget } from "../execution/lifecycle-move.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
 import { emitBoundedRunAudit, type RunAuditSinkHost } from "../util/emit-bounded-run-audit.js";
+/* RUFU-293: the one empty-land evidence classifier shared by the single-repo guard, the workspace
+   parity guard, and the self-healing stall-deadlock disposition. */
+import {
+  EMPTY_LAND_CONTRADICTION_EVENT,
+  EMPTY_LAND_CONTRADICTION_REASON,
+  EMPTY_MERGE_NO_LANDED_PROOF_REASON,
+  classifyEmptyLandEvidence,
+  emptyLandContradictionAuditMetadata,
+  evaluateWorkspaceEmptyLand,
+  execEmptyLandGit,
+} from "./empty-land-evidence.js";
 import { deriveExecutorSignalMemory, evaluateNoOpFinalizeExecutorVeto } from "../overseer/overseer-noop-finalize-veto.js";
 import { createLogger } from "../logger.js";
 import {
@@ -1194,7 +1205,19 @@ export async function landOneRepo(
     Zero commits ahead is only an unconditional no-op when no durable blocker remains. A retry after reset, rebase, or prior integration must still review the complete integration tree before clearing previously rejected correctness concerns.
     */
     if (Number.parseInt(aheadRaw.trim(), 10) === 0 && outstandingReviewReasons.length === 0) {
-      await audit.git({ type: "merge:ai-empty", target: integrationBranch, metadata: { taskId, tipSha } });
+      /*
+      FNXC:EmptyLandEvidence 2026-10-15-11:49 (RUFU-293 acceptance 4c):
+      `merge:ai-empty` had one shape for two causally different verdicts, so an operator reading the
+      audit store could not tell a branch that genuinely carries no commits from one whose merge agent
+      produced no squash — and only the second one can hide an unapplied contribution that the
+      evidence gate downstream (`runAiMerge`'s `outcome === "empty"` arm) then has to re-prove.
+      `reason` is a fixed enum that names which arm fired; the two arms stay otherwise identical.
+      */
+      await audit.git({
+        type: "merge:ai-empty",
+        target: integrationBranch,
+        metadata: { taskId, tipSha, reason: "branch-truly-empty" as const },
+      });
       return { outcome: "empty", tipSha, integrationBranch, dependencySyncDecision: "not-run-empty" };
     }
 
@@ -1378,7 +1401,16 @@ export async function landOneRepo(
       if (!squashSha) {
         // Branch had no net changes vs the tip — nothing to land. The caller
         // decides how to finalize the (possibly multi-repo) task.
-        await audit.git({ type: "merge:ai-empty", target: integrationBranch, metadata: { taskId, tipSha } });
+        //
+        // `reason: "merge-agent-no-squash"` distinguishes this arm from the pre-clean-room
+        // short-circuit above: the branch WAS ahead (so it carries commits) yet the merge agent
+        // produced no squash. That is exactly the shape RUFU-293's evidence gate re-proves before
+        // any "work may have been reverted or lost" accusation is written.
+        await audit.git({
+          type: "merge:ai-empty",
+          target: integrationBranch,
+          metadata: { taskId, tipSha, reason: "merge-agent-no-squash" as const },
+        });
         return { outcome: "empty", tipSha, integrationBranch, dependencySyncDecision };
       }
 
@@ -2174,32 +2206,85 @@ export async function runAiMerge(
     if (task.noCommitsExpected !== true) {
       const landedProof = await proveEmptyMergeAlreadyLanded(task, branch, integrationBranch, projectRootDir);
       if (!landedProof) {
-        const reason =
-          "branch had no net changes vs main — work may have been reverted or lost; operator review required";
+        /*
+         * FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+         * EVIDENCE GATE in front of the lost-work accusation. `outcome: "empty"` proves only that the
+         * merge agent committed nothing inside the clean room; it does not prove the branch is
+         * net-zero. RUFU-267 is the measured miss: 4 unmerged commits and a 38-file contribution sat
+         * intact on the branch while this guard accused the executor of reverting/losing the work and
+         * the self-healing deadlock sweep later paused the card on that false premise.
+         *
+         * Both evidence classes share ONE disposition — no finalize, `status: "failed"` (keeps
+         * `recoverStrandedCompletedTodoTasks` from re-promoting), contained rebound with progress
+         * preserved — and differ only in diagnosis and audit event. That is deliberate:
+         *   • contradicted      → says "merge-lane malfunction, work is still on the branch" and emits
+         *     `task:empty-land-contradiction-detected`.
+         *   • proven `net-zero` → keeps the FN-8141 sentence byte-identical: an ahead-but-reverted
+         *     branch still has no landed proof and must NOT finalize.
+         *   • proven `ancestor` → same FN-8141 lane; finalizing requires one of
+         *     `proveEmptyMergeAlreadyLanded`'s sanctioned proofs, and a classifier-only ancestor hit
+         *     after that helper said "no proof" is not one of them.
+         *   • unknown           → same FN-8141 lane (absence of evidence is never evidence).
+         * Laundering protection is therefore untouched: the new arm can only make the message honest,
+         * never weaker. It also keeps both diagnoses on the same durable-write call sites — duplicating
+         * them would shift the ordinal-keyed FN-8923 durable-write inventory and orphan its verdicts.
+         */
+        const landEvidence = await classifyEmptyLandEvidence({
+          branch,
+          integrationBranch,
+          exec: execEmptyLandGit(projectRootDir),
+        });
+        const contradicted = landEvidence.evidence === "contradicted";
+        const reason = contradicted ? EMPTY_LAND_CONTRADICTION_REASON : EMPTY_MERGE_NO_LANDED_PROOF_REASON;
         await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason, status: "failed" }));
         if (fence.isOrphaned()) return {
           task, branch, merged: false, noOp: false, ok: true, reason, error: reason,
           worktreeRemoved: false, branchDeleted: false,
         };
         const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
+        /*
+         * The task-log line is operator-facing, so the contradicted branch carries the measured
+         * contribution and names the refs. It must never match `hasPriorAiNoOpFinalizationProof`'s
+         * shape ("... had no net changes vs X — finalizing as no-op"), which only ever ships on
+         * proven paths — hence the different verb clause. Run-audit keeps ids/counts/enums only.
+         */
         await fence.write("log", () => store.logEntry(
           taskId,
-          `Finalize blocked (empty-merge no-landed-proof guard): ${reason} — contained recovery target ${reboundColumn} with progress preserved`,
-          JSON.stringify({ branch, integrationBranch, lane: "ai-empty-merge", baseCommitSha: task.baseCommitSha }, null, 2),
+          contradicted
+            ? `AI merge: empty land verdict for ${branch} vs ${integrationBranch} is CONTRADICTED by branch content (${landEvidence.filesChanged} files, +${landEvidence.insertions}/-${landEvidence.deletions}, ${landEvidence.aheadCount} commits ahead) — merge-lane malfunction, the work is still on the branch; contained recovery target ${reboundColumn} with progress preserved`
+            : `Finalize blocked (empty-merge no-landed-proof guard): ${reason} — contained recovery target ${reboundColumn} with progress preserved`,
+          JSON.stringify(
+            contradicted
+              ? { branch, integrationBranch, lane: "ai-empty-merge", evidence: "contradicted", aheadCount: landEvidence.aheadCount, filesChanged: landEvidence.filesChanged }
+              : { branch, integrationBranch, lane: "ai-empty-merge", baseCommitSha: task.baseCommitSha },
+            null, 2,
+          ),
         ));
-        await audit.database({
-          type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
-          target: taskId,
-          metadata: {
-            reason,
-            branch,
-            integrationBranch,
-            lane: "ai-empty-merge",
-            baseCommitSha: task.baseCommitSha,
-            hadPriorNoOpProof: false,
-            parkedStatus: "failed",
-          },
-        });
+        if (contradicted) {
+          await emitBoundedRunAudit(store, {
+            taskId,
+            agentId: "merger",
+            runId: `merge-${taskId}`,
+            domain: "database",
+            mutationType: EMPTY_LAND_CONTRADICTION_EVENT,
+            target: taskId,
+            metadata: emptyLandContradictionAuditMetadata({ taskId, lane: "ai-empty-merge", evidence: landEvidence }),
+          }, { log: aiMergeLog });
+        } else {
+          await audit.database({
+            type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
+            target: taskId,
+            metadata: {
+              reason,
+              branch,
+              integrationBranch,
+              lane: "ai-empty-merge",
+              baseCommitSha: task.baseCommitSha,
+              hadPriorNoOpProof: false,
+              parkedStatus: "failed",
+            },
+          });
+        }
         await fence.write("lifecycle", () => reboundAiMergeTask(store, taskId));
         return {
           task,
@@ -3598,37 +3683,101 @@ export async function landWorkspaceTask(
      * sub-repo shows the reverted shape (or its branch vanished with nothing landed): set task.error
      * (keeps recoverStrandedCompletedTodoTasks from re-promoting), emit the audit event, and move back
      * to todo instead of laundering it into `done`. noCommitsExpected tasks keep their existing path.
+     *
+     * FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+     * "tip is not an ancestor of the integration branch" is no longer read as proof of reverted work —
+     * it is also the shape of a sub-repo whose work is fully present and simply never applied, which
+     * is RUFU-267's exact failure. Every non-ancestor empty sub-repo is therefore measured before it
+     * is accused (`evaluateWorkspaceEmptyLand`): a contradicted one blocks with the merge-lane
+     * malfunction sentence and its own audit event, while proven-net-zero and unknown keep the FN-8141
+     * lost-work lane with its sentence byte-identical. Both shapes still block — only the diagnosis
+     * and the audit event differ — so laundering protection is unchanged.
      */
     const landedCount = repos.filter((r) => r.status === "landed" && r.landedSha).length;
     /*
     FNXC:WorkspaceMergeFinalization 2026-10-02-21:52 (RUFU-504):
     The ancestry observation is taken ONCE per pass, through the same helper that decides whether a
-    zero-commit workspace is a delivery. The guard keeps its own BLOCKING rule — a `noCommitsExpected`
-    card is never blocked by the reverted-shape test — while the evidence is collected whenever nothing
-    landed, because the delivery decision needs it whatever the marker says (the marker is optional; the
-    probe is the evidence). One pass must not contain two reads of the same refs that can disagree.
+    zero-commit workspace is a delivery. One pass must not contain two reads of the same refs that can
+    disagree.
+
+    FNXC:WorkspaceMergeFinalization 2026-10-23-11:40 (RUFU-293 integration):
+    The single probe now feeds BOTH consumers: RUFU-504's commit-free delivery decision and RUFU-293's
+    empty-land guard. The guard's blocking rule is unchanged (`noCommitsExpected` is never blocked, a
+    landed repo skips the question), but its `basis` is no longer the verdict — `unproven` collapses
+    three shapes the ancestry read cannot separate (branch vanished, ahead-and-contributing,
+    ahead-and-net-zero), and accusing the middle one of being lost work is exactly RUFU-267's false
+    verdict. Each unproven repo is therefore measured by the shared classifier, which reuses this
+    probe's tip rather than repeating the ancestry literal; `zero-ahead` short-circuits to a proven
+    ancestor with no extra git.
     */
     const commitFreeEvidence = repos.length > 0 && landedCount === 0
       ? await probeWorkspaceCommitFree(repos, probeWorkspaceTipAncestry)
       : [];
-    const hasRevertedEmptyRepo = task.noCommitsExpected !== true
-      && commitFreeEvidence.some((repo) => repo.basis === "unproven");
-    if (hasRevertedEmptyRepo) {
-      const reason =
-        "branch had no net changes vs main — work may have been reverted or lost; operator review required";
+    const emptyLand = await evaluateWorkspaceEmptyLand({
+      noCommitsExpected: task.noCommitsExpected,
+      repos,
+      landedCount,
+      classify: async (repo) => {
+        const basis = commitFreeEvidence[repos.indexOf(repo)]?.basis;
+        if (basis === "zero-ahead") return { evidence: "proven", proof: "ancestor" as const };
+        return classifyEmptyLandEvidence({
+          branch: repo.branch,
+          integrationBranch: repo.integrationBranch,
+          exec: execEmptyLandGit(repo.repoRootDir),
+        });
+      },
+    });
+    const contradictedEmptyRepoCount = emptyLand.contradictedRepoCount;
+    const contradictedEvidence = emptyLand.evidence;
+    if (emptyLand.blocksFinalize) {
+      /*
+       * A mixed batch (one contradicted sub-repo, another genuinely net-zero) reports the
+       * contradiction: it is the statement that is true of at least one repo and the one the operator
+       * must act on, while the per-repo detail stays in the task log. Disposition is identical either
+       * way — no finalize, contained rebound with progress preserved.
+       */
+      const contradicted = contradictedEmptyRepoCount > 0;
+      const reason = contradicted ? EMPTY_LAND_CONTRADICTION_REASON : EMPTY_MERGE_NO_LANDED_PROOF_REASON;
       await fence.write("lifecycle", () => store.updateTask(taskId, { error: reason }));
       if (fence.isOrphaned()) return { taskId, repos, allLanded, finalized: false, finalizeBlockedReason: reason };
       const reboundColumn = await resolveFinalizeReboundColumn(store, taskId);
       await fence.write("log", () => store.logEntry(
         taskId,
-        `Finalize blocked (empty-merge no-landed-proof guard, workspace): ${reason} — contained recovery target ${reboundColumn} with progress preserved`,
-        JSON.stringify({ lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, repos: repos.map((r) => r.repo) }, null, 2),
+        contradicted
+          ? `Finalize blocked (empty-land contradicted guard, workspace): ${contradictedEmptyRepoCount} sub-repo(s) still hold unapplied content (${contradictedEvidence?.filesChanged} files, +${contradictedEvidence?.insertions}/-${contradictedEvidence?.deletions} on the first) — merge-lane malfunction, not lost work; contained recovery target ${reboundColumn} with progress preserved`
+          : `Finalize blocked (empty-merge no-landed-proof guard, workspace): ${reason} — contained recovery target ${reboundColumn} with progress preserved`,
+        JSON.stringify({
+          lane: "ai-empty-merge-workspace",
+          repoCount: repos.length,
+          landedCount,
+          evidence: contradicted ? "contradicted" : "no-landed-proof",
+          contradictedEmptyRepoCount,
+          repos: repos.map((r) => r.repo),
+        }, null, 2),
       ).catch(() => undefined));
-      await audit.database({
-        type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
-        target: taskId,
-        metadata: { reason, lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, hadPriorNoOpProof: false },
-      }).catch(() => undefined);
+      if (contradicted && contradictedEvidence) {
+        await emitBoundedRunAudit(store, {
+          taskId,
+          agentId: "merger",
+          runId: `merge-${taskId}`,
+          domain: "database",
+          mutationType: EMPTY_LAND_CONTRADICTION_EVENT,
+          target: taskId,
+          metadata: emptyLandContradictionAuditMetadata({
+            taskId,
+            lane: "ai-empty-merge-workspace",
+            evidence: contradictedEvidence,
+            repoCount: repos.length,
+            landedCount,
+          }),
+        }, { log: aiMergeLog });
+      } else {
+        await audit.database({
+          type: "task:empty-merge-finalize-blocked-no-landed-proof" as Parameters<typeof audit.database>[0]["type"],
+          target: taskId,
+          metadata: { reason, lane: "ai-empty-merge-workspace", repoCount: repos.length, landedCount, hadPriorNoOpProof: false },
+        }).catch(() => undefined);
+      }
       await fence.write("lifecycle", () => reboundAiMergeTask(store, taskId));
       return { taskId, repos, allLanded, finalized: false, finalizeBlockedReason: reason };
     }

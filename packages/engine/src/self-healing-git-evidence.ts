@@ -34,6 +34,13 @@ import { join } from "node:path";
    the class body the bare identifier resolves to this import. That collision
    pre-dates the move and is preserved exactly. */
 import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./merge/already-merged-detector.js";
+/* RUFU-293: the empty-land evidence gate is ONE classifier shared with the merge lane. The alias
+   keeps the module function addressable next to the protected override seam below. */
+import {
+  classifyEmptyLandEvidence as classifyEmptyLandEvidenceWithGit,
+  execEmptyLandGit,
+  type EmptyLandEvidenceResult,
+} from "./merge/empty-land-evidence.js";
 /* RUFU-231: shared trusted-integration-identity chain (one decision with the branch-conflict
    inspection and the checkout-emptiness prover). branch-conflicts.ts imports neither this file
    nor self-healing.ts, so the direction stays one-way. */
@@ -1083,6 +1090,29 @@ export abstract class SelfHealingGitEvidence {
       }
     }
     return false;
+  }
+
+  /**
+   * FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+   * Re-prove an "empty land" claim before a recovery disposition repeats it. The stall-deadlock
+   * disposition terminalizes a card on the merge lane's empty verdict; RUFU-267 showed that verdict
+   * can be false while the branch still holds the work, so the premise is re-derived from git here
+   * instead of trusted from the error text.
+   *
+   * This protected seam exists so fixture tests inject evidence shapes without shelling real git,
+   * mirroring `execBranchProbe` / `hasUnlandedTaskOwnedContent`. Read-only, and `unknown` on any
+   * probe loss — a subclass or a broken repository never gains the power to approve a disposition.
+   */
+  protected async classifyEmptyLandEvidence(input: {
+    branch: string;
+    integrationBranch: string;
+    repoRootDir?: string;
+  }): Promise<EmptyLandEvidenceResult> {
+    return classifyEmptyLandEvidenceWithGit({
+      branch: input.branch,
+      integrationBranch: input.integrationBranch,
+      exec: execEmptyLandGit(input.repoRootDir ?? this.options.rootDir),
+    });
   }
 
   protected async isBranchTipMisboundToTask(input: {

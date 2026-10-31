@@ -2857,6 +2857,40 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    /*
+     * FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+     * The RUFU-293 contradicted-diagnosis sentence is the SAME containment as the FN-8141 lane, so the
+     * stranded-todo promoter must exclude it for the same reason. Coverage is symmetric on purpose:
+     * the two sentences come from one guard and a card parked on either must not ping-pong to review.
+     */
+    it("RUFU-293: does not re-promote a task the empty-land contradiction guard blocked (error set)", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-293",
+          column: "todo",
+          paused: false,
+          error: "empty land verdict contradicted by branch content — merge-lane malfunction, work is still on the branch; operator review required",
+          reviewLevel: 2,
+          steps: [{ status: "done" }, { status: "done" }, { status: "done" }, { status: "skipped" }, { status: "skipped" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
     it("recovers blockedBy todo tasks when all steps are complete", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
 

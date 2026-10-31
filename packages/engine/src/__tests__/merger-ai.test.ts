@@ -1172,6 +1172,18 @@ describe("runAiMerge", () => {
     expect(result.merged).toBe(false);
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
     expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
+
+    /*
+    FNXC:EmptyLandEvidence 2026-10-15-12:21 (RUFU-293 acceptance 4c):
+    `merge:ai-empty` is one event name over two causally different arms, and only the post-merge arm
+    can hide an unapplied contribution. The closed `reason` enum is the only place the distinction
+    survives into the audit store, so the arm that fires here must be pinned to `branch-truly-empty`.
+    */
+    const emptyArmRows = (store.recordRunAuditEvent as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((entry) => entry.mutationType === "merge:ai-empty");
+    expect(emptyArmRows).toHaveLength(1);
+    expect(emptyArmRows[0]?.metadata).toMatchObject({ reason: "branch-truly-empty" });
   });
 
   it("demotes a no-commits task with skipped-out work instead of AI empty-merge finalizing done", async () => {
@@ -1340,7 +1352,83 @@ describe("runAiMerge", () => {
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
     );
+    /*
+     * RUFU-293 control: a branch that is genuinely ahead-but-net-zero is PROVEN empty, not
+     * contradicted, so it must keep the FN-8141 sentence and event rather than the malfunction one.
+     */
+    expect(result.error).toContain("work may have been reverted or lost");
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "task:empty-land-contradiction-detected" }),
+    );
     // The integration branch must NOT advance and NOT be marked done.
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  /*
+   * RUFU-293 regression (RUFU-267): the merge agent committed nothing in the clean room while the
+   * branch still carried its real unapplied contribution. The empty verdict is contradicted by git,
+   * so the board must say "merge-lane malfunction, work is still on the branch" — never "reverted or
+   * lost", which blamed the executor for a merge-lane failure and hid work that was recoverable.
+   * Same containment as the FN-8141 lane: no finalize, integration branch untouched.
+   */
+  it("reports an honest merge-lane malfunction when an empty land verdict is contradicted by branch content", async () => {
+    // Branch carries feature.txt and was never merged: real unapplied content, tip NOT an ancestor.
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { store, task } = makeStore(dir); // commit-expected
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      // Merge agent applies nothing → empty outcome, even though the branch has real content.
+      mergeAgent: vi.fn(async () => { /* nothing lands */ }),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(false);
+    expect(result.noOp).toBe(false);
+    expect(result.error).toBe(
+      "empty land verdict contradicted by branch content — merge-lane malfunction, work is still on the branch; operator review required",
+    );
+    // The lost-work accusation must not survive anywhere on the contradicted path.
+    expect(result.error).not.toContain("had no net changes");
+    expect(result.error).not.toContain("reverted or lost");
+    expect(task).toMatchObject({ status: "failed", error: expect.stringContaining("merge-lane malfunction") });
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-1", "done", expect.anything());
+
+    const auditCalls = (store.recordRunAuditEvent as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const contradiction = auditCalls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((entry) => entry.mutationType === "task:empty-land-contradiction-detected");
+    expect(contradiction).toBeDefined();
+    expect(contradiction?.target).toBe("FN-1");
+    // Ids/counts/enums only: branch and integration branch names stay out of run-audit.
+    expect(contradiction?.metadata).toMatchObject({
+      taskId: "FN-1",
+      lane: "ai-empty-merge",
+      evidence: "contradicted",
+    });
+    const metadata = contradiction?.metadata as Record<string, number>;
+    expect(metadata.aheadCount).toBeGreaterThan(0);
+    expect(metadata.filesChanged).toBeGreaterThan(0);
+    expect(metadata.insertions).toBeGreaterThan(0);
+    expect(contradiction?.metadata).not.toHaveProperty("branch");
+    expect(contradiction?.metadata).not.toHaveProperty("integrationBranch");
+    // The FN-8141 event belongs to the net-zero lane only.
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationType: "task:empty-merge-finalize-blocked-no-landed-proof" }),
+    );
+    /*
+    FNXC:EmptyLandEvidence 2026-10-15-12:21 (RUFU-293 acceptance 4c):
+    The empty verdict this test contradicts was declared by the POST-merge arm — the branch was ahead
+    and the merge agent still produced no squash — so its `merge:ai-empty` row must say so. Without
+    the discriminator the audit store cannot tell this shape from a genuinely empty branch, which is
+    what let RUFU-267's malfunction read as "nothing to land" for three weeks.
+    */
+    const emptyArm = auditCalls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((entry) => entry.mutationType === "merge:ai-empty");
+    expect(emptyArm).toBeDefined();
+    expect(emptyArm?.metadata).toMatchObject({ reason: "merge-agent-no-squash" });
+    // The integration branch must NOT advance.
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
   });
 

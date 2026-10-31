@@ -217,6 +217,25 @@ export type GitMutationType =
   | "merge:scope:auto-widen"
   | "merge:ai-clean-room"
   | "merge:ai-no-branch"
+  /**
+   * Metadata shape:
+   * ```ts
+   * {
+   *   taskId: string;
+   *   tipSha: string;
+   *   reason: "branch-truly-empty" | "merge-agent-no-squash";
+   * }
+   * ```
+   *
+   * FNXC:EmptyLandEvidence 2026-10-15-11:49 (RUFU-293 acceptance 4c):
+   * `reason` is the closed arm vocabulary. `branch-truly-empty` is the pre-clean-room short-circuit
+   * (zero commits ahead of the integration tip with no durable review blockers); `merge-agent-no-squash`
+   * is the post-merge arm where the branch WAS ahead but the merge agent produced no squash. The second
+   * arm is the one that can carry an unapplied contribution, which is why the RUFU-293 evidence gate
+   * re-proves the empty premise at `runAiMerge`'s `outcome === "empty"` handler before any finalize
+   * wording is written. Neither arm's row asserts anything about the branch's content — that finding
+   * belongs to `task:empty-land-contradiction-detected`.
+   */
   | "merge:ai-empty"
   | "merge:ai-review-verdict"
   | "merge:ai-review-blocked"
@@ -1183,6 +1202,15 @@ export type DatabaseMutationType =
    * Metadata: { reason, branch, integrationBranch, lane, baseCommitSha?, hadPriorNoOpProof? }
    */
   | "task:empty-merge-finalize-blocked-no-landed-proof"
+  /**
+   * FNXC:EmptyLandEvidence 2026-09-25-10:55:
+   * RUFU-293: an "empty land" verdict (the merge agent committed nothing) was contradicted by
+   * read-only branch evidence — the branch still contributes unapplied content, so the merge lane
+   * malfunctioned and the work is NOT reverted/lost. Emitted by whichever door caught it
+   * (`lane`: ai-empty-merge | ai-empty-merge-workspace | self-healing-stall-deadlock).
+   * Metadata: { taskId, lane, evidence, aheadCount?, filesChanged?, insertions?, deletions?, repoCount?, landedCount? }
+   */
+  | "task:empty-land-contradiction-detected"
   | "task:integrity-reconcile-modified-files"
   | "task:integrity-warning"
   /** FN-5092 watchdog: stale `status: "merging"` / `"merging-pr"` cleared on a workflow Complete task. Metadata: { previousColumn, previousStatus, ageMs, mergeConfirmed?: boolean } */

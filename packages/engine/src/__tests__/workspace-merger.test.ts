@@ -118,6 +118,12 @@ function createStore(settings: Record<string, unknown> = {}): TaskStore & Record
     }),
     upsertTaskCommitAssociation: vi.fn().mockResolvedValue(undefined),
     accumulateTokenUsage: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:EmptyLandEvidence 2026-10-15-12:21 (RUFU-293): the contradicted-empty-land coverage below reads
+    the run-audit rows the land produced, so this store double must actually accept them. Without the
+    sink `createRunAuditor` degrades to a no-op auditor and the audit assertions could not see anything.
+    */
+    recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
     emit: (event: string, payload?: unknown) => {
       emitted.push({ event, payload });
       return realEmit(event, payload);
@@ -752,6 +758,75 @@ describeIfGit("landWorkspaceTask — per-repo merge loop (Phase C U1)", () => {
     // Integration refs unchanged.
     expect(fx.git("repo-a", "git rev-parse refs/heads/main")).toBe(tipABefore);
     expect(fx.git("repo-b", "git rev-parse refs/heads/main")).toBe(tipBBefore);
+  });
+
+  /*
+   * RUFU-293 production-path regression (RUFU-267's exact shape): a sub-repo whose merge lane applied
+   * nothing while its branch still carries the unapplied contribution comes back `empty` with its tip
+   * NOT an ancestor of the integration branch. Pre-RUFU-293 the parity guard read that as reverted or
+   * lost work; the evidence gate must instead name a merge-lane malfunction, keep the FN-8141
+   * accusation off the card entirely, and leave the per-repo `merge:ai-empty` row naming the arm that
+   * made the contradiction detectable. Containment is unchanged: no finalize, no ref advance.
+   */
+  it("RUFU-293: blocks a contradicted workspace empty land as a merge-lane malfunction, not lost work", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    // Both branches are ahead with real content and were never merged: nothing here is net-zero.
+    addRepoBranchWithEdit(fx, "repo-a", "a feature\n");
+    addRepoBranchWithEdit(fx, "repo-b", "b feature\n");
+
+    const tipABefore = fx.git("repo-a", "git rev-parse refs/heads/main");
+    const tipBBefore = fx.git("repo-b", "git rev-parse refs/heads/main");
+
+    const store = createStore();
+    const task = makeTask({
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    });
+
+    const result = await landWorkspaceTask(store, task, fx.rootDir, {}, {
+      // The malfunction itself: the merge lane leaves HEAD at the tip in every clean room, so the
+      // squash is empty even though both branches hold content the integration branch lacks.
+      mergeAgent: vi.fn(async () => { /* nothing lands */ }),
+      reviewAgent: approveReviewAgent,
+    });
+
+    expect(result.finalized).toBe(false);
+    for (const r of result.repos) expect(r.status).toBe("empty");
+    expect(result.finalizeBlockedReason).toBe(
+      "empty land verdict contradicted by branch content — merge-lane malfunction, work is still on the branch; operator review required",
+    );
+    // The lost-work accusation must not survive on this path, in the block reason or on the card.
+    expect(result.finalizeBlockedReason).not.toEqual(expect.stringContaining("reverted or lost"));
+    expect(result.finalizeBlockedReason).not.toEqual(expect.stringContaining("had no net changes"));
+    expect(store.updateTask).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.objectContaining({ error: expect.stringContaining("merge-lane malfunction") }),
+    );
+    expect(store.emitted.some((e) => e.event === "task:merged")).toBe(false);
+
+    // Nothing was applied and nothing was lost: both integration refs are exactly where they were.
+    expect(fx.git("repo-a", "git rev-parse refs/heads/main")).toBe(tipABefore);
+    expect(fx.git("repo-b", "git rev-parse refs/heads/main")).toBe(tipBBefore);
+
+    const auditRows = (store.recordRunAuditEvent as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => call[0] as Record<string, unknown>);
+    const contradiction = auditRows.find((entry) => entry.mutationType === "task:empty-land-contradiction-detected");
+    expect(contradiction).toBeDefined();
+    expect(contradiction?.metadata).toMatchObject({
+      taskId: TASK_ID,
+      lane: "ai-empty-merge-workspace",
+      evidence: "contradicted",
+      repoCount: 2,
+      landedCount: 0,
+    });
+    // Ids/counts/enums only — the ref names stay out of run-audit.
+    expect(contradiction?.metadata).not.toHaveProperty("branch");
+    // The FN-8141 net-zero event belongs to the proven-empty lane only.
+    expect(auditRows.some((entry) => entry.mutationType === "task:empty-merge-finalize-blocked-no-landed-proof")).toBe(false);
+    // Every sub-repo's empty verdict names the arm that can hide unapplied work.
+    const emptyArms = auditRows.filter((entry) => entry.mutationType === "merge:ai-empty");
+    expect(emptyArms).toHaveLength(2);
+    for (const row of emptyArms) expect(row.metadata).toMatchObject({ reason: "merge-agent-no-squash" });
   });
 });
 

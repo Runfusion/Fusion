@@ -170,6 +170,17 @@ import { registerLifecycleMoveLog } from "./execution/lifecycle-move-log.js";
 import { moveTaskToContainedBackwardTarget, type ContainedLifecycleMoveResult } from "./execution/lifecycle-move.js";
 import { emitBoundedRunAudit, emitBoundedRunAuditWithOutcome } from "./util/emit-bounded-run-audit.js";
 import { runLongTermMemoryMaintenance, type LongTermMemoryMaintenanceResult } from "./memory/long-term-consolidation.js";
+/*
+FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293): one classifier behind the merge guards and this
+sweep, so a recovery lane can never again accuse an executor of lost work on an unsanctioned premise.
+*/
+import {
+  EMPTY_LAND_CONTRADICTION_EVENT,
+  EMPTY_LAND_CONTRADICTION_REASON,
+  EMPTY_MERGE_NO_LANDED_PROOF_REASON,
+  emptyLandContradictionAuditMetadata,
+  type EmptyLandEvidenceResult,
+} from "./merge/empty-land-evidence.js";
 import { createProcfsGitChildProbe, reapOrphanedGitChildren, type GitChildProcessProbe } from "./util/orphaned-git-child-reaper.js";
 import {
   TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
@@ -1007,6 +1018,33 @@ const RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET = new Set<string>(MERGE_A
 import { classifyTransientMergeError } from "./errors/transient-merge-error-classifier.js";
 
 export { classifyTransientMergeError } from "./errors/transient-merge-error-classifier.js";
+
+/*
+FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+The stall-deadlock disposition terminalizes on a stall reason *derived from* `task.error`. When that
+error came from an empty-merge finalize guard, the premise may itself be false — RUFU-267 was paused on
+"work may have been reverted or lost" while its branch held 4 unmerged commits and a 38-file
+contribution. This gate decides whether the read-only re-probe is worth running: only a card whose
+CURRENT error carries one of the two empty-merge premise sentences can be a victim of this class, so
+the probe never fires for an ordinary stall.
+
+Cost: the `repetitionCount >= threshold` test that selects the deadlock arm is only computable inside the
+apply transaction, so predicting it from a possibly-slim pre-read row risks skipping the probe on the one
+dispatch that matters. Probing on the premise alone instead costs ≤ 3 read-only git commands per surfaced
+stall of a card that is already pathological (and whose stalls are at least `timeoutMs` apart) — cheap
+insurance against re-pausing a card whose work is intact.
+*/
+export function shouldProbeEmptyLandDeadlockPremise(input: {
+  error?: string;
+  threshold: number;
+  userPaused?: boolean;
+}): boolean {
+  if (input.userPaused === true) return false;
+  if (!(input.threshold > 0)) return false;
+  const error = typeof input.error === "string" ? input.error : "";
+  return error.includes(EMPTY_MERGE_NO_LANDED_PROOF_REASON) || error.includes(EMPTY_LAND_CONTRADICTION_REASON);
+}
+
 const MAX_STARVATION_DROPS = 3;
 /*
 FNXC:VerdictlessFailedGate 2026-09-14-14:47 (RUFU-217, Step 5 / AC1):
@@ -13964,6 +14002,22 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         if (!selectedSignal || await this.isMergeLaneOwned(task.id)) continue;
 
         const threshold = resolveInReviewStallDeadlockThreshold(settings);
+        /*
+        FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+        The read-only re-probe runs BEFORE the fenced apply because the apply's compute callback is
+        synchronous and transaction-shaped — awaiting git inside it would hold the task's advisory lock
+        over a subprocess. The result is only *consumed* by the deadlock arm, and that arm re-checks the
+        premise against `live.error`, so a card that gained a different error between this read and the
+        transaction keeps its own diagnosis.
+        */
+        const emptyLandEvidence = shouldProbeEmptyLandDeadlockPremise({
+          error: typeof task.error === "string" ? task.error : undefined,
+          threshold,
+          userPaused: task.userPaused === true,
+        })
+          ? await this.probeEmptyLandDeadlockPremise(task)
+          : undefined;
+        const emptyLandContradicted = emptyLandEvidence?.evidence === "contradicted";
         let appliedSignal: typeof selectedSignal | undefined;
         let repetitionCount = 0;
         let disposition: "observation" | "deadlock" | "terminal-provider" | undefined;
@@ -14044,17 +14098,39 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
             && !isAwaitingReviewRevision(live)
           ) {
             disposition = "deadlock";
+            /*
+            FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+            One predicate feeds both the log line and the terminal error so the two surfaces can never
+            disagree about whether this park was contradicted. Re-checked against `live.error` because the
+            probe ran on the pre-read row: if the card gained a different error in between, the probe's
+            measurement is about a premise that no longer stands. The clause counts stay here (and in the
+            audit row) rather than in the error sentence, which is a shared constant.
+            */
+            const liveError = String(live.error ?? "");
+            const contradictedPremise = emptyLandContradicted
+              && (liveError.includes(EMPTY_MERGE_NO_LANDED_PROOF_REASON) || liveError.includes(EMPTY_LAND_CONTRADICTION_REASON));
+            const contradictionClause = contradictedPremise
+              ? ` NOTE: ${EMPTY_LAND_CONTRADICTION_REASON} (${emptyLandEvidence?.filesChanged ?? 0} files, +${emptyLandEvidence?.insertions ?? 0}/-${emptyLandEvidence?.deletions ?? 0}, ahead ${emptyLandEvidence?.aheadCount ?? 0})`
+              : "";
             return {
               logEntry: {
                 timestamp,
-                action: `${IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX}${signal.code}]: deadlock-prevention threshold reached after ${repetitionCount} identical stalls — pausing task. last reason: ${signal.reason}`,
+                action: `${IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX}${signal.code}]: deadlock-prevention threshold reached after ${repetitionCount} identical stalls — pausing task. last reason: ${signal.reason}${contradictionClause}`,
               },
               paused: true,
               // FNXC:VerdictlessFailedGate 2026-09-14-14:47 (RUFU-217): single-sourced with the
               // parked-card classifier — byte-identical strings, drift would deafen recovery.
               pausedReason: IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
               status: "failed",
-              error: `${IN_REVIEW_STALL_DEADLOCK_ERROR_PREFIX}${signal.code} repeated ${repetitionCount}× without progress. ${signal.reason}`,
+              /*
+              FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+              Prefix, code, and repetition stem stay byte-identical — the FN-8953 wedge descriptor, the
+              `In-review stall deadlock` matcher and RUFU-280's verdict-less-gate classifier all reason
+              about them. Only the embedded clause is replaced, and only while `live.error` still carries
+              the empty-merge premise the probe measured. Disposition, counters, `pausedReason` and the
+              owner-detach are untouched: a contradicted verdict explains the park, it does not release it.
+              */
+              error: `${IN_REVIEW_STALL_DEADLOCK_ERROR_PREFIX}${signal.code} repeated ${repetitionCount}× without progress. ${contradictedPremise ? EMPTY_LAND_CONTRADICTION_REASON : signal.reason}`,
             };
           }
           disposition = "observation";
@@ -14086,6 +14162,31 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
             worktree: outcome.task.worktree ?? null,
           },
         });
+
+        /*
+        FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+        The deadlock row above records the reason the lane *believed*; this one records that the belief
+        was contradicted, so an operator triaging "why is this review card paused" sees the branch still
+        holds content without reading git. Emitted after the fence applied and only for the terminalizing
+        dispatch; the write goes through the bounded seam so a stalled audit sink cannot delay or alter
+        the pause that was already committed. Metadata is ids/counts/fixed enums only — branch names stay
+        in the task log.
+        */
+        if (disposition === "deadlock" && emptyLandEvidence && emptyLandContradicted) {
+          await emitBoundedRunAudit(this.store, {
+            taskId: task.id,
+            agentId: "self-healing",
+            runId: generateSyntheticRunId("self-healing-stall-deadlock", task.id),
+            domain: "database",
+            mutationType: EMPTY_LAND_CONTRADICTION_EVENT,
+            target: task.id,
+            metadata: emptyLandContradictionAuditMetadata({
+              taskId: task.id,
+              lane: "self-healing-stall-deadlock",
+              evidence: emptyLandEvidence,
+            }),
+          }, { log });
+        }
       }
 
       return surfaced;
@@ -14140,6 +14241,25 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
   at-most-once dedup matches on that prefix, so one sweep's entry is invisible to
   another's suppression check.
   */
+  /*
+  FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+  Re-proves the git premise behind an empty-merge stall from the recovery side, through the protected
+  `classifyEmptyLandEvidence` seam so a test can supply evidence without shelling git. Returns undefined
+  ("no new evidence") for a card with no attached branch — the deadlock arm itself detaches the branch, so
+  a re-run over an already-detached card must keep the operator-facing diagnosis it already has rather
+  than invent one. Any git or resolution failure degrades the same way: conservative, never a guess.
+  */
+  private async probeEmptyLandDeadlockPremise(task: Task): Promise<EmptyLandEvidenceResult | undefined> {
+    const branch = typeof task.branch === "string" && task.branch.length > 0 ? task.branch : undefined;
+    if (!branch) return undefined;
+    try {
+      const integrationBranch = task.baseBranch || await resolveIntegrationBranch(this.options.rootDir, undefined);
+      return await this.classifyEmptyLandEvidence({ branch, integrationBranch });
+    } catch {
+      return undefined;
+    }
+  }
+
   /** A once-only opener: the first caller starts the cycle, the rest await it. */
   private surfacingCycleMemo(): () => Promise<SurfacingCycle | null> {
     let pending: Promise<SurfacingCycle | null> | undefined;

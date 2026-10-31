@@ -43,6 +43,7 @@ Events that close a task's delivery: blocked/advanced completion parks, already-
 | `task:zero-commit-landing-proof-refused` | A finalization lane refused to finalize a zero-commit card whose checkout still held work, or could not be classified (RUFU-274). Metadata is ids/counts/fixed enums only — never paths or content. |
 | `task:zero-commit-landing-proof-deferred` | A finalization lane deferred on a zero-commit card because zero-ness or checkout content could not be proven, instead of finalizing on a guess (RUFU-274). Metadata is ids/counts/fixed enums only. |
 | `task:zero-commit-landing-proof-cleared` | A re-probe proved the cause of a durable uncommitted-work hold is gone and the hold was cleared (RUFU-274). Metadata is the task ID, lane and prior reason code only. |
+| `task:empty-land-contradiction-detected` | An "empty land" verdict was contradicted by read-only branch evidence — the branch still contributes unapplied content, so the merge lane malfunctioned and the work is not reverted/lost (RUFU-293). Metadata is task ID, the detecting `lane`, the fixed `evidence` enum, and counts only. |
 | `task:finalize-unproven-blocked` | Finalize is blocked because finalization has not been proven against the landing truth. |
 | `task:merge-boundary-unproven-parked` | A workflow merge boundary could not be proven and its terminal park is recorded with best-effort, time-bounded telemetry that never blocks or stalls the park. |
 | `task:merge-boundary-evidence-recovered` | Self-healing reverified durable unfinished work on a historic proofless boundary park and resumed named implementation remediation. Metadata contains task ID and a fixed outcome only. |
@@ -76,6 +77,10 @@ History line, written alongside it.
 Without this row a refusal is invisible to the board: the move throws, the mover sees the sentence, and the
 card stays put. With it, "how often does a human-attributed move get refused at the completion boundary,
 and from which surface?" is one query.
+
+### Empty-land verdict arms (RUFU-293)
+
+The AI merge lane reports "nothing to land" through the git event `merge:ai-empty`, which fires from exactly two arms and now carries a closed `reason` enum so the two are distinguishable in the audit store: `branch-truly-empty` (zero commits ahead of the integration tip, with no durable review blockers — checked before any clean room is built) and `merge-agent-no-squash` (the branch WAS ahead, yet the merge agent produced no squash). Only the second arm can hide an unapplied contribution, so `runAiMerge`'s `outcome: "empty"` handler re-proves the empty premise with read-only git evidence before any finalize wording is written: a proven `ancestor`/`net-zero` contribution keeps the historical FN-8141 "work may have been reverted or lost" refusal verbatim, while a **contradicted** premise is recorded as a merge-lane malfunction under `task:empty-land-contradiction-detected` (table above) instead of accusing the work of being lost. Metadata stays ids/counts/fixed enums (`taskId`, `tipSha`, `reason`); branch content, diffs, and paths never enter the row.
 
 ## Self-healing reconciliation events
 

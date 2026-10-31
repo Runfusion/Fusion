@@ -51,6 +51,13 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENTS_LITERALS = [
   "task:zero-commit-landing-proof-refused",
   "task:zero-commit-landing-proof-deferred",
   "task:zero-commit-landing-proof-cleared",
+  /*
+  FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
+  The evidence gate beside the guard above: it fires when the empty-land claim is CONTRADICTED by
+  branch content, i.e. the opposite finding from a proven net-zero refusal. Sibling event, same
+  delivery-pipeline finalization theme, so it belongs in the curated set rather than doc prose only.
+  */
+  "task:empty-land-contradiction-detected",
   "task:finalize-unproven-blocked",
   "task:merge-boundary-unproven-parked",
   "task:merge-boundary-evidence-recovered",
@@ -138,6 +145,8 @@ export const DELIVERY_PIPELINE_RUN_AUDIT_EVENT_NOTES: Readonly<Record<DeliveryPi
     "A finalization lane deferred on a zero-commit card because zero-ness or checkout content could not be proven, instead of finalizing on a guess (RUFU-274). Metadata is ids/counts/fixed enums only.",
   "task:zero-commit-landing-proof-cleared":
     "A re-probe proved the cause of a durable uncommitted-work hold is gone and the hold was cleared (RUFU-274). Metadata is the task ID, lane and prior reason code only.",
+  "task:empty-land-contradiction-detected":
+    "An empty-land verdict was contradicted by branch evidence (unapplied content remains); the merge lane malfunctioned (RUFU-293).",
   "task:finalize-unproven-blocked":
     "Finalize is blocked because finalization has not been proven against the landing truth.",
   "task:merge-boundary-unproven-parked":
