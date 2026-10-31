@@ -58,9 +58,20 @@ describe("decidePlannerRecovery", () => {
     expect(decision.attemptLimit).toBe(PLANNER_RECOVERY_MAX_ATTEMPTS);
   });
 
-  it("yields inject_guidance for a reviewer stage", () => {
-    const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal: "progressing" }) });
-    expect(decision.action).toBe("inject_guidance");
+  it("yields inject_guidance for a reviewer stage with a problem signal", () => {
+    for (const signal of ["stuck", "blocked"] as const) {
+      const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal }) });
+      expect(decision.action, `signal=${signal}`).toBe("inject_guidance");
+    }
+  });
+
+  // A review that is merely open reports `progressing`; steering it looped once per tick because a healthy
+  // signal also resets the controller's attempt budget.
+  it("returns none for a reviewer stage with a healthy or human-wait signal", () => {
+    for (const signal of ["progressing", "complete", "awaiting-human"] as const) {
+      const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal }) });
+      expect(decision.action, `signal=${signal}`).toBe("none");
+    }
   });
 
   it("yields inject_guidance for a stuck-but-not-failed stage", () => {

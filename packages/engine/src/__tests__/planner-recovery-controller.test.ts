@@ -50,11 +50,22 @@ describe("PlannerRecoveryController.tick", () => {
 
   it("dispatches injectGuidance for a reviewer-stage decision", async () => {
     const injectGuidance = vi.fn().mockResolvedValue(undefined);
-    const controller = makeController(observation({ stage: "reviewer", signal: "progressing" }), { injectGuidance });
+    const controller = makeController(observation({ stage: "reviewer", signal: "blocked" }), { injectGuidance });
 
     const decision = await controller.tick(task());
     expect(decision?.action).toBe("inject_guidance");
     expect(injectGuidance).toHaveBeenCalledTimes(1);
+  });
+
+  it("never steers an open review that reports progressing, however many ticks run", async () => {
+    const injectGuidance = vi.fn().mockResolvedValue(undefined);
+    const controller = makeController(observation({ stage: "reviewer", signal: "progressing" }), { injectGuidance });
+
+    for (let tick = 0; tick < 5; tick += 1) {
+      const decision = await controller.tick(task());
+      expect(decision?.action).toBe("none");
+    }
+    expect(injectGuidance).not.toHaveBeenCalled();
   });
 
   it("dispatches requestTargetedFix when the failed observation carries an error source link", async () => {
