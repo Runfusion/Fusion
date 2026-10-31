@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -152,9 +153,11 @@ Durable fix for the packaged desktop app missing runtime dependencies.
 electron-builder's pnpm support runs `pnpm list --prod` and silently drops
 `deduped` subtrees, so the embedded Local runtime's `import("@fusion/engine")`
 closure (@modelcontextprotocol/sdk, the pi-ai provider SDKs, etc.) was never
-packed and the app crashed with ERR_MODULE_NOT_FOUND. Instead of relying on that
-collector, materialize the complete production closure with `pnpm deploy`
-(legacy + hoisted => a real flat node_modules that pnpm resolves correctly) and
+packed and the app crashed with ERR_MODULE_NOT_FOUND.
+
+FNXC:DesktopLockedStaging 2026-10-23-12:00:
+Instead of relying on that collector, materialize the complete production closure with `pnpm deploy`
+(dedicated workspace lockfile + hoisted => locked, flat node_modules) and
 point electron-builder at that staged directory via --projectDir.
 
 - --prod drops devDependencies (electron itself), so copy electron's package.json
@@ -162,8 +165,9 @@ point electron-builder at that staged directory via --projectDir.
   the runtime separately).
 - Rewrite the staged electron-builder.yml output to ../dist-electron so artifacts
   still land in packages/desktop/dist-electron for the existing workflow globs.
-- The stage has no pnpm-lock, so electron-builder treats it as a plain flat
-  project and packs the whole node_modules — no dedup gap.
+- After the locked install completes, remove only the generated stage lockfile.
+  electron-builder still sees the same plain flat project and packs the whole
+  node_modules — no dedup gap. The source workspace lockfile remains untouched.
 */
 /*
  * FNXC:DesktopBuild 2026-07-03-10:20:
@@ -243,13 +247,97 @@ export async function verifyEmbeddedPostgresPayloads(
   }
 }
 
+async function normalizeDesktopDeployManifest(): Promise<void> {
+  const root = await realpath(desktopDeployDir);
+  const insideStage = (path: string) => path === root || path.startsWith(root + sep);
+  const visited = new Set<string>();
+
+  async function visit(directory: string): Promise<void> {
+    directory = await realpath(directory);
+    if (!insideStage(directory)) throw new Error("Staged dependency resolves outside the deployment");
+    if (visited.has(directory)) return;
+    visited.add(directory);
+    const manifestPath = resolve(directory, "package.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    let changed = false;
+    for (const [name, reference] of Object.entries(manifest.dependencies ?? {})) {
+      /**
+       * FNXC:DesktopLockedStaging 2026-10-23-12:00:
+       * Normalize generated root aliases and nested workspace links so npm can
+       * validate the installed dependency graph without the source workspace.
+       */
+      if (typeof reference !== "string"
+        || (!reference.startsWith("workspace:") && !reference.startsWith(`${name}@file:`))) continue;
+      let installedVersion: string | undefined;
+      for (const modules of createRequire(manifestPath).resolve.paths(name) ?? []) {
+        const candidate = resolve(modules, name, "package.json");
+        if (!insideStage(candidate) || !existsSync(candidate)) continue;
+        const installedPath = await realpath(candidate);
+        if (!insideStage(installedPath)) throw new Error("Staged dependency resolves outside the deployment");
+        const installed = JSON.parse(await readFile(installedPath, "utf8"));
+        if (installed.name !== name || typeof installed.version !== "string" || !installed.version.trim()) {
+          throw new Error(`Cannot normalize staged workspace dependency ${name}: invalid installed manifest`);
+        }
+        installedVersion = installed.version;
+        break;
+      }
+      if (!installedVersion) throw new Error(`Cannot resolve staged workspace dependency ${name}`);
+      manifest.dependencies[name] = installedVersion;
+      changed = true;
+    }
+    if (changed) {
+      /**
+       * FNXC:DesktopLockedStaging 2026-10-23-12:00:
+       * Replace staged manifest directory entries atomically so injected hardlinks
+       * cannot modify source manifests or the shared pnpm store.
+       */
+      const temporary = await mkdtemp(resolve(directory, ".fusion-stage-manifest-"));
+      try {
+        const replacement = resolve(temporary, "package.json");
+        await writeFile(replacement, `${JSON.stringify(manifest, null, 2)}\n`, {
+          mode: (await stat(manifestPath)).mode & 0o777,
+        });
+        await rename(replacement, manifestPath);
+      } finally {
+        await rm(temporary, { recursive: true, force: true });
+      }
+    }
+    const modules = resolve(directory, "node_modules");
+    if (!existsSync(modules)) return;
+    for (const entry of await readdir(modules, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || (!entry.isDirectory() && !entry.isSymbolicLink())) continue;
+      const packagePath = resolve(modules, entry.name);
+      if (entry.name.startsWith("@")) {
+        for (const scoped of await readdir(packagePath, { withFileTypes: true })) {
+          if (scoped.isDirectory() || scoped.isSymbolicLink()) await visit(resolve(packagePath, scoped.name));
+        }
+      } else {
+        await visit(packagePath);
+      }
+    }
+  }
+
+  await visit(root);
+}
+
 export async function stageDesktopDeploy(): Promise<void> {
   console.log("[desktop:build] Staging complete production closure via pnpm deploy...");
   await rm(desktopDeployDir, { recursive: true, force: true });
   await runPnpm(
-    ["--filter", "@fusion/desktop", "deploy", "--prod", "--legacy", "--config.node-linker=hoisted", desktopDeployDir],
+    [
+      "--filter", "@fusion/desktop", "deploy", "--prod",
+      "--config.inject-workspace-packages=true", "--config.node-linker=hoisted", desktopDeployDir,
+    ],
     workspaceRoot,
   );
+
+  /**
+   * FNXC:DesktopLockedStaging 2026-10-23-12:00:
+   * Preserve locked versions and Electron's plain-flat packaging boundary.
+   * Remove only the generated deployment lock; preserve the source lockfile.
+   */
+  await rm(resolve(desktopDeployDir, "pnpm-lock.yaml"), { force: true });
+  await normalizeDesktopDeployManifest();
 
   // electron-builder needs electron's version; --prod pruned the devDependency.
   const electronPkg = resolve(packageRoot, "node_modules", "electron", "package.json");
