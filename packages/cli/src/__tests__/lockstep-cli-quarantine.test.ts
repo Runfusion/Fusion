@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -60,16 +60,14 @@ describe("CLI quarantine ledger lockstep", () => {
     }
   });
 
-  it("retains the FN-9425 skills-get quarantine exactly once", () => {
+  it("retires the expired FN-9425 skills-get quarantine in lockstep", () => {
     const quarantinedFile = "src/commands/__tests__/skills-get.test.ts";
     const configPaths = parseQuarantinedCliTests(readFileSync(configPath, "utf8"));
     const ledger = JSON.parse(readFileSync(ledgerPath, "utf8")) as { entries: QuarantineEntry[] };
     const entries = ledger.entries.filter((entry) => entry.file === `${cliPathPrefix}${quarantinedFile}`);
 
-    expect(configPaths.filter((path) => path === quarantinedFile)).toHaveLength(1);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      quarantinedAt: "2026-09-29",
-    });
+    expect(configPaths.filter((path) => path === quarantinedFile)).toHaveLength(0);
+    expect(entries).toHaveLength(0);
+    expect(existsSync(resolve(repoRoot, cliPathPrefix, quarantinedFile))).toBe(false);
   });
 });

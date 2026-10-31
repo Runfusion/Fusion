@@ -107,12 +107,11 @@ const quarantinedCliTests: string[] = [
   FN-8381 deletes extension-dist-barrel after its fourth quarantine cycle. Timing isolated the full core dist-barrel and re-mocked extension module graph as a 4–5.5s CPU-bound beforeAll while temp setup and cache seeding were negligible; shard contention pushed the same hook beyond Vitest's default 10s in run 29662476909. The source-side extension test retains the fn_task_list formatting/truncation invariant, while this test's marginal full-barrel substitution signal is not worth another load-sensitive rescue. Keep it out of both this exclusion and scripts/lib/test-quarantine.json; do not replace deletion with timeout, retry, or worker-budget appeasement.
   */
   /*
-  FNXC:CliTests 2026-09-29-17:01:
-  FN-9425 quarantines skills-get.test.ts after two independent non-blocking Full Suite timeouts.
-  Keep the 14-day deletion ratchet and direct-file diagnostic bypass; do not appease this with timeout,
-  retry, or assertion changes. This is not an engine-core merge-gate eviction.
+  FNXC:CliTests 2026-10-31-11:02:
+  Retire the expired skills-get quarantine under the existing 14-day deletion ratchet.
+  Keep its closed failure record and the generic direct-file diagnostic mechanism;
+  do not reset the quarantine date, extend timeouts or weaken the strict ledger check.
   */
-  "src/commands/__tests__/skills-get.test.ts",
 ];
 
 /*
