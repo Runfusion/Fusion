@@ -51,7 +51,19 @@ function makeTask(id: string, overrides: Partial<Task> = {}): Task {
 function makeStore(tasksInput: Task[], settingsOverrides: Partial<Settings> = {}): { tasks: Map<string, Task>; store: TaskStore & EventEmitter } {
   const tasks = new Map(tasksInput.map((task) => [task.id, task]));
   const emitter = new EventEmitter();
-  const settings: Settings = { globalPause: false, enginePaused: false, ...settingsOverrides } as Settings;
+  /*
+  FNXC:OverlapWaitSynchronization 2026-10-09-16:10 (RUFU-330):
+  Overlap grouping is the PRECONDITION these three sweeps have anything to release, so the shared
+  fixture states it. Production treats an absent `groupOverlappingFiles` as "the feature is off, so any
+  surviving `overlapBlockedBy` is stale by definition" and clears it unconditionally
+  (`canClearObservedOverlap` returns the setting's own absence, and `resolveFreshDependentOverlap`
+  short-circuits on `groupOverlappingFiles === true`). A fixture that left the flag unset therefore
+  proved the opposite of its test name: the "still active holder" case woke its dependent because the
+  board never asked whether the holder was active, not because preservation is broken. Declared here
+  once so every case in this file exercises the real lifetime decision, and the terminal-holder case
+  keeps releasing for the right reason (a terminal lane surrenders its lease), not because grouping was off.
+  */
+  const settings: Settings = { globalPause: false, enginePaused: false, groupOverlappingFiles: true, ...settingsOverrides } as Settings;
   const store = Object.assign(emitter, {
     /* FNXC:WorkflowBatchCacheEpoch 2026-10-12-23:00 (RUFU-584 fixture repair): same gap as
        `self-healing-stale-overlap-blocker.test.ts` — the shared IR cache now reads the definition epoch

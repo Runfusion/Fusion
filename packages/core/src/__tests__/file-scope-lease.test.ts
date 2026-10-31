@@ -115,14 +115,24 @@ describe("planning checkout evidence", () => {
 });
 
 describe("workspace checkout and overlap-scope helpers", () => {
-  it.each(["singular", "workspace", "both"])("releases landed %s checkouts while retaining unconfirmed claims", (kind) => {
+  /*
+  FNXC:OverlapScheduling 2026-10-09-15:23 (RUFU-330):
+  The merge-confirmed line used to demand `false`, which was upstream's `mergeDetails.mergeConfirmed`
+  early return. Merge 4d7efff3bb (upstream merge 59524b0457, decision recorded in the
+  FNXC:OverlapScheduling 2026-10-04-15:40 note of `tasks/file-scope-lease.ts` by 2b68f10057) deliberately
+  declined that guard, so this assertion kept guarding a contract this fork does not have and the case was
+  red on `main` ever since. Retention is the fork's contract — checkout clearing stays the early-release
+  hatch — and the `empty`-proof downgrade owns its own describe below, so nothing is lost by stating the
+  verdict this production actually returns.
+  */
+  it.each(["singular", "workspace", "both"])("keeps a landed %s checkout's lease while retaining the checkout", (kind) => {
     const holder = {
       ...(kind !== "workspace" ? { worktree: "/wt/retained" } : {}),
       ...(kind !== "singular" ? { workspaceWorktrees: { repo: { worktreePath: "/wt/repo" } } } : {}),
     } as Task;
     expect(taskHoldsUnmergedCheckout(holder)).toBe(true);
     expect(taskHoldsUnmergedCheckout({ ...holder, mergeDetails: { mergeConfirmed: false } })).toBe(true);
-    expect(taskHoldsUnmergedCheckout({ ...holder, mergeDetails: { mergeConfirmed: true } })).toBe(false);
+    expect(taskHoldsUnmergedCheckout({ ...holder, mergeDetails: { mergeConfirmed: true } })).toBe(true);
   });
 
   const workspaceTask = (workspaceWorktrees: unknown, worktree?: string) => ({

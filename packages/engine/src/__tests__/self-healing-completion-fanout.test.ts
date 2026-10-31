@@ -411,14 +411,25 @@ describe("self-healing completion fan-out", () => {
 
   it("uses the holder workflow rather than a project-wide terminal column union", async () => {
     const completed = makeTask("FN-254-COMPLETED", { column: "done" });
+    /*
+    FNXC:TaskQueueOrder 2026-10-09-14:24 (RUFU-330):
+    The holder has to WIN the queue order, because a retained non-terminal checkout classifies as
+    `dormant` and `fileScopeLeaseBlocksCandidate` only preserves a dependent's block for a dormant
+    holder that sorts first. This fixture used to buy that with `priority: "high"`, but FN-509
+    (fa5cdf67ce) deleted the priority levels outright — nothing reads `Task.priority` any more — and
+    FN-509 never updated this file, so both cards tied on `createdAt` (same millisecond) and the id
+    tiebreak sorted FN-254-DEPENDENT ahead of FN-254-HOLDER. The block then released for a reason that
+    has nothing to do with column roles, and the test asserted nothing about its own subject. The
+    surviving mechanism is arrival order, so the holder is honestly older than its dependent.
+    */
     const overlapHolder = makeTask("FN-254-HOLDER", {
       column: "shared",
-      priority: "high",
+      createdAt: "2026-09-01T00:00:00.000Z",
       worktree: "/wt/fn-254-holder",
     });
     const dependent = makeTask("FN-254-DEPENDENT", {
       column: "todo",
-      priority: "normal",
+      createdAt: "2026-09-02T00:00:00.000Z",
       status: "queued",
       blockedBy: completed.id,
       overlapBlockedBy: overlapHolder.id,

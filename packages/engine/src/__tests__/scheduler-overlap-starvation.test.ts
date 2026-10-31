@@ -1,10 +1,47 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { filterPathsByIgnoreList, Scheduler } from "../scheduler.js";
 import { getPromptPath } from "../execution/spec-staleness.js";
-import type { Agent, AgentStore, Settings, Task, TaskStore } from "@fusion/core";
+import { resetCheckoutEmptinessProversForTesting } from "../worktree/checkout-emptiness.js";
+import type { Agent, AgentStore, CheckoutEmptinessProofMap, Settings, Task, TaskStore } from "@fusion/core";
+
+/*
+FNXC:OverlapScheduling 2026-10-09-15:10 (RUFU-330):
+The scheduler asks `proveDormantCheckoutEmptiness` whether a dormant holder's retained checkout still
+holds anything, and the real prover answers by shelling out `git status --porcelain` in each candidate
+path. Every fixture path here (`/wt/a`, `/wt/holder`, ...) exists on no host, so the pass paid nine real
+subprocess spawns per run only to receive `unknown` from ENOENT: green by the ABSENCE of proof, not by a
+verdict this file chose, and hostage to whatever a host happens to have at those paths. A scheduling
+fixture should state its lease verdict, so the proof now comes from `checkoutProofs` — empty by default,
+which is the same fail-closed answer the failing probes produced, so no existing case changes meaning.
+Real git stays owned by `checkout-emptiness.real-git.test.ts` and proof-map semantics by
+`scheduler-overlap-lease-until-done.test.ts`; what is pinned HERE is the pass-level wiring — that
+`Scheduler.schedule()` asks for the proof of exactly the would-be-dormant cards and forwards the verdict
+into the classification. `resetCheckoutEmptinessProversForTesting()` runs on both sides of every case
+because the prover registry is process-global and keyed by the rootDir string that other engine files
+reuse (`/repo`, `/tmp/project`).
+*/
+const checkoutProofs = new Map<string, CheckoutEmptinessProofMap>();
+/** Candidate ids the scheduler asked the prover about, one entry per sweep. */
+const proofRequests: string[][] = [];
+
+vi.mock("../worktree/checkout-emptiness.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../worktree/checkout-emptiness.js")>();
+  return {
+    ...actual,
+    proveDormantCheckoutEmptiness: async (input: { candidates: Array<{ id?: string }> }) => {
+      proofRequests.push(input.candidates.map((candidate) => candidate.id ?? ""));
+      return new Map(checkoutProofs);
+    },
+  };
+});
+
+/** Declare what the scheduler's emptiness pass answers for this case; unlisted cards stay unproven. */
+function proveCheckout(taskId: string, verdict: "empty" | "occupied" | "unknown"): void {
+  checkoutProofs.set(taskId, new Map([["", verdict]]));
+}
 
 /*
 FNXC:PlanPremises 2026-10-08-03:12 (RUFU-319):
@@ -212,6 +249,15 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(Scheduler.prototype as any, "validateTaskFilesystem").mockResolvedValue({ valid: true });
+    checkoutProofs.clear();
+    proofRequests.length = 0;
+    resetCheckoutEmptinessProversForTesting();
+  });
+
+  afterEach(() => {
+    checkoutProofs.clear();
+    proofRequests.length = 0;
+    resetCheckoutEmptinessProversForTesting();
   });
 
   it("characterizes the stale overlap retained when capacity hold skips reservation", async () => {
@@ -1174,6 +1220,52 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-OLDER", "in-progress", expect.anything());
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-NEWER", "in-progress", expect.anything());
     expect(tasks.find((task) => task.id === "FN-NEWER")).toMatchObject({ overlapBlockedBy: "FN-OLDER" });
+  });
+
+  /*
+  FNXC:OverlapScheduling 2026-10-09-15:10 (RUFU-330):
+  RUFU-200's downgrade is a two-sided contract and the scheduler owns the wiring half of it: the pass must
+  ask about exactly the would-be-dormant cards and hand the verdict to the classifier. Both directions run
+  on one fixture so the control is non-vacuous — without a proof the dormant holder keeps blocking (what
+  every other case in this file relies on), with an `empty` proof the same card releases its peer.
+  */
+  it("downgrades a dormant holder for the pass that proves its checkout empty, and only for that pass", async () => {
+    const runPass = async (withProof: boolean) => {
+      checkoutProofs.clear();
+      proofRequests.length = 0;
+      const tasks = [
+        // `triage` keeps the holder a dormant lease owner that the sweep itself never dispatches, so the
+        // only thing that can unblock the peer in this fixture is the emptiness verdict under test.
+        makeTask({ id: "FN-DORMANT", column: "triage", worktree: "/wt/dormant", createdAt: "2026-01-01T00:00:00.000Z" }),
+        makeTask({ id: "FN-CANDIDATE", column: "todo", createdAt: "2026-01-02T00:00:00.000Z" }),
+      ];
+      const store = createStore(tasks, {
+        "FN-DORMANT": ["packages/core/src/store.ts"],
+        "FN-CANDIDATE": ["packages/core/src/store.ts"],
+      });
+      if (withProof) proveCheckout("FN-DORMANT", "empty");
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+
+      await scheduler.schedule();
+
+      return {
+        asked: proofRequests.at(-1) ?? [],
+        candidate: tasks.find((task) => task.id === "FN-CANDIDATE"),
+        dispatched: (store.moveTask as ReturnType<typeof vi.fn>).mock.calls
+          .some(([id, column]) => id === "FN-CANDIDATE" && column === "in-progress"),
+      };
+    };
+
+    const unproven = await runPass(false);
+    expect(unproven.asked).toContain("FN-DORMANT");
+    expect(unproven.candidate).toMatchObject({ overlapBlockedBy: "FN-DORMANT" });
+    expect(unproven.dispatched).toBe(false);
+
+    const proven = await runPass(true);
+    expect(proven.asked).toContain("FN-DORMANT");
+    expect(proven.candidate?.overlapBlockedBy ?? null).toBe(null);
+    expect(proven.dispatched).toBe(true);
   });
 
   it("does not let a dormant task block itself", async () => {

@@ -63,6 +63,29 @@ function task(id: string, overrides: Partial<Task> = {}): Task {
   } as Task;
 }
 
+/*
+FNXC:OverlapScheduling 2026-10-31-21:41 (RUFU-330):
+Every case in this file lands its holder through `finalizeMerged` — the DIRECT AI-merge finalizer — and
+that lane refuses a card whose workflow still requires post-merge evidence. Production is right to
+refuse: `finalizeTask` throws instead of reporting a merge that strands the required gate
+(`FNXC:PostMergeEvidenceOrdering 2026-09-25-20:07`), and RUFU-370's taxonomy names a fake-store lane
+that can never produce the row as terminal (`[post-merge gate unreachable: unsupported-store]`). The
+card under test here is not about that gate at all, so the fixture states the optional-group answer
+explicitly — `enabledWorkflowSteps: []` is the same "group unticked" state
+`confirmed-merge-must-finalize.test.ts` uses for its completing arm — rather than inheriting the
+built-in default and dying on a refusal the chain has nothing to do with.
+*/
+function holderTask(repo: ReturnType<typeof createRepository>, id = "FN-A"): Task {
+  return task(id, {
+    column: "in-review",
+    autoMerge: true,
+    enabledWorkflowSteps: [],
+    worktree: repo.holderWorktree,
+    branch: "fusion/fn-a",
+    summary: "Changed the shared contract",
+  });
+}
+
 function continuation(taskId: string): WorkflowWorkItem {
   return {
     id: "wi-overlap-resume", runId: `${taskId}:builtin:coding:plan-review`, stableWorkflowRunId: `${taskId}:builtin:coding`,
@@ -82,6 +105,13 @@ function createProductionStore(blocked: Task, holder: Task) {
   let item = continuation(blocked.id);
   let releaseSettlement: (() => void) | undefined;
   let settlementBarrier: Promise<void> | undefined;
+  const applyMove = (id: string, column: string): Task => {
+    const previous = tasks.get(id)!;
+    const next = { ...previous, column } as Task;
+    tasks.set(id, next);
+    emitter.emit("task:moved", { task: next, from: previous.column, to: column, source: "engine", lanes: { review: new Set(["in-review"]), complete: new Set(["done"]) } });
+    return next;
+  };
   const store: any = Object.assign(emitter, {
     getRootDir: vi.fn(() => "/repo"),
     getTasksDir: vi.fn(() => "/repo/.fusion/tasks"),
@@ -152,12 +182,22 @@ function createProductionStore(blocked: Task, holder: Task) {
       if (patch) tasks.set(id, { ...live, ...patch } as Task);
       return tasks.get(id);
     }),
-    moveTask: vi.fn(async (id: string, column: string) => {
-      const previous = tasks.get(id)!;
-      const next = { ...previous, column } as Task;
-      tasks.set(id, next);
-      emitter.emit("task:moved", { task: next, from: previous.column, to: column, source: "engine", lanes: { review: new Set(["in-review"]), complete: new Set(["done"]) } });
-      return next;
+    moveTask: vi.fn(async (id: string, column: string) => applyMove(id, column)),
+    /*
+    FNXC:OverlapScheduling 2026-10-31-21:41 (RUFU-330):
+    `moveTaskIf` is the seam finalization actually uses now — the terminal move goes through the
+    fenced read-predicate-transition (`moveTaskIfImpl`: read the live row, run the predicate against
+    THAT row, skip when it refuses or the row already sits in the target column, and answer
+    `{ task, moved }`) after `moveTask` was the only move surface. A store without it died with
+    `TypeError: store.moveTaskIf is not a function` inside `finalizeProvenAutoMergeTask`, so the
+    whole chain below was unobservable. It is implemented as a real move (same row mutation and the
+    same `task:moved` emission the plain seam produces) rather than a recorded call, because the
+    overlap fan-out this file exists to test is driven by that event.
+    */
+    moveTaskIf: vi.fn(async (id: string, column: string, predicate: (live: Task) => boolean | Promise<boolean>) => {
+      const live = tasks.get(id)!;
+      if (!await predicate(live) || live.column === column) return { task: live, moved: false };
+      return { task: applyMove(id, column), moved: true };
     }),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
@@ -185,7 +225,7 @@ describe("overlap resume production chain", () => {
   it.each(["delivery-first", "settlement-first", "restart-after-finalize"] as const)("uses the real terminal finalizer, FN-329 fan-out, durable drain, refresh, and transport (%s)", async (order) => {
     const repo = createRepository();
     const blocked = task("FN-B", { baseBranch: "main", baseCommitSha: repo.c0 });
-    const holder = task("FN-A", { column: "in-review", autoMerge: true, worktree: repo.holderWorktree, branch: "fusion/fn-a", summary: "Changed the shared contract" });
+    const holder = holderTask(repo);
     const h = createProductionStore(blocked, holder);
     let transportPrompt = "";
     let graphEntries = 0;
@@ -249,7 +289,16 @@ describe("overlap resume production chain", () => {
     });
     expect(graphEntries).toBe(1);
     expect(finalization.ok).toBe(true);
-    expect(h.store.publishTaskOverlapDeliveries.mock.invocationCallOrder[0]).toBeLessThan(h.store.moveTask.mock.invocationCallOrder[0]);
+    /*
+    FNXC:OverlapScheduling 2026-10-31-21:41 (RUFU-330):
+    The invariant is unchanged — the durable overlap delivery publish must be ordered BEFORE the card
+    reaches the complete lane, so a dependent is never woken by a move that already finalized its
+    blocker. Only the observed seam moves: finalization's terminal move is the fenced `moveTaskIf`
+    (`FNXC:PostMergeEvidenceFence 2026-09-23-08:10`), not the public `moveTask`, and asserting on a
+    seam nothing calls anymore would compare against `undefined` and pass on nothing.
+    */
+    expect(h.store.publishTaskOverlapDeliveries.mock.invocationCallOrder[0]).toBeLessThan(h.store.moveTaskIf.mock.invocationCallOrder[0]);
+    expect(h.store.moveTask).not.toHaveBeenCalled();
     expect(h.item).toMatchObject({ state: "succeeded", leaseOwner: null });
     expect(git(repo.worktree, "merge-base", "--is-ancestor", repo.c1, "HEAD")).toBe("");
     expect(readFileSync(join(repo.worktree, "shared.txt"), "utf8")).toContain("C1");
@@ -263,7 +312,7 @@ describe("overlap resume production chain", () => {
   it("does not let A's completion consume a replacement C overlap episode", async () => {
     const repo = createRepository();
     const blocked = task("FN-B", { baseBranch: "main", baseCommitSha: repo.c0 });
-    const holder = task("FN-A", { column: "in-review", autoMerge: true, worktree: repo.holderWorktree, branch: "fusion/fn-a", summary: "Changed the shared contract" });
+    const holder = holderTask(repo);
     const replacement = task("FN-C", { column: "in-progress" });
     const h = createProductionStore(blocked, holder);
     h.addTask(replacement);
@@ -301,7 +350,7 @@ describe("overlap resume production chain", () => {
   it("keeps the released continuation held while another dependency remains unmet", async () => {
     const repo = createRepository();
     const blocked = task("FN-B", { baseBranch: "main", baseCommitSha: repo.c0, dependencies: ["FN-D"] });
-    const holder = task("FN-A", { column: "in-review", autoMerge: true, worktree: repo.holderWorktree, branch: "fusion/fn-a", summary: "Changed the shared contract" });
+    const holder = holderTask(repo);
     const dependency = task("FN-D", { column: "todo" });
     const h = createProductionStore(blocked, holder);
     h.addTask(dependency);

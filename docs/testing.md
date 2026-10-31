@@ -150,12 +150,17 @@ The isolation checker is run as a watched child for its before and after passes.
 - `check-pre-json-anchor`
 - `check-routes-modular`
 - `check-runtime-skill-loader-drift`
-<!-- FNXC:TestInfrastructure 2026-10-08-05:06 (RUFU-324): the two entries below were missing from this anchor block and from the verify-fast mirror while already present in the production chains, which left `verify-fast.test.mjs` red at base 89c2b53510. Repaired together with the RUFU-324 addition so this order-sensitive guard reports real divergence again. -->
+<!-- FNXC:TestInfrastructure 2026-10-08-05:06 (RUFU-324): the two entries below were missing from this anchor block and from the verify-fast mirror while already present in the production chains, which left `verify-fast.test.mjs` red at base 89c2b53510. Repaired together with the RUFU-324 addition so this order-sensitive guard reports real divergence again.
+
+FNXC:TestInfrastructure 2026-10-31-22:53 (RUFU-330 merge): RUFU-330 restored this same `check-changeset-migration-references` entry from its own base, where `check-nonlatin-tracked-text` had not landed yet. The two repairs are the same content, so the merge keeps this superset — both entries, in canonical pretest order — rather than the branch's one-entry block. -->
 - `check-changeset-migration-references`
 - `check-nonlatin-tracked-text`
 <!-- pretest-validators:end -->
 
-`check-runtime-skill-loader-drift` enforces the Claude/Grok runtime skill loaders' clean rename-diff. It then bootstraps missing/stale workspace dist artifacts, runs **typecheck + build scoped to the changed packages** (reusing the same git-diff / changed-package resolution as `pnpm test`), always builds the `@runfusion/fusion` CLI package required by the source-checkout boot smoke, and runs the existing **boot smoke** once. The static phase invokes each existing validator entry point without update flags, is bounded and fail-fast, and runs **no Vitest or test lane**. It gives deterministic, flake-free signal in seconds, so it is a sound project `testCommand`/verification command when you want non-test verification. With no affected package (root/docs-only diff) it runs static checks, artifact bootstrap, the CLI prerequisite build, and boot smoke. Each step is bounded by the shared `runWithWatchdog` (class `changed`) so a hang fails fast, and it exits nonzero on the first failing step. This is purely additive: it does not change `pnpm test`, the merge gate, or CI, and the full suite stays available (`pnpm test:full`, non-blocking on push to main).
+`check-runtime-skill-loader-drift` enforces the Claude/Grok runtime skill loaders' clean rename-diff, and
+`check-changeset-migration-references` fails a changeset that names a migration filename (`0088_example_name`)
+no longer present under `packages/core/src/postgres/migrations` — a renumber leaves the number in prose, where
+neither `check:changesets` nor the schema applier can see it. It then bootstraps missing/stale workspace dist artifacts, runs **typecheck + build scoped to the changed packages** (reusing the same git-diff / changed-package resolution as `pnpm test`), always builds the `@runfusion/fusion` CLI package required by the source-checkout boot smoke, and runs the existing **boot smoke** once. The static phase invokes each existing validator entry point without update flags, is bounded and fail-fast, and runs **no Vitest or test lane**. It gives deterministic, flake-free signal in seconds, so it is a sound project `testCommand`/verification command when you want non-test verification. With no affected package (root/docs-only diff) it runs static checks, artifact bootstrap, the CLI prerequisite build, and boot smoke. Each step is bounded by the shared `runWithWatchdog` (class `changed`) so a hang fails fast, and it exits nonzero on the first failing step. This is purely additive: it does not change `pnpm test`, the merge gate, or CI, and the full suite stays available (`pnpm test:full`, non-blocking on push to main).
 
 `pnpm check:workspace-package-graph` verifies that every `workspace:` dependency or override in the root importer or a glob-matched workspace manifest resolves to a glob-covered workspace package, and that no package directory under `packages/` or `plugins/` falls outside `pnpm-workspace.yaml` package globs.
 
@@ -807,6 +812,35 @@ in CI via the `Engine slow tier` job in `full-suite.yml` (non-blocking, push to 
 `scripts/assert-engine-slow-nonempty.mjs` to **fail if zero tests executed** (so a glob
 or config drift that silently empties the tier breaks the run instead of passing vacuously).
 The CI job uses `fetch-depth: 0` because these tests run real git operations.
+
+### Engine lease and CAS fixture honesty
+
+<!-- FNXC:TestHarnessFidelity 2026-10-31-21:56 (RUFU-330): three red overlap/file-scope unit files were
+stale fixtures, not product regressions; the durable rules that keep that cluster honest live here so
+the next author finds them before re-theorising a product bug. Full worked example:
+docs/solutions/test-failures/engine-overlap-file-scope-harness-cas-drift.md. -->
+
+Two fixture rules are lane-level, not per-file preferences:
+
+1. **A scheduling or admission unit test may not inherit a `git`-backed checkout-emptiness verdict.**
+   `proveDormantCheckoutEmptiness` has six production call sites and **none injects a `prover`**, so the
+   default is the process-global, per-rootDir-string prover cache shelling out `git status --porcelain`.
+   A fixture whose card paths exist on no host therefore pays subprocess cost only to receive `unknown`
+   from ENOENT — green by the absence of proof — and can read another file's cached verdict because
+   engine suites reuse rootDir strings like `/repo`. Declare the verdict per case and call
+   `resetCheckoutEmptinessProversForTesting()` on both sides of it; real `git` stays in
+   `checkout-emptiness.real-git.test.ts` and the `engine-slow` tier.
+2. **No collect-only compare-and-set fakes.** A fake `transitionWorkflowWorkItem` must own mutable rows,
+   enforce `expectedState` / `expectedLeaseOwner` by returning the untouched live row on a mismatch (what
+   `async-workflow-workitems.ts` does — a CAS loss is an ordinary outcome, not a throw), apply every
+   non-fence patch field, and return the post-transition row **including `leaseOwner`**; a row without that
+   key makes every honest call look like a lost race, so no production change can satisfy the assertion.
+   The same fidelity applies to the move seam: finalization moves through the fenced `moveTaskIf`, not the
+   public `moveTask` (see FN-9371's engine-slow disposition above).
+
+When unit and PostgreSQL disagree on the same seam, run the PostgreSQL lane first: SQL enforces these
+fences and a hand-written fake drifts silently the moment production gains a required input field, so a
+green pg lane over a red unit file is evidence about **which side is stale**.
 
 ## Quarantine ledger and the deletion ratchet
 

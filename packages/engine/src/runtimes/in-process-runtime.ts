@@ -820,7 +820,16 @@ export async function releaseHumanMergeApprovalHolds(
   return released;
 }
 
-async function dispatchPlanningContinuationIfCurrent(input: {
+/*
+FNXC:PlanningContinuationDispatch 2026-10-09-15:32 (RUFU-330):
+`export` restored. The note at the bottom of this file states the contract explicitly —
+"`dispatchPlanningContinuationIfCurrent` / `settlePlanningContinuationDispatch` /
+`releaseFileScopeWaitingContinuations` are exported standalone utilities" — and its two siblings are
+still exported (`:674`, `:715`), so the missing keyword was lost in a merge resolution and quietly
+turned `planning-continuation-renamed-lane-dispatch.test.ts` into `TypeError: ... is not a function`
+for both of its cases. Behaviour is untouched: this only re-opens the documented admission seam.
+*/
+export async function dispatchPlanningContinuationIfCurrent(input: {
   store: TaskStore;
   task: Task;
   item: WorkflowWorkItem;

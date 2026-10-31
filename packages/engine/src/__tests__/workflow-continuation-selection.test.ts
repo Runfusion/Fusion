@@ -139,10 +139,20 @@ describe("resolvePlanningContinuationCandidate", () => {
     const now = Date.parse("2026-09-06T00:29:00.000Z");
     const item = workItem("planner-live-defer", "planning", { state: "retrying" });
     const plannerLive = resolvePlanningContinuationCandidate(item, task("FN-299"), { plannerLive: true });
+    /*
+    FNXC:EventDrivenDispatch 2026-10-09-18:25 (RUFU-330):
+    `reason` stated here because FN-519 (49d88bfd53, 2026-09-18) added it additively to the returned
+    deferral so a diagnostic can name WHICH gate produced the wait; nothing branches on it. This
+    exact-shape `toEqual` predates that field, so it had been red on `main` ever since (base-proofed
+    red at this branch's merge-base 5999ba49fa, i.e. not caused by RUFU-330). Stating the shipped key
+    keeps the case's real subject — planner ownership defers on the short fixed window, never the
+    caller's `deferMs` — and the operator-window loop below already asserted the other two reasons.
+    */
     expect(resolveParkedContinuationDeferral(plannerLive, now, 123_456)).toEqual({
       itemId: item.id,
       expectedState: "retrying",
       retryAfter: new Date(now + PLANNER_LIVE_CONTINUATION_DEFER_MS).toISOString(),
+      reason: "planner-live",
     });
 
     for (const [status, expectedReason] of [
@@ -154,6 +164,8 @@ describe("resolvePlanningContinuationCandidate", () => {
       expect(resolveParkedContinuationDeferral(parked, now)).toMatchObject({
         expectedState: "retrying",
         retryAfter: new Date(now + PARKED_CONTINUATION_DEFER_MS).toISOString(),
+        // The operator-facing claim: each human wait names its own gate and keeps the long window.
+        reason: expectedReason,
       });
     }
   });

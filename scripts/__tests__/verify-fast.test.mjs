@@ -112,6 +112,11 @@ const PRETEST_CHECKS = [
   proved at base 89c2b53510. Repaired here because this task owns the same order-sensitive mirror:
   the drift guard is only meaningful if it reports real divergence, and a permanently-red mirror is
   indistinguishable from the drift it exists to catch.
+
+  FNXC:TestInfrastructure 2026-10-31-22:53 (RUFU-330 merge):
+  RUFU-330 independently restored this same entry from a base that predated check-nonlatin-tracked-text,
+  with the identical diagnosis (18 canonical scripts against 17 mirrored). The merge keeps this two-entry
+  superset so the mirror still matches the canonical chain's tail order.
   */
   "scripts/check-changeset-migration-references.mjs",
   /*

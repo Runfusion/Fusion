@@ -122,7 +122,27 @@ describe("self-healing withholds tip-already-merged reclaim on pending overlap e
     });
 
     expect(await manager.reclaimSelfOwnedBranchConflicts()).toBe(0);
-    expect(store.updateTask).not.toHaveBeenCalled();
+    /*
+    FNXC:BranchConflictRecovery 2026-10-09-16:15 (RUFU-330):
+    The veto is "the card is not reclaimed", not "the card is never written". RUFU-231 (913d6076a4)
+    made a counted branch-conflict rejection consume a bounded recovery attempt, so the sweep's ONLY
+    write here is the recovery counter; the old blanket `updateTask` never-called assertion read a
+    legitimate budget write as a leaked reclaim. Assert the veto by what must stay untouched — no
+    worktree/branch/base metadata clear, no reclaim log — while pinning the budget write that is now
+    the sweep's contract, plus the foreign rejection it logs.
+    */
+    const writes = (store.updateTask as any).mock.calls as Array<[string, Record<string, unknown>]>;
+    expect(writes).toHaveLength(1);
+    expect(writes[0]![0]).toBe("FN-9002");
+    expect(writes[0]![1]).toEqual({ recoveryRetryCount: 1 });
+    for (const [, patch] of writes) {
+      expect(Object.keys(patch)).not.toContain("worktree");
+      expect(Object.keys(patch)).not.toContain("branch");
+      expect(Object.keys(patch)).not.toContain("baseCommitSha");
+    }
+    expect((store.logEntry as any).mock.calls.some((call: any[]) =>
+      String(call[1]).includes("[recovery] already-merged rejected FN-9002")
+      && String(call[1]).includes("reason=foreign-task-tip"))).toBe(true);
     expect((store.logEntry as any).mock.calls.some((call: any[]) => String(call[1]).includes("tip-already-merged withheld"))).toBe(false);
   });
 });

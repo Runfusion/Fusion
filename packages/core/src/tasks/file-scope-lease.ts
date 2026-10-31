@@ -60,6 +60,13 @@ FNXC:OverlapScheduling 2026-10-04-15:40 (upstream merge 59524b0457):
 Kept at this fork's shape. Upstream added a `task.mergeDetails?.mergeConfirmed === true` early return here,
 but that guard belongs to the post-merge-recovery refactor this merge deliberately declines, and no declined
 caller exists to set it. A guard whose producer is absent is a silent lease drop, so it is NOT ported.
+
+FNXC:OverlapScheduling 2026-10-09-15:23 (RUFU-330):
+Correction of one premise above, decision unchanged: the producer is NOT absent on current main —
+`project-engine.ts` writes `mergeDetails: { ..., mergeConfirmed: true }` through `updateTask` when it closes
+a PR-landed card out. The decline still stands on its remaining grounds: releasing the lease on confirmation
+drops a claim while the checkout is still retained, and checkout clearing (or a proven `empty` verdict) is
+this fork's release event, so the retention behaviour is the fail-closed side either way.
 */
 export function taskHoldsUnmergedCheckout(
   task: Pick<Task, "worktree" | "workspaceWorktrees">,
