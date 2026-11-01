@@ -744,6 +744,15 @@ export type DatabaseMutationType =
   | "task:reconcile-absent-branch-landed"
   /** Metadata: { taskId, source, branch, baseBranch, reason } — identifiers and fixed outcomes only. */
   | "task:reconcile-absent-branch-unproven"
+  /*
+  FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+  One row per workspace commit-free discharge from the landed-review reconcile fence.
+  Metadata: { taskId, source, repoCount, dischargedCount, repoBasis (repo → "zero-ahead"|"landed"),
+  outcome: "discharged" } — ids/counts/fixed outcomes only; refusal writes no row. Deliberately
+  outside the curated delivery-pipeline tables of docs/run-audit.md (RUFU-390/RUFU-346/RUFU-768
+  precedent), documented there as prose.
+  */
+  | "task:reconcile-workspace-landed-review"
   | "task:auto-recover-misrouted-foreign-commit"
   | "task:auto-recover-foreign-only-contamination"
   | "task:auto-recover-foreign-only-contamination-skipped"

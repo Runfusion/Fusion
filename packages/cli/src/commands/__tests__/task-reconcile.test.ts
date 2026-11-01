@@ -76,6 +76,56 @@ describe("runTaskReconcile", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
+  /*
+  FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+  The commit-free discharge must read differently from the singular success: no SHA claim, every
+  repository named with its basis and base, and "no commit authored" stated — the operator needs to
+  know the card completed without anything ever being merged.
+  */
+  it("renders the workspace discharge without claiming a commit", async () => {
+    reconcile.mockResolvedValue({
+      outcome: "workspace-discharged",
+      repoCount: 3,
+      dischargedCount: 3,
+      repos: [
+        { repo: "saneca", basis: "zero-ahead", baseBranch: "main", branchTipSha: "aaaa1111aaaa1111" },
+        { repo: "lager-manager", basis: "zero-ahead", baseBranch: "main", branchTipSha: "bbbb2222bbbb2222" },
+        { repo: "lager-2026", basis: "landed", baseBranch: "main", landedSha: "cccc3333cccc3333" },
+      ],
+    });
+    await expect(runTaskReconcile("SANE-454", "project")).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("3/3 repositories proven commit-free"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("lager-2026 landed at cccc3333 on main"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("no commit authored"));
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+  The RUFU-357 defect verbatim: the refusal could only ever say `workspace`. The unconfirmed refusal
+  now names every repository with its basis and — where git counted them — its unique commits, while
+  the mergeConfirmed class keeps the bare sentence byte-identically.
+  */
+  it("names every repository in the widened workspace refusal", async () => {
+    reconcile.mockResolvedValue({
+      outcome: "ineligible",
+      reason: "workspace",
+      repos: [
+        { repo: "lager-2026", basis: "ahead", uniqueCommitCount: 1 },
+        { repo: "lager-manager", basis: "zero-ahead", uniqueCommitCount: 0 },
+      ],
+    });
+    await expect(runTaskReconcile("SANE-463", "project")).rejects.toThrow("exit:1");
+    expect(error).toHaveBeenCalledWith("Cannot reconcile SANE-463: workspace (lager-2026 ahead 1; lager-manager zero-ahead).");
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("keeps the merge-confirmed workspace refusal sentence bare", async () => {
+    reconcile.mockResolvedValue({ outcome: "ineligible", reason: "workspace" });
+    await expect(runTaskReconcile("SANE-452", "project")).rejects.toThrow("exit:1");
+    expect(error).toHaveBeenCalledWith("Cannot reconcile SANE-452: workspace.");
+  });
+
   it.each([
     [{ outcome: "not-landed", baseBranch: "main" }, "never fabricates an approval"],
     [{ outcome: "raced", reason: "task-state-changed" }, "changed while reconciling"],

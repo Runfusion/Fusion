@@ -1452,6 +1452,20 @@ export async function runTaskReconcile(id: string, projectName?: string) {
       console.log(`Resumed ${id}: required post-merge evidence gate ${result.gateId} was re-seeded.`);
       return;
     }
+    /*
+    FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+    The commit-free workspace discharge has its own sentence because the singular success line
+    claims a SHA and a merge strategy this card does not have: every repository was proven
+    zero-ahead (or landed) against its OWN base and no commit was authored. Naming the bases is the
+    per-repo mergeTargetBranch provenance; "no commit authored" keeps the claim honest.
+    */
+    if (result.outcome === "workspace-discharged") {
+      const repoClause = result.repos
+        .map((repo) => `${repo.repo} ${repo.basis}${repo.landedSha ? ` at ${repo.landedSha.slice(0, 8)}` : ""} on ${repo.baseBranch}`)
+        .join("; ");
+      console.log(`Discharged ${id}: ${result.dischargedCount}/${result.repoCount} repositories proven commit-free (${repoClause}); card moved to complete, no commit authored.`);
+      return;
+    }
     if (result.outcome === "already-complete") {
       /*
       FNXC:UnrunPostMergeGateRecovery 2026-09-25-15:35 (RUFU-306):
@@ -1474,7 +1488,19 @@ export async function runTaskReconcile(id: string, projectName?: string) {
       console.error(`Cannot reconcile ${id}: the card changed while reconciling (${result.reason}); retry.`);
     } else {
       const live = result.reason === "live-session" || result.reason === "executing" || result.reason === "checkout-leased";
-      console.error(`Cannot reconcile ${id}: ${result.reason}${live ? "; something is still working on this task" : ""}.`);
+      /*
+      FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+      The unconfirmed workspace refusal must never collapse to the bare word: every repository is
+      named with its basis and, where git counted them, its unique commits — e.g.
+      `Cannot reconcile SANE-463: workspace (lager-2026 ahead 1; lager-manager zero-ahead).`
+      The mergeConfirmed class carries no `repos` detail and keeps the old sentence byte-identically.
+      */
+      const repoClause = result.repos && result.repos.length > 0
+        ? ` (${result.repos.map((repo) =>
+            `${repo.repo} ${repo.basis}${typeof repo.uniqueCommitCount === "number" && (repo.basis === "ahead" || repo.basis === "reverted") ? ` ${repo.uniqueCommitCount}` : ""}`,
+          ).join("; ")})`
+        : "";
+      console.error(`Cannot reconcile ${id}: ${result.reason}${repoClause}${live ? "; something is still working on this task" : ""}.`);
     }
     await closeBoardContextAndExit(context, 1);
   } finally {

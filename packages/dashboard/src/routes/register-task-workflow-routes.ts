@@ -5829,7 +5829,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         source: "manual",
         requireAutoMergeEligible: false,
       });
-      if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "already-complete") {
+      /*
+      FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+      The commit-free workspace discharge is a success arm — it completes the card — so it joins the
+      200 list; the widened refusal (reason + structured per-repo `repos`) stays a 409 and the route
+      adds no decision logic: the body is the fence's own result, unchanged.
+      */
+      if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "already-complete" || result.outcome === "workspace-discharged") {
         return res.json(result);
       }
       return res.status(409).json(result);

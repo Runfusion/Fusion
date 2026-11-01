@@ -258,6 +258,49 @@ describe("POST /api/tasks/:id/reconcile-landed-review", () => {
     expect(res.status).toBe(409);
     expect(res.body).toEqual({ outcome: "ineligible", reason: "foreign-ownership" });
   });
+
+  /*
+  FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+  The commit-free workspace discharge COMPLETES the card, so it joins the 200 list; and the widened
+  refusal must relay the fence's structured per-repo `repos` detail verbatim — the route adds no
+  decision logic of its own.
+  */
+  it("returns 200 for the commit-free workspace discharge", async () => {
+    const discharge = {
+      outcome: "workspace-discharged",
+      repoCount: 2,
+      dischargedCount: 2,
+      repos: [
+        { repo: "saneca", basis: "zero-ahead", baseBranch: "main" },
+        { repo: "lager-manager", basis: "landed", baseBranch: "main", landedSha: "cccc3333cccc3333" },
+      ],
+    };
+    const reconcileLandedReviewTask = vi.fn().mockResolvedValue(discharge);
+    const { app } = buildApp({ task: mkMergeTask({ id: "SANE-454", status: null }), reconcileLandedReviewTask });
+
+    const res = await performRequest(app, "POST", "/api/tasks/SANE-454/reconcile-landed-review", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(discharge);
+  });
+
+  it("relays the per-repository workspace refusal detail as a 409", async () => {
+    const refusal = {
+      outcome: "ineligible",
+      reason: "workspace",
+      repos: [
+        { repo: "lager-2026", basis: "ahead", uniqueCommitCount: 3 },
+        { repo: "lager-manager", basis: "zero-ahead", uniqueCommitCount: 0 },
+      ],
+    };
+    const reconcileLandedReviewTask = vi.fn().mockResolvedValue(refusal);
+    const { app } = buildApp({ task: mkMergeTask({ id: "SANE-463", status: null }), reconcileLandedReviewTask });
+
+    const res = await performRequest(app, "POST", "/api/tasks/SANE-463/reconcile-landed-review", "{}", { "content-type": "application/json" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual(refusal);
+  });
 });
 
 describe("POST /api/tasks/:id/retry — orphaned merge-active status (FN-8004)", () => {

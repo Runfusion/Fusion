@@ -8,10 +8,12 @@ import {
   COMMIT_FREE_DELIVERY_REASON,
   createTipAncestryProbe,
   decideWorkspaceDelivery,
+  evaluateWorkspaceReconcileDischarge,
   probeWorkspaceCommitFree,
   reposNeedingCommitFreeProbe,
   summarizeCommitFreeEvidence,
   type WorkspaceCommitFreeRepoEvidence,
+  type WorkspaceReconcileDischargeInput,
   type GitTextRunner,
 } from "../merge/workspace-commit-free-delivery.js";
 import { validateWorkflowDoneMergeProof } from "../merge/auto-merge-finalization.js";
@@ -241,5 +243,182 @@ describe("ancestry probe against a real repository", () => {
     const summary = summarizeCommitFreeEvidence([evidence("lager-manager", "zero-ahead", "e".repeat(40)), evidence("lager-2026", "unproven")]);
     expect(summary).toContain("lager-manager {basis=zero-ahead; tip=eeeeeeeeeeee");
     expect(summary).toContain("lager-2026 {basis=unproven; tip=none}");
+  });
+});
+
+/*
+FNXC:WorkspaceLandedReconcile 2026-11-01-08:10 (RUFU-357):
+The reconcile-side discharge predicate, tested with an injected probe/table and no repository —
+the decision is what is under test, not git. These cases pin the two vocabulary rules the saneca
+population turned on: `zero-ahead` (ancestor + corroborated count 0) discharges, while the
+`net-zero` reverted shape, an unreadable count (`null`), an unresolvable base, and a proven-absent
+branch are all refusals; an empty obligation set never discharges.
+*/
+describe("workspace reconcile discharge evaluation", () => {
+  const TIP_A = "a".repeat(40);
+  const TIP_B = "b".repeat(40);
+
+  interface Table {
+    entries?: Record<string, { branch: string; landedSha?: string } | undefined>;
+    missingDirs?: string[];
+    bases?: Record<string, string | undefined>;
+    landed?: string[];
+    probes?: Record<string, { basis: "zero-ahead" | "unproven"; branchTipSha?: string }>;
+    counts?: Record<string, number | null>;
+    branchStates?: Record<string, "present" | "absent" | "unknown">;
+    diagnoses?: Record<string, { evidence: "proven" | "contradicted" | "unknown"; proof?: "ancestor" | "net-zero"; aheadCount?: number }>;
+  }
+
+  function harness(repoKeys: string[], table: Table = {}) {
+    let probeCalls = 0;
+    const input: WorkspaceReconcileDischargeInput = {
+      repoKeys,
+      entries: Object.fromEntries(repoKeys.map((repo) => [repo, table.entries && repo in table.entries ? table.entries[repo] : { branch: "fusion/RUFU-357" }])),
+      resolveRepoRootDir: (repo) => (table.missingDirs?.includes(repo) ? undefined : `/checkout/${repo}`),
+      probeIntegrationBranch: async (repo) => (table.bases && repo in table.bases ? table.bases[repo] : "main"),
+      isLanded: async ({ repo }) => table.landed?.includes(repo) ?? false,
+      probe: async ({ repo }) => {
+        probeCalls++;
+        return table.probes?.[repo] ?? { basis: "zero-ahead", branchTipSha: repo === "lager-2026" ? TIP_B : TIP_A };
+      },
+      measureAhead: async ({ repoDir }) => {
+        const repo = repoDir.replace("/checkout/", "");
+        return table.counts && repo in table.counts ? table.counts[repo] : 0;
+      },
+      ...(table.branchStates
+        ? { probeBranch: async (repoDir: string) => table.branchStates![repoDir.replace("/checkout/", "")] ?? ("present" as const) }
+        : {}),
+      ...(table.diagnoses
+        ? { diagnoseAhead: async ({ repo }: { repo: string }) => table.diagnoses![repo] ?? { evidence: "unknown" as const } }
+        : {}),
+    };
+    return { run: () => evaluateWorkspaceReconcileDischarge(input), probeCalls: () => probeCalls };
+  }
+
+  it("discharges when every repository is proven zero-ahead and corroborated by count 0", async () => {
+    const { run } = harness(["saneca", "lager-2026"]);
+    const result = await run();
+    expect(result.discharge).toBe(true);
+    expect(result.scopeEmpty).toBe(false);
+    expect(result.repos.every((r) => r.kind === "discharged" && r.basis === "zero-ahead")).toBe(true);
+    expect(result.commitFreeBasis).toEqual({ saneca: "zero-ahead", "lager-2026": "zero-ahead" });
+    expect(result.commitFreeBranchTipShas).toEqual({ saneca: TIP_A, "lager-2026": TIP_B });
+  });
+
+  it("refuses naming the repository whose count is ahead", async () => {
+    const { run } = harness(["saneca", "lager-2026"], {
+      probes: { "lager-2026": { basis: "unproven", branchTipSha: TIP_B } },
+      counts: { "lager-2026": 1 },
+    });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos).toEqual([{ repo: "lager-2026", kind: "held", basis: "ahead", uniqueCommitCount: 1 }]);
+    expect(result.repos[0]).toMatchObject({ repo: "saneca", kind: "discharged", basis: "zero-ahead" });
+  });
+
+  it("refuses the mixed landed + held shape naming the held repository (decideWorkspaceDelivery cannot judge it)", async () => {
+    const { run } = harness(["lager-manager", "lager-2026"], {
+      landed: ["lager-manager"],
+      probes: { "lager-2026": { basis: "unproven", branchTipSha: TIP_B } },
+      counts: { "lager-2026": 2 },
+    });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.repos[0]).toMatchObject({ repo: "lager-manager", kind: "discharged", basis: "landed" });
+    expect(result.heldRepos.map((r) => r.repo)).toEqual(["lager-2026"]);
+    // A landed repository contributes no probe row, so the persisted basis never calls it unproven.
+    expect(result.commitFreeBasis).toEqual({ "lager-2026": "unproven" });
+  });
+
+  it("refuses when the canonical ahead count is null — unproven zero-ness is never a discharge", async () => {
+    const { run } = harness(["saneca"], { counts: { saneca: null } });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos).toEqual([{ repo: "saneca", kind: "held", basis: "unproven", uniqueCommitCount: null }]);
+  });
+
+  it("discharges all-landed without spending an ancestry probe", async () => {
+    const { run, probeCalls } = harness(["saneca", "lager-2026"], { landed: ["saneca", "lager-2026"] });
+    const result = await run();
+    expect(result.discharge).toBe(true);
+    expect(probeCalls()).toBe(0);
+    expect(result.commitFreeBasis).toBeUndefined();
+    expect(result.repos.every((r) => r.kind === "discharged" && r.basis === "landed")).toBe(true);
+  });
+
+  it("refuses an empty obligation set — never an empty-set discharge", async () => {
+    const { run } = harness([]);
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.scopeEmpty).toBe(true);
+  });
+
+  it("maps the net-zero (ahead, empty contribution) shape to `reverted`, never to a discharge", async () => {
+    const { run } = harness(["lager-2026"], {
+      probes: { "lager-2026": { basis: "unproven", branchTipSha: TIP_B } },
+      counts: { "lager-2026": 1 },
+      diagnoses: { "lager-2026": { evidence: "proven", proof: "net-zero", aheadCount: 1 } },
+    });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "reverted", uniqueCommitCount: 1 });
+  });
+
+  it("refuses a proven-absent branch without a landed proof as `branch-absent`", async () => {
+    const { run } = harness(["lager-2026"], {
+      probes: { "lager-2026": { basis: "unproven" } },
+      branchStates: { "lager-2026": "absent" },
+    });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "branch-absent", uniqueCommitCount: null });
+  });
+
+  it("refuses an unresolvable per-repository base as `base-unresolvable`", async () => {
+    const { run } = harness(["lager-2026"], { bases: { "lager-2026": undefined } });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "base-unresolvable" });
+  });
+
+  it("refuses a key with no workspaceWorktrees entry as unproven (never an assumed discharge)", async () => {
+    const { run } = harness(["lager-2026"], { entries: { "lager-2026": undefined } });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "unproven" });
+  });
+
+  it("discharges the mixed landed + zero-ahead shape from per-repo verdicts without consulting decideWorkspaceDelivery", async () => {
+    const { run } = harness(["lager-manager", "lager-2026"], { landed: ["lager-manager"] });
+    const result = await run();
+    expect(result.discharge).toBe(true);
+    expect(result.repos.map((r) => r.basis)).toEqual(["landed", "zero-ahead"]);
+    // The probed half keeps its basis; the landed half contributes none.
+    expect(result.commitFreeBasis).toEqual({ "lager-2026": "zero-ahead" });
+  });
+
+  it("recovers the count and the ahead wording from the classifier when the canonical measure reads null", async () => {
+    const { run } = harness(["lager-2026"], {
+      probes: { "lager-2026": { basis: "unproven", branchTipSha: TIP_B } },
+      // `measureAhead` cannot read the count; the diagnosis still proves the branch contributes content.
+      counts: { "lager-2026": null },
+      diagnoses: { "lager-2026": { evidence: "contradicted", aheadCount: 3 } },
+    });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    // A contradicted empty-land claim is real content ahead, with the classifier's count — never the
+    // reverted wording, and never a discharge.
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "ahead", uniqueCommitCount: 3 });
+  });
+
+  it("names the reverted shape from the classifier even when the canonical count could not be read", async () => {
+    const { run } = harness(["lager-2026"], {
+      probes: { "lager-2026": { basis: "unproven", branchTipSha: TIP_B } },
+      counts: { "lager-2026": null },
+      diagnoses: { "lager-2026": { evidence: "proven", proof: "net-zero", aheadCount: 2 } },
+    });
+    const result = await run();
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "reverted", uniqueCommitCount: 2 });
   });
 });

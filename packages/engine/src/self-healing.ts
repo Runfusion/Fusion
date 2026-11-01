@@ -178,7 +178,9 @@ import {
   EMPTY_LAND_CONTRADICTION_EVENT,
   EMPTY_LAND_CONTRADICTION_REASON,
   EMPTY_MERGE_NO_LANDED_PROOF_REASON,
+  classifyEmptyLandEvidence,
   emptyLandContradictionAuditMetadata,
+  execEmptyLandGit,
   type EmptyLandEvidenceResult,
 } from "./merge/empty-land-evidence.js";
 import { createProcfsGitChildProbe, reapOrphanedGitChildren, type GitChildProcessProbe } from "./util/orphaned-git-child-reaper.js";
@@ -285,7 +287,7 @@ the dependency-free `workspace-land-predicate` module, NOT merger-ai. Previously
 imported it from merger-ai while merger-ai imports `MIN_TEMP_WORKTREE_REAP_AGE_MS` from
 self-healing — a real import cycle. Importing from the predicate module breaks the cycle.
 */
-import { isRepoLanded } from "./merge/workspace-land-predicate.js";
+import { findProvenLandedCommit, isRepoLanded } from "./merge/workspace-land-predicate.js";
 import { persistWorkspaceRepoLandFailure } from "./merge/workspace-land-failure.js";
 import { getCommitTaskOwnership } from "./merge/already-merged-detector.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
@@ -304,6 +306,17 @@ import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree/
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "./worktree/workspace-base-branch.js";
+/*
+FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+The landed-review reconcile fence gained a per-repository discharge arm, so it consumes the SAME
+commit-free-delivery authority the merge lane uses (`createTipAncestryProbe` /
+`COMMIT_FREE_DELIVERY_REASON` via `evaluateWorkspaceReconcileDischarge`), the canonical ahead count,
+the ONE repository-identity classifier (RUFU-390/RUFU-519: classify before measuring), and the
+empty-land classifier used ONLY to explain a refusal. No second predicate is defined here.
+*/
+import { COMMIT_FREE_DELIVERY_REASON, createTipAncestryProbe, evaluateWorkspaceReconcileDischarge, type WorkspaceReconcileRepoVerdict } from "./merge/workspace-commit-free-delivery.js";
+import { measureAheadCommitCount } from "./worktree/worktree-backend.js";
+import { resolveWorkspaceRootMembership } from "./worktree/workspace-root-member.js";
 import { resolveBranchGroupMergeRouting } from "./merge/group-merge-coordinator.js";
 import type { OwnedLandedClassification } from "./merger.js";
 import { regenerateBareMergeSubject } from "./merge/merger-bare-subject.js";
@@ -1245,9 +1258,48 @@ export type LandedReviewReconcileResult =
   reseed), so the operator can see which of the three seeds this is instead of guessing from the log.
   */
   | { outcome: "resumed"; gateId: string; attempt: number }
+  /*
+  FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+  The commit-free discharge success arm for a workspace card. It deliberately carries NO singular
+  `sha`/`strategy`/`baseBranch`: a zero-ahead repository authored no commit, and naming a tip SHA a
+  landing would claim authorship the card does not have (RUFU-504's rule, mirrored). The per-repo
+  `basis` records which canonical proof discharged each repository — `zero-ahead` (tip is an
+  ancestor of that repository's OWN resolved base, corroborated by ahead-count 0) or `landed`
+  (proven through `findProvenLandedCommit`, whose sha is the only one echoed).
+  */
+  | { outcome: "workspace-discharged"; repoCount: number; dischargedCount: number; repos: Array<{ repo: string; basis: "zero-ahead" | "landed"; baseBranch: string; branchTipSha?: string; landedSha?: string }> }
   | { outcome: "not-landed"; baseBranch: string }
   | { outcome: "raced"; reason: string }
-  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" | "post-merge-evidence-pending" | "awaiting-finalization" };
+  /*
+  FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+  `reason: "workspace"` is RETAINED — for merge-confirmed cards (RUFU-291/RUFU-306's class) and for
+  workspace cards whose per-repo proof failed. The unconfirmed refusal is no longer the bare word:
+  `repos` names every repository with its basis and unique-commit count (or `null` = unreadable), so
+  no surface has to collapse the verdict to one opaque word. The four `workspace-*` / shared-group
+  reasons name the arm-level gates that refused BEFORE any per-repo proof could speak.
+  */
+  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" | "post-merge-evidence-pending" | "awaiting-finalization" | "workspace-scope-unresolved" | "workspace-obligations-empty" | "workspace-probe-unavailable" | "workspace-base-unresolvable" | "shared-branch-group"; repos?: LandedReviewWorkspaceRepoDetail[] };
+
+/*
+FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+Structured per-repository detail for a workspace reconcile refusal. Every member is a count or a
+fixed enum — repository basis words come straight from the discharge predicate, and
+`measuredAsRootRepository` is the RUFU-390 disclosure that this member entry was measured in the
+workspace ROOT repository because its own directory IS that repository (never a silent proxy).
+*/
+export type LandedReviewWorkspaceRepoBasis =
+  | WorkspaceReconcileRepoVerdict["basis"]
+  | "probe-unavailable"
+  | "out-of-scope";
+
+export interface LandedReviewWorkspaceRepoDetail {
+  repo: string;
+  basis: LandedReviewWorkspaceRepoBasis;
+  /** Unique commits over the repository's own base; `null` = the count could not be read. */
+  uniqueCommitCount: number | null;
+  /** RUFU-390: this member entry names the workspace ROOT repository; the measurement is of the root. */
+  measuredAsRootRepository?: true;
+}
 
 /*
 FNXC:ApprovalHoldMoveClear 2026-10-07-16:12 (RUFU-314 finding 1):
@@ -18239,7 +18291,14 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     if (!task) return { outcome: "ineligible", reason: "not-in-review" };
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return { outcome: "ineligible", reason: "engine-paused" };
-    if (isWorkspaceTask(task)) return { outcome: "ineligible", reason: "workspace" };
+    /*
+    FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+    The blanket `isWorkspaceTask → reason: "workspace"` refusal at this slot is REPLACED by the
+    narrowed refusal below plus the per-repository discharge arm. The blanket line sat BEFORE the
+    review-lane check, so 16 saneca cards with a proven 0-unique-commit count across root and both
+    sub-repos could not even be LOOKED at by `fn task reconcile` — the refusal was the whole answer.
+    A singular card never touches any of this: every new branch below is guarded by `isWorkspaceTask`.
+    */
     const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     if (!reviewColumns.has(task.column)) {
       const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
@@ -18261,7 +18320,31 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       });
       if (approvalBlocker) return { outcome: "ineligible", reason: "workflow-approval-blocked" };
     }
-    if (task.paused) return await this.refuseMergeConfirmedHold(task, options.source, "paused");
+    /*
+    FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+    The class this task does NOT open: a workspace card whose merge is already confirmed belongs to
+    RUFU-291/RUFU-306's post-merge-gate lane, so it keeps returning `reason: "workspace"` and never
+    flows into the post-merge-evidence arm below. Placed after the review-lane and approval checks as
+    the spec requires; the discharge arm is inserted BEFORE the merge-confirmed arm too, so the two
+    guards cannot disagree even if one is later widened.
+    */
+    if (isWorkspaceTask(task) && task.mergeDetails?.mergeConfirmed) return { outcome: "ineligible", reason: "workspace" };
+    /*
+    FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+    The pause guard learns AUTHORSHIP, because the target population is parked by the engine itself:
+    the 2026-10-03 addendum measured the 16 uniq=0 saneca cards sitting `paused: true` with
+    `pausedReason: "in-review-stall-deadlock"` written by the engine's own stall disposition — a
+    literal "no user pause" fence would refuse them forever. Admission is exactly
+    `isWorkspaceTask && !mergeConfirmed && isEngineAuthoredInReviewStallPark(task)`; the classifier is
+    reused whole (it also rejects `userPaused` and a park whose `error` was overwritten by a later
+    failure), never re-derived from `pausedReason` alone. For every other shape the guard below
+    returns `refuseMergeConfirmedHold(…, "paused")` byte-identically, and liveness stays enforced
+    AFTER admission: the userPaused / live-session / executing / lease guards still run before this
+    method may write anything, and the discharge itself is only granted when EVERY obligation
+    repository proves out — admitting the pause never skips a probe.
+    */
+    const workspaceStallParkAdmission = isWorkspaceTask(task) && task.mergeDetails?.mergeConfirmed !== true && isEngineAuthoredInReviewStallPark(task);
+    if (task.paused && !workspaceStallParkAdmission) return await this.refuseMergeConfirmedHold(task, options.source, "paused");
     if (task.userPaused) return await this.refuseMergeConfirmedHold(task, options.source, "user-paused");
     const livePaths = activeSessionRegistry.pathsForTask(task.id).filter((path) => activeSessionRegistry.isPathActive(path));
     if (livePaths.length > 0) return { outcome: "ineligible", reason: "live-session" };
@@ -18285,6 +18368,18 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     */
     if (options.requireAutoMergeEligible && !allowsAutoMergeProcessing(task, settings)) {
       return await this.refuseMergeConfirmedHold(task, options.source, "auto-merge-off");
+    }
+    /*
+    FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+    The workspace discharge arm runs after EVERY liveness/lease/auto-merge fence and before the
+    merge-confirmed post-merge arm and the singular branch-evidence block — a workspace card can never
+    reach the rootDir-bound singular helpers (`isBranchTipMisboundToTask`, `findAlreadyMergedTaskCommit`,
+    `hasUnlandedTaskOwnedContent`), which is the Phase-D P0 single-commit-finalize class on a multi-repo
+    card. Only the manual surfaces reach it: the automatic sweep still `continue`s on workspace cards in
+    its own candidate filter (unchanged), so unattended mass finalization remains RUFU-504's decision.
+    */
+    if (isWorkspaceTask(task)) {
+      return await this.reconcileWorkspaceLandedReview(task, options, { settings, reviewColumns, requiredPreMergeStepIds });
     }
     if (task.mergeDetails?.mergeConfirmed) {
       /*
@@ -18409,6 +18504,308 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     return { outcome: "reconciled", sha: check.landed.sha, strategy: check.landed.strategy, baseBranch: mergeTarget.branch };
   }
 
+  /*
+  FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+  The per-repository discharge arm of `reconcileLandedReviewTask`, reached ONLY for a workspace card
+  that passed every shared fence (review lane, required pre-merge approval, pause/lease/liveness,
+  auto-merge hold) and is NOT merge-confirmed. Why the fence needed it: the saneca production board
+  measured 16 `in-review` + `failed` cards whose summed unique-commit count over `main..<branch>`
+  across the root repository and both sub-repos was 0 — no content left to review — and the fence
+  answered every `fn task reconcile` with the bare word `workspace`, with no door at all.
+
+  The operator requirements encoded here, in the order they run:
+  1. IDENTITY BEFORE MEASUREMENT (RUFU-390/RUFU-519): every member key is classified with
+     `resolveWorkspaceRootMembership` before any probe; `own-repository` measures in its own
+     directory, `workspace-root-repository` (the measured `saneca` shape — its `git rev-parse
+     --show-toplevel` IS the workspace root) is measured and REPORTED as the root repository, and
+     `unknown`, a missing directory, or a scoped key with no `workspaceWorktrees` entry refuses
+     `workspace-probe-unavailable`. Measuring a member in a directory whose top-level is an
+     enclosing repository is the false-certificate class and is structurally impossible here.
+  2. The confirmed `repositoryScope` is the obligation set. A scope that is not confirmed refuses
+     `workspace-scope-unresolved`; confirmed-but-empty refuses `workspace-obligations-empty` — an
+     empty obligation set is NEVER an empty-set discharge. Keys outside the scope are named in the
+     refusal detail but never required to discharge.
+  3. Each repository's base is resolved with its OWN recorded base (`resolveWorkspaceRepoBaseBranch`
+     mode `recorded`) and recorded with `stage: "self-heal"`, exactly as the partial-land sweep
+     does; a failure refuses `workspace-base-unresolvable` naming the repo.
+  4. Discharge vocabulary (Step 1's predicate, the merge lane's own authority): `zero-ahead` = the
+     tip resolves AND is an ancestor of that repository's own base AND the canonical ahead count is
+     0; `landed` = proven via `findProvenLandedCommit` (the only sha this arm may ever echo). The
+     `net-zero` shape is AHEAD-of-base-and-contributes-nothing — the committed-then-reverted shape —
+     and is never wordable as a delivery; `classifyEmptyLandEvidence` runs only to NAME such a
+     refusal (`reverted`) and can never license a discharge.
+  5. A shared-branch-group member is refused outright — its landing needs
+     `recordSelfHealingBranchGroupMemberLanding` semantics this task does not own.
+  6. Branches are untouched and no worktree is removed on EITHER path: per-repo acquired worktrees
+     stay owned by the FN-9056 sweep and branch deletion by the merge lane; nothing here shells out
+     to `git worktree remove` / `git branch -D`, and no ignored path is ever force-added.
+  7. Finalize writes RUFU-504's commit-free merge proof with NO invented `commitSha`, clears the
+     red state and the engine-authored park in the same CAS write, moves through the shared
+     complete-lane `moveTask` (NOT `moveToCompleteLaneAfterLandedCleanup`, which would attempt
+     singular worktree cleanup on a multi-repo card), and lands exactly one bounded
+     `task:reconcile-workspace-landed-review` audit row (ids/counts/fixed outcomes only) AFTER the
+     write through the FN-9175 bounded seam. A refusal writes no audit row and — because this arm is
+     unreachable for merge-confirmed cards — never an on-card refusal line, so a
+     dischargeable-but-refused card does not accumulate log chatter from repeated CLI attempts.
+  */
+  private async reconcileWorkspaceLandedReview(
+    task: Task,
+    options: { source: "self-healing" | "manual" },
+    ctx: { settings: Settings; reviewColumns: ReadonlySet<string>; requiredPreMergeStepIds: ReadonlySet<string> },
+  ): Promise<LandedReviewReconcileResult> {
+    const { settings, reviewColumns, requiredPreMergeStepIds } = ctx;
+    // Rule 5 (shared branch group): refused by shape, before any git runs.
+    if (isSharedBranchGroupMemberIntegration(task)) {
+      return { outcome: "ineligible", reason: "shared-branch-group" };
+    }
+    const workspaceWorktrees = task.workspaceWorktrees ?? {};
+    const explicitScope = task.repositoryScope?.state === "confirmed" ? task.repositoryScope.repositories : undefined;
+    if (!explicitScope) return { outcome: "ineligible", reason: "workspace-scope-unresolved" };
+    if (explicitScope.length === 0) return { outcome: "ineligible", reason: "workspace-obligations-empty" };
+    const outOfScopeRepos = Object.keys(workspaceWorktrees).filter((repo) => !explicitScope.includes(repo));
+
+    /*
+    Identity classification runs BEFORE any measurement (rule 1). The measurement directory is the
+    member checkout the sweep also measures (`join(rootDir, repoRel)`); what classification decides
+    is WHAT that directory proves. A directory whose top-level is an enclosing repository may only
+    ever be reported as that enclosing repository — never as a separately measured member.
+    */
+    const probeDirs = new Map<string, { dir: string; asRootRepository: boolean }>();
+    const probeUnavailable: string[] = [];
+    const rootRepositoryNotes: string[] = [];
+    for (const repo of explicitScope) {
+      if (!workspaceWorktrees[repo]) {
+        probeUnavailable.push(repo);
+        continue;
+      }
+      const dir = join(this.options.rootDir, repo);
+      if (!existsSync(dir)) {
+        probeUnavailable.push(repo);
+        continue;
+      }
+      const membership = await resolveWorkspaceRootMembership(dir, this.options.rootDir);
+      if (membership.kind === "unknown") {
+        probeUnavailable.push(repo);
+        continue;
+      }
+      const asRootRepository = membership.kind === "workspace-root-repository";
+      probeDirs.set(repo, { dir, asRootRepository });
+      // The RUFU-390 identity note is buffered and written only on a DISCHARGE — a refusal writes
+      // no card log at all, so repeated CLI attempts against an undischargable card stay silent.
+      if (asRootRepository) rootRepositoryNotes.push(repo);
+    }
+    if (probeUnavailable.length > 0) {
+      return {
+        outcome: "ineligible",
+        reason: "workspace-probe-unavailable",
+        repos: probeUnavailable.map((repo) => ({ repo, basis: "probe-unavailable" as const, uniqueCommitCount: null })),
+      };
+    }
+
+    /** Per-repo resolved base, captured during probing for the finalize's mergeTargetBranch provenance. */
+    const baseBranches: Record<string, string> = {};
+    /** Canonical landing shas proven THIS pass (`findProvenLandedCommit`) — the only shas ever recorded. */
+    const landedProofShas: Record<string, string> = {};
+    const gitText = async (args: string[], cwd: string): Promise<string> => {
+      const { stdout } = await execAsync(`git ${args.map((arg) => shellQuote(arg)).join(" ")}`, { cwd, timeout: 20_000 });
+      return typeof stdout === "string" ? stdout.trim() : String(stdout ?? "").trim();
+    };
+    const verdicts = await evaluateWorkspaceReconcileDischarge({
+      repoKeys: explicitScope,
+      entries: workspaceWorktrees,
+      resolveRepoRootDir: (repo) => probeDirs.get(repo)?.dir,
+      probeIntegrationBranch: async (repo, entry, repoRootDir) => {
+        try {
+          const resolution = await resolveWorkspaceRepoBaseBranch({
+            mode: "recorded",
+            repoRootDir,
+            repoRelPath: repo,
+            task,
+            settings,
+            recordedBaseBranch: entry.baseBranch,
+          });
+          await recordWorkspaceBaseBranchDecision({
+            store: this.store,
+            audit: createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("workspace-repo-base-branch", task.id),
+              agentId: "system:self-healing",
+              phase: "workspace-repo-base-branch",
+            }),
+            task,
+            repoRelPath: repo,
+            repoAbsPath: repoRootDir,
+            resolution,
+            stage: "self-heal",
+          });
+          baseBranches[repo] = resolution.branch;
+          return resolution.branch;
+        } catch {
+          return undefined;
+        }
+      },
+      isLanded: async ({ repo, repoRootDir, integrationBranch, entry }) => {
+        const sha = await findProvenLandedCommit(
+          repoRootDir, integrationBranch, entry.landedSha, task.id, entry.branch, entry.revertBoundarySha, task.createdAt,
+        ).catch(() => undefined);
+        if (sha) landedProofShas[repo] = sha;
+        return Boolean(sha);
+      },
+      probe: createTipAncestryProbe(gitText),
+      measureAhead: (input) => measureAheadCommitCount(input),
+      probeBranch: (repoRootDir, branch) => this.probeRepoBranch(repoRootDir, branch),
+      diagnoseAhead: async ({ repoRootDir, branch, integrationBranch }) =>
+        classifyEmptyLandEvidence({ branch, integrationBranch, exec: execEmptyLandGit(repoRootDir) }),
+    });
+
+    const detailFor = (verdict: WorkspaceReconcileRepoVerdict): LandedReviewWorkspaceRepoDetail => ({
+      repo: verdict.repo,
+      basis: verdict.basis,
+      uniqueCommitCount: verdict.kind === "held" ? verdict.uniqueCommitCount : verdict.basis === "zero-ahead" ? 0 : null,
+      ...(probeDirs.get(verdict.repo)?.asRootRepository ? { measuredAsRootRepository: true as const } : {}),
+    });
+    const withOutOfScope = (repos: LandedReviewWorkspaceRepoDetail[]): LandedReviewWorkspaceRepoDetail[] => [
+      ...repos,
+      ...outOfScopeRepos.map((repo) => ({ repo, basis: "out-of-scope" as const, uniqueCommitCount: null })),
+    ];
+
+    if (verdicts.scopeEmpty) return { outcome: "ineligible", reason: "workspace-obligations-empty" };
+    if (verdicts.repos.some((verdict) => verdict.kind === "held" && verdict.basis === "base-unresolvable")) {
+      return { outcome: "ineligible", reason: "workspace-base-unresolvable", repos: withOutOfScope(verdicts.repos.map(detailFor)) };
+    }
+    if (!verdicts.discharge) {
+      // The proof failed. This refusal names every repository with its basis and count (rule: the
+      // unconfirmed class may never collapse to the bare word) and writes nothing on the card.
+      return { outcome: "ineligible", reason: "workspace", repos: withOutOfScope(verdicts.repos.map(detailFor)) };
+    }
+
+    const discharged = verdicts.repos.filter(
+      (verdict): verdict is Extract<WorkspaceReconcileRepoVerdict, { kind: "discharged" }> => verdict.kind === "discharged",
+    );
+    const workspaceLandedShas: Record<string, string> = {};
+    for (const verdict of discharged) {
+      const sha = landedProofShas[verdict.repo];
+      if (sha) workspaceLandedShas[verdict.repo] = sha;
+    }
+    /*
+    RUFU-504's commit-free shape, mirrored: `noOpMerge`/`noOpReason` carry the delivery claim, the
+    basis map is the persisted vocabulary the merge lane also writes, and `commitSha` is DELIBERATELY
+    ABSENT — a tip SHA is evidence about a branch, not a landing this card authored. `workspaceLandedShas`
+    only ever carries shas `findProvenLandedCommit` proved in this very pass.
+    */
+    const mergeDetails: MergeDetails = {
+      mergedAt: new Date().toISOString(),
+      mergeConfirmed: true,
+      noOpMerge: true,
+      noOpReason: COMMIT_FREE_DELIVERY_REASON,
+      prNumber: getPrimaryPrInfo(task)?.number,
+      ...(verdicts.commitFreeBasis ? { workspaceCommitFreeBasis: verdicts.commitFreeBasis } : {}),
+      ...(verdicts.commitFreeBranchTipShas ? { workspaceCommitFreeBranchTipShas: verdicts.commitFreeBranchTipShas } : {}),
+      ...(Object.keys(workspaceLandedShas).length > 0 ? { workspaceLandedShas } : {}),
+    };
+    /*
+    Compare-and-set, workspace-widened: the fingerprint covers everything the singular fence already
+    guards PLUS the four fields this arm actually read (`workspaceWorktrees`, `repositoryScope`,
+    `pausedReason`, `mergeRetries`), so a land, a scope re-confirmation, a different park, or a merge
+    retry landing between proof and write fails the CAS and reports `raced` with nothing written.
+    */
+    const fingerprintOf = (current: Task) => JSON.stringify({
+      column: current.column,
+      status: current.status ?? null,
+      paused: !!current.paused,
+      userPaused: !!current.userPaused,
+      branch: current.branch ?? null,
+      mergeConfirmed: !!current.mergeDetails?.mergeConfirmed,
+      checkoutRunId: current.checkoutRunId ?? null,
+      checkoutLeaseRenewedAt: current.checkoutLeaseRenewedAt ?? null,
+      enabledWorkflowSteps: current.enabledWorkflowSteps ?? [],
+      steps: current.steps ?? [],
+      workflowStepResults: current.workflowStepResults ?? [],
+      workspaceWorktrees: current.workspaceWorktrees ?? null,
+      repositoryScope: current.repositoryScope ?? null,
+      pausedReason: current.pausedReason ?? null,
+      mergeRetries: current.mergeRetries ?? null,
+    });
+    const fingerprint = fingerprintOf(task);
+    let committed = false;
+    const commitIfCurrent = (current: Task) => {
+      if (fingerprintOf(current) !== fingerprint) return null;
+      if (getTaskHardMergeBlocker(current, { reviewColumns, requiredPreMergeStepIds })) return null;
+      committed = true;
+      return {
+        mergeDetails,
+        branch: null,
+        branchWriteOrigin: "engine" as const,
+        status: null,
+        error: null,
+        // The engine-authored stall-deadlock park is lifted ONLY because the classifier + the full
+        // per-repo proof agreed; pause accounting is cleared through the shared helper, never by
+        // hand-writing fields.
+        paused: false as const,
+        pausedReason: null,
+        ...computePauseAccountingPatch(current, false, new Date().toISOString(), false),
+      };
+    };
+    if (typeof this.store.updateTaskAtomic === "function") {
+      await this.store.updateTaskAtomic(task.id, commitIfCurrent);
+    } else {
+      // Lightweight in-memory stores used by legacy recovery tests predate the atomic seam.
+      const current = await this.store.getTask(task.id);
+      const patch = current && commitIfCurrent(current);
+      if (patch) await this.store.updateTask(task.id, patch);
+    }
+    if (!committed) return { outcome: "raced", reason: "task-state-changed" };
+    for (const repo of rootRepositoryNotes) {
+      await this.store.logEntry(
+        task.id,
+        `Workspace reconcile: member entry "${repo}" resolves to the workspace ROOT repository (its git top-level IS the root — the RUFU-390 shape); it is measured and reported AS the root repository, never as a separately measured member.`,
+      ).catch(() => undefined);
+    }
+    const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
+    const movedTask = await this.store.moveTask(task.id, completeLane);
+    this.emitTaskMerged(movedTask, { mergeConfirmed: true });
+    const repoSummary = discharged.map((verdict) =>
+      `${verdict.repo} {basis=${verdict.basis}; base=${baseBranches[verdict.repo] ?? "unrecorded"}${landedProofShas[verdict.repo] ? `; landed=${landedProofShas[verdict.repo]!.slice(0, 8)}` : ""}}`,
+    ).join("; ");
+    await this.store.logEntry(
+      task.id,
+      `Auto-reconciled (workspace, commit-free): ${discharged.length}/${explicitScope.length} repositories discharged with zero unique commits on their own bases — ${repoSummary}. No commits were authored; branches and worktrees were left untouched.`,
+    );
+    /*
+    Exactly one bounded row per discharge, AFTER the CAS write, through the FN-9175 bounded seam:
+    an absent, throwing, rejecting, or hanging audit sink cannot alter or wedge the finalization.
+    Metadata stays ids/counts/fixed-outcomes; per-repo basis is restricted to the two discharge
+    words. A refusal emits no row.
+    */
+    await emitBoundedRunAudit(this.store, {
+      taskId: task.id,
+      agentId: "self-healing",
+      runId: generateSyntheticRunId("reconcile-workspace-landed-review", task.id),
+      domain: "database",
+      mutationType: "task:reconcile-workspace-landed-review",
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        source: options.source,
+        repoCount: explicitScope.length,
+        dischargedCount: discharged.length,
+        repoBasis: Object.fromEntries(discharged.map((verdict) => [verdict.repo, verdict.basis])),
+        outcome: "discharged",
+      },
+    }, { log });
+    return {
+      outcome: "workspace-discharged",
+      repoCount: explicitScope.length,
+      dischargedCount: discharged.length,
+      repos: discharged.map((verdict) => ({
+        repo: verdict.repo,
+        basis: verdict.basis,
+        baseBranch: baseBranches[verdict.repo] ?? "",
+        ...(verdict.branchTipSha ? { branchTipSha: verdict.branchTipSha } : {}),
+        ...(landedProofShas[verdict.repo] ? { landedSha: landedProofShas[verdict.repo] } : {}),
+      })),
+    };
+  }
+
   async recoverBranchMisboundInReviewTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
@@ -18490,7 +18887,13 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
             it is failing on cards it actually repaired. Upstream FN-9442 counts that same action in the
             sweep's recovered tally, so the tally and the audit exclusion travel together.
             */
-            if (result.outcome === "reconciled" || result.outcome === "resumed") recovered++;
+            if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "workspace-discharged") recovered++;
+            /*
+            FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
+            The tally learns the new success arm so a future automatic admission can never under-count a
+            discharge as a refusal. The sweep's own workspace `continue` above still makes this arm
+            unreachable for workspace cards TODAY — the widening is exhaustiveness, not admission.
+            */
             else if (result.outcome !== "already-complete") {
               const reason = result.outcome === "not-landed" ? "not-landed" : result.reason;
               const key = `${task.id}:${reason}`;
