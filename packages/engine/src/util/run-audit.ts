@@ -1187,6 +1187,22 @@ export type DatabaseMutationType =
    * the push step ran and threw — its detail stays in the engine log and the `push:origin` row.
    */
   | "task:merge-publish-before-finalize-unavailable"
+  /**
+   * FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+   * The project's own publish policy withheld publication of landed work, and no other record would say
+   * so. RUFU-337 F-4 measured the silence: `pushAfterMerge` defaults to false, so an ordinary merge with
+   * publishing off reached its terminal lane having written ZERO rows — the `-unavailable` pair above is
+   * recorded only on the arms that refuse completion on required post-merge evidence, and `push:origin`
+   * is written only by a push that ran. So "publish disabled by config" was indistinguishable from a
+   * merge-lane dispatch failure without reading the policy source. This row is that missing trace: one
+   * per withheld publish, on every lane, emitted at the decision point. Metadata is ids/fixed enums only
+   * (`taskId`, `lane` `single-repo`|`workspace`, `reasonCode` `setting-disabled`|`merge-strategy-suppressed`)
+   * — never a remote URL, ref tip, branch, or error text. It is deliberately NOT emitted alongside the
+   * evidence-blocked arm's `-unavailable` row for the same policy fact: the bound is one policy row per
+   * withheld publish, never zero and never two. Deliberately outside the curated delivery-pipeline
+   * catalogue (same shape as RUFU-346's pair), documented as prose in `docs/run-audit.md`.
+   */
+  | "task:merge-publish-policy-skipped"
   /** FNXC:ConfirmedMergeFinalization 2026-08-23-08:25: FN-180 records counts-only reconciliation of stale checklist state after durable merge proof. */
   | "task:reconcile-confirmed-merge-checklist"
   /**

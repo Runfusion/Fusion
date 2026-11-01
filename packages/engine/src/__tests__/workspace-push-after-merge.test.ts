@@ -11,7 +11,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Settings, Task, TaskStore, WorkspaceLeaseHandle } from "@fusion/core";
 import { landWorkspaceTask, WorkspaceMergeTechnicalError } from "../merge/merger-ai.js";
-import { isPushAfterMergeEnabled, type PushAfterMergeLane } from "../merge/push-after-merge-policy.js";
+import { isPushAfterMergeEnabled, explainPushAfterMergeDecision, type PushAfterMergeLane } from "../merge/push-after-merge-policy.js";
 import { WorkspaceEnvironmentError } from "../merge/workspace-integration-target.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
@@ -133,8 +133,18 @@ function createStore(task: Task, settings: Partial<Settings> = {}) {
   return { store: store as unknown as TaskStore, logs, mocks: store };
 }
 
-function enableRemotePublication(mocks: ReturnType<typeof createStore>["mocks"]): void {
-  mocks.recordWorkspaceLeaseFenceRef.mockImplementation(async (input: {
+/**
+ * FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4): the publish-policy skip row a withheld publish must
+ * leave behind. Reading it through one helper keeps every workspace case asserting the same contract:
+ * exactly one row, one lane, one fixed reason.
+ */
+function policySkippedRows(mocks: ReturnType<typeof createStore>["mocks"]): Array<Record<string, unknown>> {
+  return mocks.recordRunAuditEvent.mock.calls
+    .map(([event]) => event as unknown as Record<string, unknown>)
+    .filter((event) => event.mutationType === "task:merge-publish-policy-skipped");
+}
+
+function enableRemotePublication(mocks: ReturnType<typeof createStore>["mocks"]): void {  mocks.recordWorkspaceLeaseFenceRef.mockImplementation(async (input: {
     handle: WorkspaceLeaseHandle;
     fenceRefName: string;
     fenceRefSha: string;
@@ -190,6 +200,24 @@ describe("push-after-merge policy", () => {
             && (lane === "workspace" || mergeStrategy !== "pull-request");
 
           expect(isPushAfterMergeEnabled(settings, { lane })).toBe(expected);
+          /*
+          FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+          The explained decision is now the single source the boolean derives from, so the full matrix
+          pins both halves at once: same answer, and a fixed reason on every disabled cell. The reason
+          must separate the operator's switch from the strategy owning transport — a workspace lane
+          never suppresses on strategy (FN-263), and a pull-request lane with publishing on is suppressed
+          by mechanism, not by the operator turning anything off.
+          */
+          const decision = explainPushAfterMergeDecision(settings, { lane });
+          expect(decision.enabled).toBe(expected);
+          if (expected) {
+            expect(decision).toEqual({ enabled: true });
+          } else {
+            expect(decision).toEqual({
+              enabled: false,
+              reasonCode: pushAfterMerge === true ? "merge-strategy-suppressed" : "setting-disabled",
+            });
+          }
         });
       }
     }
@@ -256,9 +284,37 @@ describeIfGit("landWorkspaceTask push-after-merge", () => {
     }
     expect(logs.some((message) => /fence publication|stale info/i.test(message))).toBe(false);
     expect(mocks.logEntry.mock.calls.filter(([, message]) => message.includes('"Push to remote after merge" is disabled'))).toHaveLength(1);
+    /*
+    FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+    The card always carried this sentence; the audit trail carried nothing, so "publishing is off" could
+    not be told from a lane that failed before dispatch. One row per withheld workspace publish — the
+    workspace merge decides publishing once for the whole board, not once per repository.
+    */
+    expect(policySkippedRows(mocks)).toEqual([
+      expect.objectContaining({
+        agentId: "merger",
+        target: task.id,
+        domain: "git",
+        mutationType: "task:merge-publish-policy-skipped",
+        metadata: { taskId: task.id, lane: "workspace", reasonCode: "setting-disabled" },
+      }),
+    ]);
   });
 
-  it("publishes workspace branches before a required post-merge gate defers completion", async () => {
+  /*
+  FNXC:PostMergeGateDeliveryShape 2026-10-31-23:41 (RUFU-338, stale-assertion repair):
+  This case used to assert `rejects.toThrow("has not reported")` plus a card left parked `in-review` with
+  no move. RUFU-429 deliberately deleted that contract: a required post-merge gate whose lane CANNOT
+  report is `not-applicable` (`notApplicableReason: "delivery-shape"`) for a workspace-shaped card, and
+  "no blocker, no re-seed, and no deferred-finalization claim may be built on an absence the lane was
+  never able to fill" (`packages/core/src/merge/confirmed-merge-reconciliation.ts`). The measured cost of
+  the old behavior was zero workspace cards ever producing a `post-merge-verification` row while eleven
+  human waivers a day lifted a gate nobody could run. So the refusal asserted here is not a regression to
+  restore, and weakening it to `expect(true)` would test nothing: what this seam still owns is that the
+  gate changes NOTHING about publication — every repository's remote still advances, on a card that now
+  finalizes instead of waiting for evidence that can never arrive.
+  */
+  it("publishes every workspace branch even though a required post-merge gate can never report for this delivery shape", async () => {
     fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
     addBareOrigins(fixture);
     const task = makeTask(addTaskBranches(fixture));
@@ -268,15 +324,21 @@ describeIfGit("landWorkspaceTask push-after-merge", () => {
     const selection = { workflowId: "builtin:coding", stepIds: ["post-merge-verification"] };
     Object.assign(mocks, { getTaskWorkflowSelection: () => selection, getTaskWorkflowSelectionAsync: async () => selection });
     enableRemotePublication(mocks);
-    await expect(landWorkspaceTask(store, task, fixture.rootDir, {}, {
+    const result = await landWorkspaceTask(store, task, fixture.rootDir, {}, {
       mergeAgent: squashMergeAgent(BRANCH), reviewAgent: async () => "REVIEW_VERDICT: approve",
-    })).rejects.toThrow("has not reported");
+    });
+
+    expect(result.allLanded).toBe(true);
+    expect(result.finalized).toBe(true);
     for (const repository of fixture.repos) {
       expect(remoteMain(fixture, repository)).toBe(fixture.git(repository, "git rev-parse refs/heads/main"));
     }
-    expect(task.column).toBe("in-review");
-    expect(mocks.moveTask).not.toHaveBeenCalled();
-    expect(mocks.emit).not.toHaveBeenCalledWith("task:merged", expect.anything());
+    // The gate is not deleted from the IR and no verdict is fabricated for it: the card completes on the
+    // strength of the delivery shape, so the card still carries zero post-merge rows afterwards.
+    expect(task.workflowStepResults ?? []).toHaveLength(0);
+    expect(task.column).toBe("done");
+    // Publishing was enabled, so this card must NOT also carry a policy-skip row.
+    expect(policySkippedRows(mocks)).toHaveLength(0);
   });
 
   it("publishes every synchronized workspace integration branch with fence refs", async () => {

@@ -311,6 +311,14 @@ describe("runAiMerge publishes a landing whose finalization is blocked by requir
     // A withheld attempt is still its own queryable class, and it writes no transport row.
     expect(auditRows(storeMocks, "push:origin")).toHaveLength(0);
     expect(auditRows(storeMocks, PUBLISHED)).toHaveLength(0);
+    /*
+    FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+    The RUFU-338 policy row is for the arm that would otherwise leave NOTHING — this arm already names
+    `hold: "policy-disabled"` and carries its visible refusal, so one withheld publish stays one record.
+    Pinned here rather than only in the doc sentence because "never zero, never two" is only honest if the
+    two arms that own it are both under test.
+    */
+    expect(auditRows(storeMocks, "task:merge-publish-policy-skipped")).toHaveLength(0);
     expect(auditRows(storeMocks, WITHHELD)).toEqual([
       expect.objectContaining({
         agentId: "merger",

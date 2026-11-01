@@ -632,6 +632,14 @@ Neither row carries a remote URL, ref tip, error message, finding, or spec sente
 
 These two events are deliberately **not** in the curated delivery-pipeline event catalogue. That catalogue is the lifecycle record of a card moving through delivery and `run-audit-catalogue.test.ts` locks it table-for-table against the `## Delivery-pipeline finalization` section above; this pair records a git-transport decision taken on a card that never reached the completion leg, alongside the other prose-documented exceptions (`task:external-block-parked`, the chat-lane compaction pair, the worktree-base decision rows). Do not add rows for them to that table.
 
+### A publish the project's own policy withheld (RUFU-338)
+
+"Push to remote after merge" is off by default, so the ordinary merge in a default-configured project simply does not publish. Before this change that decision wrote nothing anywhere: the pair above fires only on the arms that refuse or defer completion on required post-merge evidence, and `push:origin` is written only by a push that actually ran. A card whose landed work stayed local because of a setting was therefore indistinguishable from a merge lane that died before it dispatched anything — the operator's only tool was reading the policy source (RUFU-337 F-4).
+
+`task:merge-publish-policy-skipped` is that missing record, written by whichever lane decided not to publish, under the same identity the pair above uses (`agentId: "merger"`, `runId: merge-<taskId>`, `target: <taskId>`, `domain: "git"`). Metadata is `taskId`, `lane` (`single-repo` or `workspace`) and `reasonCode` — `setting-disabled` (the operator's switch is off) or `merge-strategy-suppressed` (publishing is on, but the pull-request strategy owns the transport). The two codes sit behind one hold code upstream precisely because their remedies are opposite. No remote URL, ref tip, branch name, or error text enters the row, and the single-repo lane also writes one task-log line naming the setting and the reason, so the card itself answers the question without a query.
+
+The bound is **one publish-policy record per withheld publish — never zero, never two**. The evidence-blocked arm already carries `task:merge-publish-before-finalize-unavailable` naming `hold: "policy-disabled"` plus its visible refusal, so it is deliberately not given a second row; the arm that would otherwise leave no trace at all is the one that records here. Both arms are under test, because that sentence is only honest if each owning arm is asserted. Like RUFU-346's pair, this event is deliberately outside the curated delivery-pipeline catalogue and documents as prose here — do not add a row for it to that table.
+
 ### Long-term memory budget maintenance (RUFU-279)
 
 `memory:long-term-over-budget` records a long-term `MEMORY.md` (project scope, or one durable agent's

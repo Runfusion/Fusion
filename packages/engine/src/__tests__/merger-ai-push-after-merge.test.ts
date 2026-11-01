@@ -140,6 +140,17 @@ function makeStore(settingsOverrides: Record<string, unknown> = {}) {
   return { store: store as never, storeMocks: store, task, logs };
 }
 
+/**
+ * FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4): the trace a policy-withheld publish must leave.
+ * RUFU-337 F-4 measured the opposite — a project with publishing off (the default) wrote nothing at all,
+ * so a disabled publish was indistinguishable from a merge lane that died before dispatch.
+ */
+function auditRows(storeMocks: Record<string, any>, mutationType: string): Array<Record<string, unknown>> {
+  return storeMocks.recordRunAuditEvent.mock.calls
+    .map(([event]) => event as Record<string, unknown>)
+    .filter((event) => event.mutationType === mutationType);
+}
+
 function realMergeAgent(branch: string) {
   return vi.fn(async (cwd: string) => {
     execSync(`git merge --squash ${branch}`, { cwd, stdio: "pipe" });
@@ -339,7 +350,7 @@ exit 1
   it("does not push when pushAfterMerge is disabled", async () => {
     const { dir, originDir } = initRepoWithRemote();
     const baseSha = git(originDir, "rev-parse main");
-    const { store } = makeStore({ pushAfterMerge: false });
+    const { store, storeMocks, logs } = makeStore({ pushAfterMerge: false });
 
     const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
       mergeAgent: realMergeAgent("fusion/fn-1"),
@@ -349,12 +360,35 @@ exit 1
     expect(result.merged).toBe(true);
     expect(result.pushedToRemote).toBeUndefined();
     expect(git(originDir, "rev-parse main")).toBe(baseSha);
+    /*
+    FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+    Withholding the push stays exactly as silent on the transport as before — no `push:origin` row is
+    written for a push that never ran, the boundary RUFU-346 pins. What is no longer allowed is zero
+    trace: the policy decision gets its own row AND a line on the card, naming the operator's switch as
+    the cause. This is the default configuration, so before this the commonest merge shape in a fresh
+    project wrote nothing anywhere (RUFU-337 F-4).
+    */
+    expect(auditRows(storeMocks, "push:origin")).toHaveLength(0);
+    expect(auditRows(storeMocks, "task:merge-publish-policy-skipped")).toEqual([
+      expect.objectContaining({
+        agentId: "merger",
+        runId: "merge-FN-1",
+        target: "FN-1",
+        domain: "git",
+        mutationType: "task:merge-publish-policy-skipped",
+        metadata: { taskId: "FN-1", lane: "single-repo", reasonCode: "setting-disabled" },
+      }),
+    ]);
+    // The lane's `log` writes each message to two sinks (task log + agent status stream), so the
+    // board-visible task-log entry is counted on its `AiMerge` action, not over both sinks.
+    expect(logs.filter((l) => l.action === "AiMerge" && l.message.includes('"Push to remote after merge" is disabled'))).toHaveLength(1);
+    expect(logs.some((l) => l.message.includes("reason: setting-disabled"))).toBe(true);
   });
 
   it("does not push when mergeStrategy is pull-request even if pushAfterMerge is on", async () => {
     const { dir, originDir } = initRepoWithRemote();
     const baseSha = git(originDir, "rev-parse main");
-    const { store } = makeStore({ mergeStrategy: "pull-request" });
+    const { store, storeMocks, logs } = makeStore({ mergeStrategy: "pull-request" });
 
     // Direct runAiMerge call (the PR flow gates elsewhere; this asserts the
     // step-level guard mirrors the legacy `mergeStrategy !== "pull-request"` gate).
@@ -365,6 +399,20 @@ exit 1
 
     expect(result.pushedToRemote).toBeUndefined();
     expect(git(originDir, "rev-parse main")).toBe(baseSha);
+    /*
+    FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+    Same record, different cause: the operator asked for publishing and the merge strategy owns the
+    transport instead. One hold code over two opposite remedies is exactly why the reason code is a fixed
+    enum on the row rather than something a reader re-derives from settings.
+    */
+    expect(auditRows(storeMocks, "push:origin")).toHaveLength(0);
+    expect(auditRows(storeMocks, "task:merge-publish-policy-skipped")).toEqual([
+      expect.objectContaining({
+        metadata: { taskId: "FN-1", lane: "single-repo", reasonCode: "merge-strategy-suppressed" },
+      }),
+    ]);
+    expect(logs.some((l) => l.message.includes("reason: merge-strategy-suppressed"))).toBe(true);
+    expect(logs.some((l) => l.message.includes("reason: setting-disabled"))).toBe(false);
   });
 
   it("finalizes the task even when the push fails (non-fatal contract)", async () => {

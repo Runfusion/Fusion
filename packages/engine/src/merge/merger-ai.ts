@@ -167,7 +167,7 @@ import {
 } from "./workspace-commit-free-delivery.js";
 import { persistWorkspaceRepoLandFailure } from "./workspace-land-failure.js";
 import { ensureTenancyFenceRef, mergeDispatchFenceRef, publishWorkspaceIntegrationRef, WorkspaceFenceRefError, workspaceLandFenceRef } from "./workspace-fence-ref.js";
-import { isPushAfterMergeEnabled } from "./push-after-merge-policy.js";
+import { isPushAfterMergeEnabled, explainPushAfterMergeDecision, type PushAfterMergeDisabledReason, type PushAfterMergeLane } from "./push-after-merge-policy.js";
 import { resolveWorkspaceIntegrationTarget, WorkspaceEnvironmentError, WorkspaceIntegrationTargetError, type WorkspaceIntegrationTarget } from "./workspace-integration-target.js";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { getCommitTaskOwnership, detectAlreadyLandedOnMain } from "./already-merged-detector.js";
@@ -2443,7 +2443,17 @@ async function runPushAfterMergeStep(input: {
   fence: MergeWriteFence;
 }): Promise<void> {
   const { store, projectRootDir, taskId, settings, integrationBranch, audit, log, options, result, fence } = input;
-  if (!isPushAfterMergeEnabled(settings, { lane: "single-repo" })) return;
+  /*
+  FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+  This guard was the trace-less early return RUFU-337 F-4 named, and it is deliberately still silent.
+  RUFU-346 moved the policy door UP into `classifyPublishBeforeFinalizeHold`, so a policy-withheld publish
+  never reaches this step at all, and the reporting owner for a withheld publish is the publish closure
+  (`createPublishBeforeFinalizeLanding` → `task:merge-publish-policy-skipped`), which sees every lane and
+  every arm. Recording it here too would put two rows on one fact — the exact drift this module keeps
+  refusing. What changed is that the guard now reads the SAME explained decision the reporter derives its
+  `reasonCode` from, so a defensive belt and its trace cannot disagree about why nothing ran.
+  */
+  if (!explainPushAfterMergeDecision(settings, { lane: "single-repo" }).enabled) return;
   try {
     const pushOutcome = await pushAfterMergeToRemote({
       store,
@@ -2569,6 +2579,14 @@ export interface PublishLandingAttempt {
   landingProven: boolean;
   /** Fixed hold code when withheld, `null` otherwise. */
   withheld: MergePublishHold | null;
+  /**
+   * Present ONLY when `withheld === "policy-disabled"`: which publish policy fact stopped it, so the
+   * record distinguishes the operator's own switch (`setting-disabled`) from the merge strategy owning
+   * the transport (`merge-strategy-suppressed`) — opposite remedies behind one hold code.
+   *
+   * FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4).
+   */
+  policyReason?: PushAfterMergeDisabledReason;
 }
 
 /**
@@ -2587,8 +2605,12 @@ export type PublishLanding = (result: MergeResult, finalizationBlocked: boolean)
  */
 type PublishLandingAttemptRunner = (result: MergeResult) => Promise<PublishLandingAttempt>;
 
-function withheldPublish(withheld: MergePublishHold, landingProven = false): PublishLandingAttempt {
-  return { attempted: false, pushed: false, landingProven, withheld };
+function withheldPublish(
+  withheld: MergePublishHold,
+  landingProven = false,
+  policyReason?: PushAfterMergeDisabledReason,
+): PublishLandingAttempt {
+  return { attempted: false, pushed: false, landingProven, withheld, ...(policyReason ? { policyReason } : {}) };
 }
 
 /**
@@ -2628,7 +2650,7 @@ function classifyPublishBeforeFinalizeHold(input: {
   if (live.deletedAt) return "task-unavailable";
   if (live.paused || live.userPaused) return "task-paused";
   if (liveSettings.globalPause || liveSettings.enginePaused) return "global-pause";
-  if (!isPushAfterMergeEnabled(liveSettings, { lane: "single-repo" })) return "policy-disabled";
+  if (!explainPushAfterMergeDecision(liveSettings, { lane: "single-repo" }).enabled) return "policy-disabled";
   if ((liveSettings.pushRemote ?? "") !== (laneSettings.pushRemote ?? "")) return "destination-changed";
   if (!manual && (live.autoMerge === false || !allowsAutoMergeProcessing(live, liveSettings))) return "auto-merge-off";
   return null;
@@ -2666,7 +2688,22 @@ function runPublishBeforeFinalizeAttempt(input: PublishBeforeFinalizeInput): Pub
       laneSettings: settings,
       manual: options.manual === true,
     });
-    if (hold) return withheldPublish(hold, true);
+    if (hold) {
+      /*
+      FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+      `policy-disabled` is one hold code over two opposite remedies — the operator turned publishing off,
+      or the pull-request strategy owns the transport — so the attempt carries the fixed reason the
+      reporter publishes rather than making a reader re-derive it from settings it cannot see. Same
+      helper, same settings object as the classifier two lines above, so cause and decision cannot drift;
+      the `!decision.enabled` narrowing is what ties the reason to the hold instead of casting it in.
+      */
+      const decision = explainPushAfterMergeDecision(liveSettings, { lane: "single-repo" });
+      return withheldPublish(
+        hold,
+        true,
+        hold === "policy-disabled" && !decision.enabled ? decision.reasonCode : undefined,
+      );
+    }
     try {
       await runPushAfterMergeStep({
         store,
@@ -2740,13 +2777,84 @@ function reportPublishBeforeFinalize(
 }
 
 /**
+ * The operator-visible sentence for a publish the project's own policy withheld (single-repo lane).
+ * Names the setting by the same words the Settings UI uses, so one search finds it on either lane, and
+ * ends with the fixed reason code so a board reader can match the line to its run-audit row.
+ *
+ * FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4).
+ */
+function publishPolicySkippedMessage(
+  integrationBranch: string,
+  reasonCode: PushAfterMergeDisabledReason,
+): string {
+  return reasonCode === "merge-strategy-suppressed"
+    ? `AI merge: the "Push to remote after merge" setting is on, but the pull-request merge strategy owns publishing, so the landing stayed on the local ${integrationBranch} ref and no remote ref was written (reason: merge-strategy-suppressed).`
+    : `AI merge: "Push to remote after merge" is disabled — landed on the local ${integrationBranch} ref only; no remote ref is written (reason: setting-disabled).`;
+}
+
+/*
+FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+The missing trace for a publish withheld by the project's own policy. RUFU-337 F-4 measured the silence:
+`pushAfterMerge` defaults to false, so an ordinary merge that completed with publishing off reached its
+terminal lane having written NO row anywhere — RUFU-346's withhold pair fires only on the arms that
+refuse completion on required post-merge evidence, and `push:origin` is written only by a push that ran.
+A disabled publish was therefore indistinguishable from a merge-lane dispatch failure. Both lanes report
+through this one seam, under the same `merge-<taskId>` identity RUFU-346's pair uses, with ids/fixed enums
+only (`taskId`, `lane`, `reasonCode`) — never a remote URL, ref tip, branch, or error text. The bound is
+ONE row per withheld publish, never zero and never two: the evidence-blocked single-repo arm already has
+its `-unavailable` row naming `hold: "policy-disabled"`, so it is not given a second one. Emission is the
+bounded seam (FN-9175), so telemetry can never alter or delay a merge, and it is intentionally outside the
+curated delivery-pipeline catalogue — documented as prose in `docs/run-audit.md`, like RUFU-346's pair.
+*/
+function reportPublishPolicySkipped(
+  store: TaskStore,
+  taskId: string,
+  lane: PushAfterMergeLane,
+  reasonCode: PushAfterMergeDisabledReason,
+): void {
+  void emitBoundedRunAudit(store, {
+    taskId,
+    agentId: "merger",
+    runId: `merge-${taskId}`,
+    domain: "git",
+    target: taskId,
+    mutationType: "task:merge-publish-policy-skipped",
+    metadata: { taskId, lane, reasonCode },
+  }, { log: aiMergeLog });
+}
+
+/**
  * The publish closure finalization is handed: one attempt, then exactly one audit row describing it,
  * including the withheld cases. Never throws.
+ *
+ * FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4): a policy-withheld publish also records its own row
+ * and task-log line on the arms RUFU-346's pair deliberately leaves silent, so "publishing is off" is
+ * observable from the card rather than from the settings source.
  */
 function createPublishBeforeFinalizeLanding(input: PublishBeforeFinalizeInput): PublishLanding {
   const attemptPublish = runPublishBeforeFinalizeAttempt(input);
   return async (result: MergeResult, finalizationBlocked: boolean): Promise<PublishLandingAttempt> => {
     const attempt = await attemptPublish(result);
+    const policyReason = attempt.withheld === "policy-disabled" && !finalizationBlocked
+      ? attempt.policyReason
+      : undefined;
+    if (policyReason) {
+      /*
+      FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+      Only the arm that would otherwise leave zero trace records here. The evidence-blocked arm already
+      carries `task:merge-publish-before-finalize-unavailable` naming `hold: "policy-disabled"` plus its
+      visible refusal, so recording the same policy fact twice on that arm is the duplication RUFU-346's
+      emission contract exists to bound. The bound overall: one publish-policy record per withheld
+      publish, never zero, never two. Both records absorb their own errors — a withheld publish is the
+      lane's own decision, never a failure, and must not disturb the refusal or deferral still to come.
+      */
+      reportPublishPolicySkipped(input.store, input.taskId, "single-repo", policyReason);
+      try {
+        await input.log(publishPolicySkippedMessage(input.integrationBranch, policyReason));
+      } catch {
+        /* A missing diagnostic line is never a reason to change a merge outcome. */
+      }
+    }
     if (finalizationBlocked) {
       reportPublishBeforeFinalize(
         input.store,
@@ -3237,6 +3345,21 @@ export async function landWorkspaceTask(
     }
   }
   if (!publishToRemote && repoKeys.length > 0) {
+    /*
+    FNXC:MergePublish 2026-10-31-22:57 (RUFU-338 F-4):
+    The workspace lane always said this out loud on the card and never once in run-audit, so the audit
+    trail disagreed with the board depending on which lane merged. One parity row per withheld workspace
+    publish, from the same seam the single-repo lane uses; the log line stays the single sentence below
+    rather than becoming two. `publishToRemote` is decided at plan time, before any repository has landed,
+    so this lane never reaches the pre-finalization hold classifier and has no other publish record.
+    */
+    const workspaceDecision = explainPushAfterMergeDecision(settings, { lane: "workspace" });
+    reportPublishPolicySkipped(
+      store,
+      taskId,
+      "workspace",
+      workspaceDecision.enabled ? "setting-disabled" : workspaceDecision.reasonCode,
+    );
     await log('AI merge (workspace): "Push to remote after merge" is disabled — landing every repository on its local integration ref only; no remote refs are written.');
   }
 
