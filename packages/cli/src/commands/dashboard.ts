@@ -107,6 +107,7 @@ import {
   LandedValidationEvidenceProvider,
   HeartbeatMonitor,
   HeartbeatTriggerScheduler,
+  asWakeSignalKind,
   type WakeContext,
   ProjectEngineManager,
   PeerExchangeService,
@@ -2827,6 +2828,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                 ? context.triggeringCommentType
                 : undefined,
             contextSnapshot: { ...context },
+            /*
+            FNXC:HeartbeatIdlePreflight 2026-11-01-01:05 (RUFU-268):
+            Forward the scheduler gate's classification. Only the candidate-table kind makes the compact idle
+            turn admissible; every other value, and its absence, keeps the full path. The narrowing goes
+            through `asWakeSignalKind` — the same list the classifier is defined against — rather than a
+            literal union copied here, because a copy is how a later kind would be dropped at exactly one of
+            the two wiring sites.
+            */
+            fresherSignal: asWakeSignalKind(context.fresherSignal),
           });
         },
         store,
@@ -2838,8 +2848,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         {
           // STAS-300: this scheduler still executes heartbeats through heartbeatMonitorImpl, so an
           // acknowledged idle agent must not be re-woken here either.
-          shouldSuppressTimerWake: async (agent) => heartbeatMonitorImpl
-            ? await heartbeatMonitorImpl.decideTimerWake(agent)
+          //
+          // FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268): the tick forwards its effective interval
+          // so the idle ladder measures against the period actually scheduled here. This site must forward
+          // the same context as `runtimes/in-process-runtime.ts` — these two are the only paths a timer tick
+          // takes, and a ladder wired to one and not the other is the divergence this step exists to prevent.
+          shouldSuppressTimerWake: async (agent, context) => heartbeatMonitorImpl
+            ? await heartbeatMonitorImpl.decideTimerWake(agent, { source: "timer", intervalMs: context?.intervalMs })
             : { suppress: false },
         },
       );

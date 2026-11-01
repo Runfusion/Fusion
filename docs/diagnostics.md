@@ -197,6 +197,29 @@ Engine stop now aborts in-flight executor AI sessions before the runtime drain w
 
 Use these together to distinguish expected immediate session teardown from genuinely stuck cleanup surfaces that outlive the configured `runtimeStopDrainMs` window.
 
+## Idle heartbeat backoff (`idle-ladder`, `idle-backoff:<stepMs>`, RUFU-268)
+
+An unassigned agent whose heartbeats keep acknowledging "nothing to do" is deliberately woken less often:
+base → 2× → 4× → … up to `heartbeatIdleBackoffCapMs` (default 30 min), reset by the first run that finds
+work. Two surfaces say which decision a tick got.
+
+- `timer-heartbeat-idle-deferred agentId=<id> stepRemainingMs=<n>` (debug) — the board DID change, and this
+  agent's own ladder chose to keep waiting. The distinguishing field is the wake-decision reason code:
+  `idle-backoff:<stepMs>` means "new signal, waiting on the ladder", while `no-fresher-signal` is the older
+  STAS-300 answer "nothing changed at all". A deferred tick still records its heartbeat and still stamps
+  timer liveness; it just does not open a session.
+- `idle-ladder advanced for <id>: streak N -> M step=<ms>` / `idle-ladder cleared for <id>: …` (debug) —
+  the ladder transition itself, with its durable `agent:heartbeat-idle-ladder` row (see
+  [`run-audit.md`](run-audit.md)).
+- `idle-preflight-unavailable` / `idle-preflight-board-probe-failed` (debug) — the compact question could
+  not be answered, so the tick fell through to the full heartbeat session. These are cost signals, never
+  correctness failures: every fall-through path is the pre-RUFU-268 behaviour.
+
+To answer "why has this agent not woken?", read its `runtimeConfig.heartbeatIdleStreak` and
+`heartbeatLastNoWorkAt` against `heartbeatIntervalMs`: the rung it sits on is the wait the scheduler is
+holding it to, and the dashboard's Unresponsive threshold and next-heartbeat countdowns stretch by that
+same rung. An agent with no `heartbeatIdleStreak` is not idling at all and is timed exactly as before.
+
 ## Reports health stale-classifier diagnostics (`[reports-health]`)
 
 Direct-report stale decisions in `HeartbeatMonitor.buildReportsHealthSection()` now emit a structured log when an agent is marked `**stale**`.
@@ -206,7 +229,10 @@ Direct-report stale decisions in `HeartbeatMonitor.buildReportsHealthSection()` 
   - `runtimeConfig` — interval came from cached per-agent runtime config
   - `persisted-agent` — cache was missing/sparse; interval came from persisted `getAgent()` row
   - `monitor-default` — no per-agent interval available; monitor default interval used
-- `staleThresholdMs` is the computed stale threshold (`max(1.5 × interval, 5m floor)`)
+- `staleThresholdMs` is the computed stale threshold (`max(1.5 × interval, 5m floor)`). For an agent the
+  idle-backoff ladder is holding (RUFU-268) the `interval` in that product is the agent's own current ladder
+  step rather than its configured cadence, so the log line names the threshold the briefing actually used;
+  an agent that is not idling resolves to its configured interval unchanged
 - `heartbeatAgeMs` is the report's current heartbeat age at classification time
 - Healthy reports do not emit this diagnostic; only stale decisions do
 

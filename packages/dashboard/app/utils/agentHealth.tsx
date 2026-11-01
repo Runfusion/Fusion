@@ -1,6 +1,15 @@
 import type { JSX } from "react";
 import { Bot, Heart, Activity, Pause } from "lucide-react";
 import { describeHeartbeatThrottle } from "@fusion/core/heartbeat-recovery-state";
+/*
+FNXC:HeartbeatIdleBackoff 2026-11-01-01:20 (RUFU-268):
+The health pill needs the SAME ladder the scheduler is deferring this agent with, or an agent that is
+idling on purpose gets called Unresponsive at the very moment the engine decided to leave it alone. It is
+imported as a value from `@fusion/core` — which the browser build aliases to the types-only leaf — because
+a root-barrel value that lives only in the Node index resolves to `undefined` in the shipped bundle with
+no build error (RUFU-220). The module imports nothing, so it is legal in that leaf.
+*/
+import { resolveHeartbeatSilenceBudgetMs } from "@fusion/core";
 import type { Agent } from "../api";
 import { resolveHeartbeatIntervalMs } from "./heartbeatIntervals";
 import { elapsedSinceMs } from "./dataFreshness";
@@ -108,7 +117,25 @@ export function getStalenessThresholdMs(
   callers supply this settings value and raw persisted intervals remain the input.
   */
   const effectiveIntervalMs = Math.max(1000, Math.round(intervalMs * resolvedMultiplier));
-  return Math.max(effectiveIntervalMs * HEARTBEAT_GRACE_MULTIPLIER, MIN_HEARTBEAT_STALENESS_MS);
+
+  /*
+  FNXC:HeartbeatIdleBackoff 2026-11-01-01:20 (RUFU-268):
+  The idle ladder stretches this agent's dispatch cadence, so `lastHeartbeatAt` legitimately stops moving
+  while it idles. The grace window therefore grows by THAT agent's own step — read off its own persisted
+  streak — and by nobody else's: an agent that is not idling gets back `effectiveIntervalMs` byte-identically,
+  which is the guarantee that today's Unresponsive timing for busy agents does not move by a millisecond.
+
+  The ceiling comes from the code default rather than `settings.heartbeatIdleBackoffCapMs`, because this
+  resolver takes no settings input beyond the multiplier its callers already pass. That errs in exactly one
+  direction: with a lowered cap the window is more generous than the engine's wait, and only an operator who
+  raises the cap past 30 minutes could make it tighter than the deferral — and 4× a 30-minute step is still
+  a two-hour window. The safe direction is the one that cannot falsely call an agent Unresponsive.
+  */
+  const silenceBudgetMs = resolveHeartbeatSilenceBudgetMs({
+    streak: runtimeConfig?.heartbeatIdleStreak,
+    baseIntervalMs: effectiveIntervalMs,
+  });
+  return Math.max(silenceBudgetMs * HEARTBEAT_GRACE_MULTIPLIER, MIN_HEARTBEAT_STALENESS_MS);
 }
 
 /**

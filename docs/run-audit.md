@@ -234,6 +234,29 @@ bounded best-effort seam, so an absent, throwing, or hanging audit sink can neit
 nor turn a transient throttle into a durable park, and the event is intentionally outside the curated
 delivery-pipeline event catalogue.
 
+## Idle heartbeat backoff (RUFU-268)
+
+`agent:heartbeat-idle-ladder` records one CHANGE to an unassigned agent's idle streak — not one row per
+deferred tick — so a long idle episode costs a handful of rows. Metadata is ids/counts/a duration only:
+`agentId`, `outcome` (`advanced` when an acknowledged no-work heartbeat stretched the cadence, `cleared`
+when a run found work), `priorStreak`, `streak`, and the resulting `stepMs` (0 on a clear). The row is
+written from the single ladder writer (`recordAcknowledgedCompletion`), which is also the only place that
+touches `runtimeConfig.heartbeatIdleStreak` / `heartbeatLastNoWorkAt`, so the row and the persisted row
+cannot disagree about which rung the agent sits on. The write uses the FN-9175 bounded best-effort seam: an
+absent, throwing, or hanging audit sink costs at most one idle episode's telemetry, never a dispatch. The
+pair to read alongside it is the heartbeat run's own `resultJson.reason`:
+
+- `idle_preflight_noop` — an admissible idle tick (timer source, no assignment at run start, and a delta
+  confined to the auto-claim candidate table) was answered by the compact one-line question and spent no
+  heartbeat session. The row still carries `heartbeatDoneAccepted` and the `wakeCursor` the next tick proves
+  its silence against, so a cheap tick is as well-attested as a full one.
+- a missing reason on a completed no-task run means the full path ran, which is what every non-idle outcome
+  (assigned work, an unread message, a room entry, a new steering comment, an ambiguous or failed compact
+  answer, a manual wake) still does.
+
+The event is deliberately outside the curated delivery-pipeline event catalogue and documents as prose
+here.
+
 ## Event-driven dispatch latency
 
 `task:dispatch-latency-observed` (FN-519) answers "why did this card wait?" after the fact. Before

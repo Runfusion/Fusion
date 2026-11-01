@@ -245,14 +245,93 @@ function boardStateFrom(
   };
 }
 
+/**
+ * Which population makes a fresh snapshot fresher than an acknowledged cursor, or `"none"`.
+ *
+ * FNXC:HeartbeatIdlePreflight 2026-11-01-00:20 (RUFU-268):
+ * `hasFresherWakeSignal` answered only "is there anything new?", which was enough while a yes meant
+ * "open a full session". A second consumer now has to ask WHICH population changed: the compact idle
+ * pre-flight may run only for a delta confined to the board-candidate table, because a new message,
+ * room entry, or steering comment carries content the compact turn was never given and could not
+ * honestly answer for. Introducing this classifier rather than a second hand-copied predicate keeps
+ * ONE definition of freshness — a copy is how the two paths would start disagreeing about whether a
+ * tick needs a session, and the cheap path silently swallowing a real signal is the one failure this
+ * design cannot afford.
+ *
+ * Message and room precedence is deliberate: those are content that arrived, so they are reported
+ * before anything the board merely rearranged. The remaining checks are the board's, in the same
+ * order `hasFresherWakeSignal` used, so the classification cannot shift which tick is considered fresh.
+ *
+ * FNXC:HeartbeatIdlePreflight 2026-11-01-11:40 (RUFU-268):
+ * The board half is split THREE ways, not two, because the first build called every board delta
+ * `"board-candidates"` and that label then did double duty as "safe to postpone" and "safe to ask about
+ * with a one-line question". A new steering comment carries text the agent has never read, and a change
+ * in the agent's own assigned rows means work landed on it — postponing either for a ladder step, or
+ * letting the compact turn answer for it, trades a real signal for a token saving. Only the ambient
+ * candidate table moving is a delta an idling agent may be asked about later; it is also the only
+ * population the compact turn is actually shown, which is what makes the two permissions the same set.
+ * Splitting the label changed no tick's freshness verdict: `hasFresherWakeSignal` still answers
+ * `kind !== "none"`, so the ladder and the pre-flight narrow what they may skip without moving the
+ * boundary of when a session is owed.
+ */
+export type WakeSignalKind =
+  | "messages"
+  | "room"
+  | "board-content"
+  | "board-assignment"
+  | "board-candidates"
+  | "none";
+
+/**
+ * Every kind the classifier can return, in report order. A wiring site validates a forwarded kind
+ * against this list rather than hand-copying a literal union, so a new kind cannot be silently dropped
+ * at one of the two scheduler boundaries and quietly cost that tick its cheap turn.
+ */
+export const WAKE_SIGNAL_KINDS = [
+  "messages",
+  "room",
+  "board-content",
+  "board-assignment",
+  "board-candidates",
+  "none",
+] as const satisfies readonly WakeSignalKind[];
+
+export function classifyFresherWakeSignal(
+  cursor: HeartbeatWakeCursor,
+  snapshot: WakeSignalSnapshot,
+): WakeSignalKind {
+  if (snapshot.inboxUnreadTotal > 0) return "messages";
+  if (snapshot.roomEntryIds.some((id) => !cursor.roomEntryIds.includes(id))) return "room";
+  if (snapshot.boardState.steeringCommentIds.some((id) => !cursor.boardState.steeringCommentIds.includes(id))) {
+    return "board-content";
+  }
+  if (!sameIdSet(cursor.boardState.assignedRows, snapshot.boardState.assignedRows)) return "board-assignment";
+  if (cursor.boardState.assignedTaskState !== snapshot.boardState.assignedTaskState) return "board-assignment";
+  if (!sameIdSet(cursor.boardState.autoClaimCandidates, snapshot.boardState.autoClaimCandidates)) return "board-candidates";
+  return "none";
+}
+
+/**
+ * The ONE kind an idling agent may be asked about late, or asked about with the compact pre-flight.
+ * Both permissions are answered by the same predicate on purpose: the candidate table is the only
+ * population the cheap turn is shown, so a delta the agent cannot be shown cheaply is also a delta it
+ * cannot be asked to wait on. Two hand-copied `=== "board-candidates"` checks in two lanes is how one
+ * of them would eventually drift onto a kind carrying unread content.
+ */
+export function isIdleLadderEligibleWakeSignal(kind: WakeSignalKind | undefined): boolean {
+  return kind === "board-candidates";
+}
+
+/** Narrows a value carried across a wiring boundary to a known kind; anything else means unclassified. */
+export function asWakeSignalKind(value: unknown): WakeSignalKind | undefined {
+  return (WAKE_SIGNAL_KINDS as readonly string[]).includes(String(value))
+    ? value as WakeSignalKind
+    : undefined;
+}
+
 /** True when the fresh snapshot holds anything the acknowledged cursor did not already cover. */
 export function hasFresherWakeSignal(cursor: HeartbeatWakeCursor, snapshot: WakeSignalSnapshot): boolean {
-  if (snapshot.inboxUnreadTotal > 0) return true;
-  if (snapshot.roomEntryIds.some((id) => !cursor.roomEntryIds.includes(id))) return true;
-  if (snapshot.boardState.steeringCommentIds.some((id) => !cursor.boardState.steeringCommentIds.includes(id))) return true;
-  if (!sameIdSet(cursor.boardState.assignedRows, snapshot.boardState.assignedRows)) return true;
-  if (cursor.boardState.assignedTaskState !== snapshot.boardState.assignedTaskState) return true;
-  return !sameIdSet(cursor.boardState.autoClaimCandidates, snapshot.boardState.autoClaimCandidates);
+  return classifyFresherWakeSignal(cursor, snapshot) !== "none";
 }
 
 /**

@@ -117,7 +117,7 @@ type MovedProjectSettingsKey =
   | "reviewArbitrationProvider"
   | "reviewArbitrationModelId";
 
-type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy" | "selectedWorkflowModelLanes";
+type NonDefaultProjectSettingsKey = "ephemeralAgentTaskCreationPolicy" | "selectedWorkflowModelLanes" | "heartbeatIdleBackoffCapMs";
 type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey | NonDefaultProjectSettingsKey>;
 
 /**
@@ -1235,9 +1235,17 @@ export const GLOBAL_SETTINGS_KEYS = Object.freeze(
 FNXC:EphemeralAgentTaskCreation 2026-07-30-12:00:
 The validation policy is persisted as a project setting but intentionally absent from defaults.
 The resolver owns fallback so a legacy-only explicit false remains deny after settings merge.
+
+FNXC:HeartbeatIdleBackoff 2026-10-31-23:54 (RUFU-268):
+`heartbeatIdleBackoffCapMs` follows the same no-default pattern for the same reason: the ladder's
+ceiling is code-owned (`HEARTBEAT_IDLE_BACKOFF_DEFAULT_CAP_MS`, 30 minutes — the number the operator
+asked for) and an operator entry only overrides it. Keeping it out of `DEFAULT_PROJECT_SETTINGS` also
+means an unset cap is indistinguishable from the code default, instead of a stored 1800000 that a
+settings rollback can silently disagree with.
 */
 export const NON_DEFAULT_PROJECT_SETTINGS_KEYS = Object.freeze([
   "ephemeralAgentTaskCreationPolicy",
+  "heartbeatIdleBackoffCapMs",
 ] as const satisfies readonly NonDefaultProjectSettingsKey[]);
 
 /** Keys that belong to the project settings scope. */

@@ -1344,6 +1344,21 @@ export interface ProjectSettings {
    *  For example, 0.5 halves the interval (faster checks), 2.0 doubles it (slower checks).
    *  Must be > 0. Default: 1 (no change). */
   heartbeatMultiplier?: number;
+  /**
+   * RUFU-268 idle-backoff ceiling in ms: how long an unassigned agent's heartbeat cadence may stretch
+   * while it keeps answering "nothing to do" (base → 2× → 4× → …, clamped here).
+   *
+   * No default in `DEFAULT_PROJECT_SETTINGS` — the resolver owns the fallback, which is
+   * `HEARTBEAT_IDLE_BACKOFF_DEFAULT_CAP_MS` (30 minutes, the ceiling the operator specified) in
+   * `packages/core/src/heartbeat-idle-backoff.ts`. Lower it to make an idle agent wake more often; a
+   * non-positive or non-finite value falls back to that same default rather than disabling the ladder,
+   * because "0" from a form field must not silently mean "no backoff ever".
+   *
+   * Read by the scheduler's deferral gate. The dashboard's staleness math uses the code default rather
+   * than this setting (its threshold resolver takes no new parameter), which errs on the generous side —
+   * the one direction that cannot falsely label an agent Unresponsive.
+   */
+  heartbeatIdleBackoffCapMs?: number;
   /** Number of auto-claim candidates rendered in no-task heartbeat prompts. Range: 0-10. Default: 5. */
   autoClaimCandidatesInPrompt?: number;
   /** Opt engineer-role agents into no-task backlog auto-claim. Default: false. */

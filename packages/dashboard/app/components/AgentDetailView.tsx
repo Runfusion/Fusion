@@ -34,7 +34,7 @@ import { SkillMultiselect } from "./SkillMultiselect";
 import { subscribeSse } from "../sse-bus";
 import { MAX_LOG_ENTRIES } from "../hooks/useAgentLogs";
 import { countLeadingGapMarkers, reconcileReconnectedEntries } from "../hooks/logStreamReconcile";
-import { DEFAULT_HEARTBEAT_INTERVAL_MS, formatHeartbeatInterval, resolveHeartbeatIntervalMs } from "../utils/heartbeatIntervals";
+import { DEFAULT_HEARTBEAT_INTERVAL_MS, formatHeartbeatInterval, resolveHeartbeatCadenceMs, resolveHeartbeatIntervalMs } from "../utils/heartbeatIntervals";
 import { classifyAgentSkill, formatAgentSkillBadgeLabel } from "../utils/agentSkills";
 import { useDiscoveredSkillsCache } from "../hooks/useDiscoveredSkillsCache";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -1506,8 +1506,17 @@ function DashboardTab({
 
   const isTicking = agent.state === "active" || agent.state === "running";
   const heartbeatIntervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
+  /*
+  FNXC:HeartbeatIdleBackoff 2026-11-01-12:05 (RUFU-268):
+  Two different facts, kept apart deliberately. The line above is the CONFIGURED interval — what the
+  operator set, and what the summary row displays. This one is the cadence the scheduler will actually
+  deliver the next beat on, which stretches with the agent's idle-ladder step: promising "next heartbeat" at
+  the configured interval would have this panel announce a beat that the engine has explicitly decided not
+  to send. A non-idling agent gets the configured interval back unchanged.
+  */
+  const heartbeatCadenceMs = resolveHeartbeatCadenceMs(agent.runtimeConfig);
   const nextHeartbeatAt = isTicking && agent.lastHeartbeatAt
-    ? new Date(new Date(agent.lastHeartbeatAt).getTime() + heartbeatIntervalMs).toISOString()
+    ? new Date(new Date(agent.lastHeartbeatAt).getTime() + heartbeatCadenceMs).toISOString()
     : null;
 
   return (

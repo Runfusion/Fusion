@@ -1840,6 +1840,21 @@ export {
 } from "./ai/agent-effective-model.js";
 export { AGENT_ACTIVITY_EVENT_TYPES, AGENT_ACTIVITY_ATTRIBUTIONS, AGENT_ACTIVITY_LANE_SENTINELS, AGENT_ACTIVITY_GENERATED_ID_PATTERNS, AGENT_ACTIVITY_HANDOFF_REASONS, AGENT_ACTIVITY_TOOL_NAMES, AGENT_ACTIVITY_WORKFLOW_STEP_IDS, AGENT_ACTIVITY_METADATA_SCHEMA, AGENT_ACTIVITY_METADATA_KEYS, isAgentActivityEventType } from "./types/agents/agents.js";
 
+/*
+FNXC:HeartbeatIdleBackoff 2026-10-31-23:54 (RUFU-268):
+The dashboard aliases @fusion/core to this browser-safe leaf, and an agent's health pill must stretch its
+Unresponsive threshold by exactly the idle-ladder step the engine is deferring that agent for. Two copies
+of that arithmetic would let one surface call a laddered agent stale while the other stays quiet, so the
+ladder lives once in `heartbeat-idle-backoff.ts` — a module with no imports at all, which is what keeps
+this leaf's value graph Node-free (core-types-browser-leaf.test.ts walks it).
+*/
+export {
+  HEARTBEAT_IDLE_BACKOFF_DEFAULT_CAP_MS,
+  resolveHeartbeatIdleDeferralMs,
+  resolveHeartbeatIdleDelayMs,
+  resolveHeartbeatSilenceBudgetMs,
+} from "./heartbeat-idle-backoff.js";
+
 /* FNXC:MemoryMcp 2026-08-10-20:05: The dashboard aliases @fusion/core to this browser-safe leaf, so expose only the pure built-in descriptor and shared toggle policy here. */
 export {
   applyBuiltInMcpToggle,

@@ -6,7 +6,7 @@ import type { TaskDetail } from "@fusion/core";
 import { fetchTaskDetail } from "../api";
 import "./ActiveAgentsPanel.css";
 import { useLiveTranscript } from "../hooks/useLiveTranscript";
-import { resolveHeartbeatIntervalMs } from "../utils/heartbeatIntervals";
+import { resolveHeartbeatCadenceMs } from "../utils/heartbeatIntervals";
 import { AgentTaskBadge } from "./AgentTaskBadge";
 import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { getCanonicalStepNumber } from "../lib/step-display";
@@ -90,13 +90,17 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs, activity }:
     ? Math.floor((Date.now() - new Date(agent.lastHeartbeatAt).getTime()) / 1000)
     : 0;
 
-  // Compute next heartbeat ETA from last + interval. Negative deltas mean the
-  // beat is overdue — surface that explicitly rather than rendering a stale
-  // future time.
+  // Compute next heartbeat ETA from the last beat plus this agent's CURRENT cadence. Negative deltas mean
+  // the beat is overdue — surface that explicitly rather than rendering a stale future time.
+  //
+  // FNXC:HeartbeatIdleBackoff 2026-11-01-12:05 (RUFU-268): the cadence includes the agent's idle-ladder
+  // step, because that is when the scheduler will actually deliver the next beat. The configured interval
+  // alone labelled a deliberately idling agent "overdue" on a card the operator reads as "this agent is
+  // stuck". A non-idling agent's cadence is its configured interval, unchanged.
   const nextHeartbeatLabel = (() => {
     if (!agent.lastHeartbeatAt) return null;
-    const intervalMs = resolveHeartbeatIntervalMs(
-      (agent.runtimeConfig as { heartbeatIntervalMs?: number } | undefined)?.heartbeatIntervalMs,
+    const intervalMs = resolveHeartbeatCadenceMs(
+      agent.runtimeConfig as { heartbeatIntervalMs?: number; heartbeatIdleStreak?: number } | undefined,
     );
     const nextMs = new Date(agent.lastHeartbeatAt).getTime() + intervalMs;
     const deltaSec = Math.round((nextMs - Date.now()) / 1000);

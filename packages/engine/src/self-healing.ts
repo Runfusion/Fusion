@@ -1155,6 +1155,17 @@ const RUNNING_ON_INACTIVE_TASK_STALE_RUN_MS = PARKED_AGENT_LINK_FRESH_RUN_MS;
 const UNAVAILABLE_OWNER_HEARTBEAT_STALE_MULTIPLIER = 1.5;
 const MIN_UNAVAILABLE_OWNER_HEARTBEAT_STALE_MS = 10 * 60_000;
 
+/**
+ * FNXC:HeartbeatIdleBackoff 2026-11-01-01:20 (RUFU-268): DELIBERATELY NOT LADDER-AWARE.
+ * The RUFU-268 idle ladder stretches an unassigned agent's cadence, and every other heartbeat-freshness
+ * reader (`getStalenessThresholdMs`, `buildReportsHealthSection`) now widens its grace by that agent's own
+ * step. This one must not, because its subject is different: it is only ever asked about an agent that
+ * OWNS A TASK (`agent.taskId` set), and a ladder episode can only be open for an agent that STARTED a tick
+ * unassigned — the writer refuses to advance the streak for any run that began with an assignment. So a
+ * task-owning agent's streak is by construction not describing its current silence, and consulting it here
+ * would excuse an owner that genuinely stopped heartbeating: this reader's whole job is to catch an owner
+ * that died while holding a card, which is a loss no token saving justifies. Pinned by test.
+ */
 function hasRecentDurableOwnerHeartbeat(agent: Agent, now: number): boolean {
   const heartbeatAt = agent.lastHeartbeatAt ? Date.parse(agent.lastHeartbeatAt) : Number.NaN;
   if (!Number.isFinite(heartbeatAt)) return false;

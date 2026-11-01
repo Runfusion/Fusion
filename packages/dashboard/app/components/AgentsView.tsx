@@ -35,6 +35,7 @@ import { classifyFleetVerdict, resolveFleetStallReason } from "../utils/fleetVer
 import {
   formatHeartbeatInterval,
   getHeartbeatIntervalOptions,
+  resolveHeartbeatCadenceMs,
   resolveHeartbeatIntervalMs,
   MIN_HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_INTERVAL_PRESETS,
@@ -223,9 +224,15 @@ function getOrgNodeHeartbeat(
   const lastBeatMs = Date.parse(agent.lastHeartbeatAt);
   if (!Number.isFinite(lastBeatMs)) return null;
 
-  const intervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
+  /*
+  FNXC:HeartbeatIdleBackoff 2026-11-01-12:05 (RUFU-268):
+  The cadence, not the configured interval: an idling agent's next beat is scheduled later on purpose, and
+  naming that wait "overdue" would have this row accuse an agent the engine is deliberately leaving alone.
+  A non-idling agent's cadence IS its configured interval, so nothing moves for it.
+  */
+  const cadenceMs = resolveHeartbeatCadenceMs(agent.runtimeConfig);
   const elapsedMs = elapsedSinceMs(lastBeatMs, dataAsOfMs);
-  const remainingMs = intervalMs - elapsedMs;
+  const remainingMs = cadenceMs - elapsedMs;
   const title = `${t("agents.timeSinceLastHeartbeat", "Time since last heartbeat")}: ${formatDuration(elapsedMs)}`;
 
   if (remainingMs <= 0) {
@@ -2509,7 +2516,10 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       {isUpdatingHeartbeat && <span className="agent-heartbeat-saving text-secondary">{t("agents.saving", "Saving…")}</span>}
                       {agent.lastHeartbeatAt && (() => {
                         const lastAt = new Date(agent.lastHeartbeatAt);
-                        const nextAt = new Date(lastAt.getTime() + configuredIntervalMs);
+                        // RUFU-268: this card's "Next:" promise counts down to the beat the scheduler will
+                        // actually deliver, so it stretches with the agent's own idle step. The select above
+                        // it stays the CONFIGURED interval — that is an editable setting, not a forecast.
+                        const nextAt = new Date(lastAt.getTime() + resolveHeartbeatCadenceMs(agent.runtimeConfig));
                         const isTicking = agent.state === "active" || agent.state === "running";
                         return (
                           <>

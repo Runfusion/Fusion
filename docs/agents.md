@@ -117,7 +117,7 @@ The `fn_agent_update` extension tool lets chat/extension callers update existing
 - Identity fields: `name`, `role` (`triage`, `executor`, `reviewer`, `merger`, `engineer`, `custom`), `title`, `icon`, and `soul`.
 - Instruction fields: `instructions_text`, `instructions_path`, and `heartbeat_procedure_path`.
 - Hierarchy field: `reportsTo` as a manager agent ID/name; privileged CLI/user calls may pass `reportsTo: ""` to clear the manager.
-- Heartbeat/runtime fields: `heartbeat_interval_ms`, `heartbeat_timeout_ms`, `max_concurrent_runs`, and `message_response_mode` (`immediate` or `on-heartbeat`). Runtime updates merge into the existing `runtimeConfig` and preserve unrelated keys.
+- Heartbeat/runtime fields: `heartbeat_interval_ms`, `heartbeat_timeout_ms`, `max_concurrent_runs`, and `message_response_mode` (`immediate` or `on-heartbeat`). Runtime updates merge into the existing `runtimeConfig` and preserve unrelated keys. The idle-backoff fields `heartbeatIdleStreak` and `heartbeatLastNoWorkAt` (RUFU-268) are engine-owned bookkeeping for that agent's own ladder and are never an editable field here — setting an interval changes the base the ladder multiplies, it does not reset who is idling.
 
 At least one update field must be provided. The tool rejects missing targets, ephemeral/runtime agents, self-targeting, string/number limit violations (`soul` 10,000 chars, `instructions_text` 50,000 chars, path fields 500 chars, heartbeat interval ≥1000ms, heartbeat timeout ≥5000ms, max concurrent runs ≥1), missing managers, self-manager assignments, and hierarchy cycles before mutating storage. Successful calls persist through one `AgentStore.updateAgent` call, so normal config revision history records the full edit.
 

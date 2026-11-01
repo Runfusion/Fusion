@@ -44,6 +44,7 @@ import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-
 import { detectGitRepository, type GitRepoDetection } from "../worktree/worktree-pool.js";
 import type { PlanningHandoffOutcome } from "../triage.js";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
+import { asWakeSignalKind } from "../heartbeat-wake-signals.js";
 import { AutoClaimSnapshotManager } from "../scheduling/auto-claim-snapshot.js";
 import { RoutineRunner, type RoutineRunnerOptions } from "../scheduling/routine-runner.js";
 import { RoutineScheduler } from "../scheduling/routine-scheduler.js";
@@ -2161,6 +2162,15 @@ export class InProcessRuntime
                   ? context.triggeringCommentType
                   : undefined,
               contextSnapshot: { ...context },
+              /*
+              FNXC:HeartbeatIdlePreflight 2026-11-01-01:05 (RUFU-268):
+              Forward the scheduler gate's classification. Only the candidate-table kind makes the compact idle
+              turn admissible; every other value, and its absence, keeps the full path. The narrowing goes
+              through `asWakeSignalKind` — the same list the classifier is defined against — rather than a
+              literal union copied here, because a copy is how a later kind would be dropped at exactly one of
+              the two wiring sites.
+              */
+              fresherSignal: asWakeSignalKind(context.fresherSignal),
             });
           },
           this.taskStore,
@@ -2174,9 +2184,15 @@ export class InProcessRuntime
             FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300): the timer tick asks the monitor that
             owns the run store and the wake signals, so the gate and the prompt it guards read the
             same sources. No monitor means no answer, and an unanswered tick dispatches.
+
+            FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268): the tick forwards its effective interval
+            so the idle ladder measures against the period actually scheduled here (multiplier included).
+            Keep this forwarding identical to the dashboard wiring in `commands/dashboard.ts` — the two
+            sites are the only paths a timer tick can take, and a ladder wired to one and not the other is
+            the divergence this step exists to prevent.
             */
-            shouldSuppressTimerWake: async (agent) => this.heartbeatMonitor
-              ? await this.heartbeatMonitor.decideTimerWake(agent)
+            shouldSuppressTimerWake: async (agent, context) => this.heartbeatMonitor
+              ? await this.heartbeatMonitor.decideTimerWake(agent, { source: "timer", intervalMs: context?.intervalMs })
               : { suppress: false },
           },
         );

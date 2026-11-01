@@ -558,6 +558,7 @@ Security-sensitive file-browser escape hatches are project-only. `allowAbsoluteF
 | `worktreeLimitEnabled` | `boolean` | `true` | When false, removes the execution-worktree gate structurally. It does not change write-capable execution isolation, and planning remains checkout-free. |
 | `pollIntervalMs` | `number` | `15000` | Scheduler poll interval (ms). |
 | `heartbeatMultiplier` | `number` | `1` | Global multiplier applied to agent heartbeat timing: both heartbeat intervals and unresponsive timeout bases. Configured from the Agents screen (not Settings). |
+| `heartbeatIdleBackoffCapMs` | `number` | `1800000` (30 min) | Ceiling of the idle-backoff ladder (RUFU-268). An unassigned agent whose heartbeats keep acknowledging "nothing to do" has its dispatch cadence doubled per consecutive idle answer (base → 2× → 4× → …) and never past this value; the ladder resets the moment a run finds work. Reads of "is this agent late?" on the dashboard (the Unresponsive threshold and every next-heartbeat countdown) and in a manager's Reports Health briefing stretch by the same rung, so a deliberately idle agent is not reported as broken. A non-positive or unset value falls back to the 30-minute default rather than to zero — a zero cap would silently switch the ladder off. |
 | `heartbeatScopeDiscipline` | `"strict" \| "lite" \| "off"` | `"strict"` | Heartbeat prompt procedure mode. `strict` keeps coordination-heavy scope discipline, `lite` restores pre-2026-05-11 wording, and `off` uses a minimal procedure. Per-agent `runtimeConfig.heartbeatScopeDiscipline` can override this default. |
 | `heartbeatPromptTemplate` | `"default" \| "compact"` | `"default"` | Heartbeat execution-prompt trim template default. Per-agent `runtimeConfig.heartbeatPromptTemplate` overrides this value. Role fallback when unset everywhere is `executor`→`default`, non-executor coordination roles→`compact`. |
 | `autoClaimCandidatesInPrompt` | `number` | `5` | Default no-task heartbeat candidate list length. Integer range `0-10`; `0` suppresses candidate prompt injection. |
@@ -1810,6 +1811,8 @@ Common heartbeat/runtime keys on `runtimeConfig` include:
 | Field | Type | Description |
 |---|---|---|
 | `heartbeatIntervalMs` | `number` | Per-agent heartbeat interval |
+| `heartbeatIdleStreak` | `number` | Engine-owned (RUFU-268): consecutive acknowledged heartbeats that found no work. Selects the idle-backoff rung; absent or `0` means "not idling" and is the shape of every row written before RUFU-268. Cleared by the first run that finds work. |
+| `heartbeatLastNoWorkAt` | `string` (ISO) | Engine-owned (RUFU-268): when the last acknowledged no-work heartbeat completed. The idle deferral is measured from this anchor; a missing, unparseable, or future-dated value defers nothing. |
 | `heartbeatTimeoutMs` | `number` | Per-agent heartbeat timeout |
 | `maxConcurrentRuns` | `number` | Per-agent concurrent heartbeat limit |
 | `messageResponseMode` | `"immediate" \| "on-heartbeat"` | `immediate` promptly wakes through local-hook and durable mailbox reconciliation when an engine runs; `on-heartbeat` processes ordinary mail on the periodic heartbeat, except for valid user forced wakes. |

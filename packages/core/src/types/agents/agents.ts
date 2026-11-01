@@ -745,6 +745,36 @@ export interface AgentHeartbeatConfig {
    * Default: false (timer fires regardless of assignment).
    */
   skipHeartbeatWhenIdle?: boolean;
+  /**
+   * RUFU-268 idle ladder: consecutive ACKNOWLEDGED no-work heartbeats this agent has completed.
+   *
+   * WRITER: `HeartbeatMonitor.recordAcknowledgedCompletion` in `packages/engine/src/agent-heartbeat.ts`
+   * — the single place that knows a heartbeat was both acknowledged (`heartbeatDoneAccepted`) and idle
+   * (`isNoTaskRun`). It increments on an acknowledged no-work completion and clears the key when the
+   * same tick found work, so no other producer may write it.
+   * READERS: `HeartbeatTriggerScheduler.onTimerTick` (defers a timer tick by `resolveHeartbeatIdleDelayMs`
+   * until this agent's ladder step elapses) and every heartbeat-freshness check — dashboard
+   * `getStalenessThresholdMs` and engine `buildReportsHealthSection` — through
+   * `resolveHeartbeatSilenceBudgetMs`, so an agent idling on the ladder is never falsely Unresponsive.
+   *
+   * Absent on every agent row created before RUFU-268: that is the non-idling case, not zero-with-a-
+   * different-meaning, and `resolveHeartbeatIdleDelayMs` answers 0 ("no stretch") for it.
+   */
+  heartbeatIdleStreak?: number;
+  /**
+   * RUFU-268 idle ladder anchor: ISO timestamp of the LAST acknowledged no-work heartbeat completion.
+   *
+   * WRITER: same `recordAcknowledgedCompletion` seam as `heartbeatIdleStreak`, which is why the two keys
+   * can never disagree about which episode they describe.
+   * READER: `resolveHeartbeatIdleDeferralMs` — a timer tick is admissible once `now - this timestamp`
+   * reaches the agent's ladder step.
+   *
+   * The value SLIDES (it is the last idle tick, deliberately not the first). Anchoring it at the episode
+   * start would make elapsed time grow monotonically, so from step 2 on every tick would already be past
+   * its own deadline and the ladder would stop biting. A missing, unparseable, or future-dated value
+   * defers nothing — dispatching is always the safe answer for a bad timestamp.
+   */
+  heartbeatLastNoWorkAt?: string;
 }
 
 /** Per-agent budget configuration, stored in agent.runtimeConfig.budgetConfig */

@@ -238,6 +238,14 @@ export * from "./tasks/terminal-failure-auto-recovery.js";
 export * from "./tasks/original-description-policy.js";
 export * from "./planner/planning-plan-md.js";
 export * from "./tasks/file-scope-classification.js";
+/*
+FNXC:HeartbeatIdleBackoff 2026-10-31-23:54 (RUFU-268):
+The idle-backoff ladder is shared by the scheduler that defers an idle agent's ticks and by every
+heartbeat-freshness reader that must widen that agent's grace window by no more than the step it is
+actually sitting at. Exported from the root barrel for the engine and from `types.ts` for the browser
+leaf, so both packages consume one function rather than re-deriving the arithmetic.
+*/
+export * from "./heartbeat-idle-backoff.js";
 export { MAX_TASK_LIST_TEXT_CHARS, clampTaskListText, formatTaskListText } from "./tasks/task-list-format.js";
 export { TASK_BOARD_READ_CAVEAT } from "./agent-tool-descriptions.js";
 export { collectTaskCommentEntries, renderTaskCommentSection, resolveAdvertisedCommentIds, MAX_COMMENT_LOOKUP_IDS } from "./tasks/task-comment-read.js";

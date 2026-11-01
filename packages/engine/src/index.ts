@@ -1045,7 +1045,16 @@ export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiProm
 export { RoutineRunner, type RoutineRunnerOptions } from "./scheduling/routine-runner.js";
 export { RoutineScheduler, type RoutineSchedulerOptions } from "./scheduling/routine-scheduler.js";
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./healing/stuck-task-detector.js";
-export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "./agent-heartbeat.js";
+export { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, type TimerWakeContext, type TimerWakeDecision } from "./agent-heartbeat.js";
+/*
+FNXC:HeartbeatIdlePreflight 2026-11-01-12:10 (RUFU-268):
+The two heartbeat wiring sites (`runtimes/in-process-runtime.ts`, `cli/commands/dashboard.ts`) sit in
+_different packages_, so the classifier's vocabulary has to be part of the engine's public surface. They
+previously hand-copied the kind literals into their own narrowing, which means a new kind added here is
+silently dropped at one boundary and the tick that earned the cheap turn quietly loses it. A shared
+`asWakeSignalKind` makes drift impossible rather than merely undesirable.
+*/
+export { asWakeSignalKind, isIdleLadderEligibleWakeSignal, type WakeSignalKind } from "./heartbeat-wake-signals.js";
 export { TokenCapDetector, type TokenCapCheckResult } from "./errors/token-cap-detector.js";
 /*
 FNXC:ChatContextGuard 2026-08-18-18:06:

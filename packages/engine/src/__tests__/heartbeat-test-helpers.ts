@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { AgentStore, AgentHeartbeatRun, TaskStore, TaskDetail, Agent, MessageStore, Message, AgentBudgetStatus } from "@fusion/core";
+import type { HeartbeatWakeCursor, WakeSignalSnapshot } from "../heartbeat-wake-signals.js";
 import type { AgentSession } from "../agent-heartbeat.js";
 
 export function createMockStore(overrides: Partial<AgentStore> = {}): AgentStore {
@@ -114,4 +115,120 @@ export function createInboxMessageStore(messages: Message[] = []) {
     getMailbox: ReturnType<typeof vi.fn>;
     markInboxAsRead: ReturnType<typeof vi.fn>;
   };
+}
+
+/*
+FNXC:HeartbeatIdleBackoff 2026-11-01-12:40 (RUFU-268):
+The idle ladder is asserted from more than one suite — the gate/writer tests, the compact pre-flight's
+session tests, and any later read-side check — and all of them need the same two facts: an unassigned
+identity agent whose row carries a ladder, and an acknowledged completed run whose wake cursor covered a
+given board. Duplicating that shape per file is how one suite would keep asserting the old field names
+after the other had moved, so the fixtures live with the rest of the heartbeat harness.
+
+Both are value-shape factories, not behaviour: what a ladder row HAS to contain is the contract, and the
+suites that assert what the engine DOES with it should not each also be writing it.
+*/
+export const IDLE_LADDER_BASE_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * An unassigned, identity-bearing agent idling on the ladder. `runtimeConfig` merges over the base
+ * interval so a test that only cares about the streak never re-states a cadence, and
+ * `{ heartbeatIdleStreak: undefined }` reproduces the row shape every agent had before RUFU-268.
+ */
+export function createIdleLadderAgent(
+  runtimeConfig: Record<string, unknown> = {},
+  overrides: Partial<Agent> = {},
+): Agent {
+  return {
+    id: "agent-idle-1",
+    name: "Idle Ladder Agent",
+    role: "executor",
+    state: "active",
+    soul: "Monitor the project and pick up ambient work.",
+    taskId: undefined,
+    createdAt: "2026-10-31T00:00:00.000Z",
+    updatedAt: "2026-10-31T00:00:00.000Z",
+    metadata: {},
+    runtimeConfig: { heartbeatIntervalMs: IDLE_LADDER_BASE_INTERVAL_MS, ...runtimeConfig },
+    ...overrides,
+  } as unknown as Agent;
+}
+
+/**
+ * A wake snapshot holding exactly the populations a test names, with the rest empty. The classifier
+ * decision is about WHICH population moved, so a fixture that filled everything at once could not
+ * distinguish them; each option stays `undefined`-able to mean "nothing in this population".
+ */
+export function createWakeSnapshot(options: {
+  candidates?: string[];
+  unread?: number;
+  roomEntryIds?: string[];
+  assignedRows?: string[];
+  steeringCommentIds?: string[];
+  assignedTaskState?: string | null;
+} = {}): WakeSignalSnapshot {
+  return {
+    inboxUnreadTotal: options.unread ?? 0,
+    roomEntryIds: options.roomEntryIds ?? [],
+    boardState: {
+      assignedTaskId: null,
+      assignedTaskState: options.assignedTaskState ?? null,
+      assignedRows: options.assignedRows ?? [],
+      autoClaimCandidates: options.candidates ?? [],
+      steeringCommentIds: options.steeringCommentIds ?? [],
+    },
+  };
+}
+
+/**
+ * A wake cursor covering an empty board, for the classifier tests that vary ONE population at a time.
+ * `overrides` patches the board state only — the shape of every population is the contract, and a fixture
+ * that omitted one would test the classifier's tolerance for a malformed cursor instead of its taxonomy.
+ */
+export function createWakeCursor(boardState: Partial<HeartbeatWakeCursor["boardState"]> = {}): HeartbeatWakeCursor {
+  return {
+    consumedMessageIds: [],
+    roomEntryIds: [],
+    boardState: {
+      assignedTaskId: null,
+      assignedTaskState: null,
+      assignedRows: [],
+      autoClaimCandidates: [],
+      steeringCommentIds: [],
+      ...boardState,
+    },
+  };
+}
+
+/**
+ * A completed run the wake gate accepts as an acknowledgement (`heartbeatDoneAccepted: true`) covering a
+ * board whose auto-claim table held exactly `autoClaimCandidates`. Everything else in the cursor is
+ * empty, so any candidate a test's snapshot reports is fresh by construction.
+ */
+export function createAcknowledgedHeartbeatRun(
+  autoClaimCandidates: string[] = [],
+  overrides: Partial<AgentHeartbeatRun> = {},
+): AgentHeartbeatRun {
+  return {
+    id: "run-ack",
+    agentId: "agent-idle-1",
+    startedAt: "2026-10-31T06:00:00.000Z",
+    endedAt: "2026-10-31T06:01:00.000Z",
+    status: "completed",
+    resultJson: {
+      heartbeatDoneAccepted: true,
+      wakeCursor: {
+        consumedMessageIds: [],
+        roomEntryIds: [],
+        boardState: {
+          assignedTaskId: null,
+          assignedTaskState: null,
+          assignedRows: [],
+          autoClaimCandidates,
+          steeringCommentIds: [],
+        },
+      },
+    },
+    ...overrides,
+  } as unknown as AgentHeartbeatRun;
 }

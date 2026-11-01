@@ -17,17 +17,25 @@
  * - onTerminated: Called when a heartbeat run is terminated
  */
 
-import { DEFAULT_PROVIDER_INSTANCE_ID, deriveTaskLabelFromDescription, resolveAdvertisedCommentIds, type AgentStore, type AgentHeartbeatRun, type HeartbeatInvocationSource, type AgentHeartbeatConfig, type AgentBudgetStatus, type Message, type MessageStore, type TaskStore, type TaskDetail, type AgentRole, type Agent, type InboxTask, type RunMutationContext, type Settings, type AgentConfigRevision, type ReflectionStore, type ChatStore, type ChatRoom, type ChatRoomMessage, type AgentMemoryInclusionMode } from "@fusion/core";
+import { DEFAULT_PROVIDER_INSTANCE_ID, deriveTaskLabelFromDescription, resolveAdvertisedCommentIds, HEARTBEAT_IDLE_BACKOFF_DEFAULT_CAP_MS, resolveHeartbeatIdleDeferralMs, resolveHeartbeatIdleDelayMs, resolveHeartbeatSilenceBudgetMs, type AgentStore, type AgentHeartbeatRun, type HeartbeatInvocationSource, type AgentHeartbeatConfig, type AgentBudgetStatus, type Message, type MessageStore, type TaskStore, type TaskDetail, type AgentRole, type Agent, type InboxTask, type RunMutationContext, type Settings, type AgentConfigRevision, type ReflectionStore, type ChatStore, type ChatRoom, type ChatRoomMessage, type AgentMemoryInclusionMode } from "@fusion/core";
 import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./scheduling/auto-claim-snapshot.js";
 import {
   collectBoardSignal,
+  classifyFresherWakeSignal,
   collectInboxSignal,
   collectRoomSignal,
   collectWakeSignals,
-  hasFresherWakeSignal,
+  isIdleLadderEligibleWakeSignal,
   parseHeartbeatWakeCursor,
   type WakeRoomSignal,
+  type WakeSignalKind,
 } from "./heartbeat-wake-signals.js";
+import {
+  IDLE_PREFLIGHT_SYSTEM_PROMPT,
+  buildIdlePreflightRequest,
+  parseIdlePreflightVerdict,
+  type IdlePreflightVerdict,
+} from "./heartbeat-idle-preflight.js";
 import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 import {
   ApprovalRequestStore,
@@ -110,6 +118,15 @@ import {
 const MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES = 3;
 
 /*
+FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268):
+The heartbeat cadence for an agent that never set `heartbeatIntervalMs`. Hoisted to module scope because
+the idle ladder needs the same fallback the scheduler registers its timer with: if the two disagreed, the
+ladder's steps would be measured against a period nobody schedules, and a `heartbeatMultiplier`-free agent
+would defer on one clock while firing on another.
+*/
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 3_600_000;
+
+/*
 FNXC:AgentHeartbeat 2026-10-23-06:14:
 CLI MessageStore instances persist mail through PostgreSQL but their process-local hooks cannot wake the engine-owned monitor. Reconcile the durable unread inbox on a bounded monitor-owned cadence, while retaining the hook as the same-process fast path.
 */
@@ -143,6 +160,7 @@ import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import { acknowledgeOverlapResumeContext, type OverlapResumeContextDelivery } from "./execution/overlap-resume-context.js";
 
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./util/run-audit.js";
+import { createAssistantStreamCapture } from "./execution/assistant-text-capture.js";
 import { promptWithFallback } from "./pi.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
@@ -379,6 +397,17 @@ export interface HeartbeatExecutionOptions {
   to perform — then RUFU-682 made that self-inflicted refusal binding.
   */
   wakePurpose?: WakePurpose;
+  /*
+  FNXC:HeartbeatIdlePreflight 2026-11-01-01:05 (RUFU-268):
+  Which wake population the scheduler's gate proved was fresher, forwarded on the tick that gate let
+  through. The compact idle pre-flight may run ONLY on `"board-candidates"`: a message, room entry, or
+  steering comment carries content the compact turn was never given, and a tick whose gate could not
+  classify it (manual wake, no prior cursor, a probe that failed, or a caller that is not the scheduler at
+  all) arrives here with the field absent, which means "do not attempt the cheap turn". Forwarding the
+  scheduler's own verdict is also what stops executeHeartbeat from re-probing the board and reaching a
+  different answer a few milliseconds later.
+  */
+  fresherSignal?: WakeSignalKind;
 }
 
 /*
@@ -1150,6 +1179,254 @@ export class HeartbeatMonitor {
   }
 
   /**
+   * Record that a heartbeat was ACKNOWLEDGED: persist the wake-signal cursor its board read covers, and
+   * advance or clear the idle ladder that acknowledgement earned.
+   *
+   * FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268):
+   * An acknowledged no-work heartbeat is the only evidence in the system that an agent asked "anything for
+   * me?" and got "no", so it is the only thing allowed to buy that agent a longer wait. The cursor, the
+   * ladder, and the audit row are therefore written by ONE function, called by both paths that can earn an
+   * acknowledgement: the full session's completion tail and the compact idle pre-flight's NOOP. That
+   * sharing is the point — the two paths' acknowledgement is then identical by construction rather than by
+   * duplicated code, which is the failure RUFU-267 recorded for every pair of paths that each persisted
+   * "what the agent last saw" in its own words.
+   *
+   * A run that was NOT acknowledged never reaches this function, so a failed or unacknowledged heartbeat
+   * cannot advance the ladder. A run that FOUND work clears the ladder, because an agent that did
+   * something is not idling — including a run that started with a task and handed it off mid-session, so
+   * `isNoTaskRun` was true by the end: callers pass `startedUnassigned`, captured before the handoff and
+   * terminal-lane-clear paths can rewrite it, precisely so a run that did real work cannot be scored idle.
+   *
+   * Metadata stays ids/counts/fixed enums: the step is a duration, never a sentence.
+   */
+  async recordAcknowledgedCompletion(params: {
+    agent: Agent;
+    runId: string;
+    /**
+     * False = this tick acknowledged that it found nothing to do, which advances the ladder.
+     * True = work was found (or a probe said so), which clears it.
+     */
+    foundWork: boolean;
+    /** Compute and persist the wake cursor. False for a WORK verdict whose full run writes its own. */
+    withWakeCursor?: boolean;
+    consumedMessageIds?: string[];
+    roomEntryIds?: string[];
+  }): Promise<{ heartbeatDoneAccepted?: true; wakeCursor?: Record<string, unknown> }> {
+    const { agent, runId, foundWork } = params;
+    const withWakeCursor = params.withWakeCursor !== false;
+    const acknowledgement: { heartbeatDoneAccepted?: true; wakeCursor?: Record<string, unknown> } = {};
+
+    if (withWakeCursor && this.taskStore) {
+      try {
+        acknowledgement.wakeCursor = {
+          consumedMessageIds: params.consumedMessageIds ?? [],
+          roomEntryIds: params.roomEntryIds ?? [],
+          boardState: await collectBoardSignal({
+            taskStore: this.taskStore,
+            agent,
+            autoClaimSnapshotManager: this.snapshotManager,
+          }),
+        };
+      } catch (cursorErr) {
+        // No cursor means the next tick has nothing to prove its silence against, so it dispatches. The
+        // ladder must NOT advance either: an unproven read may not buy a deferral. Returning here keeps
+        // that invariant structural instead of a rule a later edit has to remember.
+        heartbeatLog.warn(`wake-cursor-unavailable for ${agent.id}: ${cursorErr instanceof Error ? cursorErr.message : String(cursorErr)}`);
+        return acknowledgement;
+      }
+      acknowledgement.heartbeatDoneAccepted = true;
+    }
+
+    await this.applyIdleLadderTransition(agent, runId, foundWork);
+    return acknowledgement;
+  }
+
+  /**
+   * The only place that increments or clears `heartbeatIdleStreak`. Private on purpose: every other
+   * caller goes through {@link recordAcknowledgedCompletion}, which is what keeps the streak, the sliding
+   * anchor and the cursor a single episode instead of three fields that can disagree.
+   */
+  private async applyIdleLadderTransition(agent: Agent, runId: string, foundWork: boolean): Promise<void> {
+    try {
+      const prior = (agent.runtimeConfig ?? {}) as AgentHeartbeatConfig;
+      const rawPrior = prior.heartbeatIdleStreak;
+      const priorStreak = typeof rawPrior === "number" && Number.isFinite(rawPrior) && rawPrior > 0 ? Math.floor(rawPrior) : 0;
+      if (foundWork && priorStreak === 0 && prior.heartbeatLastNoWorkAt === undefined) {
+        // Nothing to clear: the overwhelmingly common task-heartbeat path writes no row and no agent row.
+        return;
+      }
+
+      // The persisted streak is the TRUE run count; `resolveHeartbeatIdleDelayMs` clamps the ladder step.
+      // Capping what we store would throw away "how long has this agent actually been idle", which is the
+      // one number an operator asks when a card sat unclaimed.
+      const nextStreak = foundWork ? 0 : priorStreak + 1;
+      const runtimeConfig: Record<string, unknown> = { ...(agent.runtimeConfig ?? {}) };
+      if (foundWork) {
+        delete runtimeConfig.heartbeatIdleStreak;
+        delete runtimeConfig.heartbeatLastNoWorkAt;
+      } else {
+        runtimeConfig.heartbeatIdleStreak = nextStreak;
+        // The anchor SLIDES: it is the last acknowledged no-work tick, not the episode start. Anchored at
+        // the start, elapsed time only grows, so from step 2 on every tick would already be past its own
+        // deadline and the ladder would stop biting exactly when the backoff should be strongest.
+        runtimeConfig.heartbeatLastNoWorkAt = new Date().toISOString();
+      }
+      await this.store.updateAgent(agent.id, { runtimeConfig });
+
+      const baseIntervalMs = typeof prior.heartbeatIntervalMs === "number" && Number.isFinite(prior.heartbeatIntervalMs) && prior.heartbeatIntervalMs > 0
+        ? prior.heartbeatIntervalMs
+        : DEFAULT_HEARTBEAT_INTERVAL_MS;
+      const stepMs = foundWork ? 0 : resolveHeartbeatIdleDelayMs({ streak: nextStreak, baseIntervalMs });
+      heartbeatLog.debug(
+        `idle-ladder ${foundWork ? "cleared" : "advanced"} for ${agent.id}: streak ${priorStreak} -> ${nextStreak}${foundWork ? "" : ` step=${stepMs}ms`}`,
+      );
+      await emitBoundedRunAudit(this.taskStore, {
+        agentId: agent.id,
+        runId,
+        domain: "database",
+        mutationType: "agent:heartbeat-idle-ladder",
+        target: agent.id,
+        // ids / counts / a duration only. One row per ladder CHANGE (not per deferred tick), so an idle
+        // episode costs a handful of rows instead of one per tick.
+        metadata: {
+          agentId: agent.id,
+          outcome: foundWork ? "cleared" : "advanced",
+          priorStreak,
+          streak: nextStreak,
+          stepMs,
+        },
+      });
+    } catch (ladderErr) {
+      // Losing the ladder costs one extra heartbeat, never a missed dispatch, so this cannot fail the run.
+      heartbeatLog.warn(`idle-ladder-write-failed for ${agent.id}: ${ladderErr instanceof Error ? ladderErr.message : String(ladderErr)}`);
+    }
+  }
+
+  /**
+   * How much longer this agent's own ladder says a timer tick should wait, or 0 to dispatch now.
+   *
+   * FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268):
+   * Every guard here refuses to defer rather than refusing to dispatch, because the asymmetry is the whole
+   * safety argument: a wrongly-deferred tick is invisible to the operator, while one extra heartbeat is
+   * merely the thing the ladder was supposed to save. So an assigned agent, an agent in error recovery, an
+   * agent that never idled (no streak — the shape of every row written before RUFU-268), a missing or
+   * corrupt anchor, or an unreadable cap setting all answer 0.
+   */
+  private async resolveIdleDeferralMs(
+    agent: Agent,
+    options: { intervalMs?: number; nowMs?: number } = {},
+  ): Promise<number> {
+    try {
+      if (agent.taskId) return 0;
+      if (agent.state === "error") return 0;
+
+      const runtimeConfig = (agent.runtimeConfig ?? {}) as AgentHeartbeatConfig;
+      const streak = runtimeConfig.heartbeatIdleStreak;
+      if (typeof streak !== "number" || !Number.isFinite(streak) || streak <= 0) return 0;
+
+      const capMs = await this.resolveIdleBackoffCapMs();
+
+      return resolveHeartbeatIdleDeferralMs({
+        streak,
+        baseIntervalMs: options.intervalMs ?? runtimeConfig.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+        capMs,
+        lastNoWorkAt: runtimeConfig.heartbeatLastNoWorkAt,
+        nowMs: options.nowMs ?? Date.now(),
+      });
+    } catch (deferralErr) {
+      heartbeatLog.warn(`idle-ladder-deferral-probe-failed for ${agent.id}: ${deferralErr instanceof Error ? deferralErr.message : String(deferralErr)}`);
+      return 0;
+    }
+  }
+
+  /**
+   * The idle ladder's ceiling as configured: `settings.heartbeatIdleBackoffCapMs`, or the code-owned
+   * 30-minute default when it is absent, non-positive, or unreadable.
+   *
+   * FNXC:HeartbeatIdleBackoff 2026-11-01-11:55 (RUFU-268):
+   * Shared by the dispatch gate and the reports-health prompt so the two cannot disagree about how long
+   * an agent is allowed to be silent: a cap the scheduler honours that the manager's own briefing does
+   * not would have a manager nagging an agent the engine is deliberately leaving alone. A non-positive or
+   * non-finite entry falls back to the default rather than 0 — a cap that read as zero would clamp every
+   * ladder step away, which is a silent way of switching the feature off from a form field.
+   */
+  private async resolveIdleBackoffCapMs(): Promise<number> {
+    if (!this.taskStore) return HEARTBEAT_IDLE_BACKOFF_DEFAULT_CAP_MS;
+    try {
+      const rawCap = (await this.taskStore.getSettings())?.heartbeatIdleBackoffCapMs;
+      return typeof rawCap === "number" && Number.isFinite(rawCap) && rawCap > 0
+        ? rawCap
+        : HEARTBEAT_IDLE_BACKOFF_DEFAULT_CAP_MS;
+    } catch (settingsErr) {
+      heartbeatLog.debug(`idle-ladder-settings-unreadable: ${settingsErr instanceof Error ? settingsErr.message : String(settingsErr)}`);
+      return HEARTBEAT_IDLE_BACKOFF_DEFAULT_CAP_MS;
+    }
+  }
+
+  /**
+   * Ask the one-line question. Tool-less in behaviour (`tools: "readonly"` is the narrowest set the
+   * runtime seam offers, and the contract permits no action), with a constant head and a request that is
+   * nothing but candidate ids.
+   *
+   * FNXC:HeartbeatIdlePreflight 2026-11-01-12:20 (RUFU-268):
+   * The answer is read from `session.subscribe()` through the shared assistant-text capture rather than the
+   * `onText` option, because `onText` is only wired by the pi runtime's own session creation
+   * (`pi.ts createAssistantStreamCapture`); a CLI-adapter runtime would stream nothing into it and every
+   * tick would silently fall back to the full path — the same class of one-runtime-only wiring that the
+   * ladder's two scheduler sites had. One capture path, one text accumulator, so a reply can never be
+   * counted twice into `NOOPNOOP`.
+   *
+   * Anything other than a clean answer — a provider error, a session that reported a state error, an empty
+   * or ambiguous reply — returns `unavailable`, which the caller treats as "take the full path". That is the
+   * direction this lane is required to fail in: a wasted session is a cost, a wrongly-skipped dispatch is a
+   * stalled card, and only one of those is invisible to the operator.
+   */
+  private async runIdlePreflightTurn(
+    agent: Agent,
+    runId: string,
+    settings: Settings | undefined,
+    candidateIds: string[],
+  ): Promise<IdlePreflightVerdict> {
+    let responseText = "";
+    try {
+      const models = resolveHeartbeatSessionModels(settings, agent.runtimeConfig, agent);
+      const created = await createResolvedAgentSession({
+        sessionPurpose: "heartbeat",
+        runtimeHint: extractRuntimeHint(agent.runtimeConfig),
+        pluginRunner: this.pluginRunner,
+        cwd: this.rootDir ?? process.cwd(),
+        systemPrompt: IDLE_PREFLIGHT_SYSTEM_PROMPT,
+        tools: "readonly",
+        customTools: [],
+        fusionTools: [],
+        mcpServers: [],
+        ...(models.defaultProvider && models.defaultModelId
+          ? { defaultProvider: models.defaultProvider, defaultModelId: models.defaultModelId }
+          : {}),
+        settings,
+      });
+      try {
+        const capture = createAssistantStreamCapture({ onText: (delta: string) => { responseText += delta; } });
+        const unsubscribe = created.session.subscribe?.((event: unknown) => { capture.handleAgentEvent(event); });
+        try {
+          await promptWithFallback(created.session, buildIdlePreflightRequest(candidateIds));
+        } finally {
+          if (typeof unsubscribe === "function") unsubscribe();
+        }
+        const stateError = created.session.state as { errorMessage?: string; error?: string } | undefined;
+        const message = stateError?.errorMessage ?? stateError?.error;
+        if (message) throw new Error(message);
+      } finally {
+        try { created.session.dispose(); } catch { /* best-effort cleanup */ }
+      }
+      return parseIdlePreflightVerdict(responseText);
+    } catch (preflightErr) {
+      heartbeatLog.debug(`idle-preflight-unavailable for ${agent.id} (${runId}): ${preflightErr instanceof Error ? preflightErr.message : String(preflightErr)}`);
+      return "unavailable";
+    }
+  }
+
+  /**
    * Decide whether a timer tick may spend an agent session, or has nothing newer to offer.
    *
    * FNXC:HeartbeatWakeDiscipline 2026-10-13 (STAS-300): the tick that follows an acknowledged,
@@ -1163,8 +1440,8 @@ export class HeartbeatMonitor {
    */
   async decideTimerWake(
     agent: Agent,
-    options?: { source?: HeartbeatExecutionOptions["source"]; triggerDetail?: string },
-  ): Promise<{ suppress: boolean; reason: string }> {
+    options?: { source?: HeartbeatExecutionOptions["source"]; triggerDetail?: string; intervalMs?: number; nowMs?: number },
+  ): Promise<TimerWakeDecision> {
     const source = options?.source ?? "timer";
     if (source !== "timer") {
       return { suppress: false, reason: `non-timer-source:${source}` };
@@ -1212,10 +1489,41 @@ export class HeartbeatMonitor {
         sinceIso,
       });
 
-      if (hasFresherWakeSignal(cursor.cursor, signals)) {
-        return { suppress: false, reason: "fresher-signal" };
+      // ONE definition of freshness for the whole gate: classify once, and let the kind decide both
+      // whether this tick earns a session and which cost the agent is allowed to skip.
+      const signalKind = classifyFresherWakeSignal(cursor.cursor, signals);
+
+      if (signalKind === "none") {
+        return { suppress: true, reason: "no-fresher-signal" };
       }
-      return { suppress: true, reason: "no-fresher-signal" };
+
+      /*
+      FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268):
+      A board-candidate reshuffle is the ONE kind of new signal an idle agent may be asked about later,
+      or not asked about at all for a while. STAS-300 already made a tick whose signals are all at or
+      behind the acknowledged cursor free, so the residual cost this ladder targets is exactly this branch:
+      a card moved, appeared, or changed column, the agent looked and declined, and every following tick
+      now spends a full briefing to re-learn nothing. Waiting that agent's ladder step is therefore the
+      operator's explicit ask, and it is bounded twice over — only this branch, and never past the cap.
+
+      Any other kind dispatches immediately. A message, a room entry, or a steering comment carries content
+      the agent has not seen, so delaying it would trade an operator's expectation for a token saving.
+
+      Why the ladder lives here rather than in a second scheduler gate: this decision is already reached
+      from both scheduler wiring sites, so the ladder cannot be wired to one and forgotten on the other —
+      which is the defect this step exists to prevent. A deferred tick is still distinguishable from a
+      suppressed one by its reason code (`idle-backoff:<stepMs>` vs `no-fresher-signal`) in the log, and
+      `agent:heartbeat-idle-ladder` is its durable row.
+      */
+      if (isIdleLadderEligibleWakeSignal(signalKind)) {
+        const idleDeferralMs = await this.resolveIdleDeferralMs(agent, { intervalMs: options?.intervalMs, nowMs: options?.nowMs });
+        if (idleDeferralMs > 0) {
+          return { suppress: true, reason: `idle-backoff:${idleDeferralMs}` };
+        }
+      }
+
+      // Any other kind of delta — content that arrived rather than a board that rearranged — dispatches.
+      return { suppress: false, reason: "fresher-signal", fresherSignal: signalKind };
     } catch (error) {
       heartbeatLog.warn(`wake-signal-probe-failed for ${agent.id}: ${error instanceof Error ? error.message : String(error)}`);
       return { suppress: false, reason: "probe-failed" };
@@ -2825,6 +3133,7 @@ export class HeartbeatMonitor {
       triggeringCommentType,
       wakeMessage,
       wakePurpose,
+      fresherSignal,
     } = options;
 
     // Validate execution dependencies
@@ -3559,6 +3868,15 @@ export class HeartbeatMonitor {
           heartbeatLog.log(`Agent ${agentId} has no task but has identity — running no-task heartbeat`);
         }
         let isNoTaskRun = !taskId;
+        /*
+        FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268):
+        The idle ladder is scored on how the run BEGAN, not on how `isNoTaskRun` happens to read at the
+        completion tail. Two in-session paths flip that flag to true after real work: the terminal-lane
+        clear that drops an assignment to a card that already finished, and `fn_task_handoff_to_workflow_executor`
+        releasing a queued task. Either leaves the tail looking like an unassigned heartbeat while the run
+        consumed a task, so this early snapshot is what `foundWork` is derived from.
+        */
+        const runStartedUnassigned = !taskId;
 
         // Validate agent state (only for task-scoped runs)
         if (!isNoTaskRun) {
@@ -3783,6 +4101,60 @@ export class HeartbeatMonitor {
 
         // Build tools with task creation tracking and run context for mutation correlation
         // For no-task runs, exclude fn_task_log and document tools (they require a taskId)
+        /*
+        FNXC:HeartbeatIdlePreflight 2026-11-01-01:05 (RUFU-268):
+        An idle tick the scheduler could not skip is still allowed to cost a question rather than a
+        briefing. Admissible only when the gate proved the delta is confined to the candidate table, the run
+        BEGAN unassigned (a handoff or terminal-lane clear mid-session is work, not idleness), and the agent
+        is an identity agent that would otherwise be sitting through the full prompt assembly below.
+
+        Every non-`noop` outcome falls through to that full path untouched, so the cheapest turn in the
+        heartbeat can never be the reason real work was skipped: `work` clears the ladder and proceeds, an
+        unparsable reply or a failed session proceeds, and `noop` is the only answer that ends the run — and
+        it ends it with the SAME acknowledgement and wake cursor the full path would have written, because it
+        goes through `recordAcknowledgedCompletion` rather than a second copy of that block.
+        */
+        if (
+          isNoTaskRun
+          && runStartedUnassigned
+          && canRunNoTaskHeartbeat
+          && source === "timer"
+          && isIdleLadderEligibleWakeSignal(fresherSignal)
+          && this.taskStore
+        ) {
+          const boardSignal = await collectBoardSignal({
+            taskStore: this.taskStore,
+            agent,
+            autoClaimSnapshotManager: this.snapshotManager,
+          }).catch((boardErr) => {
+            heartbeatLog.warn(`idle-preflight-board-probe-failed for ${agentId}: ${boardErr instanceof Error ? boardErr.message : String(boardErr)}`);
+            return undefined;
+          });
+
+          if (boardSignal) {
+            const verdict = await this.runIdlePreflightTurn(agent, run.id, heartbeatModelSettings, boardSignal.autoClaimCandidates);
+            if (verdict === "noop") {
+              const acknowledgement = await this.recordAcknowledgedCompletion({
+                agent,
+                runId: run.id,
+                foundWork: false,
+                consumedMessageIds: [],
+                roomEntryIds: [],
+              });
+              heartbeatLog.debug(`idle-preflight-noop for ${agentId}: no session spent, ladder advanced`);
+              await this.completeRun(agentId, run.id, {
+                status: "completed",
+                resultJson: { reason: "idle_preflight_noop", toolCallCount: 0, ...acknowledgement },
+              });
+              return (await this.store.getRunDetail(agentId, run.id))!;
+            }
+            if (verdict === "work") {
+              // Fresh work means the agent is not idling; the ladder resets before the full run spends it.
+              await this.applyIdleLadderTransition(agent, run.id, true);
+            }
+          }
+        }
+
         let heartbeatTools: ToolDefinition[];
         if (isNoTaskRun) {
           // No-task runs: task creation/delegation, direct-report config + provisioning,
@@ -5232,20 +5604,18 @@ export class HeartbeatMonitor {
           trigger against durable board state and never satisfy the gate on a steered card.
           */
           if (heartbeatDoneRecorded && !heartbeatProgressBudgetExhausted && this.taskStore) {
-            try {
-              completionResultJson.wakeCursor = {
-                consumedMessageIds,
-                roomEntryIds: pendingRoomMessages.entries.flatMap((entry) => entry.messages.map((message) => message.id)),
-                boardState: await collectBoardSignal({
-                  taskStore: this.taskStore,
-                  agent,
-                  autoClaimSnapshotManager: this.snapshotManager,
-                }),
-              };
-              completionResultJson.heartbeatDoneAccepted = true;
-            } catch (cursorErr) {
-              heartbeatLog.warn(`wake-cursor-unavailable for ${agentId}: ${cursorErr instanceof Error ? cursorErr.message : String(cursorErr)}`);
-            }
+            const acknowledgement = await this.recordAcknowledgedCompletion({
+              agent,
+              runId: run.id,
+              // A run that started WITH an assignment did work, even when a handoff or a terminal-lane
+              // clear left `isNoTaskRun` true by the end. Scoring that as idle would let a productive
+              // heartbeat buy itself a longer wait and delay the next real dispatch.
+              foundWork: !runStartedUnassigned,
+              consumedMessageIds,
+              roomEntryIds: pendingRoomMessages.entries.flatMap((entry) => entry.messages.map((message) => message.id)),
+            });
+            if (acknowledgement.wakeCursor) completionResultJson.wakeCursor = acknowledgement.wakeCursor;
+            if (acknowledgement.heartbeatDoneAccepted) completionResultJson.heartbeatDoneAccepted = true;
           }
 
           await this.completeRun(agentId, run.id, {
@@ -5408,10 +5778,17 @@ export class HeartbeatMonitor {
 
     await this.warmHeartbeatMultiplierCache();
     const now = Date.now();
+    /*
+    FNXC:HeartbeatIdleBackoff 2026-11-01-11:55 (RUFU-268):
+    The ceiling is read once for the whole section: it is a project setting, so asking per report row
+    would multiply a single settings read by the size of the team for no new information.
+    */
+    const idleBackoffCapMs = await this.resolveIdleBackoffCapMs();
     const rows = await Promise.all(reports.map(async (report) => {
       const resolvedConfig = this.resolveAgentConfig(report.id);
       let pollIntervalMs = resolvedConfig.pollIntervalMs;
       let intervalSource: "runtimeConfig" | "persisted-agent" | "monitor-default" = "monitor-default";
+      let idleStreak: unknown = (report.runtimeConfig as AgentHeartbeatConfig | undefined)?.heartbeatIdleStreak;
 
       try {
         // Async lookup — works in both SQLite and PG backend modes. Previously
@@ -5432,14 +5809,32 @@ export class HeartbeatMonitor {
             this.getCachedHeartbeatMultiplier(),
           );
           intervalSource = "runtimeConfig";
+          if (idleStreak === undefined) {
+            idleStreak = agent.runtimeConfig.heartbeatIdleStreak;
+          }
         }
       } catch (reportsHealthConfigErr) {
         heartbeatLog.warn(`[reports-health] failed to resolve interval for ${report.id}: ${reportsHealthConfigErr instanceof Error ? reportsHealthConfigErr.message : String(reportsHealthConfigErr)} — using monitor-default`);
       }
 
       const { heartbeatTimeoutMs } = resolvedConfig;
+      /*
+      FNXC:HeartbeatIdleBackoff 2026-11-01-11:55 (RUFU-268):
+      A laddered agent is silent BECAUSE the engine decided so, and this prompt is the one place a
+      manager is told which of its reports look stale. Measuring an idling report against the raw
+      interval would have the manager chase an agent the scheduler is deliberately leaving alone — the
+      same false accusation the dashboard's pill was fixed for, one surface earlier. The stretch comes
+      from the SAME core ladder the scheduler and the dashboard read, and an agent that is not idling
+      gets back `pollIntervalMs` byte-identically, so today's staleness line for working agents does not
+      move.
+      */
+      const silenceBudgetMs = resolveHeartbeatSilenceBudgetMs({
+        streak: idleStreak,
+        baseIntervalMs: pollIntervalMs,
+        capMs: idleBackoffCapMs,
+      });
       const staleThresholdMs = Math.max(
-        pollIntervalMs * REPORTS_STALE_INTERVAL_MULTIPLIER,
+        silenceBudgetMs * REPORTS_STALE_INTERVAL_MULTIPLIER,
         MIN_HEARTBEAT_STALENESS_MS,
       );
       const lastHeartbeatTs = report.lastHeartbeatAt ? Date.parse(report.lastHeartbeatAt) : NaN;
@@ -6424,11 +6819,22 @@ type PendingAssignment = {
   budgetStatus?: AgentBudgetStatus;
 };
 
+/*
+FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268):
+The wake gate now also answers the idle-ladder question, so it takes the tick's effective interval as
+context. That keeps the ladder's base equal to the timer period the scheduler is actually running (a
+heartbeatMultiplier then stretches both together), instead of the ladder silently measuring against an
+interval nobody schedules. Both wiring sites forward the context; neither constructs the decision, so
+neither can drift from the other.
+*/
+export type TimerWakeContext = { intervalMs?: number };
+export type TimerWakeDecision = { suppress: boolean; reason?: string; fresherSignal?: WakeSignalKind };
+
 export class HeartbeatTriggerScheduler {
   private store: AgentStore;
   private callback: TriggerCallback;
   private taskStore?: TaskStore;
-  private shouldSuppressTimerWake?: (agent: Agent) => Promise<{ suppress: boolean; reason?: string }>;
+  private shouldSuppressTimerWake?: (agent: Agent, context?: TimerWakeContext) => Promise<TimerWakeDecision>;
   private timers: Map<string, AgentTimer> = new Map();
   private errorRecoveryLimit = MAX_HEARTBEAT_ERROR_RECOVERY_ATTEMPTS;
   private pendingAssignments: Map<string, PendingAssignment> = new Map();
@@ -6512,7 +6918,7 @@ export class HeartbeatTriggerScheduler {
   constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore, options?: {
     isTaskExecuting?: (taskId: string) => boolean;
     isAgentEffectivelyExecuting?: (agentId: string) => boolean;
-    shouldSuppressTimerWake?: (agent: Agent) => Promise<{ suppress: boolean; reason?: string }>;
+    shouldSuppressTimerWake?: (agent: Agent, context?: TimerWakeContext) => Promise<TimerWakeDecision>;
   }) {
     this.store = store;
     this.callback = callback;
@@ -6634,7 +7040,7 @@ export class HeartbeatTriggerScheduler {
   }
 
   /** Default heartbeat interval when not explicitly configured (3600 seconds / 1 hour) */
-  private static readonly DEFAULT_HEARTBEAT_INTERVAL_MS = 3_600_000;
+  private static readonly DEFAULT_HEARTBEAT_INTERVAL_MS = DEFAULT_HEARTBEAT_INTERVAL_MS;
 
   /**
    * Register an agent for timer-based heartbeat triggers.
@@ -7773,21 +8179,45 @@ export class HeartbeatTriggerScheduler {
       budget observability are untouched; a probe that cannot answer dispatches, because sleeping on
       an unproven silence is the failure mode this discipline exists to prevent.
       */
+      let fresherSignal: WakeSignalKind | undefined;
       if (this.shouldSuppressTimerWake) {
-        const decision: { suppress: boolean; reason?: string } = await this.shouldSuppressTimerWake(agent).catch((suppressErr) => {
+        const decision: TimerWakeDecision = await this.shouldSuppressTimerWake(agent, { intervalMs }).catch((suppressErr) => {
           heartbeatLog.warn(`timer-wake-suppression-probe-failed for ${agentId}: ${suppressErr instanceof Error ? suppressErr.message : String(suppressErr)}`);
           return { suppress: false };
         });
         if (decision.suppress) {
-          heartbeatLog.log(`timer-heartbeat-suppressed agentId=${agentId} reason=${decision.reason ?? "unspecified"}`);
+          /*
+          FNXC:HeartbeatIdleBackoff 2026-11-01-00:35 (RUFU-268):
+          Two different decisions reach this return and an operator reading the log must not have to guess
+          which one it was: `no-fresher-signal` means STAS-300 proved the board says nothing new, while
+          `idle-backoff:<stepMs>` means the board DID change and this agent's own ladder chose to wait.
+          The second one is the tick that would otherwise be mistaken for a stalled scheduler.
+          */
+          const reason = decision.reason ?? "unspecified";
+          if (reason.startsWith("idle-backoff:")) {
+            heartbeatLog.debug(`timer-heartbeat-idle-deferred agentId=${agentId} stepRemainingMs=${reason.slice("idle-backoff:".length)}`);
+          } else {
+            heartbeatLog.log(`timer-heartbeat-suppressed agentId=${agentId} reason=${reason}`);
+          }
           return;
         }
+
+        /*
+        FNXC:HeartbeatIdlePreflight 2026-11-01-01:05 (RUFU-268):
+        Carry WHICH population the gate found fresher onto the tick it just authorised, so the run can ask
+        the cheap question first instead of re-deriving freshness a few milliseconds later and possibly
+        disagreeing with the gate that admitted it. A decision with no kind — an unwired gate, a probe that
+        failed, a wake that was never a timer tick — carries nothing, and an unclassified tick always takes
+        the full path.
+        */
+        fresherSignal = decision.fresherSignal;
       }
 
       await this.callback(agentId, "timer", {
         wakeReason: "timer",
         triggerDetail: "scheduled",
         intervalMs,
+        ...(fresherSignal ? { fresherSignal } : {}),
       });
     } catch (err) {
       heartbeatLog.error(`Timer tick error for ${agentId}: ${err instanceof Error ? err.message : err}`);
