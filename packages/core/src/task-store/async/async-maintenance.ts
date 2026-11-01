@@ -90,6 +90,17 @@ export async function pruneOperationalLogsAsync(
   /*
   FNXC:PostgresRetention 2026-07-14-18:12:
   Legacy run-audit and heartbeat rows do not carry project_id. Scope deletion through their owning task/agent instead; taskless audit rows remain retained because their project cannot be proven, which is safer than cross-project deletion.
+
+  FNXC:StoreOpenProvenance 2026-10-31-22:15 (RUFU-344):
+  `store:open` is the deliberate exception to that taskless rule, and the exception is bounded to that
+  one mutation_type. The rule above exists because a taskless row's project is unprovable; a store-open
+  row is different — it is written by the project-bound data layer, so `project_id` is assigned by the
+  0006 partition trigger and the row IS project-attributable without a task. Without this branch the
+  row would be immortal: one row per store open means one per `fn` CLI invocation and per PG test
+  harness boot, so a durable forensic record would grow without bound in direct proportion to how much
+  the tool is used. Deleting it by project is provably safe in a way the general taskless case is not:
+  the row describes the opening process, not a task's history, so no owning task can lose its evidence.
+  Every other taskless audit row keeps the old rule and is collected only through its owning task.
   */
   await count("runAuditEvents", sql`
     DELETE FROM project.run_audit_events AS events
@@ -97,6 +108,13 @@ export async function pruneOperationalLogsAsync(
       AND events.task_id IN (
         SELECT id FROM project.tasks WHERE project_id = ${projectId}
       )
+    RETURNING 1
+  `);
+  await count("storeOpenAuditEvents", sql`
+    DELETE FROM project.run_audit_events AS events
+    WHERE events.mutation_type = 'store:open'
+      AND events.project_id = ${projectId}
+      AND events.timestamp < ${cutoff}
     RETURNING 1
   `);
   await count("agentHeartbeats", sql`

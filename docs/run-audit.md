@@ -320,6 +320,50 @@ The row exists because the park is the whole point of the fix: without it a stop
 curated delivery-pipeline catalogue, following the same precedent as `task:planning-admission-stalled`,
 which is why it is documented here as prose rather than as a catalogue table row.
 
+## Store-open provenance
+
+RUFU-344: `store:open` records one process that opened a `TaskStore`, so a mutation on a shared database can be
+attributed to the writer that made it. Metadata is ids/paths only (`pid`, `ppid`, `execPath`, `entry`, `cwd`,
+`nodeVersion`) and the row's `target` is the bound project id, or `unscoped` for a layer bound to the legacy default
+partition. The emitter sits at the single store-open site — `initImpl` in
+`packages/core/src/task-store/lifecycle-ops.ts` — and the promise is **per store open, not once per process**:
+`TaskStore.init()` runs its body on every call, so a second open by the same process records a second row, and every
+host that opens its own store — engine runtime, dashboard/CLI extension host, desktop, and the PostgreSQL test harness
+— is stamped. Connection material (database URL, provider, pool sizing) is deliberately excluded: `entry` and `cwd`
+already answer "which process", and run-audit carries no credential or connection string.
+
+The row is deliberately **not** a row in the curated delivery-pipeline catalogue: `run-audit-catalogue.test.ts` locks
+that table table-for-table against this document, the catalogue enumerates delivery-pipeline events, and store
+provenance is not one — the same precedent as `task:planning-admission-stalled` and `task:planning-reseed-cycle`,
+which are likewise documented here as prose. It is also invisible to the task-keyed and agent-keyed reads:
+`queryRunAuditEvents` narrows only by `task_id` / `run_id` / `agent_id` / `domain` / `mutation_type` inside a project,
+this row's `task_id` is NULL, and its `agent_id` is the synthetic `store` — deliberately not `system`, which already
+authenticates real engine-authored mutations — so it surfaces on no card's history and under no real agent's runs.
+It is found by mutation type, which is precisely how the writer of a shared-database mutation gets attributed. The
+symptom suite asserts that nullability and key set directly.
+
+**Awaited but bounded.** The write is `await`ed through the bounded seam (`emitBoundedRunAudit(store, …, { log })`),
+never through a direct `recordRunAuditEvent` call. An unawaited write is lost exactly where the event matters most: a
+one-shot `fn` CLI invocation opens the store, does its work, and exits, so a void write that has not landed dies with
+the process and no later reader can reconstruct it. Awaiting the *unbounded* call would instead make an unreachable
+audit store a lifecycle dependency of opening the store, which FN-9175/FN-9177 forbid. The bounded seam resolves both:
+absent, synchronously throwing, rejecting, never-settling, and late-settling sinks all let `init()` resolve, and the
+rejection reaches the operator as a `phase: "init:store-open-stamp"` warning through the seam's own logger instead of
+an unhandled rejection. The behavior is pinned by
+`packages/core/src/__tests__/postgres/store-open-provenance.pg.test.ts` and
+`packages/core/src/__tests__/excluded-awaited-run-audit-store-sites.test.ts`.
+
+**Retention.** The general rule deletes a run-audit row only through a row that owns it (task → agents → runs →
+sessions → continuations → work items → worklogs). A `store:open` row owns nothing, so under that rule alone it is
+immortal — one row per store open, i.e. one per `fn` CLI invocation and one per PostgreSQL test-harness boot, forever.
+`pruneOperationalLogsAsync` therefore carries a bounded exception for this one mutation type, keyed `storeOpenAuditEvents`
+in its per-table result: aged `store:open` rows are deleted for the project the retention pass is bound to, under the
+same window every other run-audit retention uses, and never across projects. The project is provable without a task
+because the emitting data layer is project-bound (the partition trigger assigns `project_id`); a pass with no bound
+project deletes only the `__legacy_unscoped__` partition, which is where a row written by an unbound layer lands, so
+such a row is collectable rather than stranded. Rows of any other mutation type with no owning task stay uncapped by
+design; this exception is not a general taskless sweep.
+
 ## Maintenance contract
 
 Adding a new catalogued run-audit event requires updating **both** the typed catalogue module (`packages/engine/src/run-audit/run-audit-catalogue.ts`) **and** this doc together — the parity test (`packages/engine/src/__tests__/run-audit-catalogue.test.ts`) fails if the documented event set and the catalogue module's set ever diverge, keeping the observability surface truthful as the real `DatabaseMutationType` union evolves. Removing an event likewise requires updating both in the same change.
@@ -336,7 +380,7 @@ Core best-effort emitters use `packages/core/src/run-audit/emit-bounded-run-audi
 
 ### Awaited core exclusion decision
 
-FN-9178 classified awaited sites with hostile-sink characterization tests. FN-9180 routed the class-A `task-deleted-outbox:catch-up`, `:reconciliation-fallback`, `:lease-fenced`, and `:retention-pruned` rows through `emitBoundedRunAudit`; each remains awaited at its post-acknowledgement, post-cursor, or post-DELETE position so bounded telemetry preserves ordering. FN-9181 routed detached recall capture through the same bounded seam. `task:workflow-switch-torn` and `task:reconcile-phantom-committed-reservation` are class B and use the bounded outcome seam because their throw/result payload depends on audit outcome. `task:bypass-review`, `task:resume-step`, and both resurrection-blocked records are class C and intentionally unbounded: they claim persistence before return, destructive cleanup, or a forensic throw.
+FN-9178 classified awaited sites with hostile-sink characterization tests. RUFU-344 adds `store:open` as a class-C site that is awaited **through the bounded seam** rather than directly: it claims a durable forensic record before the open returns, and a void write would not survive a one-shot CLI exit, while the seam's settle-or-timeout bound keeps telemetry out of the store-open lifecycle; `init()` resolves for an absent, throwing, rejecting, never-settling, and late-settling sink. FN-9180 routed the class-A `task-deleted-outbox:catch-up`, `:reconciliation-fallback`, `:lease-fenced`, and `:retention-pruned` rows through `emitBoundedRunAudit`; each remains awaited at its post-acknowledgement, post-cursor, or post-DELETE position so bounded telemetry preserves ordering. FN-9181 routed detached recall capture through the same bounded seam. `task:workflow-switch-torn` and `task:reconcile-phantom-committed-reservation` are class B and use the bounded outcome seam because their throw/result payload depends on audit outcome. `task:bypass-review`, `task:resume-step`, and both resurrection-blocked records are class C and intentionally unbounded: they claim persistence before return, destructive cleanup, or a forensic throw.
 
 All `recordRunAuditEventWithinTransaction(tx, ...)` calls and the `recordRunAuditEventBackend(tx, ...)` transactional call are permanently out of scope. Their audit row shares a transaction with the mutation it describes; bounding would split that atomicity. The full matrix and evidence pointers are in the FN-9178 `decision` task document; `excluded-awaited-run-audit-store-sites.test.ts`, `excluded-awaited-run-audit-layer-sites.test.ts`, and the core routing ratchet pin this boundary.
 

@@ -7,6 +7,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../__test-utils__/pg-test-harness.js";
+import { CORE_RUN_AUDIT_EMIT_TIMEOUT_MS } from "../run-audit/emit-bounded-run-audit.js";
 
 /*
  * FNXC:RunAudit 2026-08-20-06:40:
@@ -232,5 +233,52 @@ pgDescribe("FN-9178 awaited store run-audit characterization", () => {
       await vi.advanceTimersByTimeAsync(2_100);
       expect(settled).toBe(false);
     } finally { vi.useRealTimers(); }
+  });
+
+  /*
+  FNXC:StoreOpenProvenance 2026-10-31-22:15 (RUFU-344):
+  The store-open stamp is the one AWAITED best-effort emit on the store-open path, so it is characterized
+  here at the boundary `docs/run-audit.md` promises: a hostile audit sink may delay `init()` by at most the
+  seam's bound and may never convert telemetry into a lifecycle dependency of opening the store. The
+  store's own backlog is the proof — `beforeEach` clears `taskIdStateReconciled`, so an `init()` that
+  resolves with it restored shows the sink did not abort the open. These
+  cases stay open here rather than in the delivery-pipeline read files because `store:open` carries no task,
+  no agent run, and no catalogue row; the row's shape and retention live in
+  `postgres/store-open-provenance.pg.test.ts`.
+
+  The light-boot options are deliberate: the archive reintegration and patchnode reconcile are unrelated to
+  the stamp and only add wall-clock. The never-settling case runs on the REAL clock because
+  `advanceTimersByTimeAsync` starves the open's own PostgreSQL I/O (measured: the fake-timer form hung past
+  15 s), so the shipped 2 000 ms bound is asserted as elapsed time instead of a timer advance.
+  */
+  const stampAttempted = (audit: { mock: { calls: unknown[][] } }): boolean =>
+    audit.mock.calls.some((call) => (call[0] as { mutationType?: string } | undefined)?.mutationType === "store:open");
+
+  it.each([
+    ["absent", () => undefined],
+    ["synchronous throw", () => { throw new Error("sync"); }],
+    ["rejection", () => Promise.reject(new Error("rejected"))],
+  ])("store-open stamp through a %s audit sink still completes the open", async (_state, sink) => {
+    const store = h.store();
+    const internal = store as unknown as { taskIdStateReconciled: boolean };
+    internal.taskIdStateReconciled = false;
+    const audit = vi.spyOn(store, "recordRunAuditEvent").mockImplementation(sink as never);
+    await expect(store.init({ skipArchiveReintegration: true, skipPatchnodeReconcile: true })).resolves.toBeUndefined();
+    expect(stampAttempted(audit)).toBe(true);
+    expect(internal.taskIdStateReconciled).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it("store-open stamp delays init only until the shipped bounded-seam window on a never-settling sink", async () => {
+    const store = h.store();
+    const internal = store as unknown as { taskIdStateReconciled: boolean };
+    internal.taskIdStateReconciled = false;
+    const audit = vi.spyOn(store, "recordRunAuditEvent").mockImplementation(() => new Promise<never>(() => undefined));
+    const startedAt = Date.now();
+    await expect(store.init({ skipArchiveReintegration: true, skipPatchnodeReconcile: true })).resolves.toBeUndefined();
+    expect(stampAttempted(audit)).toBe(true);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(CORE_RUN_AUDIT_EMIT_TIMEOUT_MS);
+    expect(internal.taskIdStateReconciled).toBe(true);
+    vi.restoreAllMocks();
   });
 });

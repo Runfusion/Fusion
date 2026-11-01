@@ -97,6 +97,31 @@ export type RunAuditMutationType =
   | "task:comment-delivery-unowned"
   | "task:vanished-approved-work"
   | "task:row-purged-for-resurrection"
+  /*
+  FNXC:StoreOpenProvenance 2026-10-31-22:15 (RUFU-344):
+  `store:open` is written by `initImpl` — the single body behind `TaskStore.init()` — once per store
+  open, and its only job is to name the PROCESS that opened the shared project database. FN-7910 is
+  the motivating incident: a stale binary opened the store, its init passes evacuated Ideas cards,
+  and every row that writer left said only `agentId:"system"`, so the mutation could not be
+  attributed afterwards. The stamp is the LAST await of a completed open, so it names the process behind
+  the mutations a store makes afterwards; a store open that never completes stamps nothing, because the
+  stamp is itself a write on the connection whose stall is being diagnosed — which is why
+  `docs/architecture.md` still calls a bare 30 s `[taskstore-boot]` expiry un-attributable.
+
+  Metadata is ids/paths only and exactly these six keys: `pid`, `ppid`, `execPath`, `entry`
+  (`process.argv[1]`, `"unknown"` when absent), `cwd`, `nodeVersion`. Nothing content-y is legal here:
+  no error text, no log line, no task title, no connection URL that could carry credentials, and no
+  extra key — the row is written on every store open (every CLI invocation, every test harness), so
+  anything else is multiplied across the whole fleet. `target` carries the bound project id
+  (`"unscoped"` when the layer is project-agnostic) because the column is NOT NULL, and `task_id`
+  stays NULL because opening a store is not a task mutation.
+
+  Restored, not new: the event shipped in a628a13888 and was lost in 5ae6332563 when the SQLite
+  dual-path collapse deleted its `insertRunAuditEventRow` call site while the `AGENTS.md` bullet
+  describing it stayed. Tests that read unfiltered `runAuditEvents` must filter by `mutationType`
+  instead of asserting exact counts, because one row now appears per store open.
+  */
+  | "store:open"
   | (string & {});
 
 /** Input for recording a run-audit event. */

@@ -1,4 +1,4 @@
-import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
+import { emitBoundedRunAudit, type RunAuditLogger } from "../run-audit/emit-bounded-run-audit.js";
 /* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * lifecycle-ops operations.
@@ -112,8 +112,76 @@ export async function initImpl(store: TaskStore, options?: { skipArchiveReintegr
     // Lifecycle listeners are backend-agnostic: recordActivity() routes their
     // best-effort writes through the injected PostgreSQL data layer.
     store.setupActivityLogListeners();
+    /*
+    FNXC:StoreOpenProvenance 2026-10-31-22:15 (RUFU-344):
+    Store-open provenance stamp — the durable answer to "which process opened this store?". Every init
+    runs its recovery passes against the SHARED project database, so a store opened by a stale or
+    unexpected binary is a writer that can later look unattributable; FN-7910 is exactly that incident
+    (an unidentifiable process evacuated Ideas cards through its init passes). `docs/architecture.md`
+    records the same gap on the slow-boot side: the `[taskstore-boot]` line is process-local console
+    output and a forked extension child persists no stdout, so a bare 30 s boot timeout left no trace.
+
+    Restored, not new: the stamp shipped in a628a13888 and was silently lost in 5ae6332563 (the SQLite
+    dual-path collapse deleted its `insertRunAuditEventRow` call site) while `AGENTS.md` kept promising
+    it. `FNXC:LegacyAdoption 2026-07-19-05:00` below still gave the SQLite-era reason for NOT auditing
+    at store-open; that reason died with the SQLite runtime — TaskStore is PostgreSQL-only and
+    `recordRunAuditEvent` is a live async write.
+
+    Durability decision: this emit is AWAITED, which is unusual for best-effort telemetry and is the
+    point. A one-shot CLI process (`fn task list`) can exit before an unawaited write reaches the
+    database, and one-shot processes are precisely the population this event exists to attribute — a
+    `void` write would drop the row exactly where the row matters most. The bounded seam (2 000 ms
+    default) keeps the worst case finite, so awaiting cannot turn a hostile audit sink into an
+    unbounded boot: absent, throwing, rejecting, never-settling, and late-settling sinks all still let
+    `init()` resolve. `store-open-provenance.pg.test.ts` pins both the row and that sink health.
+
+    This write is NON-TRANSACTIONAL by design: the row does not share a transaction with any other
+    mutation (unlike the `recordRunAuditEventWithinTransaction` boundaries), which is why it belongs to
+    class C of the FN-9178 awaited-exclusion matrix — proof written before returning — rather than to
+    the permanently-unbounded atomicity boundaries.
+
+    Metadata stays ids/paths only: `pid`, `ppid`, `execPath`, `entry`, `cwd`, `nodeVersion`. No error
+    prose, no connection URL that could carry credentials, no extra key — one row is written per store
+    open across the whole fleet, and `target` is the bound project id (or `"unscoped"`) only because the
+    column is NOT NULL. A store open is not a task mutation, so `taskId` is deliberately omitted and
+    `task_id` stays NULL. `agentId` is the synthetic `"store"` rather than `"system"` — the same choice
+    the original stamp made — because `"system"` already authenticates real engine-authored mutations,
+    and a provenance row must not contaminate a query for who changed a card.
+
+    Placement is the last await of a COMPLETED open. A store open that hangs therefore stamps nothing:
+    the stamp is itself a write on the connection whose stall is being diagnosed, so `docs/architecture.md`
+    stays correct that a bare 30 s `[taskstore-boot]` expiry is un-attributable with existing channels.
+    What the row does answer is which process performed mutations after a completed open.
+    */
+    await emitBoundedRunAudit(store, {
+      agentId: "store",
+      runId: `store-open-${process.pid}-${Date.now()}`,
+      domain: "database",
+      mutationType: "store:open",
+      target: store.asyncLayer?.projectId?.trim() || "unscoped",
+      metadata: {
+        pid: process.pid,
+        ppid: process.ppid,
+        execPath: process.execPath,
+        entry: process.argv[1] ?? "unknown",
+        cwd: process.cwd(),
+        nodeVersion: process.version,
+      },
+    }, { log: storeOpenAuditLog });
     return;
 }
+
+/*
+FNXC:StoreOpenProvenance 2026-10-31-22:15 (RUFU-344):
+The bounded seam hands its caller a `{ warn(message) }` contract while `storeLog` wants a structured
+phase, so the store-open site adapts the two. The seam's own message is fixed text that names only the
+mutation type ("failed to record" vs "timed out recording"), which is what keeps a timeout and a
+rejection distinguishable in the log; it can never carry row metadata, and nothing here interpolates
+metadata into a log line.
+*/
+const storeOpenAuditLog: RunAuditLogger = {
+  warn: (message) => storeLog.warn(message, { phase: "init:store-open-stamp" }),
+};
 
 /*
 FNXC:LegacyAdoption 2026-07-19-05:00 (U9b / R10 / KTD-8):
@@ -127,10 +195,12 @@ pre-cutover rows carrying a legacy `task.status` whose writer the cutover delete
 exactly as R10 forbids. Running in both places is safe because `legacyAdoptedAt` makes
 adoption idempotent: whichever opens first adopts, the other skips.
 
-Deliberately NOT audited here. Run-audit emission at store-open would have to go through
-the sync SQLite row-insert path, which is one of the masked no-op sites under PG mode; the
-engine sweep is the audited path. Adoption is logged instead, and a failure is warned and
-swallowed — a store must still open when adoption cannot run.
+This note once read "Deliberately NOT audited here", justified by store-open audit having to go
+through the sync SQLite row-insert path — one of the masked no-op sites under PG mode. That premise
+died with the SQLite runtime: `TaskStore` is PostgreSQL-only, so `initImpl` now stamps the `store:open`
+provenance row through the bounded seam above (RUFU-344). What still holds, and is unchanged, is the
+rule for ADOPTION itself — adoption is logged rather than audited, and a failure is warned and
+swallowed, because a store must still open when adoption cannot run.
 
 FNXC:LegacyAdoption 2026-07-19-09:00 (PR #2335 review):
 The sweep PAGINATES until the active census is drained instead of scanning only the newest

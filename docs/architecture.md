@@ -1508,8 +1508,10 @@ and its deadline are shared by all of them rather than paid per surface:
   orders of magnitude inside the budget — while every DB-side contention path measured (advisory
   lock, table lock) terminates with a **named** cause at the server's ~20 s bound rather than as a
   bare budget expiry. A bare 30 s expiry is therefore the shape a stall with no server-side bound
-  takes, and it is **un-attributable with existing channels**: no `store:open` provenance row, no
-  persisted child-process console, no `pg_stat_statements`. No product change shipped for it; the
+  takes, and it is **un-attributable with existing channels**: no persisted child-process console, no
+  `pg_stat_statements`, and no `store:open` provenance row either — that stamp is the last await of a
+  *completed* store open, so an open that never finishes writes nothing and the row can only attribute
+  the mutations a store makes after it opened (RUFU-344). No product change shipped for it; the
   discriminator is pinned by `packages/cli/src/__tests__/task-store-boot-concurrency.test.ts` and
   `packages/cli/src/__tests__/extension-agent-class-boot-budget.test.ts`.
 - **A stall answers with a retry, not a denial (STAS-299).** The measured damage was not the stall
