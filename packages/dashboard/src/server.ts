@@ -31,6 +31,7 @@ import {
   setRunningAgentCountSource,
 } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
+import { createHealthSnapshot } from "./health-snapshot.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
@@ -2053,31 +2054,60 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   /*
    * FNXC:PostgresHealth 2026-06-24-16:10:
-   * The /api/health endpoint is async because PostgreSQL health checks
-   * (connectivity probe, task-ID integrity via Drizzle) are inherently async.
-   * The endpoint derives the live PostgreSQL layer from TaskStore unless an
-   * integration host supplies an explicit override. Missing layers and failed
-   * connectivity/integrity queries return degraded health.
-   * VAL-HEALTH-001: healthy backend reports green; VAL-HEALTH-002: corrupt/
-   * unreachable backend surfaces degraded status + errors.
+   * PostgreSQL health checks (connectivity probe, task-ID integrity via Drizzle) are inherently async.
+   * The endpoint derives the live PostgreSQL layer from TaskStore unless an integration host supplies
+   * an explicit override. Missing layers and failed connectivity/integrity queries return degraded health.
+   * VAL-HEALTH-001: healthy backend reports green; VAL-HEALTH-002: corrupt/unreachable backend surfaces
+   * degraded status + errors.
+   *
+   * FNXC:HealthProbeLatency 2026-11-01-22:53 (RUFU-674):
+   * The evaluation above no longer runs on the request path. The dashboard watchdog probes
+   * `curl -m 10` every 45 s and restarts after three consecutive failures, and the evaluation carries a
+   * 5 s internal budget over a route measured at 1.7-3.1 s idle, so ~7 s of event-loop latency lost the
+   * probe and killed a merely slow server (measured: `health=000 fails=3` at 8.9 GB RSS, under the
+   * memory ceiling, taking every live session with it). The handler now answers from a snapshot
+   * refreshed off the request path - zero awaited I/O, the principle /metrics already states for its own
+   * scrape - and stays fail-closed: a snapshot older than the stale ceiling is answered 503, so a
+   * genuinely wedged loop still loses liveness, sooner than before. Awaiting stays only for the first
+   * probe of a booting server, which is the pre-existing startup contract.
    */
-  app.get("/api/health", async (_req, res) => {
-    /*
-    FNXC:MigrationStatusDashboard 2026-07-19-14:30:
-    The daemon's TaskStore is bound to the engine project id, but TaskStore has
-    no project-id accessor. Pass that typed server identity to health so durable
-    migration markers use project:<projectId> instead of a root-path fallback.
-    */
+  /*
+  FNXC:MigrationStatusDashboard 2026-07-19-14:30:
+  The daemon's TaskStore is bound to the engine project id, but TaskStore has
+  no project-id accessor. Pass that typed server identity to health so durable
+  migration markers use project:<projectId> instead of a root-path fallback.
+  */
+  const evaluateHealthPayload = async () => {
     const health = await evaluateDashboardPostgresHealth(store, options?.postgresHealthLayer, {
       projectId: options?.engine?.getProjectId?.(),
     });
-    res.json(buildHealthPayload({
+    return buildHealthPayload({
       database: health.database,
       taskIdIntegrityReport: health.taskIdIntegrity,
       migration: health.migration,
       cliPackageVersion,
       engineAvailable: hasDashboardEngine(options),
-    }));
+    });
+  };
+  const healthSnapshot = createHealthSnapshot<ReturnType<typeof buildHealthPayload>>({
+    evaluate: evaluateHealthPayload,
+  });
+  healthSnapshot.start();
+
+  // Async only for shape parity with the pre-snapshot handler; the hot path below never awaits.
+  app.get("/api/health", async (_req, res) => {
+    const snapshot = healthSnapshot.read();
+    if (snapshot.value !== null && !snapshot.stale) {
+      res.json(snapshot.value);
+      return;
+    }
+    // Fail closed: the loop got a turn, but the evidence is older than the ceiling it must satisfy.
+    if (snapshot.value !== null) {
+      res.status(503).json(snapshot.value);
+      return;
+    }
+    // Boot path: no snapshot yet, so answer this one probe the way the endpoint always has.
+    res.json(await evaluateHealthPayload());
   });
 
   /*
