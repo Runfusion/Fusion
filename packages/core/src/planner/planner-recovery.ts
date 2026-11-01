@@ -154,7 +154,7 @@ export interface DecidePlannerRecoveryInput {
  *     the decision names what WOULD run on approval but never dispatches it
  *     from this bounded layer; only the engine controller's
  *     `resolveConfirmation`, after an explicit human approval, may.
- *  4. `reviewer` stage with a PROBLEM signal (`stuck` / `blocked`) → `"inject_guidance"`.
+ *  4. `reviewer` stage with a PROBLEM signal (`stuck` / `blocked` / `failed`) → `"inject_guidance"`.
  *  5. `executor` / `workflow-gate` stage with `signal === "failed"` →
  *     `"request_targeted_fix"` when a source link carries a specific
  *     fixable error (`failed-check` / `merge-error`), else `"retry_step"`.
@@ -274,10 +274,14 @@ export function decidePlannerRecovery(input: DecidePlannerRecoveryInput): Planne
     review that is simply open. A healthy signal also clears the controller's attempt registry each tick
     (FN-7577), so the bounded budget never filled: one reviewer-stage task received a steering comment on
     every 45 s tick for twelve days (22,499 copies in `comments` and `steering_comments`), and each append
-    rewrote both arrays plus the `search_vector` GIN entries at ~360 ms. Only a problem signal steers now,
-    matching the executor/workflow-gate fall-through below.
+    rewrote both arrays plus the `search_vector` GIN entries at ~360 ms. Only a problem signal steers now.
+    `failed` stays here rather than reaching the executor branch below: a targeted fix or step retry has
+    no meaning for a review, and `failed` does not reset the attempt budget, so steering stays bounded.
     */
-    if (snapshot.stage === "reviewer" && (snapshot.signal === "stuck" || snapshot.signal === "blocked")) {
+    if (
+      snapshot.stage === "reviewer" &&
+      (snapshot.signal === "stuck" || snapshot.signal === "blocked" || snapshot.signal === "failed")
+    ) {
       const proposedAction = "inject_guidance";
       const sideEffectClass = classifyPlannerActionSideEffect({ watchedStage: snapshot.stage, proposedAction });
       return {
