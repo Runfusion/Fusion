@@ -1628,11 +1628,12 @@ and the pure, never-throw `decidePlannerRecovery(input)`. Decision rules, in ord
 3. `merger` / `pull-request` stages → `"await_confirmation"` (FN-7513) with `requiresConfirmation: true`,
    `sideEffectClass: "merge_pr"`: these require confirmation and are surfaced, never dispatched, by the
    bounded layer itself — see "Planner overseer confirmation gate (FN-7513)" below.
-4. `reviewer` stage → `"inject_guidance"`.
+4. `reviewer` stage with a problem signal (`stuck` / `blocked` / `failed`) → `"inject_guidance"`; a
+   healthy or human-wait reviewer signal (`progressing` / `complete` / `awaiting-human`) → `"none"`.
 5. `executor` / `workflow-gate` stage with `signal === "failed"` → `"request_targeted_fix"` when a
    source link carries a specific fixable error (`failed-check` / `merge-error`), else `"retry_step"`.
-6. Any other `executor` / `workflow-gate` signal (stuck/blocked/progressing/awaiting-human) →
-   `"inject_guidance"`.
+6. `executor` / `workflow-gate` stage with `stuck` / `blocked` → `"inject_guidance"`; any other signal
+   (`progressing` / `complete` / `awaiting-human`) → `"none"`.
 
 `packages/engine/src/planner-recovery-controller.ts`'s `PlannerRecoveryController` is the dispatcher,
 mirroring the `AutoRecoveryDispatcher` + `StuckTaskDetector` handler-injection conventions: it holds an

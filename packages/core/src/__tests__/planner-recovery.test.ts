@@ -58,9 +58,32 @@ describe("decidePlannerRecovery", () => {
     expect(decision.attemptLimit).toBe(PLANNER_RECOVERY_MAX_ATTEMPTS);
   });
 
-  it("yields inject_guidance for a reviewer stage", () => {
-    const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal: "progressing" }) });
+  it("yields inject_guidance for a reviewer stage with a problem signal", () => {
+    for (const signal of ["stuck", "blocked", "failed"] as const) {
+      const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal }) });
+      expect(decision.action, `signal=${signal}`).toBe("inject_guidance");
+    }
+  });
+
+  // A review that is merely open reports `progressing`; steering it looped once per tick because a healthy
+  // signal also resets the controller's attempt budget.
+  // A failed review must not reach the executor's targeted-fix branch, even with a failed-check source.
+  it("steers a failed reviewer stage instead of requesting a targeted fix", () => {
+    const decision = decidePlannerRecovery({
+      snapshot: observation({
+        stage: "reviewer",
+        signal: "failed",
+        sources: [{ kind: "failed-check", ref: "check-1", url: "https://example.test/check-1" }],
+      }),
+    });
     expect(decision.action).toBe("inject_guidance");
+  });
+
+  it("returns none for a reviewer stage with a healthy or human-wait signal", () => {
+    for (const signal of ["progressing", "complete", "awaiting-human"] as const) {
+      const decision = decidePlannerRecovery({ snapshot: observation({ stage: "reviewer", signal }) });
+      expect(decision.action, `signal=${signal}`).toBe("none");
+    }
   });
 
   it("yields inject_guidance for a stuck-but-not-failed stage", () => {
