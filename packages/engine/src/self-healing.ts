@@ -304,6 +304,21 @@ import { isInsideConfiguredWorktreesDir, isReclaimableWorktreeCandidate, isWorkt
 import { removeDirectoryWithRetry } from "./worktree/worktree-removal-retry.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
+/*
+FNXC:AcquisitionConflictRevalidation 2026-11-01-13:35 (RUFU-356):
+The stale-acquisition-conflict sweep consumes the revalidation helper for BOTH halves of its decision:
+the envelope recognizer (which card the sweep may consider at all) and the live-git probe (whether the
+conflict that card was failed for still exists). Nothing in this file re-implements either — a second
+recognizer or a second git read here is how a recovery lane starts deciding from prose again.
+*/
+import {
+  acquisitionConflictAuditCode,
+  isAcquisitionExhaustionError,
+  isAcquisitionPremiseCleared,
+  readAcquisitionConflictLaneState,
+  rederiveAcquisitionConflictPremise,
+  type AcquisitionConflictSweepCode,
+} from "./worktree/acquisition-conflict-revalidation.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } from "./worktree/workspace-base-branch.js";
 /*
@@ -1464,6 +1479,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   private strandedCompletedFailureProvenanceWarned = new Set<string>();
   /*
+   * FNXC:AcquisitionConflictRevalidation 2026-11-01-13:42 (RUFU-356):
+   * `taskId:code` memo for `task:reconcile-stale-acquisition-conflict-no-action`, so a card that keeps
+   * refusing at the hourly churn cadence is reported once per refusal REASON rather than once per pass,
+   * while a card that starts refusing for a different reason still announces itself. Keyed by reason
+   * (not just taskId) because "why is this card still parked" is the question the row exists to answer.
+   */
+  private staleAcquisitionConflictNoActionAudited = new Set<string>();
+  /*
    * FNXC:StrandedHoldContinuation 2026-07-26-14:15:
    * FN-8592 no-action findings are candidate-only but can persist across
    * maintenance passes. Keep their `(taskId, reason)` memo on the manager,
@@ -2564,6 +2587,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // column-reasoning step below — a row in an undeclared column carries NO trait flags, so each
       // of those steps would silently classify it as "not my case" and leave it stranded.
       { name: "reconcile-undeclared-task-columns", fn: () => this.reconcileUndeclaredTaskColumns().then(() => undefined) },
+      /*
+      FNXC:AcquisitionConflictRevalidation 2026-11-01-13:44 (RUFU-356):
+      Runs immediately after the column re-home because this sweep's candidate gate IS a column
+      predicate: a card parked in a column its own workflow no longer declares would read as
+      `wrong-lane` forever, and the re-home above is what makes the rebound target meaningful again.
+      A restart must not leave a card stranded behind a conflict that vanished while the engine was
+      down, so this is a startup step and not only a maintenance one.
+      */
+      { name: "reconcile-stale-acquisition-conflicts", fn: () => this.reconcileStaleAcquisitionConflicts().then(() => undefined) },
       // FNXC:OrphanedPendingSteps 2026-07-22-16:20 (FN-8492 incident): runs right after
       // adoption and BEFORE every in-review recovery step below — those reason about
       // step-result completeness, and an orphaned `pending` result reads as "work in
@@ -3656,6 +3688,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             }
             return result.findings.length;
           },
+        },
+        /*
+        FNXC:AcquisitionConflictRevalidation 2026-11-01-13:44 (RUFU-356):
+        Churn-gated like every other per-candidate git-worktree pass (exact precedent:
+        `reconcile-vanished-task-dirs`), and reading the cycle's PRE-CAPTURED flag: `runMaintenance()`
+        advances `lastGitWorktreeChurnAt` before batch 1 executes, so a step that re-queried
+        `isGitWorktreeChurnDue()` here would read `false` on every pass and never run. The cadence is
+        also the retry bound — a card whose conflict really persists is re-probed hourly, not every
+        maintenance tick.
+        */
+        {
+          name: "reconcile-stale-acquisition-conflicts",
+          fn: () => (maintenancePaused || !gitWorktreeChurnDue ? Promise.resolve(0) : this.reconcileStaleAcquisitionConflicts()),
         },
         {
           name: "reconcile-stale-symbol-locks",
@@ -10506,6 +10551,239 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       log.error(`reconcileUndeclaredTaskColumns failed: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
     }
+  }
+
+  /*
+  FNXC:AcquisitionConflictRevalidation 2026-11-01-13:40 (RUFU-356):
+  A card the heartbeat terminally failed for a worktree conflict must not be kept failed by the
+  SENTENCE that failed it. Acquisition itself re-inspects live git on every attempt, but nothing
+  re-examined the premise AFTER the three-strike park, so a card whose conflict had since disappeared
+  was refused by prose git no longer agreed with: RUFU-278 sat `todo`/`queued` with
+  `… already checked out at <path>` while the path, the `git worktree list` registration, and the
+  `.git/worktrees/` admin directory were all provably absent (verified twice, three independent
+  reads each time), and no lane — scheduler redispatch, self-healing, or `fn_task_retry`-free
+  operation — owned re-deriving it. FN-7802 covers review-lane merge-active cards and FN-6736 phantom
+  executor bindings; a ready-lane card carrying a stale acquisition error belonged to nobody.
+
+  What this pass does, and nothing more: it finds cards parked by EXACTLY that envelope, asks live git
+  the same question acquisition asks, and when the premise is gone clears `{ status: null, error: null }`
+  IN PLACE. No `moveTask` — the card is already in the lane its workflow dispatches from, and a
+  backward or lateral move would be a lifecycle claim this repair has no authority to make. No wipe of
+  `branch`/`worktree`: the branch is the card's own and the next acquisition re-binds its worktree.
+  The cleared field shape is byte-identical to the operator's `fn_task_retry` clear, so the two paths
+  cannot drift and dispatch eligibility (`status === "failed"` excludes the card) releases it.
+
+  Why the candidate gate is the OUTER ENVELOPE and never the conflict sentence: the inner detail is
+  RUFU-376's to reword — it already reworded it once — so a recognizer keyed on inner wording silently
+  stops recognizing the parks it exists to repair. The envelope is composed at exactly one site, the
+  `MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES` cap in `agent-heartbeat.ts`.
+
+  Deliberately NOT candidates, each recorded as a deduped no-action row rather than left invisible:
+  - the executor's create-failure wording (`Worktree creation failed after N attempts` /
+    `Failed to create worktree after N attempts`): that module writes the phrase to the task LOG, and
+    its throw reaches `task.error` only through graph-node failure routing while the card is EXECUTING
+    in the WIP lane, where the remedy is the executor's own node-retry budget. Recognizing it here
+    would give one error string two owners; the rebound-lane gate below already excludes it.
+  - the branch-base-diverged park (`TASK_BASE_DIVERGED:`): a different premise whose remedy is operator
+    git surgery on a base branch, never a worktree re-derivation.
+  - the review-lane acquisition sentence: another lane's remedy, and outside the rebound lane.
+  - workspace cards: their branches live across repositories, so one root-directory probe proves nothing.
+
+  Fail-closed is preserved by construction, not by a second guess: a branch still registered on a live
+  checkout answers `live-registration`, a destination that still holds content answers `path-present`,
+  and a surviving unregistered tip whose unique commits are foreign or unattributed answers
+  `foreign-unmerged` — RUFU-292's preservation boundary, untouched. A probe that could not run answers
+  `probe-unknown`, and an inspection that did not run is never proof that a conflict disappeared.
+  Together with the hourly churn cadence this pass runs on, that bound is also the retry limit: a card
+  whose conflict genuinely persists is re-examined at most once an hour, with both outcomes audited.
+  */
+  async reconcileStaleAcquisitionConflicts(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const pageSize = 500;
+      let offset = 0;
+      let cleared = 0;
+      let refused = 0;
+
+      for (;;) {
+        const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
+        for (const task of tasks) {
+          // Page-cheap candidate gate: status plus the park envelope, before any per-card git work.
+          if (task.status !== "failed") continue;
+          if (!isAcquisitionExhaustionError(task.error ?? undefined)) continue;
+          if (await this.clearStaleAcquisitionConflict(task, settings, executingIds)) cleared += 1;
+          else refused += 1;
+        }
+        if (tasks.length < pageSize) break;
+        offset += tasks.length;
+      }
+      if (cleared > 0) log.log(`Released ${cleared} task(s) terminally failed by a worktree acquisition conflict that live git says is gone`);
+      if (refused > 0) log.log(`Withheld stale-acquisition-conflict release on ${refused} task(s): the refusal reason is recorded per card on its first pass`);
+      return cleared;
+    } catch (error) {
+      log.error(`reconcileStaleAcquisitionConflicts failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
+  /**
+   * One candidate card: re-derive its acquisition conflict from live git and, when the premise is
+   * provably gone, clear the park in place. Returns true only when the card was actually released.
+   *
+   * FNXC:AcquisitionConflictRevalidation 2026-11-01-13:40 (RUFU-356):
+   * The two probes are sequenced, not merged. `readAcquisitionConflictLaneState` answers the physical
+   * question first (is any checkout of this branch, or the destination the create would write to,
+   * still there?) and only a free destination lets the tip-level classifier speak, because a tip that
+   * merely reads as own-attributed while its checkout still exists would hand the card straight back
+   * to the same refusal. Both probes answer in fixed vocabulary, so no refusal sentence ever reaches
+   * a decision or an audit row.
+   */
+  private async clearStaleAcquisitionConflict(
+    task: Task,
+    settings: Settings,
+    executingIds: Set<string>,
+  ): Promise<boolean> {
+    if (task.userPaused === true || task.paused === true) {
+      // An operator park is authoritative; the sweep never reaches through it.
+      return this.emitStaleAcquisitionConflictNoAction(task, "paused");
+    }
+    if (isWorkspaceTask(task)) return this.emitStaleAcquisitionConflictNoAction(task, "workspace-task");
+    if (executingIds.has(task.id)) {
+      // A live session owns this card's status right now. That is a race, not a refusal: the next
+      // pass re-examines it, and a per-race audit row would say nothing an operator could act on.
+      log.debug(`reconcileStaleAcquisitionConflicts: ${task.id} has a live session — re-checked next pass`);
+      return false;
+    }
+
+    // The rebound-lane gate: the park's own move target, resolved from the CARD's workflow. A card
+    // that has since been dispatched elsewhere is not this sweep's to release.
+    const ir = await resolveWorkflowIrForTask(this.store, task.id);
+    const reboundTarget = ir ? resolveReboundTarget(ir) : undefined;
+    if (!reboundTarget || reboundTarget !== task.column) {
+      return this.emitStaleAcquisitionConflictNoAction(task, "wrong-lane");
+    }
+
+    let code: AcquisitionConflictSweepCode;
+    let premiseCleared = false;
+    try {
+      const laneState = await readAcquisitionConflictLaneState({ rootDir: this.options.rootDir, settings, task });
+      if (laneState === "absent") {
+        const outcome = await rederiveAcquisitionConflictPremise({
+          rootDir: this.options.rootDir,
+          settings,
+          task,
+          logger: { warn: (message: string) => log.warn(message) },
+        });
+        premiseCleared = isAcquisitionPremiseCleared(outcome);
+        code = acquisitionConflictAuditCode(outcome);
+      } else if (laneState === "probe-unknown") {
+        code = "probe-unknown";
+      } else {
+        // `live-registration` (branch checked out somewhere) and `path-present` (the destination still
+        // holds content) are both a surviving physical side of the conflict acquisition refused.
+        code = "live-registration";
+      }
+    } catch {
+      code = "probe-threw";
+    }
+
+    if (!premiseCleared) return this.emitStaleAcquisitionConflictNoAction(task, code);
+
+    const expectedColumn = task.column;
+    const buildPatch = (live: Task): TaskUpdatePatch | null => {
+      if (live.deletedAt != null) return null;
+      // Admission re-derives on the live row: a card that was retried, re-parked elsewhere, or paused
+      // between the page read and this write keeps whatever state it now has.
+      if (live.status !== "failed") return null;
+      if (!isAcquisitionExhaustionError(live.error ?? undefined)) return null;
+      if (live.userPaused === true || live.paused === true) return null;
+      if (live.column !== expectedColumn) return null;
+      // Exactly the operator retry's two fields. No branch/worktree wipe, no counter reset.
+      return { status: null, error: null };
+    };
+
+    let wrote = false;
+    if (typeof this.store.updateTaskAtomic === "function") {
+      await this.store.updateTaskAtomic(task.id, (live) => {
+        const patch = buildPatch(live);
+        if (patch) wrote = true;
+        return patch;
+      });
+    } else {
+      // Compatibility only for structural test/extension stores; production TaskStore is atomic.
+      const live = await this.store.getTask(task.id).catch(() => null);
+      const patch = live ? buildPatch(live) : null;
+      if (live && patch) {
+        await this.store.updateTask(task.id, patch);
+        wrote = true;
+      }
+    }
+
+    if (!wrote) {
+      // The live row drifted between the page read and the fenced write. The pair `{code:
+      // "premise-cleared", outcome: "no-action"}` is the honest reading: git says the conflict is
+      // gone, the row no longer looks like the park this sweep was admitted for.
+      return this.emitStaleAcquisitionConflictNoAction(task, "premise-cleared");
+    }
+
+    await emitBoundedRunAudit(this.store, {
+      taskId: task.id,
+      agentId: "self-healing",
+      runId: generateSyntheticRunId("reconcile-stale-acquisition-conflict", task.id),
+      domain: "database",
+      mutationType: "task:reconcile-stale-acquisition-conflict" as DatabaseMutationType,
+      target: task.id,
+      // ids/counts/fixed outcomes only: no branch name, no worktree path, no refusal sentence, no sha.
+      metadata: {
+        taskId: task.id,
+        column: task.column,
+        priorStatus: "failed",
+        code: "premise-cleared",
+        outcome: "cleared",
+      },
+    }, { log });
+    await this.store.logEntry(
+      task.id,
+      "Cleared a worktree-acquisition failure: re-checked against live git and the conflict it described no longer exists, so the card is dispatchable again. The branch and its commits were left untouched.",
+    ).catch(() => undefined);
+    return true;
+  }
+
+  /**
+   * One deduped `-no-action` row per `(card, refusal reason)`, so a card that keeps refusing is
+   * countable once instead of once an hour forever, while a NEW refusal reason is still announced.
+   *
+   * FNXC:AcquisitionConflictRevalidation 2026-11-01-13:40 (RUFU-356):
+   * Returning `false` keeps the caller's "released?" reading in one place — every non-clearing branch
+   * of the decision is a refusal that must be visible, which is the whole difference between this
+   * sweep and the one it replaced by hand (an operator reading a `failed` badge with no history line
+   * explaining why nobody would retry the card).
+   */
+  private async emitStaleAcquisitionConflictNoAction(
+    task: Task,
+    code: AcquisitionConflictSweepCode,
+  ): Promise<false> {
+    const key = `${task.id}:${code}`;
+    if (this.staleAcquisitionConflictNoActionAudited.has(key)) return false;
+    this.staleAcquisitionConflictNoActionAudited.add(key);
+    await emitBoundedRunAudit(this.store, {
+      taskId: task.id,
+      agentId: "self-healing",
+      runId: generateSyntheticRunId("reconcile-stale-acquisition-conflict", task.id),
+      domain: "database",
+      mutationType: "task:reconcile-stale-acquisition-conflict-no-action" as DatabaseMutationType,
+      target: task.id,
+      metadata: {
+        taskId: task.id,
+        column: task.column,
+        priorStatus: "failed",
+        code,
+        outcome: "no-action",
+      },
+    }, { log });
+    return false;
   }
 
   /**

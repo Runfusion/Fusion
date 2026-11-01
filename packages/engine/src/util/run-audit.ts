@@ -904,6 +904,19 @@ export type DatabaseMutationType =
   /** Deduped companion row for a fence park this pass examined and deliberately left alone. Same metadata. */
   | "task:reconcile-planning-fence-park-no-action"
   /*
+  FNXC:AcquisitionConflictRevalidation 2026-11-01-13:46 (RUFU-356):
+  The stale-worktree-acquisition-conflict sweep re-derives a terminally failed card's conflict from
+  LIVE git and releases it in place when the premise is provably gone. Metadata is a closed set of
+  ids and fixed enums — { taskId, column, priorStatus, code, outcome } — where `code` is
+  `premise-cleared | live-registration | foreign-unmerged | probe-unknown | wrong-lane | paused |
+  workspace-task | probe-threw` and `outcome` is `cleared | no-action`. The branch name, the worktree
+  path, the refusal sentence, and any commit sha are deliberately absent: this event exists precisely
+  because a stored sentence was being trusted as evidence, so it must never carry one.
+  */
+  | "task:reconcile-stale-acquisition-conflict"
+  /** Deduped per (card, refusal reason) companion row for a candidate the sweep deliberately left parked. Same metadata. */
+  | "task:reconcile-stale-acquisition-conflict-no-action"
+  /*
   FNXC:LegacyAdoption 2026-07-19-04:30 (U9b / R10 / KTD-8):
   Startup legacy-row adoption through the KTD-8 adoption table. Metadata is
   ids/counts/outcomes-only: { taskId, action, priorStatus, column, backfilledStepCount,

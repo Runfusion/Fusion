@@ -665,3 +665,30 @@ list: that catalogue is locked table-for-table against the delivery surface, and
 background maintenance telemetry with no delivery pipeline to describe.
 `packages/engine/src/__tests__/memory-long-term-audit-contract.test.ts` pins the declaration, the
 documentation, and that exclusion together.
+
+### A stale acquisition-conflict park re-validated against live git (RUFU-356)
+
+`task:reconcile-stale-acquisition-conflict` records the sweep clearing a card that `status: "failed"`
+was holding terminal because its stored error said the branch was already checked out somewhere, while
+`task:reconcile-stale-acquisition-conflict-no-action` records a candidate it examined and left parked.
+The premise of such an error is a fact about git, and git moves: RUFU-278 stayed undispatchable for
+hours after its worktree path, its registration, and its `.git/worktrees/` administration directory had
+all three disappeared, because the only remaining record of the conflict was the sentence itself. The
+sweep therefore re-derives the conflict from live git (the same collision inspection the acquisition
+path runs on every attempt) and acts only on a premise it can prove is gone.
+
+Metadata is ids and fixed enums only, on both events: `taskId`, `column`, `priorStatus`, `code`, and
+`outcome`. `code` is the closed re-derivation vocabulary — what a probe said (`premise-cleared`,
+`live-registration`, `foreign-unmerged`, `probe-unknown`) or what a candidate gate said (`paused`,
+`workspace-task`, `wrong-lane`, `probe-threw`) — so one query over
+`task:reconcile-stale-acquisition-conflict-no-action` answers "why is this card still parked" without
+reading the row. A surviving worktree path and a live branch registration share `live-registration`
+because both are the same physical refusal; a tip already merged, a tip attributed to the card, and a
+branch that no longer exists all report `premise-cleared`, which is also the only code that can clear.
+A refusal is deduped per `(card, code)`, so a card that keeps refusing for the same reason reports once
+per process rather than once per hourly pass, while a new reason for the same card is announced.
+
+The branch name, the worktree path, the refusal sentence, and any commit SHA are never recorded. That
+is not tidiness: the probe returns an enum precisely so no caller can decide from prose, and the
+sentence it replaced is exactly the artefact this sweep exists to stop trusting. Both events are
+deliberately outside the curated delivery-pipeline catalogue and document as prose here.
