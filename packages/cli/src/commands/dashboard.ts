@@ -39,6 +39,7 @@ import {
   resolveWorktreeCapacityLimit,
   hydrateGrokApiKeyFromUserSettings,
   projectPiXaiModelsToGrokCli,
+  reportBuildProvenance,
   type WorkflowIr,
 } from "@fusion/core";
 
@@ -2294,6 +2295,30 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       const message = err instanceof Error ? err.message : String(err);
       logSink.warn(`Background engine startup failed: ${message}`, "dashboard");
     });
+
+    /*
+    FNXC:BuildProvenance 2026-11-01-03:23 (RUFU-359):
+    THIS is the boot surface the operator actually runs — the live deployment is started by the
+    supervised watchdog as `bin.js dashboard --host 0.0.0.0`, not by `fusion daemon`. A fix that only
+    landed on the daemon path would be invisible exactly where the staleness was measured.
+
+    Same non-blocking contract as `runDaemon`: fire-and-forget, below the boot store (which is the
+    audit sink), and measuring `import.meta.url` — the module actually loaded — never a cwd.
+    Two dashboard-specific facts belong here:
+    - In TTY mode the TUI repaints the console, so this line may be transient on screen; the
+      `build:provenance-stale` audit row is the durable record. That is why no second UI surface
+      (panel, badge, banner) was added.
+    - `logSink` is the file's single diagnostic funnel (TUI in a terminal, `console.*` headless) and
+      the adjacent engine-startup failure logs on the `"dashboard"` channel, so the provenance line
+      joins the same stream the operator already reads instead of racing the TUI on raw stdout.
+    A package-installed copy stays silent via core's installation-ownership guard; no override
+    resolver is passed.
+    */
+    void reportBuildProvenance({
+      artifactPath: fileURLToPath(import.meta.url),
+      sink: store,
+      log: { warn: (message) => logSink.warn(message, "dashboard") },
+    }).catch(() => undefined);
 
     let hybridExecutor: HybridExecutor | undefined = undefined;
 

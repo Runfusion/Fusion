@@ -122,6 +122,23 @@ export type RunAuditMutationType =
   instead of asserting exact counts, because one row now appears per store open.
   */
   | "store:open"
+  /*
+  FNXC:BuildProvenance 2026-11-01-03:18 (RUFU-359):
+  `build:provenance-stale` is emitted once per boot by `reportBuildProvenance` when the LOADED
+  artifact is provably older than the HEAD of the Fusion workspace that owns it, i.e. the operator is
+  running an old build. It is the machine-readable twin of the `[engine] build provenance: … STALE`
+  boot line, written because a TUI repaint can erase the console line while the fact is still true.
+  Metadata is ids/counts/timestamps only and exactly five keys: `bundleMtime`, `headSha`, `headTime`,
+  `ageMs`, `commitsBehind` (an integer, or the literal `"unavailable"` when `rev-list` failed — never
+  a fake `0`). `target` is the artifact BASENAME, never an absolute path. Remedy text is not metadata:
+  the boot line owns the operator-action sentence, and the commit sha is an id, not prose. The row is
+  written ONLY on `stale` — `fresh` and `unknown` (ownership unproven, stat failed, toplevel outside
+  the verified root, git missing, HEAD unparseable) emit nothing at all, which is what lets a
+  package-installed copy under a host project's repository stay row-free instead of warning about
+  commits that are not Fusion's. Emitted through the FN-9177 bounded seam, so an absent, throwing, or
+  hanging audit sink cannot delay or fail startup.
+  */
+  | "build:provenance-stale"
   | (string & {});
 
 /** Input for recording a run-audit event. */

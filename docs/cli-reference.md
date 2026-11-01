@@ -356,6 +356,33 @@ token on demand — so masking the banner cannot lock you out of your own UI. If
 non-interactive `fn serve`/`fn dashboard` before this rule, treat the token in that log as exposed
 and rotate it (restart with `--token`, or set a new `$FUSION_DASHBOARD_TOKEN`).
 
+#### Build freshness at boot
+
+`fn dashboard` compares the file it actually loaded against the git checkout that owns it and, when the
+repository is more than 60 seconds newer than that build, prints one line at startup:
+
+```
+build provenance: bundle 2026-10-08T02:11:07Z vs HEAD 4f9c2a1be (2026-10-31T09:14:22Z) — HEAD is 23d 7h newer (~5 commits). STALE — the running code is not this checkout's newest work. Operator action: pnpm build (then restart Fusion).
+```
+
+The line goes through the dashboard log sink, so it reaches the terminal UI, a redirected or piped log
+(a watchdog-supervised launch is the case it was written for), and the dashboard **System** panel's log
+view. It never rebuilds, installs, restarts, or blocks anything: the daemon and dashboard keep starting
+exactly as they did, and only the operator can rebuild across the shutdown boundary.
+
+It prints **only** when all of these hold, and says nothing otherwise:
+
+- the running copy belongs to a Fusion source workspace (`pnpm-workspace.yaml` plus a root `package.json`
+  named `fusion-workspace`), so a package-installed Fusion under another project's `node_modules` never
+  measures that project's `HEAD`; and
+- that checkout's `HEAD` is newer than the loaded bundle by more than the grace window.
+
+A fresh build, a CI clone whose bundle is newer than its HEAD, a copy installed from a package, a missing
+`git`, or an unreadable `HEAD` all stay silent — one quiet line per start, which is what makes `STALE`
+mean something. Each stale boot also records one `build:provenance-stale` row for later querying; see
+[run-audit → Build provenance at boot](./run-audit.md#build-provenance-at-boot). `fn daemon` reports the
+same verdict on its `[engine]` console channel; `fn serve` deliberately does not print it.
+
 ### Interactive Terminal UI (TTY Mode)
 
 When running in an interactive terminal (TTY), `fn dashboard` starts an
@@ -574,6 +601,16 @@ fn daemon [--port <port>] [--host <host>] [--token <token>] [--paused] [--intera
 | `--paused` | Start with engine paused (automation disabled). |
 | `--token-only` | Only generate/show the token without starting the server. |
 | `--interactive` | Interactive port selection. |
+
+#### Build freshness at boot
+
+`fn daemon` prints the same one-line build-freshness verdict on its `[engine]` console channel when the
+loaded bundle is more than 60 seconds older than the `HEAD` of the Fusion source checkout that owns it, and
+says nothing for a fresh build, a package-installed copy, or an unverifiable checkout. It never rebuilds or
+restarts anything; the remedy line is for the operator. Each stale boot also records one
+`build:provenance-stale` row — see
+[run-audit → Build provenance at boot](./run-audit.md#build-provenance-at-boot) — and `fn serve`
+deliberately prints nothing. `fn dashboard` documents the full rule.
 
 ---
 

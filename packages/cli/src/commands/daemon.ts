@@ -10,6 +10,7 @@
 
 import type { AddressInfo } from "node:net";
 import { join, resolve as pathResolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   CentralCore,
   TaskStore,
@@ -24,6 +25,7 @@ import {
   hydrateGrokApiKeyFromUserSettings,
   projectPiXaiModelsToGrokCli,
   reconcileClaudeCliPaths,
+  reportBuildProvenance,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
 import { createServer, GitHubClient, createDashboardMissionForgeReader, createSkillsAdapter, getCliPackageVersion, getProjectSettingsPath, isUnresolvedCliPackageVersion, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook, resolveGitLabClient } from "@fusion/dashboard";
@@ -523,6 +525,30 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   Share the daemon primary TaskStore with the host pi extension so agent fn_* tools reuse the engine pool (no dual-boot).
   */
   setHostTaskStore(primaryCwd, store);
+
+  /*
+  FNXC:BuildProvenance 2026-11-01-03:23 (RUFU-359):
+  An old `dist` silently defeats every fix investigation: "the fix landed on main and nothing
+  changed" and "this deployment runs an old build" produce identical behaviour, so an operator or an
+  agent spends a session hunting a defect that is not in the running code. Measured on the operator's
+  live install the deploy branch sat 5 commits behind `main` with no build revision embedded in the
+  bundle and no provenance line anywhere in an 80 MB boot log.
+
+  Three deliberate constraints on this call site:
+  - Fire-and-forget. Startup must never wait on a git subprocess for a diagnostic; `void` + `.catch`
+    means the probe can only ever ADD a line, never delay or fail a boot.
+  - It sits below the `store` binding, not above it, because the store is the audit sink — reporting
+    before it exists would silently drop the machine-readable half of the signal.
+  - `import.meta.url` is the artifact measured, never `process.cwd()` or `primaryCwd`: the thing whose
+    age matters is the module actually loaded (`packages/cli/dist/bin.js`), and the operated-on
+    project's working directory is a different repository entirely. A package-installed copy stays
+    silent through core's installation-ownership guard, so no override resolver is passed here.
+  */
+  void reportBuildProvenance({
+    artifactPath: fileURLToPath(import.meta.url),
+    sink: store,
+    log: { warn: (message) => console.log(`[engine] ${message}`) },
+  }).catch(() => undefined);
 
   const getGlobalSettingsStore = () => {
     const candidate = store as { getGlobalSettingsStore?: () => { getSettings: () => Promise<unknown> } };

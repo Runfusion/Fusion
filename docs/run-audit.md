@@ -364,6 +364,59 @@ project deletes only the `__legacy_unscoped__` partition, which is where a row w
 such a row is collectable rather than stranded. Rows of any other mutation type with no owning task stay uncapped by
 design; this exception is not a general taskless sweep.
 
+## Build provenance at boot
+
+RUFU-359: `build:provenance-stale` records one boot of a Fusion source-workspace installation whose
+**loaded artifact file** is older than the `HEAD` of the git checkout that owns it. It exists because a
+long-lived deployment otherwise has no way to answer "is the fix I just merged actually running?":
+measured on the operator's live install, the deploy worktree's branch sat 5 commits behind `main`, the
+running `bin.js` bundle carried no embedded revision, and the 80 MB boot log held no version or age line,
+so several open cards reasoned about a defect that was not in the running code. The row is what makes
+"this deployment warned" distinguishable from "this deployment is current" without a task, a card, or an
+operator reading a terminal.
+
+**Emitted on exactly one verdict.** A boot that measures fresh, measures inside the 60-second build grace,
+or cannot resolve `HEAD` writes no row and logs nothing, and an installation that is not owned by a Fusion
+source workspace writes nothing at all. The row therefore has no false-positive population: it appears
+only when the running bundle is proven stale against a repository that Fusion itself owns. Only the two
+long-lived operator surfaces emit it — `fn daemon` and `fn dashboard`. `fn serve` and every one-shot
+command emit nothing by design.
+
+Metadata is timestamps/counts only: `bundleMtime` (artifact mtime, ISO), `headSha` (40-hex `HEAD`),
+`headTime` (HEAD committer time, ISO), `ageMs` (how much newer HEAD is than the bundle), and
+`commitsBehind` (a number, or the literal `"unavailable"` when `rev-list` gave no usable count — never a
+misleading `0`). `target` is the artifact's **basename** (`bin.js`), not its path. The row never carries an
+absolute filesystem path, a HEAD ref name, git stderr, the rendered warning sentence, or the operator
+remedy; those live in the boot log, which is the operator-facing record. `agentId` is the synthetic `boot`
+with `runId` `build-provenance`, and `domain` reuses `git` — the verdict is computed entirely from git
+plumbing (`rev-parse`, `log`, `rev-list`) and every existing `domain: "git"` query is `taskId`-scoped, so a
+taskless boot row cannot be pulled into an existing surface. `verification:resource-bound-engaged` is the
+precedent for a reused domain plus a synthetic agent/run pair rather than a widened `RunAuditDomain`, which
+stays a closed four-member set.
+
+The row is deliberately **not** a row in the curated delivery-pipeline catalogue: `run-audit-catalogue.test.ts`
+locks that table table-for-table against this document, the catalogue enumerates delivery-pipeline events,
+and boot provenance is not one — the same precedent as `store:open`, `task:planning-admission-stalled`, and
+`task:planning-reseed-cycle`. Like them it is found by mutation type.
+
+**Ownership is the false-positive defence.** Before any subprocess exists, the probe requires
+`pnpm-workspace.yaml` plus a root `package.json` named `fusion-workspace`, and then requires
+`git rev-parse --show-toplevel` to resolve to that same root or a directory inside it. A published
+`@runfusion/fusion` installed under a host project's `node_modules` therefore answers `unknown` with
+**zero** git invocations and zero stat calls, so a user who commits to their own repository can never
+receive "your Fusion build is stale" measured against *their* `HEAD`, and a vendored Fusion checkout
+inside an unrelated repository cannot trigger it either. The zero-git-call and zero-row guarantees for that
+shape are asserted in `packages/core/src/__tests__/build-provenance.test.ts`, including fixtures that build
+the packaged-install and vendored trees on disk rather than mocking the filesystem.
+
+**Bounded and retention-honest.** Emission goes through the FN-9177 bounded seam (`emitBoundedRunAudit`),
+never a direct `recordRunAuditEvent` call, so an absent, throwing, rejecting, or hanging audit store cannot
+change the boot verdict, delay startup, or lose the operator's log line. The row is taskless and keeps the
+general retention rule (collect only through an owning task), so it persists beyond the retention window
+like other taskless rows; its volume is bounded by how often a proven-stale owned installation boots, and
+because staleness ends at the next rebuild the population is self-limiting. If it ever needs pruning,
+the `storeOpenAuditEvents` branch in `pruneOperationalLogsAsync` is the shape to copy.
+
 ## Maintenance contract
 
 Adding a new catalogued run-audit event requires updating **both** the typed catalogue module (`packages/engine/src/run-audit/run-audit-catalogue.ts`) **and** this doc together — the parity test (`packages/engine/src/__tests__/run-audit-catalogue.test.ts`) fails if the documented event set and the catalogue module's set ever diverge, keeping the observability surface truthful as the real `DatabaseMutationType` union evolves. Removing an event likewise requires updating both in the same change.

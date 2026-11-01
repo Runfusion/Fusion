@@ -5,9 +5,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installShippedSkillsIntoProject, SHIPPED_SKILL_NAMES, type ShippedSkillName } from "../claude-skills.js";
 
-const { mockSyncStartupModels, mockShouldUseHybridExecutor, mockHybridExecutorCtor, mockHybridExecutorInitialize, mockHybridExecutorShutdown, mockHybridExecutorWhenReady } = vi.hoisted(() => ({
+const { mockSyncStartupModels, mockShouldUseHybridExecutor, mockHybridExecutorCtor, mockHybridExecutorInitialize, mockHybridExecutorShutdown, mockHybridExecutorWhenReady, mockReportBuildProvenance } = vi.hoisted(() => ({
   mockSyncStartupModels: vi.fn().mockResolvedValue(undefined),
   mockShouldUseHybridExecutor: vi.fn().mockResolvedValue({ enabled: false, reason: "single-project-local-only" }),
+  /*
+  FNXC:BuildProvenance 2026-11-01-03:23 (RUFU-359):
+  This file's `@fusion/core` mock spreads the REAL module (`importOriginal`), so without an explicit
+  override every `runDaemon` boot test in this file would spawn a real `git` subprocess from the new
+  boot probe. The override keeps the suite hermetic and makes the call site assertable.
+  */
+  mockReportBuildProvenance: vi.fn().mockResolvedValue({ artifactPath: "/stub", ageMs: 0, verdict: "unknown" }),
   mockHybridExecutorInitialize: vi.fn().mockResolvedValue(undefined),
   mockHybridExecutorShutdown: vi.fn().mockResolvedValue(undefined),
   mockHybridExecutorWhenReady: vi.fn().mockResolvedValue(undefined),
@@ -60,6 +67,16 @@ const mocks = vi.hoisted(() => {
   // GlobalSettingsStore mock
   let globalSettingsData: Record<string, unknown> = {};
   const globalSettingsStoreInstance = {
+    /*
+    FNXC:CliTests 2026-11-01-03:23 (RUFU-359):
+    `getDefaultProject()` in `src/project-context.ts` awaits `globalStore.init()`, and the real
+    `GlobalSettingsStore.init` returns a boolean, so a fixture without `init` made EVERY `runDaemon`
+    boot in this file reject with `globalStore.init is not a function` — 25 failures, reproduced
+    identically at pristine 25be8aabe2 with none of this card's code present (it survives on main
+    only because the CLI lane is not in the thin merge gate). Declaring the method here is the
+    shared-factory repair; per-test overrides stay where they were.
+    */
+    init: vi.fn().mockImplementation(() => Promise.resolve(false)),
     getSettings: vi.fn().mockImplementation(() => Promise.resolve({ ...globalSettingsData })),
     updateSettings: vi.fn().mockImplementation((settings: Record<string, unknown>) => {
       globalSettingsData = { ...globalSettingsData, ...settings };
@@ -576,6 +593,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
     };
   }),
   getTaskMergeBlocker: vi.fn().mockReturnValue(null),
+  reportBuildProvenance: mockReportBuildProvenance,
   syncInsightExtractionAutomation: mocks.syncInsightExtractionAutomationMock,
   INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
   processAndAuditInsightExtraction: mocks.processAndAuditInsightExtractionMock,
@@ -762,6 +780,25 @@ describe("runDaemon", () => {
     const { runDaemon } = await import("../daemon.js");
     await runDaemon({});
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:BuildProvenance 2026-11-01-03:23 (RUFU-359):
+  The automated proof that `fusion daemon` is one of the wired boot surfaces. Before this call site,
+  a long-lived deployment that printed nothing about its own build age was indistinguishable from a
+  current one, so "the landed fix seems not to work" cost a whole investigation to rule out.
+  Asserted loosely on the artifact path (`dist` in a built run, `src` under a source run) because the
+  contract is "the loaded module file, never a cwd" — pinning an absolute path would make the test
+  false on every other checkout.
+  */
+  it("reports build provenance at boot against the loaded module file", async () => {
+    mockReportBuildProvenance.mockClear();
+    const { runDaemon } = await import("../daemon.js");
+    await runDaemon({});
+    expect(mockReportBuildProvenance).toHaveBeenCalledTimes(1);
+    const args = mockReportBuildProvenance.mock.calls[0]?.[0] as { artifactPath: string };
+    expect(typeof args.artifactPath).toBe("string");
+    expect(args.artifactPath).toMatch(/(dist|src)/);
   });
 
   it("binds GitLab mission evidence to the executing engine's project store", async () => {

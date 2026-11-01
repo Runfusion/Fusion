@@ -1518,6 +1518,30 @@ export type { TaskExternalBlock, TaskExternalBlockOrigin, TaskExternalBlockRepor
 export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEW_CAPABILITY_DECLINE_CODE, REVIEW_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, formatReviewCapabilityDeclineReason, describeLaneCapabilityDecline, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
 export type { LaneCapabilityDeclineDescriptor } from "./tasks/lane-capability-decline.js";
 export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
+/*
+FNXC:BuildProvenance 2026-11-01-03:18 (RUFU-359):
+`collectBuildProvenance` is exported alongside `reportBuildProvenance` on purpose: today only the two
+operator-visible boot paths (`fn daemon`, `fn dashboard`) consume the verdict, and a future
+`fusion doctor` must call the SAME measurement rather than re-derive staleness with its own grace
+window or its own ownership rule. The two diverging would be the bug this card exists to remove.
+*/
+export {
+  BUILD_PROVENANCE_GIT_TIMEOUT_MS,
+  BUILD_STALE_GRACE_MS,
+  FUSION_WORKSPACE_PACKAGE_NAME,
+  collectBuildProvenance,
+  evaluateBuildProvenance,
+  formatBuildProvenanceWarning,
+  reportBuildProvenance,
+  resolveFusionWorkspaceRoot,
+} from "./build-provenance.js";
+export type {
+  BuildProvenance,
+  BuildProvenanceAuditSink,
+  BuildProvenanceLogger,
+  BuildProvenanceProbeOptions,
+  BuildProvenanceVerdict,
+} from "./build-provenance.js";
 export type {
   TaskColumnRestartEntryNode,
   TaskColumnRestartPlan,
