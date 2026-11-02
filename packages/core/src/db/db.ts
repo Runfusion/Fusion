@@ -30,6 +30,9 @@
 // Re-export the pure utilities so existing `from "./db.js"` importers keep working.
 export {
   toJson,
+  toJsonArray,
+  coerceTaskLogArray,
+  TaskLogShapeError,
   toJsonNullable,
   fromJson,
   isSqliteLockError,

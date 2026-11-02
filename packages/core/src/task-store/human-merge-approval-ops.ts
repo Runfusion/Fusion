@@ -22,7 +22,7 @@ transaction owns a non-reentrant lock, and the model, push and provider calls ha
 import { and, eq, isNull } from "drizzle-orm";
 import { withTaskLogProjections } from "./task-log-projections.js";
 
-import { toJson } from "../db/db.js";
+import { coerceTaskLogArray, toJson, toJsonArray } from "../db/db.js";
 import * as schema from "../postgres/schema/index.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { readTaskRowInTransaction } from "./async/async-persistence.js";
@@ -98,7 +98,7 @@ export function describeHumanMergeTaken(
 }
 
 function appendLog(current: Task, entry: TaskLogEntry): TaskLogEntry[] {
-  const log = [...(current.log ?? []), entry];
+  const log = [...coerceTaskLogArray<TaskLogEntry>(current.log), entry];
   const limit = getTaskActivityLogEntryLimit();
   if (log.length > limit) log.splice(0, log.length - limit);
   return log;
@@ -134,7 +134,7 @@ async function withHumanMergeApprovalTransaction(
          derived columns must ride with it — see the pairing invariant in task-log-projections.ts. */
       const [updatedRow] = await tx.update(schema.project.tasks).set(withTaskLogProjections({
         humanMergeApproval: computed.state === null ? null : toJson(computed.state),
-        log: toJson(appendLog(current, computed.logEntry)),
+        log: toJsonArray(appendLog(current, computed.logEntry)),
         updatedAt: new Date().toISOString(),
       })).where(and(
         eq(schema.project.tasks.id, id),
