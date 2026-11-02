@@ -1298,6 +1298,27 @@ export async function runGraphCustomNode(
       contextPatch.notRunReason = outcome.notRunReason;
     }
     if (typeof stepNotes === "string" && stepNotes) contextPatch.notes = stepNotes;
+    /*
+    FNXC:ReviewInputProof 2026-11-02-15:52:
+    RUFU-445 — a `review-input-unprovable` refusal carried its `proof.reason` only in the transient
+    History line, so the DURABLE row said `Reason: (no feedback captured)` and the operator could not
+    tell an unfixable stale-base overflow from a transient git hiccup (RUFU-281 sat in review on
+    `git-diff-too-large` with nothing on the card naming it). `node:<id>:error` is the canonical
+    carrier: `synthesizeNonVerdictFailureOutput` reads exactly that key to fill a failed non-verdict
+    record's `output`, and `graphFailureNodeErrorText` reads it for the terminal diagnostic. Published
+    only for this refusal value — the refusal returns before any session dispatch, so it is never a
+    reviewer verdict, and RUFU-773's classifier constraint holds: the sentence is not a
+    session-contention pattern and never starts with the missing-worktree prefix whose tail is read as
+    a filesystem path, so no throw-site frames are appended and no classifier is misled.
+    */
+    if (
+      !outcome.success
+      && outcome.failureValue === "review-input-unprovable"
+      && typeof outcome.error === "string"
+      && outcome.error.trim()
+    ) {
+      contextPatch[`node:${node.id}:error`] = outcome.error.trim();
+    }
     const stepFindings = outcome.findings;
     if (stepFindings?.length) contextPatch.findings = stepFindings;
     const repositoryReviewOutcomes = outcome.repositoryReviewOutcomes;

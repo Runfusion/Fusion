@@ -7,6 +7,36 @@ vi.mock("../worktree/review-checkout-clean.js", () => ({ probeReviewCheckout: ch
 
 const childProcess = vi.hoisted(() => {
   const diff = `diff --git a/large.bin b/large.bin\n${"x".repeat(2 * 1024 * 1024)}`;
+  /*
+  FNXC:ReviewInputProof 2026-11-02-15:52 (RUFU-445):
+  The binary patch is hashed from a STREAM now, so this harness fakes `spawn` as well as `execFile`
+  and emits the same two-megabyte patch in chunks. The assertion is unchanged — the merge door must
+  capture the same fingerprint — only the seam it arrives through moved. `execFile` stays mocked for
+  the small metadata probes, which remain bounded `execFile` calls on purpose.
+  */
+  const makeEmitter = () => {
+    const listeners = new Map<string, Array<(arg?: unknown) => void>>();
+    return {
+      on: (event: string, cb: (arg?: unknown) => void) => {
+        listeners.set(event, [...(listeners.get(event) ?? []), cb]);
+      },
+      emit: (event: string, arg?: unknown) => {
+        for (const cb of listeners.get(event) ?? []) cb(arg);
+      },
+    };
+  };
+  const spawn = vi.fn((_file: string, args: string[]) => {
+    const stdout = makeEmitter();
+    const child = { ...makeEmitter(), stdout, kill: vi.fn() };
+    queueMicrotask(() => {
+      if (String(args[0] ?? "") === "diff") {
+        stdout.emit("data", Buffer.from(diff.slice(0, 700_000)));
+        stdout.emit("data", Buffer.from(diff.slice(700_000)));
+      }
+      child.emit("close", 0);
+    });
+    return child;
+  });
   const execFile = vi.fn((
     _file: string,
     _args: string[],
@@ -31,12 +61,13 @@ const childProcess = vi.hoisted(() => {
       else resolve({ stdout, stderr });
     });
   });
-  return { diff, execFile };
+  return { diff, execFile, spawn };
 });
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...await importOriginal<typeof import("node:child_process")>(),
   execFile: childProcess.execFile,
+  spawn: childProcess.spawn,
 }));
 vi.mock("../executor/worktree-git-refs.js", () => ({ resolveDiffBaseRef: vi.fn(async () => "base") }));
 

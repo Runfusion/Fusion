@@ -4,7 +4,7 @@ FN-149 compares review rounds by the binary patch the reviewer received. Both si
 reviews use this helper so an unchanged code loop has one durable, content-addressed definition.
 */
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { resolveDiffBaseRef } from "../executor/worktree-git-refs.js";
 
@@ -15,10 +15,20 @@ FNXC:ReviewInputProof 2026-09-01-11:18:
 A content-binding review proof must not silently disappear when a binary diff exceeds Node's default
 one-megabyte child-process buffer. Bound Git capture explicitly so a large change either produces its
 fingerprint or reports a named, fail-closed reason instead of creating a permanent merge wedge.
+
+FNXC:ReviewInputProof 2026-11-02-15:52:
+RUFU-445 keeps that BOUND and reworks how it is measured: the budget is now a streamed-byte ceiling,
+not the size of a buffer that must hold the whole patch. `git diff --binary` output is hashed from
+stdout chunk-by-chunk, so memory stays chunk-bounded while the refused size is exactly the same
+10 MiB it was before (no raise without measurement). The bound still refuses rather than truncates:
+a patch past it resolves to `git-diff-too-large`, never to a partial digest.
 */
 export const REVIEW_DIFF_GIT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 export const REVIEW_DIFF_GIT_TIMEOUT_MS = 120_000;
 
+/** Bounded options for the SMALL metadata probes below (`rev-list --count`, `--name-only`,
+ *  `--shortstat`, `cat-file -e`), whose output is kilobytes. The binary patch itself never uses
+ *  these — it streams (see `streamGitDiffFingerprint`). */
 function gitCaptureOptions(cwd: string) {
   return {
     cwd,
@@ -26,13 +36,6 @@ function gitCaptureOptions(cwd: string) {
     maxBuffer: REVIEW_DIFF_GIT_MAX_BUFFER_BYTES,
     timeout: REVIEW_DIFF_GIT_TIMEOUT_MS,
   };
-}
-
-function isGitDiffBufferOverflow(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as { code?: unknown; message?: unknown };
-  return candidate.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-    || (typeof candidate.message === "string" && candidate.message.includes("maxBuffer"));
 }
 
 export type ReviewDiffFingerprintProbe =
@@ -92,19 +95,102 @@ FN-180 must compare a workspace repository's approved base-to-task-branch patch 
 checkout remains on the integration branch. The optional target ref preserves singular HEAD callers
 while preventing a clean checkout from being mistaken for an empty reviewed branch.
 */
+/*
+FNXC:ReviewInputProof 2026-11-02-15:52:
+RUFU-445 — hashing a streamed patch instead of buffering it. Measured on RUFU-281:
+`git diff --binary e0b25b4ccd..HEAD` produced 38 867 308 bytes and Node killed the child at
+10 470 778 bytes with `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`, which classified as `git-diff-too-large`
+and refused the mandatory Code Review gate forever — even though the card's REAL diff (against the
+correct integration base) was 112 781 bytes. Two requirements are preserved verbatim:
+
+ - FN-180's empty-vs-unreadable split: zero bytes streamed with a clean exit is a definite EMPTY
+   input (`{ state: "empty" }` → `EMPTY_REVIEW_DIFF_FINGERPRINT`); a spawn failure, a timeout kill,
+   or a non-zero git exit stays `unavailable` / `git-diff-failed` and fails closed. The argv
+   (`git diff --binary <base>..<target>`) is unchanged, so the reviewed content is identical.
+ - The refusal reason enum (`no-diff-base` / `git-diff-too-large` / `git-diff-failed`) stays honest:
+   the byte ceiling is checked as chunks arrive and the child is killed the moment it is exceeded,
+   so `git-diff-too-large` means "more than 10 MiB of patch", never "we lost part of it".
+
+Fingerprint definition: the legacy digest hashed the utf8-DECODED stdout string; this one hashes the
+raw bytes. For any patch that round-trips through utf8 (which includes git's own base85 `GIT binary
+patch` blocks) the two digests are identical — asserted by `review-diff-fingerprint-buffer.test.ts`.
+For a byte-lossy patch (a text file holding invalid utf8) the digest MAY differ, because utf8
+decoding is lossy where streaming is not. The only consequence is one extra "review input changed"
+convergence round after this ships: it can never approve a review that has not run, and it cannot
+wedge a merge, because an input fingerprint is compared only against another input fingerprint.
+*/
+function streamGitDiffFingerprint(worktreePath: string, range: string): Promise<ReviewDiffFingerprintProbe> {
+  return new Promise((resolve) => {
+    const hash = createHash("sha256");
+    let streamedBytes = 0;
+    let settled = false;
+    let timedOut = false;
+    // Holder object rather than a bare `let`: `finish` is defined before the timer exists and must
+    // still be able to clear it.
+    const timerRef: { id?: ReturnType<typeof setTimeout> } = {};
+    let child: ReturnType<typeof spawn>;
+    const finish = (probe: ReviewDiffFingerprintProbe) => {
+      if (settled) return;
+      settled = true;
+      if (timerRef.id) clearTimeout(timerRef.id);
+      resolve(probe);
+    };
+    const killChild = () => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Already dead or unkillable — the settled probe is what the caller acts on.
+      }
+    };
+
+    try {
+      // stderr is discarded, not collected: a full stderr pipe would stall the child, and a git
+      // warning is never review evidence.
+      child = spawn("git", ["diff", "--binary", range], {
+        cwd: worktreePath,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      resolve({ state: "unavailable", reason: "git-diff-failed" });
+      return;
+    }
+
+    timerRef.id = setTimeout(() => {
+      timedOut = true;
+      killChild();
+      finish({ state: "unavailable", reason: "git-diff-failed" });
+    }, REVIEW_DIFF_GIT_TIMEOUT_MS);
+    timerRef.id.unref?.();
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      streamedBytes += chunk.length;
+      if (streamedBytes > REVIEW_DIFF_GIT_MAX_BUFFER_BYTES) {
+        killChild();
+        finish({ state: "unavailable", reason: "git-diff-too-large" });
+        return;
+      }
+      hash.update(chunk);
+    });
+    child.on("error", () => {
+      killChild();
+      finish({ state: "unavailable", reason: "git-diff-failed" });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      if (timedOut || code !== 0) {
+        finish({ state: "unavailable", reason: "git-diff-failed" });
+        return;
+      }
+      finish(streamedBytes === 0
+        ? { state: "empty" }
+        : { state: "fingerprint", fingerprint: hash.digest("hex") });
+    });
+  });
+}
+
 export async function probeReviewDiffFingerprint(worktreePath: string | undefined, baseRef: string | undefined, targetRef = "HEAD"): Promise<ReviewDiffFingerprintProbe> {
   if (!worktreePath || !baseRef) return { state: "unavailable", reason: "missing-worktree-or-base" };
-  try {
-    const { stdout } = await execFileAsync("git", ["diff", "--binary", `${baseRef}..${targetRef}`], gitCaptureOptions(worktreePath));
-    return stdout
-      ? { state: "fingerprint", fingerprint: createHash("sha256").update(stdout).digest("hex") }
-      : { state: "empty" };
-  } catch (error) {
-    return {
-      state: "unavailable",
-      reason: isGitDiffBufferOverflow(error) ? "git-diff-too-large" : "git-diff-failed",
-    };
-  }
+  return await streamGitDiffFingerprint(worktreePath, `${baseRef}..${targetRef}`);
 }
 
 /*

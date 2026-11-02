@@ -193,6 +193,33 @@ describe("content-binding review dispatch proof", () => {
     expect(harness.store.logEntry).toHaveBeenCalledWith(row.id, expect.stringContaining("git-diff-too-large"), undefined, undefined);
   });
 
+  /*
+  FNXC:ReviewInputProof 2026-11-02-15:52 (RUFU-445): the refusal reason must survive on the DURABLE
+  row, not only in the transient History line. RUFU-281's card showed `Reason: (no feedback captured)`
+  while the real cause (`git-diff-too-large`) existed nowhere but in a log line, so an operator could
+  not tell an unfixable stale-base overflow from a transient git failure. `node:<id>:error` is the
+  canonical carrier that `synthesizeNonVerdictFailureOutput` and the terminal graph diagnostic both read.
+  */
+  it.each(["no-diff-base", "git-diff-too-large", "git-diff-failed"] as const)(
+    "publishes the %s refusal reason on the node-error context key",
+    async (reason) => {
+      mocks.resolveProof.mockResolvedValue({ kind: "unprovable", reason });
+      const row = task();
+      const harness = graphHarness(row);
+      const result = await runGraphCustomNode(harness as never, codeNode("prompt") as never, row, {} as Settings);
+      expect(result.contextPatch?.[`node:custom-review:error`]).toEqual(expect.stringContaining(reason));
+    },
+  );
+
+  it("keeps a refusal off the node-error key when the review produced a verdict", async () => {
+    const row = task();
+    const harness = graphHarness(row);
+    harness.executeWorkflowStep.mockResolvedValue({ success: false, error: "reviewer session died", failureValue: "exception" });
+    const result = await runGraphCustomNode(harness as never, codeNode("prompt") as never, row, {} as Settings);
+    // Only the input-proof refusal publishes this key; an ordinary failure keeps its existing shape.
+    expect(result.contextPatch ?? {}).not.toHaveProperty("node:custom-review:error");
+  });
+
   it("attaches node-captured proof to a script review outcome", async () => {
     const row = task();
     const harness = graphHarness(row);
@@ -434,6 +461,64 @@ describe("identity-only graph result writers", () => {
         mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "proof-279" } },
       })).toBeUndefined();
     }
+  });
+
+  it("records the refusal reason on the durable code-review row instead of a feedback placeholder", async () => {
+    /*
+    FNXC:ReviewInputProof 2026-11-02-15:52 (RUFU-445): end-to-end through the REAL graph seam —
+    `synthesizeNonVerdictFailureOutput` fills a failed non-verdict record's `output` from
+    `node:<templateNodeId>:error`, and the remediation consumers fall back to
+    "(no feedback captured)" only when that field is empty. Assert the durable field, not a log line.
+    */
+    mocks.resolveProof.mockResolvedValue({ kind: "unprovable", reason: "git-diff-too-large" });
+    const row = task({ enabledWorkflowSteps: ["code-review"] });
+    const harness = graphHarness(row);
+    const group: WorkflowIr["nodes"][number] = {
+      id: "code-review",
+      kind: "optional-group",
+      column: "review",
+      config: {
+        name: "Code Review",
+        defaultOn: false,
+        template: {
+          nodes: [{ id: "code-review-step", kind: "prompt", config: { name: "Code Review", prompt: "Review", gateMode: "gate" } }],
+          edges: [],
+        },
+      },
+    };
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "refusal reason on the durable row",
+      columns: [{ id: "review", name: "Review", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start", column: "review" },
+        group,
+        { id: "end", kind: "end", column: "review" },
+      ],
+      edges: [
+        { from: "start", to: "code-review" },
+        { from: "code-review", to: "end", condition: "success" },
+      ],
+    };
+    const sink = recorder();
+    const executor = new WorkflowGraphExecutor({
+      runCustomNode: (node, nodeTask, context) => runGraphCustomNode(
+        harness as never,
+        node,
+        nodeTask,
+        {} as Settings,
+        undefined,
+        context,
+      ),
+      recordWorkflowStepResult: sink.record,
+    });
+
+    await executor.run(row, {} as Settings, ir);
+    const persisted = sink.results.get("code-review")!;
+    expect(persisted.status).toBe("failed");
+    expect(persisted.output).toEqual(expect.stringContaining("git-diff-too-large"));
+    expect(persisted.output).not.toContain("(no feedback captured)");
+    expect(harness.executeWorkflowStep).not.toHaveBeenCalled();
   });
 
   it("does not lift a fingerprint for an unrelated unmarked node", async () => {

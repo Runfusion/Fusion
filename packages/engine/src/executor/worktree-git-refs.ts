@@ -6,7 +6,7 @@
 import { exec, execFile, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import type { Task } from "@fusion/core";
-import { resolveCapturedBaseCommitSha } from "../execution/base-commit-capture.js";
+import { resolveCapturedBaseCommitSha, resolveDescendantMergeBase } from "../execution/base-commit-capture.js";
 import { executorLog } from "../logger.js";
 
 const execAsync = promisify(exec);
@@ -62,24 +62,43 @@ export async function resolveContaminationBaseRef(worktreePath: string): Promise
 }
 
 /**
- * Capture the list of files modified during agent execution.
- * Uses git diff against the stored baseCommitSha to determine what changed.
- * Returns an empty array if no changes or if git commands fail.
- */
+ * Resolve the base ref a diff must be measured FROM for this worktree: a stored
+ * `baseCommitSha` when present, else the integration fork point (see
+ * {@link resolveDescendantMergeBase}). Falls back to `git rev-parse HEAD~1` and
+ * finally `undefined` when no merge-base resolves — callers must treat a falsy
+ * result as "no diff evidence", never as "no changes".
+ *
+FNXC:ReviewInputProof 2026-11-02-15:52:
+RUFU-445 — the diff base is the INTEGRATION fork point, never whichever ref happens to be older.
+`resolveDiffBaseRef` was the last origin-first outlier in `packages/engine/src`: its
+`git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main` chain tried local `main`
+only when the remote command FAILED, so a local `main` that is legitimately AHEAD — this repo never
+pushes without operator consent (AGENTS.md) — produced a base hundreds of commits stale.
+
+Measured on RUFU-281 (worktree `.fusion/worktrees/rufu-281`, HEAD d6f660716d, 2026-09-30 ~05:00Z):
+no stored `baseCommitSha` (1 of 244 task mirrors), local `main` 709 commits ahead of `origin/main`,
+so the computed base was e0b25b4ccd — 628 commits behind the card's real fork point. The reviewer's
+"input" became 628 commits of unpublished `main` history instead of the card's 9 commits:
+`git diff --binary e0b25b4ccd..HEAD` overflowed the 10 MiB child-process buffer (38 867 308 B, of
+which 10 470 778 B captured) while the true base de0b9a3856 yields 112 781 B, so the mandatory
+Code Review gate refused every attempt with `review-input-unprovable` and never dispatched a
+reviewer. The same stale base also widened `captureModifiedFiles` scoping silently for cards that
+never hit the buffer.
+
+Resolution: delegate to the SAME descendant-of-two-merge-bases rule RUFU-231 already uses at capture
+time (`resolveDescendantMergeBase`), so remote-tracking-ahead still wins (RUFU-217) and local-ahead
+still never rewinds (FN-5937). Each caller keeps its own terminal fallback: this one stays
+`git rev-parse HEAD~1` → `undefined`, because callers branch on a falsy base
+(`captureModifiedFiles` returns `[]`) — calling the capture helper wholesale would silently swap in
+its `git rev-parse HEAD` contract.
+*/
 export async function resolveDiffBaseRef(worktreePath: string, baseCommitSha?: string): Promise<string | undefined> {
   if (baseCommitSha) return baseCommitSha;
 
-  try {
-    const { stdout } = await execAsync(
-      "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main",
-      { cwd: worktreePath, encoding: "utf-8" },
-    );
-    const ref = stdout.trim();
-    if (ref) return ref;
-  } catch (mergeBaseErr: unknown) {
-    const mergeBaseMsg = mergeBaseErr instanceof Error ? mergeBaseErr.message : String(mergeBaseErr);
-    executorLog.warn(`Failed merge-base lookup for diff base in ${worktreePath}, trying HEAD~1 fallback: ${mergeBaseMsg}`);
-  }
+  const mergeBaseRef = await resolveDescendantMergeBase(worktreePath, {
+    logger: { warn: (msg) => executorLog.warn(`Failed merge-base lookup for diff base in ${worktreePath}: ${msg}`) },
+  });
+  if (mergeBaseRef) return mergeBaseRef;
 
   try {
     const { stdout } = await execAsync("git rev-parse HEAD~1", {

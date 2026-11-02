@@ -4,41 +4,53 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 /**
- * Resolve the fork-point base SHA for a freshly acquired task worktree.
- *
- * Called immediately after worktree acquisition, when the task branch was
- * just created/force-reset from the local integration branch
- * (`prepareForTask` forks from local `main` via `resolveIntegrationBranch`).
- *
- * The merge-base MUST be measured against LOCAL main first (origin/main only
- * as a fallback), matching the contamination-base sites in
- * `worktree-acquisition.ts` and `auto-recovery-handlers/branch-worktree.ts`.
- * The merger lands tasks on local main before pushing, so at fork time local
- * main can be ahead of origin/main by merged-but-unpushed commits. Measuring
- * against origin/main rewinds the base past those commits; once the
- * post-merge rebase-and-push rewrites their SHAs, `baseCommitSha..HEAD`
- * permanently sweeps the predecessors' files into this task's diff (FN-5937:
- * in-review tasks showing 31 "files changed" instead of 12).
- *
- * Returns `undefined` only when every git invocation fails (caller treats a
- * missing base as non-fatal).
- *
- * FNXC:Workspace 2026-06-21-20:10:
- * `integrationBranch` is an OPTIONAL TRAILING param defaulting to the historic
- * "main" literal so the single-repo executor caller and the real-git tests stay
- * green without change. Workspace mode (U2/KTD3) passes each sub-repo's RESOLVED
- * integration branch so per-repo base capture forks against the right branch
- * instead of a hardcoded "main". The local-first ordering (merge-base HEAD
- * <local> then origin/<branch>) is preserved per-branch to keep the
- * inflation-prevention invariant (FN-5937) intact for non-main integration
- * branches too.
+ * Options for {@link resolveDescendantMergeBase}.
  */
-export async function resolveCapturedBaseCommitSha(
+export interface DescendantMergeBaseOptions {
+  /** Receives one warn per failed `git merge-base` measurement, naming the single-quoted ref. */
+  logger?: { warn: (msg: string) => void };
+  /** Integration branch to fork against; defaults to the historic "main" literal. */
+  integrationBranch?: string;
+}
+
+/*
+FNXC:BranchBaseIdentity 2026-11-02-15:52:
+RUFU-445 — the descendant-of-two-merge-bases DECISION is extracted from
+`resolveCapturedBaseCommitSha` into this shared seam so `resolveDiffBaseRef` (the diff/fork-point
+reader used by review-input proof, merge content capture, modified-file scoping, branch-conflict
+handling and worktree invariant verification) measures the integration base with the SAME rule
+instead of its own origin-first shell `||` chain.
+
+Why sharing matters: the origin-first chain picks whichever ref happens to be OLDER. In this repo
+local `main` is legitimately ahead of `origin/main` (AGENTS.md: never push without operator
+consent), so `merge-base HEAD origin/main` landed 628 commits behind the card's own fork point on
+RUFU-281 — its 112 781-byte review input became 38 867 308 bytes of unpublished `main` history,
+overflowed the 10 MiB capture buffer, and the mandatory Code Review gate refused forever with
+`review-input-unprovable`. The same stale base silently widens modified-file scoping for cards that
+never hit the buffer. Measured 2026-09-30 ~05:00Z in `.fusion/worktrees/rufu-281` at d6f660716d.
+
+Ordering preserved verbatim from both settled precedents: remote-tracking ahead → remote base wins
+(RUFU-217 post-rebase truth); local ahead or diverged → local base wins and never rewinds
+(FN-5937 inflation guard, docs/solutions/logic-errors/files-changed-inflated-by-origin-first-base-commit.md).
+
+This seam deliberately has NO terminal fallback: the capture caller falls back to
+`git rev-parse HEAD` and `resolveDiffBaseRef` to `git rev-parse HEAD~1`, and callers branch on a
+falsy result (`captureModifiedFiles` returns `[]`), so merging either fallback into the shared
+helper would rewrite the other's contract.
+*/
+/**
+ * The integration fork point of this worktree's branch: the DESCENDANT of
+ * `merge-base(HEAD, <local integration branch>)` and
+ * `merge-base(HEAD, origin/<integration branch>)`, or `undefined` when neither
+ * ref resolves. Carries no task state — see {@link resolveCapturedBaseCommitSha}
+ * for the capturing half of the same rule.
+ */
+export async function resolveDescendantMergeBase(
   worktreePath: string,
-  logger?: { warn: (msg: string) => void },
-  integrationBranch: string = "main",
+  options: DescendantMergeBaseOptions = {},
 ): Promise<string | undefined> {
-  const branch = integrationBranch.trim() || "main";
+  const { logger } = options;
+  const branch = (options.integrationBranch ?? "main").trim() || "main";
   /*
   FNXC:Workspace 2026-06-22-09:00:
   Shell-quote with a real single-quoted POSIX literal, NOT JSON.stringify. A
@@ -89,24 +101,67 @@ export async function resolveCapturedBaseCommitSha(
   };
 
   const [mbLocal, mbRemote] = await Promise.all([mergeBase(localRef), mergeBase(originRef)]);
-  let baseCommitSha: string | undefined;
   if (mbLocal && mbRemote) {
-    baseCommitSha = (await isStrictDescendant(mbRemote, mbLocal)) ? mbRemote : mbLocal;
-  } else {
-    baseCommitSha = mbLocal ?? mbRemote;
+    return (await isStrictDescendant(mbRemote, mbLocal)) ? mbRemote : mbLocal;
   }
+  return mbLocal ?? mbRemote;
+}
 
-  if (!baseCommitSha) {
-    try {
-      const { stdout } = await execAsync("git rev-parse HEAD", {
-        cwd: worktreePath,
-        encoding: "utf-8",
-      });
-      baseCommitSha = stdout.trim() || undefined;
-    } catch {
-      return undefined;
-    }
+/**
+ * Resolve the fork-point base SHA for a freshly acquired task worktree.
+ *
+ * Called immediately after worktree acquisition, when the task branch was
+ * just created/force-reset from the local integration branch
+ * (`prepareForTask` forks from local `main` via `resolveIntegrationBranch`).
+ *
+ * The base is the DESCENDANT of the two measured merge-bases (see
+ * {@link resolveDescendantMergeBase}), which keeps the local-first ordering that
+ * the contamination-base sites in `worktree-acquisition.ts` and
+ * `auto-recovery-handlers/branch-worktree.ts` already use: the merger lands
+ * tasks on local main before pushing, so at fork time local main can be ahead of
+ * origin/main by merged-but-unpushed commits. Measuring against origin/main
+ * rewinds the base past those commits; once the post-merge rebase-and-push
+ * rewrites their SHAs, `baseCommitSha..HEAD` permanently sweeps the
+ * predecessors' files into this task's diff (FN-5937: in-review tasks showing
+ * 31 "files changed" instead of 12).
+ *
+ * Returns `undefined` only when every git invocation fails (caller treats a
+ * missing base as non-fatal).
+ *
+ * FNXC:Workspace 2026-06-21-20:10:
+ * `integrationBranch` is an OPTIONAL TRAILING param defaulting to the historic
+ * "main" literal so the single-repo executor caller and the real-git tests stay
+ * green without change. Workspace mode (U2/KTD3) passes each sub-repo's RESOLVED
+ * integration branch so per-repo base capture forks against the right branch
+ * instead of a hardcoded "main". The local-first ordering (merge-base HEAD
+ * <local> then origin/<branch>) is preserved per-branch to keep the
+ * inflation-prevention invariant (FN-5937) intact for non-main integration
+ * branches too.
+ */
+export async function resolveCapturedBaseCommitSha(
+  worktreePath: string,
+  logger?: { warn: (msg: string) => void },
+  integrationBranch: string = "main",
+): Promise<string | undefined> {
+  /*
+  FNXC:BranchBaseIdentity 2026-11-02-15:52:
+  RUFU-445 — the mbLocal/mbRemote + descendant selection now lives in the shared
+  `resolveDescendantMergeBase` seam above (same rule, same warn wording, same single-quote
+  discipline), so the capture site and `resolveDiffBaseRef` cannot drift apart. Only this
+  function's OWN terminal fallback stays here: a capture with no resolvable merge-base records
+  HEAD (a freshly forked branch IS its base), which is a different contract from
+  `resolveDiffBaseRef`'s `HEAD~1`.
+  */
+  const mergeBaseCommitSha = await resolveDescendantMergeBase(worktreePath, { logger, integrationBranch });
+  if (mergeBaseCommitSha) return mergeBaseCommitSha;
+
+  try {
+    const { stdout } = await execAsync("git rev-parse HEAD", {
+      cwd: worktreePath,
+      encoding: "utf-8",
+    });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
   }
-
-  return baseCommitSha;
 }
