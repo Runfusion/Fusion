@@ -56,7 +56,7 @@ import { BacklogPressureReporter } from "./scheduling/backlog-pressure-reporter.
 import { UnlinkedMissionsAdvisoryReporter } from "./missions/unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import type { TaskMoveLanes } from "@fusion/core";
-import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveMaxConcurrentSetting, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, isTerminalColumnRole, columnsWithFlag } from "@fusion/core";
+import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveMaxConcurrentSetting, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, isTerminalColumnRole, columnsWithFlag, prefetchWorkflowSelections } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2, WorkflowSelectionCache } from "@fusion/core";
 import type { ColumnRoleTraitFlags } from "@fusion/core";
 
@@ -2717,13 +2717,31 @@ export class Scheduler {
    * and multi-WIP workflows keep their declared symbols exclusively held.
    */
   private async renewActiveMissionSymbolLocks(tasks: Task[]): Promise<void> {
+    /*
+    FNXC:SweepSelectionBatching 2026-11-01-23:20 (RUFU-312 step 3):
+    This renewal pass runs over EVERY board card the scheduler holds, and each card asked the workflow
+    resolver for its own selection and IR. Both reads are per-workflow facts, so the pass issued one
+    `task_workflow_selection` SELECT plus one definition read per card — on a single-workflow board that is the
+    same question asked N times, and it is the shape production measured as 82-131 concurrent identical
+    selection SELECTs with 0 tasks executing.
+
+    The batch read is the sweep's own, and its caches are swept-owned: a selection cache lives for exactly one
+    pass because a selection write invalidates lane state and the next pass must observe it (same reasoning as
+    `resolveDependencySatisfactionColumns` above). Prefetch collapses the selection reads to one query for the
+    whole pass, and the IR cache collapses definition reads to one per DISTINCT workflow instead of one per
+    card. A card whose selection cannot be prefetched still resolves — the resolver falls back to a single read
+    and keeps the documented `in-progress` fallback below if even that fails.
+    */
+    const irCache = new Map<string, WorkflowIr>();
+    const selectionCache: WorkflowSelectionCache = new Map();
+    await prefetchWorkflowSelections(this.store, tasks.map((task) => task.id), selectionCache);
     for (const task of tasks) {
       /* DELIBERATE-LITERAL — seeds the trait resolution immediately below, which overwrites it
          whenever the workflow resolves; the literal survives only as the documented fallback for an
          unresolvable workflow. Reviewed 2026-07-30-20:40. */
       let isImplementationColumn = task.column === "in-progress";
       try {
-        const ir = await resolveWorkflowIrForTask(this.store, task.id);
+        const ir = await resolveWorkflowIrForTask(this.store, task.id, irCache, selectionCache);
         const column = (ir as WorkflowIrV2).columns?.find((candidate) => candidate.id === task.column);
         if (column) isImplementationColumn = resolveColumnFlags(column).countsTowardWip === true;
       } catch {

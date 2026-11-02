@@ -245,6 +245,16 @@ export const tasks = projectSchema.table("tasks", {
   reintroduce the per-read amplification this pair exists to remove.
   */
   logRecent: jsonb("log_recent"),
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-17:20 (RUFU-312):
+  The precedence witness for `project.task_log_rollup`. Two authors can now produce the log-derived
+  envelope: a compound write that still authors `log` + the two derived columns in the same UPDATE (and
+  stamps this column last), and a pure append that authors the rollup row instead (and stamps its own
+  `computed_at` last). Whichever stamp is newer is the envelope that reflects the log, and that rule is
+  the only thing standing between a board badge and whichever lane happened to run first. Read-only for
+  every consumer except the list hydration that compares the two.
+  */
+  logProjectionAt: text("log_projection_at"),
   attachments: jsonb("attachments").default([]),
   steeringComments: jsonb("steering_comments").default([]),
   comments: jsonb("comments").default([]),
@@ -332,19 +342,33 @@ export const tasks = projectSchema.table("tasks", {
   — no triggers needed. The 'simple' text-search configuration is used because
   task text is code-like (task IDs, technical terms); FTS5 used simple
   tokenization, and 'simple' preserves that behavior (no stemming/stopwords).
+  The query path must resolve the SAME configuration: `FTS_TS_CONFIG` in
+  `task-store/async/async-search.ts` is 'simple', and an english column paired with a
+  simple query silently matches nothing (one stemming rule apart). That pairing is
+  asserted, not assumed, by the cross-dictionary guard in
+  `__tests__/postgres/task-search-vector-dictionary.pg.test.ts`.
 
-  The expression concatenates the same columns the FTS5 table indexed:
-  id, title, description, and comments (cast to text since comments is jsonb).
-  coalesce() guards NULLs so the concatenation never yields NULL.
+  The expression concatenates the two columns whose text a reader searches lexically: title and description.
 
-  Value-aware partial-update optimization (VAL-SEARCH-006): PostgreSQL only
-  regenerates a generated column when one of its source columns changes. An
-  UPDATE that touches only non-text columns (e.g. status, updated_at) leaves
-  search_vector unchanged, so no needless regeneration occurs. This replaces
-  the FTS5 value-aware WHEN guard on the update trigger.
+  FNXC:TaskSearchVectorScope 2026-11-01-22:25 (RUFU-312):
+  It used to concatenate `id` and `comments::text` as well, and both were load-bearing noise.
+  `id` contributes a UUID's hex chunks — lexemes no user types and no word-boundary query asks for, while
+  they inflate the GIN (task-id search is served by the literal substring arm of `buildTaskSearchPredicate`,
+  which matches the raw `id` column). `comments::text` was the expensive one: it is a jsonb document that
+  review and comment writes append to, and a stored-generated column is recomputed whenever a source column is
+  touched — so every comment write re-deparsed the whole comment history into a tsvector and re-keyed its GIN
+  entries, on the hottest write path of a card. Comment text remains findable: `buildTaskSearchPredicate`
+  ORs an ILIKE arm over the raw `comments::text`, so row membership is unchanged; only lexical ranking over
+  comment bodies is lost, and neither search surface ranks by it (the board page orders by a createdAt/id
+  keyset, `searchTasks` ranks `ts_rank` over title/description text).
+
+  Value-aware partial-update optimization (VAL-SEARCH-006): PostgreSQL only regenerates a generated column
+  when one of its source columns changes. An UPDATE that touches status, updated_at, `log` or `comments`
+  leaves search_vector unchanged — the last of those is what this column set buys. This replaces the FTS5
+  value-aware WHEN guard on the update trigger.
   */
   searchVector: tsvector("search_vector").generatedAlwaysAs(
-    sql`to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))`,
+    sql`to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))`,
   ),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.id] }),
@@ -1241,6 +1265,78 @@ export const unplannedExecutionBlocks = projectSchema.table("unplanned_execution
   createdAt: text("created_at").notNull(),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.taskId, t.episode] }),
+]);
+
+/*
+FNXC:TaskLogSideTable 2026-11-01-17:15 (RUFU-312):
+The task activity log's real home. Before this table every append rewrote the whole `tasks` row — the
+`log` jsonb column alone was 25 MB of 55 MB of live-row bytes (max single row 313 KB), so one diagnostic
+line cost a fat-row rewrite plus maintenance of 16 indexes, and the heap measured 4 609 MB against 55 MB
+of live data. An append now costs one small INSERT here and never touches `tasks`.
+
+Keying is composite `(project_id, task_id, seq)` — never `id` alone — because `project_id` is the
+multi-project partition key and a bare task id is not unique across partitions. `seq` is a global
+identity, which is monotonic per task as well, so a page of entries has a stable insertion order even
+when two entries share one millisecond (the `timestamp` index alone cannot break that tie, and History
+rows would visibly reorder).
+*/
+export const taskLogEntries = projectSchema.table("task_log_entries", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  taskId: text("task_id").notNull(),
+  seq: bigint("seq", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+  action: text("action").notNull(),
+  outcome: text("outcome"),
+  /** ISO-8601 wall-clock string, the same shape `TaskLogEntry.timestamp` has always carried. */
+  timestamp: text("timestamp").notNull(),
+  runContext: jsonb("run_context"),
+  /** `logEntryOnce` dedupe identity; sparse, so the index below stays small. */
+  dedupeKey: text("dedupe_key"),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.taskId, t.seq] }),
+  /* ON UPDATE CASCADE is load-bearing: the fallback-partition rekey UPDATEs project_id and refuses the whole
+  promotion (`unsafe-fk-update-graph`) on any child FK that cannot propagate it. Migration 0093 carries the
+  full reason; this declaration must keep matching that DDL. */
+  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] }).onDelete("cascade").onUpdate("cascade"),
+  index("idx_task_log_entries_task_time").on(t.projectId, t.taskId, desc(t.timestamp)),
+  index("idx_task_log_entries_dedupe").on(t.projectId, t.taskId, t.dedupeKey, desc(t.seq)).where(sql`${t.dedupeKey} IS NOT NULL`),
+]);
+
+/*
+FNXC:TaskLogSideTable 2026-11-01-17:15 (RUFU-312):
+The rollup that keeps the five log-derived board badges live now that a pure append no longer writes
+`tasks`. RUFU-615 moved those derivations into `tasks.timing_total_ms` + `tasks.log_recent`, which is a
+write-time contract: the columns are only correct because the writer that authored the log also authored
+them. A side-table append has no `tasks` write to pair with — writing them there would put back exactly
+the fat-row churn this table exists to remove — so the same envelope is authored here instead, from the
+merged view of the log, and the reader picks whichever of the two sources was authored last
+(`tasks.log_projection_at` vs `computed_at`). One row per task, ~a few hundred bytes, PK-only lookup.
+*/
+export const taskLogRollup = projectSchema.table("task_log_rollup", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  taskId: text("task_id").notNull(),
+  entryCount: integer("entry_count").notNull().default(0),
+  timingTotalMs: doublePrecision("timing_total_ms").notNull().default(0),
+  logRecent: jsonb("log_recent"),
+  /** Authored-at stamp of THIS envelope — the precedence witness against `tasks.log_projection_at`. */
+  computedAt: text("computed_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.taskId] }),
+  foreignKey({ columns: [t.projectId, t.taskId], foreignColumns: [tasks.projectId, tasks.id] }).onDelete("cascade").onUpdate("cascade"),
+]);
+
+/*
+FNXC:TaskLogSideTable 2026-11-01-17:15 (RUFU-312):
+Per-project witness that the one-time backfill copied each project's legacy `tasks.log` arrays into
+`task_log_entries`. It is what makes the mixed-version rolling-restart window decidable: an entry whose
+timestamp is at or after this mark may still exist only in the legacy column (written by a daemon running
+the previous build), and the bounded boot catch-up copies exactly those. No mark means no backfill ran.
+*/
+export const taskLogBackfillMarker = projectSchema.table("task_log_backfill_marker", {
+  projectId: text("project_id").notNull(),
+  backfilledAt: text("backfilled_at").notNull(),
+  copiedEntryCount: integer("copied_entry_count").notNull().default(0),
+}, (t) => [
+  primaryKey({ columns: [t.projectId] }),
 ]);
 
 export const workflowRunBranches = projectSchema.table("workflow_run_branches", {
@@ -2881,4 +2977,7 @@ export const projectTableNames = [
   "task_lifecycle_event_seq", "task_lifecycle_events", "task_verification_requests",
   "unplanned_execution_blocks", "workflow_agent_capacity_leases", "task_overlap_waits",
   "stale_review_callback_waiver_receipts",
+  /* FNXC:TaskLogSideTable 2026-11-01-17:22 (RUFU-312): the log side table, its rollup and its backfill
+   * marker. Every projectSchema.table(...) must be listed here or the pg harness never truncates it. */
+  "task_log_entries", "task_log_rollup", "task_log_backfill_marker",
 ] as const;

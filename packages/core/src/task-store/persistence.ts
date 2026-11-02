@@ -155,6 +155,13 @@ export interface TaskRow {
   */
   timingTotalMs: number | null;
   logRecent: string | null;
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-17:45 (RUFU-312):
+  Row-shape only, like the pair above it: this stamp is not a `Task` field, so neither the dashboard task
+  JSON nor the `.fusion/tasks/<ID>/task.json` mirror gains a key. It records that THIS lane authored the
+  envelope, which is the witness `pickTaskLogEnvelope` compares against `task_log_rollup.computed_at`.
+  */
+  logProjectionAt: string | null;
   attachments: string | null;
   steeringComments: string | null;
   comments: string | null;
@@ -440,6 +447,14 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   */
   defineTaskColumn("timingTotalMs", (task) => deriveTaskLogProjections(task.log).timingTotalMs),
   defineTaskColumn("logRecent", (task) => toJson(deriveTaskLogProjections(task.log).logRecent)),
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-17:45 (RUFU-312):
+  The full-row half of the author stamp. A full-row write always re-authors `log` and its envelope (the
+  two descriptors above), so it always owns the stamp too; the targeted-UPDATE half is
+  `withTaskLogProjections`. A pure log append reaches neither half — that is the case the rollup table
+  answers — which is precisely why the stamp has to be per-author rather than derived from `updated_at`.
+  */
+  defineTaskColumn("logProjectionAt", () => new Date().toISOString()),
   defineTaskColumn("attachments", (task) => toJson(task.attachments || [])),
   defineTaskColumn("steeringComments", (task) => toJson(task.steeringComments || [])),
   defineTaskColumn("comments", (task) => toJson(task.comments || [])),

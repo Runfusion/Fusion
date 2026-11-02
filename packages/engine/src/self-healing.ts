@@ -443,9 +443,10 @@ async function resolveFileScopeLeaseTaskRoles(
   store: TaskStore,
   task: Pick<Task, "id" | "column">,
   irCache: Map<string, WorkflowIr>,
+  selectionCache: WorkflowSelectionCache,
 ): Promise<FileScopeLeaseTaskRoles> {
   try {
-    const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+    const ir = await resolveWorkflowIrForTask(store, task.id, irCache, selectionCache);
     const column = (ir as WorkflowIrV2).columns?.find((candidate) => candidate.id === task.column);
     const flags = column ? resolveColumnFlags(column) : undefined;
     return {
@@ -4098,10 +4099,29 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       just admitted it under.
       */
       const stuckLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:25 (RUFU-312 step 3):
+      This is the sweep that the 82-131-identical-SELECT measurement was about: it walks every card in every
+      WIP-role column and asks each one which lanes its workflow declares. The resolver reads the selection
+      FIRST, so caching only the IR (as this loop did not even do before) still costs one
+      `task_workflow_selection` SELECT per card, on a pass that runs every maintenance batch.
+
+      `newSelectionCache` is the file's own sweep-scoped batch prefetch — one query for the whole card set, and
+      a cached `undefined` keeps cards with no selection row out of the fan-out. The IR cache is hoisted to the
+      same pass so a definition read happens once per DISTINCT workflow rather than once per card. Both caches
+      die with the pass, because a selection write invalidates lane state and the next pass must observe it.
+      */
+      const stuckIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const stuckSelectionCache = await this.newSelectionCache(tasks.map((task) => task.id));
       for (const task of tasks) {
         let lanes: Set<string>;
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(
+            this.store,
+            task.id,
+            stuckIrCache,
+            stuckSelectionCache,
+          );
           lanes = source === "default" ? new Set(stuckWipColumns) : new Set(columnsWithFlag(ir, "countsTowardWip"));
         } catch {
           lanes = new Set(stuckWipColumns);
@@ -4238,6 +4258,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       behavior rather than matching nothing.
       */
       const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): one batched selection read covers the whole candidate set (`newSelectionCache`). */
+      const strandedTodoSelectionCache = await this.newSelectionCache(completedNonColumnCandidates.map((task) => task.id));
       const stranded: Task[] = [];
       for (const task of completedNonColumnCandidates) {
         /*
@@ -4259,7 +4281,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         let holdColumn = "todo";
         try {
           const lifecycle = resolveLifecycleColumns(
-            await resolveWorkflowIrForTask(this.store, task.id, irCache),
+            await resolveWorkflowIrForTask(this.store, task.id, irCache, strandedTodoSelectionCache),
           );
           if (lifecycle?.hold) holdColumn = lifecycle.hold;
         } catch {
@@ -4684,9 +4706,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const tasks = [...staleMergeById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const staleMergeLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const staleMergeIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const staleMergeSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, staleMergeIrCache, staleMergeSelectionCache);
           staleMergeLanes.set(
             entry.id,
             source === "default"
@@ -5453,9 +5485,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       */
       const reclaimLanes = new Map<string, { hold: Set<string>; wip: Set<string>; review: Set<string> }>();
       const unresolvedReclaimCards: string[] = [];
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:55 (RUFU-312 step 3): this per-card lane classification walks
+      every todo/WIP/paused-review candidate on the board, and the resolver reads the SELECTION before any cache
+      helps, so a cache-less call is one `task_workflow_selection` SELECT plus one definition read per card on
+      every maintenance batch. One batch selection read for the candidate set and one IR cache for the pass
+      reduce it to a single query plus one definition read per distinct workflow; both live and die with the pass
+      because a selection write invalidates lane state and the next pass must observe it.
+      */
+      const reclaimIrCache = new Map<string, WorkflowIr>();
+      const reclaimSelectionCache = await this.newSelectionCache([
+        ...todoCandidates,
+        ...inProgressCandidates,
+        ...inReviewPausedCandidates,
+      ].map((task) => task.id));
       for (const task of [...todoCandidates, ...inProgressCandidates, ...inReviewPausedCandidates]) {
         if (reclaimLanes.has(task.id)) continue;
-        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(
+          this.store,
+          task.id,
+          reclaimIrCache,
+          reclaimSelectionCache,
+        );
         if (source === "default") unresolvedReclaimCards.push(task.id);
         const lanes = {
           hold: new Set<string>(LEGACY_COLUMN_IDS_BY_ROLE.hold ?? []),
@@ -6903,11 +6954,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
       const leaseRoleIrCache = this.batchWorkflowIrCache();
+      /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): per-EVENT shape: the ids this pass resolves are the blockers it walks, so the cache is filled lazily by the resolver instead of prefetched over the board. */
+      const leaseRoleSelectionCache: WorkflowSelectionCache = new Map();
       const leaseRolesByTaskId = new Map<string, FileScopeLeaseTaskRoles>();
       const resolveLeaseRolesFor = async (leaseTask: Task): Promise<FileScopeLeaseTaskRoles> => {
         const cached = leaseRolesByTaskId.get(leaseTask.id);
         if (cached) return cached;
-        const roles = await resolveFileScopeLeaseTaskRoles(this.store, leaseTask, leaseRoleIrCache);
+        const roles = await resolveFileScopeLeaseTaskRoles(this.store, leaseTask, leaseRoleIrCache, leaseRoleSelectionCache);
         leaseRolesByTaskId.set(leaseTask.id, roles);
         return roles;
       };
@@ -8206,8 +8259,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const inProgressTasks: Task[] = [];
       const inReviewTasks: Task[] = [];
       const unresolvedBlockedCards: string[] = [];
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:55 (RUFU-312 step 3): the buckets below are decided per card, and
+      the loop walks every candidate the lane union pulled in. Batch-read the selections once for that candidate
+      set and share one IR cache for the pass — see the sibling note in the phantom-binding sweep.
+      */
+      const blockedIrCache = new Map<string, WorkflowIr>();
+      const blockedSelectionCache = await this.newSelectionCache([...blockedCandidates.keys()]);
       for (const task of blockedCandidates.values()) {
-        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(
+          this.store,
+          task.id,
+          blockedIrCache,
+          blockedSelectionCache,
+        );
         if (source === "default") unresolvedBlockedCards.push(task.id);
         /*
         Legacy ids UNIONED into each bucket rather than compared separately: `resolveWorkflowIrForTask`
@@ -8267,11 +8332,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
       const leaseRoleIrCache = this.batchWorkflowIrCache();
+      /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): per-EVENT shape: the ids this pass resolves are the blockers it walks, so the cache is filled lazily by the resolver instead of prefetched over the board. */
+      const leaseRoleSelectionCache: WorkflowSelectionCache = new Map();
       const leaseRolesByTaskId = new Map<string, FileScopeLeaseTaskRoles>();
       const resolveLeaseRolesFor = async (leaseTask: Task): Promise<FileScopeLeaseTaskRoles> => {
         const cached = leaseRolesByTaskId.get(leaseTask.id);
         if (cached) return cached;
-        const roles = await resolveFileScopeLeaseTaskRoles(this.store, leaseTask, leaseRoleIrCache);
+        const roles = await resolveFileScopeLeaseTaskRoles(this.store, leaseTask, leaseRoleIrCache, leaseRoleSelectionCache);
         leaseRolesByTaskId.set(leaseTask.id, roles);
         return roles;
       };
@@ -8432,6 +8499,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         for (const depId of task.dependencies ?? []) referencedIds.add(depId);
         referencedIds.add(task.id);
       }
+      /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): the lane map is built once per referenced card, so the whole reference set is prefetched in one statement. */
+      const laneSelectionCache = await this.newSelectionCache([...referencedIds]);
       for (const refId of referencedIds) {
         const lanes = {
           complete: new Set<string>(["done"]),
@@ -8439,7 +8508,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           review: new Set<string>(["in-review"]),
         };
         try {
-          const ir = await resolveWorkflowIrForTask(this.store, refId, laneIrCache);
+          const ir = await resolveWorkflowIrForTask(this.store, refId, laneIrCache, laneSelectionCache);
           if (ir) {
             for (const id of columnsWithFlag(ir, "complete")) lanes.complete.add(id);
             for (const id of columnsWithFlag(ir, "hold")) lanes.hold.add(id);
@@ -10046,6 +10115,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let cleared = 0;
       /* Resolved once per card per sweep, outside the paging loop, like every IR-consuming sweep. */
       const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): one batched selection read PER PAGE; the cache stays pass-scoped so a selection write is observed next pass. */
+      const holdEvidenceSelectionCache: WorkflowSelectionCache = new Map();
 
       const isSessionLive = (taskId: string): boolean => {
         const livePaths = activeSessionRegistry.pathsForTask(taskId);
@@ -10056,6 +10127,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       for (;;) {
         const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
+        await prefetchWorkflowSelections(this.store, tasks.map((entry) => entry.id), holdEvidenceSelectionCache);
         for (const task of tasks) {
           // Page-cheap pre-filter of the hold shape (either arm of isTaskBlockedOnApproval);
           // the full candidacy is re-derived from a fresh read — the page can be stale.
@@ -10091,7 +10163,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           result among them. When the IR cannot resolve, fail SAFE: any failed/advisory row anywhere
           keeps the hold (the human-decision contract outranks a sweep's eagerness).
           */
-          const ir = await resolveWorkflowIrForTask(this.store, fresh.id, irCache).catch(() => undefined);
+          const ir = await resolveWorkflowIrForTask(this.store, fresh.id, irCache, holdEvidenceSelectionCache).catch(() => undefined);
           const requiredPreMergeIds = ir ? resolveRequiredPreMergeStepIds(ir, fresh.enabledWorkflowSteps, fresh) : undefined;
           const evidenceSurvives = (fresh.workflowStepResults ?? []).some((result) =>
             (result.status === "failed" || result.status === "advisory_failure")
@@ -10475,13 +10547,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let offset = 0;
       let rehomed = 0;
 
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:40 (RUFU-312 step 3):
+      A whole-board paginated sweep, so a cache-less resolver call here is one `task_workflow_selection` SELECT
+      plus one workflow-definition read for EVERY card on the board, every batch. The IR cache is pass-scoped (a
+      board is usually one or two workflows, so definition reads collapse to that many); the selection cache is
+      filled by one batch read per page, because selections are per-card and cannot be inferred from the IR.
+      Both are discarded when the pass ends — a selection write invalidates lane state, so the next pass must
+      observe it.
+      */
+      const rehomingIrCache = new Map<string, WorkflowIr>();
+
       for (;;) {
         const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
+        const rehomingSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
         for (const task of tasks) {
           if (task.userPaused === true) continue;
           let ir;
           try {
-            ir = await resolveWorkflowIrForTask(this.store, task.id);
+            ir = await resolveWorkflowIrForTask(this.store, task.id, rehomingIrCache, rehomingSelectionCache);
           } catch {
             continue; // Defensive only — see the note below; the resolver does not reject.
           }
@@ -10618,13 +10702,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let cleared = 0;
       let refused = 0;
 
+      /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): the rebound-lane gate reads each candidate's own workflow, so the page is prefetched in one statement and the caches live for the sweep. */
+      // A plain pass map, NOT `batchWorkflowIrCache()`: this sweep resolves a handful of candidates per pass,
+      // and the shared epoched cache adds an epoch reader the caller's store must supply for no benefit here.
+      const acquisitionIrCache = new Map<string, WorkflowIr>();
+      const acquisitionSelectionCache: WorkflowSelectionCache = new Map();
+
       for (;;) {
         const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: pageSize, offset, excludeLog: true });
+        await prefetchWorkflowSelections(this.store, tasks.map((entry) => entry.id), acquisitionSelectionCache);
         for (const task of tasks) {
           // Page-cheap candidate gate: status plus the park envelope, before any per-card git work.
           if (task.status !== "failed") continue;
           if (!isAcquisitionExhaustionError(task.error ?? undefined)) continue;
-          if (await this.clearStaleAcquisitionConflict(task, settings, executingIds)) cleared += 1;
+          if (await this.clearStaleAcquisitionConflict(task, settings, executingIds, acquisitionIrCache, acquisitionSelectionCache)) cleared += 1;
           else refused += 1;
         }
         if (tasks.length < pageSize) break;
@@ -10655,6 +10746,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     task: Task,
     settings: Settings,
     executingIds: Set<string>,
+    irCache: Map<string, WorkflowIr>,
+    selectionCache: WorkflowSelectionCache,
   ): Promise<boolean> {
     if (task.userPaused === true || task.paused === true) {
       // An operator park is authoritative; the sweep never reaches through it.
@@ -10670,7 +10763,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     // The rebound-lane gate: the park's own move target, resolved from the CARD's workflow. A card
     // that has since been dispatched elsewhere is not this sweep's to release.
-    const ir = await resolveWorkflowIrForTask(this.store, task.id);
+    const ir = await resolveWorkflowIrForTask(this.store, task.id, irCache, selectionCache);
     const reboundTarget = ir ? resolveReboundTarget(ir) : undefined;
     if (!reboundTarget || reboundTarget !== task.column) {
       return this.emitStaleAcquisitionConflictNoAction(task, "wrong-lane");
@@ -10813,12 +10906,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         isTaskActive: this.options.isTaskActive,
         getPlanningTaskIds: this.options.getPlanningTaskIds,
       });
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:40 (RUFU-312 step 3):
+      `evaluate` runs once per candidate card AND again as the post-decision re-read, so a cache-less resolver
+      call inside it cost two selection reads per card on top of the page scan. The caches are pass-scoped and
+      each page pre-fills the selection cache with ONE batch read (`newSelectionCache` skips ids it already
+      holds, so the re-read of a card already seen this pass costs nothing).
+      */
+      const strandedHoldIrCache = new Map<string, WorkflowIr>();
+      const strandedHoldSelectionCache: WorkflowSelectionCache = new Map();
       const evaluate = async (taskId: string) => {
         const task = await this.store.getTask(taskId);
         if (!task) return null;
         const freshSettings = await this.store.getSettings();
         const freshEnginePaused = freshSettings.globalPause === true || freshSettings.enginePaused === true;
-        const ir = await resolveWorkflowIrForTask(this.store, task.id);
+        const ir = await resolveWorkflowIrForTask(this.store, task.id, strandedHoldIrCache, strandedHoldSelectionCache);
         if (!("columns" in ir)) return null;
         const column = ir.columns.find((entry) => entry.id === task.column);
         if (!column) return null;
@@ -10849,6 +10951,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         decoded up to ~28 MiB of JSON the sweep threw away.
         */
         const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset, excludeLog: true });
+        await prefetchWorkflowSelections(this.store, tasks.map((entry) => entry.id), strandedHoldSelectionCache);
         for (const snapshot of tasks) {
           try {
             const initial = await evaluate(snapshot.id);
@@ -10940,6 +11043,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         was pure heap churn (see the sibling note in `reconcileStrandedHoldContinuations`).
         */
         const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset, excludeLog: true });
+        /*
+        FNXC:SweepSelectionBatching 2026-11-01-23:45 (RUFU-312 step 3): the lane-role gate below asked the
+        resolver per card, i.e. one selection read + one definition read per card on a whole-board page scan.
+        One batch selection read per page and one IR cache per page collapse that to one query for the page plus
+        one definition read per distinct workflow. Page-scoped is sufficient and correct: the pass never revisits
+        a card, and a fresh cache per page keeps a long sweep from holding selections across a selection write.
+        */
+        const principalHeldIrCache = new Map<string, WorkflowIr>();
+        const principalHeldSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
         for (const snapshot of tasks) {
           try {
             // FNXC:PrincipalHeldPlanning 2026-08-10-08:35: `slim:false` already carries pause/status/column, so
@@ -10964,7 +11076,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
              * candidacy is gated on the card's own lane (the `resolveColumnFlags` hold/planning test the sibling
              * sweep uses) and on effective auto-merge, exactly as `evaluateStrandedHoldContinuation` gates its own.
              */
-            const laneIr = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
+            const laneIr = await resolveWorkflowIrForTask(this.store, task.id, principalHeldIrCache, principalHeldSelectionCache).catch(() => undefined);
             const laneColumn = laneIr && "columns" in laneIr
               ? laneIr.columns.find((entry) => entry.id === task.column)
               : undefined;
@@ -11081,6 +11193,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         column instead of 100 % of it.
         */
         const tasks = await this.store.listTasks({ slim: false, includeArchived: false, includeDeleted: false, limit: 500, offset, excludeLog: true });
+        /*
+        FNXC:SweepSelectionBatching 2026-11-01-23:45 (RUFU-312 step 3): same page-scoped shape as the sibling
+        `reconcile-principal-held-planning` sweep — one batch selection read per page, one IR cache per page, both
+        discarded before the next page so a long sweep never carries a selection across a selection write.
+        */
+        const fenceParkIrCache = new Map<string, WorkflowIr>();
+        const fenceParkSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
         for (const snapshot of tasks) {
           try {
             const snapshotPark = getPlanningFencePark(snapshot);
@@ -11160,7 +11279,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             declares no column model cannot PROVE the lane, and the safe direction for a write that
             changes lane state is to leave the card alone rather than guess it.
             */
-            const laneIr = await resolveWorkflowIrForTask(this.store, task.id).catch(() => undefined);
+            const laneIr = await resolveWorkflowIrForTask(this.store, task.id, fenceParkIrCache, fenceParkSelectionCache).catch(() => undefined);
             if (!laneIr) { await audit("workflow-unresolvable"); continue; }
             const planningLanes = resolvePlanningLanes(laneIr);
             if (!planningLanes) { await audit("lane-vocabulary-unreadable"); continue; }
@@ -12053,13 +12172,23 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       || executingTaskLock.has(taskId)
       || this.options.isTaskActive?.(taskId) === true;
     let recovered = 0;
+    /*
+    FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+    This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+    prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+    per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+    has to observe it.
+    */
+    const unprovenResumeIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+    const unprovenResumeSelectionCache = await this.newSelectionCache([...candidates.keys()]);
+
     for (const candidate of candidates.values()) {
       if (!candidate.error?.includes("merge-boundary-unproven")) continue;
       const fresh = await this.store.getTask(candidate.id);
       if (!fresh || fresh.deletedAt || fresh.userPaused || fresh.paused || fresh.workspaceWorktrees !== undefined
         || isTaskExternallyBlocked(fresh) || isSessionLive(fresh.id)
         || !allowsAutoMergeProcessing(fresh, settings)) continue;
-      const ir = await resolveWorkflowIrForTask(this.store, fresh.id).catch(() => undefined);
+      const ir = await resolveWorkflowIrForTask(this.store, fresh.id, unprovenResumeIrCache, unprovenResumeSelectionCache).catch(() => undefined);
       const column = (ir as WorkflowIrV2 | undefined)?.columns.find((entry) => entry.id === fresh.column);
       const wipColumn = (ir as WorkflowIrV2 | undefined)?.columns
         .find((entry) => resolveColumnFlags(entry).countsTowardWip === true)?.id;
@@ -12358,10 +12487,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       const tasks = [...noOpById.values()];
       const noOpIrCache = this.batchWorkflowIrCache();
+      const noOpSelectionCache = await this.newSelectionCache([...noOpById.keys()]);
       const unresolvedNoOpCards: string[] = [];
       const noOpLanesByTask = new Map<string, ReadonlySet<string>>();
       for (const task of tasks) {
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, noOpIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, noOpIrCache, noOpSelectionCache)
           .catch(() => undefined);
         const own = resolved
           ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -12667,6 +12797,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         (task.modifiedFiles?.length ?? 0) > 0,
       );
       const perTaskIrCache = this.batchWorkflowIrCache();
+      const perTaskSelectionCache = await this.newSelectionCache([...byId.keys()]);
       const candidates: Task[] = [];
       /* Cards whose own workflow could not be resolved. Collected so an unrepairable backlog is
          reportable rather than silent — see the provenance note in the loop. */
@@ -12702,7 +12833,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         being indistinguishable from a card that answered, so "unrepaired" stops meaning "unrepairable
         and invisible forever".
         */
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, perTaskIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, perTaskIrCache, perTaskSelectionCache)
           .catch(() => undefined);
         const ownComplete = resolved ? columnsWithFlag(resolved.ir, "complete") : [];
         /* A THROW is unresolvable too. Checking only `source === "default"` left the rarer path — the
@@ -13256,13 +13387,14 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       }
       const tasks = [...mergeableById.values()];
       const mergeableIrCache = this.batchWorkflowIrCache();
+      const mergeableSelectionCache = await this.newSelectionCache([...mergeableById.keys()]);
       const unresolvedMergeableCards: string[] = [];
       /*
       Returns the card's OWN review lanes, so one resolution feeds BOTH consumers below — the lane test
       and `getTaskMergeBlocker`. Two resolutions of the same fact is how the halves of one decision drift.
       */
       const ownReviewLanesFor = async (task: Task): Promise<ReadonlySet<string>> => {
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, mergeableIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, mergeableIrCache, mergeableSelectionCache)
           .catch(() => undefined);
         const own = resolved
           ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -13787,10 +13919,11 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       }
       const tasks = [...failedStepById.values()];
       const failedStepIrCache = this.batchWorkflowIrCache();
+      const failedStepSelectionCache = await this.newSelectionCache([...failedStepById.keys()]);
       const unresolvedFailedStepCards: string[] = [];
       /* One resolution per card, feeding BOTH the lane test and the blocker below. */
       const ownReviewLanesForFailedStep = async (task: Task): Promise<ReadonlySet<string>> => {
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, failedStepIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, failedStepIrCache, failedStepSelectionCache)
           .catch(() => undefined);
         const own = resolved
           ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -13903,6 +14036,8 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const revisionBudgetByTask = new Map<string, { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number; resumesCommittedRemediation: boolean }>();
       const hydratedRevisionTaskById = new Map<string, Task>();
       const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): the attempt-cap loop resolves each candidate's IR; one batched read covers the set. */
+      const revisionSelectionCache = await this.newSelectionCache(tasks.map((task) => task.id));
       const loadRevisionAttemptSource = async (task: Task): Promise<Pick<Task, "log" | "steps" | "workflowStepResults">> => {
         try {
           const fullTask = await this.store.getTask(task.id);
@@ -13922,7 +14057,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         const target = latestFailedPreMergeStep(task);
         if (target?.workflowStepId) {
           try {
-            const ir = await resolveWorkflowIrForTask(this.store, task.id, irCache);
+            const ir = await resolveWorkflowIrForTask(this.store, task.id, irCache, revisionSelectionCache);
             if (ir.version === "v2") {
               const node = ir.nodes.find((candidate) => candidate.id === target.workflowStepId && candidate.kind === "optional-group");
               rawMaxRevisions = node?.config?.maxRevisions;
@@ -14296,9 +14431,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       for `read-failed` — display fails soft to the results-only fallback while the door itself
       fails closed on its own unresolvable-gate path.
       */
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const stallIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const stallSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, stallIrCache, stallSelectionCache);
           stallLanes.set(
             entry.id,
             source === "default"
@@ -15336,9 +15481,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const slim = [...transientById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const transientLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const transientIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const transientSelectionCache = await this.newSelectionCache(slim.map((entry) => entry.id));
+
       for (const entry of slim) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, transientIrCache, transientSelectionCache);
           transientLanes.set(
             entry.id,
             source === "default"
@@ -15517,9 +15672,10 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) interruptedById.set(task.id, task);
       }
       const interruptedIrCache = this.batchWorkflowIrCache();
+      const interruptedSelectionCache = await this.newSelectionCache([...interruptedById.keys()]);
       const unresolvedInterruptedCards: string[] = [];
       const inOwnReviewLaneForInterrupted = async (task: Task): Promise<boolean> => {
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, interruptedIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, interruptedIrCache, interruptedSelectionCache)
           .catch(() => undefined);
         const own = resolved
           ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -15733,9 +15889,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const tasks = [...wsPartialById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const wsPartialLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const wsPartialIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const wsPartialSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, wsPartialIrCache, wsPartialSelectionCache);
           wsPartialLanes.set(
             entry.id,
             source === "default"
@@ -16766,9 +16932,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const tasks = [...doneMetaById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const doneMetaLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const doneMetaIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const doneMetaSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, doneMetaIrCache, doneMetaSelectionCache);
           doneMetaLanes.set(entry.id, source === "default" ? new Set(doneMetaColumns) : new Set(columnsWithFlag(ir, "complete")));
         } catch {
           doneMetaLanes.set(entry.id, new Set(doneMetaColumns));
@@ -17059,11 +17235,25 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       just admitted from a renamed lane. Falling back to the project sets keeps it.
       */
       const mergedLanes = new Map<string, { review: Set<string>; hold: Set<string> }>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:55 (RUFU-312 step 3): per-card lane classification over the merged
+      review+todo buckets, i.e. a board-wide loop. Batch the selection read once for the whole bucket set and
+      share one IR cache for the pass — see the sibling note in the phantom-binding sweep.
+      */
+      const mergedIrCache = new Map<string, WorkflowIr>();
+      const mergedSelectionCache = await this.newSelectionCache(
+        [...reviewTasks, ...todoTasks].map((task) => task.id),
+      );
       for (const task of [...reviewTasks, ...todoTasks]) {
         if (mergedLanes.has(task.id)) continue;
         const lanes = { review: new Set<string>(), hold: new Set<string>() };
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(
+            this.store,
+            task.id,
+            mergedIrCache,
+            mergedSelectionCache,
+          );
           if (source === "default") {
             for (const id of mergedReviewColumns) lanes.review.add(id);
             for (const id of mergedHoldColumns) lanes.hold.add(id);
@@ -17275,9 +17465,10 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) inReviewById.set(task.id, task);
       }
       const deadlockIrCache = this.batchWorkflowIrCache();
+      const deadlockSelectionCache = await this.newSelectionCache([...inReviewById.keys()]);
       const unresolvedDeadlockCards: string[] = [];
       const inOwnReviewLaneForDeadlock = async (task: Task): Promise<boolean> => {
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, deadlockIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, deadlockIrCache, deadlockSelectionCache)
           .catch(() => undefined);
         const own = resolved
           ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -17559,10 +17750,11 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       }
       const tasks = [...orphanById.values()];
       const orphanIrCache = this.batchWorkflowIrCache();
+      const orphanSelectionCache = await this.newSelectionCache([...orphanById.keys()]);
       const unresolvedOrphanCards: string[] = [];
       const orphanLanesByTask = new Map<string, ReadonlySet<string>>();
       for (const task of tasks) {
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, orphanIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, orphanIrCache, orphanSelectionCache)
           .catch(() => undefined);
         const own = resolved
           ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -17771,6 +17963,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         for (const task of await this.store.listTasks({ column, slim: true, excludeLog: true })) byId.set(task.id, task);
       }
       const reviewIrCache = this.batchWorkflowIrCache();
+      const reviewSelectionCache = await this.newSelectionCache([...byId.keys()]);
       /* Cards whose own workflow could not be resolved — reported below rather than silently dropped. */
       const unresolvedReviewCards: string[] = [];
       /*
@@ -17799,7 +17992,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       sweeps holding BOTH a literal query and an unwired lane guard — six of them, this one included.
       */
       const ownReviewLanesForAlreadyMerged = async (task: Task): Promise<ReadonlySet<string>> => {
-        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, reviewIrCache)
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, reviewIrCache, reviewSelectionCache)
           .catch(() => undefined);
         const own = resolved
           ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -18067,8 +18260,20 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       /* Per-card review lanes; also fed to the hard-blocker below so it judges the card's own vocabulary. */
       const wedgeLanesByTask = new Map<string, Set<string>>();
       const unresolvedWedgeCards: string[] = [];
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:55 (RUFU-312 step 3): one batch selection read for the whole
+      review-wedge candidate set instead of one SELECT per card — see the sibling note in the phantom-binding
+      sweep.
+      */
+      const wedgeIrCache = new Map<string, WorkflowIr>();
+      const wedgeSelectionCache = await this.newSelectionCache(tasks.map((task) => task.id));
       for (const task of tasks) {
-        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+        const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(
+          this.store,
+          task.id,
+          wedgeIrCache,
+          wedgeSelectionCache,
+        );
         if (source === "default") unresolvedWedgeCards.push(task.id);
         const own = REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)]);
         wedgeLanesByTask.set(task.id, own.length > 0 ? new Set(own) : new Set(["in-review"]));
@@ -18380,9 +18585,10 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     }
     const tasks = [...limboById.values()];
     const limboIrCache = this.batchWorkflowIrCache();
+    const limboSelectionCache = await this.newSelectionCache([...limboById.keys()]);
     const unresolvedLimboCards: string[] = [];
     const ownLimboReviewLanes = async (task: Task): Promise<ReadonlySet<string>> => {
-      const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, limboIrCache)
+      const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id, limboIrCache, limboSelectionCache)
         .catch(() => undefined);
       const own = resolved
         ? [...new Set(REVIEW_ROLES.flatMap((role) => columnsWithFlag(resolved.ir, role)))]
@@ -19118,9 +19324,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const tasks = [...misboundById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const misboundLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const misboundIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const misboundSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, misboundIrCache, misboundSelectionCache);
           misboundLanes.set(
             entry.id,
             source === "default"
@@ -19346,6 +19562,14 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       */
       const contaminationLanes = new Map<string, { review: Set<string>; wip: Set<string> }>();
       const unresolvedContaminationCards: string[] = [];
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-23:55 (RUFU-312 step 3): one batch selection read for the review+WIP
+      candidate set instead of one SELECT per card — see the sibling note in the phantom-binding sweep.
+      */
+      const contaminationIrCache = new Map<string, WorkflowIr>();
+      const contaminationSelectionCache = await this.newSelectionCache(
+        [...inReview, ...inProgress].map((task) => task.id),
+      );
       for (const task of [...inReview, ...inProgress]) {
         if (contaminationLanes.has(task.id)) continue;
         const lanes = {
@@ -19371,7 +19595,12 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         guarantees rejection for precisely the renamed cards the query was widened to find.
         */
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(
+            this.store,
+            task.id,
+            contaminationIrCache,
+            contaminationSelectionCache,
+          );
           if (source === "default") unresolvedContaminationCards.push(task.id);
           else {
             for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) lanes.review.add(id);
@@ -19509,9 +19738,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const tasks = [...misclassifiedById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const misclassifiedLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const misclassifiedIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const misclassifiedSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, misclassifiedIrCache, misclassifiedSelectionCache);
           misclassifiedLanes.set(
             entry.id,
             source === "default"
@@ -19822,9 +20061,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). Covers the failed-task rows too,
          which arrive from the lane-independent read above. */
       const noCommitsLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const noCommitsIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const noCommitsSelectionCache = await this.newSelectionCache([...candidateMap.keys()]);
+
       for (const entry of candidateMap.values()) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, noCommitsIrCache, noCommitsSelectionCache);
           noCommitsLanes.set(
             entry.id,
             source === "default"
@@ -20000,9 +20249,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const tasks = [...orphanExecById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const orphanExecLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const orphanExecIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const orphanExecSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, orphanExecIrCache, orphanExecSelectionCache);
           orphanExecLanes.set(entry.id, source === "default" ? new Set(orphanWipColumns) : new Set(columnsWithFlag(ir, "countsTowardWip")));
         } catch {
           orphanExecLanes.set(entry.id, new Set(orphanWipColumns));
@@ -20104,9 +20363,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const tasks = [...reattachById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const reattachLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const reattachIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const reattachSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, reattachIrCache, reattachSelectionCache);
           reattachLanes.set(entry.id, source === "default" ? new Set(reattachWipColumns) : new Set(columnsWithFlag(ir, "countsTowardWip")));
         } catch {
           reattachLanes.set(entry.id, new Set(reattachWipColumns));
@@ -20438,6 +20707,8 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const agents = await agentStore.listAgents({ includeEphemeral: false });
     const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
     const tasks = await this.store.listTasks({ slim: true, excludeLog: true });
+    /* FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3): this loop asks two per-card workflow questions (pre-WIP role and lease role) for every board card, so the board is prefetched once. */
+    const agentBindingSelectionCache = await this.newSelectionCache(tasks.map((task) => task.id));
     const now = Date.now();
     let recovered = 0;
 
@@ -20453,14 +20724,14 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         && task.pausedByAgentId === ownerId
         && !task.userPaused;
       if (!ownerId || task.userPaused || (task.paused && !hasRecoverableAgentPause) || task.checkedOutBy || task.deletedAt) continue;
-      const preWip = await this.isPreWipColumn(task);
+      const preWip = await this.isPreWipColumn(task, agentBindingSelectionCache);
       const owner = agentsById.get(ownerId);
       if (owner && isBuiltinWorkflowRoleAgent(owner) && isWorkflowPrincipalEligible(owner)) continue;
       if (!preWip) {
         // Startup can promote a queued task before unavailable-owner recovery runs.
         // Only a lone executor principal hold may release ownership after that boundary.
         if (task.paused || taskIsLive(task.id) || (owner && isWorkflowPrincipalEligible(owner))) continue;
-        const roles = await resolveFileScopeLeaseTaskRoles(this.store, task, irCache);
+        const roles = await resolveFileScopeLeaseTaskRoles(this.store, task, irCache, agentBindingSelectionCache);
         if (!roles.isWipColumn || !task.workflowIrPinNodeId) continue;
         const items = await this.store.listWorkflowWorkItemsForTask(task.id);
         const active = items.filter((item) => ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(item.state));
@@ -21206,6 +21477,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       workflow (the common partial-rename case) and for the merge-active variant.
       */
       const recoveryIrCache = this.batchWorkflowIrCache();
+      const recoverySelectionCache = await this.newSelectionCache([...missingWtById.keys()]);
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the ARITY trap, same seam):
       These classifiers take a MEMBERSHIP set, and `resolveTaskLifecycleColumns().review` is the FIRST
@@ -21216,7 +21488,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const reviewColumnsFor = async (taskId: string): Promise<ReadonlySet<string>> => {
         const columns = new Set<string>(["in-review"]);
         try {
-          const ir = await resolveWorkflowIrForTask(this.store, taskId, recoveryIrCache);
+          const ir = await resolveWorkflowIrForTask(this.store, taskId, recoveryIrCache, recoverySelectionCache);
           if (ir) {
             for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) columns.add(id);
           }
@@ -21371,9 +21643,19 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       const tasks = [...partialById.values()];
       /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
       const partialLanes = new Map<string, Set<string>>();
+      /*
+      FNXC:SweepSelectionBatching 2026-11-01-18:35 (RUFU-312 step 3, finished in step 6):
+      This loop classifies lanes for a whole candidate set, so it takes the file's sweep-scoped batch
+      prefetch — one selection query for the set plus one IR cache for the pass, instead of one round-trip
+      per card. Both caches die with the pass: a selection write invalidates lane state, so the next pass
+      has to observe it.
+      */
+      const partialIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const partialSelectionCache = await this.newSelectionCache(tasks.map((entry) => entry.id));
+
       for (const entry of tasks) {
         try {
-          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id, partialIrCache, partialSelectionCache);
           partialLanes.set(
             entry.id,
             source === "default"

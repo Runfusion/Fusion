@@ -30,6 +30,8 @@ import type {WorkflowSettingDefinition} from "../workflows/workflow-ir-types.js"
 import {validateSettingValuePatch} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
 import {appendAgentLogEntriesSync} from "../agents/agent-log-file-store.js";
+/* FNXC:TaskLogSideTable 2026-11-01-18:25 (RUFU-312): the boot pass that rebuilds the log side table. */
+import { catchUpLegacyTaskLogEntries } from "./task-log-entries.js";
 import {getErrorMessage} from "../process/error-message.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {reconcileTaskIdStateAsync} from "../task-store/async/async-allocator.js";
@@ -153,6 +155,29 @@ export async function initImpl(store: TaskStore, options?: { skipArchiveReintegr
     stays correct that a bare 30 s `[taskstore-boot]` expiry is un-attributable with existing channels.
     What the row does answer is which process performed mutations after a completed open.
     */
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-18:25 (RUFU-312):
+    BOOT CATCH-UP. Migration 0093 backfills the entries side table for an EXISTING database, but a store
+    pointed at an older data directory that only ever received the baseline schema (or a project whose
+    migration ran while its own boot was the migration runner) needs a second, idempotent pass before
+    anything reads History. The pass is bounded twice over: a per-project marker row makes it run at most
+    once per project ever (steady state is one indexed SELECT per boot), and inside that pass the only rows
+    it selects are the ones migration 0093 itself would have copied (`log_projection_at IS NULL`). It is
+    awaited because the first read of History after boot must not see a card whose mirror carried lines the
+    board has not rebuilt yet, and it is wrapped because a storage catch-up is not allowed to take down the
+    store: a failed pass leaves the marker unwritten, so the next boot retries.
+    */
+    try {
+      const catchUp = await catchUpLegacyTaskLogEntries(store.asyncLayer!);
+      if (catchUp.examinedTaskCount > 0) {
+        storeLog.log("Task-log side-table catch-up completed", { phase: "init:task-log-catch-up", ...catchUp });
+      }
+    } catch (error) {
+      storeLog.warn("Task-log side-table catch-up failed; will retry on next boot", {
+        phase: "init:task-log-catch-up",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     await emitBoundedRunAudit(store, {
       agentId: "store",
       runId: `store-open-${process.pid}-${Date.now()}`,

@@ -75,6 +75,14 @@ export const LOG_RECENT_TAIL_REASON_MAX_CHARS = 200;
 /** Column names, exported so the descriptor, the migration and the guard test cite one source. */
 export const TASK_TIMING_TOTAL_MS_COLUMN = "timingTotalMs";
 export const TASK_LOG_RECENT_COLUMN = "logRecent";
+/*
+FNXC:TaskLogSideTable 2026-11-01-17:40 (RUFU-312):
+The author-stamp column for the pairing below. A pure append can no longer reach these columns (writing
+`tasks` is exactly what RUFU-312 removes from the append path), so the envelope has a second author —
+`project.task_log_rollup` — and each author has to say when it authored. `pickTaskLogEnvelope` reads the
+comparison; a reader that guessed from `updated_at` would credit a badge to a status change.
+*/
+export const TASK_LOG_PROJECTION_AT_COLUMN = "logProjectionAt";
 
 export interface TaskLogRecentEnvelope {
   v: number;
@@ -402,6 +410,10 @@ export function withTaskLogProjections<T extends Record<string, unknown>>(update
     ...updates,
     [TASK_TIMING_TOTAL_MS_COLUMN]: derived.timingTotalMs,
     [TASK_LOG_RECENT_COLUMN]: derived.logRecent,
+    // FNXC:TaskLogSideTable 2026-11-01-17:40 (RUFU-312): this lane authored the envelope, so it stamps
+    // its own authorship in the same statement. Never a caller-supplied value: the witness is only worth
+    // anything while exactly two writers can set it, and each sets it last.
+    [TASK_LOG_PROJECTION_AT_COLUMN]: new Date().toISOString(),
   };
 }
 

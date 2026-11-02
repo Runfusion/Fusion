@@ -12,9 +12,11 @@ import { shouldWarnPromptParseFailure } from "./task-artifacts-ops.js";
 import {readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync, statSync} from "node:fs";
-import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, TaskRecommendation, TaskRecommendationListItem, TaskRecommendationListPage, Settings} from "../types.js";
+import type {Task, TaskDetail, ColumnId, ArchivedTaskEntry, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, TaskRecommendation, TaskRecommendationListItem, TaskRecommendationListPage, Settings, TaskLogEntry} from "../types.js";
 import * as schema from "../postgres/schema/index.js";
-import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+// `getTableColumns` is deliberately absent: the searched board page used to project the whole row that way,
+// which is the 25 MB `log` column riding along with every card (RUFU-312 step 2 — see listCurrentTasksPage).
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import "../builtin-traits.js";
 import {allowsAutoMergeProcessing} from "../merge/task-merge.js";
 import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS, type InReviewStallContext} from "../tasks/in-review-stall.js";
@@ -31,6 +33,22 @@ import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-trait
 import {detectStalledReview} from "../tasks/stalled-review-detector.js";
 /* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): defensive read of the `log_recent` envelope for rows read without `log`. */
 import { parseTaskLogRecent } from "./task-log-projections.js";
+/*
+FNXC:TaskLogSideTable 2026-11-01-18:22 (RUFU-312):
+The read half of the log cutover. `pickTaskLogEnvelope` is what lets a projection that never transfers the
+log still answer the two derived columns honestly (newest author wins between the row's own pair and the
+side table's rollup), and the batch hydrator is what keeps a merged `log` for readers that own History
+without turning a page of cards into a page of queries.
+*/
+import {
+  hydrateTaskLogEntries,
+  latestEntryTimestamp,
+  mergeTaskLogViews,
+  pickTaskLogEnvelope,
+  readTaskLogEntriesBatch,
+  readTaskLogRollups,
+  taskLogProjectId,
+} from "./task-log-entries.js";
 import {computeRetrySummary} from "../tasks/retry-summary.js";
 import {resolveRequiredPreMergeStepIds} from "../merge/required-pre-merge-steps.js";
 // FNXC:PostMergeGateOperatorWaiver 2026-09-29-15:49 (RUFU-408): the bypass affordance must ask about the post-merge gates too.
@@ -138,8 +156,8 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
 }
 
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {countLiveTasks, readCompletedTaskPage, readTaskRow, readLiveTaskRows, readTaskRowByProposalClaimId, readTaskRowsBySourceLineage, normalizeTaskListReadFields, type TaskListReadField} from "./async/async-persistence.js";
-import {buildTsqueryFragment, liveSearchPredicate, searchTasksTsvector, searchTasksLike} from "./async/async-search.js";
+import {countLiveTasks, readCompletedTaskPage, readTaskRow, readLiveTaskRows, readTaskRowByProposalClaimId, readTaskRowsBySourceLineage, normalizeTaskListReadFields, TASK_SLIM_PROJECTION, type TaskListReadField} from "./async/async-persistence.js";
+import {buildTaskSearchPredicate, isLiteralOnlySearchQuery, liveSearchPredicate, searchTasksTsvector, searchTasksLike} from "./async/async-search.js";
 import {
   getArchivedTask,
   listArchivedTasks as listArchivedTaskEntries,
@@ -458,6 +476,21 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
         throw new TaskNotFoundError(id);
       }
       const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
+      /*
+      FNXC:TaskLogSideTable 2026-11-01-18:20 (RUFU-312):
+      The detail read is the one read that OWNS the whole History: the task-detail modal, the CLI's
+      `fn task show`, the planner-chat context and every engine consumer that parses a log line all reach
+      History through this seam. `log` therefore stays the merged view (legacy prefix ∪ side table) here and
+      on the mirror, while the BOARD feed stops transferring it at all (Step 2) — the split the cutover is
+      about. The merged array keeps the same retention cap and the same newest-N trimming the legacy array
+      had, so a reader sees the same entries in the same order it saw before the side table existed.
+      */
+      task.log = await hydrateTaskLogEntries({
+        client: layer.db,
+        projectId: taskLogProjectId(layer),
+        taskId: id,
+        legacyLog: task.log ?? [],
+      });
       const now = Date.now();
       const settings = await store.getSettingsFast();
       const mergeQueuedTaskIds = await store.getMergeQueuedTaskIdsAsync();
@@ -1147,6 +1180,46 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
     const deriveFeed = deriveUiSignals
       ? await buildListDeriveFeed(store, filteredRows, options)
       : null;
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-19:25 (RUFU-312):
+    A page whose rows were read without the log column still has to answer the log-derived signals (the stall
+    badge, `timedExecutionMs`). RUFU-615 made those answerable from a per-row envelope; the cutover moved
+    where that envelope lives. This is ONE primary-key-range statement for the whole page — never one per
+    card, which is the N+1 this task's Step 3 refuses — and it is skipped entirely when the page loaded the
+    log itself, because then the derivation reads the data and no cache is consulted.
+    */
+    const logFreeRowIds = filteredRows.filter((row) => row.log === undefined).map((row) => String(row.id));
+    const logRollups = logFreeRowIds.length > 0
+      ? await readTaskLogRollups(store.asyncLayer!.db, taskLogProjectId(store.asyncLayer!), logFreeRowIds)
+      : null;
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-19:45 (RUFU-312):
+    A page that DID load the `log` column gets the merged view too, because a reader cannot tell which half of
+    a card's History it is missing.
+
+    FNXC:TaskLogSideTable 2026-11-01-21:52 (RUFU-312 code-review P0):
+    The fetch bound is each row's OWN newest legacy entry, never one page-wide watermark. The first version
+    took the maximum across the page, so any card whose array was older than somebody else's had every side
+    entry between the two filtered out in SQL — and those are exactly the entries that exist only in the side
+    table after a pure append, because a pure append no longer touches the array. The steady-state shape
+    (one card takes a compound write, its neighbour only appends) therefore hid the appending card's newest
+    History lines from `Task.log`, and with them every consumer that greps markers off it
+    (`hasAutoHealableVerificationBufferFailure`, `surfacing-sweeps` alreadySurfaced, the reflection and
+    triage marker reads), while the same card's stall badge came from the rollup lane — two answers, one card.
+
+    A row with an empty array gets no bound at all (every card created after the cutover is in that shape and
+    needs its full newest-`cap` set); `readTaskLogEntriesBatch` still serves the whole page in one statement.
+    */
+    const logLoadedRows = filteredRows.filter((row) => row.log !== undefined);
+    const logMergeBounds = new Map<string, string | null>();
+    for (const row of logLoadedRows) {
+      logMergeBounds.set(String(row.id), latestEntryTimestamp(
+        Array.isArray(row.log) ? (row.log as TaskLogEntry[]) : [],
+      ) ?? null);
+    }
+    const logEntriesByTask = logLoadedRows.length > 0
+      ? await readTaskLogEntriesBatch(store.asyncLayer!.db, taskLogProjectId(store.asyncLayer!), logLoadedRows.map((row) => String(row.id)), { bounds: logMergeBounds })
+      : null;
     const tasks = await Promise.all(filteredRows.map(async (pgRow) => {
       const row = store.pgRowToTaskRow(pgRow);
       const task = store.rowToTask(row);
@@ -1162,8 +1235,29 @@ export async function listTasksImpl(store: TaskStore, options?: ListTasksOptions
       (`task-log-projections.pg.test.ts`), never paid for on the hot read path.
       */
       const logLoaded = pgRow.log !== undefined;
-      const logProjections = logLoaded ? null : parseTaskLogRecent(pgRow.logRecent);
-      const timingTotalMs = typeof pgRow.timingTotalMs === "number" ? pgRow.timingTotalMs : 0;
+      if (logLoaded) {
+        const legacyLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
+        task.log = mergeTaskLogViews(legacyLog, logEntriesByTask?.get(String(pgRow.id)) ?? []);
+      }
+      /*
+      FNXC:TaskLogSideTable 2026-11-01-19:25 (RUFU-312):
+      Two authors can now have written a card's envelope: a compound write that rewrote the `log` column
+      authored the row's own pair and stamped `log_projection_at`, while any pure append authored the rollup
+      and stamped nothing on the row. Whichever author is newer wins — see `pickTaskLogEnvelope`. Preferring
+      one lane unconditionally is how a stall badge silently regresses after an unrelated status change, so
+      the choice is made from the two stamps, exactly as RUFU-615's rule prefers data over its cache when the
+      data is present.
+      */
+      const envelope = logLoaded ? null : pickTaskLogEnvelope({
+        rollup: logRollups?.get(String(pgRow.id)),
+        legacyProjectionAt: pgRow.logProjectionAt as string | null | undefined,
+        legacyTimingTotalMs: typeof pgRow.timingTotalMs === "number" ? pgRow.timingTotalMs : null,
+        legacyLogRecent: parseTaskLogRecent(pgRow.logRecent),
+      });
+      const logProjections = logLoaded ? null : envelope!.logRecent;
+      const timingTotalMs = logLoaded || !envelope
+        ? (typeof pgRow.timingTotalMs === "number" ? pgRow.timingTotalMs : 0)
+        : (envelope.timingTotalMs ?? 0);
       if (deriveFeed === null) {
         /*
         FNXC:ListTasksDeriveOptOut 2026-09-08-20:58 (RUFU-201):
@@ -1453,21 +1547,41 @@ export async function listCurrentTasksPageImpl(store: TaskStore, options: { limi
   FNXC:TaskSearchPagination 2026-09-07-17:38:
   Dashboard search uses a project-scoped createdAt/id keyset and applies the full-text predicate before LIMIT. The query is embedded in the opaque cursor so a cursor from another search scope is rejected rather than silently skipping matches after a filter change.
   */
+  /*
+  FNXC:BoardReadProjection 2026-11-01-21:55 (RUFU-312):
+  The searched page now selects the same column set the board page does. It used to be a bare
+  `getTableColumns(tasks)`, i.e. every column including `log` — the one column the searched page could not
+  render, since `hydrateSearchTaskRows` strips it for `slim` on the way out. The page is also the endpoint a
+  user types into, so it ran on every keystroke: `log` was 42.7% of live-row bytes and, after RUFU-312 step 1,
+  an append no longer even lands there. `searchVector` is dropped by the same projection (nothing addresses
+  it), and the derived figures that `log` used to feed are answered by their authored envelope below.
+  */
+  /*
+  FNXC:TaskSearchMembership 2026-11-01-22:20 (RUFU-312):
+  The searched page now asks the SAME membership question as `searchTasks` does — the FTS arm ORed with the
+  literal ILIKE arm — instead of `searchVector @@ tsquery` on its own. The two endpoints disagreed on what a
+  search hit is: `buildTaskSearchPredicate` deliberately keeps a case-insensitive substring arm because
+  tokenization erases the punctuation a user actually types (a task id like `RUFU-312`, a filename like
+  `.txt`), and this page had no such arm. So typing a card's own id into the board search box returned zero
+  rows on `/tasks/page` while the same words in `searchTasks` found it — a one-sided defect, invisible to any
+  test that only exercised the other endpoint. Membership is now identical on both paths; only the ranking
+  stays specific to each.
+  */
   if (query) {
-    const tsquery = buildTsqueryFragment(query);
-    if (!tsquery) return { tasks: [], total: 0, hasMore: false, nextCursor: null };
+    const membershipPredicate = buildTaskSearchPredicate(query);
+    if (!membershipPredicate) return { tasks: [], total: 0, hasMore: false, nextCursor: null };
     const searchPredicate = and(
-      sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
+      membershipPredicate,
       liveSearchPredicate(false, layer.projectId, ARCHIVED_SENTINEL_LANES),
       buildTaskSearchPageCursorPredicate(cursor),
     );
     const totalPredicate = and(
-      sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
+      membershipPredicate,
       liveSearchPredicate(false, layer.projectId, ARCHIVED_SENTINEL_LANES),
     );
     const [countRows, pageRows] = await Promise.all([
       layer.db.select({ count: sql<number>`count(*)::int` }).from(schema.project.tasks).where(totalPredicate),
-      layer.db.select({ ...getTableColumns(schema.project.tasks) })
+      layer.db.select({ ...TASK_SLIM_PROJECTION })
         .from(schema.project.tasks)
         .where(searchPredicate)
         .orderBy(...buildTaskSearchPageOrder())
@@ -1988,8 +2102,34 @@ const searchPassIrCache = new Map<string, WorkflowIr>();
 const searchPassSelectionCache = new Map<string, import("../workflows/workflow-ir-resolver.js").WorkflowSelection | undefined>();
 await prefetchWorkflowSelections(store, pgRows.map((row) => String(row.id)), searchPassSelectionCache);
 await prefetchWorkflowIrs(store, pgRows.map((row) => String(row.id)), searchPassIrCache, searchPassSelectionCache);
+/*
+FNXC:TaskLogSideTable 2026-11-01-21:58 (RUFU-312):
+One rollup read for the whole searched page, the same shape `listTasksImpl` uses. The page no longer selects
+`log`, so the derived stall/timing figures must come from their authored envelope instead of being recomputed
+from a column that is not in the row. Deriving from `task.log === []` would not throw — it would quietly clear
+every stall badge on a searched page, which is the failure RUFU-615 moved this arithmetic out of the read path
+to prevent. A page that DID select `log` issues no extra read here.
+*/
+const logFreeRowIds = pgRows.filter((row) => row.log === undefined).map((row) => String(row.id));
+const searchLayer = store.asyncLayer;
+const searchRollups = logFreeRowIds.length > 0 && searchLayer
+? await readTaskLogRollups(searchLayer.db, taskLogProjectId(searchLayer), logFreeRowIds)
+: null;
   return Promise.all(pgRows.map(async (pgRow) => {
   const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-21:58 (RUFU-312):
+  The same newest-author rule as the board list (see `pickTaskLogEnvelope`): the row's own pair wins while it
+  is the newer author, the side-table rollup wins after any pure append. `logProjectionAt` is read off the RAW
+  row because `pgRowToTaskRow` cannot tell an absent column from an empty history.
+  */
+  const logLoaded = pgRow.log !== undefined;
+  const envelope = logLoaded ? null : pickTaskLogEnvelope({
+    rollup: searchRollups?.get(String(pgRow.id)),
+    legacyProjectionAt: pgRow.logProjectionAt as string | null | undefined,
+    legacyTimingTotalMs: typeof pgRow.timingTotalMs === "number" ? pgRow.timingTotalMs : null,
+    legacyLogRecent: parseTaskLogRecent(pgRow.logRecent),
+  });
   const isMergeQueued = mergeQueuedTaskIds.has(task.id);
   /*
   FNXC:WorkflowLifecycle 2026-07-05-15:40:
@@ -2023,10 +2163,19 @@ await prefetchWorkflowIrs(store, pgRows.map((row) => String(row.id)), searchPass
     engineActiveSinceMs: settings.engineActiveSinceMs,
     engineActivationGraceMs: settings.engineActivationGraceMs,
   } satisfies InReviewStalledContext);
-  task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now, reviewColumns: reviewColumnsForRow });
+  task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, {
+    now,
+    reviewColumns: reviewColumnsForRow,
+    logLoaded,
+    projection: logLoaded ? null : envelope!.logRecent,
+  });
   task.retrySummary = computeRetrySummary(task);
   if (slim) {
-    task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-21:58 (RUFU-312): one figure, two authors — recomputed from the column
+    when the page loaded it, read from the envelope when it did not.
+    */
+    task.timedExecutionMs = logLoaded ? store.computeTimedExecutionMs(task.log) : (envelope?.timingTotalMs ?? 0);
     task.log = [];
   }
   // FNXC:BoardFeedCompaction 2026-09-17-14:49: same post-derivation drop as the board lane path.
@@ -2089,7 +2238,17 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       // (load-bearing for the CREATE-time near-duplicate check via searchTasks).
       projectId: layer.projectId,
     });
-    if (pgRows.length === 0) {
+    if (pgRows.length === 0 && !isLiteralOnlySearchQuery(trimmedQuery)) {
+      /*
+      FNXC:TaskStoreSearch 2026-11-01-20:25 (RUFU-312 step 6, measured red at base 7a9981a71f):
+      The fallback exists for a cold or unusable tsvector index, and it tokenizes: `sanitizeSearchTokens`
+      strips FTS operators, so `foo*` becomes `foo`. For a punctuation-bearing query the primary path already
+      answered with the literal arm alone — that is `buildTaskSearchPredicate`'s documented rule — so an empty
+      result is the ANSWER, and re-running a punctuation-stripped LIKE here re-admitted exactly the rows the
+      literal rule exists to exclude (`foo*` matching a card titled `foo`). Same guard as membership and
+      ranking, one seam: a lexical query keeps its cold-index fallback, a literal query never gets a second,
+      narrower-still reading of what the operator typed.
+      */
       pgRows = await searchTasksLike(layer.db, trimmedQuery, {
         limit: sourceLimit,
         offset: sourceOffset,

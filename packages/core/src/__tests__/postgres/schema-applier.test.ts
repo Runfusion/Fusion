@@ -35,6 +35,7 @@ import {
   TASK_PAUSE_ACCOUNTING_VERSION,
   TASK_HUMAN_PLAN_APPROVAL_VERSION,
   WORKFLOW_IR_PIN_AND_LEGACY_ADOPTION_VERSION,
+  TASK_SEARCH_VECTOR_SCOPE_VERSION,
   assertBinaryNotOlderThanDatabase,
   cePluginSchemaInit,
   cliPressPluginSchemaInit,
@@ -133,6 +134,8 @@ import {
   PULL_REQUEST_READINESS_VERSION,
   RECOVERY_DISPOSITION_VERSION,
   TASK_LOG_PROJECTIONS_VERSION,
+  TASK_LOG_ENTRIES_VERSION,
+  TASK_SEARCH_VECTOR_SCOPE_VERSION,
   FILE_SCOPE_LEASE_RELEASE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
@@ -245,11 +248,12 @@ describe("schema-applier: immutable migration identities", () => {
     */
     expect(STALE_REVIEW_CALLBACK_WAIVER_RECEIPTS_VERSION).toBe("0086");
     /*
-    FNXC:TaskLogProjections 2026-10-10-19:55 (RUFU-615): 0092 (task-log projections) is the ceiling.
-    Kept as the single ceiling equality this file allows; migration-wiring-integrity.test.ts asserts the same
-    value equals the highest bundled file without a PostgreSQL run.
+    FNXC:TaskLogSideTable 2026-11-01-21:20 (RUFU-312): 0093 (the task-log entries side table) was the ceiling;
+    RUFU-312 step 4 adds 0094 (the narrowed search vector) behind it, so the ceiling tracks 0094. Kept as the
+    single ceiling equality this file allows; migration-wiring-integrity.test.ts asserts the same value equals
+    the highest bundled file without a PostgreSQL run.
     */
-    expect(SCHEMA_BASELINE_VERSION).toBe("0092");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0094");
 
       /*
       FNXC:MigrationRestack 2026-10-12-18:24: readiness keeps upstream's 0087 and the receipts keep 0086, so
@@ -268,7 +272,14 @@ describe("schema-applier: immutable migration identities", () => {
     merge gate rather than skipping a migration in production.
     */
     expect(RECOVERY_DISPOSITION_VERSION).toBe("0088");
-    expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeGreaterThan(Number(RECOVERY_DISPOSITION_VERSION));
+    /*
+    FNXC:MigrationRestack 2026-11-01-19:15 (RUFU-312 step 6, measured red at base 7a9981a71f):
+    This line asserted 0087 > 0088 while the comment above it states the opposite fact — FN-9512's column is
+    upstream's 0088, released one slot AFTER upstream's 0087 readiness. Upstream owns its own released order, so
+    readiness necessarily precedes it. Corrected to the real order rather than deleted: what the assertion is for
+    is that both upstream slots sit below this fork's tail, which the ceiling comparisons below still pin.
+    */
+    expect(Number(PULL_REQUEST_READINESS_VERSION)).toBeLessThan(Number(RECOVERY_DISPOSITION_VERSION));
     expect(Number(SCHEMA_BASELINE_VERSION)).toBeGreaterThanOrEqual(Number(RECOVERY_DISPOSITION_VERSION));
     expect(FILE_SCOPE_LEASE_RELEASE_VERSION).toBe("0089");
     expect(Number(FILE_SCOPE_LEASE_RELEASE_VERSION)).toBeGreaterThan(Number(RECOVERY_DISPOSITION_VERSION));
@@ -929,7 +940,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 123 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 126 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -981,7 +992,14 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     FNXC:MigrationIdentity 2026-10-04-11:59: upstream's `0086_fn_9429` receipt table adds one more, so the
     fresh-baseline project count is 123.
     */
-    expect(bySchema.project).toBe(123);    /*
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-21:20 (RUFU-312):
+    Migration 0093 adds three project tables — the append-only `task_log_entries`, its one-row-per-task
+    `task_log_rollup`, and the `task_log_backfill_marker` witness — so the fresh-baseline project count is
+    126. The count moved because the task row must stop being its own log: every History append used to
+    rewrite the whole `tasks` row, which is the load this task exists to remove.
+    */
+    expect(bySchema.project).toBe(126);    /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
     database still CREATEs it from the historical 0000 baseline and then drops it,
@@ -2305,6 +2323,8 @@ FILE_SCOPE_LEASE_RELEASE_VERSION,
       OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
       REVIEW_LANE_LEDGER_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
+      TASK_LOG_ENTRIES_VERSION,
+      TASK_SEARCH_VECTOR_SCOPE_VERSION,
       /* FNXC:MigrationCollisionRepair 2026-10-05-11:29: this fork records the non-numeric repair
       identity and ORDER BY version is TEXT, so it sorts after every numeric slot. Keep it last. */
       MIXED_0065_REPAIR_VERSION,
@@ -2494,6 +2514,97 @@ FILE_SCOPE_LEASE_RELEASE_VERSION,
   });
 
   /*
+  FNXC:TaskSearchVectorScope 2026-11-01-21:10 (RUFU-312 step 6):
+  A board created before 0094 still generates BOTH task search vectors — the live `project.tasks` column and
+  the `archive.archived_tasks` mirror — from `id || title || description || comments::text`, so every comment
+  write re-deparses that card's whole comment history into a stored-generated column and re-keys its GIN
+  entries, and a column built with `english` silently matches nothing against the `simple` query path. The
+  ledger row alone cannot prove the shape, so the applier asks the live catalog. This test reproduces the
+  recorded pre-0094 shape with the real ALTERs (the pre-state is created by SQL the old schema actually
+  shipped, never by hand-stamping a catalog row) and proves the repair lands the shipped expression on both
+  tables and then stops running.
+  */
+  it("converges a pre-0094 task search vector on both task tables to the shipped expression", async () => {
+    ctx = await setupFreshDb();
+    await applySchemaBaseline(ctx.db, { pluginHooks: [] });
+
+    /*
+    The expectation is read from this fresh database BEFORE the rollback, so it is the shipped baseline's own
+    deparse rather than a hand-copied string that could drift from the DDL it is supposed to match.
+    */
+    const db = ctx.db;
+    const readExpr = async (nsp: string, tbl: string) => ((await db.execute(sql`
+      SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+       WHERE n.nspname = ${nsp} AND c.relname = ${tbl}
+         AND a.attname = 'search_vector' AND a.attgenerated = 's'
+    `)) as unknown as Array<{ expr: string | null }>)[0]?.expr ?? "";
+
+    const canonicalProject = await readExpr("project", "tasks");
+    const canonicalArchive = await readExpr("archive", "archived_tasks");
+    for (const canonical of [canonicalProject, canonicalArchive]) {
+      expect(canonical).toContain("to_tsvector('simple'");
+      expect(canonical).not.toContain("comments");
+      expect(canonical.toLowerCase()).not.toMatch(/coalesce\(\s*id\s*,/);
+    }
+
+    // Roll the database back to the shape 0094 exists to repair, and erase its ledger row.
+    await db.execute(sql.raw(`
+      DELETE FROM public.fusion_schema_migrations WHERE version = '0094';
+      ALTER TABLE project.tasks DROP COLUMN search_vector;
+      ALTER TABLE project.tasks ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (
+        to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))
+      ) STORED;
+      ALTER TABLE archive.archived_tasks DROP COLUMN search_vector;
+      ALTER TABLE archive.archived_tasks ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (
+        to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))
+      ) STORED;
+    `));
+    expect(await getAppliedMigrations(db)).not.toContain(TASK_SEARCH_VECTOR_SCOPE_VERSION);
+    expect(await readExpr("project", "tasks")).toContain("comments");
+    expect(await readExpr("archive", "archived_tasks")).toContain("comments");
+
+    // The stale live shape re-runs the migration even though the ledger says nothing about it.
+    await expect(applySchemaBaseline(db, { pluginHooks: [] })).resolves.toMatchObject({ applied: true });
+
+    expect(await readExpr("project", "tasks")).toBe(canonicalProject);
+    expect(await readExpr("archive", "archived_tasks")).toBe(canonicalArchive);
+    expect(await getAppliedMigrations(db)).toContain(TASK_SEARCH_VECTOR_SCOPE_VERSION);
+
+    /*
+    The half the ledger cannot cover: a board that RECORDED 0094 but still carries the old column — half-
+    migrated, or created by another code path — must be repaired too. The marker stays in place this time, so
+    the only thing that can trigger the repair is the live catalog read. Delete that read and this stage is the
+    one that goes red, which is why it is a stage of this test rather than a second test.
+    */
+    await db.execute(sql.raw(`
+      ALTER TABLE project.tasks DROP COLUMN search_vector;
+      ALTER TABLE project.tasks ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (
+        to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))
+      ) STORED;
+    `));
+    expect(await getAppliedMigrations(db)).toContain(TASK_SEARCH_VECTOR_SCOPE_VERSION);
+    expect(await readExpr("project", "tasks")).toContain("comments");
+    await expect(applySchemaBaseline(db, { pluginHooks: [] })).resolves.toMatchObject({ applied: true });
+    expect(await readExpr("project", "tasks")).toBe(canonicalProject);
+
+    /*
+    Steady state: the repair must not become a boot-time rewrite. A stored-generated column change rewrites the
+    whole table, so an applier that considered the repaired shape stale would rewrite `project.tasks` on every
+    start. The applier's own idempotency assertion is the guard, and the GIN the readers need survives the drop
+    and re-add because the migration replays the captured index definitions.
+    */
+    await expect(applySchemaBaseline(db, { pluginHooks: [] })).resolves.toMatchObject({ applied: false });
+    const indexed = (await db.execute(sql`
+      SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname IN ('project','archive') AND indexdef ILIKE '%search_vector%'
+    `)) as unknown as Array<{ n: number }>;
+    expect(indexed[0]?.n).toBeGreaterThanOrEqual(2);
+  });
+
+  /*
   FNXC:GitHubImportTranslate 2026-07-17-23:48:
   Existing deployments can contain a blank cache partition from pre-0016
   writes. Recreate that durable row, then apply only the new forward migration
@@ -2663,6 +2774,8 @@ FILE_SCOPE_LEASE_RELEASE_VERSION,
       OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
       REVIEW_LANE_LEDGER_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
+      TASK_LOG_ENTRIES_VERSION,
+      TASK_SEARCH_VECTOR_SCOPE_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);
@@ -2811,6 +2924,8 @@ FILE_SCOPE_LEASE_RELEASE_VERSION,
       OVERLAP_OWNER_FK_DEFERRABLE_REPAIR_VERSION,
       REVIEW_LANE_LEDGER_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
+      TASK_LOG_ENTRIES_VERSION,
+      TASK_SEARCH_VECTOR_SCOPE_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);
@@ -2851,7 +2966,15 @@ pgDescribe("schema-applier: VAL-SCHEMA-006 AUTOINCREMENT → identity with seque
         "incidents",
       ]),
     );
-    expect(rows.length).toBe(10);
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-21:30 (RUFU-312):
+    11, not 10: migration 0093 adds `project.task_log_entries.seq` as GENERATED ALWAYS AS IDENTITY. It has to
+    be an identity rather than a per-task counter because History ordering is user-visible — `timestamp` is
+    millisecond-granular and two entries written in the same millisecond visibly swap without a tie-breaker —
+    and a per-task counter needs a read-modify-write that reintroduces the row-level contention this table
+    exists to remove.
+    */
+    expect(rows.length).toBe(11);
   });
 
   it("sequence continuity: consecutive inserts produce increasing IDs without collision", async () => {

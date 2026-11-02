@@ -323,7 +323,17 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
     expect(Object.is(before, after)).toBe(false);
   });
 
-  it("still fetches the log column for the default deriving read (board parity)", async () => {
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-21:35 (RUFU-312 step 6):
+  This test asserted the opposite — that the default board read still fetches the `log` column, "board parity".
+  RUFU-312 removed that behavior deliberately: the append-heavy History moved to `project.task_log_entries`, so
+  a list read that projected `tasks.log` was dragging ~25 MB of JSONB (25 MB of 55 MB live bytes) across the
+  wire for badges that the write-time envelope already carries. The guarantee the test existed to protect is
+  unchanged — a board row must still report its log-derived figures — so the honest update asserts the new
+  mechanism rather than weakening the old one: the column is never selected, the card's History still resolves
+  from the side table, and the slim row's figure equals the figure the detail read recomputes from it.
+  */
+  it("never projects the log column on the default board read and still derives every badge", async () => {
     await seedInProgressCard("RUFU-9203");
     const store = h.store();
     const parsedRowKeys: string[][] = [];
@@ -338,8 +348,22 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
     expect(rows).toHaveLength(1);
     expect(parsedRowKeys.length).toBeGreaterThan(0);
     for (const keys of parsedRowKeys) {
-      expect(keys).toContain("log");
+      expect(keys).not.toContain("log");
     }
+
+    /*
+    Control: the History itself is still there — it just lives beside the row now. If this came back empty the
+    assertion above would be vacuous (a board that dropped the column AND the data would pass it). The detail
+    read merges `project.task_log_entries`, so recomputing from `detail.log` is what a full-log read would have
+    answered, which is the figure the envelope has to stand in for. (`detail.timedExecutionMs` itself is a
+    slim-list field and stays undefined on a detail read — computing it is the control, not the comparison.)
+    */
+    const detail = await store.getTask("RUFU-9203");
+    expect(detail!.log.length).toBeGreaterThan(0);
+    // And the badge the column used to feed is reported identically from the envelope.
+    expect(rows[0]!.timedExecutionMs).toBeDefined();
+    expect(rows[0]!.timedExecutionMs).toEqual(store.computeTimedExecutionMs(detail!.log));
+    expect(rows[0]!.retrySummary).toBeDefined();
   });
 
   /*
@@ -401,6 +425,14 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
   Weakening the assertion would be the wrong fix — the guarantee it existed to protect ("a board badge
   cannot be switched off by a bandwidth option") is now asserted directly, by comparing the derived
   fields against a read that did load the log.
+
+  FNXC:TaskLogSideTable 2026-11-01-21:40 (RUFU-312 step 6):
+  The control read moved twice over. It began as a second `listTasks` call whose projection carried the column;
+  after RUFU-312 no list read selects `tasks.log` at all, so that control described a read shape that no longer
+  exists. The two claims this test actually owns survive intact and are now asserted directly: (a) the option
+  changes the projection and nothing a board can observe — compared against the default deriving read, and
+  (b) each log-derived figure still equals what a read holding the History would have answered — recomputed
+  from the merged `getTask` log, which is the only remaining full-log reader.
   */
   it("honours excludeLog while deriving AND keeps every log-derived figure it protects", async () => {
     await seedInProgressCard("RUFU-9208");
@@ -412,15 +444,11 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
       return parseOriginal(pgRow);
     };
 
-    // Control first: what the same card reports when the log IS loaded.
-    const withLog = await store.listTasks({ column: "in-progress", slim: true, startupMemo: false });
-    expect(withLog).toHaveLength(1);
-    expect(parsedRowKeys.length).toBeGreaterThan(0);
-    for (const keys of parsedRowKeys) {
-      expect(keys).toContain("log");
-    }
-
+    // Control 1: the same board read without the bandwidth option.
+    const defaultRows = await store.listTasks({ column: "in-progress", slim: true, startupMemo: false });
+    expect(defaultRows).toHaveLength(1);
     parsedRowKeys.length = 0;
+
     const rows = await store.listTasks({
       column: "in-progress",
       slim: true,
@@ -429,13 +457,20 @@ pgTest("listTasks derive opt-out (PostgreSQL)", () => {
     });
 
     expect(rows).toHaveLength(1);
-    // The projection is real now: the column was never selected, yet the figure it produced survives.
+    // The projection is real: the column was never selected, yet the figure it produced survives.
+    expect(parsedRowKeys.length).toBeGreaterThan(0);
     for (const keys of parsedRowKeys) {
       expect(keys).not.toContain("log");
     }
+    // Control 1 in force: the option is a bandwidth switch, not a badge switch.
+    expect(rows[0]!.timedExecutionMs).toEqual(defaultRows[0]!.timedExecutionMs);
+    expect(rows[0]!.stalledReview).toEqual(defaultRows[0]!.stalledReview);
+
+    // Control 2: and it still equals the answer a read holding the History would have given.
+    const detail = await store.getTask("RUFU-9208");
+    expect(detail!.log.length).toBeGreaterThan(0);
     expect(rows[0]!.timedExecutionMs).toBeDefined();
-    expect(rows[0]!.timedExecutionMs).toEqual(withLog[0]!.timedExecutionMs);
-    expect(rows[0]!.stalledReview).toEqual(withLog[0]!.stalledReview);
+    expect(rows[0]!.timedExecutionMs).toEqual(store.computeTimedExecutionMs(detail!.log));
   });
 
   it("keeps archived cards off the board for an excludeLog read", async () => {

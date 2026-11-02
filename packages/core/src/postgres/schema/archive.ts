@@ -47,11 +47,19 @@ export const archivedTasks = archiveSchema.table("archived_tasks", {
   external-content table (archived_tasks_fts). GENERATED ALWAYS column kept in
   sync automatically on write (VAL-SEARCH-005 archive search parity). Uses the
   'simple' text-search config for code-like tokenization parity with FTS5.
-  Indexes id, title, description, and comments (cast to text) — the same
-  columns the FTS5 archive table indexed.
+
+  FNXC:TaskSearchVectorScope 2026-11-01-20:30 (RUFU-312 step 6):
+  It used to index `id` and `comments::text` as well, which is what the FTS5 archive table did — and the
+  archive mirror is now deliberately narrowed to title + description so BOTH task tables answer the same
+  dictionary over the same sources. A query path that reads one table's vector as title/description text and
+  the other's as "everything including the serialized comment document" is the parity defect in another
+  costume: `searchArchivedTasks` binds `FTS_TS_CONFIG` ('simple'), so the column must be built with it, and
+  `buildArchiveSearchPredicate` ORs a literal ILIKE arm over id/title/description/comments so dropping the
+  jsonb document from the vector costs no row membership. The fresh-install baseline and migration 0094 carry
+  the identical expression for both tables; this declaration must not diverge from either.
   */
   searchVector: tsvector("search_vector").generatedAlwaysAs(
-    sql`to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))`,
+    sql`to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))`,
   ),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.id] }),

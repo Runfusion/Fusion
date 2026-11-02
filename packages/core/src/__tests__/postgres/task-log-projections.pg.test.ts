@@ -33,8 +33,10 @@ import {
 } from "../../__test-utils__/pg-test-harness.js";
 import {
   deriveTaskLogProjections,
+  parseTaskLogRecent,
   LOG_RECENT_INLINE_BYTE_BUDGET,
 } from "../../task-store/task-log-projections.js";
+import { pickTaskLogEnvelope } from "../../task-store/task-log-entries.js";
 import { readLiveTaskRows, TASK_READ_PROJECTION, TASK_SLIM_PROJECTION } from "../../task-store/async/async-persistence.js";
 import { countRecentIdenticalStallEntries } from "../../tasks/in-review-stall.js";
 import { tasks as tasksTable } from "../../postgres/schema/project.js";
@@ -215,11 +217,18 @@ pgTest("the SQL backfill and the TypeScript write seam derive the same value", (
   it("backfills existing rows to exactly what the write seam would have written", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "backfill target", title: "Backfill target", column: "todo" });
-    await store.logEntry(task.id, "[timing] pre-migration entry in 25ms", "body");
     const sql = h.adminSql();
-    // Simulate a database that predates the columns: blank them, then run the migration's own backfill.
-    await sql`UPDATE project.tasks SET timing_total_ms = NULL, log_recent = NULL WHERE id = ${task.id}`;
-    const live = await store.getTask(task.id);
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-20:20 (RUFU-312):
+    The fixture used to seed this row with `store.logEntry`, which was the pre-Step-1 way a row acquired
+    history. After RUFU-312 Step 1 a log append no longer writes the `log` column at all, so that call would
+    leave the column holding only its creation entry and the backfill — correctly — would derive from it.
+    The claim under test is about a database that PREDATES the columns, so the fixture now plants the legacy
+    array the way such a row actually held it: in the column itself.
+    */
+    const legacy = [{ timestamp: "2026-10-10T00:00:00.000Z", action: "[timing] pre-migration entry in 25ms", outcome: "body" }];
+    // Simulate a database that predates the columns: plant the history, blank the derived pair, run the backfill.
+    await sql`UPDATE project.tasks SET log = ${jsonParam(legacy)}::jsonb, timing_total_ms = NULL, log_recent = NULL WHERE id = ${task.id}`;
     /*
     FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): the migration's OWN backfill block is executed
     here, extracted from the shipped .sql, so this proves the statement that runs on a real upgrade and
@@ -232,7 +241,7 @@ pgTest("the SQL backfill and the TypeScript write seam derive the same value", (
     const rows = (await sql`
       SELECT timing_total_ms, log_recent FROM project.tasks WHERE id = ${task.id}
     `) as unknown as Array<{ timing_total_ms: number; log_recent: unknown }>;
-    const expected = deriveTaskLogProjections(live.log);
+    const expected = deriveTaskLogProjections(legacy);
     expect(Number(rows[0]!.timing_total_ms)).toBe(expected.timingTotalMs);
     expect(rows[0]!.log_recent).toEqual(expected.logRecent);
   });
@@ -433,20 +442,46 @@ pgTest("every log-writing seam writes the log together with its projections", ()
   const readColumns = async (id: string) => {
     const sql = h.adminSql();
     const rows = (await sql`
-      SELECT timing_total_ms, log_recent FROM project.tasks WHERE id = ${id}
-    `) as unknown as Array<{ timing_total_ms: number | null; log_recent: unknown }>;
+      SELECT timing_total_ms, log_recent, log_projection_at FROM project.tasks WHERE id = ${id}
+    `) as unknown as Array<{ timing_total_ms: number | null; log_recent: unknown; log_projection_at: string | null }>;
     return rows[0]!;
   };
 
-  it("stays paired through the targeted-UPDATE append seam", async () => {
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-20:22 (RUFU-312):
+  The pairing invariant survives Step 1, but its subject moved. A pure append no longer authors the row's own
+  derived pair — it authors the rollup — so the invariant is now asserted on the ANSWER a reader receives:
+  whichever of the two authors is newer must agree with what the merged History derives to. Asserting the row
+  columns after an append would test a write that deliberately stopped happening.
+  */
+  const readRollup = async (id: string) => {
+    const sql = h.adminSql();
+    const rows = (await sql`
+      SELECT timing_total_ms, log_recent, entry_count, computed_at FROM project.task_log_rollup WHERE task_id = ${id}
+    `) as unknown as Array<{ timing_total_ms: number | null; log_recent: unknown; entry_count: number; computed_at: string }>;
+    return rows[0] ?? null;
+  };
+
+  it("stays paired when an append authors the rollup instead of the row", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "log append pairing", title: "Log append pairing", column: "todo" });
     await store.logEntry(task.id, "[timing] appended step in 12ms", "outcome body");
     const live = await store.getTask(task.id);
     const row = await readColumns(task.id);
+    const rollup = await readRollup(task.id);
     const expected = deriveTaskLogProjections(live.log);
-    expect(Number(row.timing_total_ms)).toBe(expected.timingTotalMs);
-    expect(row.log_recent).toEqual(expected.logRecent);
+    // The append reached the side table and the rollup carries the envelope the merged log derives to.
+    expect(Number(rollup?.timing_total_ms)).toBe(expected.timingTotalMs);
+    expect(rollup?.log_recent).toEqual(expected.logRecent);
+    // And the reader's answer, chosen by author freshness across the two authorities, is that same value.
+    const envelope = pickTaskLogEnvelope({
+      rollup: rollup ? { entryCount: Number(rollup.entry_count), timingTotalMs: Number(rollup.timing_total_ms), logRecent: rollup.log_recent as never, computedAt: rollup.computed_at } : undefined,
+      legacyProjectionAt: row.log_projection_at,
+      legacyTimingTotalMs: typeof row.timing_total_ms === "number" ? row.timing_total_ms : null,
+      legacyLogRecent: parseTaskLogRecent(row.log_recent),
+    });
+    expect(envelope.timingTotalMs).toBe(expected.timingTotalMs);
+    expect(envelope.logRecent).toEqual(expected.logRecent);
   });
 
   it("stays paired through a wholesale `task.log = []` rewrite", async () => {

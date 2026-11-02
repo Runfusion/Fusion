@@ -39,7 +39,7 @@
  *   PostgreSQL integration tests consume. They target the stable
  *   `AsyncDataLayer` interface (U4), not the underlying driver.
  */
-import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
 import type { ArchivedTaskEntry } from "../types.js";
@@ -50,7 +50,7 @@ read-only archive browser with its own independent navigation, so its two orders
 than borrowing the deleted board-wide mode type.
 */
 export type ArchiveSortMode = "completion-date-desc" | "task-id-desc";
-import { buildTsqueryFragment, sanitizeSearchTokens } from "../task-store/async/async-search.js";
+import { buildArchiveSearchPredicate, buildTsqueryFragment, isLiteralOnlySearchQuery } from "../task-store/async/async-search.js";
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
@@ -318,33 +318,25 @@ export async function searchArchivedTasks(
   const trimmed = query?.trim();
   if (!trimmed) return [];
 
-  const tokens = sanitizeSearchTokens(trimmed);
-  if (tokens.length === 0) return [];
-
-  const tsquery = buildTsqueryFragment(tokens.join(" "));
   /*
-  FNXC:ArchiveSearch 2026-07-14-19:02:
-  Normal archive queries use search_vector @@ to_tsquery so PostgreSQL can use idxArchivedTasksSearchVector. If sanitization leaves only tsquery operators, retain the escaped ILIKE safety fallback instead of throwing or broadening the query.
+  FNXC:TaskSearchVectorScope 2026-11-01-20:40 (RUFU-312 step 6):
+  Archived-card membership is `buildArchiveSearchPredicate`, the same rule the live board applies: the GIN arm
+  and a literal substring arm OR'd together for a lexical query, the literal arm alone once the query carries
+  punctuation. It replaced an FTS-only predicate whose sole ILIKE fallback fired when the tsquery came out
+  empty — a shape that only worked while the archive vector still indexed the serialized comment document and
+  the task id, the two sources migration 0094 drops from it. Ranking stays with the lexical arm: a literal
+  query has no tsquery to rank by, exactly as on the live path.
   */
-  const where = tsquery
-    ? sql`${schema.archive.archivedTasks.searchVector} @@ ${tsquery}`
-    : or(...tokens.map((token) => {
-      const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
-      return or(
-        ilike(archivedTaskColumns.id, pattern),
-        ilike(archivedTaskColumns.title, pattern),
-        ilike(archivedTaskColumns.description, pattern),
-        ilike(sql<unknown>`${archivedTaskColumns.comments}::text`, pattern),
-      ) ?? sql`false`;
-    }));
+  const where = buildArchiveSearchPredicate(trimmed);
   if (!where) return [];
+  const rankTsquery = isLiteralOnlySearchQuery(trimmed) ? undefined : buildTsqueryFragment(trimmed);
 
   const baseQuery = handle
     .select({ taskJson: archivedTaskColumns.taskJson })
     .from(schema.archive.archivedTasks)
     .where(and(where, archiveProjectScope(projectId)))
     .orderBy(
-      ...(tsquery ? [sql`ts_rank(${schema.archive.archivedTasks.searchVector}, ${tsquery}) DESC`] : []),
+      ...(rankTsquery ? [sql`ts_rank(${schema.archive.archivedTasks.searchVector}, ${rankTsquery}) DESC`] : []),
       desc(archivedTaskColumns.archivedAt),
     );
   const rows = limit === undefined

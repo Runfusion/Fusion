@@ -123,11 +123,11 @@ const SEARCHABLE_COLUMN_REFS: SQL[] = [
   sql`${schema.project.tasks.comments}::text`,
 ];
 
-function buildLiteralSubstringPredicate(query: string): SQL | undefined {
+function buildLiteralSubstringPredicate(query: string, columns: readonly SQL[] = SEARCHABLE_COLUMN_REFS): SQL | undefined {
   const literal = query.trim();
   if (!literal) return undefined;
   const pattern = `%${literal.replace(/[\\%_]/g, "\\$&")}%`;
-  return or(...SEARCHABLE_COLUMN_REFS.map(
+  return or(...columns.map(
     (column) => sql`${column} ILIKE ${pattern} ESCAPE '\\'`,
   )) as SQL;
 }
@@ -327,6 +327,20 @@ export function buildTsqueryFragment(query: string): SQL | undefined {
 }
 
 /**
+ * FNXC:TaskStoreSearch 2026-11-01-19:24 (RUFU-312 step 6):
+ * Whether a query must be answered as a LITERAL substring rather than as a lexical (tsvector) query.
+ * Punctuation carries user intent — a task id, a file extension, a path — and tsvector tokenization erases it,
+ * so a punctuation-bearing query may only match rows that literally contain what the operator typed.
+ * This is the ONE predicate for that decision: `buildTaskSearchPredicate` (membership), `searchTasksTsvector`
+ * (whether a rank order exists), and `searchTasksImpl` (whether the cold-index LIKE fallback may run) all
+ * read it, because a fallback that tokenizes a punctuation query re-admits exactly the rows the literal rule
+ * exists to exclude.
+ */
+export function isLiteralOnlySearchQuery(query: string): boolean {
+  return /[^\p{L}\p{N}\s]/u.test(query?.trim() ?? "");
+}
+
+/**
  * FNXC:TaskStoreSearch 2026-09-11-22:33:
  * Task membership always includes a case-insensitive literal substring match across ID, title, description, and comments. Lexical queries additionally retain GIN-backed OR/prefix recall, while punctuation-bearing queries such as `.txt`, `%`, and `_` stay literal so tokenization cannot admit rows that omit characters the user typed; LIKE wildcards are escaped before binding.
  */
@@ -336,11 +350,44 @@ export function buildTaskSearchPredicate(query: string): SQL | undefined {
 
   // Punctuation carries user intent (task IDs, paths, extensions). Do not let
   // tsvector tokenization erase it and broaden membership.
-  if (/[^\p{L}\p{N}\s]/u.test(query.trim())) return literalPredicate;
+  if (isLiteralOnlySearchQuery(query)) return literalPredicate;
 
   const tsquery = buildTsqueryFragment(query);
   return tsquery
     ? or(sql`${schema.project.tasks.searchVector} @@ ${tsquery}`, literalPredicate) as SQL
+    : literalPredicate;
+}
+
+/**
+ * FNXC:TaskSearchVectorScope 2026-11-01-20:30 (RUFU-312 step 6):
+ * The archive mirror's searchable columns. Same four texts the live board searches, because an archived card
+ * is the same card read from cold storage — `archive.archived_tasks.search_vector` narrowed to title +
+ * description with its live twin, and this literal arm is what keeps id and comment text findable there.
+ */
+const ARCHIVE_SEARCHABLE_COLUMN_REFS: SQL[] = [
+  sql`${schema.archive.archivedTasks.id}`,
+  sql`${schema.archive.archivedTasks.title}`,
+  sql`${schema.archive.archivedTasks.description}`,
+  sql`${schema.archive.archivedTasks.comments}::text`,
+];
+
+/**
+ * FNXC:TaskSearchVectorScope 2026-11-01-20:30 (RUFU-312 step 6):
+ * Archived-card membership, built by the SAME rules as `buildTaskSearchPredicate`: lexical queries get the
+ * GIN-backed OR/prefix arm plus the literal substring arm, and a punctuation-bearing query gets the literal
+ * arm alone. One rule for both task tables is the point — an archived card that answers a different membership
+ * question than a live one makes "where is my card?" depend on whether it was ever archived, and the archive
+ * path's old shape (tsquery over a vector that also indexed the comment document, ILIKE only when the tsquery
+ * came out empty) had exactly that divergence.
+ */
+export function buildArchiveSearchPredicate(query: string): SQL | undefined {
+  const literalPredicate = buildLiteralSubstringPredicate(query, ARCHIVE_SEARCHABLE_COLUMN_REFS);
+  if (!literalPredicate) return undefined;
+  if (isLiteralOnlySearchQuery(query)) return literalPredicate;
+
+  const tsquery = buildTsqueryFragment(query);
+  return tsquery
+    ? or(sql`${schema.archive.archivedTasks.searchVector} @@ ${tsquery}`, literalPredicate) as SQL
     : literalPredicate;
 }
 
@@ -379,7 +426,7 @@ export async function searchTasksTsvector(
     searchPredicate,
     liveSearchPredicate(includeArchived, options?.projectId, options?.archivedColumns),
   ];
-  const tsquery = /[^\p{L}\p{N}\s]/u.test(query.trim()) ? undefined : buildTsqueryFragment(query);
+  const tsquery = isLiteralOnlySearchQuery(query) ? undefined : buildTsqueryFragment(query);
   const rankOrder = tsquery
     ? sql`ts_rank(${schema.project.tasks.searchVector}, ${tsquery}) DESC`
     : sql`length(${schema.project.tasks.id}) * 0`;

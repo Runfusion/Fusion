@@ -698,6 +698,23 @@ export {
   resolvePlanningPromptFromIr,
   resolveTaskSeamPrompt,
   resolveTaskPlanningPrompt,
+  /*
+  FNXC:SweepSelectionBatching 2026-11-01-19:45 (RUFU-312 step 3):
+  `prefetchWorkflowSelections` is now reached at RUNTIME from a gate-lane module: `scheduler.ts` batch-reads the
+  workflow selections of its candidate set once per scheduling pass instead of once per card, and
+  `scheduler-workflow-cutover.test.ts` is in the `engine-core` gate include list. A value export missing here
+  fails as `prefetchWorkflowSelections is not a function` — the project-level alias swaps this barrel in for
+  `@fusion/core`, and a type-only symbol would have been erased instead. The remaining symbols below complete
+  the full barrel's resolver block so the two barrels keep the near-identity their header asks for.
+  */
+  prefetchWorkflowSelections,
+  prefetchWorkflowIrs,
+  EpochedWorkflowIrCache,
+  EpochedWorkflowSelectionCache,
+  type WorkflowSelectionCache,
+  type WorkflowSelectionReadTally,
+  type WorkflowDefinitionReadTally,
+  type WorkflowSelection,
   type WorkflowIrResolverStore,
 } from "./workflows/workflow-ir-resolver.js";
 export {

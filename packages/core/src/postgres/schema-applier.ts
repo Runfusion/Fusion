@@ -122,7 +122,9 @@ ceiling stays 0092 because that is still the highest bundled file — the rule i
 not "highest upstream number", and a number naming two migrations remains the only illegal shape.
 */
 
-export const SCHEMA_BASELINE_VERSION = "0092";
+/* FNXC:TaskSearchVectorScope 2026-11-01-22:32 (RUFU-312): the ceiling tracks the highest bundled file (0094),
+ * so no boot can call the database that just received the narrowed search vector "newer than this binary". */
+export const SCHEMA_BASELINE_VERSION = "0094";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -373,6 +375,24 @@ export const RECOVERY_DISPOSITION_VERSION = "0088";
  * implement FN-9529, and an unshipped gap is harmless while a reused number is fatal.
  */
 export const TASK_LOG_PROJECTIONS_VERSION = "0092";
+
+/*
+FNXC:TaskLogSideTable 2026-11-01-17:28 (RUFU-312):
+RUFU-312 step 1: `project.task_log_entries` (the append-only activity log), its envelope rollup, the
+per-project backfill marker, and `tasks.log_projection_at`. The marker value and the .sql basename stay
+equal, and the file is registered below rather than left to a scan — an unwired `.sql` in `migrations/`
+silently never runs.
+*/
+export const TASK_LOG_ENTRIES_VERSION = "0093";
+
+/*
+FNXC:TaskSearchVectorScope 2026-11-01-22:32 (RUFU-312):
+RUFU-312 step 4: `project.tasks.search_vector` is rebuilt from title + description under the `simple`
+configuration, dropping the `id` hex lexemes and the `comments::text` document whose every write used to
+recompute the vector. The marker value and the .sql basename stay equal, and the file is registered below
+rather than left to a scan — an unwired `.sql` in `migrations/` silently never runs.
+*/
+export const TASK_SEARCH_VECTOR_SCOPE_VERSION = "0094";
 
 export const FILE_SCOPE_LEASE_RELEASE_VERSION = "0089";
 
@@ -696,6 +716,10 @@ than bundled-unwired, because the wiring-integrity guard exists precisely to mak
 */
 /* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): explicit registration; see TASK_LOG_PROJECTIONS_VERSION. */
 const TASK_LOG_PROJECTIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0092_rufu_615_task_log_projections.sql");
+/* FNXC:TaskLogSideTable 2026-11-01-17:28 (RUFU-312): explicit registration; see TASK_LOG_ENTRIES_VERSION. */
+const TASK_LOG_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0093_rufu_312_task_log_entries.sql");
+/* FNXC:TaskSearchVectorScope 2026-11-01-22:32 (RUFU-312): explicit registration; see TASK_SEARCH_VECTOR_SCOPE_VERSION. */
+const TASK_SEARCH_VECTOR_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0094_rufu_312_search_vector_scope.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -857,6 +881,8 @@ export async function applySchemaBaseline(
     const recoveryDispositionAlreadyApplied = applied.includes(RECOVERY_DISPOSITION_VERSION);
     const fileScopeLeaseReleaseAlreadyApplied = applied.includes(FILE_SCOPE_LEASE_RELEASE_VERSION);
     const taskLogProjectionsAlreadyApplied = applied.includes(TASK_LOG_PROJECTIONS_VERSION);
+    const taskLogEntriesAlreadyApplied = applied.includes(TASK_LOG_ENTRIES_VERSION);
+    const searchVectorScopeAlreadyApplied = applied.includes(TASK_SEARCH_VECTOR_SCOPE_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -2116,8 +2142,26 @@ export async function applySchemaBaseline(
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${RECOVERY_DISPOSITION_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
+    /*
+    FNXC:AbsentRelationProbe 2026-11-01-19:20 (RUFU-312 step 6, measured red at base 7a9981a71f):
+    This was the one migration block in the applier that violated the absent-relation invariant the
+    VAL-SCHEMA-008 drift probes exist to pin: `EXISTS (… information_schema.columns …)` answers FALSE for a
+    database that carries no product relations at all, so `!exists` read as drift and the block re-ran
+    `ALTER TABLE project.tasks …` against a table that does not exist — a 42P01 throw inside
+    `applySchemaBaseline`, i.e. the boot crash class RUFU-239 recorded. Its three neighbours (PR readiness,
+    recovery disposition, task-log projections) already gate on `to_regclass(anchor) IS NOT NULL` first, so the
+    repair is that same pattern, not a new one. Drift detection is unchanged: an existing `project.tasks` that
+    lacks the column still re-applies the idempotent DDL; only an anchorless database — which by definition has
+    nothing to drift — now answers "nothing to do".
+    */
     const fileScopeLeaseReleaseExists = ((await tx.execute(sql`
-      SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'file_scope_lease_release') AS present
+      SELECT (
+        to_regclass('project.tasks') IS NULL
+        OR EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'project' AND table_name = 'tasks' AND column_name = 'file_scope_lease_release'
+        )
+      ) AS present
     `)) as unknown as Array<{ present: boolean }>)[0]?.present === true;
     if (!fileScopeLeaseReleaseAlreadyApplied || !fileScopeLeaseReleaseExists) {
       const migrationSql = await readFile(FILE_SCOPE_LEASE_RELEASE_MIGRATION_PATH, "utf8");
@@ -2151,6 +2195,70 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(TASK_LOG_PROJECTIONS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_LOG_PROJECTIONS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-17:28 (RUFU-312):
+    The append destination and its backfill must exist before any writer may route a log entry away from
+    the task row, which is why the copy rides the migration instead of a background sweep: the legacy
+    column is the only complete copy of history until it finishes. The DDL is IF-NOT-EXIST and both copy
+    loops skip a task that already has rows, so a re-run after a partial apply is a no-op. The live-table
+    probe matches the migrations above it: a database that recorded this slot under another migration
+    re-runs the DDL instead of handing the write path a table that does not exist.
+    */
+    const taskLogEntriesMissing = ((await tx.execute(sql`
+      SELECT (
+        to_regclass('project.tasks') IS NOT NULL
+        AND to_regclass('project.task_log_entries') IS NULL
+      ) AS missing
+    `)) as unknown as Array<{ missing: boolean }>)[0]?.missing ?? false;
+    if (!taskLogEntriesAlreadyApplied || taskLogEntriesMissing) {
+      const migrationSql = await readFile(TASK_LOG_ENTRIES_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_LOG_ENTRIES_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:TaskSearchVectorScope 2026-11-01-22:32 (RUFU-312):
+    The narrowed vector is a read-path correctness change as much as a write-path cost change: a board whose
+    column was built from a different dictionary, or that still indexes comment bodies, answers searches
+    differently from the code that queries it. The probe therefore asks the live question — is the stored-
+    generated column's deparsed expression still non-canonical? — instead of trusting the ledger row, because
+    a database that recorded the slot but carries an old column (half-migrated, or created by another code
+    path) must be repaired. The predicate is the same one the migration's own guard uses, so the two cannot
+    disagree about what canonical means, and a canonical database pays one catalog read and no rewrite. The
+    read is pg_catalog because `information_schema.generated_columns` does not exist on the PostgreSQL 16
+    build this project runs — a probe that raises here fails every boot and every pg test. An absent probe row
+    reads as NOT stale: a database with no stored-generated column is handled by the ledger check above (which
+    is what creates the column once), and reading absence as staleness would re-run the migration on every boot,
+    keep `applied` true forever, and make every idempotency assertion in the schema tests fail.
+    */
+    /*
+    FNXC:TaskSearchVectorScope 2026-11-01-20:35 (RUFU-312 step 6):
+    The probe now asks the live question of BOTH task tables — `project.tasks` and the `archive.archived_tasks`
+    mirror — because the migration enforces one expression over both, and a probe that watches only the live
+    table would let a half-migrated database keep a mirror whose vector indexes different text under the same
+    query path. The stale test is the same disjunction per table, so the two tables and this file cannot
+    disagree about what canonical means; the UNION ALL shape is deliberate — a row per table, and any stale row
+    (or a table whose column is missing entirely, which the ledger check above covers) re-runs the file.
+    */
+    const searchVectorScopeStale = ((await tx.execute(sql`
+      SELECT bool_or(
+        position('comments' in pg_get_expr(d.adbin, d.adrelid)) > 0
+        OR position('COALESCE(id' in pg_get_expr(d.adbin, d.adrelid)) > 0
+        OR position('coalesce(id' in pg_get_expr(d.adbin, d.adrelid)) > 0
+        OR pg_get_expr(d.adbin, d.adrelid) ILIKE '%english%'
+      ) AS stale
+        FROM (VALUES ('project', 'tasks'), ('archive', 'archived_tasks')) AS v(nsp, tbl)
+        JOIN pg_class c ON c.relname = v.tbl
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = v.nsp
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'search_vector' AND a.attgenerated = 's'
+        LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    `)) as unknown as Array<{ stale: boolean | null } | undefined>)[0]?.stale ?? false;
+    if (!searchVectorScopeAlreadyApplied || searchVectorScopeStale) {
+      const migrationSql = await readFile(TASK_SEARCH_VECTOR_SCOPE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_SEARCH_VECTOR_SCOPE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

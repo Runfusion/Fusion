@@ -1,5 +1,7 @@
 import { emitBoundedRunAudit } from "../run-audit/emit-bounded-run-audit.js";
 import { withTaskLogProjections } from "./task-log-projections.js";
+/* FNXC:TaskLogSideTable 2026-11-01-18:55 (RUFU-312): the read boundary merges the side-table entries. */
+import { appendTaskLogEntries, hydrateTaskLogEntries, readTaskLogEntries, replaceTaskLogEntries, taskLogProjectId } from "./task-log-entries.js";
 /* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 import { createLogger } from "../process/logger.js";
 import { resolveLegacyStampReviewColumns } from "./task-store-helpers.js";
@@ -140,7 +142,23 @@ export async function readTaskJsonImpl(store: TaskStore, dir: string): Promise<T
       if (pgRow.deletedAt) {
         throw new TaskDeletedError(id, pgRow.deletedAt as string);
       }
-      return store.rowToTask(store.pgRowToTaskRow(pgRow));
+      const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
+      /*
+      FNXC:TaskLogSideTable 2026-11-01-18:55 (RUFU-312):
+      `readTaskJson` is a misnomer worth knowing before you trust it: this arm answers from the DATABASE row
+      and the file is only the fallback when no row exists. So it is a read boundary, not a writer's private
+      scratch read, and a consumer that asks for a card must not find History shorter than the card's own
+      mirror shows — the side table is merged here for exactly the reason `getTask` merges it. The cost is one
+      PK-scoped read of ≤ retention entries, which replaces (does not add to) the `log` column's TOAST fetch
+      that this same row read already paid before the cutover.
+      */
+      task.log = await hydrateTaskLogEntries({
+        client: layer.db,
+        projectId: taskLogProjectId(layer),
+        taskId: id,
+        legacyLog: task.log ?? [],
+      });
+      return task;
     }
     const filePath = join(dir, "task.json");
     const raw = await readFile(filePath, "utf-8");
@@ -515,7 +533,18 @@ export async function applyInReviewStallObservationFencedImpl(
         isNull(schema.project.tasks.deletedAt),
       )).returning();
       if (!updatedRow) return { applied: false, reason: "task-missing" };
-      return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)) };
+      /*
+      FNXC:TaskLogSideTable 2026-11-01-20:10 (RUFU-312):
+      A compound writer keeps its own state write and its row bump — that bump is real state change, which is
+      exactly why RUFU-615's slim read was allowed to trust the row envelope here — but the entry it authors
+      now lands in the side table inside the SAME transaction, so the row stops being the log's store of
+      record. The returned task carries the merged History because it feeds the `task.json` mirror and the
+      `task:updated` event: the two surfaces a reader can see without another store read.
+      */
+      const observedTask = store.rowToTask(store.pgRowToTaskRow(updatedRow));
+      await appendTaskLogEntries({ client: tx, projectId: taskLogProjectId(layer), taskId: id, entries: [patch.logEntry], legacyLog: log });
+      observedTask.log = await readTaskLogEntries(tx, taskLogProjectId(layer), id);
+      return { applied: true, task: observedTask };
     });
 
     if (outcome.applied) {
@@ -655,7 +684,17 @@ export async function publishReviewRemediationFencedImpl(
         isNull(schema.project.tasks.deletedAt),
       )).returning();
       if (!updatedRow) return { applied: false, reason: "task-missing" };
-      return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)) };
+      /*
+      FNXC:TaskLogSideTable 2026-11-01-20:12 (RUFU-312): this seam assigns `values.log` outright, which means
+      "this is the History now". The side rows are replaced with that same array in the same transaction, so
+      the merged read, the written array, and the derived envelope cannot disagree about what the History is.
+      */
+      const remediationTask = store.rowToTask(store.pgRowToTaskRow(updatedRow));
+      if (values.log) {
+        await replaceTaskLogEntries({ client: tx, projectId: taskLogProjectId(layer), taskId: id, entries: values.log });
+        remediationTask.log = values.log;
+      }
+      return { applied: true, task: remediationTask };
     });
 
     if (outcome.applied) {
@@ -799,7 +838,13 @@ export async function updateWorkflowStepResultsWithLogFencedImpl(
         isNull(schema.project.tasks.deletedAt),
       )).returning();
       if (!updatedRow) return { applied: false, reason: "task-missing" };
-      return { applied: true, task: store.rowToTask(store.pgRowToTaskRow(updatedRow)) };
+      /* FNXC:TaskLogSideTable 2026-11-01-20:13 (RUFU-312): same split as the stall-observation seam — the
+      step-result write stays on the row, the new entry goes to the side table in this transaction, and the
+      returned task carries the merged History for the mirror and the event. */
+      const steppedTask = store.rowToTask(store.pgRowToTaskRow(updatedRow));
+      await appendTaskLogEntries({ client: tx, projectId: taskLogProjectId(layer), taskId: id, entries: [patch.logEntry], legacyLog: log });
+      steppedTask.log = await readTaskLogEntries(tx, taskLogProjectId(layer), id);
+      return { applied: true, task: steppedTask };
     });
 
     if (outcome.applied) {

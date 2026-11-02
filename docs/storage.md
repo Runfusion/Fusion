@@ -564,9 +564,36 @@ FN-509 removed task priority levels. An ordinary queue is strictly arrival-order
 
 **Single maintainer.** `packages/core/src/task-store/task-log-projections.ts` holds the derivation. It is called from the `TASK_COLUMN_DESCRIPTORS` entries used by every full-row write, and through `withTaskLogProjections()` from every targeted `UPDATE` that writes `log` while bypassing the descriptors. `project.fusion_task_log_projections()` in migration 0092 is a transliteration of the same module, used ONLY by the one-time backfill — a read never calls it, because reading is exactly what costs too much.
 
+<!--
+FNXC:TaskLogSideTable 2026-11-01-22:05 (RUFU-312 step 7):
+"Single maintainer" gained a second author when History appends moved to `project.task_log_entries`: a pure
+append no longer touches `tasks` at all, so it authors its envelope on the rollup row instead. The pairing
+invariant below still holds for every statement that writes the `log` COLUMN; what changed is that most log
+writes are no longer statements against that column. `tasks.log_projection_at` / the rollup's own stamp are
+what let a reader pick the newer of the two envelopes.
+-->
+
 **The invariant.** *No SQL statement may write `log` without writing both derived columns in the same statement.* A half-written pair is a card whose badge disagrees with the history it came from, and no runtime check can tell a fresh envelope from a stale one. `packages/core/src/task-store/__tests__/task-log-projection-pairing.test.ts` enforces it by scanning `packages/core/src` and `packages/engine/src` for `.update(tasks)…set(…)` statements that name `log`, including the `.set(values)` shape whose log assignment is conditional. The guard found five unwrapped writers the first time it ran.
 
+<!--
+FNXC:TaskLogSideTable 2026-11-01-22:05 (RUFU-312 step 7):
+This paragraph described the pre-RUFU-312 read shapes and is superseded: `log` is no longer in ANY list
+projection, so `excludeLog` is now a no-op in the opposite direction (nothing to exclude) and `slim` cannot
+starve a sweep of a column no reader selects. The rows in the benchmark table below stay as the measurement of
+the shapes that existed when they were taken; the current shape is in the RUFU-312 section that follows.
+-->
+
 **`excludeLog` semantics.** `listTasks({ excludeLog: true })` used to be a documented no-op while deriving, because deriving meant reading. It is now effective on its own: the five figures come from the two columns. `slim` alone still does **not** drop `log` while deriving — shared loaders keep their default shape, so an engine sweep that reads `log` markers out of a list-loaded row cannot be starved by a bandwidth flag that was named for something else.
+
+<!--
+FNXC:TaskLogSideTable 2026-11-01-22:05 (RUFU-312 step 7):
+This paragraph's `slim` answer is superseded: `listTasks` now computes `effectiveExcludeLog = excludeLog === true || slim`,
+so the board lane's own shape drops the column and the sentence "`slim` alone still does not drop `log` while
+deriving" no longer describes the code. What did NOT change is the reason the shared loader keeps a full default:
+`readLiveTaskRows` still selects `log` unless told otherwise, because the lane-role read pattern-matches log
+*content* and no bounded envelope carries it. The benchmark rows below stay as the measurement of the shapes
+that existed when they were taken.
+-->
 
 **Settled `slim` answer.** `slim` stays what it was: a *row-shape* flag that re-parses `PROMPT.md` for cards with empty persisted `steps` and blanks a few fields; it is not a bandwidth flag, and it is not gated on `derive`. A caller that wants badges and no log wants `excludeLog`, not `slim`. Measured on a distribution-matched 2 417-row board (31.8 MB of `log`, envelope 841 KB, 38:1 after TOAST):
 
@@ -599,6 +626,166 @@ Two readings of that table matter for how it is used:
 **Per-caller shapes.** Board page and queue page (`listCurrentTasksPageImpl`, `listTaskQueuePageImpl`), `GET /api/tasks`, and the triage/scheduler/gridlock sweeps pass `excludeLog: true`; the hold-release sweep already did. The lane-role read that feeds merge eligibility deliberately does **not**: `hasAutoHealableVerificationBufferFailure` pattern-matches log *content*, which no bounded envelope carries. `packages/engine/src/__tests__/board-read-shape-guard.test.ts` pins both halves, so dropping the column where a consumer reads it fails a test just as keeping it where nobody reads it does.
 
 **Neither field is a `Task` field.** `timingTotalMs`/`logRecent` exist on the row and in the database only, so the dashboard payload and the `.fusion/tasks/<ID>/task.json` mirror are unchanged; `task-log-projections.pg.test.ts` pins the serialized board row and the mirror key set.
+
+## Task History beside the task row (`project.task_log_entries`, RUFU-312)
+
+<!-- FNXC:TaskLogSideTable 2026-11-01-22:05: RUFU-312 merged RUFU-304/309/310/311 — one symptom (a board that slows down and searches empty as cards accumulate) with four causes. Document the new storage shape, which write touches which table, the two-author envelope, the backfill witness, the narrowed search vectors, and the maintenance that stays operator-decided. -->
+
+RUFU-615 above stopped *reading* the log column. The append path kept costing the same, because an append is a
+whole-row `UPDATE`: measured on the operator's live board, 25 MB of 55 MB live `project.tasks` bytes sat in
+`tasks.log`, and every History line rewrote that row, bumped its `updated_at`, and invalidated whatever had
+reasoned from it. RUFU-312 moves the History itself out of the row.
+
+### The three tables (migration `0093_rufu_312_task_log_entries.sql`)
+
+| Table | Shape | Answers |
+|---|---|---|
+| `project.task_log_entries` | append-only, one row per History line, `seq GENERATED ALWAYS AS IDENTITY` | the card's History, in insertion order, without touching the card |
+| `project.task_log_rollup` | one row per task: `entry_count`, `timing_total_ms`, `log_recent`, `computed_at` | the derived figures for a card whose History is side-table-only |
+| `project.task_log_backfill_marker` | one row per project: `backfilled_at`, `copied_entry_count` | proof for an operator that the legacy arrays were copied, and the answer a later catch-up reads |
+
+### Which write touches what
+
+- **A pure History append** (`logEntry` and every lane that only adds a line) inserts into
+  `project.task_log_entries` and updates the rollup. It issues **no write against `project.tasks`** and therefore
+  never bumps `updated_at` — a card sitting untouched for six hours stops claiming it moved.
+- **A compound writer** (a status change that also logs, a move, a review gate) keeps its own state write on
+  `tasks` and sends its entry to the same side table. It is one statement against `tasks` either way, so nothing
+  is added to the path that already had to write the row.
+- **Envelope authorship is stamped, not assumed.** The row author writes `tasks.log_projection_at`; the rollup
+  author writes `task_log_rollup.computed_at`. A reader takes the newer of the two. Each writer stamps last, in
+  the same statement that wrote its values, and neither value is caller-supplyable — the witness is only worth
+  anything while exactly two writers can set it. Migration 0093 seeds the row author's stamp as
+  `coalesce(log_projection_at, updated_at)` for cards whose envelope was already authored, which is the honest
+  upper bound for a card nobody has appended to since the cutover.
+
+### What the reads do
+
+- **The board lane no longer requests the column.** `listTasks` computes
+  `effectiveExcludeLog = options.excludeLog === true || slim`, so the board's own read shape (`slim: true`)
+  leaves `log` out of the SELECT — and the board page, the queue page, and the searched page pass
+  `excludeLog: true` explicitly. `list-tasks-derive-optout.pg.test.ts` pins that the parsed board row never
+  carries the column, which is the assertion that would fail if it came back.
+- **The shared loader keeps its full default on purpose.** `readLiveTaskRows` still selects `log` unless a caller
+  passes `excludeLog`, because the lane-role read that feeds merge eligibility pattern-matches log *content*
+  (`hasAutoHealableVerificationBufferFailure`), which no bounded envelope carries. A bandwidth decision belongs
+  to the lane that has the envelope, not to the loader underneath every lane.
+- **A detail read merges**: the legacy `tasks.log` prefix (cards that predate migration 0093) followed by the
+  side rows. The merged array is what `task.log` still means on a `Task`/`TaskDetail`, so every consumer, the
+  dashboard payload, and the `.fusion/tasks/<ID>/task.json` mirror keep their existing shape.
+- **Derived figures come from whichever envelope is newer**, exactly as in the RUFU-615 section above.
+
+### Backfill
+
+0093 copies each existing `tasks.log` array into `project.task_log_entries`, derives each card's rollup from the
+legacy array with RUFU-615's own projection function, and writes one
+`project.task_log_backfill_marker(project_id, backfilled_at, copied_entry_count)` row per project that has any
+task — including projects whose arrays were empty, because "no mark" and "mark with zero copied entries" are
+different answers to a later catch-up and the migration must not blur them.
+
+Re-run safety is a **per-task probe, not a prefix rule**: the copy pass selects only tasks with
+`NOT EXISTS (any row in task_log_entries for that task)`, so a task is copied whole or not at all and a re-run
+adds nothing to a task that already has side rows. No row lock is taken (PostgreSQL refuses `FOR UPDATE` inside
+a CTE, and the whole migration runs under the store's migration advisory lock).
+
+The marker's second job is the **bounded boot catch-up** (`catchUpLegacyTaskLogEntries`, called from store init
+in `lifecycle-ops.ts`). A daemon running the previous build appended to the legacy column until it was replaced,
+so a legacy line stamped at or after this project's `backfilled_at` can exist in no other place. The catch-up
+copies exactly those lines — never the whole array, which is what made the column expensive — and is a no-op
+once every legacy array is older than the mark, which is the ordinary steady-state boot. Candidates are capped
+at `TASK_LOG_CATCH_UP_TASK_LIMIT` (200) per pass so a backlog cannot delay readiness; the next boot takes the
+rest. A project with no marker returns zero work rather than copying everything.
+
+### Search vector scope (migration `0094_rufu_312_search_vector_scope.sql`)
+
+Both tables carrying a task search vector — `project.tasks` and the `archive.archived_tasks` mirror — are
+normalized to ONE generated expression, `to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,''))`:
+
+- `id` left the vector: a UUID contributes hex/numeric lexemes no word query asks for, and id lookup is served
+  by the literal substring arm.
+- `comments::text` left the vector: a stored-generated column is recomputed whenever a source column is
+  touched, so every comment write re-deparsed that card's whole comment history and re-keyed its GIN entries on
+  the hottest write path a card has. Comment bodies stay findable — `buildTaskSearchPredicate` (and its archive
+  twin `buildArchiveSearchPredicate`) OR a literal ILIKE arm over the raw columns.
+- `'simple'` is not incidental: the query path binds `FTS_TS_CONFIG = 'simple'`, and an `english`-built column
+  under a `simple` query does not error, it answers "no results". The pairing is asserted on both sides by
+  `task-search-vector-dictionary.pg.test.ts`, including a one-sided recall check against raw `ILIKE` for
+  inflected words and a probe showing an english-stemmed tsquery under-recalling the shipped column.
+
+The same predicate decides "is this column still non-canonical?" in the migration's own guard and in
+`schema-applier.ts`'s staleness probe, so a repaired board does not pay a full-table rewrite on every boot.
+Because PostgreSQL has no `ALTER COLUMN ... SET EXPRESSION` for generated columns, the repair is drop-and-re-add
+and replays the captured `pg_get_indexdef` statements, which preserves an index's name, access method, and
+storage parameters. The migration is silent on success — verify the shape from the catalog rather than from
+engine logs:
+
+```sql
+SELECT n.nspname, c.relname, pg_get_expr(d.adbin, d.adrelid) AS expression
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid = a.attrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+ WHERE (n.nspname, c.relname) IN (('project','tasks'), ('archive','archived_tasks'))
+   AND a.attname = 'search_vector' AND a.attgenerated = 's';
+
+SELECT schemaname, tablename, indexdef
+  FROM pg_indexes
+ WHERE indexdef ILIKE '%search_vector%';
+```
+
+Both expression rows must read `to_tsvector('simple', ...)` over `title` and `description` and nothing else; a
+row naming `comments` or `coalesce(id` is a table the staleness guard still considers non-canonical and will
+re-repair on the next store open. The index list must contain one GIN per table (`idxTasksSearchVector`,
+`idxArchivedTasksSearchVector`), because dropping the generated column drops the indexes on it and the
+migration replays the captured definitions.
+
+### Operator-only maintenance — deliberately NOT automated
+
+RUFU-312 never runs any of the following, at boot, in a migration, or from a sweep. All three take an
+`ACCESS EXCLUSIVE` lock or rewrite a table; they are scheduled decisions made by a human against a live board.
+
+1. **Measure first.** What the change was worth, and what is left:
+
+   ```sql
+   SELECT pg_size_pretty(pg_total_relation_size('project.tasks'))                   AS table_total,
+          pg_size_pretty(pg_total_relation_size('project.task_log_entries'))        AS history_table,
+          pg_size_pretty(pg_total_relation_size('project.task_log_rollup'))         AS rollup_table;
+
+   SELECT pg_size_pretty(sum(pg_column_size(log))) AS log_payload,
+          count(*) FILTER (jsonb_typeof(log) = 'array' AND jsonb_array_length(log) > 0) AS cards_with_legacy_history
+     FROM project.tasks
+    WHERE deleted_at IS NULL;
+
+   SELECT count(*) AS projects_copied FROM project.task_log_backfill_marker;
+   ```
+
+   `cards_with_legacy_history` is the population that still needs the legacy column, and it is the number that
+   decides step 3 below — not a maintenance window.
+
+2. **Reclaim the space the old shapes produced.** After 0094 rewrites each task table and rebuilds each GIN,
+   the dead tuples and the old expression's toast remain in the heap until the table is rewritten:
+
+   ```sql
+   VACUUM (FULL, ANALYZE) project.tasks;          -- ACCESS EXCLUSIVE: nothing reads or writes during it
+   VACUUM (FULL, ANALYZE) archive.archived_tasks;
+   -- On a board that cannot stop: pg_repack(1) does the same rewrite without the long lock.
+   ```
+
+   Re-run 0094's effect before judging it: a table that already carries the canonical expression is skipped
+   entirely by the guard, so only the first pass after the upgrade pays the rewrite.
+
+3. **Do NOT drop `project.tasks.log` yet.** This is a *code* prerequisite, not a maintenance window. Detail reads
+   still merge the legacy prefix, so dropping the column deletes the History of every card that predates
+   0093 — provably, and with no way back. The safe order is: (a) confirm the copy,
+   `select count(*) from project.task_log_backfill_marker;` plus a spot-check that a pre-0093 card's earliest
+   History line exists in `project.task_log_entries`; (b) ship the change that stops reading the legacy prefix;
+   (c) only then `ALTER TABLE project.tasks DROP COLUMN log;` — and expect `task-log-side-table.pg.test.ts`,
+   `task-log-projection-pairing.test.ts`, and the `TASK_COLUMN_DESCRIPTORS` entries to name every reader that
+   still needs it.
+
+If the board was restored from a backup taken *before* 0093 ran, the marker is what makes the re-run safe: the
+copy pass selects only tasks that have no side rows yet, so a restored copy cannot double-insert a card's
+History.
 
 ## 4) Legacy SQLite Tables Inventory (`packages/core/src/db.ts`, migration reference)
 

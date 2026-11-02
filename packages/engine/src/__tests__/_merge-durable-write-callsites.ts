@@ -476,6 +476,15 @@ const NON_WRITER_REASONS: Record<string, string> = Object.fromEntries([
   "clearCompletionHandoffAcceptedMarker",
   "clearDoneTransientFields",
   "clearLinkedAgentTaskIds",
+  /*
+  FNXC:ListReadCacheInvalidation 2026-11-01-18:05 (RUFU-312 step 5):
+  `clearListReadCaches()` (added by RUFU-627's coalesced board-list reads) drops in-process list/read memos
+  only — it persists nothing and is not reached from the merge frontier. It still has to be NAMED here: an
+  unclassified public TaskStore method refuses the whole inventory regeneration
+  (`assertInventoryRegenerationInputs`), which is how this ratchet sat red on `main` from RUFU-627 until RUFU-312
+  re-audited the surface. Same admission rule as the workflow-cache epoch pair above.
+  */
+  "clearListReadCaches",
   "clearNearDuplicateReferencesTo",
   "clearNearDuplicateReferencesToFailSoft",
   "clearStaleExecutionStartBranchReferences",

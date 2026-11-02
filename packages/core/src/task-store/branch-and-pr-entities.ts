@@ -33,6 +33,8 @@ import { join } from "node:path";
 import { MoveTaskInternalOptions, MoveTaskOptions, storeLog } from "../store.js";
 import { ARCHIVED_SENTINEL_LANES, resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {writePromptFileAtomic} from "./prompt-file.js";
+/* FNXC:TaskLogSideTable 2026-11-01-19:22 (RUFU-312): run-mutation entries are read from the side table. */
+import { readTaskLogEntriesForRun, taskLogProjectId } from "./task-log-entries.js";
 
 /*
 FNXC:BranchGroupProjectIsolation 2026-08-12-14:30:
@@ -1091,20 +1093,20 @@ export async function updateWorkflowPromptOverridesImpl(store: TaskStore,
 
 export async function getMutationsForRunImpl(store: TaskStore, runId: string): Promise<TaskLogEntry[]> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-26:
-     * In backend mode, use the async layer to read tasks instead of store.db.
-     */
-        const tasks = await store.listTasks();
-    const mutations: TaskLogEntry[] = [];
-    for (const task of tasks) {
-      const logEntries = task.log || [];
-      for (const entry of logEntries) {
-        if (entry.runContext?.runId === runId) {
-          mutations.push(entry);
-        }
-      }
-    }
-    return mutations.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    FNXC:SqliteFinalRemoval 2026-06-26:
+    In backend mode, use the async layer to read tasks instead of store.db.
+
+    FNXC:TaskLogSideTable 2026-11-01-19:22 (RUFU-312):
+    The scan is gone. This read used to materialize every card in the project with its full `log` column and
+    filter runContext in JavaScript — the single most expensive consumer of the fat row, and after the log
+    cutover it would also have been WRONG, because a runContext append now lands in the side table. Both
+    problems are answered by the one narrow query below.
+    */
+    const layer = store.asyncLayer!;
+    const entries = await readTaskLogEntriesForRun(layer.db, taskLogProjectId(layer), runId);
+    return entries
+      .map(({ taskId: _taskId, ...entry }) => entry)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
 /*

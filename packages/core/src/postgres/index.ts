@@ -97,6 +97,13 @@ export {
   /* FNXC:HumanPlanApproval 2026-09-15-06:24: FN-408's per-card decision column version. */
   TASK_HUMAN_PLAN_APPROVAL_VERSION,
   TASK_PAUSE_ACCOUNTING_VERSION,
+  /*
+  FNXC:TaskSearchVectorScope 2026-11-01-21:05 (RUFU-312 step 6):
+  Re-exported so the pg convergence test can delete the 0094 ledger row and re-apply by NAME, the way every
+  other migration-convergence test in schema-applier.test.ts does, instead of hardcoding a version string that
+  can drift from the applier's own constant.
+  */
+  TASK_SEARCH_VECTOR_SCOPE_VERSION,
   MIGRATION_BOOKKEEPING_TABLE,
 } from "./schema-applier.js";
 export {

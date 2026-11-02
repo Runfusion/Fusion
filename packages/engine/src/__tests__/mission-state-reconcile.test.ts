@@ -718,4 +718,75 @@ describe("reconcileMissionState", () => {
     expect(feature.status).toBe("done");
     expect(pass2.statusUpdates).toBe(0);
   });
+
+  it("reads workflow selections for a 50-card reconciliation in one batched read and zero per-card reads", async () => {
+    /*
+    FNXC:SweepSelectionBatching 2026-11-01-22:05 (RUFU-312 step 3, code-review P2):
+    `sweep-selection-read-shape.test.ts` proves the CALL SHAPE (no cache-less resolver call left in
+    `self-healing.ts` / `scheduler.ts`), which is the only way to see a fan-out that no per-card test can
+    observe — but a pattern match is a proxy for the cost, and the contract of step 3 is a COUNT: one
+    `task_workflow_selection` read per pass, not per card. This is that count, asserted through the same
+    fake-store counting seam `runHoldReleaseSweep` is guarded by, over a board big enough that the old
+    shape would be unmistakable: 50 lineage candidates is 50 single reads before the batch prefetch, and
+    one batched read after it.
+
+    Why this sweep: mission reconciliation runs from the self-healing lane, and its lineage classifier is
+    the one converted loop whose candidate set a fake store can size freely — so the assertion is about
+    the read count and nothing else. No status write is asserted here on purpose.
+    */
+    const followUps = Array.from({ length: 50 }, (_unused, index) => ({
+      id: `FN-${index + 1}`,
+      title: `Delivery ${index + 1}`,
+      column: "shipped",
+      status: undefined,
+      missionId: "M-1",
+      sliceId: "SL-1",
+      updatedAt: `2026-08-11T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      sourceMetadata: { missionLineage: { missionId: "M-1", sliceId: "SL-1", featureId: `F-${index + 1}` } },
+    }));
+    const features = Array.from({ length: 50 }, (_unused, index) => ({
+      id: `F-${index + 1}`,
+      title: `Delivery ${index + 1}`,
+      sliceId: "SL-1",
+      taskId: `FN-P-${index + 1}`,
+      status: "done",
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:00.000Z",
+    }));
+    const missionStore = {
+      listMissions: vi.fn().mockResolvedValue([{ id: "M-1", status: "active" }]),
+      getMissionWithHierarchy: vi.fn().mockResolvedValue({
+        id: "M-1", milestones: [{ slices: [{ id: "SL-1", features }] }],
+      }),
+      listAssertionsForFeature: vi.fn().mockResolvedValue([]),
+      updateFeatureStatus: vi.fn(),
+    };
+    const batched = vi.fn().mockResolvedValue(
+      new Map(followUps.map((task) => [task.id, { workflowId: "custom:delivery", stepIds: [] }])),
+    );
+    const singles = vi.fn().mockResolvedValue({ workflowId: "custom:delivery", stepIds: [] });
+    const taskStore = {
+      listTasks: vi.fn().mockResolvedValue(followUps),
+      getTask: vi.fn((taskId: string) => Promise.resolve(followUps.find((task) => task.id === taskId))),
+      getLatestSpecDriftReport: vi.fn().mockResolvedValue(undefined),
+      getTaskWorkflowSelectionsAsync: batched,
+      getTaskWorkflowSelectionAsync: singles,
+      getWorkflowDefinition: vi.fn().mockResolvedValue({
+        ir: {
+          version: "v2", id: "custom:delivery", nodes: [], edges: [],
+          columns: [
+            { id: "todo", label: "Todo", traits: [{ trait: "hold" }] },
+            { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }),
+    };
+
+    await reconcileMissionState({ taskStore: taskStore as never, missionStore }, { source: "self-healing" });
+
+    // One statement for the whole candidate set, and no per-card reader reached.
+    expect(batched).toHaveBeenCalledTimes(1);
+    expect(batched.mock.calls[0][0]).toHaveLength(50);
+    expect(singles).not.toHaveBeenCalled();
+  });
 });

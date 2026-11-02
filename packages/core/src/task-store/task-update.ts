@@ -31,6 +31,7 @@ import {resolveTaskTitleWrite} from "../ai/ai-summarize.js";
 import {buildBootstrapPrompt} from "../mesh/mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine} from "../task-store/comments.js";
+import {replaceTaskLogEntries, taskLogProjectId} from "./task-log-entries.js";
 import {applyOriginalDescription} from "../tasks/original-description-policy.js";
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
 import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
@@ -1421,6 +1422,24 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         }, planningInvalidation, undefined, shouldPersist, persistFence);
       } else {
         await store.atomicWriteTaskJsonWithAudit(dir, task, undefined, planningInvalidation, undefined, shouldPersist, persistFence);
+      }
+
+      /*
+      FNXC:TaskLogSideTable 2026-11-01-20:05 (RUFU-312):
+      An explicit `log` write means "this is the History now", and after Step 1 that sentence spans two
+      stores: the array just persisted is only the legacy half. The side table is therefore replaced with the
+      same array so the merged read equals what the caller wrote. This runs after the row commit rather than
+      inside its transaction because `updateTask` persists through the mirror-first seam, not through a
+      caller-visible transaction; a failure here is raised rather than swallowed, since a History that still
+      shows entries the caller just removed is a worse outcome than a failed update.
+      */
+      if (updates.log !== undefined && store.asyncLayer) {
+        await replaceTaskLogEntries({
+          client: store.asyncLayer.db,
+          projectId: taskLogProjectId(store.asyncLayer),
+          taskId: task.id,
+          entries: task.log ?? [],
+        });
       }
 
       /*

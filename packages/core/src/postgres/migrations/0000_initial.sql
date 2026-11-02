@@ -194,10 +194,17 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   -- Full-text search vector (tsvector) replacing the SQLite FTS5 tasks_fts
   -- table. GENERATED ALWAYS so PostgreSQL keeps it in sync on write
   -- (VAL-SEARCH-002/003/004). 'simple' config for code-like tokenization
-  -- parity with FTS5. Value-aware: only regenerates when id/title/description/
-  -- comments change (VAL-SEARCH-006).
+  -- parity with FTS5. Value-aware: only regenerates when a source column changes
+  -- (VAL-SEARCH-006).
+  -- FNXC:TaskSearchVectorScope 2026-11-01-20:42 (RUFU-312): the baseline carries the NARROWED expression so a
+  -- fresh install lands canonical instead of being rewritten by migration 0094 on its next statement. Sources
+  -- are title + description only: `id` contributed a UUID's hex lexemes no word query asks for, and
+  -- `comments::text` made every comment write re-deparse the whole comment history into this column and re-key
+  -- its GIN entries. Both stay findable through the literal ILIKE arm of `buildTaskSearchPredicate`. Kept
+  -- byte-equal to the declaration in postgres/schema/project.ts and the CREATE in 0094 — three copies of one
+  -- expression that must not disagree, because the applier's staleness probe reads the live deparse.
   search_vector tsvector GENERATED ALWAYS AS (
-    to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))
+    to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))
   ) STORED
 );
 
@@ -2047,8 +2054,12 @@ CREATE TABLE IF NOT EXISTS archive.archived_tasks (
   -- FNXC:TaskStoreSearch 2026-06-24-12:40:
   -- Full-text search vector replacing the SQLite FTS5 archived_tasks_fts table.
   -- GENERATED ALWAYS for automatic sync-on-write (VAL-SEARCH-005 archive parity).
+  -- FNXC:TaskSearchVectorScope 2026-11-01-20:42 (RUFU-312): narrowed to title + description exactly as its live
+  -- twin above, so both task tables answer one dictionary over one source set; migration 0094 repairs the same
+  -- shape on a database created before this change, and `buildArchiveSearchPredicate`'s literal arm keeps id
+  -- and comment text findable here.
   search_vector tsvector GENERATED ALWAYS AS (
-    to_tsvector('simple', coalesce(id, '') || ' ' || coalesce(title, '') || ' ' || coalesce(description, '') || ' ' || coalesce(comments::text, ''))
+    to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(description, ''))
   ) STORED
 );
 CREATE INDEX IF NOT EXISTS "idxArchivedTasksArchivedAt"

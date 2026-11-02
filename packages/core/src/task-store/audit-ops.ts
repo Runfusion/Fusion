@@ -17,15 +17,26 @@ import {makeTransitionPending} from "../tasks/transition-types.js";
 import {writeTransitionPendingAsync} from "./async/async-transition-pending.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import "../builtin-traits.js";
-import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
-import {readTaskRow, updateTaskColumns} from "../task-store/async/async-persistence.js";
-/* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): the raw `tx.update(tasks).set({ log })` seams in this
- * file bypass `updateTaskColumns`, so each one pairs the derived columns itself. */
-import { withTaskLogProjections } from "./task-log-projections.js";
+import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome} from "../task-store/comments.js";
+import {readTaskRow} from "../task-store/async/async-persistence.js";
+/*
+FNXC:TaskLogSideTable 2026-11-01-18:08 (RUFU-312):
+Every log seam in this file routes its ENTRIES through this module. A seam that also mutates task fields
+keeps writing its own columns and stops writing `log`; a seam whose only task-column write was the log
+array stops writing the task row entirely. Nothing here may author `log` without also handing the same
+entries to `appendTaskLogEntries`, which is what keeps `task_log_rollup` the complete envelope author.
+*/
+import {
+  appendTaskLogEntries,
+  hasTaskLogEntryWithinWindow,
+  hydrateTaskLogEntries,
+  taskLogProjectId,
+} from "./task-log-entries.js";
 import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
 import { ARCHIVED_SENTINEL_LANES } from "../project-lane-vocabulary.js";
 import { buildTaskLogReadOnlyMessage, buildTaskNotFoundMessage } from "./task-log-write-refusal.js";
+import { recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
 import * as schema from "../postgres/schema/index.js";
 import { observeOverlapWaitTransitionInTransaction } from "./overlap-wait-ops.js";
 
@@ -141,26 +152,39 @@ export async function logEntryOnceImpl(
   input: { action: string; outcome?: string; dedupeKey: string; windowMs: number },
 ): Promise<boolean> {
   const layer = store.asyncLayer!;
-  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  const projectId = taskLogProjectId(layer);
   const now = new Date();
   const result = await layer.transactionImmediate(async (tx) => {
     await acquireTaskAdvisoryXactLock(tx, projectId, id);
-    const rows = await tx.select().from(schema.project.tasks).where(and(
-      eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id), isNull(schema.project.tasks.deletedAt),
-    ));
-    const current = rows[0];
-    if (!current) throw new Error(`Task ${id} not found while logging episode`);
-    const log = Array.isArray(current.log) ? [...current.log as TaskLogEntry[]] : [];
-    const duplicate = log.some((entry) => entry.dedupeKey === input.dedupeKey
-      && now.getTime() - Date.parse(entry.timestamp) < input.windowMs);
-    if (duplicate) return { appended: false, row: current };
-    log.push({ timestamp: now.toISOString(), action: input.action, outcome: truncateTaskLogOutcome(input.outcome), dedupeKey: input.dedupeKey });
-    const limit = getTaskActivityLogEntryLimit();
-    if (log.length > limit) log.splice(0, log.length - limit);
-    const updated = await tx.update(schema.project.tasks).set(withTaskLogProjections({ log, updatedAt: now.toISOString() })).where(and(
-      eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id),
-    )).returning();
-    return { appended: true, row: updated[0]! };
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-18:00 (RUFU-312):
+    The dedupe probe used to materialize the whole task row and scan its jsonb array (one card measured
+    3.99 MB of `log`) to answer "did this key already fire inside the window?". It is now an indexed
+    lookup over the entries that carry that key, and the append itself is one INSERT: the suppressed answer
+    RUFU-643 made cheap stays cheap, and the appended answer stops rewriting the card.
+    */
+    const duplicate = await hasTaskLogEntryWithinWindow(tx, projectId, id, input.dedupeKey, input.windowMs, now.getTime());
+    if (duplicate) return { appended: false };
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-18:05 (RUFU-312):
+    Existence is now proved by the narrow lane probe rather than by the whole-row SELECT this seam used to
+    need for its log array, so the refusal keeps its exact message while costing one indexed column read.
+    The side-table foreign key would also refuse the insert, but with a constraint error nobody reads.
+    */
+    const state = await getLiveTaskColumn(tx, id, layer.projectId, ARCHIVED_SENTINEL_LANES);
+    if (state === null) throw new Error(`Task ${id} not found while logging episode`);
+    const appended = await appendTaskLogEntries({
+      client: tx,
+      projectId,
+      taskId: id,
+      entries: [{
+        timestamp: now.toISOString(),
+        action: input.action,
+        outcome: truncateTaskLogOutcome(input.outcome),
+        dedupeKey: input.dedupeKey,
+      }],
+    });
+    return { appended: appended.appendedCount > 0 };
   });
   /*
   FNXC:DiagnosticLogDedupe 2026-10-11-22:51 (RUFU-643):
@@ -173,7 +197,21 @@ export async function logEntryOnceImpl(
   point of the seam. The appended arm is unchanged: the mirror and cache must still follow the write.
   */
   if (!result.appended) return false;
-  const task = store.rowToTask(store.pgRowToTaskRow(result.row as unknown as Record<string, unknown>));
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-18:05 (RUFU-312):
+  The appended arm still owes the mirror and the cache copy (RUFU-643 kept that duty deliberately), but it
+  no longer receives the row from the write — the write touched no row — so it reads the card once and
+  hydrates `log` from the side table, exactly as `getTask` will answer on the next read.
+  */
+  const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
+  if (!pgRow) return true;
+  const task = store.rowToTask(store.pgRowToTaskRow(pgRow as unknown as Record<string, unknown>));
+  task.log = await hydrateTaskLogEntries({
+    client: layer.db,
+    projectId,
+    taskId: id,
+    legacyLog: Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [],
+  });
   await store.writeTaskJsonFile(store.taskDir(id), task);
   if (store.isWatching) store.taskCache.set(id, { ...task });
   return true;
@@ -248,30 +286,53 @@ export async function transitionQueuedEpisodeImpl(
       newLeaseObservation: true,
     });
     const log = Array.isArray(current.log) ? [...current.log as TaskLogEntry[]] : [];
-    if (appended) {
-      log.push({
-        timestamp: now,
-        action: transition.action,
-        outcome: truncateTaskLogOutcome(transition.outcome),
-        ...(transition.runContext ? { runContext: transition.runContext } : {}),
-      });
-      const limit = getTaskActivityLogEntryLimit();
-      if (log.length > limit) log.splice(0, log.length - limit);
-    }
-    const updated = await tx.update(schema.project.tasks).set(withTaskLogProjections({
+    const queuedEntry: TaskLogEntry | null = appended ? {
+      timestamp: now,
+      action: transition.action,
+      outcome: truncateTaskLogOutcome(transition.outcome),
+      ...(transition.runContext ? { runContext: transition.runContext } : {}),
+    } : null;
+    if (queuedEntry) log.push(queuedEntry);
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-18:10 (RUFU-312):
+    This transition's task-row write carries queue state (status, blockers, episode signature) and always
+    rewrites the row, so it keeps that write — but the log entry leaves with it. The queue edge is the
+    mutation; the log line is a passenger, and a passenger may not make a card pay a fresh copy of its own
+    history. In the same transaction, so the entry and the state it describes commit together.
+    */
+    const updated = await tx.update(schema.project.tasks).set({
       status: "queued",
       blockedBy: transition.blockedBy,
       overlapBlockedBy: transition.overlapBlockedBy,
       queuedLogEpisodeSignature: transition.signature,
-      ...(appended ? { log } : {}),
       updatedAt: now,
-    })).where(and(
+    }).where(and(
       eq(schema.project.tasks.projectId, projectId),
       eq(schema.project.tasks.id, id),
     )).returning();
-    return { appended, task: updated[0]! };
+    if (queuedEntry) {
+      await appendTaskLogEntries({
+        client: tx,
+        projectId,
+        taskId: id,
+        entries: [queuedEntry],
+        legacyLog: log,
+      });
+    }
+    return { appended, task: updated[0]!, entry: queuedEntry };
   });
   const task = store.rowToTask(store.pgRowToTaskRow(result.task as unknown as Record<string, unknown>));
+  /*
+  FNXC:TaskLogSideTable 2026-11-01-18:12 (RUFU-312):
+  The row this write returned predates the entry by construction, so the mirror and the `task:updated`
+  payload carry the merged log — the same answer `getTask` gives a reader that asks immediately after.
+  */
+  task.log = await hydrateTaskLogEntries({
+    client: store.asyncLayer!.db,
+    projectId,
+    taskId: id,
+    legacyLog: Array.isArray((result.task as unknown as Record<string, unknown>).log) ? ((result.task as unknown as Record<string, unknown>).log as TaskLogEntry[]) : [],
+  });
   await store.writeTaskJsonFile(store.taskDir(id), task);
   if (store.isWatching) store.taskCache.set(id, { ...task });
   store.emitTaskLifecycleEventSafely("task:updated", [task]);
@@ -284,7 +345,7 @@ export async function checkAndRecordUnplannedExecutionBlockImpl(
   episode: string,
 ): Promise<boolean> {
   const layer = store.asyncLayer!;
-  const projectId = layer.projectId ?? "__legacy_unscoped__";
+  const projectId = taskLogProjectId(layer);
   const entry: TaskLogEntry = {
     timestamp: new Date().toISOString(),
     action: "Execution dispatch refused — task is still unplanned",
@@ -307,18 +368,21 @@ export async function checkAndRecordUnplannedExecutionBlockImpl(
       ));
     const task = rows[0];
     if (!task) throw new Error(`Task ${id} not found or deleted while recording unplanned dispatch refusal`);
-    const log = Array.isArray(task.log) ? [...task.log as TaskLogEntry[]] : [];
-    log.push(entry);
-    const limit = getTaskActivityLogEntryLimit();
-    if (log.length > limit) log.splice(0, log.length - limit);
-    await tx.update(schema.project.tasks)
-      /*
-       * FNXC:PlanningHandoffRecovery 2026-08-04-06:35:
-       * This diagnostic must not make an old planning handoff look fresh to
-       * recovery grace windows. The marker timestamp records audit recency.
-       */
-      .set(withTaskLogProjections({ log }))
-      .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id)));
+    /*
+    FNXC:TaskLogSideTable 2026-11-01-18:12 (RUFU-312):
+    The row read above exists only to prove the card is live — it used to be read *because* its log array
+    was about to be rewritten, and this diagnostic (FNXC:PlanningHandoffRecovery 2026-08-04-06:35) must not
+    make an old planning handoff look fresh to recovery grace windows. The claim row keeps carrying the
+    episode timestamp, and the entry now goes to the side table in the same transaction, so the task row is
+    untouched by this refusal at all.
+    */
+    await appendTaskLogEntries({
+      client: tx,
+      projectId,
+      taskId: id,
+      entries: [entry],
+      legacyLog: Array.isArray(task.log) ? (task.log as TaskLogEntry[]) : [],
+    });
     return true;
   });
   return recorded;
@@ -326,65 +390,39 @@ export async function checkAndRecordUnplannedExecutionBlockImpl(
 
 export async function logEntryImpl(store: TaskStore, id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task> {
     return store.withTaskLock(id, async () => {
+      const layer = store.asyncLayer!;
+      const projectId = taskLogProjectId(layer);
       const entry: TaskLogEntry = {
         timestamp: new Date().toISOString(),
         action,
         outcome: truncateTaskLogOutcome(outcome),
       };
+      /*
+      FNXC:TaskLogSideTable 2026-11-01-17:58 (RUFU-312):
+      THE APPEND ARM. Both arms used to end in a `tasks` write — the plain one via `updateTaskColumns`
+      (log + `updated_at`), the `runContext` one via a whole-row atomic write — so every diagnostic line
+      rewrote the card's ~28 KB row version, produced a fresh TOAST chunk for the grown jsonb array and
+      re-maintained all 16 indexes. Measured consequence: 25 MB of 55 MB live-row bytes sat in this one
+      column and the heap reached 4 609 MB. The entry now goes to `project.task_log_entries` and the task
+      row is not written at all: no log column, no `updated_at` (bumping it "for ordering" would put the
+      rewrite straight back, and `seq` is what orders entries), no derived-column pairing — the envelope
+      `appendTaskLogEntries` authors into `task_log_rollup` replaces that.
+
+      Everything a caller could observe OTHER than the row's bytes is preserved on purpose: the same two
+      refusals, the mirror write, the cache copy, the `task:updated` emission (a board that shows new
+      History must still be told to look), and a returned Task whose `log` carries the new entry.
+      */
       if (runContext) {
-        {
-          const layer = store.asyncLayer!;
-          const state = await getLiveTaskColumn(layer.db, id, layer.projectId, ARCHIVED_SENTINEL_LANES);
-          /*
-          FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
-          `getLiveTaskColumn` returns `archived` only as the stable deleted/historical sentinel. It is
-          not a workflow role, and logs remain read-only for that sentinel; the shared helper owns its literal.
-          */
-          if (state === "archived") throw new Error(buildTaskLogReadOnlyMessage(id));
-          if (state === null) throw new Error(buildTaskNotFoundMessage(id));
-        }
-
-        const dir = store.taskDir(id);
-        const task = await store.readTaskJson(dir);
-
-        // Initialize log array if missing (for legacy tasks)
-        if (!task.log) {
-          task.log = [];
-        }
-
-        entry.runContext = runContext;
-        task.log.push(entry);
-        const _entryLimit = getTaskActivityLogEntryLimit();
-        if (task.log.length > _entryLimit) {
-          task.log.splice(0, task.log.length - _entryLimit);
-        }
-        task.updatedAt = new Date().toISOString();
-
-        // When runContext is provided, record audit event atomically with task mutation.
-        await store.atomicWriteTaskJsonWithAudit(dir, task, {
-          taskId: task.id,
-          agentId: runContext.agentId,
-          runId: runContext.runId,
-          domain: "database",
-          mutationType: "task:log",
-          target: task.id,
-          metadata: { action, outcome },
-        });
-
-        if (store.isWatching) store.taskCache.set(id, { ...task });
-        store.emit("task:updated", task);
-        return task;
+        const state = await getLiveTaskColumn(layer.db, id, layer.projectId, ARCHIVED_SENTINEL_LANES);
+        /*
+        FNXC:TaskArchiveRemoval 2026-09-04-18:25 DELIBERATE-LITERAL:
+        `getLiveTaskColumn` returns `archived` only as the stable deleted/historical sentinel. It is
+        not a workflow role, and logs remain read-only for that sentinel; the shared helper owns its literal.
+        */
+        if (state === "archived") throw new Error(buildTaskLogReadOnlyMessage(id));
+        if (state === null) throw new Error(buildTaskNotFoundMessage(id));
       }
 
-      // Fast path for high-volume log entries: update only the log + updatedAt fields
-      // instead of reading/writing the entire task payload on every append.
-      //
-      // FNXC:SqliteFinalRemoval 2026-06-25-23:05:
-      // Backend mode: read the task row via async Drizzle, append the log entry,
-      // and write back only the log + updatedAt columns. This avoids the
-      // sync this.db.prepare() path which throws "SQLite Database is not
-      // available in backend mode" (discovered by sqlite-final-removal session 3).
-            const layer = store.asyncLayer!;
       const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
       if (!pgRow) {
         throw new Error(buildTaskNotFoundMessage(id));
@@ -400,32 +438,46 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         ? historicalSentinels.has(String(pgRow.column ?? ""))
         /* DELIBERATE-LITERAL — migration fallback for callers without sentinel metadata. */
         : pgRow.column === "archived";
-      if (rowIsHistoricalSentinel || pgRow.deletedAt != null) {
+      if (!runContext && (rowIsHistoricalSentinel || pgRow.deletedAt != null)) {
         throw new Error(buildTaskLogReadOnlyMessage(id));
       }
-      // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
-      const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
-      existingLog.push(entry);
-      const _entryLimit = getTaskActivityLogEntryLimit();
-      if (existingLog.length > _entryLimit) {
-        existingLog.splice(0, existingLog.length - _entryLimit);
-      }
-      const updatedAt = new Date().toISOString();
-      await updateTaskColumns(layer, id, { log: existingLog, updatedAt });
+      // PG jsonb columns arrive already-parsed; this is the legacy half of the merged read.
+      const legacyLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
+      if (runContext) entry.runContext = runContext;
 
-      // Re-read the task for event emission (full row → Task).
-      const updatedRow = await readTaskRow(layer, id, { includeDeleted: false });
-      if (updatedRow) {
-        const current = store.rowToTask(store.pgRowToTaskRow(updatedRow));
-        await store.writeTaskJsonFile(store.taskDir(id), current);
-        if (store.isWatching) {
-          store.taskCache.set(id, { ...current });
-        }
-        store.emitTaskLifecycleEventSafely("task:updated", [current]);
-        return current;
+      if (runContext) {
+        // The `task:log` audit row stays transactional with the mutation it describes — the mutation is
+        // now the side-table insert, so the audit write rides the same transaction handle.
+        await layer.transactionImmediate(async (tx) => {
+          await appendTaskLogEntries({ client: tx, projectId, taskId: id, entries: [entry], legacyLog });
+          await recordRunAuditEventWithinTransaction(tx, {
+            taskId: id,
+            agentId: runContext.agentId,
+            runId: runContext.runId,
+            domain: "database",
+            mutationType: "task:log",
+            target: id,
+            metadata: { action, outcome },
+          });
+        });
+      } else {
+        await appendTaskLogEntries({ client: layer.db, projectId, taskId: id, entries: [entry], legacyLog });
       }
-      const emittedTask = ({ id, log: existingLog, updatedAt } as unknown) as Task;
-      store.emitTaskLifecycleEventSafely("task:updated", [emittedTask]);
-      return emittedTask;
+
+      // The row in hand predates the append, so the emitted/mirrored Task carries the merged view.
+      const task = store.rowToTask(store.pgRowToTaskRow(pgRow as unknown as Record<string, unknown>));
+      task.log = await hydrateTaskLogEntries({
+        client: layer.db,
+        projectId,
+        taskId: id,
+        legacyLog,
+      });
+      await store.writeTaskJsonFile(store.taskDir(id), task);
+      if (store.isWatching) {
+        store.taskCache.set(id, { ...task });
+      }
+      if (runContext) store.emit("task:updated", task);
+      else store.emitTaskLifecycleEventSafely("task:updated", [task]);
+      return task;
 });
   }
