@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { createHealthSnapshot, HEALTH_SNAPSHOT_STALE_CEILING_MS } from "../health-snapshot.js";
+import { createHealthSnapshot, HEALTH_SNAPSHOT_REFRESH_MS, HEALTH_SNAPSHOT_STALE_CEILING_MS } from "../health-snapshot.js";
 
 function makeClock(start = 1_000_000) {
   let t = start;
@@ -21,6 +21,14 @@ function makeClock(start = 1_000_000) {
 describe("health snapshot probe path (RUFU-674)", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("keeps the refresh cadence between the evaluation cost and the watchdog probe interval", () => {
+    // Two bounds the constants must respect, or the design silently regresses into being a load source
+    // (a ~2 s evaluation refreshed every 5 s is a 34-62% duty cycle) or into restarting a healthy server
+    // (a ceiling only a little above the cadence makes one slow evaluation answer 503).
+    expect(HEALTH_SNAPSHOT_REFRESH_MS).toBeLessThanOrEqual(45_000);
+    expect(HEALTH_SNAPSHOT_STALE_CEILING_MS).toBeGreaterThanOrEqual(HEALTH_SNAPSHOT_REFRESH_MS * 3);
+  });
 
   it("is empty rather than stale before the first evaluation lands", () => {
     const snapshot = createHealthSnapshot({ evaluate: async () => "payload", now: makeClock().now });

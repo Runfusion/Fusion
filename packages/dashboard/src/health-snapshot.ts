@@ -17,12 +17,22 @@
  * timeout. Only the slow-but-alive case stops being fatal.
  */
 
-/** Refresh cadence. Must stay well inside the watchdog's 45 s probe interval so a probe never pays for a read. */
-export const HEALTH_SNAPSHOT_REFRESH_MS = 5_000;
+/**
+ * Refresh cadence. Two measured bounds, both of which this value satisfies:
+ *
+ * - Must stay well inside the watchdog's 45 s probe interval so a probe never pays for a read.
+ * - Must stay wide enough that the evaluation's own cost is not a load source. The evaluation measures
+ *   1,7-3,1 s at idle (it runs a connectivity probe, a task-ID integrity read and a migration read), so
+ *   a 5 s cadence would put it on a 34-62% duty cycle - 9x the traffic the old request-driven route saw
+ *   from the watchdog's 45 s probe, buying freshness nobody polls for. 20 s keeps every probe answer at
+ *   most 20 s old on a 6-15% duty cycle.
+ */
+export const HEALTH_SNAPSHOT_REFRESH_MS = 20_000;
 /**
  * Age after which a snapshot must be answered as degraded. Kept under the watchdog's kill window
  * (3 failed probes × 45 s ≈ 135 s) so a wedged process still loses its liveness claim before the kill
- * would have happened anyway.
+ * would have happened anyway. With a 20 s refresh this is ~4 missed refreshes, so one slow evaluation
+ * cannot flip a healthy server to degraded.
  */
 export const HEALTH_SNAPSHOT_STALE_CEILING_MS = 90_000;
 
