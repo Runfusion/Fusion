@@ -553,3 +553,9 @@ list: that catalogue is locked table-for-table against the delivery surface, and
 background maintenance telemetry with no delivery pipeline to describe.
 `packages/engine/src/__tests__/memory-long-term-audit-contract.test.ts` pins the declaration, the
 documentation, and that exclusion together.
+
+### Scheduler pass stall
+
+`scheduler:pass-stalled` records one scheduling pass whose re-entrance guard had to be forced open, emitted once per stall episode (not per interval tick) from `Scheduler.reportStuckPass`. Metadata is `leg` (the pass leg reached, from the closed set `idle` / `board-read` / `mission-symbol-locks` / `hold-release-sweep` / `post-sweep-reread` / `advisory-reporters`), `inFlightMs` rounded to whole seconds, `thresholdMs`, and the fixed `outcome` `guard-forced-open`. `target` and `runId` carry the project id; the board's root path never enters the row.
+
+The row exists because the log line is not durable: the process log was measured truncating in place on 2026-10-30, which destroyed every force-open reading that day. Emission goes through the FN-9175 bounded seam, so an absent, throwing, rejecting, or hanging sink cannot delay or change the dispatch decision that follows the force-open. This event is deliberately outside the curated delivery-pipeline catalogue and is documented here as prose.

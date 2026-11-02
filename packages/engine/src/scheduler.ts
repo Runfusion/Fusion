@@ -311,6 +311,13 @@ type SchedulePassPhase =
 
 /** A pass at or above this wall clock gets one info line; healthy passes stay silent. */
 const SLOW_SCHEDULE_PASS_LOG_MS = 30_000;
+
+/**
+FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830): the guard threshold is now read by two consumers —
+the force-open decision and the audit row that reports it — so it stops being an inline literal. Kept at
+exactly 600_000: widening it would silently reduce how often a stuck pass is reported.
+*/
+const STUCK_PASS_GUARD_MS = 600_000;
 const DEFAULT_DISPATCH_OSCILLATION_THRESHOLD = 5;
 const DEFAULT_DISPATCH_OSCILLATION_WINDOW_MS = 60_000;
 
@@ -1228,6 +1235,14 @@ export class Scheduler {
   The phase is diagnostic state only. No read path, badge, or lifecycle decision derives from it, and it is cleared with the guard so a finished pass never reports a stale leg.
   */
   private schedulingPhase: SchedulePassPhase = "idle";
+  /*
+  FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830):
+  One audit row per stall EPISODE, not per tick. A pass that stays in flight keeps tripping the guard on
+  every interval, so an un-deduped emit would write a row per tick for the whole stall and turn the
+  rarest high-value signal into the noisiest one — the shape FN-8600 had to bound for plan-admission
+  throttling. Reset when a pass starts, so the next stall is a new episode.
+  */
+  private stallReportedForPass = false;
   private immediateSchedulePending = false;
   private wasWorktreeLimited = false;
   private wasGlobalPaused = false;
@@ -2598,17 +2613,56 @@ export class Scheduler {
     );
   }
 
+  /**
+   * Record a forced-open stall as a durable run-audit row.
+   *
+   * FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830): extracted from the guard branch so the emit
+   * shape and its sink-health behavior are assertable without holding a scheduling pass open for ten
+   * minutes. Deliberately fire-and-forget through the bounded seam: telemetry must never delay, fail,
+   * or reorder the dispatch decision that follows it.
+   */
+  private reportStuckPass(stuckMs: number): void {
+    const projectId = this.store.getProjectId() ?? "unknown-project";
+    void emitBoundedRunAudit(this.store, {
+      agentId: "scheduler",
+      runId: generateSyntheticRunId("pass-stall", projectId),
+      domain: "database",
+      mutationType: "scheduler:pass-stalled",
+      target: projectId,
+      metadata: {
+        leg: this.schedulingPhase,
+        inFlightMs: Math.round(stuckMs / 1000) * 1000,
+        thresholdMs: STUCK_PASS_GUARD_MS,
+        outcome: "guard-forced-open",
+      },
+    });
+  }
+
   async schedule(): Promise<void> {
     if (!this.running) return;
     if (this.scheduling) {
       /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. Dispatch prep runs real git work per candidate, so the threshold is generous. */
       const stuckMs = this.schedulingSince > 0 ? Date.now() - this.schedulingSince : 0;
-      if (stuckMs < 600_000) return;
+      if (stuckMs < STUCK_PASS_GUARD_MS) return;
       schedulerLog.warn(this.describeStuckPass(stuckMs));
+      /*
+      FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830): the log line alone is not a record. Measured
+      the same day RUFU-828 shipped: the process log at /tmp/fusion-prod-20261006.log lost everything
+      before 13:53 in place (same inode, truncated), which erased 66 force-open readings, 3 465 pass
+      durations and all 13 leg attributions from disk. The stall is therefore also written as a durable
+      run-audit row through the FN-9175 bounded seam, so telemetry cannot become a lifecycle dependency
+      and an absent, throwing, or hanging sink cannot block dispatch. Metadata is fixed-enum + counts
+      only: no root path, no task list, no error text.
+      */
+      if (!this.stallReportedForPass) {
+        this.stallReportedForPass = true;
+        this.reportStuckPass(stuckMs);
+      }
     }
     this.scheduling = true;
     this.schedulingSince = Date.now();
     this.schedulingPhase = "board-read";
+    this.stallReportedForPass = false;
 
     try {
       /*
