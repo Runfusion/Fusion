@@ -187,6 +187,8 @@ export interface WorkflowWorkItemRow {
   state: string;
   attempt: number;
   retryAfter: string | null;
+  /** FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): episode anchor for a stranded-continuation deferral; NULL means never deferred. */
+  deferredSince: string | null;
   leaseOwner: string | null;
   leaseExpiresAt: string | null;
   lastError: string | null;

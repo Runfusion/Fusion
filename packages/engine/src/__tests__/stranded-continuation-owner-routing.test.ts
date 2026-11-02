@@ -27,6 +27,7 @@ import {
   CLAIMABLE_HOLD_REASON_PREFIXES,
   DEPENDENCY_HOLD_REASON_PREFIX,
   FILE_SCOPE_HOLD_REASON_PREFIX,
+  RECLAIM_DEFERRAL_HORIZON_MS,
   RECLAIM_DEFERRAL_LADDER_MS,
   evaluateStrandedContinuationReclaim,
 } from "../workflows/stranded-continuation-reclaim.js";
@@ -226,6 +227,158 @@ describe("evaluateStrandedContinuationReclaim — hold ownership routing", () =>
     expect(evaluateStrandedContinuationReclaim({
       ...heldInput(`${DEPENDENCY_HOLD_REASON_PREFIX}RUFU-196`, { live: true, taskBlockedBy: "RUFU-196" }),
     })).toEqual({ action: "none", reason: "live-session" });
+  });
+
+  /* ── RUFU-299: the deferral horizon ────────────────────────────────── */
+
+  /*
+  FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+  These cases are the whole "bounded" promise, asserted on the returned disposition because that is what the
+  sweep acts on: an unbounded ladder hid the card from the store-wide due gate, so the fix has to be
+  observable as a DECISION before it is observable as a write. The ladder itself is unchanged — the horizon is
+  an absolute bound on an episode, not a shorter ladder.
+  */
+  describe("deferral horizon (RUFU-299)", () => {
+    // Same instant `heldInput` defaults to, named here so the anchor and the rung are computed from one clock.
+    const NOW = 1_800_000_000_000;
+    const DAY = 24 * 3_600_000;
+    const HORIZON = RECLAIM_DEFERRAL_HORIZON_MS;
+    const TOP_RUNG = RECLAIM_DEFERRAL_LADDER_MS[RECLAIM_DEFERRAL_LADDER_MS.length - 1]!;
+
+    /** A held row whose episode anchor sits `ageMs` in the past and whose rung has already saturated. */
+    function agedHold(ageMs: number, extra: Record<string, unknown> = {}) {
+      return heldInput(`${DEPENDENCY_HOLD_REASON_PREFIX}RUFU-196`, {
+        taskBlockedBy: "RUFU-196",
+        deferralHorizonMs: HORIZON,
+        item: {
+          state: "held", kind: "task", taskId: "RUFU-263", nodeId: "plan-review",
+          leaseExpiresAt: null, blockedReason: `${DEPENDENCY_HOLD_REASON_PREFIX}RUFU-196`,
+          retryAfter: new Date(NOW - GRACE_EXCEEDED + TOP_RUNG).toISOString(),
+          deferredSince: new Date(NOW - ageMs).toISOString(),
+        },
+        ...extra,
+      });
+    }
+
+    it("reveals instead of deferring once the episode passes the horizon", () => {
+      // One millisecond short of the bound the ladder still behaves normally: the reveal is a threshold, not
+      // an extra pass that always fires.
+      expect(evaluateStrandedContinuationReclaim(agedHold(HORIZON - 1)))
+        .toMatchObject({ action: "defer", reason: "dependency-hold", sustained: true });
+
+      expect(evaluateStrandedContinuationReclaim(agedHold(HORIZON)))
+        .toEqual({ action: "reveal", reason: "dependency-hold", deferralAgeMs: HORIZON });
+
+      // The unclaimable-sustained branch reveals too — it is the other reason with no named owner.
+      expect(evaluateStrandedContinuationReclaim(heldInput(null, {
+        alreadyAnnounced: true,
+        deferralHorizonMs: HORIZON,
+        item: {
+          state: "held", kind: "task", taskId: "RUFU-263", nodeId: "plan-review",
+          leaseExpiresAt: null, blockedReason: null,
+          retryAfter: new Date(NOW - GRACE_EXCEEDED + TOP_RUNG).toISOString(),
+          deferredSince: new Date(NOW - HORIZON - DAY).toISOString(),
+        },
+      }))).toEqual({ action: "reveal", reason: "unclaimable-sustained", deferralAgeMs: HORIZON + DAY });
+    });
+
+    it("never reveals without a horizon, an anchor, or finite anchor evidence", () => {
+      // Pre-RUFU-299 call sites behave exactly as before: no horizon means never reveal.
+      expect(evaluateStrandedContinuationReclaim(agedHold(HORIZON * 4, { deferralHorizonMs: undefined })))
+        .toMatchObject({ action: "defer", sustained: true });
+
+      // No anchor means no episode clock, so an aged `retryAfter` alone must never trigger a reveal. This is
+      // the RUFU-547 hazard stated as an assertion — keying the horizon off `retryAfter` would reveal here.
+      const noAnchor = agedHold(HORIZON * 4);
+      (noAnchor.item as { deferredSince: string | null }).deferredSince = null;
+      expect(evaluateStrandedContinuationReclaim(noAnchor)).toMatchObject({ action: "defer" });
+
+      // An unparseable stamp is not evidence of an elapsed episode, and neither is a clock anomaly.
+      for (const stamp of ["not-a-timestamp", new Date(NOW + DAY).toISOString()]) {
+        const junk = agedHold(HORIZON * 4);
+        (junk.item as { deferredSince: string | null }).deferredSince = stamp;
+        expect(evaluateStrandedContinuationReclaim(junk), stamp).toMatchObject({ action: "defer" });
+      }
+    });
+
+    it("marks sustained exactly from the pass whose rung saturates", () => {
+      // The climb is the ladder working; the first RE-APPLICATION of the top rung is the state the horizon
+      // exists to end. One ladder walk, three rungs, then the ceiling forever.
+      const widths: Array<number | null> = [null, THIRTY_MINUTES, TWO_HOURS, TOP_RUNG, TOP_RUNG];
+      const expectedRungs = [THIRTY_MINUTES, TWO_HOURS, TOP_RUNG, TOP_RUNG, TOP_RUNG];
+      const expectedSustained = [false, false, false, true, true];
+      widths.forEach((width, pass) => {
+        const verdict = evaluateStrandedContinuationReclaim(heldInput(`${DEPENDENCY_HOLD_REASON_PREFIX}RUFU-196`, {
+          taskBlockedBy: "RUFU-196",
+          item: {
+            state: "held", kind: "task", taskId: "RUFU-263", nodeId: "plan-review",
+            leaseExpiresAt: null, blockedReason: `${DEPENDENCY_HOLD_REASON_PREFIX}RUFU-196`,
+            retryAfter: width === null ? null : new Date(NOW - GRACE_EXCEEDED + width).toISOString(),
+          },
+        }));
+        expect(verdict, `pass ${pass}`).toMatchObject({ action: "defer", retryAfterMs: NOW + expectedRungs[pass]! });
+        expect("sustained" in verdict, `pass ${pass} sustained key`).toBe(expectedSustained[pass]);
+      });
+    });
+
+    it("keeps converge ahead of reveal and every named owner ahead of both", () => {
+      // RUFU-285's precedence survives the new branch: an evidenced overlap wait converges onto the blocker
+      // the task row proves, instead of having its deferral cleared out from under that blocker. A NULL reason
+      // is the shape that reaches the converge branch at all — the dependency prefix is decided earlier.
+      expect(evaluateStrandedContinuationReclaim(heldInput(null, {
+        alreadyAnnounced: true,
+        taskOverlapBlockedBy: "RUFU-128",
+        overlapBlockerLive: true,
+        overlapHolderLive: true,
+        deferralHorizonMs: HORIZON,
+        item: {
+          state: "held", kind: "task", taskId: "RUFU-263", nodeId: "plan-review",
+          leaseExpiresAt: null, blockedReason: null,
+          retryAfter: new Date(NOW - GRACE_EXCEEDED + TOP_RUNG).toISOString(),
+          deferredSince: new Date(NOW - HORIZON - DAY).toISOString(),
+        },
+      }))).toMatchObject({ action: "converge" });
+
+      // A named owner is suppressed BEFORE the horizon is consulted, so a scheduler- or engine-owned hold is
+      // never revealed out from under the seam that owns it.
+      const guards: Array<[{ [k: string]: unknown }, "none" | "requeue", string]> = [
+        [{ enginePaused: true }, "none", "engine-paused"],
+        [{ taskPaused: true }, "none", "operator-paused"],
+        [{ live: true }, "none", "live-session"],
+        [{ planningLive: true }, "none", "live-planning"],
+        [{ stalenessMs: 599_999 }, "none", "too-fresh"],
+        [{ taskTerminal: true }, "retire", "task-terminal"],
+        // The dependency proof itself outranks the horizon: a wait whose blocker is gone re-queues instead.
+        [{ taskBlockedBy: "RUFU-777" }, "requeue", "stale-dependency-hold"],
+      ];
+      for (const [extra, expected, why] of guards) {
+        const verdict = evaluateStrandedContinuationReclaim(agedHold(HORIZON * 4, extra));
+        expect(verdict.action, why).toBe(expected);
+      }
+
+      // A held row whose lease has not expired is still not the horizon's to harvest: the `running` lease
+      // proof and the grace window both outrank it, and a `manual-hold` kind never reaches the ladder at all.
+      const manual = agedHold(HORIZON * 4, {
+        item: {
+          state: "held", kind: "manual-hold", taskId: "RUFU-263", nodeId: "plan-review",
+          blockedReason: `${DEPENDENCY_HOLD_REASON_PREFIX}RUFU-196`,
+          retryAfter: new Date(NOW - GRACE_EXCEEDED + TOP_RUNG).toISOString(),
+          deferredSince: new Date(NOW - HORIZON * 4).toISOString(),
+          leaseExpiresAt: null,
+        },
+      });
+      expect(evaluateStrandedContinuationReclaim(manual)).toEqual({ action: "none", reason: "manual-hold" });
+      const leased = agedHold(HORIZON * 4, {
+        item: {
+          state: "running", kind: "task", taskId: "RUFU-263", nodeId: "plan-review",
+          blockedReason: `${DEPENDENCY_HOLD_REASON_PREFIX}RUFU-196`,
+          retryAfter: new Date(NOW - GRACE_EXCEEDED + TOP_RUNG).toISOString(),
+          deferredSince: new Date(NOW - HORIZON * 4).toISOString(),
+          leaseExpiresAt: new Date(NOW + 60_000).toISOString(),
+        },
+      });
+      expect(evaluateStrandedContinuationReclaim(leased)).toEqual({ action: "none", reason: "lease-active" });
+    });
   });
 });
 

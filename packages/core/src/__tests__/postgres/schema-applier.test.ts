@@ -137,6 +137,7 @@ import {
   TASK_LOG_ENTRIES_VERSION,
   TASK_SEARCH_VECTOR_SCOPE_VERSION,
   FILE_SCOPE_LEASE_RELEASE_VERSION,
+  WORKFLOW_DEFERRED_SINCE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -252,8 +253,12 @@ describe("schema-applier: immutable migration identities", () => {
     RUFU-312 step 4 adds 0094 (the narrowed search vector) behind it, so the ceiling tracks 0094. Kept as the
     single ceiling equality this file allows; migration-wiring-integrity.test.ts asserts the same value equals
     the highest bundled file without a PostgreSQL run.
+
+    FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): the ceiling moves to 0095
+    (`workflow_work_items.deferred_since`). Same single-equality rule: this line and the file-level scan must
+    agree, and a ceiling left at 0094 would make every boot raise StaleBinarySchemaError.
     */
-    expect(SCHEMA_BASELINE_VERSION).toBe("0094");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0095");
 
       /*
       FNXC:MigrationRestack 2026-10-12-18:24: readiness keeps upstream's 0087 and the receipts keep 0086, so
@@ -2325,6 +2330,8 @@ FILE_SCOPE_LEASE_RELEASE_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
       TASK_LOG_ENTRIES_VERSION,
       TASK_SEARCH_VECTOR_SCOPE_VERSION,
+      /* FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): the fork's tail grows by one slot. */
+      WORKFLOW_DEFERRED_SINCE_VERSION,
       /* FNXC:MigrationCollisionRepair 2026-10-05-11:29: this fork records the non-numeric repair
       identity and ORDER BY version is TEXT, so it sorts after every numeric slot. Keep it last. */
       MIXED_0065_REPAIR_VERSION,
@@ -2776,6 +2783,8 @@ FILE_SCOPE_LEASE_RELEASE_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
       TASK_LOG_ENTRIES_VERSION,
       TASK_SEARCH_VECTOR_SCOPE_VERSION,
+      /* FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): the fork's tail grows by one slot. */
+      WORKFLOW_DEFERRED_SINCE_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);
@@ -2926,6 +2935,8 @@ FILE_SCOPE_LEASE_RELEASE_VERSION,
       TASK_LOG_PROJECTIONS_VERSION,
       TASK_LOG_ENTRIES_VERSION,
       TASK_SEARCH_VECTOR_SCOPE_VERSION,
+      /* FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): the fork's tail grows by one slot. */
+      WORKFLOW_DEFERRED_SINCE_VERSION,
       /* keep the non-numeric repair identity last: ORDER BY version is TEXT */
       MIXED_0065_REPAIR_VERSION,
     ]);

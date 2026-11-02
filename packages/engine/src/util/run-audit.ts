@@ -1385,6 +1385,48 @@ export type DatabaseMutationType =
   | "workflowWorkItem:reconcile-stranded-requeued"
   | "workflowWorkItem:reconcile-stranded-retired"
   | "workflowWorkItem:reconcile-stranded-no-action"
+  /**
+   * FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+   * Two rows that make a bounded deferral observable, because before them the difference between "the ladder
+   * is working" and "the ladder has run out and the card is hidden from every due-gated reader" existed
+   * nowhere except in reconstructing the absence of anything else.
+   *
+   * `-defer-sustained`: a deferral that RE-APPLIED the top rung — the ladder has saturated. Written on EVERY
+   * saturated pass, not deduped, because counting these rows is the point: "how many times has the widest rung
+   * been applied?" was the question the symptom report could not answer. It is not the retry-storm shape the
+   * other memos bound — a saturated row sits in the future for the whole rung, so this sweep can only reach the
+   * row about once per rung (~4 rows/day/card); the mechanism being measured rate-limits its own telemetry.
+   * `deferralAgeMs` is NULL when the row saturated a ladder written before the `deferred_since` anchor existed:
+   * unknown, deliberately not reported as a zero-age episode. The episode's single `[recovery]` card-history
+   * line is bounded separately by the `strandedContinuationDeferralSustained` memo (process-local, so a restart
+   * may re-announce one line), because the card is the channel RUFU-263 flooded — 782 identical lines on one
+   * card while the card itself never moved.
+   * Metadata: { taskId, workItemId, nodeId, kind, priorState, reason, stalenessMs, deferralAgeMs, rungMs, deferredSince }
+   *
+   * `-revealed`: the episode passed `RECLAIM_DEFERRAL_HORIZON_MS`, so the sweep cleared its own `retryAfter`
+   * and anchor and the row is durably due again. The card keeps its state and `blockedReason` — this is the
+   * deferral being refused, not the wait being reclaimed. Emitted only when the clearing compare-and-set
+   * landed (asserted on the returned row), which is also what bounds it to one row per episode: the cleared
+   * anchor is the fact that made it true.
+   * Metadata: { taskId, workItemId, nodeId, kind, priorState, reason, stalenessMs, deferralAgeMs }
+   *
+   * The reveal also writes exactly one `[recovery]` card-history line. It needs no memo because clearing the
+   * anchor is itself the durable once-per-episode marker; a failed log write is not retried, because re-announcing
+   * would mean inventing a second reveal — the event row above stays the authoritative record.
+   *
+   * Both payloads are ids/counts/outcomes-only, the same rule as their `-no-action` sibling: no `blockedReason`
+   * sentence, no blocker task title, no error text, no node config. `workflow-stranded-deferral-horizon.pg.test.ts`
+   * asserts each row's exact payload-key set against this documentation, so a field added here without a doc
+   * update fails a test rather than drifting silently.
+   *
+   * Both rows are written through `createRunAuditor(...).database(...)`, which forwards to the FN-9175 bounded
+   * seam and owns an envelope of its own (`phase`, plus `source`/`taskLineageId` when the caller's context
+   * carries them). The Metadata lists above are the PAYLOAD this sweep emits; the stored jsonb also holds the
+   * envelope, which is the disagreement RUFU-314 named — `workflow-stranded-deferral-horizon.pg.test.ts` strips
+   * the envelope and compares the payload, so the documented set stays checkable without pretending away.
+   */
+  | "workflowWorkItem:reconcile-stranded-defer-sustained"
+  | "workflowWorkItem:reconcile-stranded-revealed"
   | "task:reconcile-stranded-completed-no-action"
   /**
    * FNXC:Lifecycle 2026-07-16-09:40:

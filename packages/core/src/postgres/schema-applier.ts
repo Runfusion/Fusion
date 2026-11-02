@@ -124,7 +124,12 @@ not "highest upstream number", and a number naming two migrations remains the on
 
 /* FNXC:TaskSearchVectorScope 2026-11-01-22:32 (RUFU-312): the ceiling tracks the highest bundled file (0094),
  * so no boot can call the database that just received the narrowed search vector "newer than this binary". */
-export const SCHEMA_BASELINE_VERSION = "0094";
+/* FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): the ceiling follows the highest bundled
+ * file again (0095, `workflow_work_items.deferred_since`). The stale-binary guard compares the DB's highest
+ * marker against Number(SCHEMA_BASELINE_VERSION), so leaving it at 0094 would make every boot after this one
+ * raise StaleBinarySchemaError against the database this very binary migrated. Slot 0095 was free: no bundled
+ * file and no open branch names it, and numbers are never reused. */
+export const SCHEMA_BASELINE_VERSION = "0095";
 /** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
@@ -393,6 +398,15 @@ recompute the vector. The marker value and the .sql basename stay equal, and the
 rather than left to a scan — an unwired `.sql` in `migrations/` silently never runs.
 */
 export const TASK_SEARCH_VECTOR_SCOPE_VERSION = "0094";
+
+/*
+FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+`workflow_work_items.deferred_since` — the durable episode anchor that bounds the stranded-continuation
+deferral ladder (an unbounded `retryAfter` re-stamp hides a card from every due-gated reader). The marker
+value and the .sql basename stay equal, and the file is registered below rather than left to a scan — an
+unwired `.sql` in `migrations/` silently never runs (`migration-wiring-integrity.test.ts`).
+*/
+export const WORKFLOW_DEFERRED_SINCE_VERSION = "0095";
 
 export const FILE_SCOPE_LEASE_RELEASE_VERSION = "0089";
 
@@ -720,6 +734,8 @@ const TASK_LOG_PROJECTIONS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0092_rufu_615_
 const TASK_LOG_ENTRIES_MIGRATION_PATH = join(MIGRATIONS_DIR, "0093_rufu_312_task_log_entries.sql");
 /* FNXC:TaskSearchVectorScope 2026-11-01-22:32 (RUFU-312): explicit registration; see TASK_SEARCH_VECTOR_SCOPE_VERSION. */
 const TASK_SEARCH_VECTOR_SCOPE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0094_rufu_312_search_vector_scope.sql");
+/* FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): explicit registration; see WORKFLOW_DEFERRED_SINCE_VERSION. */
+const WORKFLOW_DEFERRED_SINCE_MIGRATION_PATH = join(MIGRATIONS_DIR, "0095_rufu_299_workflow_work_items_deferred_since.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -883,6 +899,7 @@ export async function applySchemaBaseline(
     const taskLogProjectionsAlreadyApplied = applied.includes(TASK_LOG_PROJECTIONS_VERSION);
     const taskLogEntriesAlreadyApplied = applied.includes(TASK_LOG_ENTRIES_VERSION);
     const searchVectorScopeAlreadyApplied = applied.includes(TASK_SEARCH_VECTOR_SCOPE_VERSION);
+    const workflowDeferredSinceAlreadyApplied = applied.includes(WORKFLOW_DEFERRED_SINCE_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -2259,6 +2276,28 @@ export async function applySchemaBaseline(
       const migrationSql = await readFile(TASK_SEARCH_VECTOR_SCOPE_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${TASK_SEARCH_VECTOR_SCOPE_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+    /*
+    FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+    Additive nullable column on `project.workflow_work_items`. The probe keeps the absent-relation invariant
+    the neighbouring blocks pin: a database with no `project.workflow_work_items` at all answers "nothing to
+    drift" instead of handing `ALTER TABLE … ` a 42P01 inside `applySchemaBaseline`. A relation that exists
+    but lacks the column re-applies the idempotent DDL.
+    */
+    const workflowDeferredSinceExists = ((await tx.execute(sql`
+      SELECT (
+        to_regclass('project.workflow_work_items') IS NULL
+        OR EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'project' AND table_name = 'workflow_work_items' AND column_name = 'deferred_since'
+        )
+      ) AS present
+    `)) as unknown as Array<{ present: boolean }>)[0]?.present === true;
+    if (!workflowDeferredSinceAlreadyApplied || !workflowDeferredSinceExists) {
+      const migrationSql = await readFile(WORKFLOW_DEFERRED_SINCE_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${WORKFLOW_DEFERRED_SINCE_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
     return { applied: schemaChanged, pluginHooksRun: pluginHooks.length };

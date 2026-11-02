@@ -60,6 +60,13 @@ export interface WorkflowWorkItem {
   state: WorkflowWorkItemState;
   attempt: number;
   retryAfter: string | null;
+  /*
+  FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+  When a stranded-continuation deferral EPISODE began (first deferral), not when the current rung expires.
+  `retryAfter` cannot carry that meaning: its width is the ladder's rung input and a reclaim zeroes it, so a
+  horizon read off it would restart on every shift. NULL = this row has never been deferred by the sweep.
+  */
+  deferredSince: string | null;
   leaseOwner: string | null;
   leaseExpiresAt: string | null;
   lastError: string | null;
@@ -111,6 +118,14 @@ export interface WorkflowWorkItemUpsertInput {
 export interface WorkflowWorkItemTransitionPatch {
   attempt?: number;
   retryAfter?: string | null;
+  /**
+   * FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+   * Episode-anchor write seam. Deliberately ONLY on the transition patch and not on the upsert input: the
+   * column defaults NULL at insert, and the single writer is `reconcileStrandedWorkflowContinuations`, which
+   * must reach it inside the same compare-and-set that stamps `retryAfter` — two separate writes would let a
+   * concurrent transition leave an episode anchored to a deferral that no longer exists.
+   */
+  deferredSince?: string | null;
   leaseOwner?: string | null;
   leaseExpiresAt?: string | null;
   lastError?: string | null;

@@ -1379,6 +1379,7 @@ export function transitionWorkflowWorkItemSyncImpl(store: TaskStore,
               SET state = ?,
                   attempt = ?,
                   retryAfter = ?,
+                  deferredSince = ?,
                   leaseOwner = ?,
                   leaseExpiresAt = ?,
                   lastError = ?,
@@ -1390,6 +1391,14 @@ export function transitionWorkflowWorkItemSyncImpl(store: TaskStore,
           state,
           patch.attempt ?? existing.attempt,
           patch.retryAfter === undefined ? existing.retryAfter : patch.retryAfter,
+          /*
+          FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+          Mirrors the async transition so the two paths cannot drift on the episode anchor. Named to match
+          this statement's own (legacy camelCase) column vocabulary rather than the PostgreSQL
+          `deferred_since`, because every other column in this same UPDATE is spelled that way — the two
+          spellings belong to two schemas and mixing them inside one statement would be the drift.
+          */
+          patch.deferredSince === undefined ? existing.deferredSince : patch.deferredSince,
           patch.leaseOwner === undefined ? existing.leaseOwner : patch.leaseOwner,
           patch.leaseExpiresAt === undefined ? existing.leaseExpiresAt : patch.leaseExpiresAt,
           patch.lastError === undefined ? existing.lastError : patch.lastError,

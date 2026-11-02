@@ -217,6 +217,8 @@ export function rowToWorkflowWorkItemImpl(store: TaskStore, row: WorkflowWorkIte
       state: store.normalizeWorkflowWorkItemState(row.state),
       attempt: row.attempt,
       retryAfter: row.retryAfter,
+      /* FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): keep the sync mapper shape-equal to the async one or the two surfaces disagree about the domain type. */
+      deferredSince: row.deferredSince,
       leaseOwner: row.leaseOwner,
       leaseExpiresAt: row.leaseExpiresAt,
       lastError: row.lastError,

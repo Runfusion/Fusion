@@ -1220,6 +1220,15 @@ export const workflowWorkItems = projectSchema.table("workflow_work_items", {
   state: text("state").notNull(),
   attempt: integer("attempt").notNull().default(0),
   retryAfter: text("retry_after"),
+  /*
+  FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+  The episode anchor for a stranded-continuation deferral: WHEN this sweep first deferred this hold, set
+  once at the first deferral and preserved by every later one. `retry_after` cannot answer that question —
+  its WIDTH is the ladder's rung input and a reclaim zeroes the whole column — so the horizon that bounds
+  an unbounded deferral ladder has to live somewhere the ladder does not overwrite. Nullable, never
+  indexed: the due index `idx_workflow_work_items_due` deliberately stays as it is.
+  */
+  deferredSince: text("deferred_since"),
   leaseOwner: text("lease_owner"),
   leaseExpiresAt: text("lease_expires_at"),
   lastError: text("last_error"),

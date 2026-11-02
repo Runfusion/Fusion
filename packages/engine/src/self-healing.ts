@@ -279,7 +279,7 @@ import {
 } from "./planning-handoff-recovery.js";
 import { getPromptPath } from "./execution/spec-staleness.js";
 import { evaluateStrandedHoldContinuation, seedPreReleasePlanReviewContinuation } from "./plan-review-continuation.js";
-import { evaluateStrandedContinuationReclaim, needsOverlapHolderProof, strandedHoldConditionKey, RECLAIM_RETIRED_STATE } from "./workflows/stranded-continuation-reclaim.js";
+import { evaluateStrandedContinuationReclaim, needsOverlapHolderProof, strandedHoldConditionKey, RECLAIM_RETIRED_STATE, RECLAIM_STALENESS_GRACE_MS, RECLAIM_DEFERRAL_HORIZON_MS } from "./workflows/stranded-continuation-reclaim.js";
 /*
 FNXC:Workspace 2026-06-22-14:10 (Phase D review G — cycle dissolved):
 `isRepoLanded` is the CANONICAL per-repo landed predicate (Phase C, exported A6). It now lives in
@@ -1544,6 +1544,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   */
   private strandedContinuationAnnounced = new Set<string>();
   private strandedContinuationNoActionAudited = new Set<string>();
+  /*
+  FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+  A third memo, because the sustained finding answers a DIFFERENT question than the two above: not "did the sweep
+  see this wait" but "did this wait run past the point where the ladder alone hides the card". It bounds the
+  episode's single `[recovery]` CARD line — the event row is deliberately written on every saturated pass, because
+  counting those passes is the point — and its key is dropped when the episode is revealed so a later episode can
+  announce itself again. Like the two above it is process-local, so a restart costs one re-announced line.
+  */
+  private strandedContinuationDeferralSustained = new Set<string>();
   /* FNXC:SymbolLock 2026-07-30-14:20: idle symbol-lock sweeps emit one no-action audit until a stale lock re-arms the diagnostic. */
   private symbolLockNoActionAudited = false;
   /*
@@ -11424,8 +11433,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       FNXC:StrandedContinuationReclaim 2026-08-11-09:12:
       Ten minutes matches `WorkflowAgentCapacity.LEASE_DURATION_MS`, the longest a healthy claim can go
       without renewing its durable capacity row. Anything younger may be a live session mid-renewal.
+      RUFU-299 moved the number beside the classifier that consumes it (`RECLAIM_STALENESS_GRACE_MS`) so the
+      sweep cannot pass a grace window the classifier's documentation does not describe.
       */
-      const graceMs = 10 * 60_000;
+      const graceMs = RECLAIM_STALENESS_GRACE_MS;
       const now = Date.now();
       const nowIso = new Date(now).toISOString();
       /*
@@ -11447,6 +11458,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let repaired = 0;
       /* FNXC:StrandedContinuationReclaim 2026-09-22-14:21 (RUFU-263): holds whose wait is real are deferred on a ladder, counted separately from reclaims. */
       let deferredCount = 0;
+      /* FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299): a third outcome — a wait whose deferral was refused because the episode outlived the horizon. */
+      let revealedCount = 0;
       for (const item of due) {
         try {
           /*
@@ -11485,6 +11498,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             taskBlockedBy: task?.blockedBy ?? null,
             taskOverlapBlockedBy: task?.overlapBlockedBy ?? null,
             alreadyAnnounced: this.strandedContinuationAnnounced.has(conditionKey),
+            /*
+            FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+            The sweep always passes the horizon: an unbounded ladder is what made a deferred card invisible
+            to every due-gated reader, and this is the only seam that writes these deferrals. `item`
+            already carries `deferredSince`, so the episode clock is read off the row and survives a restart.
+            */
+            deferralHorizonMs: RECLAIM_DEFERRAL_HORIZON_MS,
           };
           let verdict = evaluateStrandedContinuationReclaim(reclaimInput);
           /*
@@ -11512,11 +11532,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           /* A wait an owning seam can re-take or release: the caller writes NOTHING at all. */
           if (verdict.action === "none") continue;
           const audit = async (
-            type: "workflowWorkItem:reconcile-stranded-requeued" | "workflowWorkItem:reconcile-stranded-retired" | "workflowWorkItem:reconcile-stranded-no-action",
+            type: "workflowWorkItem:reconcile-stranded-requeued" | "workflowWorkItem:reconcile-stranded-retired" | "workflowWorkItem:reconcile-stranded-no-action" | "workflowWorkItem:reconcile-stranded-defer-sustained" | "workflowWorkItem:reconcile-stranded-revealed",
             metadata: Record<string, unknown>,
+            /*
+            FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+            The dedupe set becomes a parameter instead of a `type.endsWith("no-action")` test, so the set a row is
+            bounded by is visible at the call site rather than inferred from its name. Rows with no set
+            (`-requeued`, `-retired`, `-revealed`, `-defer-sustained`) are each naturally rate-limited by the
+            state they describe — a saturated row is invisible to this sweep for the whole top rung — while
+            `-no-action` would otherwise re-emit every maintenance pass, the retry-storm shape
+            `planningFenceNoActionAudited` already exists to prevent.
+            */
+            dedupe?: Set<string>,
           ): Promise<void> => {
-            // House convention: a no-action finding is deduped per condition and marked only after the write lands.
-            if (type.endsWith("no-action") && this.strandedContinuationNoActionAudited.has(conditionKey)) return;
+            // House convention: a bounded finding is deduped per condition and marked only after the write lands.
+            if (dedupe?.has(conditionKey)) return;
             await createRunAuditor(this.store, {
               runId: generateSyntheticRunId("reconcile-stranded-continuation", item.taskId),
               agentId: "self-healing",
@@ -11525,7 +11555,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               phase: "reconcile-stranded-continuation",
             }).database({ type: type as DatabaseMutationType, target: item.id, metadata });
             // FNXC:StrandedContinuationReclaim 2026-09-22-14:21: a failed audit write stays unmarked so the next pass can still record it.
-            if (type.endsWith("no-action")) this.strandedContinuationNoActionAudited.add(conditionKey);
+            if (dedupe) dedupe.add(conditionKey);
           };
           const rowMetadata = {
             /* Ids/counts/outcomes only — never `lastError` prose or node config. */
@@ -11546,16 +11576,111 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           the condition is recorded once, deduped, as the no-action row below.
           */
           if (verdict.action === "defer") {
+            /*
+            FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+            The episode anchor is written at the FIRST deferral and then preserved: `item.deferredSince ?? nowIso`
+            re-stamps the existing value rather than sliding forward, because a horizon that moves with each
+            shift can never elapse — the RUFU-547 hazard. It rides the SAME compare-and-set as `retryAfter`, so
+            a pass that loses the race anchors nothing and cannot start a phantom episode.
+            */
             const deferred = await this.store.transitionWorkflowWorkItem(item.id, item.state, {
               expectedState: item.state,
               retryAfter: new Date(verdict.retryAfterMs).toISOString(),
+              deferredSince: item.deferredSince ?? nowIso,
             });
             if (deferred.state !== item.state) continue;
             deferredCount += 1;
             await audit("workflowWorkItem:reconcile-stranded-no-action", {
               ...rowMetadata,
               nextCheckAt: new Date(verdict.retryAfterMs).toISOString(),
+            }, this.strandedContinuationNoActionAudited);
+            /*
+            The ladder working and the ladder exhausted look identical from the row alone, so every saturated
+            pass is recorded: `-defer-sustained` is what makes the wedge countable — "how many times has the
+            widest rung been applied?" was the question the symptom report could not answer.
+
+            This row is deliberately NOT deduped per episode, and it is not the retry-storm shape the other
+            memos exist to bound: a saturated row sits in the future for the whole top rung, so a sweep can only
+            reach this branch about once per rung (~4 rows/day/card). The mechanism being measured is the same
+            thing that rate-limits its own telemetry. The episode bound lives on the CARD LINE below instead,
+            because that is the channel RUFU-263 flooded (782 identical lines on one card).
+
+            `deferralAgeMs` is NULL when the row saturated its ladder before an anchor existed (a pre-RUFU-299
+            row), reported as unknown rather than as a zero-age episode — the repo's `null`-means-unprobed rule.
+            */
+            if (verdict.sustained === true) {
+              await audit("workflowWorkItem:reconcile-stranded-defer-sustained", {
+                ...rowMetadata,
+                deferralAgeMs: verdict.deferralAgeMs ?? null,
+                rungMs: verdict.retryAfterMs - now,
+                deferredSince: item.deferredSince ?? nowIso,
+              });
+              /*
+              One card-history line per episode, through the same announce seam RUFU-263 left for the re-queue
+              note, and bounded by the same episode memo the reveal clears. The memo is process-local, so a
+              restart may re-announce one line — bounded and intended, and the right way round compared with the
+              old state where the card said nothing forever. The memo is marked only when the log write lands
+              (the FN-8600 convention), so a failed write re-announces instead of losing the operator's only
+              on-card evidence.
+              */
+              if (!this.strandedContinuationDeferralSustained.has(conditionKey)) {
+                const announced = await this.store.logEntry(
+                  item.taskId,
+                  `[recovery] workflow continuation deferral saturated — ${item.nodeId} held '${item.state}' for ${
+                    verdict.deferralAgeMs == null ? "an unmeasured episode" : `${Math.floor(verdict.deferralAgeMs / 60_000)} min`
+                  } (${verdict.reason}); the deferral horizon will surface it within 7 days`,
+                ).then(() => true).catch(() => false);
+                if (announced) this.strandedContinuationDeferralSustained.add(conditionKey);
+              }
+            }
+            continue;
+          }
+          /*
+          FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+          The episode outlived the horizon, so the sweep's own cadence control is REFUSED: `retryAfter` and the
+          anchor are cleared together in one guarded write and the row is durably due again — visible to the
+          dispatcher, to this sweep, and to every other due-gated reader. It is NOT a reclaim: the row keeps its
+          state and its `blockedReason`, because the wait may still be real and an owning seam may still appear;
+          what changed is that hiding it is no longer acceptable. Clearing the anchor is what makes this one
+          reveal per episode — the next pass starts a fresh episode at rung 0 instead of re-revealing.
+          */
+          if (verdict.action === "reveal") {
+            const revealed = await this.store.transitionWorkflowWorkItem(item.id, item.state, {
+              expectedState: item.state,
+              retryAfter: null,
+              deferredSince: null,
+              // The classifier suppressed reveal while a lease was live, so anything here is already expired;
+              // clearing it leaves the surfaced row with no future-looking gate at all.
+              leaseExpiresAt: null,
             });
+            /*
+            Asserted on the OBSERVED row, not on a call: a lost compare-and-set returns the row as the other
+            writer left it, and a pass that wrote nothing must claim nothing — no event row, no counter.
+            */
+            if (revealed.state !== item.state || revealed.retryAfter != null || revealed.deferredSince != null) continue;
+            revealedCount += 1;
+            /*
+            All three episode memos are dropped with the episode: the deferral the card is about to receive is a
+            NEW condition as far as the noise bounders are concerned, and leaving the keys behind would silence
+            the next episode's evidence — including the re-queue announce line — exactly when it is most wanted.
+            */
+            this.strandedContinuationAnnounced.delete(conditionKey);
+            this.strandedContinuationNoActionAudited.delete(conditionKey);
+            this.strandedContinuationDeferralSustained.delete(conditionKey);
+            await audit("workflowWorkItem:reconcile-stranded-revealed", {
+              ...rowMetadata,
+              deferralAgeMs: verdict.deferralAgeMs,
+            });
+            /*
+            One card-history line per reveal. Unlike the sustained note this needs no memo: clearing the anchor IS
+            the durable once-per-episode marker, so the next pass cannot re-enter this branch. A failed write is
+            not retried — the reveal already happened and cannot be re-announced without inventing a second one —
+            so the event row above remains the authoritative record.
+            */
+            await this.store.logEntry(
+              item.taskId,
+              `[recovery] workflow continuation deferral revealed — ${item.nodeId} passed the deferral horizon after ${Math.floor(verdict.deferralAgeMs / 60_000)} min; its retryAfter is cleared so every due-gated reader sees it again (${verdict.reason})`,
+            ).catch(() => undefined);
             continue;
           }
           /*
@@ -11583,7 +11708,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             await audit("workflowWorkItem:reconcile-stranded-no-action", {
               ...rowMetadata,
               nextCheckAt: new Date(verdict.retryAfterMs).toISOString(),
-            });
+            }, this.strandedContinuationNoActionAudited);
             continue;
           }
           const target = verdict.action === "retire" ? RECLAIM_RETIRED_STATE : "runnable";
@@ -11635,12 +11760,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           log.warn(`reconcileStrandedWorkflowContinuations: failed for ${item.id}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      if (repaired > 0 || deferredCount > 0) {
-        // Two numbers, because they are two different promises: a reclaim makes the row runnable now, a
-        // deferral leaves a real wait in place and schedules the next look.
+      if (repaired > 0 || deferredCount > 0 || revealedCount > 0) {
+        // Three numbers, because they are three different promises: a reclaim makes the row runnable now, a
+        // deferral leaves a real wait in place and schedules the next look, and a reveal takes the wait back
+        // out of hiding because postponing it any further would hide the card from every reader.
         log.log(
           `Reclaimed ${repaired} stranded workflow continuation(s)`
-          + (deferredCount > 0 ? `; left ${deferredCount} hold(s) in place on the re-check ladder` : ""),
+          + (deferredCount > 0 ? `; left ${deferredCount} hold(s) in place on the re-check ladder` : "")
+          + (revealedCount > 0 ? `; revealed ${revealedCount} hold(s) past the deferral horizon` : ""),
         );
       }
       return repaired;

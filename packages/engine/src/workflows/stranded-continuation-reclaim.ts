@@ -33,7 +33,7 @@ the problem it was written for.
 /** Terminal disposition for a row whose task can never run it again. */
 export const RECLAIM_RETIRED_STATE = "cancelled" as const;
 
-export type StrandedContinuationAction = "requeue" | "retire" | "defer" | "none";
+export type StrandedContinuationAction = "requeue" | "retire" | "defer" | "reveal" | "none";
 
 export type StrandedContinuationReason =
   | "engine-paused"
@@ -77,6 +77,16 @@ to forget that:
   mutation event row. The sustained condition is instead recorded once, deduped, by the caller's
   `reconcile-stranded-no-action` row. `retryAfterMs` is the durable half of the bound: the same due-gate
   that hides the row from this sweep hides it from every reader, so the bound survives a restart.
+  `sustained` marks the passes whose PREVIOUS deferral was already as wide as the top rung — the ladder has
+  saturated and this write re-applies the ceiling forever unless something bounds it (RUFU-299).
+  `deferralAgeMs` is how long the episode has run, measured from the durable anchor, and is `undefined`
+  whenever no anchor exists yet (a first deferral has no elapsed time to report).
+- `reveal`   — the deferral episode passed `deferralHorizonMs`, so the sweep's own cadence control is
+  REFUSED: `retryAfter` and the episode anchor are both cleared and the row becomes durably due again. This
+  is not a reclaim — the row keeps its state and its `blockedReason`, because the wait may still be real and
+  an owning seam may still exist; what changes is that the card is visible to every due-gated reader again
+  instead of hidden by an unbounded ladder. One `reveal` per episode, because the clearing write removes the
+  anchor that made the horizon true. RUFU-299.
 - `none`     — a wait a named seam owns; the caller writes NOTHING at all.
 
 RUFU-285 adds:
@@ -91,7 +101,14 @@ RUFU-285 adds:
 export type StrandedContinuationVerdict =
   | { action: "requeue"; reason: StrandedContinuationReason; announceRecovery: boolean; retryAfterMs?: number }
   | { action: "retire"; reason: StrandedContinuationReason }
-  | { action: "defer"; reason: StrandedContinuationReason; retryAfterMs: number }
+  | { action: "defer"; reason: StrandedContinuationReason; retryAfterMs: number; sustained?: true; deferralAgeMs?: number }
+  /*
+  FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+  The reason is the SAME vocabulary the deferral used, so the caller can name which unownable wait it just
+  surfaced without re-deriving it, and no other reason can appear here — every other defer path either sits
+  behind a named owner (and is suppressed) or is `converge`, which keeps precedence over reveal.
+  */
+  | { action: "reveal"; reason: "dependency-hold" | "unclaimable-sustained"; deferralAgeMs: number }
   | { action: "converge"; reason: "file-scope-wait-converged"; ownedReason: string; retryAfterMs: number }
   | { action: "none"; reason: StrandedContinuationReason };
 
@@ -174,6 +191,52 @@ survives a restart without a new column or a migration.
 */
 export const RECLAIM_DEFERRAL_LADDER_MS: readonly number[] = [30 * 60_000, 2 * 3_600_000, 6 * 3_600_000];
 
+/*
+FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+The ladder bounds how OFTEN a sustained hold is re-examined; nothing above bounds how MANY times, so from
+the pass after saturation the sweep re-stamps the top rung forever. `retryAfter` IS the store-wide due gate
+(`listDueWorkflowWorkItems` admits only `retryAfter IS NULL OR retryAfter <= now`), so an unbounded ladder is
+not a slow re-check — it is the card disappearing from the dispatcher, from this sweep, and from every other
+due-gated reader (measured: a 6 h rung re-stamped every 6 h is invisible roughly 92 % of the time, with only
+the once-per-10-minutes per-process `reconcile-stranded-no-action` row as evidence).
+
+The horizon is therefore an ABSOLUTE bound on one deferral episode: once the anchor is at least this old,
+the next pass clears the deferral instead of renewing it, and the card is durably visible again.
+
+Anchor rule, and why it cannot be `retryAfter`: the anchor is written at the FIRST deferral of an episode
+and preserved by every later one. `retryAfter` is load-bearing for the ladder (`nextDeferralMs` reads the
+previous rung's WIDTH back out of it) and a reclaim zeroes the whole column, so a horizon measured from it
+would restart on every shift and could never elapse — precisely the RUFU-547 hazard. It is likewise never
+measured from `task.updatedAt`, which every unrelated writer on the card bumps.
+
+Two audit claims corrected here so nobody re-derives them:
+  (a) The notification gap is NOT a blinded due-read under `reconcile-review-stall-notification`.
+      `reconcileReviewStallWedgeNotifications` enumerates TASK ROWS and filters the persisted
+      `task.stallReason` codes (`merge-blocker`, `pre-merge-gate-pending`, `held-human-review`); it never
+      touches `workflow_work_items`. The real gap was that a saturated planning-lane reclaim deferral left no
+      durable escalation an operator or triage could query at all — which is what `-defer-sustained` and
+      `-revealed` are for.
+  (b) The audit's `self-healing.ts:5994` / `:9594` line anchors are drift. The load-bearing seams are the
+      symbols `evaluateStrandedContinuationReclaim`, `nextDeferralMs`, the sweep's `defer` CAS write, and the
+      sweep's `listDueWorkflowWorkItems({ now, states: [...ACTIVE_WORKFLOW_WORK_ITEM_STATES] })` read.
+
+Reveal is once per episode by construction: the clearing write nulls the anchor, so the next pass starts a
+fresh episode rather than re-revealing. Out of scope on purpose: the RUFU-285 `converge` write also stamps
+`retryAfter`, but that row becomes an ordinary `file-scope:<blockerId>` wait whose owner
+(`releaseFileScopeWaitingContinuations`) is event-driven and lists per task, so it is not due-gated and has a
+named re-taker — the property the two in-scope defer reasons lack. Anchoring or revealing that class would
+steal the row from its owner.
+*/
+export const RECLAIM_DEFERRAL_HORIZON_MS = 7 * 24 * 60 * 60_000;
+
+/*
+FNXC:StrandedContinuationReclaim 2026-08-11-09:12:
+Ten minutes matches `WorkflowAgentCapacity.LEASE_DURATION_MS`, the longest a healthy claim can go without
+renewing its durable capacity row. Anything younger may be a live session mid-renewal. Exported so the
+sweep passes the number the classifier's own documentation names rather than restating a literal.
+*/
+export const RECLAIM_STALENESS_GRACE_MS = 10 * 60_000;
+
 /**
  * Condition signature for the caller's once-per-condition memo: the same row, in the same state, for the
  * same stated reason, is ONE condition. A changed reason or state is genuinely new information and is
@@ -242,9 +305,13 @@ function dependencyHoldIds(reason: string): string[] {
  * @param input.overlapHolderLive Caller-proven liveness for `taskOverlapBlockedBy`'s task (resolves, not
  *   soft-deleted, not in the terminal column); omitted means unproven, which keeps the wedge-class answer.
  *   RUFU-285: proving liveness is what keeps a dead blocker's leftover evidence from freezing a card.
+ *
+ * RUFU-299 adds the deferral horizon: `item.deferredSince` is the durable start of the current deferral
+ * episode and `deferralHorizonMs` bounds it. Past the horizon a would-be `defer` becomes `reveal`, so no
+ * hold can be postponed out of every reader's sight forever; an omitted horizon never reveals.
  */
 export function evaluateStrandedContinuationReclaim(input: {
-  item: Pick<WorkflowWorkItem, "state" | "kind" | "leaseExpiresAt" | "leaseOwner" | "blockedReason" | "taskId" | "nodeId" | "retryAfter">;
+  item: Pick<WorkflowWorkItem, "state" | "kind" | "leaseExpiresAt" | "leaseOwner" | "blockedReason" | "taskId" | "nodeId" | "retryAfter" | "deferredSince">;
   taskTerminal: boolean;
   taskMissing: boolean;
   taskPaused: boolean;
@@ -265,6 +332,14 @@ export function evaluateStrandedContinuationReclaim(input: {
   assumption.
   */
   overlapHolderLive?: boolean;
+  /**
+  FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+  Absolute bound on one deferral episode, measured from the durable `item.deferredSince` anchor. `undefined`
+  means NEVER reveal, which is what keeps every pre-RUFU-299 caller and test call site behaving exactly as
+  before; the sweep always passes `RECLAIM_DEFERRAL_HORIZON_MS`. Optional rather than defaulted so a caller
+  that has not thought about the horizon cannot silently acquire one.
+  */
+  deferralHorizonMs?: number;
 }): StrandedContinuationVerdict {
   if (input.enginePaused) return { action: "none", reason: "engine-paused" };
   if (input.taskMissing) return { action: "retire", reason: "task-missing" };
@@ -311,11 +386,43 @@ export function evaluateStrandedContinuationReclaim(input: {
   */
   const stoppedAt = input.now - input.stalenessMs;
   const priorWidthMs = input.item.retryAfter ? Date.parse(input.item.retryAfter) - stoppedAt : Number.NaN;
-  const deferVerdict = (why: "dependency-hold" | "unclaimable-sustained"): StrandedContinuationVerdict => ({
-    action: "defer",
-    reason: why,
-    retryAfterMs: input.now + nextDeferralMs(priorWidthMs),
-  });
+  /*
+  FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+  The episode clock, read ONLY off the durable anchor. An unparseable or future stamp yields a non-finite age,
+  which is treated as "no episode yet": the row keeps its ladder rather than being revealed on evidence that
+  proves nothing — the same fail-closed reading `lease-active` gives an unparseable expiry.
+  */
+  const anchorMs = input.item.deferredSince ? Date.parse(input.item.deferredSince) : Number.NaN;
+  const deferralAgeMs = Number.isFinite(anchorMs) ? input.now - anchorMs : undefined;
+  const horizonReached = input.deferralHorizonMs !== undefined
+    && deferralAgeMs !== undefined
+    && deferralAgeMs >= input.deferralHorizonMs;
+  /*
+  `sustained` is the pass whose PREVIOUS deferral was already the top rung, i.e. the first pass that
+  RE-APPLIES the ceiling rather than climbing to it. That distinction is the whole observable bound: the
+  climb is the ladder working, the re-application is the state the horizon exists to end.
+  */
+  const rungSaturated = Number.isFinite(priorWidthMs)
+    && priorWidthMs >= RECLAIM_DEFERRAL_LADDER_MS[RECLAIM_DEFERRAL_LADDER_MS.length - 1]!;
+  const deferVerdict = (why: "dependency-hold" | "unclaimable-sustained"): StrandedContinuationVerdict => {
+    if (horizonReached) {
+      /*
+      The horizon is reached from inside the defer branches only, so it inherits every guard those branches
+      sit behind — engine pause, terminal/missing task, `manual-hold`, live session/planner, `too-fresh`,
+      `lease-active`, `scheduler-owned`, the pure principal / human-merge / file-scope suppressions, and the
+      `stillWaiting` proof for a dependency wait. A row whose owner can re-take it never gets here, and an
+      evidenced overlap wait is answered by `converge` before this point.
+      */
+      return { action: "reveal", reason: why, deferralAgeMs: deferralAgeMs! };
+    }
+    return {
+      action: "defer",
+      reason: why,
+      retryAfterMs: input.now + nextDeferralMs(priorWidthMs),
+      ...(rungSaturated ? { sustained: true as const } : {}),
+      ...(deferralAgeMs !== undefined ? { deferralAgeMs } : {}),
+    };
+  };
 
   if (isPrincipalRoutingHold(reason)) {
     /*

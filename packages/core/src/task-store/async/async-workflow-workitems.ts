@@ -113,6 +113,7 @@ export function rowToWorkflowWorkItem(row: WorkflowWorkItemRow): WorkflowWorkIte
     state: normalizeWorkflowWorkItemState(row.state),
     attempt: row.attempt,
     retryAfter: row.retryAfter,
+    deferredSince: row.deferredSince,
     leaseOwner: row.leaseOwner,
     leaseExpiresAt: row.leaseExpiresAt,
     lastError: row.lastError,
@@ -622,6 +623,12 @@ export async function transitionWorkflowWorkItem(
         state,
         attempt: patch.attempt ?? existing.attempt,
         retryAfter: patch.retryAfter === undefined ? existing.retryAfter : patch.retryAfter,
+        /*
+        FNXC:StrandedContinuationDeferralHorizon 2026-11-02-12:27 (RUFU-299):
+        The episode anchor rides the SAME guarded UPDATE as `retryAfter`, so a compare-and-set loss cannot
+        leave an anchored episode attached to a deferral this pass failed to stamp.
+        */
+        deferredSince: patch.deferredSince === undefined ? existing.deferredSince : patch.deferredSince,
         leaseOwner: patch.leaseOwner === undefined ? existing.leaseOwner : patch.leaseOwner,
         leaseExpiresAt:
           patch.leaseExpiresAt === undefined ? existing.leaseExpiresAt : patch.leaseExpiresAt,
