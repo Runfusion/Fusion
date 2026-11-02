@@ -10,6 +10,7 @@ import { emitBoundedRunAudit, type RunAuditLogger } from "../run-audit/emit-boun
  */
 import {TaskStore, storeLog, RECONCILE_ORPHAN_TASK_DIR_MAX_AGE_MS, WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX} from "../store.js";
 import {planLegacyAdoption} from "../db/legacy-adoption.js";
+import { repairDoubleEncodedTaskLogsAsync } from "./async/async-task-log-shape.js";
 import {and, eq, sql} from "drizzle-orm";
 import {
   MIGRATION_BOOKKEEPING_TABLE,
@@ -74,6 +75,22 @@ export async function initImpl(store: TaskStore, options?: { skipArchiveReintegr
     } catch (error) {
       storeLog.warn("Async allocator reconciliation failed during backend init", {
         phase: "init:async-allocator-reconcile",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    /*
+    FNXC:TaskLogShape 2026-11-02-19:12 (RUFU-858 acceptance 3):
+    Repair any `tasks.log` row that was written as a double-encoded jsonb scalar BEFORE the first
+    project-wide read of this process. Such a row makes every query selecting `id, log` over the project
+    throw, which is how `fn task delete` came to report failure after committing and `fn task create` came
+    to create nothing. Best-effort by the same rule as the reconciles around it: a failure here must not
+    stop the store from opening.
+    */
+    try {
+      await repairDoubleEncodedTaskLogsAsync(store);
+    } catch (error) {
+      storeLog.warn("Task log jsonb shape repair failed during backend init", {
+        phase: "init:task-log-shape-repair",
         error: error instanceof Error ? error.message : String(error),
       });
     }

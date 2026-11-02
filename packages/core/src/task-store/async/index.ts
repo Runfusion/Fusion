@@ -18,5 +18,6 @@ export * from "./async-phantom-reservations.js";
 export * from "./async-search.js";
 export * from "./async-self-healing.js";
 export * from "./async-settings.js";
+export * from "./async-task-log-shape.js";
 export * from "./async-transition-pending.js";
 export * from "./async-workflow-workitems.js";
