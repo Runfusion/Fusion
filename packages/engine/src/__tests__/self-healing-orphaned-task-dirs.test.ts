@@ -31,7 +31,14 @@ describe("SelfHealingManager orphaned task-dir maintenance", () => {
     vi.spyOn(manager as any, "maintainTaskFts").mockResolvedValue(undefined);
     vi.spyOn(manager as any, "checkpointWal").mockReturnValue(undefined);
     vi.spyOn(manager as any, "enforceWorktreeCap").mockResolvedValue(undefined);
-    vi.spyOn(manager, "archiveStaleDoneTasks").mockResolvedValue(0);
+    /*
+    FNXC:TestInfrastructure 2026-11-02-10:23 (RUFU-446):
+    The `vi.spyOn(manager, "archiveStaleDoneTasks")` stub that used to sit here is deleted, not
+    re-pointed: FN-295 removed task archiving, so the property does not exist and `vi.spyOn` throws
+    before `runMaintenance` is ever reached. This file therefore failed on `main` too, contrary to
+    the intake note that claimed it passed — the throw happens in the same harness position as in
+    self-healing-db-corruption.test.ts.
+    */
 
     await (manager as any).runMaintenance();
 

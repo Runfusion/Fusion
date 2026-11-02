@@ -229,6 +229,24 @@ describe("FN-514 — a card waiting for its operator is not a stall", () => {
   afterEach(() => { vi.useRealTimers(); });
 
   it("classifies neither an awaited decision nor an owed correction as a stall signal", () => {
+    /*
+    FNXC:HumanMergeApproval 2026-11-02-10:28 (RUFU-446): verdict REGRESSION — assertions UNCHANGED.
+
+    Provenance, re-derived with git here (planning could not run it): the exemption and the
+    completed-review arm were authored on two separate lines of history — FN-514 `1c26d7a8ee`
+    (2026-09-17, `isHumanMergeApprovalBlocker` inside the `if (mergeBlocker)` scan) and FN-9317
+    `706c155609` (2026-09-19, `completed-review-status-none`) which is NOT a descendant of FN-514.
+    The first commit where both coexist is the sync merge `2c09516986` ("merge:
+    origin/main@e0b25b4ccd into superset main (2026-09-21 sync)"), which resolved the new arm ABOVE
+    the exemption. No commit after FN-514 documents a precedence decision over the human-merge
+    exemption (`git log -S isHumanMergeApprovalBlocker -- packages/core/src` names only `1c26d7a8ee`
+    and RUFU-280 `17da7ecc61`, which only widened the review-agent revision lane). So the ordering
+    that broke these assertions is a merge artifact, not a ruling: `makeTask(ARMED)`,
+    `makeTask(REJECTED)` and the `create-pr` transfer hold all carry all-done steps, `status: null`,
+    no error, `mergeRetries: 0` and a stale `updatedAt`, so the completed arm answered before the
+    documented P0 ever got asked. The classifier is repaired in RUFU-446 Step 3; these expectations
+    stay exactly as FN-514 wrote them.
+    */
     expect(getInReviewStallReason(makeTask(ARMED))).toBeUndefined();
     expect(getInReviewStallReason(makeTask(REJECTED))).toBeUndefined();
     // The create-pr transfer hold reports the same blocker and is equally exempt.
@@ -239,11 +257,45 @@ describe("FN-514 — a card waiting for its operator is not a stall", () => {
   });
 
   it("still reports genuine stalls, so the exemption is narrow", () => {
+    /*
+    FNXC:HumanMergeApproval 2026-11-02-10:28 (RUFU-446): verdict NEW TRUTH — assertion updated, and
+    the case below it added, so the file asserts MORE than before.
+
+    This fixture is UNLOCKED (no `humanMergeApproval`): all steps done, `status: null`, no error,
+    `mergeRetries: 0`, `updatedAt` older than `staleMergingMinAgeMs`. That shape is exactly what
+    `completed-review-status-none` was created to name — FN-9317 `706c155609` ("FN-9317: recover
+    stalled in-review merges", 2026-09-19, FNXC:MergeRetryAdmission 2026-09-20-02:17) states it
+    outright: "A fully completed review card with no status, active owner, admitted retry, or
+    terminal error is not an idle healthy state." The card is still a genuine stall, only under the
+    more precise code, so narrowness holds and nothing here weakens the FN-514 exemption.
+
+    The zero-step sibling is the part that was missing: the completed arm excludes zero-step cards
+    by design, so `no-worktree-no-merge-confirmed` had no surviving coverage once the newer arm
+    claimed the all-done shape. Both codes stay pinned.
+    */
     const stalled = makeTask(undefined, { worktree: undefined } as Partial<Task>);
-    expect(getInReviewStallReason(stalled)?.code).toBe("no-worktree-no-merge-confirmed");
+    expect(getInReviewStallReason(stalled)?.code).toBe("completed-review-status-none");
+
+    const zeroStepMissingCheckout = makeTask(undefined, {
+      worktree: undefined,
+      steps: [],
+    } as Partial<Task>);
+    expect(getInReviewStallReason(zeroStepMissingCheckout)?.code).toBe("no-worktree-no-merge-confirmed");
   });
 
   it("does not pause or fail a locked card past the deadlock threshold", async () => {
+    /*
+    FNXC:HumanMergeApproval 2026-11-02-10:28 (RUFU-446): verdict REGRESSION — assertions UNCHANGED
+    (same provenance as the classifier test above: FN-9317's `completed-review-status-none` arm
+    reached this card through the `2c09516986` sync merge, ahead of FN-514's exemption).
+
+    This is the same defect one level up, and the operator-visible half of it: the sweep logged one
+    `completed-review-status-none` observation per pass, so twelve patient minutes of "nobody has
+    decided yet" accumulated `inReviewStallDeadlockThreshold` repeats and the card would be paused
+    and failed — the exact outcome FN-514 forbids for a card whose only state is an armed lock. A
+    green run of this test after Step 3 is not the only proof; the precedence itself is pinned at
+    core level in packages/core/src/__tests__/in-review-stall.test.ts.
+    */
     const task = makeTask(ARMED);
     const store = createStallStore(task);
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
@@ -261,6 +313,13 @@ describe("FN-514 — a card waiting for its operator is not a stall", () => {
   });
 
   it("does not pause or fail a card whose rejection still owes corrections", async () => {
+    /*
+    FNXC:HumanMergeApproval 2026-11-02-10:28 (RUFU-446): verdict REGRESSION — assertions UNCHANGED.
+    Same arm and same merge as the armed-lock case above; a published rejection is the stronger,
+    non-revocable obligation, so losing it to a board/engine disagreement badge is the worse of the
+    two shapes. `getHumanMergeApprovalBlocker` reports `HUMAN_MERGE_REJECTION_BLOCKER` first, which
+    is what the repaired arm now consults.
+    */
     const task = makeTask(REJECTED);
     const store = createStallStore(task);
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });

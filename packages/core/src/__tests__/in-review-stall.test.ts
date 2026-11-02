@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+/*
+FNXC:HumanMergeApproval 2026-11-02-10:30 (RUFU-446): the precedence cases below construct real lock
+states, so the fixture types come from the feature rather than a structural copy that could drift.
+*/
+import type { HumanMergeApprovalState } from "../merge/human-merge-approval.js";
 import {
   classifyProviderError,
   countRecentIdenticalStallEntries,
@@ -331,5 +336,126 @@ describe("getInReviewStallReason", () => {
       updatedAt: new Date(NOW - DEFAULT_STALE_MERGING_MIN_AGE_MS - 60_000).toISOString(),
     }, { now: NOW });
     expect(signal?.code).toBe("transient-merge-status-no-owner");
+  });
+
+  /*
+  FNXC:HumanMergeApproval 2026-11-02-10:30 (RUFU-446): the operator wait outranks the completed arm.
+
+  These cases exist because the precedence was never decided, it was merged. FN-514 (`1c26d7a8ee`)
+  put the human-merge exemption inside the `mergeBlocker` scan; FN-9317 (`706c155609`) added the
+  `completed-review-status-none` arm on a line that is not a descendant of FN-514, and the sync merge
+  `2c09516986` resolved it ABOVE the scan. An armed lock matches the completed arm verbatim (all-done
+  steps, `status: null`, no error, `mergeRetries: 0`, stale `updatedAt`), so from that merge until
+  here every locked card was badged a stall every `taskStuckTimeoutMs` and terminalized at
+  `inReviewStallDeadlockThreshold` — the ~100-minute self-failure FN-514 was written to stop, and the
+  engine suite only noticed it as ten unrelated-looking red tests.
+
+  The last three cases are the SCOPE of the exemption, pinned rather than implied. It is arm-scoped on
+  purpose: a blanket `return undefined` above the completed arm would also swallow the arms below it,
+  which `getTaskMergeBlocker` makes reachable for a locked card because it evaluates the lock LAST.
+  A locked card therefore keeps every classification whose refusal is stronger than the wait — an
+  operator deciding cannot restore a missing checkout, un-exhaust a retry budget, or answer a terminal
+  provider error.
+  */
+  const LOCK_CANDIDATE = {
+    lockGeneration: 1,
+    workflowSignature: "builtin:coding@7",
+    reviewEpisodeId: "2026-11-02T10:00:00.000Z",
+    contentSignature: "singular:fp:abc",
+    targetSignature: "merge:.@origin:fusion/FN-514->main",
+  };
+  const STALE = new Date(NOW - DEFAULT_STALE_MERGING_MIN_AGE_MS - 1).toISOString();
+  /** The exact shape the completed arm claims, plus whatever delivery lock the case is about. */
+  const lockedCompletedTask = (humanMergeApproval: HumanMergeApprovalState) => ({
+    ...baseTask,
+    status: undefined,
+    mergeRetries: 0,
+    updatedAt: STALE,
+    humanMergeApproval,
+  });
+
+  it("classifies a card awaiting its operator's merge decision as no stall at all", () => {
+    expect(getInReviewStallReason(lockedCompletedTask({ enabled: true, generation: 1 }), { now: NOW }))
+      .toBeUndefined();
+  });
+
+  it("classifies a published rejection that still owes corrections as no stall", () => {
+    expect(getInReviewStallReason(lockedCompletedTask({
+      enabled: true,
+      generation: 1,
+      remediationGeneration: 1,
+      rejection: {
+        requestId: "j1",
+        instruction: "redo the mobile flow",
+        rejectedBy: "dashboard-operator",
+        rejectedAt: "2026-11-02T11:00:00.000Z",
+        candidate: LOCK_CANDIDATE,
+        remediationGeneration: 1,
+        state: "pending",
+      },
+    }), { now: NOW })).toBeUndefined();
+  });
+
+  it("classifies an unsettled create-pr transfer hold as no stall", () => {
+    expect(getInReviewStallReason(lockedCompletedTask({
+      enabled: true,
+      generation: 1,
+      decision: {
+        requestId: "r1",
+        action: "create-pr",
+        deliveryAction: "create-pr",
+        decidedBy: "dashboard-operator",
+        decidedAt: "2026-11-02T11:00:00.000Z",
+        candidate: LOCK_CANDIDATE,
+        receipt: { state: "pending", at: "2026-11-02T11:00:00.000Z" },
+      },
+    }), { now: NOW })).toBeUndefined();
+  });
+
+  it("still classifies an unlocked completed status-none handoff, so the exemption is not the arm", () => {
+    const signal = getInReviewStallReason({ ...baseTask, status: undefined, updatedAt: STALE }, { now: NOW });
+    expect(signal?.code).toBe("completed-review-status-none");
+  });
+
+  it("keeps a missing checkout a stall for a locked card — the exemption is arm-scoped, not card-wide", () => {
+    const signal = getInReviewStallReason({
+      ...lockedCompletedTask({ enabled: true, generation: 1 }),
+      worktree: undefined,
+    }, { now: NOW });
+    expect(signal?.code).toBe("no-worktree-no-merge-confirmed");
+  });
+
+  it("keeps an exhausted retry budget a stall for a locked card", () => {
+    const signal = getInReviewStallReason({
+      ...lockedCompletedTask({ enabled: true, generation: 1 }),
+      mergeRetries: DEFAULT_MAX_AUTO_MERGE_RETRIES,
+    }, { now: NOW });
+    expect(signal?.code).toBe("merge-retries-exhausted");
+  });
+
+  it("keeps a terminal provider error a stall for a locked card", () => {
+    const signal = getInReviewStallReason({
+      ...lockedCompletedTask({ enabled: true, generation: 1 }),
+      status: "failed",
+      error: "HTTP 400 invalid_request_error: unsupported parameter",
+    }, { now: NOW });
+    expect(signal?.code).toBe("non-retryable-provider-error");
+  });
+
+  it("classifies a decided merge that nobody executed as a stall — deciding ends the wait", () => {
+    const signal = getInReviewStallReason(lockedCompletedTask({
+      enabled: true,
+      generation: 1,
+      decision: {
+        requestId: "r1",
+        action: "merge",
+        deliveryAction: "merge",
+        decidedBy: "dashboard-operator",
+        decidedAt: "2026-11-02T11:00:00.000Z",
+        candidate: LOCK_CANDIDATE,
+        receipt: { state: "pending", at: "2026-11-02T11:00:00.000Z" },
+      },
+    }), { now: NOW });
+    expect(signal?.code).toBe("completed-review-status-none");
   });
 });

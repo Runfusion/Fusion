@@ -1,6 +1,13 @@
 import { getTaskMergeBlocker, isPreMergeStepsNotRunBlocker } from "../merge/task-merge.js";
 /* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514's delivery lock is a human WAIT, never a stall. */
-import { isHumanMergeApprovalBlocker } from "../merge/human-merge-approval.js";
+/*
+FNXC:HumanMergeApproval 2026-11-02-10:30 (RUFU-446):
+`getHumanMergeApprovalBlocker` is now imported alongside its classifier, because the exemption needs
+the LOCK itself rather than only the sentence the door returns for it. See the arm below the
+`completed-review-status-none` block for why the door scan's copy of that check cannot reach the
+shape it has to exempt.
+*/
+import { getHumanMergeApprovalBlocker, isHumanMergeApprovalBlocker } from "../merge/human-merge-approval.js";
 /* FNXC:TaskLogProjections 2026-10-10-19:13 (RUFU-615): projection-backed trailing-run count. */
 import {
   countIdenticalStallFromProjection,
@@ -384,11 +391,47 @@ export function getInReviewStallReason(
   disagreement through the shared hydration signal rather than a dashboard-only
   inference. Zero-step cards remain excluded because they do not prove execution.
   */
+  /*
+  FNXC:HumanMergeApproval 2026-11-02-10:30 (RUFU-446): the operator wait outranks the completed arm.
+
+  Requirement (unchanged since FN-514 `1c26d7a8ee`, restated in `merge/human-merge-approval.ts`:
+  "It is a typed human WAIT, never a failure: callers classify it with `isHumanMergeApprovalBlocker`
+  and must not park the card, burn a retry budget or trigger an automatic replan"): a card whose only
+  outstanding fact is an armed delivery lock, a rejection owing corrections, or an unsettled `create-pr`
+  transfer hold may never be counted toward the deadlock ladder. The same contract ships as operator
+  documentation — `docs/workflow-steps.md` -> "Human delivery hold (FN-514)" -> **It is not a stall.**
+  names this exemption and predicts this exact failure ("the sweep would record the same blocker every
+  poll and eventually pause and fail a card") — written by `1c26d7a8ee` and never amended since, so the
+  drift below contradicted a written contract, not an inference.
+
+  Why the exemption below was not enough: it sits inside `if (mergeBlocker)`, so it is only ever
+  consulted after every structural arm has already answered. The completed arm added by FN-9317
+  `706c155609` (a line that is NOT a descendant of FN-514) landed ABOVE that scan in the sync merge
+  `2c09516986`, and an armed lock satisfies the completed arm verbatim — all steps done, `status:
+  null`, no error, `mergeRetries: 0`, stale `updatedAt`. So a deliberately patient operator's card was
+  badged `completed-review-status-none` every `taskStuckTimeoutMs` and terminalized at
+  `inReviewStallDeadlockThreshold`, which is the exact ~100-minute failure this file was written
+  against. No commit ever ruled on that precedence; the merge produced it.
+
+  SCOPE OF THE EXEMPTION — arm-scoped, deliberately NOT an early return above the completed block:
+  a context-free `return undefined` there would also pre-empt every arm below it, and those arms are
+  reachable for a locked card TODAY because `getTaskMergeBlocker` evaluates the lock LAST, after the
+  lane / pause / blocking-status / incomplete-steps / pre-merge-approval arms. A locked card therefore
+  KEEPS its current classification whenever the door refusal is stronger than the lock: `status:
+  "failed"` carrying a terminal provider error still reports `non-retryable-provider-error`, a missing
+  checkout still reports `no-worktree-no-merge-confirmed`, an exhausted retry budget still reports
+  `merge-retries-exhausted`, and a non-human refusal still reports `merge-blocker`. An operator cannot
+  act on any of those by deciding; the wait is exempt only where the wait IS the whole refusal. The
+  boundary is pinned, not implied, by `packages/core/src/__tests__/in-review-stall.test.ts`.
+  */
+  const operatorWaitIsTheWholeRefusal = isHumanMergeApprovalBlocker(getHumanMergeApprovalBlocker(task));
+
   const updatedAtMs = Date.parse(task.updatedAt);
   const completedSteps = task.steps.length > 0
     && task.steps.every((step) => step.status === "done" || step.status === "skipped");
   if (
-    completedSteps
+    !operatorWaitIsTheWholeRefusal
+    && completedSteps
     && task.status == null
     && !task.error
     && mergeRetries === 0

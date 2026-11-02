@@ -63,6 +63,16 @@ const BATCH1_METHODS = [
   "pruneWorktrees",
   "cleanupOrphans",
   "enforceWorktreeCap",
+  /*
+  FNXC:TestInfrastructure 2026-11-02-10:23 (RUFU-446):
+  RUFU-210's reaper is a maintenance batch-1 step that emits a
+  `worktree:orphaned-git-child-reap-no-action` audit row on its FIRST no-op pass. This harness
+  asserts corruption-only audit counts (`not.toHaveBeenCalled()` on a healthy DB, exactly 1 and 2
+  calls in the cooldown / re-notify tests), so an unstubbed newer sweep leaks one foreign row into
+  every count. Stubbing it preserves the harness contract — only the corruption path may emit —
+  instead of loosening the assertions to tolerate unrelated sweeps added later.
+  */
+  "reapOrphanedWorktreeGitChildren",
 ] as const;
 
 const BATCH2_METHODS = [
@@ -150,7 +160,17 @@ function stubMaintenance(manager: SelfHealingManager) {
   untouched.
   */
   vi.spyOn(manager as never, "openSurfacingCycle").mockResolvedValue(null as never);
-  vi.spyOn(manager, "archiveStaleDoneTasks").mockResolvedValue(0);
+  /*
+  FNXC:TestInfrastructure 2026-11-02-10:23 (RUFU-446):
+  There used to be a `vi.spyOn(manager, "archiveStaleDoneTasks")` line here. FN-295 deleted task
+  archiving, so the method no longer exists on `SelfHealingManager` and `vi.spyOn` throws
+  `The property "archiveStaleDoneTasks" is not defined on the object.` for EVERY test that calls this
+  harness — six deterministic failures on `main`, none of them about DB corruption surfacing.
+  A spy on a deleted method protects nothing, so it is removed rather than re-added to production.
+  The remaining per-sweep stubs stay load-bearing: `runMaintenance` still evaluates every other
+  sweep and the surfacing cycle, exactly as the FNXC:TestInfrastructure 2026-08-01-23:05 note above
+  records.
+  */
 }
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
