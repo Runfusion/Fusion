@@ -289,3 +289,74 @@ describe("TaskDetailModal planning-admission stallReason", () => {
     expect(screen.queryByTestId("task-detail-stall-reason-FN-PLANDONE")).toBeNull();
   });
 });
+
+/*
+FNXC:WipAdmissionPark 2026-11-02-08:39 (RUFU-393):
+The detail banner is where a card refused at its hold->WIP crossing has to explain itself. Measured on the
+board this task fixes, one card was refused 16 536 times over 2 d 19 h and its detail view said nothing,
+because the refusal changed no observable field. Like the planning family, the copy carries the ELAPSED
+WAIT (the number core measures from the episode's own `firstAt`), states that a gate is withholding a
+crossing rather than that something failed, and leaves the operator a concrete lever — the column's limit
+or its occupants. With no age on the row it headlines the wait without inventing one.
+*/
+describe("TaskDetailModal wip-admission stallReason", () => {
+  it("names a withheld hold->WIP crossing with its elapsed wait, description, and next step", () => {
+    const waitedMs = (2 * 24 * 60 + 19 * 60) * 60 * 1000; // 2 d 19 h, the measured RUFU-393 wait
+    renderDetail(
+      makeTask({
+        id: "FN-WIPDETAIL",
+        column: "todo",
+        status: "pending",
+        stallReason: {
+          code: "wip-admission-throttled",
+          reason: "engine sentence for wip-admission-throttled",
+          observedAt: "2026-11-02T00:00:00.000Z",
+          waitedMs,
+        },
+      }),
+    );
+    const banner = screen.getByTestId("task-detail-stall-reason-FN-WIPDETAIL");
+    expect(banner.getAttribute("data-stall-code")).toBe("wip-admission-throttled");
+    expect(banner).toHaveTextContent("Waiting for a work-in-progress slot (2 d 19 h)");
+    const description = banner.querySelector(".task-stall-reason-description")?.textContent ?? "";
+    expect(description.trim().length).toBeGreaterThan(0);
+    // Localized catalog copy, not the engine's sentence — the same rule the planning family follows.
+    expect(description).not.toContain("engine sentence for");
+    expect(banner.querySelector(".task-stall-reason-action")?.textContent?.trim().length).toBeGreaterThan(0);
+    expect(banner.querySelector(".task-stall-reason-headline")?.textContent).not.toMatch(/\bfail(ed)?\b/i);
+  });
+
+  it("headlines the wait without an invented age when the server carries none", () => {
+    renderDetail(
+      makeTask({
+        id: "FN-WIPNOAGE",
+        column: "todo",
+        status: "pending",
+        stallReason: {
+          code: "wip-admission-throttled",
+          reason: "engine sentence for wip-admission-throttled",
+          observedAt: "2026-11-02T00:00:00.000Z",
+        },
+      }),
+    );
+    const banner = screen.getByTestId("task-detail-stall-reason-FN-WIPNOAGE");
+    expect(banner).toHaveTextContent("Waiting for a work-in-progress slot");
+    expect(banner.querySelector(".task-stall-reason-headline")?.textContent).not.toMatch(/\(\s*\)/);
+  });
+
+  it("shows no WIP-admission banner on a landed card", () => {
+    renderDetail(
+      makeTask({
+        id: "FN-WIPDONE",
+        column: "done",
+        status: "done",
+        stallReason: {
+          code: "wip-admission-throttled",
+          reason: "stale episode on a landed row",
+          observedAt: "2026-11-02T00:00:00.000Z",
+        },
+      }),
+    );
+    expect(screen.queryByTestId("task-detail-stall-reason-FN-WIPDONE")).toBeNull();
+  });
+});

@@ -7823,6 +7823,13 @@
     "nousResearchLogoAlt": "Nous Research"
   },
   "stall": {
+    "wip-admission-throttled": {
+      "badgeLabel": "Waiting for a WIP slot",
+      "headline": "Waiting for a work-in-progress slot ({{waited}})",
+      "headlineUnspecified": "Waiting for a work-in-progress slot",
+      "description": "This card is planned and idle, but its crossing into work-in-progress keeps being refused, so it stays where it is until a slot or a release frees it.",
+      "suggestedAction": "Check what occupies the work-in-progress column and its limit, or move the card yourself."
+    },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",
       "headline": "Waiting for a planner slot",

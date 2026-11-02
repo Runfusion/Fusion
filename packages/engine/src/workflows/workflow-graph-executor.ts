@@ -521,6 +521,8 @@ export interface WorkflowGraphExecutorResult {
      */
     source?: import("./workflow-column-boundary.js").WorkflowRunSuspendSource;
     capacity?: import("@fusion/core").CapacityRejectionFacts;
+    /** Mirrors the boundary's suspended arm — the durable-park identity. See the boundary for the contract. */
+    park?: import("./workflow-column-boundary.js").WipAdmissionParkFacts;
   };
 }
 

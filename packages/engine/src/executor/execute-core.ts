@@ -30,6 +30,15 @@ import type { Task } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import { dropPreHeldExecutorSlot } from "../concurrency/concurrency.js";
 import { getActivePrincipalHoldCooldown } from "./execute-workflow-graph.js";
+/*
+FNXC:WipAdmissionPark 2026-11-02-09:21 (RUFU-393 code-review P0):
+The SAME decision the graph-entry surface reads, imported rather than re-derived, so the two surfaces cannot
+disagree about what a parked card is. It is the async entry form, not the bare marker read: dropping a
+dispatch on the marker alone froze cards whose only remaining work is a graph run in the refused column
+(see `wipAdmissionParkDefersGraphEntry`). `execution/wip-admission-park.ts` depends only on `@fusion/core`
+and the logger, so this edge adds no cycle.
+*/
+import { wipAdmissionParkDefersGraphEntry } from "../execution/wip-admission-park.js";
 
 export type ExecuteCoreDeps = {
   completionFinalizedTaskIds: Set<string>;
@@ -39,6 +48,13 @@ export type ExecuteCoreDeps = {
   blockOuterDispatchWhenDependenciesUnmet: (task: Task) => Promise<boolean>;
   blockOuterDispatchWhenFileScopeLeaseHeld: (task: Task) => Promise<boolean>;
   executeWorkflowGraph: (task: Task, options: { alreadyClaimed: true }) => Promise<void>;
+  /**
+   * FNXC:WipAdmissionPark 2026-11-02-09:21 (RUFU-393 code-review P0):
+   * The card's own pending graph work, read from the same store the graph will read. Required, because the
+   * deferral may only describe the withheld crossing; a routing block that cannot ask the question must not
+   * drop the dispatch, so an unimplemented probe answers "work pending" (see `wipAdmissionInLaneWork`).
+   */
+  hasInLaneWorkflowWork: (task: Pick<Task, "id" | "column">) => Promise<boolean>;
 };
 
 export async function executeCore(deps: ExecuteCoreDeps, task: Task): Promise<void> {
@@ -75,6 +91,33 @@ export async function executeCore(deps: ExecuteCoreDeps, task: Task): Promise<vo
   const principalHoldCooldown = getActivePrincipalHoldCooldown(task.id);
   if (principalHoldCooldown) {
     executorLog.debug(`execute() called for ${task.id} while a workflow-principal hold is cooling down (${principalHoldCooldown.reason}) — deferring`);
+    return;
+  }
+  /*
+  FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+  The measured hot loop. A card parked at the hold->WIP seam is re-dispatched by the scheduler every few
+  minutes, and each dispatch entered the graph, re-parked at the same boundary, wrote a continuation, and
+  recorded a refusal row — 16 536 rows for one card over 2 d 19 h while the board showed an idle card. The
+  crossing is the hold/release sweep's to make, so entering the graph cannot advance it: deferring here, on
+  the durable marker, is what makes the wait cost nothing.
+
+  FNXC:WipAdmissionPark 2026-11-02-09:21 (RUFU-393 code-review P0):
+  This await sits BEFORE the `graphRouting` claim, which FN-8471 warns against, and it is still correct only
+  because of what follows it: the claim check below is unchanged, so two dispatches that both clear the
+  deferral still serialize on `graphRouting.has` exactly as before, and a deferral itself writes no claim to
+  own. What the await must never become is a decision on the marker alone — the first cut was synchronous and
+  marker-only, and it silently dropped the planning-continuation dispatch of every card the sweep had just
+  parked with `awaiting-planning`, which is the only dispatch that would ever have planned them. The shared
+  entry decision now also asks the gate which refused (does its remedy live in this column at all?) and the
+  card's own work items (is there anything to run here?), so the loop that gets bounded is the poll loop and
+  not the work.
+
+  No slot bookkeeping belongs here: the `execute()` wrapper owns pre-held slot release for every exit path.
+  */
+  const parkedDeferral = await wipAdmissionParkDefersGraphEntry(task, deps.hasInLaneWorkflowWork);
+  if (parkedDeferral) {
+    const { episode } = parkedDeferral;
+    executorLog.debug(`execute() called for ${task.id} while it is parked at the ${episode.fromColumn}->${episode.toColumn} seam (${episode.code}, ${episode.stallCount} refusals since ${episode.firstAt}) — deferring`);
     return;
   }
   /*

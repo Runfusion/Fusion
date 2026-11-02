@@ -4764,6 +4764,13 @@
       "headline": "Waiting to be picked up",
       "suggestedAction": "No action needed; reorder or assign the card if a different one should run first."
     },
+    "wip-admission-throttled": {
+      "badgeLabel": "Aguardando vaga de WIP",
+      "headline": "Aguardando uma vaga de trabalho em andamento ({{waited}})",
+      "headlineUnspecified": "Aguardando uma vaga de trabalho em andamento",
+      "description": "Este cartão está planejado e parado, mas sua entrada em trabalho em andamento continua sendo recusada, então ele fica onde está até uma vaga ou liberação.",
+      "suggestedAction": "Verifique o que ocupa a coluna de trabalho em andamento e o limite dela, ou mova o cartão você mesmo."
+    },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",
       "headline": "Waiting for a planner slot",

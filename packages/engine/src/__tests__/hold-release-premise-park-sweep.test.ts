@@ -124,9 +124,18 @@ describe("hold-release sweep skips the premise terminal park before resolving it
     expect(parked.status).toBe("failed");
     expect(parked.error).toContain(PLAN_PREMISE_EXHAUSTED_PREFIX);
     expect(parked.sourceMetadata?.planPremiseRejection).toMatchObject({ refusalCount: 3, escalation: "park" });
-    expect(updateTask).not.toHaveBeenCalled();
-    expect(updateTaskAtomic).not.toHaveBeenCalled();
-    expect(logEntryOnce).not.toHaveBeenCalled();
+    /*
+    FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+    This guard read as a blanket "the sweep performed no updateTask call anywhere", which the sweep could
+    satisfy only while it wrote nothing at all. A held capacity candidate now also records its durable
+    WIP-admission marker, so the blanket form would have laundered a real requirement (the terminal park is
+    refuse-to-touch) into a prohibition on an unrelated write. The invariant is now asserted ABOUT the park
+    rather than about the world: no write, atomic write, or once-log may name the parked id.
+    */
+    const namesPark = (calls: readonly unknown[]): boolean => calls.every((call) => (call as unknown[])[0] !== parked.id);
+    expect(namesPark(updateTask.mock.calls)).toBe(true);
+    expect(namesPark(updateTaskAtomic.mock.calls)).toBe(true);
+    expect(namesPark(logEntryOnce.mock.calls)).toBe(true);
     // No move was ever attempted for the park (the control's move, if any, is environment-dependent).
     expect(moveTaskIf.mock.calls.every((call: unknown[]) => call[0] !== parked.id)).toBe(true);
   });

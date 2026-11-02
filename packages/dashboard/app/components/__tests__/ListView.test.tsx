@@ -1222,6 +1222,41 @@ describe("ListView", () => {
     });
 
     /*
+    FNXC:WipAdmissionPark 2026-11-02-08:39 (RUFU-393):
+    The withheld hold->WIP crossing must be legible in BOTH List layouts — the mobile card and the desktop
+    table row render the chip from different JSX branches, and RUFU-6115/FN-6123 are the standing proof
+    that a face affordance fixed in one branch silently stays missing in the other. A card refused for
+    2 d 19 h showed `In Progress 0%` in both.
+    */
+    const wipAdmissionStall = {
+      code: "wip-admission-throttled",
+      reason: "Waiting for a work-in-progress slot (2 d 19 h)",
+      observedAt: "2026-11-02T00:00:00.000Z",
+      waitedMs: (2 * 24 * 60 + 19 * 60) * 60 * 1000,
+    };
+
+    it("names a sustained WIP-admission refusal on the desktop table row face", () => {
+      renderListView({
+        tasks: [createMockTask({ id: "FN-WIPROW", column: "todo", title: "Parked at the seam", stallReason: wipAdmissionStall as never })],
+      });
+      const chip = screen.getByTestId("list-stall-reason-FN-WIPROW");
+      expect(chip).toHaveTextContent("Waiting for a work-in-progress slot (2 d 19 h)");
+      expect(chip.getAttribute("data-stall-code")).toBe("wip-admission-throttled");
+      expect(document.querySelector('[data-task-stall-reason="wip-admission-throttled"]')).not.toBeNull();
+    });
+
+    it("names a sustained WIP-admission refusal on the mobile card face", () => {
+      const matchMediaSpy = mockMobileViewport();
+      renderListView({
+        tasks: [createMockTask({ id: "FN-WIPCARD", column: "todo", title: "Parked at the seam", stallReason: wipAdmissionStall as never })],
+      });
+      const chip = screen.getByTestId("list-stall-reason-FN-WIPCARD");
+      expect(chip).toHaveTextContent("Waiting for a work-in-progress slot (2 d 19 h)");
+      expect(chip.getAttribute("data-stall-code")).toBe("wip-admission-throttled");
+      matchMediaSpy.mockRestore();
+    });
+
+    /*
     FNXC:StallReason 2026-09-01-19:47 (RUFU-175 review):
     A landed row can carry stale paused metadata (see the `keeps done status badge … when stale paused
     metadata exists` pair above), and landing proof deliberately ignores `paused`, so the park can still

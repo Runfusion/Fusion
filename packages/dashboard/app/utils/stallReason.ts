@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next";
-import type { Task, TaskExternalBlock } from "@fusion/core";
-import { formatTaskExternalBlockReason, isTaskExternallyBlocked } from "@fusion/core";
+import type { Task, TaskExternalBlock, TaskStallReason } from "@fusion/core";
+import { formatTaskExternalBlockReason, formatWipAdmissionStallWait, isTaskExternallyBlocked } from "@fusion/core";
 import { elapsedSinceMs } from "./dataFreshness";
 import { getInReviewStallCopy } from "./inReviewStallCopy";
 import { getStalePausedReviewCopy } from "./stalePausedReviewCopy";
@@ -103,6 +103,16 @@ export type StallReasonCode =
   | "plan-recovery-backoff"
   | "plan-no-admission"
   | "recoverable-work"
+  /*
+  FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+  Carried VERBATIM from `TaskStallReasonCode`, and it is the execution lane's twin of the planning family
+  above for the same reason RUFU-177 carried the review-lane three: the code identity is what tells a
+  surface WHICH authority refused the card. A planning stall sends an operator to the planner; this one
+  sends them to the work-in-progress column's limit and its occupants. Collapsing the two is what made the
+  reported storm unreadable — a card refused 16 536 times at the hold→WIP crossing looked, on the board,
+  exactly like a card waiting for a planner.
+  */
+  | "wip-admission-throttled"
   /*
   FNXC:ProviderThrottleIsTransient 2026-09-30-14:45 (RUFU-286):
   Client-synthesized (like `agent-approval`, not carried from a server code): the card's own agent is
@@ -473,6 +483,8 @@ function serverStallReason(subject: StallSubject, context: StallContext): StallR
   // Planning-lane codes are dispatched by the shared list rather than per-code `case` labels, so the
   // dispatch and the face-visibility rule below can never disagree about which codes belong to the lane.
   if (isPlanningAdmissionStallCode(server.code)) return planAdmissionReason(server.code, context);
+  // Same shared-list discipline for the execution-lane admission code (RUFU-393).
+  if (isWipAdmissionStallCode(server.code)) return wipAdmissionReason(server, context);
   switch (server.code) {
     case "merge-blocker":
     // fallthrough: an enabled gate that has not run yet genuinely blocks the merge, so it shares the merge-blocker copy group; only its code (and therefore its test/data attribute) differs.
@@ -581,6 +593,23 @@ function isPlanningAdmissionStallCode(code: string): code is PlanningAdmissionSt
 }
 
 /*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The execution lane's twin: a planned card whose crossing into work-in-progress keeps being refused. It has
+its own list rather than joining `PLAN_ADMISSION_CODES` because the two lanes need opposite remedies — a
+planning chip sends an operator to the planner, this one to the WIP column's limit and its occupants — and
+the whole reason the code exists is that collapsing them previously pointed at the wrong knob. Same
+one-list-three-uses discipline as the planning family: the type, the dispatch above, and face visibility
+below all read this list, so the code cannot be mapped in one place and silently ignored in another.
+*/
+const WIP_ADMISSION_CODES = ["wip-admission-throttled"] as const;
+
+type WipAdmissionStallCode = (typeof WIP_ADMISSION_CODES)[number];
+
+function isWipAdmissionStallCode(code: string): code is WipAdmissionStallCode {
+  return (WIP_ADMISSION_CODES as readonly string[]).includes(code);
+}
+
+/*
 FNXC:PlanningAdmissionStall 2026-09-25-19:31 (RUFU-273):
 The seven planning-lane answers, each with its OWN copy group. A single shared "waiting to be planned"
 sentence would have reproduced the defect this task exists to remove: before it, every aged silent
@@ -651,6 +680,39 @@ function planAdmissionReason(
     headline: entry.headline,
     description: entry.description,
     suggestedAction: entry.action,
+  };
+}
+
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The copy deliberately carries the ELAPSED WAIT, because "the card has been refused for two days" and "the
+card was refused a minute ago" are different operational events and the chip must not blur them. The
+number arrives on the server's `waitedMs`, measured in core from the episode's own `firstAt`; the formatting
+is core's `formatWipAdmissionStallWait` so the CLI, the banner, and any later surface read the same age out
+of the same rule. When the age is absent the non-interpolating variant is used rather than a headline that
+reads "(waiting )" — the same honesty rule `dependency-block` applies to a missing task id.
+
+The wording never says "failed" and never says "stuck": nothing has gone wrong with the card, a gate is
+withholding a crossing, and the operator's lever is the column's limit or its occupants.
+*/
+function wipAdmissionReason(server: TaskStallReason, context: StallContext): StallReason {
+  const { t } = context;
+  const waited = typeof server.waitedMs === "number" ? formatWipAdmissionStallWait(server.waitedMs) : undefined;
+  const badgeLabel = t("stall.wip-admission-throttled.badgeLabel", "Waiting for a WIP slot");
+  return {
+    code: "wip-admission-throttled",
+    badgeLabel,
+    headline: waited
+      ? t("stall.wip-admission-throttled.headline", "Waiting for a work-in-progress slot ({{waited}})", { waited })
+      : t("stall.wip-admission-throttled.headlineUnspecified", "Waiting for a work-in-progress slot"),
+    description: t(
+      "stall.wip-admission-throttled.description",
+      "This card is planned and idle, but its crossing into work-in-progress keeps being refused, so it stays where it is until a slot or a release frees it.",
+    ),
+    suggestedAction: t(
+      "stall.wip-admission-throttled.suggestedAction",
+      "Check what occupies the work-in-progress column and its limit, or move the card yourself.",
+    ),
   };
 }
 
@@ -916,6 +978,15 @@ export function stallReasonVisibleOnFace(
   operator has to know about without opening it.
   */
   if (isPlanningAdmissionStallCode(stall.code)) return true;
+  /*
+  FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+  Earns the card face for the reason RUFU-273 gives for the planning family: a card that has been refused
+  out of `todo` for a day while reading as an idle card is exactly the at-a-glance question the chip exists
+  to answer, and a detail banner nobody opens leaves the reported symptom unfixed. This is NOT one of the
+  ordinary-wait codes below — the escalation floor in core has already decided the wait outlived any
+  transient, so a card in its lane's normal resting state never reaches here with this code.
+  */
+  if (isWipAdmissionStallCode(stall.code)) return true;
   switch (stall.code) {
     case "wedge":
     case "dependency-block":

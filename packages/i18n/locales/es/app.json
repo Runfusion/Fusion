@@ -4764,6 +4764,13 @@
       "headline": "Waiting to be picked up",
       "suggestedAction": "No action needed; reorder or assign the card if a different one should run first."
     },
+    "wip-admission-throttled": {
+      "badgeLabel": "Esperando un hueco de WIP",
+      "headline": "Esperando un hueco de trabajo en curso ({{waited}})",
+      "headlineUnspecified": "Esperando un hueco de trabajo en curso",
+      "description": "Esta tarjeta está planificada e inactiva, pero su paso a trabajo en curso sigue siendo rechazado, así que permanece donde está hasta que se libere un hueco.",
+      "suggestedAction": "Revisa qué ocupa la columna de trabajo en curso y su límite, o mueve la tarjeta tú mismo."
+    },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",
       "headline": "Waiting for a planner slot",

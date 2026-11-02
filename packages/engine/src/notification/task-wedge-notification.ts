@@ -394,6 +394,30 @@ const STALL_WEDGE_ACTIONS: Record<TaskStallReasonCode, string | null> = {
   "awaiting-review-revision": null,
   // Planning-lane codes (RUFU-273) — the card names the cause itself, so a wedge alert would double-announce.
   "plan-admission-throttled": null,
+  /*
+  FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+  Deliberately NOT alertable, and the reason is a delivery fact rather than a judgement about noise: today
+  this code could never reach an operator through the wedge pipeline at all, so a non-null string here would
+  be a dead affordance — config claiming an alert that no path can deliver.
+
+  Two vetoes, both structural:
+  1. No discovery path reaches it. RUFU-180's standing sweep is the only discovery for a stall that writes no
+     `status`/`error`/`pausedReason`, and its candidate filter names the three review-lane codes
+     (`self-healing.ts`, `reconcileReviewStallWedgeNotifications`) because it was authored for cards that stop
+     being row-written once they land in review. A card held in its own hold lane is row-written on every sweep.
+  2. The delivery path vetoes a hold-lane card. `notifyTaskStallWedge` settles through the pending mark, and
+     the pending revalidation clears any wedge whose card is resting in a `hold`/`countsTowardWip`/`complete`
+     lane (`notification-service.ts`, `hasProgressed`). `todo` carries the `hold` trait, so a withheld card is
+     classified as having progressed and the alert is cancelled before dispatch — by design, since that veto is
+     what keeps an ordinary queue from notifying.
+
+  So the surfaces are the ones this code can actually own: the stall chip on the card face (with the age the
+  escalation floor proved), one History line per published episode record, and the bounded audit row. The
+  sibling planning-lane code RUFU-273 shipped the same way for the same reason. Making an aged WIP refusal
+  mailbox-alertable needs a wedge class whose revalidation knows that a hold-lane card is NOT progress —
+  notification-service work outside this task's scope, recorded as a follow-up rather than half-wired here.
+  */
+  "wip-admission-throttled": null,
   "plan-lane-ineligible": null,
   "plan-premise-held": null,
   "plan-spec-unreadable": null,

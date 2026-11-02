@@ -16,6 +16,7 @@ import type { WorktreeCreateConflictDeps } from "./worktree-create-conflict.js";
 import type { WorktreeInvariantDeps } from "./worktree-verify-invariants.js";
 import type { NonContinuableSessionDeps } from "./non-continuable-session.js";
 import { facadeFields, facadeMethods } from "./facade-methods.js";
+import { wipAdmissionInLaneWorkProbe } from "../execution/wip-admission-park.js";
 import * as pure from "./pure-bindings.js";
 import { resolveWorkspaceConfigOnce } from "./workspace-config-resolver.js";
 import {
@@ -818,6 +819,14 @@ export function buildExecuteCoreDeps(host: any): any {
     completionFinalizedTaskIds: host.completionFinalizedTaskIds,
     graphRouting: host.graphRouting,
     releaseSemaphore: () => { host.options.semaphore?.release(); },
+    /*
+    FNXC:WipAdmissionPark 2026-11-02-09:21 (RUFU-393 code-review P0):
+    The withheld-crossing deferral is allowed to drop a dispatch only when the card has nothing to run in
+    its own column, and that answer comes from the store the graph itself will read — never from the marker.
+    Wired through the shared probe so the outer routing surface and the inner graph-entry surface ask the
+    identical question.
+    */
+    hasInLaneWorkflowWork: wipAdmissionInLaneWorkProbe(host.store),
     ...facadeMethods(host, [
       "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet",
       "blockOuterDispatchWhenFileScopeLeaseHeld", "executeWorkflowGraph",

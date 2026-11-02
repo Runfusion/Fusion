@@ -45,7 +45,14 @@ import {
   resolveColumnFlags,
   TransitionRejectionError,
   emitWorkflowLifecycleEvent,
+  type TaskWipAdmissionStallCode,
 } from "@fusion/core";
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The human-hold exclusion for the durable park marker. `execution/wip-admission-park.ts` imports
+`@fusion/core` and the logger only, never this file, so this edge introduces no cycle.
+*/
+import { holdReleaseKind, isHumanOrEventRelease } from "../execution/wip-admission-park.js";
 
 /** Run-audit event emitted by the boundary controller (KTD-12, ids/counts only). */
 export type WorkflowColumnBoundaryAuditEvent =
@@ -156,7 +163,34 @@ export type WorkflowColumnBoundaryEntryResult =
       source?: WorkflowRunSuspendSource;
       /** The gate that refused, with the counts that refused it. Absent when no pool was consulted. */
       capacity?: CapacityRejectionFacts;
+      /*
+      FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+      What a durable park needs, computed HERE rather than by the consumer. The refusal's identity exists
+      at exactly two places in the process — the branch that declined the move and, for a real pool, the
+      rejection that carried `CapacityFacts` — and nowhere else: by the time the suspended disposition
+      reaches the executor, `reason: "capacity"` is the only surviving fact, and a consumer that
+      reconstructed the gate from that word would repeat RUFU-372's exact error of labeling an authority
+      hand-off as a full pool. Forwarding the gate plus its eligibility is therefore the only way the
+      marker can say something the boundary did not already know.
+
+      `eligible` is false for a hold column whose release is authored `manual` or `external-event`. Those
+      cards wait for a person or an event, and parking them as though a pool refused them sends the
+      operator to a limit slider that has nothing to do with the hold.
+      */
+      park?: WipAdmissionParkFacts;
     };
+
+/** A capacity suspension's park identity, carried from the branch that refused the crossing. */
+export interface WipAdmissionParkFacts {
+  /** Which gate refused, in the durable episode's own vocabulary. */
+  code: TaskWipAdmissionStallCode;
+  /** False when the hold is released by a human or an external event — never park those as capacity. */
+  eligible: boolean;
+  /** The refusing pool's identity, when a pool was consulted. */
+  poolId?: string;
+  occupants?: number;
+  limit?: number;
+}
 
 /** Fixed vocabulary for what made a graph run suspend at a column boundary. */
 export type WorkflowRunSuspendSource =
@@ -443,6 +477,20 @@ export function createWorkflowColumnBoundary(
           like capacity exhaustion. No `capacity` block exists to report.
           */
           source: "scheduler-seam",
+          /*
+          FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+          The durable-park identity for the seam. `code` stays `scheduler-seam` and NO occupancy is
+          reported, because this branch never asked a pool — RUFU-372 removed a fabricated zero from this
+          exact spot, and a fabricated `at-limit` here would be that defect rewritten. `eligible` carries
+          the human-hold exclusion: a card behind a `manual` or `external-event` release waits for a person
+          or an event, and parking it as capacity is the mislabel this task exists to stop. The sweep,
+          which DOES read the pool and the readiness probes, overwrites this with its own specific arm; the
+          floor in `wipAdmissionStallWrite` is what makes two writers safe.
+          */
+          park: {
+            code: "scheduler-seam",
+            eligible: !isHumanOrEventRelease(holdReleaseKind(deps.ir, fromColumn)),
+          },
         } as const;
         await deps.onSuspend?.(suspension);
         /*
@@ -509,6 +557,24 @@ export function createWorkflowColumnBoundary(
               */
               source: err.rejection.capacity ? ("column-capacity" as const) : ("capacity-rejection-without-facts" as const),
               ...(err.rejection.capacity ? { capacity: err.rejection.capacity } : {}),
+              /*
+              FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+              A finite pool refused this move, so the park names the pool and its first sample. `poolId` is
+              the refusing COLUMN — the pool identity the rejection actually carries; inventing a
+              shared-budget id here would be a claim this branch cannot support. A refusal that arrived
+              without facts parks as unproven rather than as a zero-occupant pool, matching the source enum
+              one line above. Any column that can refuse a move for capacity is by definition not a human
+              release gate, so eligibility is unconditional here.
+              */
+              park: err.rejection.capacity
+                ? {
+                    code: "column-capacity" as TaskWipAdmissionStallCode,
+                    eligible: true,
+                    poolId: err.rejection.capacity.column,
+                    occupants: err.rejection.capacity.occupants,
+                    limit: err.rejection.capacity.limit,
+                  }
+                : { code: "capacity-rejection-without-facts" as TaskWipAdmissionStallCode, eligible: true },
             } as const;
             await deps.onSuspend?.(suspension);
             // FNXC:WorkflowEvents 2026-07-27-12:06 (U3): see the hold→wip seam above.

@@ -4764,6 +4764,13 @@
       "headline": "Waiting to be picked up",
       "suggestedAction": "No action needed; reorder or assign the card if a different one should run first."
     },
+    "wip-admission-throttled": {
+      "badgeLabel": "等待進行中槽位",
+      "headline": "等待進行中的槽位（{{waited}}）",
+      "headlineUnspecified": "等待進行中的槽位",
+      "description": "此卡片已規劃且閒置，但進入「進行中」的轉換持續被拒絕，因此在有槽位或放行釋放它之前會停留在目前位置。",
+      "suggestedAction": "檢查「進行中」欄被什麼佔用及其上限，或自行移動該卡片。"
+    },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",
       "headline": "Waiting for a planner slot",

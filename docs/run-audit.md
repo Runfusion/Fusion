@@ -328,6 +328,42 @@ over node, reason, and column boundary only, so a card polling a full pool keeps
 row per poll. Folding the fluctuating occupant count into wait identity would restore the flood this event
 exists to bound.
 
+### Dedupe authority moved onto the card (RUFU-393)
+
+RUFU-372 made the row diagnosable; it did not make it *bounded*. A capacity suspension is re-observed on every
+dispatch, and until RUFU-393 the only bound was an in-process memo (`noteWorkflowRunSuspended`) that a restart
+wipes and that puts nothing on the card — so `SKEN-009` recorded **16 536** refusals for the same
+`todo → in-progress` crossing across 2 d 19 h at ~3/minute while its `column`, `status` and `updated_at` never
+moved. The row is now gated by a **durable episode** on the card itself
+(`sourceMetadata.wipAdmissionStall`, written through key-level `sourceMetadataPatch`), and one accepted episode
+write accompanies exactly one audit row, so the two surfaces cannot disagree about how many times a wait has
+been reported. A repeated dispatch whose episode is unchanged writes neither.
+
+| key | meaning |
+|---|---|
+| `stallCode` | The gate that is holding the crossing, from the closed vocabulary: `scheduler-seam`, `column-capacity`, `downstream-full`, `move-rejected-or-no-slot`, `no-downstream-capacity-column`, `awaiting-planning`, `awaiting-approval`. Present when this row accompanied an accepted episode write. |
+| `stallCount` | How many *records* this one wait has produced — the refresh-floor count, not wall-clock passes. |
+| `stallFirstAt` | ISO instant of the first refusal in the episode. Age is read here, never from `task.updatedAt` (RUFU-350's trap: naming a card bumps the shared clock). |
+| `stallPoolId` | The capacity pool the refusal was measured against, or `null` when no pool was consulted — the same honest-absence rule as the `capacity*` block above. |
+
+**The bound is arithmetic, not intent**: an unchanged episode re-emits at most once per
+`WIP_ADMISSION_STALL_REFRESH_FLOOR_MS` (15 minutes), so one card cannot exceed four records an hour no matter
+how often the sweep or a dispatch runs, and one hour of per-minute passes produces exactly four rows
+(boundaries at t=0, 15, 30, 45 min) — pinned by test, not by comment. None of these four keys enters the notice
+signature: `stallCount` increments on every accepted refresh, and RUFU-442's measured failure was a bound whose
+key changed each cycle.
+
+The sweep publishes its own arm verdicts onto the same episode (`publishWipAdmissionHold`), which is why the
+code list above carries more members than the graph seam alone can observe: `downstream-full` and
+`move-rejected-or-no-slot` are measured by `runHoldReleaseSweep` against the real pool and the in-transaction
+move, and they arrive under the graph's node id when a graph episode already owns the signature, so one
+identity stays one identity whoever measured it last. Arms with no gate to name — `timer-not-elapsed`, and the
+`manual` / `external-event` human waits — publish nothing at all. The episode itself is not a run-audit row and
+holds no prose: it is card state, and the parked marker is never a refusal (FN-7648's durable refusals stay
+confined to `promoteHeldTask` / `releaseHeldByEvent`).
+
+This event stays deliberately outside the curated delivery-pipeline catalogue and documents as prose here.
+
 Still not carried, and the reason this section is not called a solution: **who holds the slots**. Holder
 identity is not in the refusal, so the row answers "which gate, how full" but not "which cards occupy it".
 

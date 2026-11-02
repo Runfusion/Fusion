@@ -143,6 +143,18 @@ describe("WorkflowColumnBoundary controller", () => {
       fromColumn: "todo",
       toColumn: "in-progress",
       irHash: expect.any(String),
+      /*
+      FNXC:RunAuditCapacityDiagnostic 2026-11-02-07:10 (RUFU-393 test-repair):
+      This `toEqual` had already gone stale on main — RUFU-372 added `source` here without updating this
+      fixture, so the case was red before this task touched the seam and stayed red until now. Both new
+      fields are recorded together so the assertion states the current contract exactly:
+      - `source` (RUFU-372): which refusal this is — the scheduler seam, not a pool it never consulted.
+      - `park` (RUFU-393): the durable-park identity the executor parks from, carrying no occupancy because
+        this branch never asked a pool, and `eligible` because a human-owned hold must never be labelled a
+        capacity wait.
+      */
+      source: "scheduler-seam",
+      park: { code: "scheduler-seam", eligible: true },
     });
   });
 

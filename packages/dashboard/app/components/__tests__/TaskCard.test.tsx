@@ -8794,6 +8794,69 @@ describe("TaskCard stall-reason wiring", () => {
     expect(card.hasAttribute("data-task-stall-reason")).toBe(false);
   });
 
+  /*
+  FNXC:WipAdmissionPark 2026-11-02-08:39 (RUFU-393):
+  The card face is where a withheld hold->WIP crossing has to become visible. Measured boards held a card
+  refused at that seam for 2 d 19 h (16 536 refusals for one card) while its row showed `In Progress 0%`
+  and nothing else, because the refusal changed no observable field. These two cases pin the wiring — the
+  resolver's copy and arithmetic are `stallReason.test.ts`'s job:
+  (a) a sustained refusal resolved by the server arrives as an age-bearing chip plus the code stamp, and
+  (b) the raw durable episode ALONE never renders. (b) is the anti-duplication guarantee: the face reads
+  the server stall authority, so the escalation floor cannot be re-implemented (and drift) in the UI.
+  */
+  it("names a sustained WIP-admission refusal on the face with its elapsed wait", () => {
+    const waitedMs = (2 * 24 * 60 + 19 * 60) * 60 * 1000; // 2 d 19 h, the measured RUFU-393 wait
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          stallReason: {
+            code: "wip-admission-throttled",
+            reason: "Waiting for a work-in-progress slot (2 d 19 h)",
+            observedAt: "2026-11-02T00:00:00.000Z",
+            waitedMs,
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    const chip = screen.getByTestId("card-stall-reason-FN-001");
+    expect(chip.textContent).toContain("Waiting for a work-in-progress slot (2 d 19 h)");
+    expect(chip.getAttribute("data-stall-code")).toBe("wip-admission-throttled");
+    const card = document.querySelector(".card") as HTMLElement;
+    expect(card.getAttribute("data-task-stall-reason")).toBe("wip-admission-throttled");
+  });
+
+  it("renders no chip from the raw park episode alone — only the server stall authority speaks", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          sourceMetadata: {
+            wipAdmissionStall: {
+              code: "downstream-full",
+              signature: "capacity|todo->in-progress",
+              nodeId: "parse",
+              fromColumn: "todo",
+              toColumn: "in-progress",
+              lastAt: "2026-11-02T00:00:00.000Z",
+              firstAt: "2026-10-31T05:00:00.000Z",
+              stallCount: 41,
+              poolId: "wf:builtin:coding:in-progress",
+              occupants: 2,
+              limit: 2,
+            },
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByTestId("card-stall-reason-FN-001")).toBeNull();
+    expect((document.querySelector(".card") as HTMLElement).hasAttribute("data-task-stall-reason")).toBe(false);
+  });
+
   it("does NOT add a stall chip for a triage duplicate (the Needs-your-decision badge already says it)", () => {
     render(
       <TaskCard

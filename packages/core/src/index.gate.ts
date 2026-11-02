@@ -1466,6 +1466,30 @@ export {
   RECOVERABLE_WORK_STALL_REASON,
 } from "./tasks/task-stall-reason.js";
 export type { TaskStallReason, TaskStallReasonCode, StallableTask, TaskStallReasonContext, PlanAdmissionStallObservation } from "./tasks/task-stall-reason.js";
+export {
+  readWipAdmissionStallEpisode,
+  wipAdmissionStallWrite,
+  clearWipAdmissionStallPatch,
+  wipAdmissionParkSignature,
+  isWipAdmissionStallCode,
+  wipAdmissionStallAgeMs,
+  formatWipAdmissionStallWait,
+  WIP_ADMISSION_STALL_REFRESH_FLOOR_MS,
+  WIP_ADMISSION_STALL_ESCALATION_FLOOR_MS,
+} from "./tasks/wip-admission-park.js";
+export type { WipAdmissionStallObservation } from "./tasks/wip-admission-park.js";
+export {
+  WIP_ADMISSION_STALL_SENTENCES,
+  WIP_ADMISSION_SCHEDULER_SEAM_STALL_REASON,
+  WIP_ADMISSION_COLUMN_CAPACITY_STALL_REASON,
+  WIP_ADMISSION_UNPROVEN_STALL_REASON,
+  WIP_ADMISSION_DOWNSTREAM_FULL_STALL_REASON,
+  WIP_ADMISSION_MOVE_REFUSED_STALL_REASON,
+  WIP_ADMISSION_NO_TARGET_STALL_REASON,
+  WIP_ADMISSION_AWAITING_PLANNING_STALL_REASON,
+  WIP_ADMISSION_AWAITING_APPROVAL_STALL_REASON,
+} from "./tasks/task-stall-reason.js";
+
 /*
 FNXC:PlanningAdmissionStall 2026-09-25-17:48 (RUFU-273):
 Planning-lane episode surface. `PLAN_ADMISSION_STALL_METADATA_KEY` is exported from both barrels for
@@ -1477,8 +1501,9 @@ The write-side helpers (`planAdmissionStallWrite`, `clearPlanAdmissionStallPatch
 sweep are separate writers of one key, and the refresh/firstAt/stallCount discipline must be decided in
 one place or the two lanes will disagree about what a sustained stall looks like.
 */
-export { PLAN_ADMISSION_STALL_METADATA_KEY } from "./types.js";
+export { PLAN_ADMISSION_STALL_METADATA_KEY, WIP_ADMISSION_STALL_METADATA_KEY } from "./types.js";
 export type { TaskPlanAdmissionStallCode, TaskPlanAdmissionStallEpisode } from "./types.js";
+export type { TaskWipAdmissionStallCode, TaskWipAdmissionStallEpisode } from "./types.js";
 export {
   getStalePausedReviewSignal,
   DEFAULT_STALE_PAUSED_REVIEW_THRESHOLD_MS,

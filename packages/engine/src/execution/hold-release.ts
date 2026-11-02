@@ -80,6 +80,14 @@ import { getPromptPath } from "./spec-staleness.js";
 import { isTaskPlanningOrExecutionLive } from "../agents/planning-execution-liveness.js";
 import { evaluateStrandedHoldContinuation, seedPreReleasePlanReviewContinuation, type PlanReviewSeedBailReason } from "../plan-review-continuation.js";
 import { checkPlanPremises, type PlanPremiseCheckResult } from "./plan-premise-check.js";
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+Every refused candidate in this sweep already gets a `trackHeld` reason, and that reason has always lived
+only in an in-process `Map` that a restart wipes and that never reaches the card. Publishing it through the
+durable episode is what turns "the engine knew why and said nothing" into an operator-visible wait; the
+refresh floor inside `wipAdmissionStallWrite` is what makes calling it from a poll safe.
+*/
+import { publishWipAdmissionHold } from "./wip-admission-park.js";
 import {
   advancePlanPremiseRejectionEpisode,
   buildPlanPremiseExhaustedError,
@@ -1218,6 +1226,22 @@ export async function runHoldReleaseSweep(
     const budgetMs = deps.budgetMs ?? SWEEP_BUDGET_MS;
     const expired = () => deps.now() >= sweepStartedMs + budgetMs;
     const evaluatedTaskIds = new Set<string>();
+    /*
+    FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+    The capacity arm's sample and the resolved release target, kept per candidate so the post-loop publish
+    can report WHICH pool refused. They live outside the closure because the publish deliberately runs
+    once, after the loop: awaiting a marker write inside the measured `release-config` phase would charge
+    the durable write to the phase the RUFU-209 attribution exists to keep honest, and a card refused by
+    several arms in one pass should record one observation, not several.
+    */
+    /*
+    FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+    The capacity facts RUFU-372 put on the audit row are exactly what the durable marker needs, and they are
+    measured here rather than re-derived at publication so the two surfaces can never disagree about how
+    full the pool was.
+    */
+    const capacityFactsByTaskId = new Map<string, { poolId: string; occupants: number; limit: number }>();
+    const targetByTaskId = new Map<string, string>();
     const irCache = new Map<string, WorkflowIr>();
     const selectionCache = deps.selectionCache ?? new Map<string, { workflowId: string; stepIds: string[] } | undefined>();
     const counters: SweepCounters = { settings: 0, tasks: 0, batchSelections: 0, selections: 0, definitions: 0, handoffMarkers: 0, prompts: 0, workItems: 0, evalSettings: 0, heldCandidates: 0 };
@@ -1448,10 +1472,20 @@ export async function runHoldReleaseSweep(
         } else if (release === "capacity") {
           const capacityTarget = resolveReleaseTarget(ir, task.column, true);
           if (!capacityTarget) { trackHeld(task.id, "no-downstream-capacity-column", deps.now()); result.held.push({ taskId: task.id, reason: "no-downstream-capacity-column" }); evaluatedTaskIds.add(task.id); return { kind: "skip" }; }
+          /*
+          FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+          Record the boundary as soon as it is known, not only on the arm that proceeds. The marker writer
+          reads this map, and a `downstream-full` refusal that resolved its target column and then returned
+          `skip` would otherwise publish `toColumn: "none"` next to occupancy facts that name that same
+          column — the marker contradicting its own evidence. `no-downstream-capacity-column` stays `none`,
+          because there the boundary genuinely does not exist.
+          */
+          targetByTaskId.set(task.id, capacityTarget);
           const capacity = resolveColumnCapacity(ir, capacityTarget, settings);
           if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
             const workflowId = resolveCapacityPoolId(effectiveWorkflowIdByTask.get(task.id));
             const occupants = countCapacitySlot(allTasks, effectiveWorkflowIdByTask, new Set(resolveWipBudgetColumns(ir, capacityTarget)), workflowId, capacity.countPending);
+            capacityFactsByTaskId.set(task.id, { poolId: workflowId, occupants, limit: capacity.limit });
             if (occupants >= capacity.limit) { trackHeld(task.id, "downstream-full", deps.now()); result.held.push({ taskId: task.id, reason: "downstream-full" }); evaluatedTaskIds.add(task.id); return { kind: "skip" }; }
           }
           shouldRelease = true;
@@ -1459,6 +1493,7 @@ export async function runHoldReleaseSweep(
         if (!shouldRelease) { evaluatedTaskIds.add(task.id); return { kind: "skip" }; }
         const target = resolveReleaseTarget(ir, task.column, release === "capacity");
         if (!target) { trackHeld(task.id, "no-release-target", deps.now()); result.held.push({ taskId: task.id, reason: "no-release-target" }); evaluatedTaskIds.add(task.id); return { kind: "skip" }; }
+        targetByTaskId.set(task.id, target);
         return { kind: "proceed", target, release };
       });
       if (decision.kind === "skip") continue;
@@ -1498,6 +1533,34 @@ export async function runHoldReleaseSweep(
       // A pass that finished inside its budget examined everyone: the inversion is over by definition.
       deferredTailsByProject.delete(projectKey);
     }
+    /*
+    FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+    Publish this pass's refusals onto the cards themselves. `result.held` already carries one arm verdict per
+    refused candidate, so the durable marker is written from the SAME decision the log line reports rather
+    than from a second calculation that could disagree with it — the defect class RUFU-372 removed from the
+    audit row. Arms outside the closed gate vocabulary (`timer-not-elapsed`, and the `manual` /
+    `external-event` pair, which are human waits and not capacity waits) publish nothing, and the refresh
+    floor bounds everything else, so a card refused on every pass produces at most four records an hour
+    instead of one per pass forever.
+
+    Best-effort by contract: a marker write must never convert an explain-wait record into a sweep failure,
+    so a rejection is absorbed by the recorder and the release decision stands untouched. A card that was
+    RELEASED is deliberately absent from `result.held` and therefore never parks; its marker, if any, is
+    cleared at the move seam.
+    */
+    const heldTaskById = new Map(allTasks.map((candidate) => [candidate.id, candidate]));
+    for (const heldEntry of result.held) {
+      const heldTask = heldTaskById.get(heldEntry.taskId);
+      if (!heldTask) continue;
+      const facts = capacityFactsByTaskId.get(heldEntry.taskId);
+      await publishWipAdmissionHold(store, heldTask, {
+        fromColumn: heldTask.column,
+        toColumn: targetByTaskId.get(heldEntry.taskId) ?? "none",
+        heldReason: heldEntry.reason,
+        ...(facts ? { poolId: facts.poolId, occupants: facts.occupants, limit: facts.limit } : {}),
+      }, deps.now());
+    }
+
     const sweepMs = deps.now() - sweepStartedMs;
     const longestHeldMs = result.held.reduce((max, held) => Math.max(max, deps.now() - (heldSince.get(held.taskId)?.sinceMs ?? deps.now())), 0);
     const evaluateMs = Math.max(0, sweepMs - prefetchMs - irResolveMs);

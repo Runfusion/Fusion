@@ -586,6 +586,18 @@ export {
 } from "./tasks/task-external-block.js";
 export type { TaskExternalBlock, TaskExternalBlockOrigin, TaskExternalBlockReport } from "./tasks/task-external-block.js";
 
+/*
+FNXC:WipAdmissionPark 2026-11-02-08:20 (RUFU-393):
+The dashboard's card face states how long a planned card has been refused a work-in-progress slot, and the
+dashboard's `@fusion/core` vite alias resolves ONLY to this file — so the wait formatter has to be re-exported
+here or the browser bundle cannot see it (`pnpm build` fails the rollup trace while typecheck and vitest stay
+green, because both of those resolve the package barrel). It is a pure `ms -> "2 h 4 m"` formatter over its own
+argument, so nothing engine- or store-shaped crosses into the browser graph; deliberately NOT the derivation
+module, which reaches `merge/task-merge.js` and would pull `node:crypto` into the bundle (see the hazard note
+there).
+*/
+export { formatWipAdmissionStallWait } from "./tasks/wip-admission-park.js";
+
 export type { OverlapWaitPhase, OverlapWaitDecision, OverlapWaitFreshness, OverlapWaitLandedPath, OverlapWaitDeliverySnapshot, OverlapWaitDeliveryProof, OverlapWaitReceipt, TaskOverlapWait, OverlapWaitClaim, OverlapWaitExecutionIdentity } from "./types/task/task-overlap-wait.js";
 
 // ── task-core ──────────────────────────────────────────────────────────
@@ -601,6 +613,7 @@ import {
   TRANSFERRED_TO_METADATA_KEY,
   PLAN_PREMISE_REJECTION_METADATA_KEY,
   PLAN_ADMISSION_STALL_METADATA_KEY,
+  WIP_ADMISSION_STALL_METADATA_KEY,
   WEDGE_RENOTIFY_COOLDOWN_MS,
 } from "./types/task/task-core.js";
 export {
@@ -613,10 +626,12 @@ export {
   TRANSFERRED_TO_METADATA_KEY,
   PLAN_PREMISE_REJECTION_METADATA_KEY,
   PLAN_ADMISSION_STALL_METADATA_KEY,
+  WIP_ADMISSION_STALL_METADATA_KEY,
   WEDGE_RENOTIFY_COOLDOWN_MS,
 };
 export type { PlanPremiseRejectionEpisode } from "./types/task/task-core.js";
 export type { TaskPlanAdmissionStallCode, TaskPlanAdmissionStallEpisode } from "./types/task/task-core.js";
+export type { TaskWipAdmissionStallCode, TaskWipAdmissionStallEpisode } from "./types/task/task-core.js";
 
 import type {
   SourceType,

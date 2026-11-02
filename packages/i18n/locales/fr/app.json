@@ -4764,6 +4764,13 @@
       "headline": "Waiting to be picked up",
       "suggestedAction": "No action needed; reorder or assign the card if a different one should run first."
     },
+    "wip-admission-throttled": {
+      "badgeLabel": "En attente d'une place en cours",
+      "headline": "En attente d'une place en cours de réalisation ({{waited}})",
+      "headlineUnspecified": "En attente d'une place en cours de réalisation",
+      "description": "Cette carte est planifiée et inactive, mais son passage en cours de réalisation continue d'être refusé ; elle reste en place jusqu'à la libération d'une place.",
+      "suggestedAction": "Vérifiez ce qui occupe la colonne en cours de réalisation et sa limite, ou déplacez vous-même la carte."
+    },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",
       "headline": "Waiting for a planner slot",

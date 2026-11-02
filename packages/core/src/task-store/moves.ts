@@ -13,6 +13,13 @@ import { appendPatchnodeEntryInTransaction } from "./async/async-patchnode.js";
 import { appendTaskLifecycleEventInTransaction } from "./lifecycle-outbox.js";
 import * as schema from "../postgres/schema/index.js";
 import {TaskDeletedError, HandoffInvariantViolationError, TransitionRejectionError} from "./errors.js";
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The move seam owns the ONLY clear of the withheld-hold->WIP marker, because the marker's claim is
+column-scoped and a real column change falsifies it whoever moved the card.
+*/
+import { clearWipAdmissionStallPatch } from "../tasks/wip-admission-park.js";
+import { WIP_ADMISSION_STALL_METADATA_KEY } from "../types.js";
 
 /** @internal A fenced terminal-failure apply lost ownership before its move transaction. */
 export class TerminalFailureApplyRejected extends Error {
@@ -1883,6 +1890,31 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         */
         ...(workflowSelectionForMove?.workflowId ? { workflowId: workflowSelectionForMove.workflowId } : {}),
       });
+    }
+    /*
+    FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+    A withheld hold->WIP crossing stops describing reality the moment the card actually changes column, so
+    the marker is cleared on ANY real column change rather than on a list of recognized release paths. One
+    site covers every mover — the capacity sweep's release, an operator drag, a graph transition, a
+    completion — because the marker's own claim is column-scoped ("this card could not cross FROM here INTO
+    there"), and enumerating releasing lanes is exactly how a clear goes missing: RUFU-258 chased a pause
+    that four separate remediators all failed to clear, and the shape of that bug was an incomplete
+    clearing list, not a missing one.
+
+    The clear is key-preserving and post-commit best-effort. It must not run on a same-column write (a
+    no-op move is not a crossing), and a failed clear leaves a marker that merely ages out: dispatch
+    suppression is freshness-gated, so a stale marker cannot strand a card forever.
+    */
+    if (fromColumn !== toColumn && task.sourceMetadata?.[WIP_ADMISSION_STALL_METADATA_KEY] != null) {
+      void store
+        .updateTask(id, { sourceMetadataPatch: clearWipAdmissionStallPatch() })
+        .catch((err: unknown) => {
+          storeLog.warn("Failed to clear wip-admission park marker on move (degraded)", {
+            phase: "moveTaskInternal:wip-admission-clear",
+            taskId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
     }
     if (clearedApprovalHold) {
       /*

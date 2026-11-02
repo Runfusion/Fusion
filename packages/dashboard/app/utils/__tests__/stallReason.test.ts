@@ -886,6 +886,66 @@ describe("resolveStallReason — the server field outranks the client classifier
 });
 
 /*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The WIP-admission family is one server code carrying eight gate-specific sentences, so the mapping job here
+is narrower than the planning family's and sharper in one respect: the ELAPSED WAIT has to reach the card.
+That number is the entire payload — "waiting 2 d 19 h for a work-in-progress slot" is what makes an
+invisible refusal legible, and the operator-facing requirement was explicitly that the age be visible.
+So the assertions below are about the interpolation, not just about a code surviving the trip: the wait must
+be rendered from the server's `waitedMs` through core's humanizer, and its absence must degrade to honest
+copy rather than a literal `{{waited}}` or a fabricated duration.
+*/
+describe("stallReason — the withheld hold→WIP crossing", () => {
+  it("renders the elapsed wait from the server's waitedMs through the shared humanizer", () => {
+    const { t } = makeT();
+    const twoDays19Hours = (2 * 24 * 60 * 60_000) + (19 * 60 * 60_000);
+    const result = resolveStallReason(
+      subject({ column: "todo", stallReason: { ...serverStall("wip-admission-throttled"), waitedMs: twoDays19Hours } as never }),
+      { t },
+    );
+
+    expect(result?.code).toBe("wip-admission-throttled");
+    // The measured figure from the incident must survive, in human units, on the headline.
+    expect(result?.headline).toContain("2 d 19 h");
+    // A raw millisecond count or an untranslated placeholder would both read as a bug to an operator.
+    expect(result?.headline).not.toContain("{{waited}}");
+    expect(result?.headline).not.toContain(String(twoDays19Hours));
+  });
+
+  it("degrades to honest copy when the server reported no elapsed wait", () => {
+    const { t } = makeT();
+    const result = resolveStallReason(
+      subject({ column: "todo", stallReason: serverStall("wip-admission-throttled") }),
+      { t },
+    );
+
+    expect(result?.headline).toBeTruthy();
+    expect(result?.headline).not.toContain("{{waited}}");
+    // Inventing an age would be worse than saying nothing: the number is the operator's whole cue.
+    expect(result?.headline).not.toMatch(/\bd\b\s*\d+\s*h/);
+  });
+
+  it("never renders the authority's English diagnostic sentence verbatim", () => {
+    const { t } = makeT();
+    const result = resolveStallReason(
+      subject({ column: "todo", stallReason: { ...serverStall("wip-admission-throttled"), waitedMs: 7_200_000 } as never }),
+      { t },
+    );
+    expect(result?.description).not.toContain("canonical blocker sentence");
+    // It is a wait for capacity, not a failure — the chip must not send the operator to the failure lane.
+    expect(`${result?.badgeLabel} ${result?.headline}`).not.toMatch(/fail/i);
+  });
+
+  it("outranks the client chain, which cannot know a refusal happened at all", () => {
+    const { t } = makeT();
+    // A card with a client-visible cause AND a WIP refusal: the refusal is the reason it is not running.
+    const withClientCause = subject({ column: "todo", blockedBy: "FN-9", stallReason: serverStall("wip-admission-throttled") });
+    expect(resolveStallReason(subject({ column: "todo", blockedBy: "FN-9" }), { t })?.code).toBe("dependency-block");
+    expect(resolveStallReason(withClientCause, { t })?.code).toBe("wip-admission-throttled");
+  });
+});
+
+/*
 FNXC:StallReason 2026-09-02-22:01 (RUFU-177):
 The face-visibility predicate is now the ONE arbiter behind four surfaces (card chip, desktop row, mobile
 card, detail banner), and it is what decides the two decisions this task turns on: which server-backed
@@ -953,6 +1013,14 @@ const faceExpectations: Record<StallReasonCode, readonly [boolean, boolean, bool
   stall is named by the server's episode, not by a pause the card may not have.
   */
   "plan-admission-throttled": [true, true, true],
+  /*
+  FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+  An aged withheld hold→WIP crossing shows on the card face. The exhaustive `Record<StallReasonCode, …>`
+  typing is what forces this decision — the storm was invisible precisely because a refusal had no face
+  surface, and the code cannot exist until core proved the refusal outlived the escalation floor, so a
+  visible chip here means a real stall rather than ordinary lane noise.
+  */
+  "wip-admission-throttled": [true, true, true],
   "plan-lane-ineligible": [true, true, true],
   "plan-premise-held": [true, true, true],
   "plan-spec-unreadable": [true, true, true],

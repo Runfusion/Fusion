@@ -710,6 +710,97 @@ export interface TaskPlanAdmissionStallEpisode {
   uniqueCommitCount?: number;
 }
 
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The execution lane had the same silence RUFU-273 closed for the planning lane. A card resting in a
+`hold` column whose graph run crosses into the first WIP column is refused there by rule — KTD-2 makes
+the scheduler's capacity sweep the ONLY mover across a hold->wip seam, so the graph parks the run with
+`reason: "capacity"` and the card stays put. Nothing durable changed, so the next dispatch repeated it:
+973 audit rows for 32 cards in 6 h on one board and 16 536 refusals for ONE card over 2 d 19 h on
+another, while `column`, `status` and `updated_at` never moved. Two independent boards make the
+unbounded restatement a product defect in the shared seam, not one project's tuning problem.
+
+Why a persisted episode rather than pure derivation (the same argument RUFU-273 makes, and for the same
+reason): a refusal at this seam is an *event*, and the read path cannot re-derive it — a task read
+cannot ask the graph executor why the run ended `suspended`, and by the time a human looks the
+in-process notice memo (`run-suspended-notice.ts`'s `lastNoticeByKey`) has been wiped by a restart.
+RUFU-442 already bounds restatement *in memory*; this key is the durable half it deliberately left
+unowned. Everything the episode stores is either stable for the duration of the wait (node, boundary,
+pool, source) or a timestamp — never an occupant count, which RUFU-372 measured to be unstable and
+therefore excluded from wait identity.
+
+Diagnostic-only by contract, exactly like the planning episode: this key must never gate admission,
+release, dispatch or merge. It is written KEY-level through `updateTask`'s `sourceMetadataPatch` so
+`duplicateOfTaskIds`/`handoffFrom`/`planAdmissionStall` survive, and it is cleared whenever the card
+actually changes column (the park is column-scoped by construction, so a move makes it false).
+*/
+export const WIP_ADMISSION_STALL_METADATA_KEY = "wipAdmissionStall" as const;
+
+/**
+ * Which gate refused the crossing. The literals are the vocabulary the hold/release sweep ALREADY
+ * computes (`hold-release.ts`'s `trackHeld` reasons) plus the boundary's own RUFU-372 source enum, so
+ * an operator reading a park reason reads the same words the sweep log writes — a parallel vocabulary
+ * would let the two disagree forever.
+ */
+export type TaskWipAdmissionStallCode =
+  /** KTD-2 scheduler-owned seam: the graph declined to move, NO capacity pool was consulted. */
+  | "scheduler-seam"
+  /** A real in-transaction move was refused by a finite WIP pool (RUFU-372 `column-capacity`). */
+  | "column-capacity"
+  /** A capacity refusal arrived without structured facts (RUFU-372's honest third arm). */
+  | "capacity-rejection-without-facts"
+  /** The sweep measured the target WIP column at or over its limit for this card's pool. */
+  | "downstream-full"
+  /** The sweep found a slot but the in-transaction move/reservation refused. */
+  | "move-rejected-or-no-slot"
+  /** The workflow declares no capacity-bearing downstream column to release into. */
+  | "no-downstream-capacity-column"
+  /** Release is withheld because the card is not yet planned (readiness, not capacity). */
+  | "awaiting-planning"
+  /** Release is withheld by an approval gate (readiness, not capacity). */
+  | "awaiting-approval";
+
+/**
+ * Durable withheld-crossing episode for one card (RUFU-393). Absent or `null` means "no withheld
+ * hold->wip crossing is being waited on", which is the state a released, moved, or completed card must
+ * return to.
+ */
+export interface TaskWipAdmissionStallEpisode {
+  /** Which gate refused. Maps 1:1 onto a fixed sentence in `task-stall-reason.ts`. */
+  code: TaskWipAdmissionStallCode;
+  /**
+   * Stable identity of the refused wait: `reason|from->to` — the crossing itself and nothing else. Only
+   * fields that cannot move while one wait continues may enter it, which excludes the observing node, the
+   * refusing gate, the pool, and every occupancy figure: two writers (the graph and the hold/release
+   * sweep) observe one wait at different precision, and an identity they can disagree on would restart
+   * `firstAt` exactly when better information arrives. RUFU-442's measured failure was the same defect one
+   * level up — a signature containing continuation identity, which churns every re-dispatch.
+   */
+  signature: string;
+  /**
+   * The graph node the run parked at (built-in boards: `parse`), or `hold-release-sweep` when only the
+   * release sweep has observed it. A PROPERTY, not identity: the node names who saw the refusal.
+   */
+  nodeId: string;
+  /** The hold column the card is resting in. */
+  fromColumn: string;
+  /** The WIP column the crossing was refused into. */
+  toColumn: string;
+  /** ISO timestamp of the most recent observation of this gate. */
+  lastAt: string;
+  /** ISO timestamp of the FIRST observation of this episode. Age is derived from THIS field and never
+   *  from `updatedAt` — RUFU-350 measured that naming a card bumps the shared row clock. */
+  firstAt: string;
+  /** How many times this gate was observed (1-based; resets when `signature` changes). */
+  stallCount: number;
+  /** The capacity pool the verdict was measured against. Absent when no pool was consulted. */
+  poolId?: string;
+  /** Occupants at the refusing sample. Counts are forensic only and are NOT part of `signature`. */
+  occupants?: number;
+  /** The resolved limit at the refusing sample. Forensic only, as `occupants`. */
+  limit?: number;
+}
+
 /** One cross-project handoff pointer record (see the FNXC block above). */
 export interface TaskHandoffPointer {
   /** Registry id of the project the pointer references. */
@@ -746,6 +837,9 @@ export interface TaskSource {
    * - planning-admission stall episode (RUFU-273): `planAdmissionStall`
    *   ({@link TaskPlanAdmissionStallEpisode}, nullable) names the planning gate an aged card is
    *   behind so the stall authority can render it. Diagnostic-only; never gates admission.
+   * - WIP-admission park episode (RUFU-393): `wipAdmissionStall`
+   *   ({@link TaskWipAdmissionStallEpisode}, nullable) names the gate that refused this card's
+   *   hold->WIP crossing and when it was first refused. Diagnostic-only; never gates release.
    * - `followUp: { version: number }` (FNXC:TaskFollowUp 2026-09-17-15:55) marks FN-513's
    *   FOLLOW-UP sub-type of `task_refine`: a child prepared from a still-running parent's plan and
    *   in-flight implementation. It is a versioned marker rather than a new `SourceType` because a

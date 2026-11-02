@@ -79,6 +79,12 @@ import {
 } from "./run-suspended-notice.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The durable withheld-crossing park: recorded on the suspended arm, consulted before the graph is entered.
+`execution/wip-admission-park.ts` imports `@fusion/core` and the logger only, so this edge adds no cycle.
+*/
+import { recordWipAdmissionPark, wipAdmissionInLaneWorkProbe, wipAdmissionParkDefersGraphEntry } from "../execution/wip-admission-park.js";
 import { takePreHeldExecutorSlot } from "../concurrency/concurrency.js";
 import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
@@ -666,6 +672,35 @@ export async function executeWorkflowGraph(
     if (cooling && !opts?.alreadyClaimed) {
       executorLog.debug(`[workflow-graph] ${task.id} deferred — principal hold cooling down (${cooling.reason})`);
       return;
+    }
+    /*
+    FNXC:WipAdmissionPark 2026-11-02-09:21 (RUFU-393 code-review P0):
+    A card whose row still carries a fresh withheld-hold->WIP marker for the column it is standing in has
+    ALREADY been refused at that seam, and re-running the graph cannot change the answer: the crossing is
+    the hold/release sweep's to make, not the graph's. Re-entering was the storm itself — one card wrote
+    16 536 refusal rows over 2 d 19 h by being dispatched every few minutes to discover the same boundary
+    every time, and each pass cost a graph run, a continuation write, and an audit row for a condition that
+    only a release can change. Deferring on the durable marker is what makes the wait cost nothing.
+
+    Only the withheld CROSSING is deferred, never the card: the shared entry decision also asks which gate
+    refused (a `awaiting-planning` / `awaiting-approval` verdict's remedy IS graph work in this column) and
+    what work items the card still has here, because a marker-only deferral dropped the very dispatch that
+    would have planned a card the sweep had parked. See `wipAdmissionParkDefersGraphEntry`.
+
+    Three marker conjuncts (column-matched, fresh, unclaimed-only) live in the shared predicate rather than
+    being inlined here, so this surface and the outer `executeCore` gate cannot drift — see that function for
+    why one copy is the requirement. Only the UNCLAIMED path defers here: once `executeCore` has claimed
+    graph routing, an early return strands the claim and wedges the task against every later dispatch.
+    */
+    if (!opts?.alreadyClaimed) {
+      const deferred = await wipAdmissionParkDefersGraphEntry(task, wipAdmissionInLaneWorkProbe(deps.store));
+      if (deferred) {
+        const { episode } = deferred;
+        executorLog.debug(
+          `[workflow-graph] ${task.id} deferred — parked at the ${episode.fromColumn}->${episode.toColumn} seam (${episode.code}, ${episode.stallCount} refusals since ${episode.firstAt})`,
+        );
+        return;
+      }
     }
     // Claim synchronously before any await so concurrent execute() calls for
     // the same task cannot both enter graph routing (mirrors executingTaskLock).
@@ -1377,18 +1412,45 @@ export async function executeWorkflowGraph(
          * the deployed first cut: SANE-556, 7 identical `(parse, capacity)` waits in 4 minutes).
          */
         const suspension = result.suspension;
+        /*
+        FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+        For a capacity suspension the DURABLE episode is the dedupe authority, so the park recorder runs
+        FIRST and, when the boundary says the card is eligible to be parked, REPLACES the in-process memo
+        below as the gate on the audit row. RUFU-442's memo is the right bound for a wait that has no
+        durable state to point at, but it lives in a `Map` a restart wipes and it puts nothing on the card
+        — which is precisely why a card could be refused 16 536 times over two days and still read as an
+        idle card. One accepted episode write accompanies exactly one audit row, so the two can never
+        disagree about how many times this wait has been reported.
+
+        `eligible` false means a human or an external event owns the hold. Those suspensions keep the
+        pre-existing memo path untouched: they are not a capacity park and must not gain a capacity marker.
+        */
+        const parkFacts = suspension?.reason === "capacity" ? suspension.park : undefined;
+        const parkDecision = parkFacts?.eligible
+          ? await recordWipAdmissionPark(deps.store, task, {
+              code: parkFacts.code,
+              nodeId: suspension?.nodeId ?? "unknown",
+              fromColumn: suspension?.fromColumn ?? "unknown",
+              toColumn: suspension?.toColumn ?? "unknown",
+              ...(parkFacts.poolId !== undefined ? { poolId: parkFacts.poolId } : {}),
+              ...(parkFacts.occupants !== undefined ? { occupants: parkFacts.occupants } : {}),
+              ...(parkFacts.limit !== undefined ? { limit: parkFacts.limit } : {}),
+            })
+          : undefined;
         const signature = runSuspendedNoticeSignature({
           nodeId: suspension?.nodeId ?? "unknown",
           reason: suspension?.reason ?? "unknown",
           fromColumn: suspension?.fromColumn ?? null,
           toColumn: suspension?.toColumn ?? null,
         });
-        const isNewWait = noteWorkflowRunSuspended(
-          executorLog,
-          task.id,
-          signature,
-          `[workflow-graph] ${task.id} suspended at node '${suspension?.nodeId ?? "unknown"}' (${suspension?.reason ?? "unknown"})`,
-        );
+        const isNewWait = parkDecision
+          ? parkDecision.auditRowWarranted
+          : noteWorkflowRunSuspended(
+              executorLog,
+              task.id,
+              signature,
+              `[workflow-graph] ${task.id} suspended at node '${suspension?.nodeId ?? "unknown"}' (${suspension?.reason ?? "unknown"})`,
+            );
         if (!isNewWait) return;
         await emitBoundedRunAudit(deps.store, {
           taskId: task.id,
@@ -1425,6 +1487,22 @@ export async function executeWorkflowGraph(
                   capacityColumn: suspension.capacity.column,
                   capacityOccupants: suspension.capacity.occupants,
                   capacityLimit: suspension.capacity.limit,
+                }
+              : {}),
+            /*
+            FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+            The episode's own identity, so one row answers "which gate", "how many times", and "since when"
+            without a second query. `stallFirstAt` is an ISO instant and `stallCount` a count, both inside
+            the ids/counts/outcomes-only rule. Neither enters the notice signature: `stallCount` increments
+            on every accepted refresh, and RUFU-442's measured failure was exactly a bound whose key
+            changed each cycle.
+            */
+            ...(parkDecision?.accepted && parkDecision.episode
+              ? {
+                  stallCode: parkDecision.episode.code,
+                  stallCount: parkDecision.episode.stallCount,
+                  stallFirstAt: parkDecision.episode.firstAt,
+                  stallPoolId: parkDecision.episode.poolId ?? null,
                 }
               : {}),
           },

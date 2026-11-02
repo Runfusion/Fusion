@@ -4,7 +4,21 @@ import {
   type Task,
   type TaskPlanAdmissionStallCode,
   type TaskPlanAdmissionStallEpisode,
+  type TaskWipAdmissionStallCode,
 } from "../types.js";
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The withheld-hold->WIP episode lives in its own module, read and written from here so the stall authority
+and the recorder share one validator and one pair of floors. The episode CODES reach this file through
+`../types.js` (the type barrel) rather than through this module on purpose: a table keyed by the code
+union must fail to compile if the union grows, which is the same reason `PLAN_ADMISSION_STALL_SENTENCES`
+is keyed rather than switch-cased.
+*/
+import {
+  readWipAdmissionStallEpisode,
+  wipAdmissionStallAgeMs,
+  WIP_ADMISSION_STALL_ESCALATION_FLOOR_MS,
+} from "./wip-admission-park.js";
 import type { LifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
 import {
   getTaskCompletionBlocker,
@@ -88,7 +102,18 @@ export type TaskStallReasonCode =
   /** Aged and eligible with nothing refusing it — no admission and no gate that can be named. */
   | "plan-no-admission"
   /** The row claims a branch holding commits that are not on the default branch. */
-  | "recoverable-work";
+  | "recoverable-work"
+  /*
+  FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+  The execution lane's twin of `plan-admission-throttled`. A card refused at a hold->WIP seam had NO code
+  at all — RUFU-180's stall sweep is review-lane only and RUFU-273's is planning-lane only — so a board
+  could show a card that had been refused 16 536 times over two days and the card itself said nothing.
+  It is a SEPARATE code from the planning family on the same grounds that family gives: "no planner slot
+  is free" and "this card will not cross into WIP" need different remedies, and collapsing them would
+  send an operator to triage capacity for a card that is already planned.
+  */
+  /** A hold->WIP crossing has been refused and the card is parked at the seam. */
+  | "wip-admission-throttled";
 
 export interface TaskStallReason {
   code: TaskStallReasonCode;
@@ -97,6 +122,18 @@ export interface TaskStallReason {
   reason: string;
   /** ISO timestamp of the read that produced this assessment (same clock as sibling signals). */
   observedAt: string;
+  /**
+   * Elapsed wait of a throttle-class stall, in milliseconds, measured by core from the durable episode's
+   * OWN `firstAt` — never from `updatedAt`, which naming a card bumps (RUFU-350's measured
+   * self-retraction). Present only for the throttle-class codes; every other code reports no measured
+   * wait rather than a guessed one.
+   *
+   * The field exists because "a two-day block must read differently from a fresh one", and every surface
+   * that renders a stall resolves a CODE to its own localized copy and deliberately ignores this
+   * `reason` string — a duration smuggled into the English sentence would be invisible to exactly the
+   * operator the age is for. The number travels in the vocabulary; each surface formats it.
+   */
+  waitedMs?: number;
 }
 
 /** The task fields the derivation reads. `getTaskMergeBlocker`/`getTaskCompletionBlocker` take
@@ -233,6 +270,72 @@ export const PLAN_NO_ADMISSION_STALL_REASON =
 export const RECOVERABLE_WORK_STALL_REASON =
   "This card's claimed branch holds commits that are not on the default branch, so work exists that the card does not show";
 
+/*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+One fixed sentence per REFUSING GATE, in the shape `PLAN_*_STALL_REASON` establishes — each names its own
+gate rather than sharing a generic "capacity" phrase. Two deliberate differences from the planning table:
+
+- All eight gate literals collapse onto the ONE stall code `wip-admission-throttled`. The planning family
+  exposes its episode codes as stall codes; here the operator's question is one thing ("why has this
+  planned card not entered WIP?") and the gate is the detail, so the code stays stable while the
+  sentence names the gate. Splitting it into eight codes would force every consumer that branches on
+  code to enumerate a vocabulary it does not need.
+- `scheduler-seam` says plainly that NO capacity pool was consulted. RUFU-372's entire finding was that
+  two different shapes both reported `reason=capacity`, which sent operators hunting a limit that was
+  never binding; a sentence that repeats that mistake would undo the label the enum exists to carry.
+
+No sentence interpolates an id, a count, or a path. Age is the one variable that must read differently
+for a two-day block, and it travels as `TaskStallReason.waitedMs` rather than inside these strings, so
+the surfaces that localize by code can still render it.
+*/
+
+/** KTD-2 authority hand-off: the graph declined to move and NO capacity pool was consulted. */
+export const WIP_ADMISSION_SCHEDULER_SEAM_STALL_REASON =
+  "Waiting to enter work-in-progress: the scheduler owns this crossing and has not released the card; no capacity pool was consulted";
+
+/** A real in-transaction move was refused by a finite work-in-progress pool. */
+export const WIP_ADMISSION_COLUMN_CAPACITY_STALL_REASON =
+  "Waiting to enter work-in-progress: the work-in-progress column is at its limit for this card's pool";
+
+/** A capacity refusal arrived with no structured facts, so the refusing column is unknown. */
+export const WIP_ADMISSION_UNPROVEN_STALL_REASON =
+  "Waiting to enter work-in-progress: the move was refused for capacity but the refusing column cannot be identified";
+
+/** The sweep measured the target column at or over its limit. */
+export const WIP_ADMISSION_DOWNSTREAM_FULL_STALL_REASON =
+  "Waiting to enter work-in-progress: the next column is full";
+
+/** A slot was found and the in-transaction move still refused. */
+export const WIP_ADMISSION_MOVE_REFUSED_STALL_REASON =
+  "Waiting to enter work-in-progress: a slot was found but the move was refused";
+
+/** The workflow declares nowhere to release the card into. */
+export const WIP_ADMISSION_NO_TARGET_STALL_REASON =
+  "Waiting to enter work-in-progress: this card's workflow declares no column to release it into";
+
+/** Readiness, not capacity: the card is not planned yet. */
+export const WIP_ADMISSION_AWAITING_PLANNING_STALL_REASON =
+  "Waiting to enter work-in-progress: the card is not planned yet, so release is withheld";
+
+/** Readiness, not capacity: an approval gate holds it. */
+export const WIP_ADMISSION_AWAITING_APPROVAL_STALL_REASON =
+  "Waiting to enter work-in-progress: an approval gate is withholding release";
+
+/** Code union of the persisted WIP-admission episode — the gates the row itself can carry (RUFU-393). */
+type WipAdmissionEpisodeCode = TaskWipAdmissionStallCode;
+
+/** Episode gate -> stall sentence. A fixed table: a gate with no entry cannot appear as a stall. */
+export const WIP_ADMISSION_STALL_SENTENCES: Record<WipAdmissionEpisodeCode, string> = {
+  "scheduler-seam": WIP_ADMISSION_SCHEDULER_SEAM_STALL_REASON,
+  "column-capacity": WIP_ADMISSION_COLUMN_CAPACITY_STALL_REASON,
+  "capacity-rejection-without-facts": WIP_ADMISSION_UNPROVEN_STALL_REASON,
+  "downstream-full": WIP_ADMISSION_DOWNSTREAM_FULL_STALL_REASON,
+  "move-rejected-or-no-slot": WIP_ADMISSION_MOVE_REFUSED_STALL_REASON,
+  "no-downstream-capacity-column": WIP_ADMISSION_NO_TARGET_STALL_REASON,
+  "awaiting-planning": WIP_ADMISSION_AWAITING_PLANNING_STALL_REASON,
+  "awaiting-approval": WIP_ADMISSION_AWAITING_APPROVAL_STALL_REASON,
+};
+
 /** Code union of the persisted episode — the codes the row itself can carry (RUFU-273). */
 type PlanAdmissionEpisodeCode = TaskPlanAdmissionStallCode;
 
@@ -361,6 +464,56 @@ export function clearPlanAdmissionStallPatch(): Record<string, unknown> {
 }
 
 /*
+FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
+The execution-lane branch, deliberately THIN: unlike `derivePlanningAdmissionStall` it invents no
+inference of its own and reads exactly one persisted episode. The reason is the failure this task fixes.
+Every earlier reading of the storm had to guess between "the pool is full" and "nothing ever evaluates
+the card", and the guesses were made from a 30-sweep average because a task read cannot ask the executor
+why the run ended `suspended` — the durable episode is the ONE surface that can carry that answer, and it
+is written by the lane that observed the refusal. An inference here would be a second authority competing
+with the observer, which is what RUFU-372 removed from the audit row.
+
+Guards, and why each is the same shape as the planning branch:
+- `paused`/`userPaused` defer to the pause family, which already owns that card's badge — two causes on
+  one card is how a chip stops being actionable.
+- a non-empty `status` defers to whatever wrote it, including `"queued"`, which is a live scheduler
+  transient: chipping it would mark every card mid-dispatch abnormal (RUFU-273's argument, adopted).
+- the ESCALATION floor, not the refresh floor, gates the badge. The first park is normal scheduling; a
+  refusal still holding an hour later is not. RUFU-292's rule — a card in its lane's ordinary resting
+  state is not a stall — is what keeps `todo` from becoming a permanent badge for every queued card.
+
+The one positional guard is `task.column === episode.fromColumn`, because the move-seam clear below cannot be
+awaited. That clear is fire-and-forget inside the move's own task lock — the lock is NON-REENTRANT
+(`task-store/lifecycle-ops.ts`), which is why RUFU-297's post-commit notice pair has the same shape — so a dropped
+clear (a one-shot CLI exiting right after the commit, a throwing sink) stays possible, and the badge it would
+leave behind would name a slot the card no longer needs. Reading the episode only while the card still sits on
+the column it was refused at makes the clear a tidy-up rather than a correctness dependency, and costs a parked
+card nothing: a card the sweep refuses is in the hold lane by definition, so it is on `fromColumn`.
+*/
+function deriveWipAdmissionStall(
+  task: StallableTask,
+  context: TaskStallReasonContext,
+  observedAt: string,
+): TaskStallReason | undefined {
+  const episode = readWipAdmissionStallEpisode(task.sourceMetadata);
+  if (!episode) return undefined;
+  // A claim about a crossing is only true while the card still waits at that crossing.
+  if (task.column !== episode.fromColumn) return undefined;
+  if (task.paused === true || task.userPaused === true) return undefined;
+  if (typeof task.status === "string" && task.status.length > 0) return undefined;
+
+  const waitedMs = wipAdmissionStallAgeMs(episode, context.now ?? Date.now());
+  if (waitedMs < WIP_ADMISSION_STALL_ESCALATION_FLOOR_MS) return undefined;
+
+  return {
+    code: "wip-admission-throttled",
+    reason: WIP_ADMISSION_STALL_SENTENCES[episode.code],
+    observedAt,
+    waitedMs,
+  };
+}
+
+/*
 FNXC:PlanningAdmissionStall 2026-09-25-17:48 (RUFU-273):
 The planning-lane branch of the derivation, factored out so its own guards are testable in isolation
 and so the parent function keeps reading as a lane dispatch.
@@ -418,6 +571,25 @@ function derivePlanningAdmissionStall(
 const LEGACY_COMPLETE_COLUMN = "done";
 const LEGACY_ARCHIVED_COLUMN = "archived";
 const LEGACY_REVIEW_COLUMN = "in-review";
+
+/**
+ * The two admission-stall lanes, in the one order both call sites must agree on (RUFU-393).
+ *
+ * The execution-lane episode is consulted FIRST, for the reason the planning family already states twice
+ * in this function: precedence decides which remedy an operator is handed. A planned card refused out of
+ * `todo` into `in-progress` can absolutely still carry `status: "needs-replan"` from an earlier rejection,
+ * and a card whose branch has unmerged work can be refused by a column at its limit — the planning arm
+ * would claim either and send the operator to a planner or to git while the real refusal was a WIP
+ * budget. Each arm refuses to guess, so whichever fires reports something it can prove; this helper only
+ * fixes which proof is shown first, and keeps the two sites from drifting apart.
+ */
+function deriveAdmissionStall(
+  task: StallableTask,
+  context: TaskStallReasonContext,
+  observedAt: string,
+): TaskStallReason | undefined {
+  return deriveWipAdmissionStall(task, context, observedAt) ?? derivePlanningAdmissionStall(task, context, observedAt);
+}
 
 /**
  * Derive the canonical stall/hold reason for one task, or `undefined` when the card is moving,
@@ -532,7 +704,7 @@ export async function deriveTaskStallReason(
   */
   if (!hasBlockedBy && !hasDependencies) {
     try {
-      return derivePlanningAdmissionStall(task, context, observedAt);
+      return deriveAdmissionStall(task, context, observedAt);
     } catch {
       return undefined;
     }
@@ -570,7 +742,7 @@ export async function deriveTaskStallReason(
   unparseable `nextRecoveryAt` degrades to silence, never to a broken task read.
   */
   try {
-    return derivePlanningAdmissionStall(task, context, observedAt);
+    return deriveAdmissionStall(task, context, observedAt);
   } catch {
     return undefined;
   }
