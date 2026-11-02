@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
+import { coerceTaskLogArray } from "../db/db.js";
+import type { TaskLogEntry } from "../types.js";
 import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-stores/async-mission-store-queries.js";
 import {TaskHasDependentsError, TaskHasLineageChildrenError, TaskNotFoundError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir} from "node:fs/promises";
@@ -81,7 +83,7 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       slim archive reads derive timedExecutionMs from its [timing] events. Append the deletion marker
       instead of replacing those proofs; transient runtime ownership remains excluded separately.
       */
-      log: [...(task.log ?? []), { timestamp: archivedAt, action: "Task deleted" }],
+      log: [...coerceTaskLogArray<TaskLogEntry>(task.log), { timestamp: archivedAt, action: "Task deleted" }],
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       columnMovedAt: task.columnMovedAt,
@@ -436,7 +438,7 @@ export async function restoreFromArchiveImpl(
       gitlabTracking: entry.gitlabTracking,
       sourceIssue: entry.sourceIssue,
       attachments: entry.attachments,
-      log: [...entry.log, { timestamp: new Date().toISOString(), action: "Task restored from archive" }],
+      log: [...coerceTaskLogArray<TaskLogEntry>(entry.log), { timestamp: new Date().toISOString(), action: "Task restored from archive" }],
       comments: entry.comments,
       createdAt: entry.createdAt,
       updatedAt: options.now ?? new Date().toISOString(),

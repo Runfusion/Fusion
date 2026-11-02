@@ -29,7 +29,7 @@ import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntr
 import { CONFIG_CHANGED_BY_SYSTEM } from "../types.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
-import {toJson} from "../db/db.js";
+import {toJson, toJsonArray} from "../db/db.js";
 import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -510,7 +510,7 @@ export async function applyInReviewStallObservationFencedImpl(
       if (log.length > entryLimit) log.splice(0, log.length - entryLimit);
 
       const values: Partial<typeof schema.project.tasks.$inferInsert> = {
-        log: toJson(log),
+        log: toJsonArray(log),
         updatedAt: new Date().toISOString(),
       };
       /*
@@ -1635,7 +1635,7 @@ export function rewriteDependentsForRemovalImpl(store: TaskStore, taskId: string
         toJson(updatedDependent.dependencies),
         updatedDependent.blockedBy ?? null,
         updatedDependent.status ?? null,
-        toJson(updatedDependent.log ?? []),
+        toJsonArray(updatedDependent.log),
         updatedDependent.updatedAt,
         updatedDependent.id,
       );
