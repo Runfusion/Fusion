@@ -21,6 +21,21 @@ import { resolveDiffBaseRef } from "../executor/worktree-git-refs.js";
 import { probeReviewDiffFingerprint } from "../worktree/review-diff-fingerprint.js";
 
 /*
+FNXC:WorkflowPassCacheFixture 2026-11-02-03:45 (RUFU-318):
+RUFU-584 (`58d561b1c1`) made `SelfHealingManager.batchWorkflowIrCache()` read `store.workflowDefinitionEpoch()`
+unconditionally. Every hand-rolled store below is cast over `EventEmitter & Record<string, any>`, so the missing
+method threw at the sweep's first cache read and its outer catch reduced each pass to one `log.warn` — the six
+verdict-less recovery cases here were asserting on a sweep that never ran. A constant epoch is the honest fake:
+no case writes a workflow definition or selection mid-pass, so cache invalidation is never the subject. The real
+`TaskStore` owns both counters (core/src/store.ts:754).
+*/
+const WORKFLOW_PASS_CACHE_EPOCH = {
+  workflowDefinitionEpoch: vi.fn(() => 0),
+  workflowSelectionEpoch: vi.fn(() => 0),
+};
+
+
+/*
 FNXC:VerdictlessFailedGate 2026-09-14-14:47 (RUFU-217, AC7 Symptom Verification):
 A required pre-merge gate whose latest result row is `failed` with NO authored verdict is a
 plumbing failure, not a reviewer decision — but the merge door renders it byte-identical to a
@@ -153,6 +168,7 @@ function sweepStore(live: Task, hooks: { onSeed?: () => void; discardClearPatche
       live.log.push({ timestamp: new Date().toISOString(), action });
     }),
     recordRunAuditEvent: vi.fn(async (entry: Record<string, unknown>) => { auditEvents.push(entry); }),
+    ...WORKFLOW_PASS_CACHE_EPOCH,
     peekMergeQueue: vi.fn(async () => []),
     getAgentLogs: vi.fn(async () => []),
     getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
@@ -398,6 +414,7 @@ describe("RUFU-217 verdict-less pre-merge gate re-run", () => {
         cards.find((card) => card.id === id)?.log.push({ timestamp: new Date().toISOString(), action });
       }),
       recordRunAuditEvent: vi.fn(async (entry: Record<string, unknown>) => { auditEvents.push(entry); }),
+      ...WORKFLOW_PASS_CACHE_EPOCH,
       peekMergeQueue: vi.fn(async () => []),
       moveTask: vi.fn(async (id: string) => cards.find((card) => card.id === id)),
     }) as unknown as EventEmitter & Record<string, any>;
@@ -464,6 +481,7 @@ describe("RUFU-217 verdict-less pre-merge gate re-run", () => {
       peekMergeQueue: vi.fn(async () => []),
       getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
       recordRunAuditEvent: vi.fn(async () => undefined),
+      ...WORKFLOW_PASS_CACHE_EPOCH,
     }) as unknown as EventEmitter & Record<string, any>;
     const recoverFailedPreMergeStep = vi.fn(async () => true);
 

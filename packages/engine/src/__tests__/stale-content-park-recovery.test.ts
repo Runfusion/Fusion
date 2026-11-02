@@ -49,6 +49,16 @@ function createRecoveryStore(task: Task, raceRefusesClear = false) {
     }),
     logEntry: vi.fn().mockResolvedValue(undefined),
     recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+    /*
+    FNXC:WorkflowPassCacheFixture 2026-11-02-03:45 (RUFU-318):
+    RUFU-584 (`58d561b1c1`) made `SelfHealingManager.batchWorkflowIrCache()` read `store.workflowDefinitionEpoch()`
+    unconditionally, so this fake's missing method threw on the sweep's first cache read and the outer catch
+    reduced the whole pass to a `log.warn` — all four hidden-arm cases here were green-looking no-ops on a sweep
+    that never ran. A constant epoch is the honest fake: no case writes a workflow definition or selection
+    mid-pass (the workflow resolution is mocked outright), so cache invalidation is never the subject.
+    */
+    workflowDefinitionEpoch: vi.fn(() => 0),
+    workflowSelectionEpoch: vi.fn(() => 0),
   };
   return store as any;
 }

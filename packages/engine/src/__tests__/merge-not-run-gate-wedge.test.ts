@@ -127,6 +127,18 @@ function recoveryStore(task: Task) {
     listTasksByColumns: vi.fn(async () => []),
     logEntry: vi.fn(async () => undefined),
     recordRunAuditEvent: vi.fn(async () => undefined),
+    /*
+    FNXC:WorkflowPassCacheFixture 2026-11-02-03:37 (RUFU-318):
+    RUFU-584 (`58d561b1c1`) made `SelfHealingManager.batchWorkflowIrCache()` read
+    `store.workflowDefinitionEpoch()` unconditionally (self-healing.ts:1429). This hand-rolled fake did not
+    implement it, so EVERY sweep threw on the first cache read and its outer catch collapsed the whole pass
+    into one `log.warn` — this file lost both repair cases with no visible cause. The real `TaskStore` owns
+    both counters (core/src/store.ts:754); a constant epoch is the correct fake because no case in this file
+    writes a workflow selection or definition mid-pass, so cache invalidation is never the subject.
+    Same drift class as `FNXC:StaleReviewWaiverFixture` below: a product store read lands, the fakes do not.
+    */
+    workflowDefinitionEpoch: vi.fn(() => 0),
+    workflowSelectionEpoch: vi.fn(() => 0),
     getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
     getAgentLogs: vi.fn(async () => []),
   } as any;

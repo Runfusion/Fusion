@@ -86,6 +86,21 @@ export type UnrunPreMergeGateRerouteReason =
   | "operator-held"
   | "workflow-selection-changed";
 
+/*
+FNXC:UnrunGateParkWithheldNotice 2026-11-02-03:45 (RUFU-318):
+The result is a DISCRIMINATED union, not `{ rerouted: boolean; reason: WholeEnum }`. The seed lane cannot
+report `seeded` while `rerouted` is false, but the flat annotation said it could, so every consumer that
+wanted "the refusal reason" had to re-exclude the two success values or cast — and the arm that records
+`task:merge-unrun-gate-park-no-action` (whose whole metadata contract is a fixed refusal vocabulary) is exactly
+where such a cast would smuggle a success value into a refusal row.
+*/
+/** Reasons the seed lane can report while NOT seeding. */
+export type UnrunPreMergeGateRefusalReason = Exclude<UnrunPreMergeGateRerouteReason, "seeded" | "verdictless-seeded">;
+
+export type UnrunPreMergeGateRerouteResult =
+  | { rerouted: true; reason: "seeded" | "verdictless-seeded"; nodeId: string; workflowStepId: string }
+  | { rerouted: false; reason: UnrunPreMergeGateRefusalReason; nodeId?: string; workflowStepId?: string };
+
 /** Only the engine-owned unrun-gate park may be automatically released. */
 export function isRecoverableUnrunGatePark(task: Task): boolean {
   return task.status === "failed"
@@ -276,7 +291,7 @@ export async function rerouteUnrunPreMergeGateToReview(
     allowDeadlockPark?: boolean;
     expectedWorkflowSelection?: { workflowId: string; stepIds: string[] } | null;
   },
-): Promise<{ rerouted: boolean; reason: UnrunPreMergeGateRerouteReason; nodeId?: string; workflowStepId?: string }> {
+): Promise<UnrunPreMergeGateRerouteResult> {
   const { mergeContent, requiredPreMergeStepIds, expectedWorkflowSelection } = options;
   if (mergeContent.kind !== "singular" || task.workspaceWorktrees !== undefined) return { rerouted: false, reason: "not-singular" };
   const deadlockParkAdmissible =

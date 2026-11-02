@@ -37,7 +37,7 @@ getMergeConfirmedFinalizationBlocker (beta.8 merge-boundary feature), plus the t
 type imports (ChatSession, ChatInFlightGenerationState) that the post-merge body still
 uses. parseExplicitDuplicateMarker survives only in an FNXC history comment — every
 call site uses the renamed resolver. */
-import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasUserAutoMergeHold, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries,
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasUserAutoMergeHold, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, WEDGE_RENOTIFY_COOLDOWN_MS, countRecentIdenticalStallEntries,
   /* FNXC:SelfHealing 2026-09-10-23:14 (merge origin/main 2026-09-10): upstream's stall-deadlock
      repetition logic calls these two in-review-stall helpers; the union import carries them. */
   getLatestFailedPreMergeStepProgressAt, resolveInReviewStallDeadlockThreshold,
@@ -405,6 +405,19 @@ import {
   notifyReviewEscalationUnreachable,
   resolveStallParkAgeMs,
 } from "./notification/review-escalation-notice.js";
+/*
+FNXC:UnrunGateParkWithheldNotice 2026-11-02-03:45 (RUFU-318): the withheld half of the never-ran-gate repair
+arm keeps its event name, key derivations, and mailbox notice in one module, so the arm owns no copy of a
+vocabulary its tests and docs also read.
+*/
+import {
+  UNRUN_GATE_PARK_NO_ACTION_EVENT,
+  notifyUnrunGateParkWithheld,
+  resolveUnrunGateParkAgeMs,
+  unrunGateParkEpisodeKey,
+  unrunGateParkLogDedupeKey,
+  type UnrunGateParkRefusalReason,
+} from "./notification/unrun-gate-park-notice.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 
 type FileScopeLeaseTaskRoles = {
@@ -13274,9 +13287,11 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
 
   Telemetry: the seed keeps FN-9243's `task:merge-unrun-pre-merge-gate-rerouted` event with its
   registered key set untouched — a seed attempt IS that event — under a park-namespaced dedupe key so
-  a decline here cannot swallow that lane's own row. The park outcome itself gets the new
-  `task:merge-unrun-gate-park-repaired` event with ids/counts/fixed enums only; blocker prose, review
-  findings and errors never enter run-audit. Idempotence: after a successful repair the row is no
+  a decline here cannot swallow that lane's own row. The park outcome itself is a PAIR: the repair gets
+  `task:merge-unrun-gate-park-repaired` and a withheld repair gets the paired
+  `task:merge-unrun-gate-park-no-action` plus a durable History line and one mailbox notice per window
+  (RUFU-318). Both carry ids/counts/fixed enums only; blocker prose, review findings and errors never
+  enter run-audit. Idempotence: after a successful repair the row is no
   longer `status:"failed"`, so the classifier stops admitting it and the budget prunes itself.
   */
   private async routeUnrunGateParkBackToReview(
@@ -13331,22 +13346,93 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     }
 
     const outcome = !reroute.rerouted ? "seed-refused" as const : parkCleared ? "repaired" as const : "signature-drift" as const;
-    const repairAuditKey = `${task.id}:unrun-gate-park:${outcome}:${reroute.workflowStepId ?? park.missingGateIds[0] ?? ""}`;
-    if (!this.unrunGateParkAuditKeys.has(repairAuditKey)) {
-      this.unrunGateParkAuditKeys.add(repairAuditKey);
+    const gateId = reroute.workflowStepId ?? park.missingGateIds[0] ?? null;
+
+    /*
+    FNXC:UnrunGateParkWithheldNotice 2026-11-02-03:45 (RUFU-318):
+    `task:merge-unrun-gate-park-repaired` is now the SUCCESS record only. It used to carry
+    `outcome: "seed-refused" | "signature-drift"` under a key with no time bound, so a refusal that persisted
+    across passes was written at most once per engine lifetime and the card stayed silent for the rest of the
+    8 days RUFU-225 sat parked. Withholding a repair now emits the paired `-no-action` counterpart, a durable
+    History line, and one mailbox notice per window — the convention every other bounded repair arm already
+    keeps (`…-no-action`). The seed's own `task:merge-unrun-pre-merge-gate-rerouted` row above is untouched: a
+    seed attempt IS that event, and its key stays unbucketed because the per-window refusal census is this
+    pair's job, not a second event's emission cadence.
+    */
+    if (outcome === "repaired") {
+      const repairAuditKey = `${task.id}:unrun-gate-park:${outcome}:${gateId ?? ""}`;
+      if (!this.unrunGateParkAuditKeys.has(repairAuditKey)) {
+        this.unrunGateParkAuditKeys.add(repairAuditKey);
+        await emitBoundedRunAudit(this.store, {
+          taskId: task.id,
+          agentId: "self-healing",
+          runId: generateSyntheticRunId("self-healing", task.id),
+          domain: "database",
+          mutationType: "task:merge-unrun-gate-park-repaired",
+          target: task.id,
+          metadata: {
+            taskId: task.id,
+            workflowStepId: gateId,
+            missingGateCount: park.missingGateIds.length,
+            source: "self-healing",
+            outcome,
+          },
+        });
+      }
+      return;
+    }
+
+    const refusalReason: UnrunGateParkRefusalReason = reroute.rerouted ? "park-signature-drift" : reroute.reason;
+    const withheldAt = Date.now();
+    const withheldAgeMs = resolveUnrunGateParkAgeMs(task, withheldAt);
+    const notice = await notifyUnrunGateParkWithheld({
+      messageStore: this.options.messageStore,
+      task,
+      outcome,
+      refusalReason,
+      workflowStepId: gateId,
+      ...(withheldAgeMs !== undefined ? { withheldAgeMs } : {}),
+      now: withheldAt,
+    });
+    /*
+    Durable per-window History line. `logEntryOnce` dedupes in the store, so the marker survives an engine
+    restart — the in-process `Set` is exactly what could not be trusted here. A store without that seam keeps
+    one line per (card, outcome, guard, gate) inside this process rather than one per pass.
+    */
+    const marker = `[unrun-gate-park-withheld] Self-healing withheld the never-ran-gate repair for gate '${gateId ?? "unknown"}' (reason: ${refusalReason}).`;
+    const logKey = unrunGateParkLogDedupeKey(task.id, outcome, refusalReason, gateId);
+    if (typeof this.store.logEntryOnce === "function") {
+      await this.store.logEntryOnce(task.id, {
+        action: marker,
+        outcome: refusalReason,
+        dedupeKey: logKey,
+        windowMs: WEDGE_RENOTIFY_COOLDOWN_MS,
+      }).catch(() => undefined);
+    } else if (!this.unrunGateParkAuditKeys.has(`${logKey}:log`)) {
+      this.unrunGateParkAuditKeys.add(`${logKey}:log`);
+      await this.store.logEntry(task.id, marker).catch(() => undefined);
+    }
+
+    const episodeKey = unrunGateParkEpisodeKey(task.id, outcome, refusalReason, gateId, withheldAt);
+    if (!this.unrunGateParkAuditKeys.has(episodeKey)) {
+      this.unrunGateParkAuditKeys.add(episodeKey);
       await emitBoundedRunAudit(this.store, {
         taskId: task.id,
         agentId: "self-healing",
         runId: generateSyntheticRunId("self-healing", task.id),
         domain: "database",
-        mutationType: "task:merge-unrun-gate-park-repaired",
+        mutationType: UNRUN_GATE_PARK_NO_ACTION_EVENT as DatabaseMutationType,
         target: task.id,
         metadata: {
           taskId: task.id,
-          workflowStepId: reroute.workflowStepId ?? park.missingGateIds[0] ?? null,
+          workflowStepId: gateId,
           missingGateCount: park.missingGateIds.length,
-          source: "self-healing",
+          parkShape: park.shape,
           outcome,
+          refusalReason,
+          notice,
+          source: "self-healing",
+          ...(withheldAgeMs !== undefined ? { withheldAgeMs } : {}),
         },
       });
     }
