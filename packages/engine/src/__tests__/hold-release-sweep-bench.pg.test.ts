@@ -40,7 +40,7 @@ sweeping them repeatedly is a measurement run, not something the merge gate shou
   FUSION_HOLD_RELEASE_BENCH=1 pnpm --filter @fusion/engine exec vitest run \
     src/__tests__/hold-release-sweep-bench.pg.test.ts --reporter=verbose
 */
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildBootstrapPrompt, type TaskStore } from "@fusion/core";
@@ -51,7 +51,8 @@ import {
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 import { getPromptPath } from "../execution/spec-staleness.js";
-import { resetHoldReleaseInstrumentation, runHoldReleaseSweep } from "../execution/hold-release.js";
+import { resetHoldReleaseInstrumentation, runHoldReleaseSweep, type HoldReleasePass } from "../execution/hold-release.js";
+import { schedulerLog } from "../logger.js";
 
 const BENCH_ENABLED = process.env.FUSION_HOLD_RELEASE_BENCH === "1";
 const bench = PG_AVAILABLE && BENCH_ENABLED ? describe : describe.skip;
@@ -526,4 +527,111 @@ bench(`hold-release sweep read-shape bench (RUFU-202, ${plan.total} seeded cards
       expect(productionC.vector.budgetTruncated).toBe(false);
     }
   }, 3_000_000);
+
+  /*
+  FNXC:CapacitySlotCost 2026-10-29-12:02 (RUFU-698 Step 2 / S6):
+  Every pass above calls `runHoldReleaseSweep` WITHOUT a reservation delegate, which is why this bench
+  has always reported `slot-calls=0` and why no per-reservation cost was ever quotable from it: a pass
+  that performs zero reservations has no reservation cost, and its `slot` bucket is not an empty one but
+  an absent one. Two things are pinned here so the bench cannot be mistaken for a cost source again:
+
+  1. the timing passes really do reserve nothing (the guard below fails loudly if that ever changes
+     without someone noticing, in either direction);
+  2. one deliberately reservation-bearing pass runs, so the file demonstrably CAN produce a non-zero
+     `slot-calls` and a non-empty `slot-detail` — the measurement class the RUFU-698 report needed.
+
+  The bearing pass injects a delegate that performs real store work (a whole-board claim-shaped read, the
+  same `slim:false` projection the production claim snapshot asks for) plus real semaphore admission.
+  That is a LOWER BOUND, not the production closure: it excludes checkout-emptiness proofs and workflow
+  IR enrichment, so it may understate, never overstate. It is therefore recorded as a delegate bound and
+  never as a Class A production latency figure — `docs/diagnostics.md` carries that distinction, and this
+  file prints no per-reservation figure at all unless its own pass performed reservations.
+  */
+  it("reports no reservation cost from a pass that reserved nothing, and can report one when it does", async () => {
+    await resetBoard(harness);
+    resetHoldReleaseInstrumentation();
+    const shapeC = storeWithListShape(harness.store, []);
+
+    // (1) the measurement passes above: zero reservations, so zero admissible cost numbers.
+    const plainDebug = vi.spyOn(schedulerLog, "debug").mockImplementation(() => {});
+    const plainLog = vi.spyOn(schedulerLog, "log").mockImplementation(() => {});
+    const plainWarn = vi.spyOn(schedulerLog, "warn").mockImplementation(() => {});
+    let plainLine = "";
+    try {
+      await runHoldReleaseSweep(shapeC, { now: () => Date.now(), budgetMs: TIMING_BUDGET_MS });
+      plainLine = [plainDebug, plainLog, plainWarn]
+        .flatMap((spy) => spy.mock.calls.map((call) => String(call[0])))
+        .find((line) => line.includes("Hold-release sweep:")) ?? "";
+    } finally {
+      plainDebug.mockRestore(); plainLog.mockRestore(); plainWarn.mockRestore();
+    }
+    const plainCalls = Number(/slot-calls=(\d+)/.exec(plainLine)?.[1] ?? -1);
+    expect(plainLine).toBeDefined();
+    expect(plainCalls).toBe(0);
+    /*
+    The guard: a zero-call line carries no slot-detail group. If a future edit prints a `slot=…ms` cost
+    here, or starts reserving without updating the read-shape parity gate, this assertion is where it
+    surfaces — the defect being retired is a cost figure quoted from a run that reserved nothing.
+    */
+    expect(plainLine).not.toContain("slot-detail=");
+
+    // (2) the capability pass: real store work per candidate, so the line reports a real call count.
+    await resetBoard(harness);
+    resetHoldReleaseInstrumentation();
+    const bearingDebug = vi.spyOn(schedulerLog, "debug").mockImplementation(() => {});
+    const bearingLog = vi.spyOn(schedulerLog, "log").mockImplementation(() => {});
+    const bearingWarn = vi.spyOn(schedulerLog, "warn").mockImplementation(() => {});
+    let bearingLine = "";
+    let bearingMs = 0;
+    try {
+      const started = performance.now();
+      await runHoldReleaseSweep(shapeC, {
+        now: () => Date.now(),
+        budgetMs: TIMING_BUDGET_MS,
+        reserveSlot: async (_task: unknown, _target: string, pass?: HoldReleasePass) => {
+          /*
+          Same whole-board claim-shaped read the pass-invariant snapshot performs, charged into the real
+          child bucket so the detail group is populated by real latency rather than by a clock stub.
+          */
+          await pass?.wall("slot:claim-snapshot", async () => {
+            await shapeC.listTasks({ includeArchived: false, derive: false, slim: false });
+          });
+          await pass?.wall("slot:admission", async () => {
+            await Promise.resolve();
+          });
+          /*
+          Refused on purpose. A refused reservation still records the leg it spent (`slot-calls` counts it,
+          which is the whole point of Step 1's attribution), and it leaves every card where it was, so this
+          pass mutates the board no more than the timing passes do.
+          */
+          return null;
+        },
+      });
+      bearingMs = performance.now() - started;
+      bearingLine = [bearingDebug, bearingLog, bearingWarn]
+        .flatMap((spy) => spy.mock.calls.map((call) => String(call[0])))
+        .find((line) => line.includes("Hold-release sweep:")) ?? "";
+    } finally {
+      bearingDebug.mockRestore(); bearingLog.mockRestore(); bearingWarn.mockRestore();
+    }
+
+    const bearingCalls = Number(/slot-calls=(\d+)/.exec(bearingLine)?.[1] ?? -1);
+    expect(bearingLine).toBeDefined();
+    // A bench pass that cannot reserve anything cannot report anything: fail instead of printing silence.
+    expect(bearingCalls).toBeGreaterThan(0);
+    const detail = /slot-detail=\(([^)]*)\)/.exec(bearingLine)?.[1] ?? "";
+    expect(detail).toContain("slot:claim-snapshot=");
+    const slotMs = Number(/slot=(\d+)ms/.exec(bearingLine)?.[1] ?? 0);
+    /*
+    Printed, never asserted as a product number: labelled inline as what it is. The per-call figure is
+    `slot ÷ slot-calls`, exactly the arithmetic RUFU-698 Step 1 made possible — and the reason the
+    report's "~2 s per call" inference was never verifiable is that no run before this one printed both
+    operands.
+    */
+    // eslint-disable-next-line no-console
+    console.info(`RUFU-698 reservation-cost pass: slot-calls=${bearingCalls} slot=${slotMs}ms `
+      + `=> ${(slotMs / Math.max(1, bearingCalls)).toFixed(1)}ms per reservation (delegate lower bound: real claim-shaped `
+      + `whole-board read + admission, NOT the production closure; sweep wall=${bearingMs.toFixed(0)}ms) — `
+      + `see docs/diagnostics.md measurement classes before quoting this anywhere.`);
+  }, 1_500_000);
 });

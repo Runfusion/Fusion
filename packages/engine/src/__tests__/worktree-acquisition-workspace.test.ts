@@ -23,6 +23,7 @@ import {
 import {
   acquireTaskWorktree,
   acquireWorkspaceRepoWorktree,
+  acquireWorkspaceTaskWorktrees,
   WorkspaceRepoAcquireBusyError,
 } from "../worktree/worktree-acquisition.js";
 import { ActiveSessionRegistry } from "../agents/active-session-registry.js";
@@ -132,6 +133,20 @@ const SETTINGS: Partial<Settings> = {
   taskAttributionTrailerNames: ["Fusion-Task-Id"],
 };
 
+/**
+ * FNXC:Worktree 2026-10-29-11:28 (RUFU-805): returns the verdict AND the Git text, because the
+ * symptom assertion needs the operator-visible fatal sentence, not just a boolean.
+ */
+function gitWorkTreeVerdict(cwd: string): { ok: boolean; message: string } {
+  try {
+    const out = execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    return { ok: out.toString().trim() === "true", message: "" };
+  } catch (error) {
+    const detail = error as { message?: string; stderr?: Buffer };
+    return { ok: false, message: `${detail.message ?? String(error)}${detail.stderr?.toString() ?? ""}` };
+  }
+}
+
 describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout: 60_000 }, () => {
   let fixture: WorkspaceFixture;
 
@@ -191,6 +206,108 @@ describeIfGit("acquireWorkspaceRepoWorktree (U2 per-repo hardening)", { timeout:
       taskId: "FN-255",
     });
     expect(logs).toContain("Worktree dependency readiness [repo-a]: satisfied");
+  });
+
+  /*
+  FNXC:Worktree 2026-10-29-11:28 (RUFU-805):
+  `acquireWorkspaceRepoWorktree` hardcoded `runInitCommand: true`, which was harmless while only
+  execution callers existed. A heartbeat wake is the first workspace caller that must not install (the
+  acquisition contract says heartbeat runs never install dependencies, and `ensureWorktreeDependencies`
+  executes real install commands with a 600 s budget per leg), so the flag is threaded through the
+  fan-out. These two cases pin both sides of `?? true` at the seam that actually threads it.
+  */
+  it("threads runInitCommand: false through the fan-out so a heartbeat-shaped wake installs nothing", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current, logs } = makeFakeStore(makeTask("FN-805-no-init"));
+    const ensureDependencyReadiness = vi.fn().mockResolvedValue({ readiness: "satisfied" });
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      ensureDependencyReadiness,
+      registry: new ActiveSessionRegistry(),
+      runInitCommand: false,
+    });
+
+    expect(result.taskWorktreeDir).toBeTruthy();
+    expect(ensureDependencyReadiness).not.toHaveBeenCalled();
+    expect(logs.some((line: string) => line.includes("Worktree dependency readiness [repo-a]"))).toBe(false);
+  });
+
+  it("keeps the dependency bootstrap when a caller omits runInitCommand", async () => {
+    fixture = await createWorkspaceFixture(["repo-a"]);
+    const { store, current } = makeFakeStore(makeTask("FN-805-default-init"));
+    const ensureDependencyReadiness = vi.fn().mockResolvedValue({ readiness: "satisfied" });
+
+    await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      ensureDependencyReadiness,
+      registry: new ActiveSessionRegistry(),
+    });
+
+    expect(ensureDependencyReadiness).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:Worktree 2026-10-29-11:28 (RUFU-805) — the reported symptom, at its real seam.
+  SANE-613 hit `fatal: not a git repository (or any parent up to mount point /)` three times in 57
+  seconds in the saneca workspace project while it had no leg in any repository, so the failure was the
+  project shape and not a leftover lane. The workspace fixture root is not a Git repository exactly
+  like that project root, which is what makes this the reproduction rather than a mock of it.
+  */
+  it("yields no usable work tree from the single-repository primitive at a workspace root", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const { store, current } = makeFakeStore(makeTask("FN-805-symptom"));
+
+    let producedPath: string | null = null;
+    let refusal: string | null = null;
+    try {
+      const acquired = await acquireTaskWorktree({
+        task: current(),
+        rootDir: fixture.rootDir,
+        store,
+        settings: SETTINGS,
+      });
+      producedPath = acquired.worktreePath;
+    } catch (error) {
+      refusal = error instanceof Error ? error.message : String(error);
+    }
+
+    // The invariant is "no usable cwd is produced", so either outcome is the defect. Which one this
+    // build takes is recorded here rather than asserted away, per the spec.
+    if (producedPath === null) {
+      expect(refusal).toBeTruthy();
+    } else {
+      const probe = gitWorkTreeVerdict(producedPath);
+      expect(probe.ok).toBe(false);
+      expect(probe.message).toMatch(/not a git repository/i);
+    }
+  });
+
+  it("resolves real repository legs for the same workspace root through the workspace primitive", async () => {
+    fixture = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    const { store, current } = makeFakeStore(makeTask("FN-805-workspace-leg"));
+
+    const result = await acquireWorkspaceTaskWorktrees({
+      workspaceConfig: { repos: ["repo-a", "repo-b"] },
+      workspaceRootDir: fixture.rootDir,
+      task: current(),
+      store,
+      settings: SETTINGS,
+      registry: new ActiveSessionRegistry(),
+      runInitCommand: false,
+    });
+
+    const leg = result.task.workspaceWorktrees?.["repo-a"]?.worktreePath;
+    expect(leg).toBeTruthy();
+    expect(gitWorkTreeVerdict(leg as string).ok).toBe(true);
   });
 
   it("runs the real dependency bootstrap through workspace acquisition", async () => {
