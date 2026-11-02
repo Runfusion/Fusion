@@ -35,9 +35,29 @@ export function extractPromptListEntries(section: string): string[] {
     .filter(Boolean);
 }
 
-function isFusionTaskArtifactScopeEntry(entry: string): boolean {
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-22:45 (RUFU-451):
+The board-owned, git-ignored subtree prefixes a card may legitimately declare as its whole File Scope. The
+list was `.fusion/tasks/` only, so a card whose deliverable is durable memory or an evidence archive — the
+shape SANE-509 was, whose scope named `.fusion/memory/MEMORY.md`, `.fusion/agent-memory/<id>/MEMORY.md` and a
+dated archive under `.fusion/memory-archive/` — derived nothing, and a workspace card that derives nothing is
+refused at the land door it can never satisfy.
+
+The prefixes are board-owned on purpose: they are paths Fusion itself owns and git ignores, so declaring ONLY
+them makes a tracked-source delivery structurally impossible. That is why the same list is allowed to satisfy
+the declaration by itself below. `.fusion/` roots that are NOT board-owned (a project's own config or scratch
+directory) are deliberately absent — widening this list is widening who may finish with zero commits.
+*/
+const BOARD_OWNED_IGNORED_SCOPE_PREFIXES = [
+  ".fusion/tasks/",
+  ".fusion/memory/",
+  ".fusion/memory-archive/",
+  ".fusion/agent-memory/",
+] as const;
+
+function isBoardOwnedIgnoredScopeEntry(entry: string): boolean {
   const normalized = entry.trim().toLowerCase().replace(/^<rootdir>\//, "").replace(/^\.\//, "");
-  return normalized.startsWith(".fusion/tasks/");
+  return BOARD_OWNED_IGNORED_SCOPE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 function isNoSourceScopeEntry(entry: string): boolean {
@@ -54,7 +74,7 @@ function isNoSourceScopeEntry(entry: string): boolean {
     normalized.includes("agent log") ||
     normalized.includes("task artifacts") ||
     normalized.includes("read-only evidence") ||
-    isFusionTaskArtifactScopeEntry(normalized)
+    isBoardOwnedIgnoredScopeEntry(normalized)
   );
 }
 
@@ -66,7 +86,7 @@ keep a single fallback after positive source-path / extension checks.
 function hasSourceChangingScopeEntry(entry: string): boolean {
   const normalized = entry.toLowerCase();
   if (!normalized) return false;
-  if (isFusionTaskArtifactScopeEntry(normalized)) return false;
+  if (isBoardOwnedIgnoredScopeEntry(normalized)) return false;
   const sourcePathPattern = /(?:^|[\s`'"(])(?:packages|src|source|sources|app|apps|lib|libs|components|scripts|docs|\.github|config|test|tests|__tests__|\.changeset)\//m;
   if (sourcePathPattern.test(normalized)) return true;
   if (/\.(ts|tsx|js|jsx|mjs|cjs|swift|kt|java|py|rs|go|rb|md|json|ya?ml|toml|css|scss|html)\b/.test(normalized)) return true;
@@ -86,7 +106,25 @@ function promptDeclaresSourceFreeTaskArtifactContract(combinedText: string): boo
 function promptScopeIsSourceFreeTaskArtifacts(promptScopeEntries: string[], declaredScope: string[]): boolean {
   if (promptScopeEntries.length === 0 || declaredScope.length === 0) return false;
   if (declaredScope.some(hasSourceChangingScopeEntry)) return false;
-  return declaredScope.every((entry) => isFusionTaskArtifactScopeEntry(entry) || isNoSourceScopeEntry(entry));
+  return declaredScope.every((entry) => isBoardOwnedIgnoredScopeEntry(entry) || isNoSourceScopeEntry(entry));
+}
+
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-22:50 (RUFU-451):
+When EVERY entry the plan declared is a board-owned ignored path, the scope IS the source-free declaration —
+no phrasing about force-adding or fabricated commits can add information to "this card cannot touch a tracked
+file". The declaration-sentence test below was written for cards that said so in prose, and a card whose plan
+states the same fact in Slovak, or in a Completion Criteria line like `NO-APPLICABLE — karta nemení žiadny
+tracked zdroj`, matched nothing and stayed refused at the land door.
+
+The structural branch stays narrow by construction: it requires a non-empty PROMPT-declared File Scope, every
+entry board-owned-ignored, and the source-changing check (source roots, tracked extensions) passing over all of
+them — one `packages/...` or `docs/...` entry disqualifies the whole card.
+*/
+function promptScopeIsEntirelyBoardOwnedIgnored(promptScopeEntries: string[], declaredScope: string[]): boolean {
+  if (promptScopeEntries.length === 0 || declaredScope.length === 0) return false;
+  if (declaredScope.some(hasSourceChangingScopeEntry)) return false;
+  return declaredScope.every(isBoardOwnedIgnoredScopeEntry);
 }
 
 function getTaskTextForNoCommitEligibility(task: Task, promptContent: string): string {
@@ -116,8 +154,8 @@ export function evaluatePromptDerivedNoCommitEligibility(task: Task, promptConte
   */
   if (
     stepsComplete &&
-    promptDeclaresSourceFreeTaskArtifactContract(combined) &&
-    promptScopeIsSourceFreeTaskArtifacts(promptScopeEntries, declaredScope)
+    promptScopeIsSourceFreeTaskArtifacts(promptScopeEntries, declaredScope) &&
+    (promptDeclaresSourceFreeTaskArtifactContract(combined) || promptScopeIsEntirelyBoardOwnedIgnored(promptScopeEntries, declaredScope))
   ) {
     return { eligible: true, reason: "prompt-derived source-free task-artifact contract" };
   }

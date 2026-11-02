@@ -35,10 +35,10 @@ import { commitIdentityArgs, resolveCommitIdentity } from "../git-identity.js";
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { realpathSync, readdirSync } from "node:fs";
+import { realpathSync, readdirSync, existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolveWorkspacePath } from "node:path";
 import {
   assertNotWorkspaceTaskMerge,
   buildTaskLineageTrailer,
@@ -160,12 +160,16 @@ import { resolveWorkspaceMergeReadiness } from "./workspace-merge-readiness.js";
 import {
   createTipAncestryProbe,
   decideWorkspaceDelivery,
+  evaluateCommitFreeRepositoryAbsence,
   probeWorkspaceCommitFree,
   summarizeCommitFreeEvidence,
   type WorkspaceCommitFreeRepoEvidence,
   type WorkspaceTipAncestryProbe,
 } from "./workspace-commit-free-delivery.js";
-import { persistWorkspaceRepoLandFailure } from "./workspace-land-failure.js";
+/* RUFU-451: the tri-state branch-presence leaf. Deliberately NOT `SelfHealingManager.probeRepoBranch` —
+   an import of the recovery substrate from the merge lane is the edge this module must not gain. */
+import { probeBranchPresence } from "./branch-presence-probe.js";
+import { persistWorkspaceRepoLandFailure, clearWorkspaceRepoLandFailure } from "./workspace-land-failure.js";
 import { ensureTenancyFenceRef, mergeDispatchFenceRef, publishWorkspaceIntegrationRef, WorkspaceFenceRefError, workspaceLandFenceRef } from "./workspace-fence-ref.js";
 import { isPushAfterMergeEnabled, explainPushAfterMergeDecision, type PushAfterMergeDisabledReason, type PushAfterMergeLane } from "./push-after-merge-policy.js";
 import { resolveWorkspaceIntegrationTarget, WorkspaceEnvironmentError, WorkspaceIntegrationTargetError, type WorkspaceIntegrationTarget } from "./workspace-integration-target.js";
@@ -3281,14 +3285,244 @@ export async function landWorkspaceTask(
   The readiness resolver retains that evidence and refuses unexplained empty sets before status,
   dispatch fencing, leases, or Git writes.
   */
+  const declaredRepositories = [...new Set(mergeBoundaryTask.repositoryScope?.repositories ?? [])];
+  const unacquiredRepositories = declaredRepositories.filter((repo) => !mergeBoundaryTask.workspaceWorktrees?.[repo]);
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:30 (RUFU-451):
+  The absence read is asked ONLY of a card that declared a zero-commit contract, and only of the declared
+  members it never acquired. A card that owes commits never gets an absence opinion computed for it at all:
+  for that card a missing member is exactly the corruption RUFU-504 says it is, and reading git to find out
+  would be the first step toward waiving it. The read itself is three-valued (`present`/`absent`/`unknown`)
+  and only a git answer of "no such ref" can make a repository absent — a directory git cannot be asked in
+  stays unmeasured, which keeps every existing refusal standing.
+  */
+  const provablyAbsent = mergeBoundaryTask.noCommitsExpected === true && unacquiredRepositories.length > 0
+    ? new Set((await evaluateCommitFreeRepositoryAbsence(
+        unacquiredRepositories.map((repo) => ({
+          repo,
+          entry: mergeBoundaryTask.workspaceWorktrees?.[repo],
+          recordedLandedSha: mergeBoundaryTask.mergeDetails?.workspaceLandedShas?.[repo],
+          repoRootDir: join(workspaceRootDir, repo),
+          worktreePathExists: (path) => existsSync(path),
+          taskBranch: mergeBoundaryTask.branch,
+          declaresContentInRepository: (mergeBoundaryTask.modifiedFiles ?? [])
+            .some((file) => file === repo || file.startsWith(`${repo}/`)),
+        })),
+        (repoRootDir, branch) => probeBranchPresence(repoRootDir, branch),
+      )).filter((verdict) => verdict.basis === "absent").map((verdict) => verdict.repo))
+    : new Set<string>();
   const readiness = resolveWorkspaceMergeReadiness(
     mergeBoundaryTask,
     mergeBoundaryModifiedRepositories,
     netZeroBranchRepositories,
+    provablyAbsent,
   );
   if (readiness.kind === "blocked") throw new Error(readiness.reason);
   if (readiness.kind === "no-op") {
-    throw new Error(`Workspace task ${taskId} has explicit no-commits policy and cannot enter repository landing`);
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:30 (RUFU-451) — the obligation-free exit:
+    The resolver reached `no-op` only when the card declared zero commits AND every declared repository is
+    provably empty of it (or none was declared at all). Until now this arm threw unconditionally, which made
+    the workspace lane the LAST door that refused a shape the other three lanes had already agreed on:
+    `decideWorkspaceDelivery` closes it (RUFU-504), the empty-land classifier discharges it (RUFU-441), the
+    partial-land sweep suppresses its false park (RUFU-451 increment 1) — and the landing step itself had no
+    branch of the if for it, so the card looped between review and this throw.
+
+    Why this is a finalize and not a land: there is no repository whose ref could be advanced, so every
+    landing side effect is definitionally inapplicable — no `merging` status, no dispatch fence or tenancy
+    fence publication, no land lease, no `WorkspaceLandIntent`, no acquired worktree, no git write. The
+    obligation-free arm therefore RUNS NO git command for the zero-declared shape, and the only reads it
+    performs are the ref-absence probes that made the classification in the first place.
+
+    What is NOT relaxed: the shared proof door still has to say so.
+      • `evaluateNoCommitsFinalizeWithLandingProof` = required pre-merge gate evidence + the landing-proof
+        door over the workspace root (uncommitted/untracked content, corroboration of the declaration).
+        This is what stops "the card declared zero commits" from becoming "the card's uncommitted work is
+        quietly discarded" — the RUFU-262 loss this repo already paid for.
+      • No recorded file may survive the classification (`readiness.preservedFiles`): a card whose row still
+        names tracked modifications owes a landing, and owes it in the arm that performs one.
+      • A refusal here is a WAIT, not a failure: the durable hold marker is what the door writes, no `error`
+        or `status` is written by this arm, and the protected tree is never cleaned up. The card stays in the
+        review lane with a row-visible sentence, exactly as the singular lane's held disposition does.
+    */
+    const absentRepositories = readiness.absentRepositories ?? [];
+    if (readiness.preservedFiles.length > 0) {
+      throw new WorkspaceFinalizeBlockedError(
+        taskId,
+        `Workspace task ${taskId} declared a zero-commit contract but still records ${readiness.preservedFiles.length} modified file(s); the delivery owes a landing`,
+      );
+    }
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:55 (RUFU-451) — the obligation set gets measured at THIS door too:
+    An empty confirmed scope is not the same statement as an empty workspace. `readiness.obligationRepositories`
+    names the member checkouts this card HOLDS, and SANE-509 is exactly that row: three acquired entries against a
+    declaration of zero repositories. This arm closed that card on the card-level door alone, measuring no member —
+    while `reconcileLandedReviewTask`, over the same row, took the acquired set as its obligation set. Two doors,
+    one card, opposite verdicts, and the card could only ever lose: the merge door's throw moved it out of review,
+    the reconcile door refused to put it back.
+
+    `captureWorkspaceReviewEvidence` is not the missing measurement either: it refuses a NON-EMPTY `base..branch`
+    diff, so a member branch that is ahead while contributing nothing (commit, then revert) and uncommitted work
+    sitting in a member tree both pass it unseen — RUFU-262's loss class, which the card-level door over a
+    workspace root that is not itself a git repository cannot see at all.
+
+    So every obligation repository is measured here with the lane's own primitives:
+      • its OWN base, through the same recorded-mode resolver the land loop uses — a member's integration branch
+        may not be the card's singular `baseBranch`, and measuring against a base the repository never named is
+        how a dirty tree reads clean (RUFU-183 refused that fallback for the same reason);
+      • the shared tip-ancestry probe. Only `zero-ahead` discharges: `unproven` with a tip is ahead-but-net-zero
+        and `unproven` without one is a branch that is gone or unreadable — RUFU-504 forbids folding either into a
+        delivery, and a DELETED member branch is never proof of delivery either. So a member the entry records as
+        landed but this lane cannot prove zero-ahead still refuses here: `findProvenLandedCommit` is the reconcile
+        door's authority and this arm gains none — the card waits in review and that sweep, which does prove
+        lands, closes it.
+      • the shared landing-proof door over THAT member's tree, which is what asks the uncommitted-work question
+        this shape never asked, with the same identity reconciliation and the same durable hold marker — so an
+        obligation-free close can never quietly discard a member's work to satisfy a declaration.
+    A refusal writes nothing on the row and lands nothing: it returns `finalized: false` with the reason naming
+    every unmeasured repository and its basis, exactly as the held and blocked dispositions below do.
+    */
+    const obligationRepositories = readiness.obligationRepositories ?? [];
+    const measuredObligations: WorkspaceCommitFreeRepoEvidence[] = [];
+    const unmeasuredObligations: string[] = [];
+    for (const repoRel of obligationRepositories) {
+      const entry = mergeBoundaryTask.workspaceWorktrees?.[repoRel];
+      const branch = entry?.branch?.trim();
+      const repoRootDir = join(workspaceRootDir, repoRel);
+      if (!branch) {
+        unmeasuredObligations.push(`${repoRel} (its acquired checkout records no branch, so nothing was measured)`);
+        continue;
+      }
+      let memberIntegrationBranch: string;
+      try {
+        memberIntegrationBranch = (await resolveWorkspaceRepoBaseBranch({
+          mode: "recorded",
+          repoRootDir,
+          repoRelPath: repoRel,
+          task: mergeBoundaryTask,
+          settings,
+          recordedBaseBranch: entry?.baseBranch,
+        })).branch;
+      } catch (error) {
+        unmeasuredObligations.push(`${repoRel} (its own integration branch is unresolvable: ${getErrorMessage(error)})`);
+        continue;
+      }
+      /*
+      The content question belongs to the tree the card OCCUPIES. A workspace card's work lives in its acquired
+      linked worktree (`entry.worktreePath`), not in the member repository's main checkout, so an uncommitted file
+      the close would walk away from is only visible where the card is standing. The member directory stays the
+      ref-resolution directory (that is where `refs/heads/<branch>` lives) and is the fallback when the entry
+      records no path at all.
+      */
+      const memberContentDir = entry?.worktreePath?.trim()
+        ? resolveWorkspacePath(workspaceRootDir, entry.worktreePath.trim())
+        : repoRootDir;
+      const [evidence] = await probeWorkspaceCommitFree(
+        [{ repo: repoRel, repoRootDir, branch, integrationBranch: memberIntegrationBranch }],
+        probeWorkspaceTipAncestry,
+      );
+      if (!evidence || evidence.basis !== "zero-ahead") {
+        unmeasuredObligations.push(
+          evidence
+            ? `${repoRel} (${branch}: basis ${evidence.basis}, ${evidence.branchTipSha ? `tip ${short(evidence.branchTipSha)}` : "no resolvable tip"})`
+            : `${repoRel} (the ancestry probe returned no measurement)`,
+        );
+        continue;
+      }
+      const memberFinalizeCheck = await evaluateNoCommitsFinalizeWithLandingProof({
+        store,
+        task: mergeBoundaryTask,
+        rootDir: memberContentDir,
+        integrationBranch: memberIntegrationBranch,
+        source: "merge-ai-workspace",
+        fence,
+      });
+      if (memberFinalizeCheck.held) {
+        await log(`AI merge (workspace): commit-free finalize held in ${repoRel} — ${memberFinalizeCheck.held.refusal}`);
+        return { taskId, repos: [], allLanded: true, finalized: false, finalizeBlockedReason: memberFinalizeCheck.held.refusal };
+      }
+      if (memberFinalizeCheck.evaluation.blocked) {
+        const refusal = memberFinalizeCheck.evaluation.reason
+          || `Workspace task ${taskId} declared a zero-commit contract that ${repoRel}'s tree contradicted`;
+        await log(`AI merge (workspace): commit-free finalize blocked in ${repoRel} — ${refusal}`);
+        return { taskId, repos: [], allLanded: true, finalized: false, finalizeBlockedReason: refusal };
+      }
+      measuredObligations.push(evidence);
+    }
+    if (unmeasuredObligations.length > 0) {
+      const reason = `Workspace task ${taskId} declared a zero-commit contract while its own checkout is not proven at zero commits ahead: ${unmeasuredObligations.join("; ")}`;
+      await log(`AI merge (workspace): ${reason} — the card stays in review and nothing is written`);
+      aiMergeLog.warn(`${taskId}: obligation-free workspace close refused — ${unmeasuredObligations.length} acquired checkout(s) not proven at zero ahead: ${unmeasuredObligations.join("; ")}`);
+      return { taskId, repos: [], allLanded: true, finalized: false, finalizeBlockedReason: reason };
+    }
+    // The card's own base wins; otherwise the SAME resolver every other lane asks (settings, then origin HEAD,
+    // then the recorded fallback). A hardcoded "main" would measure the landing-proof door against a base the
+    // project never named, which is how a clean tree reads as dirty and a dirty one as clean.
+    const obligationFreeIntegrationBranch = task.baseBranch?.trim()
+      || await resolveIntegrationBranch(workspaceRootDir, settings);
+    const finalizeCheck = await evaluateNoCommitsFinalizeWithLandingProof({
+      store,
+      task: mergeBoundaryTask,
+      rootDir: workspaceRootDir,
+      integrationBranch: obligationFreeIntegrationBranch,
+      source: "merge-ai-workspace",
+      fence,
+    });
+    if (finalizeCheck.held) {
+      await log(`AI merge (workspace): commit-free finalize held — ${finalizeCheck.held.refusal}`);
+      return { taskId, repos: [], allLanded: true, finalized: false, finalizeBlockedReason: finalizeCheck.held.refusal };
+    }
+    if (finalizeCheck.evaluation.blocked) {
+      const refusal = finalizeCheck.evaluation.reason
+        || `Workspace task ${taskId} declared a zero-commit contract that the finalize guard could not corroborate`;
+      await log(`AI merge (workspace): commit-free finalize blocked — ${refusal}`);
+      return { taskId, repos: [], allLanded: true, finalized: false, finalizeBlockedReason: refusal };
+    }
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-19:52 (RUFU-451):
+    The proven absences reach the finalizer as the PROOF's absence list and deliberately NOT as measured evidence
+    rows. `decideWorkspaceDelivery` counts an evidence row as an obligation it must see delivered, so a row
+    asserting `absent` for a repository that was never an obligation is an accounting mismatch and decides
+    `undelivered` — which is what this arm did on its first run: it refused the close it had just proven. The
+    decision maps `absentRepositories` into `workspaceCommitFreeBasis` itself, so the terminal row still records
+    `absent` per member and names them in `noOpReason`, while `commitSha` stays undefined because an unacquired
+    member never had a landing sha to carry. Nothing here invents a measurement: there was no checkout to probe
+    and no tip to record.
+    */
+    const finalized = await finalizeWorkspaceTask(
+      store,
+      taskId,
+      mergeBoundaryTask,
+      [],
+      workspaceRootDir,
+      measuredObligations,
+      fence,
+      {
+        authorized: mergeBoundaryTask.noCommitsExpected === true,
+        obligationRepositories: [...obligationRepositories, ...absentRepositories],
+        absentRepositories,
+        declaredRepositoryCount: (mergeBoundaryTask.repositoryScope?.repositories ?? [])
+          .filter((repository) => repository.trim().length > 0).length,
+      },
+    );
+    if (!finalized) {
+      return {
+        taskId,
+        repos: [],
+        allLanded: true,
+        finalized: false,
+        finalizeBlockedReason: `Workspace task ${taskId} reached the commit-free finalize and was not completed; the row was left for review`,
+      };
+    }
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:55 (RUFU-451):
+    The log line states what was actually measured. It used to assert "no acquired repository" unconditionally,
+    which on the SANE-509 shape — three acquired members — recorded a falsehood beside the very row it described.
+    */
+    await log(
+      `AI merge (workspace): obligation-free delivery — ${measuredObligations.length} acquired repositor${measuredObligations.length === 1 ? "y" : "ies"} proven zero commits ahead of its own base (${measuredObligations.map((evidence) => evidence.repo).join(", ") || "none acquired"}), ${absentRepositories.length} declared repositor${absentRepositories.length === 1 ? "y" : "ies"} provably empty of this card (${absentRepositories.join(", ") || "none declared"})`,
+    );
+    return { taskId, repos: [], allLanded: true, finalized: true };
   }
   const retainedModifiedFiles = [...new Set([...normalizedMergeBoundaryFiles, ...readiness.preservedFiles])].sort();
   await store.updateTask(taskId, { modifiedFiles: retainedModifiedFiles });
@@ -4050,7 +4284,16 @@ export function formatWorkspaceLandingSummary(
       ? "all-landed"
       : commitFreeEvidence.length > 0 && commitFreeEvidence.every((repo) => repo.basis === "zero-ahead")
         ? "commit-free-delivery"
-        : "undelivered";
+        /*
+        FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:30 (RUFU-451):
+        The obligation-free arm's own aggregate. A card whose declared repositories each hold no artifact of
+        it delivered nothing to land, and printing that as `undelivered` would tell the operator the
+        opposite of what the terminal record says (`mergeConfirmed: true`). Kept as a separate word from
+        `commit-free-delivery` because the evidence behind the two differs: ancestry here, absence there.
+        */
+        : commitFreeEvidence.length > 0 && commitFreeEvidence.every((repo) => repo.basis === "absent")
+          ? "obligation-free-delivery"
+          : "undelivered";
   const repositoryResults = repos
     .map((repo) => `${repo.repo} {status=${repo.status}; sha=${repo.landedSha ?? "none"}; dependency-sync=${repo.dependencySyncDecision ?? "not-recorded"}}`)
     .join("; ");
@@ -4066,6 +4309,18 @@ async function finalizeWorkspaceTask(
   workspaceRootDir: string,
   commitFreeEvidence: WorkspaceCommitFreeRepoEvidence[],
   fence?: MergeWriteFence,
+  /**
+   * RUFU-451: the zero-obligation proof, assembled by `landWorkspaceTask` from the git reads it actually ran —
+   * the measured `zero-ahead` set (its `commitFreeEvidence` argument) plus the declared members proven to hold
+   * no artifact of this card. `obligationRepositories` is the set both facts together must account for, so an
+   * obligation nobody probed cannot be left out of the accounting by a caller that forgot to look.
+   */
+  obligationFreeProof?: {
+    authorized: boolean;
+    obligationRepositories: readonly string[];
+    absentRepositories: readonly string[];
+    declaredRepositoryCount?: number;
+  },
 ): Promise<boolean> {
   const landed = repos.filter((r) => r.status === "landed" && r.landedSha);
   const workspaceLandedShas: Record<string, string> = {};
@@ -4108,6 +4363,7 @@ async function finalizeWorkspaceTask(
     repoCount: repos.length,
     landedCount: landed.length,
     evidence: commitFreeEvidence,
+    ...(obligationFreeProof ? { obligationFreeProof } : {}),
   });
   let deliveryReason: string | undefined = "no-net-changes";
   if (anyLanded) deliveryReason = undefined;
@@ -4147,6 +4403,27 @@ async function finalizeWorkspaceTask(
   };
   fence?.assertOwned("finalization");
   await store.updateTask(taskId, { mergeDetails });
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-22:30 (RUFU-451):
+  A commit-free close invalidates every "landing failed" breadcrumb the card carries. Those chips were written
+  by attempts that expected a land; this card just closed on proof that no land was owed, so a chip left behind
+  reports a broken repository that never owed anything — the exact red-after-closure RUFU-451 exists to stop.
+  Cleared strictly AFTER the terminal write, because a finalization that was refused must keep its breadcrumbs:
+  they are the evidence an operator needs when the delivery did NOT resolve. A superseded merge generation writes
+  nothing at all (RUFU-146), and a failed chip clear is reported on the card rather than allowed to undo a
+  certified delivery — the breadcrumb is display-only, the merge proof is already durable.
+  */
+  if (delivery.kind === "commit-free-delivery" && !fence?.isOrphaned()) {
+    const dischargedRepositories = new Set([
+      ...commitFreeEvidence.map((entry) => entry.repo),
+      ...(obligationFreeProof?.absentRepositories ?? []),
+    ]);
+    for (const repo of dischargedRepositories) {
+      await clearWorkspaceRepoLandFailure(store, taskId, repo).catch(async () => {
+        await store.logEntry(taskId, `Could not clear the stale landing-failure note for ${repo}; the delivery itself is recorded.`, "AiMerge").catch(() => undefined);
+      });
+    }
+  }
   if (typeof (store as Partial<TaskStore>).publishTaskOverlapDeliveries === "function") {
     await store.publishTaskOverlapDeliveries(taskId, overlapDeliveries);
   }

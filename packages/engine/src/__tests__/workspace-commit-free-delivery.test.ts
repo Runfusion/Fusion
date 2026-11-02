@@ -8,11 +8,14 @@ import {
   COMMIT_FREE_DELIVERY_REASON,
   createTipAncestryProbe,
   decideWorkspaceDelivery,
+  evaluateCommitFreeRepositoryAbsence,
   evaluateWorkspaceReconcileDischarge,
   probeWorkspaceCommitFree,
+  provablyAbsentRepositories,
   reposNeedingCommitFreeProbe,
   summarizeCommitFreeEvidence,
   type WorkspaceCommitFreeRepoEvidence,
+  type CommitFreeAbsenceInput,
   type WorkspaceReconcileDischargeInput,
   type GitTextRunner,
 } from "../merge/workspace-commit-free-delivery.js";
@@ -420,5 +423,306 @@ describe("workspace reconcile discharge evaluation", () => {
     const result = await run();
     expect(result.discharge).toBe(false);
     expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "reverted", uniqueCommitCount: 2 });
+  });
+});
+
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-22:00 (RUFU-451):
+The source-free workspace card. RUFU-504 discharges a repository by measuring its branch tip against that
+repository's own integration branch, which requires the card to HAVE acquired the repository — so a card that
+acquired nothing (a `noCommitsExpected` investigation or reconcile card) had no exit at all: the merge lane threw
+`WorkspacePartialLandError`, the reconcile fence refused `workspace-obligations-empty`, and every retry burned one
+auto-merge unit. These cases pin the only widening that is allowed — an unacquired declared member, or a wholly
+empty obligation set, discharges when ABSENCE is proven — and assert that every refusal a card owing commits
+already faced still stands.
+*/
+describe("commit-free repository absence (RUFU-451)", () => {
+  function absenceInput(overrides: Partial<CommitFreeAbsenceInput> = {}): CommitFreeAbsenceInput {
+    return {
+      repo: "lager-manager",
+      entry: undefined,
+      recordedLandedSha: undefined,
+      repoRootDir: "checkout/lager-manager",
+      worktreePathExists: () => false,
+      taskBranch: "fusion/RUFU-451",
+      declaresContentInRepository: false,
+      ...overrides,
+    };
+  }
+
+  const probe = (answer: "present" | "absent" | "unknown") => async (): Promise<"present" | "absent" | "unknown"> => answer;
+
+  it("reports absence only when the ref read answers \"no such ref\"", async () => {
+    const verdicts = await evaluateCommitFreeRepositoryAbsence([absenceInput()], probe("absent"));
+    expect(verdicts).toEqual([{ repo: "lager-manager", basis: "absent" }]);
+    expect(provablyAbsentRepositories(verdicts)).toEqual(["lager-manager"]);
+  });
+
+  it("never infers absence from a read it could not take", async () => {
+    // `unknown` is the three-valued probe's "I could not ask" answer (missing directory, unqueryable git).
+    const verdicts = await evaluateCommitFreeRepositoryAbsence([absenceInput()], probe("unknown"));
+    expect(verdicts).toEqual([{ repo: "lager-manager", basis: "unproven" }]);
+    expect(provablyAbsentRepositories(verdicts)).toEqual([]);
+  });
+
+  it("treats a missing branch name or an unresolvable member directory as an absent probe", async () => {
+    const noBranch = await evaluateCommitFreeRepositoryAbsence([absenceInput({ taskBranch: undefined })], probe("absent"));
+    const noDir = await evaluateCommitFreeRepositoryAbsence([absenceInput({ repoRootDir: undefined })], probe("absent"));
+    expect(noBranch[0]).toEqual({ repo: "lager-manager", basis: "unproven" });
+    expect(noDir[0]).toEqual({ repo: "lager-manager", basis: "unproven" });
+  });
+
+  it("refuses absence for a repository holding ANY artifact of the card, even while git says the ref is gone", async () => {
+    /*
+    RUFU-262's lost-work fence and RUFU-504's "a deleted branch is never folded into a delivery" both live here.
+    The acquisition record, the surviving checkout directory, the branch the row names, a recorded landing sha,
+    and files the row declares in that member are each independently disqualifying — a repository git says holds
+    no ref is exactly where deleted work hides.
+    */
+    const artifacts: Array<[string, Partial<CommitFreeAbsenceInput>]> = [
+      ["acquisition record", { entry: { branch: "fusion/RUFU-451" } }],
+      ["surviving checkout", { entry: { worktreePath: "worktrees/rufu-451" }, worktreePathExists: () => true }],
+      ["recorded landing sha", { recordedLandedSha: "c".repeat(40) }],
+      ["declared content", { declaresContentInRepository: true }],
+      // A branch the row RECORDS that git no longer resolves is lost-work suspicion, never an absence.
+      ["recorded branch whose ref vanished", { entry: { branch: "fusion/RUFU-451" }, repoRootDir: "checkout/lager-manager" }],
+    ];
+    for (const [name, override] of artifacts) {
+      const verdicts = await evaluateCommitFreeRepositoryAbsence([absenceInput(override)], probe("absent"));
+      expect(verdicts, name).toEqual([{ repo: "lager-manager", basis: "recorded" }]);
+    }
+    expect(provablyAbsentRepositories(await evaluateCommitFreeRepositoryAbsence(
+      [absenceInput({ entry: { branch: "fusion/RUFU-451" } })], probe("absent"),
+    ))).toEqual([]);
+  });
+
+  it("reports a present ref as recorded content, not absence", async () => {
+    const verdicts = await evaluateCommitFreeRepositoryAbsence([absenceInput()], probe("present"));
+    expect(verdicts).toEqual([{ repo: "lager-manager", basis: "recorded" }]);
+  });
+
+  it("never consults git for a repository that already holds an artifact", async () => {
+    let probeCalls = 0;
+    await evaluateCommitFreeRepositoryAbsence(
+      [absenceInput({ entry: { branch: "fusion/RUFU-451" } })],
+      async () => { probeCalls++; return "absent"; },
+    );
+    expect(probeCalls).toBe(0);
+  });
+
+  it("classifies each member independently instead of letting one artifact poison the set", async () => {
+    const verdicts = await evaluateCommitFreeRepositoryAbsence([
+      absenceInput({ repo: "lager-manager" }),
+      absenceInput({ repo: "lager-2026", entry: { branch: "fusion/RUFU-451" } }),
+    ], probe("absent"));
+    expect(verdicts.map((verdict) => `${verdict.repo}:${verdict.basis}`)).toEqual([
+      "lager-manager:absent", "lager-2026:recorded",
+    ]);
+  });
+});
+
+describe("workspace delivery decision with an obligation-free proof (RUFU-451)", () => {
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:35 (RUFU-451):
+  Every call site below now names its OBLIGATION SET (`obligationRepositories`), not just a declared count: the
+  accounting that keeps a repository from being dropped silently has to count the repositories the card is
+  accountable for, and for an authorized card that holds checkouts under an empty declaration that set is what it
+  holds, not what it said. `declaredRepositoryCount` survives as PROVENANCE — it is what decides whether the
+  persisted sentence has to explain where the set came from.
+  */
+  it("certifies a delivery with no repository obligation at all, naming the basis as absence", () => {
+    const decision = decideWorkspaceDelivery({
+      repoCount: 0, landedCount: 0, evidence: [],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-manager"], absentRepositories: ["lager-manager"], declaredRepositoryCount: 1 },
+    });
+    expect(decision.kind).toBe("commit-free-delivery");
+    expect(decision.noOpReason).toContain("lager-manager");
+    expect(decision.commitFreeBasis).toEqual({ "lager-manager": "absent" });
+    expect(decision.mergeConfirmed).toBe(true);
+  });
+
+  it("does not certify an obligation-free delivery for a card that owes commits", () => {
+    /*
+    The proof's `authorized` flag IS the row's zero-commit declaration, so a lane that cannot assert it falls
+    through to the pre-existing undelivered arm — the same refusal `workspace-merger-idempotency.slow.test.ts`
+    pins (via the thrown error's sentence) for the unauthorized shape.
+    */
+    const decision = decideWorkspaceDelivery({
+      repoCount: 0, landedCount: 0, evidence: [],
+      obligationFreeProof: { authorized: false, obligationRepositories: ["lager-manager"], absentRepositories: ["lager-manager"], declaredRepositoryCount: 1 },
+    });
+    expect(decision.kind).toBe("undelivered");
+    expect(decision.mergeConfirmed).toBe(false);
+  });
+
+  it("does not certify while any repository in the obligation set is unaccounted for", () => {
+    // Two obligations, one proven absent, nothing probed: the other member may hold work, so nothing is claimed.
+    const partial = decideWorkspaceDelivery({
+      repoCount: 0, landedCount: 0, evidence: [],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-manager", "lager-2026"], absentRepositories: ["lager-manager"], declaredRepositoryCount: 2 },
+    });
+    expect(partial.kind).toBe("undelivered");
+    expect(partial.mergeConfirmed).toBe(false);
+  });
+
+  it("does not certify over an obligation set narrower than the card's own declaration", () => {
+    /*
+    The obligation set is a claim by the caller, so it is checked against the declaration it is supposed to
+    implement: a caller that handed over one obligation for a five-repository card has dropped four members from
+    the accounting, which is the vacuous-truth RUFU-504 deleted, arriving by a new route.
+    */
+    const decision = decideWorkspaceDelivery({
+      repoCount: 0, landedCount: 0, evidence: [],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-manager"], absentRepositories: ["lager-manager"], declaredRepositoryCount: 5 },
+    });
+    expect(decision.kind).toBe("undelivered");
+  });
+
+  it("does not certify an obligation-free delivery over an unproven probe claim", () => {
+    const decision = decideWorkspaceDelivery({
+      repoCount: 0, landedCount: 0,
+      evidence: [evidence("lager-2026", "unproven")],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-2026"], absentRepositories: [] },
+    });
+    expect(decision.kind).toBe("undelivered");
+  });
+
+  it("keeps RUFU-504's ancestry wording byte-identically when nothing was discharged by absence", () => {
+    const decision = decideWorkspaceDelivery({
+      repoCount: 2, landedCount: 0,
+      evidence: [evidence("lager-manager", "zero-ahead", "a".repeat(40)), evidence("lager-2026", "zero-ahead", "b".repeat(40))],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-manager", "lager-2026"], absentRepositories: [], declaredRepositoryCount: 2 },
+    });
+    expect(decision.kind).toBe("commit-free-delivery");
+    expect(decision.noOpReason).toBe(COMMIT_FREE_DELIVERY_REASON);
+    expect(decision.commitFreeBranchTipShas).toEqual({
+      "lager-manager": "a".repeat(40), "lager-2026": "b".repeat(40),
+    });
+  });
+
+  it("states both kinds of proof when a mixed obligation set discharges", () => {
+    const decision = decideWorkspaceDelivery({
+      repoCount: 1, landedCount: 0,
+      evidence: [evidence("lager-manager", "zero-ahead", "a".repeat(40))],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-manager", "lager-2026"], absentRepositories: ["lager-2026"], declaredRepositoryCount: 2 },
+    });
+    expect(decision.kind).toBe("commit-free-delivery");
+    expect(decision.noOpReason).toMatch(/zero commits ahead/);
+    expect(decision.noOpReason).toMatch(/lager-2026/);
+    // Both members must reach the persisted basis map: an absent row without the probed row would erase the
+    // only git observation this card has.
+    expect(decision.commitFreeBasis).toEqual({ "lager-manager": "zero-ahead", "lager-2026": "absent" });
+    expect(decision.commitFreeBranchTipShas).toEqual({ "lager-manager": "a".repeat(40) });
+  });
+
+  it("leaves a real landing the strongest claim, unupgraded by an absence next to it", () => {
+    const decision = decideWorkspaceDelivery({
+      repoCount: 1, landedCount: 1, evidence: [],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-manager", "lager-2026"], absentRepositories: ["lager-2026"], declaredRepositoryCount: 2 },
+    });
+    expect(decision.kind).toBe("landed-delivery");
+  });
+
+  it("refuses to fold absence into a landing and invents no sha", () => {
+    const decision = decideWorkspaceDelivery({
+      repoCount: 0, landedCount: 0, evidence: [],
+      obligationFreeProof: { authorized: true, obligationRepositories: ["lager-manager"], absentRepositories: ["lager-manager"], declaredRepositoryCount: 1 },
+    });
+    expect(decision.landedSha).toBeUndefined();
+    expect(JSON.stringify(decision)).not.toMatch(/[0-9a-f]{40}/);
+  });
+
+  it("says where an obligation set that came from the checkouts the card holds came from", () => {
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:35 (RUFU-451) — the P2 the code review named:
+    SANE-509's row carries `repositoryScope: { repositories: [] }` beside a two-entry basis map. Without the
+    provenance clause a reader of the terminal record sees the sentence claiming a per-DECLARED-repository fact
+    the row contradicts, and the only way to reconcile them is to re-derive the rule from source. The clause is
+    DERIVED from `declaredRepositoryCount === 0`, so it cannot be forgotten by a caller the way a hand-passed
+    boolean could.
+    */
+    const decision = decideWorkspaceDelivery({
+      repoCount: 2, landedCount: 0,
+      evidence: [evidence("lager-manager", "zero-ahead", "a".repeat(40)), evidence("lager-2026", "zero-ahead", "b".repeat(40))],
+      obligationFreeProof: {
+        authorized: true,
+        obligationRepositories: ["lager-manager", "lager-2026"],
+        absentRepositories: [],
+        declaredRepositoryCount: 0,
+      },
+    });
+    expect(decision.kind).toBe("commit-free-delivery");
+    expect(decision.noOpReason).toContain("the card's confirmed scope named no repository");
+    expect(decision.commitFreeBasis).toEqual({ "lager-manager": "zero-ahead", "lager-2026": "zero-ahead" });
+  });
+
+  it("asserts no ancestry read at all when nothing was measured anywhere", () => {
+    /*
+    The shape with no obligation to measure closes on the declaration plus the empty reads around it, and the
+    sentence must describe THAT — RUFU-504's ancestry wording asserts a tip comparison for every repository, and
+    with zero repositories examined it is a claim about a git read that never happened.
+    */
+    const decision = decideWorkspaceDelivery({
+      repoCount: 0, landedCount: 0, evidence: [],
+      obligationFreeProof: { authorized: true, obligationRepositories: [], absentRepositories: [] },
+    });
+    expect(decision.kind).toBe("commit-free-delivery");
+    expect(decision.noOpReason).not.toMatch(/task branch tip is an ancestor/);
+    expect(decision.noOpReason).toContain("no repository was acquired");
+  });
+});
+
+describe("workspace reconcile discharge with proven-absent members (RUFU-451)", () => {
+  /**
+   * `unacquired` = declared members with no `workspaceWorktrees` entry; `absent` = the subset the absence
+   * predicate proved. Keeping them separate is the point: an unacquired member the caller did NOT prove absent
+   * must still be held, so a caller cannot widen the gate by forgetting to look.
+   */
+  function absentHarness(repoKeys: string[], unacquired: string[], absent: string[], authorized: boolean) {
+    return evaluateWorkspaceReconcileDischarge({
+      repoKeys,
+      entries: Object.fromEntries(repoKeys.map((repo) => [repo, unacquired.includes(repo) ? undefined : { branch: "fusion/RUFU-451" }])),
+      resolveRepoRootDir: (repo) => `checkout/${repo}`,
+      probeIntegrationBranch: async () => "main",
+      isLanded: async () => false,
+      probe: async () => ({ basis: "zero-ahead" as const, branchTipSha: "a".repeat(40) }),
+      measureAhead: async () => 0,
+      probeBranch: async () => "absent" as const,
+      zeroCommitAuthorized: authorized,
+      provablyAbsentRepositories: new Set(absent),
+    });
+  }
+
+  it("discharges an unacquired member proven absent, with absence as its basis", async () => {
+    const result = await absentHarness(["lager-manager", "lager-2026"], ["lager-2026"], ["lager-2026"], true);
+    expect(result.discharge).toBe(true);
+    expect(result.repos.find((verdict) => verdict.repo === "lager-2026")).toMatchObject({ kind: "discharged", basis: "absent" });
+    expect(result.commitFreeBasis).toEqual({ "lager-manager": "zero-ahead", "lager-2026": "absent" });
+    // No tip may be recorded for an absence: there was no branch to read a tip from.
+    expect(result.commitFreeBranchTipShas ?? {}).not.toHaveProperty("lager-2026");
+  });
+
+  it("holds the unacquired member for a card that never declared a zero-commit contract", async () => {
+    // Byte-identical to the pre-RUFU-451 refusal: the authorization is the first gate, not the git read.
+    const result = await absentHarness(["lager-manager", "lager-2026"], ["lager-2026"], ["lager-2026"], false);
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "unproven" });
+  });
+
+  it("holds an unacquired member the caller did not prove absent", async () => {
+    const result = await absentHarness(["lager-2026"], ["lager-2026"], [], true);
+    expect(result.discharge).toBe(false);
+    expect(result.heldRepos[0]).toMatchObject({ repo: "lager-2026", basis: "unproven" });
+  });
+
+  it("lets the decideWorkspaceDelivery mirror see the absence shape", async () => {
+    /*
+    `discharge` ANDs the mirror, so a true result proves the mirror agreed. Before RUFU-451 the mirror counted
+    every declared repository as an unproven obligation, which would have vetoed a delivery the merge lane itself
+    certifies — the two lanes disagreeing about one card is the failure this repo keeps paying for.
+    */
+    const result = await absentHarness(["lager-manager", "lager-2026"], ["lager-2026"], ["lager-2026"], true);
+    expect(result.scopeEmpty).toBe(false);
+    expect(result.discharge).toBe(true);
   });
 });

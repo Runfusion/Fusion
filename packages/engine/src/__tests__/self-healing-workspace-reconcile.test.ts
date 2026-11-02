@@ -479,3 +479,245 @@ describe("reconcileLandedReviewTask workspace discharge (RUFU-357)", () => {
     expect(store.updateTaskAtomic).not.toHaveBeenCalled();
   });
 });
+
+/*
+The shared zero-commit finalize door, scripted at its git seams. RUFU-451's reconcile arm asks this ONE
+authority before it will discharge an obligation-free card. Only the OBSERVATION is scripted here
+(`collectZeroCommitFinalizeEvidence`, plus the landing-proof door's disposition); the evaluator
+(`evaluateNoCommitsNoOpFinalize`, which `self-healing.ts` imports from `@fusion/core` and therefore cannot be
+reached by a module mock of the guard) runs for real over the scripted evidence, so these cases prove the
+WIRING — whether the fence asks, when it asks, and what it does with each answer — while the real discharge
+predicate, the real ancestry probe, and the real CAS fence still run. Door semantics themselves are owned by
+`zero-commit-finalization-guard*.test.ts` and the `no-commits-finalize-guard` core tests.
+*/
+const door = vi.hoisted(() => ({
+  /** Required pre-merge gate ids the door is told to demand (empty = the card owes none). */
+  gateIds: new Set<string>(),
+  /** The worktree-content observation the door is handed. */
+  content: { state: "clean" } as { state: string; modifiedCount?: number; untrackedCount?: number },
+  enforce: { disposition: "held", refusal: "uncommitted work sits in the workspace tree" } as { disposition: string; refusal: string },
+  calls: { collect: 0, enforce: 0 },
+  reset() {
+    door.gateIds = new Set<string>();
+    door.content = { state: "clean" };
+    door.enforce = { disposition: "held", refusal: "uncommitted work sits in the workspace tree" };
+    door.calls = { collect: 0, enforce: 0 };
+  },
+}));
+
+vi.mock("../merge/zero-commit-finalization-guard.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../merge/zero-commit-finalization-guard.js")>()),
+  resolveNoOpFinalizeGateIds: async () => door.gateIds,
+  collectZeroCommitFinalizeEvidence: async () => {
+    door.calls.collect++;
+    return { aheadCommitCount: 0, landingProof: null, worktreeContent: { ...door.content }, basis: "status-clean" };
+  },
+  enforceZeroCommitLandingProof: async () => {
+    door.calls.enforce++;
+    return door.enforce;
+  },
+}));
+
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-23:10 (RUFU-451):
+The source-free workspace card at the operator's door. RUFU-357 gave `fn task reconcile` a per-repository
+discharge arm; these are the shapes it still refused. SANE-509's measured row held three acquired member
+entries against a confirmed scope that named NO repository (its whole File Scope was git-ignored board paths),
+so the obligation set RUFU-357 read was empty and the fence answered `workspace-obligations-empty` — correct
+for a card that owes commits, because an empty set is not proof, and the only other door, the FN-7720 bypass,
+refuses too because no gate failed. The proof-gated widening here has two arms: the checkouts such a card DOES
+hold become its obligation set and each must discharge on its own base, and where nothing was declared and
+nothing was acquired the shared zero-commit door is the only authority that can speak. A declared-but-
+unacquired member discharges only on a proven absence. Every unauthorized or unproven shape keeps the refusal
+it already had, with the card left exactly where it stood.
+*/
+describe("reconcileLandedReviewTask obligation-free and proven-absent arms (RUFU-451)", () => {
+  /** The zero-obligation shape: an authorized card that declared no repository and acquired nothing. */
+  function obligationFreeCard(overrides: Partial<Task> = {}): Task {
+    return parkedWorkspaceCard({
+      noCommitsExpected: true,
+      workspaceWorktrees: {},
+      // A source-free card records no modifications; a row that does owes a landing instead of this door.
+      modifiedFiles: [],
+      repositoryScope: { state: "confirmed", repositories: [] },
+      ...overrides,
+    } as Partial<Task>);
+  }
+
+  afterEach(() => door.reset());
+
+  it("discharges an obligation-free card the shared door confirms, inventing no landing", async () => {
+    createWorkspaceRoot();
+    const store = storeFor(obligationFreeCard());
+
+    await expect(reconcile(makeManager(store))).resolves.toMatchObject({
+      outcome: "workspace-discharged", repoCount: 0, dischargedCount: 0,
+    });
+    expect(door.calls.collect).toBe(1);
+    expect(store.row.mergeDetails).toMatchObject({ mergeConfirmed: true, noOpMerge: true });
+    // The sentence states ABSENCE, never ancestry: no repository had a tip to be an ancestor of anything.
+    expect(store.row.mergeDetails?.noOpReason).toContain("no repository was acquired");
+    expect(store.row.mergeDetails?.noOpReason).not.toMatch(/ancestor/);
+    // And nothing delivery-shaped was fabricated: no sha, no landing map, no basis rows for unmeasured members.
+    expect(store.row.mergeDetails?.commitSha).toBeUndefined();
+    expect(store.row.mergeDetails?.workspaceLandedShas).toBeUndefined();
+    expect(store.row.mergeDetails?.workspaceCommitFreeBasis).toBeUndefined();
+    expect(store.row.column).not.toBe("in-review");
+  });
+
+  it("leaves the card in review when the door refuses, with the door's own reason on its History", async () => {
+    createWorkspaceRoot();
+    // Evidence family, not content family: a skipped verification step over a zero-diff card is unfinished
+    // work in the door's own vocabulary, and it must be reported as THAT — a card whose gate evidence is
+    // missing must not be told to go look at the worktree.
+    const store = storeFor(obligationFreeCard({ steps: [{ name: "Verify the harness", status: "skipped" }] }));
+
+    await expect(reconcile(makeManager(store))).resolves.toEqual({ outcome: "ineligible", reason: "workspace-obligation-free-unproven" });
+    expect(store.row.mergeDetails).toBeUndefined();
+    expect(store.row.column).toBe("in-review");
+    // The engine's park, red status and error are untouched: an unproven delivery is a wait, not a repair.
+    expect(store.row.status).toBe("failed");
+    expect(store.row.pausedReason).toBe("in-review-stall-deadlock");
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // The door's own sentence has to reach the operator; the refusal code alone would point at the worktree.
+    expect(store.logEntry).toHaveBeenCalledWith("SANE-454", expect.stringContaining("Verify the harness"), expect.any(String));
+    expect(door.calls.enforce).toBe(0);
+  });
+
+  it("asks the landing-proof door only when the door reports content at risk", async () => {
+    createWorkspaceRoot();
+    door.content = { state: "dirty", modifiedCount: 2, untrackedCount: 0 };
+    const store = storeFor(obligationFreeCard());
+
+    await expect(reconcile(makeManager(store))).resolves.toEqual({ outcome: "ineligible", reason: "workspace-obligation-free-unproven" });
+    expect(door.calls.enforce).toBe(1);
+    expect(store.row.column).toBe("in-review");
+    expect(store.row.status).toBe("failed");
+  });
+
+  it("never asks the door for a card whose row still records modified files", async () => {
+    createWorkspaceRoot();
+    // RUFU-262's loss class, at this door: a card that declares zero commits AND names modifications owes a
+    // landing, so the shared door is not even consulted — the refusal is the row contradicting itself.
+    const store = storeFor(obligationFreeCard({ modifiedFiles: ["saneca/docs/note.md"] }));
+
+    await expect(reconcile(makeManager(store))).resolves.toEqual({ outcome: "ineligible", reason: "workspace-obligation-free-unproven" });
+    expect(door.calls.collect).toBe(0);
+    expect(store.logEntry).toHaveBeenCalledWith("SANE-454", expect.stringContaining("owes a landing"), expect.any(String));
+    expect(store.row.column).toBe("in-review");
+  });
+
+  it("never asks the door for a card that never made the declaration", async () => {
+    createWorkspaceRoot();
+    // The byte-identical pre-RUFU-451 refusal, and the door stayed untouched: an empty obligation set is never
+    // an empty-set discharge for a card that owes commits.
+    const store = storeFor(obligationFreeCard({ noCommitsExpected: undefined }));
+
+    await expect(reconcile(makeManager(store))).resolves.toEqual({ outcome: "ineligible", reason: "workspace-obligations-empty" });
+    expect(door.calls.collect).toBe(0);
+    expect(store.updateTaskAtomic).not.toHaveBeenCalled();
+  });
+
+  it("discharges a declared-but-unacquired member proven absent, and says so in the basis", async () => {
+    createWorkspaceRoot();
+    // saneca + lager-manager are the RUFU-357 zero-commit shape; lager-2026 was declared but never acquired,
+    // and its ref read answers "no such ref" — that answer, not the missing entry, is what discharges it.
+    zeroCommittedScope();
+    scriptRepo("lager-2026", { tip: "", membership: "own-repository" });
+    const store = storeFor(parkedWorkspaceCard({
+      noCommitsExpected: true,
+      workspaceWorktrees: {
+        saneca: { worktreePath: ".worktrees/sane", branch: "fusion/sane-454", baseBranch: "main" },
+        "lager-manager": { worktreePath: ".worktrees/sane", branch: "fusion/sane-454", baseBranch: "main" },
+      },
+    } as Partial<Task>));
+
+    const result = await reconcile(makeManager(store));
+
+    expect(result).toMatchObject({ outcome: "workspace-discharged", repoCount: 3, dischargedCount: 3 });
+    expect(store.row.mergeDetails?.workspaceCommitFreeBasis).toMatchObject({ "lager-2026": "absent" });
+    // The mixed set must state BOTH facts: ancestry for the measured members, absence for the unacquired one.
+    expect(store.row.mergeDetails?.noOpReason).toMatch(/zero commits ahead/);
+    expect(store.row.mergeDetails?.noOpReason).toMatch(/lager-2026/);
+    // An absence gets no tip sha and no landing sha — there was no branch to observe and no commit authored.
+    expect(store.row.mergeDetails?.workspaceCommitFreeBranchTipShas ?? {}).not.toHaveProperty("lager-2026");
+    expect(store.row.mergeDetails?.workspaceLandedShas ?? {}).not.toHaveProperty("lager-2026");
+  });
+
+  /** The SANE-509 shape: acquired member checkouts against a confirmed scope that names no repository. */
+  function commitFreeWithAcquiredMembers(overrides: Partial<Task> = {}): Task {
+    return parkedWorkspaceCard({
+      noCommitsExpected: true,
+      repositoryScope: { state: "confirmed", repositories: [] },
+      ...overrides,
+    } as Partial<Task>);
+  }
+
+  it("takes the checkouts a zero-obligation card holds as its obligation set and discharges each on its base", async () => {
+    createWorkspaceRoot();
+    zeroCommittedScope();
+    const store = storeFor(commitFreeWithAcquiredMembers());
+
+    const result = await reconcile(makeManager(store));
+
+    // Every acquired member was measured, on its own base — the empty DECLARED list is not a license to skip
+    // the probe of a tree this card is standing in.
+    expect(result).toMatchObject({ outcome: "workspace-discharged", repoCount: 3, dischargedCount: 3 });
+    expect(store.row.mergeDetails).toMatchObject({ mergeConfirmed: true, noOpMerge: true });
+    expect(store.row.mergeDetails?.workspaceCommitFreeBasis).toMatchObject({
+      saneca: "zero-ahead",
+      "lager-manager": "zero-ahead",
+    });
+    // The sentence must not claim the card DECLARED those repositories — it says where the set came from.
+    expect(store.row.mergeDetails?.noOpReason).toContain("the card's confirmed scope named no repository");
+    expect(store.row.mergeDetails?.commitSha).toBeUndefined();
+    // The card-level door is not the authority here: per-repository git evidence is stronger and it is what ran.
+    expect(door.calls.collect).toBe(0);
+  });
+
+  it("refuses a zero-obligation card whose acquired checkout is ahead — holding nothing back on the empty scope", async () => {
+    createWorkspaceRoot();
+    zeroCommittedScope();
+    scriptRepo("lager-manager", { tip: "b22c2222b22c2222", ancestor: false, ahead: 2, membership: "own-repository" });
+    const store = storeFor(commitFreeWithAcquiredMembers());
+
+    await expect(reconcile(makeManager(store))).resolves.toMatchObject({
+      outcome: "ineligible", reason: "workspace",
+      repos: expect.arrayContaining([expect.objectContaining({ repo: "lager-manager", basis: "ahead", uniqueCommitCount: 2 })]),
+    });
+    expect(store.row.mergeDetails).toBeUndefined();
+    expect(store.row.column).toBe("in-review");
+  });
+
+  it("refuses a declared-but-unacquired member whose ref EXISTS — a missing entry is not an absence", async () => {
+    createWorkspaceRoot();
+    zeroCommittedScope();
+    scriptRepo("lager-2026", { tip: "d44d4444d44d4444", ancestor: false, ahead: 2, membership: "own-repository" });
+    const store = storeFor(parkedWorkspaceCard({
+      noCommitsExpected: true,
+      workspaceWorktrees: {
+        saneca: { worktreePath: ".worktrees/sane", branch: "fusion/sane-454", baseBranch: "main" },
+        "lager-manager": { worktreePath: ".worktrees/sane", branch: "fusion/sane-454", baseBranch: "main" },
+      },
+    } as Partial<Task>));
+
+    await expect(reconcile(makeManager(store))).resolves.toMatchObject({
+      outcome: "ineligible", reason: "workspace-probe-unavailable",
+    });
+    expect(store.row.mergeDetails).toBeUndefined();
+    expect(store.row.column).toBe("in-review");
+  });
+
+  it("keeps RUFU-357's ancestry sentence byte-identical for an authorized card that acquired everything", async () => {
+    createWorkspaceRoot();
+    zeroCommittedScope();
+    // Same card as Case A plus the zero-commit declaration: the obligation-free wording must NOT leak into a
+    // discharge that was proven by ancestry, because its `noOpReason` is re-derivable git evidence.
+    const store = storeFor(parkedWorkspaceCard({ noCommitsExpected: true } as Partial<Task>));
+
+    await expect(reconcile(makeManager(store))).resolves.toMatchObject({ outcome: "workspace-discharged", dischargedCount: 3 });
+    // Fully acquired: the ancestry sentence, byte-identically to RUFU-357's Case A.
+    expect(store.row.mergeDetails?.noOpReason).toBe(COMMIT_FREE_DELIVERY_REASON);
+  });
+});

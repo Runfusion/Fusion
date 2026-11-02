@@ -42,7 +42,22 @@ export type WorkspaceCommitFreeBasis =
   /** Branch tip resolves and is an ancestor of the repo's integration branch: zero commits ahead. */
   | "zero-ahead"
   /** Branch gone, or tip NOT an ancestor (ahead-but-net-zero, i.e. reverted/lost shape). */
-  | "unproven";
+  | "unproven"
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-19:55 (RUFU-451):
+  A THIRD, distinct basis, deliberately not folded into `zero-ahead`: the repository holds no artifact of
+  this card at all (never acquired, no branch, no landing) and git confirms the canonical task ref is
+  absent there. The distinction is load-bearing, not cosmetic — `zero-ahead` is an ANCESTRY claim (a tip
+  existed and was already integrated) while `absent` is an ABSENCE claim (there was never a tip here), and
+  collapsing them would let a reader believe a branch was measured that was never created. It is also the
+  reason the delivery claim itself is distinct (`COMMIT_FREE_OBLIGATION_FREE_REASON`), because RUFU-504's
+  sentence asserts ancestry the evidence never showed.
+
+  This basis is NEVER ancestry and NEVER licenses a delivery on its own: `decideWorkspaceDelivery` still
+  demands `every(basis === "zero-ahead")` for RUFU-504's arm, so an `absent` entry reaching a delivery can
+  only come from the obligation-free proof in that same call.
+  */
+  | "absent";
 
 export interface WorkspaceCommitFreeProbeInput {
   /** The `workspaceWorktrees` key (repo-relative path). */
@@ -143,6 +158,44 @@ export function decideWorkspaceDelivery(input: {
   repoCount: number;
   landedCount: number;
   evidence: WorkspaceCommitFreeRepoEvidence[];
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:45 (RUFU-451):
+  The zero-obligation arm's proof, and why `repoCount === 0` alone may never reach a delivery. RUFU-504
+  deleted exactly that vacuous truth: "zero acquired repos" was read as "every declared repo was already
+  integrated" when it had always meant "the declaration was never reconciled". So an empty aggregate stays
+  `undelivered` unless a caller that could look hands over ALL THREE facts:
+    • `authorized` — the card made the zero-commit declaration (`noCommitsExpected`). A card that owes
+      commits gets no exemption from an empty aggregate, byte-identically to before this field existed.
+    • `obligationRepositories.length === absentRepositories.length + evidence.length` — every repository the
+      card is accountable for is accounted for, either by a discharged probe claim or by a proven absence. One
+      member the caller could not account for keeps the refusal, because an empty aggregate must never hide an
+      unmeasured member. The obligation set is the DECLARED list, or the checkouts the card holds when it
+      declared none — the same rule `reconcileLandedReviewTask` applies, so the two doors cannot disagree about
+      what a card owes proof about.
+    • the list itself, which the terminal record carries so the reasoning survives in the row.
+  The proof lives with the callers that read git (the merge door, the reconcile fence); this function stays
+  a pure function of the evidence it is handed, so it cannot be talked into a delivery by a caller that
+  merely declined to look.
+  */
+  obligationFreeProof?: {
+    authorized: boolean;
+    /**
+     * Every repository the card is accountable for: its confirmed declaration, or — when it declared none and
+     * made the zero-commit contract — the member checkouts it holds (`workspaceObligationRepositories`, the one
+     * rule both doors read). This, not the declared count, is what must reconcile with the evidence: a delivery
+     * may never be certified over a repository nobody was asked about.
+     */
+    obligationRepositories: readonly string[];
+    absentRepositories: readonly string[];
+    /**
+     * What the card's CONFIRMED SCOPE declared. A zero here with a non-empty obligation set is the
+     * acquired-checkout shape, and it is what `commitFreeDischargeReason`'s provenance clause is derived from —
+     * derived, never asserted, so a persisted sentence cannot claim an ancestry read the lane did not run.
+     * Omitted means "the obligation set came from the declaration", which keeps every pre-existing caller
+     * byte-identical.
+     */
+    declaredRepositoryCount?: number;
+  };
 }): WorkspaceDeliveryDecision {
   const basis: Record<string, WorkspaceCommitFreeBasis> = {};
   const tipShas: Record<string, string> = {};
@@ -151,6 +204,57 @@ export function decideWorkspaceDelivery(input: {
     if (repo.branchTipSha) tipShas[repo.repo] = repo.branchTipSha;
   }
   const hasBasis = Object.keys(basis).length > 0;
+  const obligationFree = input.obligationFreeProof;
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:40 (RUFU-451):
+  An obligation set NARROWER than the card's own declaration is a caller that lost repositories on the way in, not
+  a card that owes less — the set is a claim ABOUT the declaration, so the declaration bounds it from below. Five
+  declared members against one stated obligation is the vacuous truth RUFU-504 deleted, arriving by a new route.
+  A caller that never saw a declaration (the reconcile mirror) leaves the bound unapplied rather than guessed.
+  */
+  const declaredRepositoryCount = obligationFree?.declaredRepositoryCount;
+  const obligationSetCoversDeclaration = declaredRepositoryCount === undefined
+    || declaredRepositoryCount <= (obligationFree?.obligationRepositories.length ?? 0);
+  /*
+  Every repository the card is accountable for is accounted for — by a discharged probe claim, or by a proven
+  absence — and nothing landed and nothing is unproven. With no absence in the set this is byte-identical to the
+  ancestry arm below (same sentence, same basis map, same tips), which is what lets the mixed and zero-obligation
+  shapes share it instead of growing a second terminal decision.
+  */
+  if (obligationFree
+    && obligationFree.authorized
+    && obligationSetCoversDeclaration
+    && input.landedCount === 0
+    && obligationFree.obligationRepositories.length === obligationFree.absentRepositories.length + input.evidence.length
+    && !Object.values(basis).some((value) => value === "unproven")) {
+    return {
+      kind: "commit-free-delivery",
+      mergeConfirmed: true,
+      noOpReason: commitFreeDischargeReason({
+        zeroAheadCount: Object.values(basis).filter((value) => value === "zero-ahead").length,
+        landedCount: 0,
+        absentRepositories: obligationFree.absentRepositories,
+        /*
+        FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:45 (RUFU-451) — the provenance is DERIVED, not supplied:
+        The plain commit-free sentence asserts "every declared repository's task branch tip is an ancestor of that
+        repository's integration branch". When the obligation set came from the checkouts the card holds rather
+        than from its declaration, that sentence alone is unreadable beside `repositoryScope: { repositories: [] }`,
+        and when the lane measured NO tip at all (the nothing-to-measure shape) it asserts a git read that never
+        happened. Both are answered from the numbers the caller had to produce anyway — it cannot state an
+        obligation set without saying where the set came from.
+        */
+        declaredNoRepositories: (declaredRepositoryCount ?? obligationFree.obligationRepositories.length) === 0
+          && obligationFree.obligationRepositories.length > 0,
+      }),
+      commitFreeBasis: {
+        ...basis,
+        ...Object.fromEntries(
+          obligationFree.absentRepositories.map((repo) => [repo, "absent" as WorkspaceCommitFreeBasis]),
+        ),
+      },
+      ...(Object.keys(tipShas).length > 0 ? { commitFreeBranchTipShas: tipShas } : {}),
+    };
+  }
   if (input.landedCount > 0) {
     return { kind: "landed-delivery", mergeConfirmed: true, ...(hasBasis ? { commitFreeBasis: basis } : {}) };
   }
@@ -174,9 +278,179 @@ export function decideWorkspaceDelivery(input: {
 export const COMMIT_FREE_DELIVERY_REASON =
   "commit-free delivery: every declared repository's task branch tip is an ancestor of that repository's integration branch, so the landing created no new commit anywhere";
 
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-19:55 (RUFU-451):
+A SEPARATE sentence for the obligation-free arm. Reusing `COMMIT_FREE_DELIVERY_REASON` here would assert
+against git evidence that was never collected — a repository with no branch has no tip to be an ancestor of
+anything — and RUFU-504's own doc warns that this sentence's power is that a reader can re-derive it. The
+named repositories are in the sentence so the claim stays re-derivable: the reader learns exactly which
+members git was asked about, and the row's `workspaceCommitFreeBasis` carries the matching `absent` basis.
+*/
+export function commitFreeObligationFreeReason(absentRepositories: readonly string[]): string {
+  return absentRepositories.length === 0
+    ? "commit-free delivery: the card declared zero commits, no repository was acquired, and no repository holds any artifact of this card — there was no delivery to perform"
+    : `commit-free delivery: the card declared zero commits and every declared repository (${absentRepositories.join(", ")}) holds no artifact of this card — no acquired checkout, no branch, no landing`;
+}
+
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:05 (RUFU-451):
+One formatter for the reconcile lane's `mergeDetails.noOpReason`, so a mixed obligation set cannot be
+described by a sentence that covers only half of it. A card with one repository already integrated and one
+that never held a branch needs BOTH halves stated: RUFU-504's sentence alone would claim ancestry for a
+repository that had no tip, and the obligation-free sentence alone would claim absence for a repository that
+had commits.
+*/
+export function commitFreeDischargeReason(input: {
+  zeroAheadCount: number;
+  landedCount: number;
+  absentRepositories: readonly string[];
+  /** The card's confirmed scope named no repository, so the probed set came from what it holds. */
+  declaredNoRepositories?: boolean;
+}): string {
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:45 (RUFU-451):
+  Nothing was measured anywhere ⇒ nothing may be asserted about tips. `zeroAheadCount === 0 && landedCount === 0`
+  is the shape where the close rests on absences alone (or on no repository at all), and RUFU-504's sentence —
+  "every declared repository's task branch tip is an ancestor of that repository's integration branch" — would be
+  a claim about reads that were never performed, on a row whose `workspaceCommitFreeBasis` is empty or all
+  `absent`. Same reason the provenance clause is gated on a measurement having happened: "every checkout this
+  card holds was probed" is false when the card held nothing to probe.
+  */
+  const nothingMeasured = input.zeroAheadCount === 0 && input.landedCount === 0;
+  const provenance = input.declaredNoRepositories && !nothingMeasured
+    ? "; the card's confirmed scope named no repository, so every checkout this card holds was probed"
+    : "";
+  if (nothingMeasured) return commitFreeObligationFreeReason(input.absentRepositories);
+  if (input.absentRepositories.length === 0) return `${COMMIT_FREE_DELIVERY_REASON}${provenance}`;
+  const absentCount = input.absentRepositories.length;
+  const absenceClause = `${absentCount} declared repositor${absentCount === 1 ? "y" : "ies"} (${input.absentRepositories.join(", ")}) ${absentCount === 1 ? "holds" : "hold"} no artifact of this card — no acquired checkout, no branch, no landing`;
+  if (input.zeroAheadCount === 0 && input.landedCount === 0) {
+    return commitFreeObligationFreeReason(input.absentRepositories);
+  }
+  const ancestryClause = [
+    input.zeroAheadCount > 0
+      ? `${input.zeroAheadCount} repositor${input.zeroAheadCount === 1 ? "y" : "ies"} proven zero commits ahead of ${input.zeroAheadCount === 1 ? "its" : "their"} own integration branch`
+      : "",
+    input.landedCount > 0 ? `${input.landedCount} already landed` : "",
+  ].filter(Boolean).join(", ");
+  return `commit-free delivery: ${ancestryClause}, and ${absenceClause}${provenance}`;
+}
+
 /** Aggregate counts for the delivery summary line on the card. */
 export function summarizeCommitFreeEvidence(evidence: WorkspaceCommitFreeRepoEvidence[]): string {
   return evidence.map((repo) => `${repo.repo} {basis=${repo.basis}${repo.branchTipSha ? `; tip=${repo.branchTipSha.slice(0, 12)}` : "; tip=none"}}`).join("; ");
+}
+
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-18:30 (RUFU-451):
+A repository the card DECLARED but never ACQUIRED is a different evidence shape from a repository whose
+branch the probe cannot resolve, and conflating the two is what left SANE-509 with no exit.
+
+Measured case: the card's File Scope named only git-ignored paths, its completion criteria stated the
+delivery was source-free, both review gates approved, and the reconcile/merge doors refused it because a
+declared member (`saneca`) carried no landing record. RUFU-504's ancestry probe cannot answer that shape
+at all — there is no acquired checkout to resolve `fusion/<id>` in — so the card was judged by a question
+it could not be asked. The prohibition that must survive is RUFU-504's: a *deleted branch* is never folded
+into a delivery, because a branch that existed, carried commits, and vanished is the RUFU-262 lost-work
+shape. This predicate keeps that fence by refusing absence whenever the card ever had an artifact in the
+repository:
+  • a recorded branch (`entry.branch`) — even when git now says it is gone. Something was named there and
+    is no longer; that is lost-work suspicion, not absence, and it stays a refusal at both doors.
+  • a recorded landing (`entry.landedSha` or `mergeDetails.workspaceLandedShas[repo]`) — a delivery claim.
+  • a surviving acquired checkout (`entry.worktreePath` still on disk) — uncommitted content can live in a
+    tree whose branch is gone, which is exactly how RUFU-262 lost work.
+Absence therefore requires git corroboration of the ONE thing a never-acquired repository can be asked:
+the canonical task branch ref does not exist in it. `unknown` from the presence probe is never absence — a
+skipped probe is an absent probe, and an absent probe may not certify a delivery.
+
+The declaration (`noCommitsExpected`) decides whether an absent repository may be *classified* as
+not-applicable; it never decides delivery on its own, which is why every caller of this predicate still
+runs the shared zero-commit proof door and the ancestry probe over the repositories it did acquire.
+*/
+
+/** The slice of a persisted workspace entry the absence predicate reads. */
+export interface CommitFreeAbsenceEntry {
+  worktreePath?: string;
+  branch?: string;
+  landedSha?: string;
+}
+
+export interface CommitFreeAbsenceInput {
+  /** The `workspaceWorktrees` key (repo-relative path). */
+  repo: string;
+  /** Persisted entry for this repository, or `undefined` when the card never acquired one. */
+  entry?: CommitFreeAbsenceEntry | null;
+  /** Durable landing sha recorded outside the entry (`mergeDetails.workspaceLandedShas[repo]`). */
+  recordedLandedSha?: string | null;
+  /** Absolute directory of the repository checkout, or `undefined` when git cannot be asked there. */
+  repoRootDir: string | undefined;
+  /** Whether the path in `entry.worktreePath` still exists. Supplied by the caller; never assumed. */
+  worktreePathExists: (path: string) => boolean;
+  /** Canonical branch this card carries (`task.branch` / `resolveTaskWorkingBranch`). */
+  taskBranch?: string | null;
+  /**
+   * True when the row's declared/observed file set names a path inside this repository
+   * (`modifiedFiles.some(f => f.startsWith(repo + "/"))`). A repository the card's own files name is not
+   * an absence no matter what its refs say, so it never enters the proof set.
+   */
+  declaresContentInRepository?: boolean;
+}
+
+/**
+ * What git said about one declared repository, in the words the doors may act on:
+ * `absent` — never an artifact of this card, corroborated by a ref read that answered "no such ref".
+ * `recorded` — the card DOES have an artifact here (acquired checkout, recorded branch, or landing).
+ * `unproven` — git could not be asked, or answered unknown. Never absence.
+ */
+export type CommitFreeAbsenceBasis = "absent" | "recorded" | "unproven";
+
+export interface CommitFreeAbsenceVerdict {
+  repo: string;
+  basis: CommitFreeAbsenceBasis;
+}
+
+/** Three-valued branch presence read (production: `SelfHealingManager.probeRepoBranch`, `show-ref`-based). */
+export type BranchPresenceProbe = (repoRootDir: string, branch: string) => Promise<"present" | "absent" | "unknown">;
+
+/**
+ * Per-declared-repository absence decision, kept pure about WHAT counts as an artifact and delegating the
+ * single ref read, so the merge lane and the reconcile fence share one definition of "nothing to land".
+ */
+export async function evaluateCommitFreeRepositoryAbsence(
+  inputs: readonly CommitFreeAbsenceInput[],
+  probeBranch: BranchPresenceProbe,
+): Promise<CommitFreeAbsenceVerdict[]> {
+  const verdicts: CommitFreeAbsenceVerdict[] = [];
+  for (const input of inputs) {
+    const entry = input.entry ?? undefined;
+    const recordedBranch = typeof entry?.branch === "string" && entry.branch.trim() ? entry.branch.trim() : undefined;
+    const hasLanding = Boolean(entry?.landedSha?.trim()) || Boolean(input.recordedLandedSha?.trim());
+    const liveCheckout = typeof entry?.worktreePath === "string" && entry.worktreePath.trim()
+      && input.worktreePathExists(entry.worktreePath.trim());
+    if (hasLanding || recordedBranch || liveCheckout || input.declaresContentInRepository) {
+      // Any surviving artifact of this card in that repository: this arm does not apply, and a vanished
+      // recorded branch lands here on purpose (RUFU-504's deleted-branch rule).
+      verdicts.push({ repo: input.repo, basis: "recorded" });
+      continue;
+    }
+    const branch = typeof input.taskBranch === "string" && input.taskBranch.trim() ? input.taskBranch.trim() : undefined;
+    if (!branch || !input.repoRootDir) {
+      // Nothing to ask git about, or nowhere to ask it. Absence without a ref read is an assumption.
+      verdicts.push({ repo: input.repo, basis: "unproven" });
+      continue;
+    }
+    const state = await probeBranch(input.repoRootDir, branch);
+    verdicts.push({
+      repo: input.repo,
+      basis: state === "absent" ? "absent" : state === "present" ? "recorded" : "unproven",
+    });
+  }
+  return verdicts;
+}
+
+/** Repositories the predicate proved hold no artifact of this card. */
+export function provablyAbsentRepositories(verdicts: readonly CommitFreeAbsenceVerdict[]): string[] {
+  return verdicts.filter((verdict) => verdict.basis === "absent").map((verdict) => verdict.repo).sort();
 }
 
 /*
@@ -245,7 +519,7 @@ export type WorkspaceReconcileHeldBasis =
 
 /** Per-repository discharge verdict. */
 export type WorkspaceReconcileRepoVerdict =
-  | { repo: string; kind: "discharged"; basis: "zero-ahead" | "landed"; branchTipSha?: string }
+  | { repo: string; kind: "discharged"; basis: "zero-ahead" | "landed" | "absent"; branchTipSha?: string }
   | { repo: string; kind: "held"; basis: WorkspaceReconcileHeldBasis; uniqueCommitCount: number | null };
 
 export interface WorkspaceReconcileDischargeResult {
@@ -314,6 +588,23 @@ export interface WorkspaceReconcileDischargeInput {
     branch: string;
     integrationBranch: string;
   }) => Promise<{ evidence: "proven" | "contradicted" | "unknown"; proof?: "ancestor" | "net-zero"; aheadCount?: number }>;
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:45 (RUFU-451):
+  RUFU-357's obligation set is `repositoryScope`, so a declared member the card never acquired was held
+  `unproven` and the whole reconcile refused — `workspace-probe-unavailable` — on a repository that has
+  nothing to measure. That is correct for a card that owes commits and self-defeating for one that declared
+  it owes none, because the refusal is GENERATED by the absence the declaration promises.
+
+  Both inputs are required, and neither is a waiver:
+    • `zeroCommitAuthorized` comes from the declaration, never from a caller's judgement of the case.
+    • `provablyAbsentRepositories` comes only from `evaluateCommitFreeRepositoryAbsence`, which demands a
+      ref read answering "no such ref" plus the absence of every artifact (checkout, recorded branch,
+      landing, declared content). `unknown` from git is NOT in the set, so this extension cannot be reached
+      by a caller that failed to look — an omitted probe leaves the pre-existing `unproven` hold byte-
+      identical.
+  */
+  zeroCommitAuthorized?: boolean;
+  provablyAbsentRepositories?: ReadonlySet<string>;
 }
 
 /**
@@ -326,13 +617,28 @@ export async function evaluateWorkspaceReconcileDischarge(
   input: WorkspaceReconcileDischargeInput,
 ): Promise<WorkspaceReconcileDischargeResult> {
   const { repoKeys, entries, resolveRepoRootDir, probeIntegrationBranch, isLanded, probe, measureAhead, probeBranch, diagnoseAhead } = input;
+  const zeroCommitAuthorized = input.zeroCommitAuthorized === true;
+  const provablyAbsentRepositories = input.provablyAbsentRepositories;
   const repos: WorkspaceReconcileRepoVerdict[] = [];
   /** Probe-stage evidence, kept for the decideWorkspaceDelivery mirror and the persisted basis map. */
   const probeEvidence: WorkspaceCommitFreeRepoEvidence[] = [];
+  /** RUFU-451: repositories discharged as absences, recorded in the persisted basis with no tip. */
+  const absentRepositories: string[] = [];
 
   for (const repo of repoKeys) {
     const entry = entries[repo];
     if (!entry) {
+      /*
+      RUFU-451: a declared member with no acquired entry is a refusal for a card that owes commits, and an
+      ABSENCE for a card that declared it owes none — but only when a git read answered "no such ref" for
+      it. Anything short of that answer (no set supplied, `unknown`, a surviving artifact) keeps the
+      pre-existing hold sentence and count untouched, so the widening cannot be reached by omission.
+      */
+      if (zeroCommitAuthorized && provablyAbsentRepositories?.has(repo)) {
+        repos.push({ repo, kind: "discharged", basis: "absent" });
+        absentRepositories.push(repo);
+        continue;
+      }
       // Belt: callers gate scope/entry mismatches earlier (workspace-scope-unresolved); inside the
       // predicate an unmeasurable key is simply held, never an assumed discharge.
       repos.push({ repo, kind: "held", basis: "unproven", uniqueCommitCount: null });
@@ -438,12 +744,34 @@ export async function evaluateWorkspaceReconcileDischarge(
   const heldRepos = repos.filter((r): r is Extract<WorkspaceReconcileRepoVerdict, { kind: "held" }> => r.kind === "held");
   const scopeEmpty = repoKeys.length === 0;
   const landedCount = repos.filter((r) => r.kind === "discharged" && r.basis === "landed").length;
-  // Mirror `decideWorkspaceDelivery` EXACTLY when the shape is pure-probe (no repository landed and
-  // every declared repository reached the probe). Any other shape — mixed landed/probed — must not ask
-  // that function, whose repoCount === evidence.length guard cannot answer it.
-  const pureProbeShape = !scopeEmpty && landedCount === 0 && probeEvidence.length === repoKeys.length;
+  /*
+  Mirror `decideWorkspaceDelivery` EXACTLY when the shape is pure-probe (no repository landed and every
+  declared repository reached the probe). Any other shape — mixed landed/probed — must not ask that
+  function, whose repoCount === evidence.length guard cannot answer it.
+
+  RUFU-451: repositories discharged as ABSENCES are excluded from `repoCount`, because `decideWorkspaceDelivery`
+  counts landing obligations and an absent repository never had one. They are handed over separately, as the
+  proof the obligation-free arm demands — which is what keeps ONE terminal authority for "is this empty
+  aggregate a delivery" instead of a second rule that could disagree with the merge lane.
+  */
+  const pureProbeShape = !scopeEmpty
+    && landedCount === 0
+    && probeEvidence.length + absentRepositories.length === repoKeys.length;
   const mirrorDischarge = pureProbeShape
-    ? decideWorkspaceDelivery({ repoCount: repoKeys.length, landedCount: 0, evidence: probeEvidence }).kind === "commit-free-delivery"
+    ? decideWorkspaceDelivery({
+      repoCount: repoKeys.length - absentRepositories.length,
+      landedCount: 0,
+      evidence: probeEvidence,
+      obligationFreeProof: {
+        authorized: zeroCommitAuthorized,
+        // The obligation set this predicate was handed, verbatim: the mirror must count the same repositories
+        // the caller was asked to prove, including a declared-but-provably-absent member. `declaredRepositoryCount`
+        // is deliberately not passed here — it only selects the provenance clause of a sentence this lane
+        // discards (the caller formats its own `noOpReason`), and guessing it would be inventing provenance.
+        obligationRepositories: repoKeys,
+        absentRepositories,
+      },
+    }).kind === "commit-free-delivery"
     : true;
   const discharge = !scopeEmpty && heldRepos.length === 0 && mirrorDischarge;
 
@@ -453,6 +781,7 @@ export async function evaluateWorkspaceReconcileDischarge(
     basis[evidence.repo] = evidence.basis;
     if (evidence.branchTipSha) tipShas[evidence.repo] = evidence.branchTipSha;
   }
+  for (const repo of absentRepositories) basis[repo] = "absent";
 
   return {
     discharge,

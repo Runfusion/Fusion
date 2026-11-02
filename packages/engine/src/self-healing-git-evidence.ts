@@ -45,6 +45,10 @@ import {
    inspection and the checkout-emptiness prover). branch-conflicts.ts imports neither this file
    nor self-healing.ts, so the direction stays one-way. */
 import { resolveTrustedIntegrationRefs } from "./execution/branch-conflicts.js";
+/* RUFU-451: the tri-state branch-presence read lives in this leaf so `merge/` can share it without an
+   edge into this substrate. Imported here for the in-file call sites AND re-exported below for the
+   pre-existing importers of `self-healing-git-evidence.js`. */
+import { classifyBranchProbeError, execBranchProbeCommand, probeBranchPresence } from "./merge/branch-presence-probe.js";
 import { createLogger } from "./logger.js";
 import { extractEffectiveWriteScopeFromPrompt, requiresContentReviewProof } from "@fusion/core";
 import type { Task, WorkflowStepResult } from "@fusion/core";
@@ -470,19 +474,14 @@ export async function resolveBaseDeliveryEvidence(input: {
   };
 }
 
-export function classifyBranchProbeError(error: unknown): "absent" | "unknown" {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === 1 &&
-    !(error as { killed?: unknown }).killed &&
-    ((error as { signal?: unknown }).signal === null || (error as { signal?: unknown }).signal === undefined)
-  ) {
-    return "absent";
-  }
-  return "unknown";
-}
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:20 (RUFU-451):
+`classifyBranchProbeError` now LIVES in `./merge/branch-presence-probe.js` and is re-exported here, so the
+merge lane and the recovery substrate share one absence classifier without `merge/` importing this module
+(that edge would give every `merge/` file a path into the recovery substrate — see the note in
+`empty-land-evidence.ts`). Existing importers of this path are untouched.
+*/
+export { classifyBranchProbeError, execBranchProbeCommand, probeBranchPresence } from "./merge/branch-presence-probe.js";
 
 export interface LandedTaskCommit {
   sha: string;
@@ -980,19 +979,15 @@ export abstract class SelfHealingGitEvidence {
    * repository evidence (128/error), unlike `rev-parse --verify`, which returns 128 for both a
    * missing ref and a non-repository cwd. The irreversible partial-land park may consume only
    * absence proof; all other errors remain unknown for a later sweep.
+   *
+   * FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:05 (RUFU-451):
+   * Delegates to the module-level `probeBranchPresence` below, keeping `execBranchProbe` as the subclass
+   * seam. The workspace merge door now asks the same tri-state question, and two implementations of
+   * "does this ref exist" is two opinions about absence — which is precisely the evidence a partial-land
+   * park and a commit-free delivery are each not allowed to disagree about.
    */
   protected async probeRepoBranch(repoRootDir: string, branch: string): Promise<"present" | "absent" | "unknown"> {
-    try {
-      await this.execBranchProbe(repoRootDir, branch);
-      return "present";
-    } catch (err: unknown) {
-      const outcome = classifyBranchProbeError(err);
-      if (outcome === "unknown") {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        log.warn(`[self-healing] branch evidence unavailable for ${repoRootDir} (${branch}): ${errorMessage}`);
-      }
-      return outcome;
-    }
+    return probeBranchPresence(repoRootDir, branch, (rootDir, ref) => this.execBranchProbe(rootDir, ref));
   }
 
   /**
@@ -1002,10 +997,7 @@ export abstract class SelfHealingGitEvidence {
    * catch: `probeRepoBranch` maps only a clean show-ref exit 1 to absence evidence.
    */
   protected async execBranchProbe(repoRootDir: string, branch: string): Promise<void> {
-    await execAsync(`git show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`, {
-      cwd: repoRootDir,
-      timeout: 30_000,
-    });
+    await execBranchProbeCommand(repoRootDir, branch);
   }
 
   protected async readShortstatForSha(

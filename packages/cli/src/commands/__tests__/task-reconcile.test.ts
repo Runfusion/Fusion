@@ -126,6 +126,20 @@ describe("runTaskReconcile", () => {
     expect(error).toHaveBeenCalledWith("Cannot reconcile SANE-452: workspace.");
   });
 
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-19:54 (RUFU-451):
+  The obligation-free refusal names NO repository — the card declared none — so there is no `repos` detail to
+  print, and a bare code would read as a broken tool rather than as the door's answer. The union widened by
+  this code, so the surface that has to carry it is this one: the operator's own terminal.
+  */
+  it("explains the obligation-free refusal instead of printing a bare code", async () => {
+    reconcile.mockResolvedValue({ outcome: "ineligible", reason: "workspace-obligation-free-unproven" });
+    await expect(runTaskReconcile("SANE-509", "project")).rejects.toThrow("exit:1");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("zero-commit delivery door refused"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("See this task's History"));
+    expect(close).toHaveBeenCalled();
+  });
+
   it.each([
     [{ outcome: "not-landed", baseBranch: "main" }, "never fabricates an approval"],
     [{ outcome: "raced", reason: "task-state-changed" }, "changed while reconciling"],

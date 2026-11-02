@@ -1500,6 +1500,18 @@ export async function runTaskReconcile(id: string, projectName?: string) {
             `${repo.repo} ${repo.basis}${typeof repo.uniqueCommitCount === "number" && (repo.basis === "ahead" || repo.basis === "reverted") ? ` ${repo.uniqueCommitCount}` : ""}`,
           ).join("; ")})`
         : "";
+      /*
+      FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:50 (RUFU-451):
+      This one refusal has no repository list to name — the card declared no repository at all — so the bare
+      code would read as a bug in the tool rather than as the door's answer. The sentence says which proof was
+      missing and what to do: the shared zero-commit door (required pre-merge gate evidence, plus the workspace
+      tree holding no uncommitted work) refused, and that door's own sentence is on the card's History.
+      */
+      if (result.reason === "workspace-obligation-free-unproven") {
+        console.error(`Cannot reconcile ${id}: the card declares zero commits and names no repository, and the zero-commit delivery door refused to confirm that — a required pre-merge gate has no approving result, the workspace tree holds work the row does not declare, or the row itself still records modified files. See this task's History for the door's reason.`);
+        await closeBoardContextAndExit(context, 1);
+        return;
+      }
       console.error(`Cannot reconcile ${id}: ${result.reason}${repoClause}${live ? "; something is still working on this task" : ""}.`);
     }
     await closeBoardContextAndExit(context, 1);

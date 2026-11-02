@@ -347,13 +347,21 @@ export interface MergeDetails {
   `workspaceLandedShas`: a tip SHA is evidence about a branch, not a claim that this card authored a commit,
   so no reader may treat them as a landing.
 
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:20 (RUFU-451):
+  `absent` is the third word, and it is a DIFFERENT KIND of claim than the other two: `zero-ahead` is an
+  ancestry observation about a tip that existed, `unproven` refuses to claim anything, and `absent` means the
+  repository never held an artifact of this card (no acquired checkout, no recorded branch, no landing) with a
+  ref read that answered "no such ref". Folding one into another is not a wording change — read as
+  `zero-ahead`, an `absent` repository reports a branch measurement that was never taken; read as `absent`, a
+  `zero-ahead` repository erases the only evidence that a real branch was already integrated.
+
   The literals mirror `WorkspaceCommitFreeBasis` in
   `packages/engine/src/merge/workspace-commit-free-delivery.ts`. `@fusion/core` cannot import
   `@fusion/engine`, so the union is declared on both sides and matched structurally; the engine test
   `workspace-commit-free-delivery.test.ts` assigns the engine result into this field, which is what keeps
   the two from drifting.
   */
-  workspaceCommitFreeBasis?: Record<string, "zero-ahead" | "unproven">;
+  workspaceCommitFreeBasis?: Record<string, "zero-ahead" | "unproven" | "absent">;
   workspaceCommitFreeBranchTipShas?: Record<string, string>;
 }
 

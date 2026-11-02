@@ -13,7 +13,7 @@ A second workspace merge pass could lose its repository set after an earlier lan
 
 ## Resolution
 
-Merge readiness preserves confirmed-scope repositories with durable `landedSha` evidence as finalization obligations. Unexplained empty sets, duplicate declarations, and duplicate worktree paths fail closed. Direct landing and recovery consult canonical pre-merge blockers, use durable transient retry state, and distinguish technical lease/fence failures from real contention.
+Merge readiness preserves confirmed-scope repositories with durable `landedSha` evidence as finalization obligations. Unexplained empty sets, duplicate declarations, and duplicate worktree paths fail closed. An empty set stops being unexplained only under the narrow rule in `workspace-zero-commit-delivery-not-applicable.md`: a confirmed declaration, or a card carrying `noCommitsExpected` whose confirmed scope names no repository, plus landing or ref-read proof for every repository it is answerable for — never the bare fact that a set is empty. Direct landing and recovery consult canonical pre-merge blockers, use durable transient retry state, and distinguish technical lease/fence failures from real contention.
 
 Workspace review remediation stores only the scope revision, failing repository, and normalized review input signature. The rerun uses that repository's acquired worktree without persisting a singular/root route. Scope changes clear both approval evidence and this target atomically; an APPROVE for the matching current scope clears the target as it records refreshed evidence. An unchanged repeated `REVISE`, including an empty finding list, parks for operator action instead of dispatching another executor.
 

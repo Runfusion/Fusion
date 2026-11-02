@@ -125,6 +125,48 @@ the stall classifiers, or an operator's manual move to the completion lane.
 
 Additional sweeps emit `task:reconcile-orphaned-workspace-worktree` when they remove a recorded dead member worktree and `task:reclaim-phantom-workspace-land-lease` when they reclaim a leaked member landing lease. Acquisition exclusivity is decided by a renewable durable lease; owner deletion or an execution-lane exit releases its acquire claim, while `task:reclaim-phantom-workspace-acquire-lease` and `worktree:workspace-repo-acquire-reclaimed` diagnose defensive leaked-entry recovery. Search run-audit records for these event IDs and `task:reconcile-workspace-partial-land` when diagnosing recovery.
 
+## A card that owes no commit
+
+A card whose plan changes no tracked file — a memory-only card, an investigation card, a documentation card whose
+home is git-ignored — states that contract as **No commits expected** (`noCommitsExpected`). The declaration is
+written by the planner, and it is also derived automatically when a card's `## File Scope` names only board-owned
+ignored paths (`.fusion/tasks/`, `.fusion/memory/`, `.fusion/memory-archive/`, `.fusion/agent-memory/`), so a card
+is never told to author a commit it was forbidden from authoring.
+
+For such a card the land step is genuinely not applicable, and both delivery doors close it on proof rather than on
+a commit:
+
+- **The obligation set** is what the card must answer for. A non-empty confirmed scope names the obligations. An
+  empty confirmed scope on an authorized card substitutes the checkouts the card actually holds, because those are
+  the only repositories where its work could sit. Zero declared and zero acquired means there is nothing to
+  measure per repository, and the card-level zero-commit door speaks instead. One rule answers the question for both
+  doors — the workspace land step and `fn task reconcile` read the same set (`workspaceObligationRepositories`), and
+  neither may close a card while an obligation in it is unmeasured: a card holding three checkouts is not
+  obligation-free just because its scope named none.
+- **Absence is measured, never assumed.** A declared member the card never acquired counts as discharged only when
+  a ref read answers "no such ref". A member whose task branch exists is not absent — whether it ever carried work
+  is a question an absence read may not answer. An acquired member is discharged only on a proven zero-ahead base,
+  and a branch that has vanished after being named is treated as lost work, not as delivery.
+- **Nothing happens before the proof door.** For a card that owes no commit, the close writes no `merging` status,
+  publishes no dispatch fence or land intent, takes no lease, creates no checkout, and runs no Git write. Git state
+  is byte-identical: no ref moves, no commit is authored, and no landing SHA is recorded — `commitSha` stays
+  absent because an absent member never had one.
+- **Uncommitted work is never discarded.** The shared zero-commit door is asked the content question about the tree
+  the card owns, and a card whose row still records modified files is refused: that card owes a landing, and owes
+  it in the arm that performs one. A refusal here is a wait, not a failure — no `failed` status, no move, and the
+  tree is left exactly where it is.
+- **The operator's reconcile door is still a door.** `fn task reconcile <id>` (and the dashboard route) can close a
+  commit-free workspace card on the same absence proof; it refuses, unchanged, when any obligation is unproven, and
+  its refusal sentence names which of the three conditions failed. It is proof-gated, never a bypass.
+- **A closed card stops reporting itself broken.** A successful commit-free close clears the per-repository
+  "landing failed" breadcrumbs written by earlier attempts that expected a land, strictly after the terminal write,
+  so a refused delivery keeps the evidence an operator needs.
+
+What is unchanged: a card that owes tracked changes still gets the per-repository land loop, still lands on each
+member's own integration ref, and still blocks — with zero commits, with a vanished branch, or with an unacquired
+member — exactly as before. Removing the commit requirement is a change to what the card promised, never to what
+Fusion will accept as delivered.
+
 ## Reverting a workspace task
 
 Workspace Git revert is all-or-nothing across member repositories: Fusion classifies every repository before committing. If every repository is clean or already reverted, the response has the shape:

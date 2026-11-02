@@ -288,7 +288,7 @@ imported it from merger-ai while merger-ai imports `MIN_TEMP_WORKTREE_REAP_AGE_M
 self-healing — a real import cycle. Importing from the predicate module breaks the cycle.
 */
 import { findProvenLandedCommit, isRepoLanded } from "./merge/workspace-land-predicate.js";
-import { persistWorkspaceRepoLandFailure } from "./merge/workspace-land-failure.js";
+import { persistWorkspaceRepoLandFailure, clearWorkspaceRepoLandFailure } from "./merge/workspace-land-failure.js";
 import { getCommitTaskOwnership } from "./merge/already-merged-detector.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
 import { shouldReclaimWedgedMerge } from "./merge/merge-reclaim-policy.js";
@@ -325,11 +325,19 @@ import { recordWorkspaceBaseBranchDecision, resolveWorkspaceRepoBaseBranch } fro
 FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
 The landed-review reconcile fence gained a per-repository discharge arm, so it consumes the SAME
 commit-free-delivery authority the merge lane uses (`createTipAncestryProbe` /
-`COMMIT_FREE_DELIVERY_REASON` via `evaluateWorkspaceReconcileDischarge`), the canonical ahead count,
+`commitFreeDischargeReason` — the per-shape formatter over RUFU-504's `COMMIT_FREE_DELIVERY_REASON` — via
+`evaluateWorkspaceReconcileDischarge`), the canonical ahead count,
 the ONE repository-identity classifier (RUFU-390/RUFU-519: classify before measuring), and the
 empty-land classifier used ONLY to explain a refusal. No second predicate is defined here.
 */
-import { COMMIT_FREE_DELIVERY_REASON, createTipAncestryProbe, evaluateWorkspaceReconcileDischarge, type WorkspaceReconcileRepoVerdict } from "./merge/workspace-commit-free-delivery.js";
+import { commitFreeDischargeReason, commitFreeObligationFreeReason, createTipAncestryProbe, evaluateCommitFreeRepositoryAbsence, evaluateWorkspaceReconcileDischarge, type WorkspaceReconcileRepoVerdict } from "./merge/workspace-commit-free-delivery.js";
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:05 (RUFU-451):
+`workspaceObligationRepositories` is imported rather than re-derived here so the reconcile fence and the merge
+door cannot disagree about which repositories a card owes proof about — the divergence, not the verdict, was the
+SANE-509 bug.
+*/
+import { workspaceObligationRepositories } from "./merge/workspace-merge-readiness.js";
 import { measureAheadCommitCount } from "./worktree/worktree-backend.js";
 import { resolveWorkspaceRootMembership } from "./worktree/workspace-root-member.js";
 import { resolveBranchGroupMergeRouting } from "./merge/group-merge-coordinator.js";
@@ -1317,7 +1325,7 @@ export type LandedReviewReconcileResult =
   ancestor of that repository's OWN resolved base, corroborated by ahead-count 0) or `landed`
   (proven through `findProvenLandedCommit`, whose sha is the only one echoed).
   */
-  | { outcome: "workspace-discharged"; repoCount: number; dischargedCount: number; repos: Array<{ repo: string; basis: "zero-ahead" | "landed"; baseBranch: string; branchTipSha?: string; landedSha?: string }> }
+  | { outcome: "workspace-discharged"; repoCount: number; dischargedCount: number; repos: Array<{ repo: string; basis: "zero-ahead" | "landed" | "absent"; baseBranch: string; branchTipSha?: string; landedSha?: string }> }
   | { outcome: "not-landed"; baseBranch: string }
   | { outcome: "raced"; reason: string }
   /*
@@ -1328,7 +1336,7 @@ export type LandedReviewReconcileResult =
   no surface has to collapse the verdict to one opaque word. The four `workspace-*` / shared-group
   reasons name the arm-level gates that refused BEFORE any per-repo proof could speak.
   */
-  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" | "post-merge-evidence-pending" | "awaiting-finalization" | "workspace-scope-unresolved" | "workspace-obligations-empty" | "workspace-probe-unavailable" | "workspace-base-unresolvable" | "shared-branch-group"; repos?: LandedReviewWorkspaceRepoDetail[] };
+  | { outcome: "ineligible"; reason: "workspace" | "not-in-review" | "paused" | "user-paused" | "executing" | "live-session" | "checkout-leased" | "auto-merge-off" | "no-branch-recorded" | "branch-present" | "branch-has-unlanded-content" | "foreign-ownership" | "workflow-approval-blocked" | "engine-paused" | "post-merge-evidence-pending" | "awaiting-finalization" | "workspace-scope-unresolved" | "workspace-obligations-empty" | "workspace-obligation-free-unproven" | "workspace-probe-unavailable" | "workspace-base-unresolvable" | "shared-branch-group"; repos?: LandedReviewWorkspaceRepoDetail[] };
 
 /*
 FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
@@ -19310,6 +19318,23 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     */
     if (isWorkspaceTask(task) && task.mergeDetails?.mergeConfirmed) return { outcome: "ineligible", reason: "workspace" };
     /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-19:20 (RUFU-451) — a workspace card is not only its worktrees:
+    `isWorkspaceTask` reads `workspaceWorktrees`, so a card in a workspace project that never ACQUIRED a member
+    (SANE-509's source-free shape: a confirmed `repositoryScope` and zero acquired entries) was invisible to
+    every workspace guard in this method and fell through to the SINGULAR branch-evidence block — the exact
+    rootDir-bound `isBranchTipMisboundToTask` / `findAlreadyMergedTaskCommit` / `hasUnlandedTaskOwnedContent`
+    class RUFU-357 rules 1-6 exist to make impossible on a multi-repo card. A CONFIRMED `repositoryScope` is
+    workspace-authored state (a singular card never has one), so it carries the same ownership claim here.
+
+    The widening is deliberately one-directional: it applies to a card whose merge is NOT confirmed, because a
+    merge-confirmed card belongs to RUFU-291/RUFU-306's post-merge-gate lane above and its `resumed` /
+    `post-merge-evidence-pending` outcomes must not be swallowed. What changes for such a card is only WHICH
+    arm may decide it: the workspace arm, which can finalize nothing without per-repository proof or the shared
+    zero-commit door, instead of a single-repo finalize over the workspace root.
+    */
+    const unconfirmedWorkspaceCard = task.mergeDetails?.mergeConfirmed !== true
+      && (isWorkspaceTask(task) || task.repositoryScope?.state === "confirmed");
+    /*
     FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
     The pause guard learns AUTHORSHIP, because the target population is parked by the engine itself:
     the 2026-10-03 addendum measured the 16 uniq=0 saneca cards sitting `paused: true` with
@@ -19323,7 +19348,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     method may write anything, and the discharge itself is only granted when EVERY obligation
     repository proves out — admitting the pause never skips a probe.
     */
-    const workspaceStallParkAdmission = isWorkspaceTask(task) && task.mergeDetails?.mergeConfirmed !== true && isEngineAuthoredInReviewStallPark(task);
+    const workspaceStallParkAdmission = unconfirmedWorkspaceCard && isEngineAuthoredInReviewStallPark(task);
     if (task.paused && !workspaceStallParkAdmission) return await this.refuseMergeConfirmedHold(task, options.source, "paused");
     if (task.userPaused) return await this.refuseMergeConfirmedHold(task, options.source, "user-paused");
     const livePaths = activeSessionRegistry.pathsForTask(task.id).filter((path) => activeSessionRegistry.isPathActive(path));
@@ -19358,7 +19383,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     card. Only the manual surfaces reach it: the automatic sweep still `continue`s on workspace cards in
     its own candidate filter (unchanged), so unattended mass finalization remains RUFU-504's decision.
     */
-    if (isWorkspaceTask(task)) {
+    if (unconfirmedWorkspaceCard) {
       return await this.reconcileWorkspaceLandedReview(task, options, { settings, reviewColumns, requiredPreMergeStepIds });
     }
     if (task.mergeDetails?.mergeConfirmed) {
@@ -19502,9 +19527,16 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
      `workspace-probe-unavailable`. Measuring a member in a directory whose top-level is an
      enclosing repository is the false-certificate class and is structurally impossible here.
   2. The confirmed `repositoryScope` is the obligation set. A scope that is not confirmed refuses
-     `workspace-scope-unresolved`; confirmed-but-empty refuses `workspace-obligations-empty` — an
-     empty obligation set is NEVER an empty-set discharge. Keys outside the scope are named in the
-     refusal detail but never required to discharge.
+     `workspace-scope-unresolved`. Keys outside the scope are named in the refusal detail but never
+     required to discharge.
+     2b. RUFU-451 widens that rule exactly twice, both keyed on the card's own `noCommitsExpected`
+     declaration and each still requiring git proof before a write: a declared member the card never
+     acquired may discharge on a PROVEN absence (`evaluateCommitFreeRepositoryAbsence`), and a card whose
+     confirmed scope named no repository takes the checkouts it actually holds as its obligation set —
+     with nothing declared and nothing acquired, the shared zero-commit door is the only authority left
+     that can speak, and it must say so. A card that never made the declaration keeps the pre-existing
+     `workspace-obligations-empty` refusal whatever it holds: for it an empty obligation set is still
+     never an empty-set discharge.
   3. Each repository's base is resolved with its OWN recorded base (`resolveWorkspaceRepoBaseBranch`
      mode `recorded`) and recorded with `stage: "self-heal"`, exactly as the partial-land sweep
      does; a failure refuses `workspace-base-unresolvable` naming the repo.
@@ -19528,6 +19560,89 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
      unreachable for merge-confirmed cards — never an on-card refusal line, so a
      dischargeable-but-refused card does not accumulate log chatter from repeated CLI attempts.
   */
+  /*
+  FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:15 (RUFU-451):
+  The card-level proof behind an OBLIGATION-FREE workspace discharge — the one shape where there is no
+  repository left to measure, so the only authority that can speak is the shared zero-commit door.
+
+  Reachable only since this method's own first release looked unreachable: the arm is entered from
+  `unconfirmedWorkspaceCard`, which now counts a CONFIRMED `repositoryScope` as workspace ownership, so the
+  "declared nothing, acquired nothing" card arrives here instead of falling into the singular branch-evidence
+  block. When it has acquired checkouts it does NOT come here — each checkout it holds is an obligation it must
+  discharge on its own base (see `obligationRepos` below), which is a stronger claim than anything this method
+  can make from the workspace root.
+
+  It asks the two questions that door always asks, over the workspace root:
+    1. does every REQUIRED pre-merge gate carry an approving carrier (the same canonical resolver the merge
+       door uses, via `resolveNoOpFinalizeGateIds`), and are the card's own steps finished; and
+    2. does the git content at the root corroborate the declaration — i.e. is there no uncommitted or
+       untracked work sitting in a tree this finalize would walk away from (RUFU-262's loss shape).
+
+  A `held` disposition is left exactly as the door recorded it: the durable hold marker plus its card-visible
+  refusal sentence, no `error`, no `status`, no retry budget. This method writes nothing itself; a refusal
+  here is a human wait, not a recovery, and the caller keeps the card in review.
+  */
+  private async affirmObligationFreeWorkspaceDelivery(task: Task, settings: Settings): Promise<boolean> {
+    /*
+    RUFU-451: content-at-risk is checked where the content can BE. This door runs only when the card declared
+    no repository and acquired no checkout, so the workspace root is the one tree that can hold its work — but
+    the row itself can still claim it modified files, and a card that records modifications owes a landing, not
+    a walk-away. That guard is the same one the workspace merge lane applies (`readiness.preservedFiles`), so
+    the two doors cannot disagree about whether a row still owes work.
+    */
+    const preservedFiles = (task.modifiedFiles ?? []).filter((file) => file.trim().length > 0);
+    if (preservedFiles.length > 0) {
+      await this.store.logEntry(
+        task.id,
+        `Workspace reconcile refused (obligation-free delivery withheld): the card declares zero commits but still records ${preservedFiles.length} modified file(s) — the delivery owes a landing`,
+        JSON.stringify({ lane: "reconcile-workspace-obligation-free", preservedFileCount: preservedFiles.length }, null, 2),
+      ).catch(() => undefined);
+      return false;
+    }
+    const integrationBranch = task.baseBranch?.trim()
+      || await resolveIntegrationBranch(this.options.rootDir, settings).catch(() => "main");
+    const collected = await collectZeroCommitFinalizeEvidence({
+      store: this.store,
+      task,
+      repoDir: this.options.rootDir,
+      integrationBranch,
+      requiredVerificationStepIds: await resolveNoOpFinalizeGateIds(this.store, task),
+    });
+    const evaluation = evaluateNoCommitsNoOpFinalize(task, collected);
+    if (!evaluation.blocked) return true;
+    if (evaluation.deliveryUnproven) {
+      const outcome = await enforceZeroCommitLandingProof({
+        store: this.store,
+        task,
+        repoDir: this.options.rootDir,
+        integrationBranch,
+        source: "self-healing-no-op-finalize",
+        preCollected: collected,
+      });
+      if (outcome.disposition === "held") {
+        await this.store.logEntry(
+          task.id,
+          `Workspace reconcile refused (delivery unproven): ${outcome.refusal}`,
+          JSON.stringify({ lane: "reconcile-workspace-obligation-free", held: true }, null, 2),
+        ).catch(() => undefined);
+      }
+      return false;
+    }
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:45 (RUFU-451):
+    The other blocked family is evidence, not content: a required pre-merge gate with no approving row, or a
+    step that is skipped/incomplete. The refusal code the caller returns is the same one, so without this line
+    the card would carry a code saying "obligation-free unproven" while the reason was an unrun gate — the
+    operator would look at the worktree instead of at the gate. The door's own sentence goes to History.
+    */
+    await this.store.logEntry(
+      task.id,
+      `Workspace reconcile refused (obligation-free delivery withheld): ${evaluation.reason ?? "the shared zero-commit door did not confirm the delivery"}`,
+      JSON.stringify({ lane: "reconcile-workspace-obligation-free", doneCount: evaluation.doneCount, incompleteCount: evaluation.incompleteCount }, null, 2),
+    ).catch(() => undefined);
+    return false;
+  }
+
   private async reconcileWorkspaceLandedReview(
     task: Task,
     options: { source: "self-healing" | "manual" },
@@ -19541,8 +19656,74 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const workspaceWorktrees = task.workspaceWorktrees ?? {};
     const explicitScope = task.repositoryScope?.state === "confirmed" ? task.repositoryScope.repositories : undefined;
     if (!explicitScope) return { outcome: "ineligible", reason: "workspace-scope-unresolved" };
-    if (explicitScope.length === 0) return { outcome: "ineligible", reason: "workspace-obligations-empty" };
-    const outOfScopeRepos = Object.keys(workspaceWorktrees).filter((repo) => !explicitScope.includes(repo));
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:55 (RUFU-451) — rule 2, widened once, on a declaration:
+    "confirmed-but-empty is NEVER an empty-set discharge" stays the rule for every card that owes commits.
+    The exception is a card that DECLARED it owed none: `explicitScope.length === 0` plus zero acquired
+    repositories is not an unreconciled declaration there, it is the shape a source-free delivery makes
+    (SANE-509's File Scope named only git-ignored paths, so acquisition never ran). The discharge still
+    requires proof before any write — the shared zero-commit door runs at `verdicts.scopeEmpty` below, over
+    the workspace root, and a refusal there (uncommitted content, an unmet required gate) keeps the card in
+    review exactly as it does today. What changed is only WHICH question is asked of an empty obligation set:
+    the per-repository ancestry probe, which has no repository to probe, is replaced by the card-level door.
+    */
+    const zeroCommitAuthorized = hasZeroCommitDeliveryAuthorization(task);
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:05 (RUFU-451) — rule 2's other half, on the same declaration:
+    The common empty-scope shape is NOT "nothing declared, nothing acquired" — it is a card that acquired
+    members and then declared no source obligation (SANE-509 held three member entries against a confirmed scope
+    of zero repositories, with two member branches carrying zero unique commits). Discharging THAT card on the
+    card-level door alone would skip the one proof that matters there: each checkout it actually holds must be
+    empty of its work. So for an authorized card with an empty declared scope the obligation set becomes the
+    ACQUIRED set and every member must still discharge on its own base, exactly as RUFU-357 requires.
+
+    The rule is now `workspaceObligationRepositories`, shared with `resolveWorkspaceMergeReadiness`: this door
+    and the merge door must not answer the question "what does this card owe proof about?" twice in two places,
+    because when they disagreed the card could not win — the merge lane closed a card this sweep refused to
+    touch, and the sweep then refused to reopen it (`reason: "workspace"`). Measured SANE-509 is that pair.
+
+    The card-level door is therefore reserved for the shape where there is genuinely nothing to probe — no
+    declared repository and no acquired checkout — and a card that never made the declaration keeps the
+    pre-existing `workspace-obligations-empty` refusal whatever it holds.
+    */
+    const obligationRepos = workspaceObligationRepositories(task);
+    if (obligationRepos.length === 0 && !zeroCommitAuthorized) {
+      return { outcome: "ineligible", reason: "workspace-obligations-empty" };
+    }
+    /*
+    RUFU-451: out-of-scope DETAIL is relative to the obligation set, not to the declared list alone. For an
+    authorized card whose confirmed scope named no repository, the checkouts it holds ARE its obligations, so
+    naming them "out-of-scope" beside the discharge that just covered them would contradict the row's own
+    noOpReason. For every other card `obligationRepos` IS the declared scope, so this reads byte-identically.
+    */
+    const outOfScopeRepos = Object.keys(workspaceWorktrees).filter((repo) => !obligationRepos.includes(repo));
+
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-20:55 (RUFU-451):
+    A declared member the card never acquired used to be pushed straight into `workspace-probe-unavailable`
+    — the refusal fired BEFORE any proof was attempted, which is why the sweep could not be talked into a
+    discharge by a better classifier downstream. For the authorized card the absence read runs here, first,
+    and its answer is the only thing that can take a member out of the unmeasured set: `evaluateCommitFreeRepositoryAbsence`
+    demands no acquired checkout, no recorded branch, no landing, no declared content, AND a `show-ref` that
+    answers "no such ref". One member the probe could not certify keeps the pre-existing refusal with its
+    pre-existing payload, because a partially-measured obligation set is not a discharge.
+    */
+    const unacquiredScopeRepos = obligationRepos.filter((repo) => !workspaceWorktrees[repo]);
+    const provablyAbsent = zeroCommitAuthorized && unacquiredScopeRepos.length > 0
+      ? new Set((await evaluateCommitFreeRepositoryAbsence(
+          unacquiredScopeRepos.map((repo) => ({
+            repo,
+            entry: undefined,
+            recordedLandedSha: task.mergeDetails?.workspaceLandedShas?.[repo],
+            repoRootDir: join(this.options.rootDir, repo),
+            worktreePathExists: (path) => existsSync(path),
+            taskBranch: task.branch,
+            declaresContentInRepository: (task.modifiedFiles ?? [])
+              .some((file) => file === repo || file.startsWith(`${repo}/`)),
+          })),
+          (repoRootDir, branch) => this.probeRepoBranch(repoRootDir, branch),
+        )).filter((verdict) => verdict.basis === "absent").map((verdict) => verdict.repo))
+      : new Set<string>();
 
     /*
     Identity classification runs BEFORE any measurement (rule 1). The measurement directory is the
@@ -19553,8 +19734,10 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const probeDirs = new Map<string, { dir: string; asRootRepository: boolean }>();
     const probeUnavailable: string[] = [];
     const rootRepositoryNotes: string[] = [];
-    for (const repo of explicitScope) {
+    for (const repo of obligationRepos) {
       if (!workspaceWorktrees[repo]) {
+        // RUFU-451: certified above; anything else stays an unmeasured member and refuses.
+        if (provablyAbsent.has(repo)) continue;
         probeUnavailable.push(repo);
         continue;
       }
@@ -19591,7 +19774,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       return typeof stdout === "string" ? stdout.trim() : String(stdout ?? "").trim();
     };
     const verdicts = await evaluateWorkspaceReconcileDischarge({
-      repoKeys: explicitScope,
+      repoKeys: obligationRepos,
       entries: workspaceWorktrees,
       resolveRepoRootDir: (repo) => probeDirs.get(repo)?.dir,
       probeIntegrationBranch: async (repo, entry, repoRootDir) => {
@@ -19635,6 +19818,8 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       probeBranch: (repoRootDir, branch) => this.probeRepoBranch(repoRootDir, branch),
       diagnoseAhead: async ({ repoRootDir, branch, integrationBranch }) =>
         classifyEmptyLandEvidence({ branch, integrationBranch, exec: execEmptyLandGit(repoRootDir) }),
+      zeroCommitAuthorized,
+      provablyAbsentRepositories: provablyAbsent,
     });
 
     const detailFor = (verdict: WorkspaceReconcileRepoVerdict): LandedReviewWorkspaceRepoDetail => ({
@@ -19648,11 +19833,22 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       ...outOfScopeRepos.map((repo) => ({ repo, basis: "out-of-scope" as const, uniqueCommitCount: null })),
     ];
 
-    if (verdicts.scopeEmpty) return { outcome: "ineligible", reason: "workspace-obligations-empty" };
+    let obligationFreeDischarge = false;
+    if (verdicts.scopeEmpty) {
+      /*
+      The empty obligation set is discharged only by the door that can see the whole card: required pre-merge
+      gate evidence plus the shared landing-proof door over the workspace root. It runs here — after the
+      scope/identity rules, BEFORE the CAS write — and a `held` disposition leaves the card in review with the
+      durable hold marker the door itself wrote, no `status`, and no retry budget spent.
+      */
+      const affirmed = await this.affirmObligationFreeWorkspaceDelivery(task, settings);
+      if (!affirmed) return { outcome: "ineligible", reason: "workspace-obligation-free-unproven" };
+      obligationFreeDischarge = true;
+    }
     if (verdicts.repos.some((verdict) => verdict.kind === "held" && verdict.basis === "base-unresolvable")) {
       return { outcome: "ineligible", reason: "workspace-base-unresolvable", repos: withOutOfScope(verdicts.repos.map(detailFor)) };
     }
-    if (!verdicts.discharge) {
+    if (!obligationFreeDischarge && !verdicts.discharge) {
       // The proof failed. This refusal names every repository with its basis and count (rule: the
       // unconfirmed class may never collapse to the bare word) and writes nothing on the card.
       return { outcome: "ineligible", reason: "workspace", repos: withOutOfScope(verdicts.repos.map(detailFor)) };
@@ -19676,7 +19872,14 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       mergedAt: new Date().toISOString(),
       mergeConfirmed: true,
       noOpMerge: true,
-      noOpReason: COMMIT_FREE_DELIVERY_REASON,
+      noOpReason: obligationFreeDischarge
+        ? commitFreeObligationFreeReason([])
+        : commitFreeDischargeReason({
+          zeroAheadCount: discharged.filter((verdict) => verdict.basis === "zero-ahead").length,
+          landedCount: Object.keys(landedProofShas).length,
+          absentRepositories: discharged.filter((verdict) => verdict.basis === "absent").map((verdict) => verdict.repo),
+          declaredNoRepositories: explicitScope.length === 0,
+        }),
       prNumber: getPrimaryPrInfo(task)?.number,
       ...(verdicts.commitFreeBasis ? { workspaceCommitFreeBasis: verdicts.commitFreeBasis } : {}),
       ...(verdicts.commitFreeBranchTipShas ? { workspaceCommitFreeBranchTipShas: verdicts.commitFreeBranchTipShas } : {}),
@@ -19734,6 +19937,17 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       if (patch) await this.store.updateTask(task.id, patch);
     }
     if (!committed) return { outcome: "raced", reason: "task-state-changed" };
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-22:35 (RUFU-451):
+    Same rule as the merge lane, in the operator's door: a discharged repository's "landing failed" breadcrumb
+    describes an attempt that expected a land this card never owed, and the card is now closed. Runs strictly
+    after the durable close (a refused or raced reconcile keeps its evidence) and only for repositories that
+    discharged — a repository still held by the proof keeps its chip, because that chip is the reason it is
+    still in review. A repository that was never acquired has no entry, and clearing one must not create it.
+    */
+    for (const verdict of discharged) {
+      await clearWorkspaceRepoLandFailure(this.store, task.id, verdict.repo).catch(() => undefined);
+    }
     for (const repo of rootRepositoryNotes) {
       await this.store.logEntry(
         task.id,
@@ -19746,9 +19960,18 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const repoSummary = discharged.map((verdict) =>
       `${verdict.repo} {basis=${verdict.basis}; base=${baseBranches[verdict.repo] ?? "unrecorded"}${landedProofShas[verdict.repo] ? `; landed=${landedProofShas[verdict.repo]!.slice(0, 8)}` : ""}}`,
     ).join("; ");
+    /*
+    FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-21:10 (RUFU-451):
+    The obligation-free arm has no per-repository list to print, and "0/0 repositories discharged with zero
+    unique commits on their own bases" reads like a measurement that never happened. This line states which
+    proof closed the card, so an operator can tell an obligation-free discharge from an ancestry one without
+    opening the row's mergeDetails.
+    */
     await this.store.logEntry(
       task.id,
-      `Auto-reconciled (workspace, commit-free): ${discharged.length}/${explicitScope.length} repositories discharged with zero unique commits on their own bases — ${repoSummary}. No commits were authored; branches and worktrees were left untouched.`,
+      obligationFreeDischarge
+        ? `Auto-reconciled (workspace, obligation-free): the card declared zero commits, no repository was acquired, and the shared zero-commit door confirmed the delivery — no status was invented and no commit was authored.`
+        : `Auto-reconciled (workspace, commit-free): ${discharged.length}/${obligationRepos.length} repositories discharged with zero unique commits on their own bases — ${repoSummary}. No commits were authored; branches and worktrees were left untouched.`,
     );
     /*
     Exactly one bounded row per discharge, AFTER the CAS write, through the FN-9175 bounded seam:
@@ -19766,7 +19989,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       metadata: {
         taskId: task.id,
         source: options.source,
-        repoCount: explicitScope.length,
+        repoCount: obligationRepos.length,
         dischargedCount: discharged.length,
         repoBasis: Object.fromEntries(discharged.map((verdict) => [verdict.repo, verdict.basis])),
         outcome: "discharged",
@@ -19774,7 +19997,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     }, { log });
     return {
       outcome: "workspace-discharged",
-      repoCount: explicitScope.length,
+      repoCount: obligationRepos.length,
       dischargedCount: discharged.length,
       repos: discharged.map((verdict) => ({
         repo: verdict.repo,

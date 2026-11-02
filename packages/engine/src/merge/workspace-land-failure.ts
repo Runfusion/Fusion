@@ -22,3 +22,31 @@ export async function persistWorkspaceRepoLandFailure(
     { requireExistingEntry: true },
   );
 }
+
+/*
+FNXC:ZeroCommitWorkspaceDelivery 2026-11-02-22:25 (RUFU-451):
+Clear one repository's display-only landing-failure breadcrumb. RUFU-451's source-free card is the shape this
+exists for: attempts made before the zero-commit contract was honoured wrote per-repository "land failed" chips
+(merger-ai's three failure sites plus the partial-land sweep), and once the card closed on an ABSENCE proof
+those chips kept reporting a broken repository that never owed a land — a closed card still looking red in the
+per-repository status surface.
+
+Two properties are deliberate:
+  • `requireExistingEntry: true` keeps a repository the card never acquired a no-op — there is no entry to
+    clear, and inventing one to hold a deletion would fabricate acquisition evidence on the row.
+  • The patch sets the key to `undefined`, which the store's jsonb write drops, so the breadcrumb is gone
+    rather than present-and-empty. A reader must never have to distinguish "cleared" from "failed with no
+    details".
+*/
+export async function clearWorkspaceRepoLandFailure(
+  store: TaskStore,
+  taskId: string,
+  repoRel: string,
+): Promise<void> {
+  await store.mergeWorkspaceWorktreeEntry(
+    taskId,
+    repoRel,
+    { landFailure: undefined },
+    { requireExistingEntry: true },
+  );
+}
