@@ -481,10 +481,35 @@ How long a capacity-refused continuation leaves the due window before it may be 
 The batch limit above is deliberately small and the due poll is ordered by task queue rank, so the
 only thing that makes the window advance is a refused row leaving the due set. Without a stamp the
 refused head is re-listed and re-refused every pass and rows beyond the limit are never read.
-Kept short on purpose: a freed slot is reclaimed by the next pass after the backoff, while a full
-rotation of a 156-row due set costs ceil(156 / 20) = 8 passes.
+
+FNXC:ContinuationDrainFairness 2026-11-02-19:57 (RUFU-862):
+The original 5 s horizon was sized against a wrong rotation model. It cost "ceil(156 / 20) = 8 passes"
+of ONE STAMP PER PASS, because the refusal path stamped a single row and stopped; a pass can only
+stamp the whole window once the stop becomes a stamp-only continuation (see
+`drainDuePlanningContinuations`). With one stamp per pass the window advances one row per poll, so a
+full rotation costs `N` polls, not `ceil(N / W)`.
+
+The horizon must outlast one window rotation or the head re-enters before the tail is ever read. One
+rotation of a W-wide window at the 2 s continuation poll costs at least W × 2 s = 40 s, so the floor
+is 45 s. Measured on the live board the same day: 274 due `kind: "task"` continuations, 256 of them
+with a NULL `retryAfter` (never deferred), only ONE row carrying a future one, and RUFU-627 ranked
+101st behind a window of 20 — four times outside reach, with `capacity_refused=0` and free executor
+capacity. A refused head that stays out for 45 s moves 20 rows per pass instead of one.
+
+The cost is bounded by the wake, not the timer: `dispatch-wakes.ts` treats reservation release as a
+wake signal ("returning the last shared slot is the exact moment ANOTHER card becomes runnable"), so
+a freed slot re-consults a stamped row immediately. The 2 s interval is a backstop for a lost NOTIFY
+(EventDrivenDispatch FN-519), which is why a longer horizon does not become added latency.
 */
-export const CAPACITY_REFUSAL_DEFER_MS = 5_000;
+export const CAPACITY_REFUSAL_DEFER_MS = 45_000;
+/*
+FNXC:ContinuationDrainFairness 2026-11-02-20:12 (RUFU-862):
+The continuation due poll's own period, named because the horizon above is only correct RELATIVE to
+it. Until now it was an inline literal 2 300 lines from the constant that has to outlast it, so the
+relationship could not be asserted by anything: a poll that slowed, or a due set that grew, silently
+defeated the fairness stamp while every test stayed green.
+*/
+export const WORKFLOW_CONTINUATION_POLL_MS = 2_000;
 /** A drain is only force-opened after this long without an owning-pass progress mark. */
 export const CONTINUATION_DRAIN_STALL_MS = 300_000;
 
@@ -662,6 +687,17 @@ export async function drainDuePlanningContinuations(
   deps: DuePlanningContinuationDrainDeps,
 ): Promise<void> {
   const items = await deps.listDue();
+  /*
+  FNXC:ContinuationDrainFairness 2026-11-02-19:57 (RUFU-862):
+  After one global-capacity refusal, every later row in this window is refused by the SAME cap, so
+  `break` wrote a stamp for exactly one row and left the other W-1 examined rows due with a NULL
+  `retryAfter`. The rotation math in `CAPACITY_REFUSAL_DEFER_MS` assumes a pass vacates the whole
+  window; this makes that true. No dispatch happens after a refusal, so the stop's original guarantee
+  — a genuine global refusal stays true for every later FIFO item in the pass — is unchanged; only the
+  bookkeeping for those later items is added. Accepted cost: a refusal that was NOT global stamps rows
+  it should not have, delaying them by one horizon; the reservation-release wake covers that case.
+  */
+  let capacityRefusedInPass = false;
   for (const item of items) {
     let task: Task | undefined;
     let taskLookupFailed = false;
@@ -693,6 +729,15 @@ export async function drainDuePlanningContinuations(
     const deferral = resolveParkedContinuationDeferral(resolved, deps.nowMs());
     if (deferral) await deps.defer(deferral);
     if (resolved.kind !== "actionable") continue;
+    if (capacityRefusedInPass) {
+      // Refused by the cap this pass already proved full: stamp it, never dispatch it.
+      await deps.defer({
+        itemId: resolved.item.id,
+        expectedState: resolved.item.state,
+        retryAfter: new Date(deps.nowMs() + CAPACITY_REFUSAL_DEFER_MS).toISOString(),
+      });
+      continue;
+    }
     if (await deps.dispatch(resolved.task, resolved.item) === false) {
       /*
       FNXC:ContinuationDrainFairness 2026-10-29-10:55 (RUFU-812):
@@ -710,13 +755,19 @@ export async function drainDuePlanningContinuations(
       item within the same pass. The CAS `expectedState` means a row another lane already moved is
       left alone, and the accepted cost is that a slot freed microseconds later is picked up on the
       next pass, not this one.
+
+      FNXC:ContinuationDrainFairness 2026-11-02-19:57 (RUFU-862):
+      "The stop itself is kept" was correct about DISPATCHING and wrong about STAMPING: stopping
+      outright also stopped the stamp for the remaining W-1 rows the same cap had just refused, which
+      is why the live board still showed 256 of 274 due rows with a NULL `retryAfter` four days after
+      this shipped. The refusal now latches the pass instead of ending it.
       */
+      capacityRefusedInPass = true;
       await deps.defer({
         itemId: resolved.item.id,
         expectedState: resolved.item.state,
         retryAfter: new Date(deps.nowMs() + CAPACITY_REFUSAL_DEFER_MS).toISOString(),
       });
-      break;
     }
   }
 }
@@ -2668,7 +2719,7 @@ export class InProcessRuntime
       */
       this.workflowContinuationTimer = setInterval(() => {
         this.kickWorkflowContinuationProcessor();
-      }, 2_000);
+      }, WORKFLOW_CONTINUATION_POLL_MS);
       this.workflowContinuationTimer.unref?.();
       await this.startDispatchWakes();
       this.kickWorkflowContinuationProcessor();
