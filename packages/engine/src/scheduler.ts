@@ -292,6 +292,32 @@ const COORDINATION_SAFE_SCOPE_PREFIXES = [
 ];
 
 const DEFAULT_DISPATCH_OSCILLATION_SETTLE_MS = 5_000;
+
+/*
+FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823):
+The legs a scheduling pass walks, in order. This exists because the 600 s re-entrance watchdog could
+previously only say that a pass was old: with ~20 project schedulers sharing one process, 66 force-open
+warnings in three hours named no board and no leg, so the leak could not be attributed even to a lane.
+`hold-release-sweep` is deliberately one label — it is the leg whose 10 s budget RUFU-698 measures, and
+it subsumes the reservation/dispatch work reached from it.
+*/
+type SchedulePassPhase =
+  | "idle"
+  | "board-read"
+  | "mission-symbol-locks"
+  | "hold-release-sweep"
+  | "post-sweep-reread"
+  | "advisory-reporters";
+
+/** A pass at or above this wall clock gets one info line; healthy passes stay silent. */
+const SLOW_SCHEDULE_PASS_LOG_MS = 30_000;
+
+/**
+FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830): the guard threshold is now read by two consumers —
+the force-open decision and the audit row that reports it — so it stops being an inline literal. Kept at
+exactly 600_000: widening it would silently reduce how often a stuck pass is reported.
+*/
+const STUCK_PASS_GUARD_MS = 600_000;
 const DEFAULT_DISPATCH_OSCILLATION_THRESHOLD = 5;
 const DEFAULT_DISPATCH_OSCILLATION_WINDOW_MS = 60_000;
 
@@ -1081,6 +1107,20 @@ export interface SchedulerOptions {
   maxWorktrees?: number;
   /** Milliseconds between scheduling polls. Default: 15000 */
   pollIntervalMs?: number;
+  /*
+  FNXC:CapacitySlotCost 2026-10-29-12:02 (RUFU-698 Step 2):
+  Clock for the hold-release sweep's budget accounting. Production keeps the real clock (`Date.now`).
+  The seam exists because the sweep's ONLY budget instrument is elapsed `now()` deltas: a board-scale
+  fit verdict — does a ~300-card sweep complete inside `SWEEP_BUDGET_MS` while driving the REAL
+  reservation closure? — is otherwise inexpressible, because a 249-card sweep over a test store
+  measures ~27 ms of real time and the only way to make real time cross a 10 s budget is to sleep
+  for 10 s, which the standing no-slow-tests rule forbids.
+
+  Charging a modelled per-read latency to THIS clock is what the card's Measurement Contract calls
+  Class C: a valid fit verdict ("this board fits the budget iff a read costs at most N ms"), never a
+  production latency figure. Default behavior is byte-identical to the previous hardcoded `Date.now()`.
+  */
+  holdReleaseClock?: () => number;
   /**
    * Shared concurrency semaphore. When provided, the scheduler uses
    * `semaphore.availableCount` to avoid scheduling more tasks than the
@@ -1188,6 +1228,21 @@ export class Scheduler {
   private running = false;
   private scheduling = false;
   private schedulingSince = 0;
+  /*
+  FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823):
+  The schedule watchdog force-opens its re-entrance guard after 600 s and named only the elapsed time, so an operator reading `previous pass still marked in-flight after 600s` could not say WHICH board was stuck or WHERE inside the pass it sat. The sibling continuation-drain watchdog already solves this with a `workflowContinuationDrainPhase` label (in-process-runtime.ts); this field gives `schedule()` the same property. Measured need: 66 force-open warnings in one 3-hour window across a 20-project process, with no way to attribute a single one of them.
+
+  The phase is diagnostic state only. No read path, badge, or lifecycle decision derives from it, and it is cleared with the guard so a finished pass never reports a stale leg.
+  */
+  private schedulingPhase: SchedulePassPhase = "idle";
+  /*
+  FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830):
+  One audit row per stall EPISODE, not per tick. A pass that stays in flight keeps tripping the guard on
+  every interval, so an un-deduped emit would write a row per tick for the whole stall and turn the
+  rarest high-value signal into the noisiest one — the shape FN-8600 had to bound for plan-admission
+  throttling. Reset when a pass starts, so the next stall is a new episode.
+  */
+  private stallReportedForPass = false;
   private immediateSchedulePending = false;
   private wasWorktreeLimited = false;
   private wasGlobalPaused = false;
@@ -2542,16 +2597,72 @@ export class Scheduler {
    * both could start tasks whose file scopes overlap — defeating the
    * overlap detection that relies on `inProgressScopes` being accurate.
    */
+  /**
+   * Describe a stuck scheduling pass for the watchdog warning.
+   *
+   * FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823): extracted from the warn call so the
+   * operator-facing sentence is assertable as one string and so identity + phase cannot be dropped by
+   * a later edit to the log call. Follows the RUFU-372 rule: a stall must name the thing that stalled,
+   * not only that something stalled.
+   */
+  private describeStuckPass(stuckMs: number): string {
+    return (
+      `schedule watchdog: previous pass still marked in-flight after ${Math.round(stuckMs / 1000)}s `
+      + `(project=${this.store.getRootDir()} leg=${this.schedulingPhase}) `
+      + `— forcing the guard open so dispatch resumes`
+    );
+  }
+
+  /**
+   * Record a forced-open stall as a durable run-audit row.
+   *
+   * FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830): extracted from the guard branch so the emit
+   * shape and its sink-health behavior are assertable without holding a scheduling pass open for ten
+   * minutes. Deliberately fire-and-forget through the bounded seam: telemetry must never delay, fail,
+   * or reorder the dispatch decision that follows it.
+   */
+  private reportStuckPass(stuckMs: number): void {
+    const projectId = this.store.getProjectId() ?? "unknown-project";
+    void emitBoundedRunAudit(this.store, {
+      agentId: "scheduler",
+      runId: generateSyntheticRunId("pass-stall", projectId),
+      domain: "database",
+      mutationType: "scheduler:pass-stalled",
+      target: projectId,
+      metadata: {
+        leg: this.schedulingPhase,
+        inFlightMs: Math.round(stuckMs / 1000) * 1000,
+        thresholdMs: STUCK_PASS_GUARD_MS,
+        outcome: "guard-forced-open",
+      },
+    });
+  }
+
   async schedule(): Promise<void> {
     if (!this.running) return;
     if (this.scheduling) {
       /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. Dispatch prep runs real git work per candidate, so the threshold is generous. */
       const stuckMs = this.schedulingSince > 0 ? Date.now() - this.schedulingSince : 0;
-      if (stuckMs < 600_000) return;
-      schedulerLog.warn(`schedule watchdog: previous pass still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open so dispatch resumes`);
+      if (stuckMs < STUCK_PASS_GUARD_MS) return;
+      schedulerLog.warn(this.describeStuckPass(stuckMs));
+      /*
+      FNXC:SchedulerPassPhase 2026-10-30-13:58 (RUFU-830): the log line alone is not a record. Measured
+      the same day RUFU-828 shipped: the process log at /tmp/fusion-prod-20261006.log lost everything
+      before 13:53 in place (same inode, truncated), which erased 66 force-open readings, 3 465 pass
+      durations and all 13 leg attributions from disk. The stall is therefore also written as a durable
+      run-audit row through the FN-9175 bounded seam, so telemetry cannot become a lifecycle dependency
+      and an absent, throwing, or hanging sink cannot block dispatch. Metadata is fixed-enum + counts
+      only: no root path, no task list, no error text.
+      */
+      if (!this.stallReportedForPass) {
+        this.stallReportedForPass = true;
+        this.reportStuckPass(stuckMs);
+      }
     }
     this.scheduling = true;
     this.schedulingSince = Date.now();
+    this.schedulingPhase = "board-read";
+    this.stallReportedForPass = false;
 
     try {
       /*
@@ -2586,6 +2697,7 @@ export class Scheduler {
       // Refresh the poll interval if the persisted setting has changed
       this.refreshPollInterval(settings.pollIntervalMs);
 
+      this.schedulingPhase = "mission-symbol-locks";
       await this.renewActiveMissionSymbolLocks(tasks);
 
       // Global pause (hard stop): halt all scheduling activity
@@ -2630,6 +2742,7 @@ export class Scheduler {
       Workflow columns graduated from Experimental and are now the scheduler's only dispatch model. The hold/release sweep owns todo→in-progress pickup, so do not fall through into the legacy pull-from-todo dispatcher after the sweep runs.
       */
       if (shouldRunWorkflowColumnScheduler(settings)) {
+        this.schedulingPhase = "hold-release-sweep";
         await this.runHoldReleaseSweepPass(tasks, settings);
         /*
         FNXC:ListTasksDeriveOptOut 2026-09-08-23:08 (RUFU-201 — post-sweep re-read):
@@ -2653,6 +2766,7 @@ export class Scheduler {
         another process already moved means a double dispatch, so both tick reads keep a
         guaranteed-fresh read instead of inheriting that ceiling.
         */
+        this.schedulingPhase = "post-sweep-reread";
         // FNXC:TaskLogProjections 2026-10-10-20:15 (RUFU-615): the post-sweep re-read keeps the SAME
         // read shape as the pass above, so the two comparisons see the same fields.
         tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false, derive: false, excludeLog: true });
@@ -2661,6 +2775,7 @@ export class Scheduler {
         settings = await this.store.getSettings();
         await this.emitHighOverlapFanoutWarnings(tasks);
 
+        this.schedulingPhase = "advisory-reporters";
         const staleWarningWindows = [settings.staleInProgressWarningMs, settings.staleInReviewWarningMs]
           .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
         const minWarningMs = staleWarningWindows.length > 0 ? Math.min(...staleWarningWindows) : 0;
@@ -2697,8 +2812,21 @@ export class Scheduler {
     } catch (err) {
       schedulerLog.error("Scheduling error:", err);
     } finally {
+      /*
+      FNXC:SchedulerPassPhase 2026-10-29-20:05 (RUFU-823): before this existed the pass emitted no
+      duration at all, so "is 600 s of in-flight a leak, or honest work on a 2 417-row board" was
+      unanswerable from the log. One bounded line per SLOW pass (not per tick) names the project and the
+      wall clock. SLOW_SCHEDULE_PASS_LOG_MS keeps healthy passes silent so this cannot flood.
+      */
+      const passMs = this.schedulingSince > 0 ? Date.now() - this.schedulingSince : 0;
+      this.schedulingPhase = "idle";
       this.scheduling = false;
       this.schedulingSince = 0;
+      if (passMs >= SLOW_SCHEDULE_PASS_LOG_MS) {
+        schedulerLog.log(
+          `schedule pass finished in ${Math.round(passMs / 1000)}s (project=${this.store.getRootDir()})`,
+        );
+      }
       if (this.running && this.immediateSchedulePending) {
         this.immediateSchedulePending = false;
         void this.schedule();
@@ -3332,7 +3460,8 @@ export class Scheduler {
       };
 
       const result = await runHoldReleaseSweep(this.store, {
-        now: () => Date.now(),
+        // FNXC:CapacitySlotCost 2026-10-29-12:02 (RUFU-698 Step 2): real clock in production; see `SchedulerOptions.holdReleaseClock`.
+        now: this.options.holdReleaseClock ?? (() => Date.now()),
         selectionCache,
         reserveSlot: async (task, _target, pass?: HoldReleasePass): Promise<SlotReservation | null> => {
           /*
