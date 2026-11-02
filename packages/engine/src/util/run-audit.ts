@@ -886,6 +886,23 @@ export type DatabaseMutationType =
   */
   | "task:reconcile-orphaned-non-convergence-hold"
   /*
+  FNXC:TerminalBranchConflictPark 2026-11-02-15:11 (RUFU-439):
+  `reconcile-terminal-branch-conflict-parks` owns the terminal-lane card still wearing
+  `paused=true` + `pausedReason=branch-conflict-unrecoverable` after the premise of that park died on
+  disk. The reclaim sweep that writes this park reads only the hold, WIP and review lanes, so a card
+  that carried the badge into `done` had no automated relief at all — six such cards sat frozen ~23.4
+  days naming a worktree that no longer existed anywhere in git. Fires once per card whose premise this
+  sweep RE-PROVED dead (branch ref `absent` from a tri-state probe AND no registered worktree in a
+  FULL `git worktree list --porcelain` read; a failed probe is never absence). Metadata is
+  { taskId, column, priorStatus, outcome } — ids, the lane it stayed in, the cleared status, and the
+  fixed outcome `stale-park-cleared`. Deliberately absent: the branch name, the park's error sentence,
+  the worktree path, and any task prose. `outcome` has exactly one value because a withheld card emits
+  no row here at all — the clear is the only observable this sweep produces, and the closed set must
+  not imply a delivery verdict: `stale-park-cleared` states that the BADGE's premise died, never that
+  the card's work landed (measured: zero commits carry a `Fusion-Task-Id` trailer naming any of the six).
+  */
+  | "task:reconcile-terminal-branch-conflict-park"
+  /*
   FNXC:PlanningFenceRecovery 2026-10-02-02:27 (RUFU-288):
   `reconcile-planning-fence-park` owns the planning-lane card that the durable principal fence refused
   into a terminal park. The mutation row fires once per automatic re-queue (the card goes

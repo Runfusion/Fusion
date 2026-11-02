@@ -257,6 +257,87 @@ describe("FN-9175 non-executor audit sink health", () => {
       manager.stop();
     });
 
+    /*
+    FNXC:TerminalBranchConflictPark 2026-11-02-16:40 (RUFU-439):
+    BEHAVIORAL SINK HEALTH FOR THE TERMINAL BRANCH-CONFLICT PARK SWEEP. Its repair is a lifecycle
+    outcome — a card frozen in a terminal lane on a branch conflict git can no longer reproduce must
+    have that alarm dismissed — while its audit row is telemetry, so an absent, throwing, rejecting,
+    stalled, or late-settling sink may never change the clear, the log line, or the returned count.
+    The sweep is also the FIRST automated writer allowed on a parked terminal row, so "the sink cannot
+    make it move the card" is asserted here as well (`column` stays `done`).
+    The git premise probe is stubbed to `dead` because this file pins the AUDIT dependency, not git
+    semantics: real-git premise behaviour (ref present, worktree registered, prefix-similar decoys,
+    unreadable repository) is pinned behaviorally against a real repository by
+    self-healing-terminal-branch-conflict-park.pg.test.ts. Stubbing the probe here keeps the case
+    deterministic — `settleBounded` runs on fake timers, on which a real `exec` subprocess never
+    completes — and keeps the case fast, per the no-slow-tests rule.
+    */
+    it.each(hostileModes)("clears a stale terminal branch-conflict park with a %s audit sink", async (mode) => {
+      const sink = sinkFor(mode);
+      const task: Record<string, unknown> = {
+        id: `RUFU439-SINK-${mode.toUpperCase()}`,
+        title: "stale terminal branch-conflict park",
+        description: "",
+        column: "done",
+        status: "failed",
+        error: "Task branch conflict: fusion/rufu439-sink is not safely reclaimable",
+        paused: true,
+        pausedReason: "branch-conflict-unrecoverable",
+        pausedStartedAt: "2026-01-01T00:00:00.000Z",
+        userPaused: false,
+        branch: "fusion/rufu439-sink",
+        dependencies: [],
+        steps: [],
+        updatedAt: "2026-11-01T00:00:00.000Z",
+      };
+      const store = {
+        ...sink.host,
+        listTasks: vi.fn(async (query: { column?: string }) => (query.column === "done" ? [task] : [])),
+        // Per-read copies, as in the real store: the sweep captures `fresh` and builds its audit
+        // payload from that capture, so `priorStatus` must be the PRE-clear status even though the
+        // fixture's own write nulls `status` first.
+        getTask: vi.fn(async () => ({ ...task })),
+        updateTaskAtomic: vi.fn(async (_id: string, updater: (current: Record<string, unknown>) => Record<string, unknown> | null) => {
+          const patch = await updater(task);
+          if (patch) Object.assign(task, patch);
+          return task;
+        }),
+        logEntry: vi.fn(async () => undefined),
+      };
+      const manager = new SelfHealingManager(store as never, { rootDir: "/tmp/rufu-439" });
+      (manager as unknown as { probeBranchConflictPremise: () => Promise<"dead"> }).probeBranchConflictPremise = async () => "dead";
+
+      await expect(settleBounded(sink, () => manager.reconcileTerminalBranchConflictParks())).resolves.toBe(1);
+
+      // Identical disposition in every sink mode, and it is an IN-PLACE clear.
+      expect(task.paused).toBe(false);
+      expect(task.pausedReason).toBeNull();
+      expect(task.status).toBeNull();
+      expect(task.error).toBeNull();
+      expect(task.column).toBe("done");
+      expect(store.logEntry).toHaveBeenCalledOnce();
+      if (sink.recordRunAuditEvent) {
+        expect(sink.recordRunAuditEvent).toHaveBeenCalledOnce();
+        const event = sink.recordRunAuditEvent.mock.calls[0][0] as Record<string, unknown>;
+        expect(event).toMatchObject({
+          agentId: "self-healing",
+          taskId: task.id,
+          domain: "database",
+          mutationType: "task:reconcile-terminal-branch-conflict-park",
+          target: task.id,
+        });
+        expect(String(event.runId)).toContain("reconcile-terminal-branch-conflict-parks");
+        // The documented closed set exactly — no auditor envelope, no branch name, no park sentence.
+        expect(event.metadata).toEqual({
+          taskId: task.id,
+          column: "done",
+          priorStatus: "failed",
+          outcome: "stale-park-cleared",
+        });
+      }
+      manager.stop();
+    });
+
     it.each(hostileModes)("reclaims a wedged active merge with a %s audit sink", async (mode) => {
       const sink = sinkFor(mode);
       const task = { id: "FN-WEDGE", title: "wedged", description: "", column: "in-review", status: "reviewing", paused: false, dependencies: [], steps: [], updatedAt: "2026-01-01T00:00:00.000Z" };

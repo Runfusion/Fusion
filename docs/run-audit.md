@@ -97,6 +97,7 @@ Reconciliation-scoped auto-recover/reclaim events the self-healing sweep surface
 | `task:reconcile-unproven-review-approval` | Self-healing rewrites singular content-review approvals without input proof to recoverable `failed` results. |
 | `task:reconcile-stale-duplicate-decision` | Self-healing clears a recurring duplicate-decision pause with no canonical target. |
 | `task:reconcile-orphaned-non-convergence-hold` | Self-healing clears a drifted stage-one approval hold (`code-review-non-convergence` or `plan-review-replan-cap`) whose gate evidence no longer exists, in place and without a lifecycle move. |
+| `task:reconcile-terminal-branch-conflict-park` | Self-healing clears a stale `branch-conflict-unrecoverable` park on a card that is already in a terminal lane, after re-proving from full git output that its premise is dead (branch ref absent and no registered worktree). Metadata is `{ taskId, column, priorStatus, outcome }` with the single fixed outcome `stale-park-cleared`; the branch name, the park's error sentence, the worktree path and any task prose never enter run-audit, and the row claims nothing about delivery. The clear is in place and never moves a column. |
 | `task:reconcile-stale-agent-assignment` | Self-healing clears stale durable Agent.taskId/state drift while preserving file-scope leases. |
 | `task:reconcile-engine-downtime-active-timing` | Self-healing shifts active-task anchors to exclude proven stopped-engine wall-clock. |
 | `task:reconcile-engine-downtime-active-timing-no-action` | Self-healing finds no active task qualifies for downtime-timing reconciliation (no-action). |
@@ -213,6 +214,38 @@ A `git worktree add` whose target sits **inside** another registered worktree is
 `worktree:post-landing-nested-registration` is the only row that can show a **landed** card still leaking registrations, which is the failure mode a forced parent removal creates: deleting the parent tree recursively removes the child's directory without deregistering it. Metadata is `{ foundCount, removedCount, residuePrunedCount, residueRemainingCount, failedCount, deferredCount, deferredReason?, outcome: "cleared" | "partial" | "deferred" }`, where `residuePrunedCount` counts records whose directory vanished with the parent and prune then cleared, and `residueRemainingCount` is what the re-read still finds. Outcome precedence is failure → deferral → residue: a deferred child is also still registered, so testing residue first would make `deferred` unreachable and would label a deliberate safety decision as a partial cleanup. Nested cleanup never changes the merge outcome — a non-`cleared` row means an actionable leak, not a failed landing. Workspace lanes report per-member tallies combined into one row **before** task-directory retirement branches, because one preserved sibling repository stops retirement while a sibling that *was* removed can still have leaked. Paths, branch names, verdicts, and error text never enter metadata.
 
 What these rows are **not** is a capacity signal: reaping a phantom registration frees no `maxWorktrees` unit, because worktree capacity derives from persisted task rows and the in-memory holder registry, neither of which consults the registration inventory (see [`docs/architecture.md`](architecture.md) → "Worktree and naming helpers"). Shape is pinned by `packages/engine/src/__tests__/worktree-nested-registrations.test.ts`, the sweep halves in `packages/engine/src/__tests__/self-healing-tempdir-sweep.test.ts` and its `.real-git.test.ts` sibling, and the landing leg in `packages/engine/src/__tests__/post-landing-worktree-cleanup.test.ts`.
+
+### The branch-conflict park a card carried into `done` (RUFU-439)
+
+`task:reconcile-terminal-branch-conflict-park` is written once per terminal-lane card whose
+`branch-conflict-unrecoverable` park this pass re-proved dead. The event exists because the relief was
+structurally unreachable rather than merely slow: `reclaimSelfOwnedBranchConflicts` — the only sweep that
+owns this park — builds its candidates from the `hold`, `countsTowardWip`, and review lanes and never
+reads a `complete`-role column, so a card that reached the terminal lane while wearing the badge had no
+automated claimant at all. Six cards sat in `done` for ~23.4 days on an error naming a worktree that
+existing nowhere in git; the upstream attribution defect that created false parks was separately fixed
+(`cae9a8c398`), and a fix to a decision clears nothing that the decision already parked.
+
+The clear is **in place and only in place**. The sweep writes `{ status, error, paused, pausedReason }`
+plus pause accounting and never writes `column`, so lifecycle containment holds: `done` stays terminal and
+the deliverable is the badge's disposition, not a relocation back into execution. What makes the write
+safe is that it is earned per card, at execution time, from evidence a sweep may not assume: the branch
+ref must probe `absent` through the tri-state `show-ref`-based probe, AND a full
+`git worktree list --porcelain` read must find no registration for it. A probe that FAILS is `unknown`,
+never absence — every pre-existing worktree-list helper in the engine swallows its error and returns an
+empty inventory, so none of them can serve as absence proof, and this sweep reads the inventory itself for
+exactly that reason. A card whose premise is still live, a card parked by an operator
+(`userPaused`), a card wearing any other `pausedReason`, and a card in a non-terminal lane are all left
+byte-identical and emit no row.
+
+Metadata is `{ taskId, column, priorStatus, outcome }` with the single fixed outcome
+`stale-park-cleared`, emitted through the FN-9175 bounded seam so a slow or hostile sink can neither
+change the clear nor delay the pass. The branch name, the park's error sentence, and the worktree path are
+deliberately absent, and `stale-park-cleared` is worded to claim only that the badge's premise died: it is
+never a delivery verdict. That distinction is measured, not theoretical — of the six cards, zero had any
+commit whose `Fusion-Task-Id` trailer named them (the only commits mentioning two of the ids carried other
+ids' trailers), so no closure on these cards could have rested on a delivery claim even though a grep for
+the id strings would have looked productive.
 
 ## Durable-agent error-state
 

@@ -653,6 +653,16 @@ every done card each pass.
 */
 const DONE_METADATA_REPAIR_CAP = 25;
 const DONE_TASK_INTEGRITY_SWEEP_LIMIT = 50;
+/*
+FNXC:TerminalBranchConflictPark 2026-11-02-15:11 (RUFU-439):
+Named locally rather than imported: core declares this reason in
+`packages/core/src/tasks/manual-retry-reset.ts` but does not re-export the constant through the package
+index, and every existing engine consumer (the park write sites, `error-classifier`,
+`auto-recovery`, `task-wedge-notification`) matches the literal. This sweep compares the value TWICE
+per card — the page pre-filter and the fenced write predicate — and a typo in either half fails
+silently as "nothing to clear", so the comparison gets one named source instead of two literals.
+*/
+const BRANCH_CONFLICT_UNRECOVERABLE_REASON = "branch-conflict-unrecoverable";
 /**
  * FNXC:GitWorktreeChurnCadenceCoarsen 2026-08-13-04:05 (RUFU-076):
  * Batch-1 git-churn steps (prune-worktrees, cleanup-orphans, cleanup-stale-temp-merge-worktrees,
@@ -2649,6 +2659,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       */
       { name: "reconcile-orphaned-non-convergence-holds", fn: () => this.reconcileOrphanedNonConvergenceHolds().then(() => undefined) },
       /*
+      FNXC:TerminalBranchConflictPark 2026-11-02-15:11 (RUFU-439):
+      STEADY-STATE AND BOOT OWNER FOR PARKED TERMINAL ROWS. Terminal lanes are deliberately excluded
+      from `reclaimSelfOwnedBranchConflicts` (its buckets are `hold` / `countsTowardWip` /
+      `REVIEW_ROLES`), so before this entry NOTHING could read a card that carried a branch-conflict
+      park into `done` — six did, for ~23.4 days, onto a premise git no longer agrees exists. Two
+      contracts travel with this registration: this sweep is the ONLY automated writer permitted to
+      touch those parked terminal rows, and lifecycle containment forbids it from moving one — the
+      clear is in place, `done` stays terminal, and no lane behind this list can re-admit the card to
+      execution. No ordering dependency on the sweeps above or below: it reads git and the pause shape
+      only, writes no `column`, no step result, and no continuation row. Pause semantics are inherited
+      from this list (the startup pass and the maintenance timer are both gated on
+      `globalPause || enginePaused`), which is why the body carries no pause gate of its own.
+      */
+      { name: "reconcile-terminal-branch-conflict-parks", fn: () => this.reconcileTerminalBranchConflictParks().then(() => undefined) },
+      /*
       FNXC:ReviewRevisionWait 2026-09-29-14:12 (RUFU-280):
       Un-freezes a card a pre-fix build parked while its reviewer was waiting for corrections. Runs
       immediately after the drifted-hold sweep (the two clears are adjacent in meaning: a hold or a park
@@ -3942,6 +3967,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // FNXC:ApprovalHoldMoveClear 2026-09-25-11:12 (RUFU-297 defect B): steady-state twin of the
           // startup registration above; same load-bearing ordering after the orphaned-pending sweep.
           { name: "reconcile-orphaned-non-convergence-holds", fn: () => this.reconcileOrphanedNonConvergenceHolds() },
+          /*
+          FNXC:TerminalBranchConflictPark 2026-11-02-15:11 (RUFU-439):
+          Steady-state twin of the startup registration above. A park can be created and its premise can
+          die entirely between restarts (the branch and its worktree are usually removed by the very
+          reclaim/landing path that parked the card), so the boot pass alone would leave the badge on
+          until the next deploy. Same two contracts as the startup entry: this is the only automated
+          writer allowed on a parked terminal row, and it clears in place — never a `column` write, never
+          a review handoff, so `done` cannot leak back into the execution lanes. Reads git plus the pause
+          shape only; no ordering dependency inside this batch.
+          */
+          { name: "reconcile-terminal-branch-conflict-parks", fn: () => this.reconcileTerminalBranchConflictParks() },
           // FNXC:ReviewRevisionWait 2026-09-29-14:12 (RUFU-280): steady-state twin of the startup
           // registration above — a card can be parked by the pre-fix classifier without a restart, and
           // the same ordering applies (frees the card before the revival lanes classify it).
@@ -10259,6 +10295,242 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     } catch (error) {
       log.error(`reconcileOrphanedNonConvergenceHolds failed: ${error instanceof Error ? error.message : String(error)}`);
       return 0;
+    }
+  }
+
+  /*
+  FNXC:TerminalBranchConflictPark 2026-11-02-15:11 (RUFU-439):
+  CLEAR A BRANCH-CONFLICT PARK WHOSE PREMISE DIED WHILE THE CARD SAT TERMINAL.
+
+  THE GAP WAS STRUCTURAL, NOT SLOW. `reclaimSelfOwnedBranchConflicts` is the only automated owner of
+  `pausedReason=branch-conflict-unrecoverable`, and it builds its candidate buckets from `hold`,
+  `countsTowardWip` and `REVIEW_ROLES` — it never reads a `complete`-role column. A card that carried
+  this badge into the terminal lane therefore had NO automated claimant: not on boot, not on any
+  maintenance pass, forever. Six cards sat in `done` for ~23.4 days wearing an error that named a
+  worktree which existed nowhere in git. The upstream cause (attribution counted
+  `git log base..branch` while the reclaim decision counted the `git cherry` unique set, so one own
+  merge commit made the two disagree and the branch refused `foreign-unmerged` permanently) was fixed
+  by `cae9a8c398` — but a fix to a DECISION clears nothing that the decision already parked, and 66
+  minutes after it landed all six parks were still byte-frozen.
+
+  WHY THE PROOF GATE IS THE ENTIRE SWEEP. This is an automated writer that mutates live rows on boot,
+  so the predicate must be re-derivable from git at execution time and must never be inferred from
+  stored prose or from a spec's date-stamped measurement. Two independent facts must BOTH hold before
+  a write: the branch ref probes `absent` through the tri-state `show-ref`-based `probeRepoBranch`,
+  AND no registered worktree claims the branch in a FULL `git worktree list --porcelain` read. `unknown`
+  is never absence: every pre-existing worktree-list helper in this package
+  (`findWorktreePathForBranch`, `describeRegisteredWorktrees`) catches its own error and returns an
+  EMPTY inventory, so a failed read would otherwise read as a dead premise — which is why
+  `probeBranchWorktreeRegistration` below reads the inventory itself and reports `unknown` on failure.
+  The same rule covers the RUFU-804 class (an unvalidated or non-git `rootDir`): the ref probe answers
+  `unknown` for a non-repository and the inventory read fails, so the card is held, never cleared.
+
+  LIFECYCLE CONTAINMENT. `done` is terminal and this sweep never disputes that: it writes
+  `{ status, error, paused, pausedReason }` plus pause accounting and NEVER writes `column`, never
+  calls `handoffTaskToReview`, and never re-enqueues. The deliverable is the badge's honest
+  disposition, not a relocation into execution. Prevention of NEW parks stays with `cae9a8c398`, and
+  re-validation of an ACQUISITION-time conflict stays with the acquisition path (a live `todo`/`queued`
+  card never re-enters this lane's shape); this sweep is the only automated writer permitted to touch a
+  parked terminal row, and it is also the only one that reads one.
+
+  NO DELIVERY CLAIM. The disposition is `stale-park-cleared`: the BADGE's premise died. Whether the
+  card's work landed is not measured here and must not be implied — measured at filing, zero of the six
+  had any commit whose `Fusion-Task-Id` trailer named them (two of them were mentioned only in commits
+  carrying another id's trailer), so a grep-count "proof of landing" would have been pure fiction. A
+  card whose premise is still live is left byte-identical and emits no row at all, which is why
+  `outcome` needs exactly one value.
+
+  Candidate shape: terminal lane + `paused === true` + this exact `pausedReason` + `userPaused !== true`
+  (an operator park is authoritative, and the six measured `userPaused=null` — the guard exists for the
+  next card, not this batch). Workspace cards HOLD: their branch can be registered in a member
+  repository, which neither probe at `options.rootDir` can see, so their premise is unprovable here
+  rather than dead. Idempotent by construction — a cleared row no longer matches the pre-filter.
+  Metadata: { taskId, column, priorStatus, outcome } — ids, the lane it stayed in, the cleared status,
+  and one fixed outcome; never a branch name, the park's error sentence, a path, or task prose.
+  */
+  async reconcileTerminalBranchConflictParks(): Promise<number> {
+    try {
+      /*
+      The lane comes from the role vocabulary, never a literal `"done"`: on a renamed or custom board a
+      hardcoded id would either match nothing (the badge stays) or match the wrong lane (a live card gets
+      probed by the wrong owner). An unreadable vocabulary holds every candidate, which is the same
+      fail-closed decision `reclaimSelfOwnedBranchConflicts` makes when its three lane reads come back empty.
+      */
+      const terminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+      if (terminalColumns.size === 0) {
+        log.debug("reconcileTerminalBranchConflictParks: no complete-role column resolved — holding every candidate");
+        return 0;
+      }
+
+      /*
+      DISCOVERY AND MUTATION ARE SEPARATE PHASES. The template this sweep clones (`reconcileOrphaned-
+      nonConvergenceHolds`) pages with offset while mutating inside the page loop, which is safe for it
+      only because a clear is rare. Here the first pass after this ships clears every candidate in the
+      lane at once, and `updateTask` bumps `updatedAt` unconditionally — the very column a paged read
+      commonly orders by — so a write mid-paging would shift the window and silently skip rows. Phase 1
+      therefore only collects ids; no row is touched until every page has been read.
+      */
+      const pageSize = 500;
+      const candidateIds: string[] = [];
+      const seen = new Set<string>();
+      for (const column of terminalColumns) {
+        let offset = 0;
+        for (;;) {
+          const page = await this.store.listTasks({ column, slim: true, excludeLog: true, limit: pageSize, offset });
+          for (const task of page) {
+            if (seen.has(task.id)) continue;
+            seen.add(task.id);
+            // Page-cheap pre-filter of the badge shape; candidacy is re-derived from a fresh read.
+            if (task.paused !== true) continue;
+            // A different pausedReason has a different owner; this sweep reaches through nothing.
+            if (task.pausedReason !== BRANCH_CONFLICT_UNRECOVERABLE_REASON) continue;
+            if (task.userPaused === true) continue;
+            candidateIds.push(task.id);
+          }
+          if (page.length < pageSize) break;
+          offset += page.length;
+        }
+      }
+      if (candidateIds.length === 0) return 0;
+
+      let cleared = 0;
+      for (const candidateId of candidateIds) {
+        /*
+        Re-read under the fresh row before deciding: the page is a snapshot, and a card that moved out of
+        the terminal lane in between is `reclaimSelfOwnedBranchConflicts`' case again, not this one.
+        */
+        const fresh = await this.store.getTask(candidateId);
+        if (!fresh || fresh.userPaused === true) continue;
+        if (fresh.paused !== true || fresh.pausedReason !== BRANCH_CONFLICT_UNRECOVERABLE_REASON) continue;
+        if (!terminalColumns.has(fresh.column)) continue;
+        /*
+        A workspace card's branch lives in a member repository, and both probes below read
+        `options.rootDir` only — so `absent` at the root would be an ABSENCE OF LOOKING, not absence of
+        the branch. Hold, and leave the card to the workspace lanes that can address the member repo.
+        */
+        if (isWorkspaceTask(fresh)) continue;
+
+        // The park sentence names `fusion/<id>`, so the row id is a sufficient fallback for a cleared
+        // `branch` field; the measured six all carry one, the fallback exists for a drifted row.
+        const branchName = fresh.branch || `fusion/${fresh.id.toLowerCase()}`;
+        const premise = await this.probeBranchConflictPremise(branchName);
+        if (premise !== "dead") {
+          // `live` = the badge is honest and stays; `unknown` = git could not be consulted, and an
+          // unconsultable git is not evidence of absence. Neither writes, neither emits.
+          if (premise === "unknown") {
+            log.warn(`reconcileTerminalBranchConflictParks: holding ${fresh.id} — branch-conflict premise could not be proven either way`);
+          }
+          continue;
+        }
+
+        const nowIso = new Date().toISOString();
+        let clearedApplied = false;
+        /*
+        Fenced clear, same shape the reclaim sweep uses for its own park write: the mutation re-derives
+        the whole candidate signature from the LIVE row, so a card that was un-paused, re-parked under a
+        different reason, operator-held, or moved out of the terminal lane between the probe and this
+        transaction keeps its state. `isWipLane` is the deliberate literal `false` the RUFU-297 template
+        uses — this is an un-pause, and `applyPauseAccounting` reads that argument only on a pause.
+        */
+        await this.store.updateTaskAtomic(fresh.id, (live) => {
+          const stillOwnsPark = live.paused === true
+            && live.pausedReason === BRANCH_CONFLICT_UNRECOVERABLE_REASON
+            && live.userPaused !== true;
+          if (!stillOwnsPark) return null;
+          clearedApplied = true;
+          return {
+            status: null,
+            error: null,
+            paused: false,
+            pausedReason: null,
+            ...computePauseAccountingPatch(live, false, nowIso, false),
+          };
+        }).catch((error: unknown) => {
+          log.warn(`reconcileTerminalBranchConflictParks: clear failed for ${fresh.id}: ${error instanceof Error ? error.message : String(error)}`);
+          clearedApplied = false;
+        });
+        if (!clearedApplied) continue;
+
+        cleared += 1;
+        await this.store.logEntry(
+          fresh.id,
+          "Cleared a stale branch-conflict park: neither the task branch nor a registered worktree for it exists in the repository any more, so the conflict this card was frozen on can no longer occur. The card stays in its terminal column; this records the dismissal of the alarm, not a claim that its work landed.",
+        );
+        /*
+        FN-9175 named seam, not `createRunAuditor`: the auditor no-ops SILENTLY without a run context
+        (a dropped context would erase this repair with no signal) and injects `phase`/`source`/
+        `taskLineageId` INTO the metadata jsonb, which would make the stored row carry keys this event's
+        documented closed set does not declare.
+        */
+        await emitBoundedRunAudit(this.store, {
+          agentId: "self-healing",
+          runId: generateSyntheticRunId("reconcile-terminal-branch-conflict-parks", fresh.id),
+          taskId: fresh.id,
+          domain: "database",
+          mutationType: "task:reconcile-terminal-branch-conflict-park" as DatabaseMutationType,
+          target: fresh.id,
+          // ids / the lane / the cleared status / one fixed outcome — never the branch name or the park sentence.
+          metadata: {
+            taskId: fresh.id,
+            column: fresh.column,
+            priorStatus: fresh.status ?? null,
+            outcome: "stale-park-cleared",
+          },
+        }, { log });
+      }
+      if (cleared > 0) log.log(`Cleared stale branch-conflict parks on ${cleared} terminal task(s)`);
+      return cleared;
+    } catch (error) {
+      log.error(`reconcileTerminalBranchConflictParks failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
+  /**
+   * FNXC:TerminalBranchConflictPark 2026-11-02-15:11 (RUFU-439):
+   * Is the premise of a `branch-conflict-unrecoverable` park still alive? Tri-state on purpose: the
+   * caller may clear on `dead` ONLY. `present` (the branch ref exists) or a registered worktree is
+   * `live`; any probe that could not be consulted is `unknown`, and the two are never merged, because
+   * conflating "git refused to answer" with "git answered no" is exactly how an unreadable repository
+   * would become an automated excuse to erase an operator-visible alarm.
+   */
+  private async probeBranchConflictPremise(branchName: string): Promise<"dead" | "live" | "unknown"> {
+    const refState = await this.probeRepoBranch(this.options.rootDir, branchName);
+    if (refState === "present") return "live";
+    if (refState !== "absent") return "unknown";
+    const worktreeState = await this.probeBranchWorktreeRegistration(branchName);
+    if (worktreeState === "registered") return "live";
+    if (worktreeState === "unknown") return "unknown";
+    return "dead";
+  }
+
+  /**
+   * FNXC:TerminalBranchConflictPark 2026-11-02-15:11 (RUFU-439):
+   * OWN worktree-registration probe, deliberately not a reuse of the two that exist.
+   * `findWorktreePathForBranch` and `describeRegisteredWorktrees` both catch their own failure and
+   * return an EMPTY result, which is a fine default for a caller that only wants a path and a fatal
+   * one for a caller whose conclusion is absence: a git that could not be read would silently look
+   * like a branch nobody has checked out. This probe parses the FULL `--porcelain` output (a truncated
+   * read is not absence evidence — the motivating measurement was invalidated by a `| head -30` over a
+   * 66-line listing), takes no argument so there is no interpolation surface, reports a match from any
+   * `branch refs/heads/` line in the whole inventory, and returns `unknown` on failure. `branch`
+   * matching is exact, never prefix: `fusion/rufu-4` must not be satisfied by `fusion/rufu-42`.
+   */
+  private async probeBranchWorktreeRegistration(branchName: string): Promise<"registered" | "absent" | "unknown"> {
+    try {
+      const { stdout } = await execAsync("git worktree list --porcelain", {
+        cwd: this.options.rootDir,
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const wanted = `branch refs/heads/${branchName}`;
+      for (const rawLine of stdout.split("\n")) {
+        if (rawLine.trim() === wanted) return "registered";
+      }
+      return "absent";
+    } catch (error: unknown) {
+      log.warn(`reconcileTerminalBranchConflictParks: worktree inventory unreadable (${error instanceof Error ? error.message : String(error)})`);
+      return "unknown";
     }
   }
 
