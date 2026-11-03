@@ -7098,6 +7098,7 @@ export default interface Resources {
         "searchProvider": "Search Provider",
         "searchesAndFetchesUseTheAgentsNativeWebSearch": " Searches and fetches use the agent's native WebSearch/WebFetch tools. No API key required. Default: builtin. ",
         "tavily": "Tavily",
+        "keenable": "Keenable (free, no key)",
         "webSearch": " Web Search "
       },
       "researchProject": {

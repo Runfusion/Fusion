@@ -13,6 +13,13 @@ export interface WebSearchProviderOptions {
   googleApiKey?: string;
   googleCx?: string;
   tavilyApiKey?: string;
+  /**
+   * FNXC:ResearchWebSearch 2026-11-03-23:30:
+   * Optional Keenable API key. When omitted (or whitespace-only), Keenable's free
+   * keyless public endpoint (/v1/search/public) is used so the backend works out
+   * of the box; a key switches to the keyed /v1/search endpoint with higher limits.
+   */
+  keenableApiKey?: string;
   maxResults?: number;
   timeoutMs?: number;
   userAgent?: string;
@@ -39,6 +46,7 @@ export class WebSearchProvider implements ResearchProvider {
     if (backend === "brave") return Boolean(this.options.braveApiKey);
     if (backend === "google") return Boolean(this.options.googleApiKey && this.options.googleCx);
     if (backend === "tavily") return Boolean(this.options.tavilyApiKey);
+    if (backend === "keenable") return true;
     return false;
   }
 
@@ -57,6 +65,7 @@ export class WebSearchProvider implements ResearchProvider {
       if (backend === "brave") return this.searchBrave(query, maxResults, requestSignal);
       if (backend === "google") return this.searchGoogle(query, maxResults, requestSignal);
       if (backend === "tavily") return this.searchTavily(query, maxResults, requestSignal);
+      if (backend === "keenable") return this.searchKeenable(query, maxResults, requestSignal);
       return [];
     }, requestSignal, backend);
 
@@ -250,6 +259,36 @@ export class WebSearchProvider implements ResearchProvider {
       title: item.title ?? item.url,
       snippet: item.content ?? "",
     }));
+  }
+
+  private async searchKeenable(query: string, maxResults: number, signal: AbortSignal) {
+    const apiKey = this.options.keenableApiKey?.trim();
+    const response = await this.requestJson<{
+      results?: Array<{ url: string; title?: string; description?: string; snippet?: string }>;
+    }>(
+      apiKey ? "https://api.keenable.ai/v1/search" : "https://api.keenable.ai/v1/search/public",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": this.options.userAgent ?? "FusionResearchBot/1.0",
+          "X-Keenable-Title": "Fusion",
+          ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        },
+        body: JSON.stringify({ query, max_results: Math.min(Math.max(1, maxResults), 50) }),
+        signal,
+      },
+      "keenable",
+    );
+
+    return (response.results ?? []).filter((item) => item.url).slice(0, maxResults).map((item) => {
+      const snippet = item.snippet ?? "";
+      return {
+        url: item.url,
+        title: item.title ?? item.url,
+        snippet: item.description || (snippet.length > 1000 ? `${snippet.slice(0, 1000)}…` : snippet),
+      };
+    });
   }
 
   private async withHttpRetry<T>(
