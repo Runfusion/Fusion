@@ -1525,7 +1525,25 @@ export {
 export type { TaskExternalBlock, TaskExternalBlockOrigin, TaskExternalBlockReport } from "./tasks/task-external-block.js";
 export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEW_CAPABILITY_DECLINE_CODE, REVIEW_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, formatReviewCapabilityDeclineReason, describeLaneCapabilityDecline, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
 export type { LaneCapabilityDeclineDescriptor } from "./tasks/lane-capability-decline.js";
-export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
+export { emitBoundedRunAudit, submitRunAuditToSinkWriter } from "./run-audit/emit-bounded-run-audit.js";
+export type { RunAuditBufferedSubmitResult } from "./run-audit/emit-bounded-run-audit.js";
+export {
+  createRunAuditSinkWriter,
+  RUN_AUDIT_SINK_BATCH_MAX,
+  RUN_AUDIT_SINK_FLUSH_WINDOW_MS,
+  RUN_AUDIT_SINK_QUEUE_MAX,
+  RUN_AUDIT_SINK_WRITE_BOUND_MS,
+} from "./run-audit/audit-sink-writer.js";
+export type { RunAuditSinkRow, RunAuditSinkStats, RunAuditSinkWriter } from "./run-audit/audit-sink-writer.js";
+export {
+  createRunAuditDeadLetterSink,
+  readRunAuditDeadLetter,
+  replayRunAuditDeadLetter,
+  runAuditDeadLetterPath,
+  RUN_AUDIT_DEAD_LETTER_FILENAME,
+  RUN_AUDIT_DEAD_LETTER_MAX_BYTES,
+} from "./run-audit/run-audit-dead-letter.js";
+export type { RunAuditDeadLetterRow, RunAuditDeadLetterReadResult, RunAuditDeadLetterReplayResult } from "./run-audit/run-audit-dead-letter.js";
 /*
 FNXC:BuildProvenance 2026-11-01-03:18 (RUFU-359):
 `collectBuildProvenance` is exported alongside `reportBuildProvenance` on purpose: today only the two

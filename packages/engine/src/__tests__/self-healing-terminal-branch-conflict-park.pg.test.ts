@@ -135,6 +135,13 @@ pgTest("self-healing reconcileTerminalBranchConflictParks (PostgreSQL + real git
   }
 
   async function auditRows(taskId: string): Promise<Array<Record<string, unknown>>> {
+    /*
+    FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+    A best-effort audit emit is accepted before it is durable, so a finished sweep no longer implies a
+    readable row. The drain's own bounded hand-off is what makes "what did this sweep record?" answerable
+    again; every assertion below is about the recorded payload, not about when it landed.
+    */
+    await h.store().flushRunAuditSink();
     const rows = await h.adminSql()`SELECT metadata FROM project.run_audit_events WHERE task_id = ${taskId} AND mutation_type = ${PARK_EVENT}`;
     return rows.map((row: { metadata: unknown }) =>
       (typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata) as Record<string, unknown>);

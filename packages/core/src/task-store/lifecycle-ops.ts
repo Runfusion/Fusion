@@ -1,4 +1,4 @@
-import { emitBoundedRunAudit, type RunAuditLogger } from "../run-audit/emit-bounded-run-audit.js";
+import { emitBoundedRunAudit, emitBoundedRunAuditWithOutcome, type RunAuditLogger } from "../run-audit/emit-bounded-run-audit.js";
 /* FNXC:RunAudit 2026-08-20-05:49: FN-9177 bounds optional audit telemetry so a hostile sink cannot alter this lifecycle path. */
 /**
  * lifecycle-ops operations.
@@ -195,7 +195,18 @@ export async function initImpl(store: TaskStore, options?: { skipArchiveReintegr
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    await emitBoundedRunAudit(store, {
+    /*
+    FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+    The awaited variant, deliberately: queueing and awaiting are contradictory requests, and this row is
+    awaited precisely because it must already be durable when `init()` resolves — a one-shot CLI exits
+    otherwise, and one-shot processes are the population the row exists to attribute. Handing it to the
+    drain writer would have moved the row from "written" to "queued" at the exact moment the process is
+    most likely to disappear, which is the opposite of what RUFU-344 bought. The seam's fire-and-forget
+    routing is therefore for emitters that do NOT await their write; this site keeps the direct bounded
+    write, and `excluded-awaited-run-audit-store-sites.test.ts` pins that it still reaches
+    `recordRunAuditEvent` and still delays `init()` by at most the shipped window.
+    */
+    await emitBoundedRunAuditWithOutcome(store, {
       agentId: "store",
       runId: `store-open-${process.pid}-${Date.now()}`,
       domain: "database",

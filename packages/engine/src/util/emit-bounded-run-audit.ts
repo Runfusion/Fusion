@@ -1,10 +1,20 @@
 import type { RunAuditDomain, RunAuditEventInput } from "@fusion/core";
+/*
+FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+One hand-off implementation, not two. The engine and core seams stay mirrored where mirroring is the
+point (logger resolution, mock shape), but the queue is a single writer under the store — so the engine
+asks core's seam whether that writer took the row rather than re-deriving the same accept/throw rules.
+*/
+import { submitRunAuditToSinkWriter } from "@fusion/core";
 import * as logger from "../logger.js";
 
 export const RUN_AUDIT_EMIT_TIMEOUT_MS = 2_000;
 
 export type RunAuditSinkHost = {
   recordRunAuditEvent?: (input: RunAuditEventInput) => unknown;
+  /** Present on a store whose durable backend has a drain writer; absent on doubles and kill-switched hosts. */
+  recordRunAuditEventBuffered?: (input: RunAuditEventInput) => { accepted: boolean; queued: boolean; spilled: boolean; queueDepth: number };
+  getRunAuditSinkStats?: () => { queueDepth?: number; batches?: number } | null;
 } | null | undefined;
 
 export type RunAuditLogger = {
@@ -52,7 +62,57 @@ export function emitBoundedRunAudit(
   event: RunAuditEvent,
   options: { timeoutMs?: number; log?: RunAuditLogger } = {},
 ): Promise<void> {
+  /*
+  FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+  "No queue here" still means no queue HERE. 1332 timed-out writes in one 20 MB log came from this seam's
+  2 s bound losing to a runtime pool of 3, so the fire-and-forget lane hands its row to the drain writer
+  below the sink boundary and returns. Everything the seam promises is unchanged — never blocking, never
+  throwing, no retry of its own — and `emitBoundedRunAuditWithOutcome` deliberately stays on the direct
+  write because its callers branch on whether the row landed.
+  */
+  if (handOffToSinkWriter(host, event, options.log ?? resolveDefaultRunAuditLog())) {
+    return Promise.resolve();
+  }
   return emitBoundedRunAuditWithOutcome(host, event, options).then(() => undefined);
+}
+
+/*
+FNXC:RunAuditSink 2026-11-03-05:55 (RUFU-453):
+The seam promises it never throws, and a hand-off that is merely UNRESOLVABLE must not break that promise. The
+`engine-core` merge-gate project resolves `@fusion/core` to the narrower gate barrel (`index.gate.ts`), where a symbol
+can be absent even though it exists in the full barrel — the import then binds `undefined`, a synchronous call to it
+throws, and every best-effort caller that swallows audit errors loses its row with no error naming the cause (measured:
+55 silent audit failures in one gate file). So the hand-off is checked and contained here, and a missing helper means
+exactly one thing: write the row directly, as the seam did before the drain existed.
+*/
+function handOffToSinkWriter(
+  host: RunAuditSinkHost,
+  event: RunAuditEvent,
+  log: RunAuditLogger,
+): boolean {
+  try {
+    return typeof submitRunAuditToSinkWriter === "function"
+      && submitRunAuditToSinkWriter(host, event, log) === "accepted";
+  } catch {
+    return false;
+  }
+}
+
+/*
+FNXC:EngineDiagnostics 2026-08-23-18:45 (shape unchanged, now shared by both lanes):
+Resolve the shipped run-audit logger lazily through the module namespace: focused subsystem tests
+routinely `vi.mock("../logger.js")` with only their own exports, which leaves `runAuditLog` absent.
+In production the export always exists, so the last-resort branch is unreachable there — it must
+therefore be a silent no-op, NOT bare `console.warn`. Writing severity-marked output outside
+`logger.ts` is exactly the reversion `log-severity-spam-contract` blocks, and adding a console
+fallback to satisfy an incomplete test mock would put mock-shaped code in the ship path.
+*/
+function resolveDefaultRunAuditLog(): RunAuditLogger {
+  try {
+    return logger.runAuditLog ?? { warn: () => undefined };
+  } catch {
+    return { warn: () => undefined };
+  }
 }
 
 /**
@@ -70,22 +130,7 @@ export async function emitBoundedRunAuditWithOutcome(
   event: RunAuditEvent,
   options: { timeoutMs?: number; log?: RunAuditLogger } = {},
 ): Promise<BoundedRunAuditResult> {
-  /*
-  FNXC:EngineDiagnostics 2026-08-23-18:45:
-  Resolve the shipped run-audit logger lazily through the module namespace: focused subsystem tests
-  routinely `vi.mock("../logger.js")` with only their own exports, which leaves `runAuditLog`
-  absent. In production the export always exists, so the last-resort branch is unreachable there —
-  it must therefore be a silent no-op, NOT bare `console.warn`. Writing severity-marked output
-  outside `logger.ts` is exactly the reversion `log-severity-spam-contract` blocks, and adding a
-  console fallback to satisfy an incomplete test mock would put mock-shaped code in the ship path.
-  */
-  let defaultLog: RunAuditLogger | undefined;
-  try {
-    defaultLog = logger.runAuditLog;
-  } catch {
-    defaultLog = undefined;
-  }
-  const log = options.log ?? defaultLog ?? { warn: () => undefined };
+  const log = options.log ?? resolveDefaultRunAuditLog();
   const sink = host?.recordRunAuditEvent;
   if (typeof sink !== "function") return { outcome: "absent" };
 
@@ -101,7 +146,24 @@ export async function emitBoundedRunAuditWithOutcome(
   void sinkPromise.catch(() => undefined);
   return await new Promise<BoundedRunAuditResult>((resolve) => {
     const timer = setTimeout(() => {
-      log.warn(`[run-audit] timed out recording ${event.mutationType}`);
+      /*
+      FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+      Only an AWAITED lane reports a timeout any more, and the line now names what the row was standing
+      behind. It may still land — which is what the sink's `lateRecorded` counter counts — so the line
+      says that too, instead of being misread as "this emitter never ran": the mistake that cost
+      RUFU-451 its proof row.
+      */
+      const depth = (() => {
+        try {
+          return host?.getRunAuditSinkStats?.()?.queueDepth;
+        } catch {
+          return undefined;
+        }
+      })();
+      log.warn(
+        `[run-audit] timed out recording ${event.mutationType}`
+        + (typeof depth === "number" ? ` (sink queued=${depth}; the write itself may still land)` : ""),
+      );
       resolve({ outcome: "timed-out" });
     }, options.timeoutMs ?? RUN_AUDIT_EMIT_TIMEOUT_MS);
     timer.unref?.();

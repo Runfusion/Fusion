@@ -105,6 +105,12 @@ pgDescribe("live rebound E2E: where a recovered card goes back to", () => {
 
       await new SelfHealingManager(h.store(), {} as never).reconcileUndeclaredTaskColumns();
 
+      /*
+      FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+      A best-effort audit emit is accepted before it is durable, so a finished sweep no longer implies a
+      readable row. This is the drain's bounded hand-off, so the assertion stays about what was recorded.
+      */
+      await h.store().flushRunAuditSink();
       const audit = await h.store().getRunAuditEventsAsync({ taskId: "FN-RB-2" });
       const repair = audit.find((e) => e.mutationType === "task:reconcile-undeclared-column");
       const metadata = (typeof repair?.metadata === "string" ? JSON.parse(repair.metadata) : repair?.metadata) as

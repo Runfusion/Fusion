@@ -99,6 +99,13 @@ pgTest("self-healing reconcileOrphanedNonConvergenceHolds (PostgreSQL, RUFU-297)
   }
 
   async function auditRows(taskId: string): Promise<Array<Record<string, unknown>>> {
+    /*
+    FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+    A best-effort audit emit is now accepted before it is durable, so "the sweep finished" no longer means
+    "its row is in the table". Flushing here is the drain's own bounded hand-off: the assertion below is
+    about what the sweep recorded, and this line is what makes that question answerable at all.
+    */
+    await h.store().flushRunAuditSink();
     const rows = await h.adminSql()`SELECT metadata FROM project.run_audit_events WHERE task_id = ${taskId} AND mutation_type = ${HOLD_EVENT}`;
     return rows.map((r: { metadata: unknown }) =>
       (typeof r.metadata === "string" ? JSON.parse(r.metadata) : r.metadata) as Record<string, unknown>);

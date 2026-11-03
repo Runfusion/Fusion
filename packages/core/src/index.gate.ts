@@ -1240,7 +1240,35 @@ one already-loaded leaf — `agent-role-policy.ts` and `task-external-block.ts` 
 */
 export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEW_CAPABILITY_DECLINE_CODE, REVIEW_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, formatReviewCapabilityDeclineReason, describeLaneCapabilityDecline, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
 export type { LaneCapabilityDeclineDescriptor } from "./tasks/lane-capability-decline.js";
-export { emitBoundedRunAudit } from "./run-audit/emit-bounded-run-audit.js";
+export { emitBoundedRunAudit, submitRunAuditToSinkWriter } from "./run-audit/emit-bounded-run-audit.js";
+export type { RunAuditBufferedSubmitResult } from "./run-audit/emit-bounded-run-audit.js";
+/*
+FNXC:RunAuditSink 2026-11-03-05:55 (RUFU-453):
+The sink writer and its spill file are mirrored here because they are already inside the gate's import closure —
+`store.ts` reaches both through `run-audit/sink-host.ts`, and every gate file touches `TaskStore` — so the export
+lines add no module graph, only the parity the barrel rule asks for. The symbol whose absence here caused a silent
+55-failure gate run is `submitRunAuditToSinkWriter`, which the engine seam imports at module scope: an import the
+gate barrel cannot satisfy binds `undefined`, the seam's synchronous hand-off throws, and best-effort callers
+swallow it, so 55 assertions in `merger-merge-lifecycle.test.ts` reported `recordRunAuditEvent` called 0 times with
+nothing naming the cause. Pinned by `packages/core/src/__tests__/gate-barrel-run-audit-parity.test.ts`.
+*/
+export {
+  createRunAuditSinkWriter,
+  RUN_AUDIT_SINK_BATCH_MAX,
+  RUN_AUDIT_SINK_FLUSH_WINDOW_MS,
+  RUN_AUDIT_SINK_QUEUE_MAX,
+  RUN_AUDIT_SINK_WRITE_BOUND_MS,
+} from "./run-audit/audit-sink-writer.js";
+export type { RunAuditSinkRow, RunAuditSinkStats, RunAuditSinkWriter } from "./run-audit/audit-sink-writer.js";
+export {
+  createRunAuditDeadLetterSink,
+  readRunAuditDeadLetter,
+  replayRunAuditDeadLetter,
+  runAuditDeadLetterPath,
+  RUN_AUDIT_DEAD_LETTER_FILENAME,
+  RUN_AUDIT_DEAD_LETTER_MAX_BYTES,
+} from "./run-audit/run-audit-dead-letter.js";
+export type { RunAuditDeadLetterRow, RunAuditDeadLetterReadResult, RunAuditDeadLetterReplayResult } from "./run-audit/run-audit-dead-letter.js";
 export type {
   TaskColumnRestartEntryNode,
   TaskColumnRestartPlan,

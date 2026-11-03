@@ -114,6 +114,59 @@ export const registerDiagnosticsRoutes: ApiRouteRegistrar = (ctx) => {
       ctx.rethrowAsApiError(error, "Failed to read resume diagnostics events");
     }
   });
+
+  /*
+  FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+  The run-audit sink's own account, because "is telemetry being lost?" was previously answerable only by
+  grepping a 20 MB log for a line whose meaning depended on which lane emitted it. Every accepted row must
+  be accounted as written, spilled, or suppressed, so the counters are the deliverable: `spilled` above
+  zero or a non-empty `deadLetter` is real loss, while `timedOut`/`lateRecorded` on a live `queueDepth`
+  mean a slow pool that has not cost anything yet.
+
+  This reports the DAEMON process's queue on `ctx.store` — the writer is per store instance, and an
+  operator asking about the queue is asking about the process that holds it. A host with no writer (the
+  `FUSION_RUN_AUDIT_BUFFERED=0` kill switch, a non-durable backend, or a store that has not emitted yet)
+  answers `available: false` beside `buffered`, so "switched off" and "nothing queued" stay distinguishable
+  instead of both reading as zeroes.
+
+  The spill file's size and row count come from the writer's in-memory accounting, so this route never
+  parses the backup on a poll; `?rows=1` is the explicit, bounded read for an operator who wants the
+  actual rows.
+  */
+  router.get("/diagnostics/run-audit-sink", async (req, res) => {
+    try {
+      const sinkStore = ctx.store as unknown as {
+        getRunAuditSinkStats?: () => Record<string, unknown> | null;
+        getRunAuditSinkDeadLetterStats?: () => { path: string; bytes: number; rows: number; suppressed: number; writeFailures: number } | null;
+        readRunAuditSinkDeadLetter?: () => Promise<{ path: string; bytes: number; rows: unknown[]; malformed: number; truncated: boolean }>;
+      };
+      const stats = sinkStore.getRunAuditSinkStats?.() ?? null;
+      const deadLetterStats = sinkStore.getRunAuditSinkDeadLetterStats?.() ?? null;
+      const wantRows = req.query.rows === "1" || req.query.rows === "true";
+
+      if (!stats) {
+        res.json({
+          available: false,
+          buffered: process.env.FUSION_RUN_AUDIT_BUFFERED !== "0",
+          pid: process.pid,
+          deadLetter: deadLetterStats,
+        });
+        return;
+      }
+
+      const rows = wantRows ? await sinkStore.readRunAuditSinkDeadLetter?.() : undefined;
+      res.json({
+        available: true,
+        buffered: true,
+        ...stats,
+        deadLetter: deadLetterStats
+          ? { ...deadLetterStats, ...(rows ? { malformed: rows.malformed, truncated: rows.truncated, entries: rows.rows } : {}) }
+          : null,
+      });
+    } catch (error) {
+      ctx.rethrowAsApiError(error, "Failed to read run-audit sink diagnostics");
+    }
+  });
 };
 
 export function __resetResumeDiagnosticsForTests(): void {

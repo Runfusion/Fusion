@@ -1485,6 +1485,21 @@ export function createSharedPgTaskStoreTestHarness(options?: {
       // Close before watcher cleanup so teardown work is never body cost.
       if (bodyHandle && harness) harness.timeoutObserver.closeBoundary(bodyHandle);
       bodyHandle = null;
+      /*
+      FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+      A best-effort audit emit is accepted before it is durable, so a row this test submitted can still be
+      sitting in the sink drain when the next test's `beforeEach` wipes the tables — and it would then land
+      inside that next test's clean database, turning one test's telemetry into another test's unexpected row.
+      Draining here keeps the reset's promise honest: what a test observes is what that test caused. It is a
+      no-op for any test that never emitted (no writer is ever built for a quiet store).
+      */
+      if (store) {
+        try {
+          await store.flushRunAuditSink();
+        } catch {
+          // best-effort: a stuck drain must not become a harness failure
+        }
+      }
       // No per-test connection teardown — the shared DB lives until afterAll.
       // Just quiesce any watchers/timers the test may have armed.
       if (store) {

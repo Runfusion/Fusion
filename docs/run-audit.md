@@ -465,14 +465,17 @@ authenticates real engine-authored mutations — so it surfaces on no card's his
 It is found by mutation type, which is precisely how the writer of a shared-database mutation gets attributed. The
 symptom suite asserts that nullability and key set directly.
 
-**Awaited but bounded.** The write is `await`ed through the bounded seam (`emitBoundedRunAudit(store, …, { log })`),
+**Awaited but bounded.** The write is `await`ed through the bounded **outcome** seam (`emitBoundedRunAuditWithOutcome(store, …, { log })`),
 never through a direct `recordRunAuditEvent` call. An unawaited write is lost exactly where the event matters most: a
 one-shot `fn` CLI invocation opens the store, does its work, and exits, so a void write that has not landed dies with
 the process and no later reader can reconstruct it. Awaiting the *unbounded* call would instead make an unreachable
 audit store a lifecycle dependency of opening the store, which FN-9175/FN-9177 forbid. The bounded seam resolves both:
 absent, synchronously throwing, rejecting, never-settling, and late-settling sinks all let `init()` resolve, and the
 rejection reaches the operator as a `phase: "init:store-open-stamp"` warning through the seam's own logger instead of
-an unhandled rejection. The behavior is pinned by
+an unhandled rejection. RUFU-453 chose the outcome variant over the plain void seam for one reason: the void seam is
+the one that hands the row to the sink drain, and queueing a row is contradictory with awaiting it — the caller would
+be told "recorded" about a row still in memory in the process most likely to vanish. The outcome seam writes directly
+and settles before returning, which is what this row's own purpose requires. The behavior is pinned by
 `packages/core/src/__tests__/postgres/store-open-provenance.pg.test.ts` and
 `packages/core/src/__tests__/excluded-awaited-run-audit-store-sites.test.ts`.
 
@@ -540,13 +543,81 @@ like other taskless rows; its volume is bounded by how often a proven-stale owne
 because staleness ends at the next rebuild the population is self-limiting. If it ever needs pruning,
 the `storeOpenAuditEvents` branch in `pruneOperationalLogsAsync` is the shape to copy.
 
+## The sink drain: how a best-effort row is queued, counted, and spilled (RUFU-453)
+
+Measured 2026-09-30 21:35Z on production: 1332 `[run-audit] timed out recording` lines in the last 20 MB of the
+redeploy log, and RUFU-451's `task:reconcile-workspace-partial-land-no-action` proof row had never been written even
+though the sweep demonstrably ran. The seam kept its contract exactly — nothing blocked, nothing failed — and the
+evidence disappeared with no counter and no surface. The cause was never query time: a standalone audit insert costs
+about 1.3 ms (measured p50 on an idle pool, p95 1.68 ms), but it has to check out one of `DEFAULT_POOL_MAX = 3`
+runtime-pool connections, and under ordinary engine load the wait for a slot beats the 2 s emit bound. One test
+measured that wait directly: with every slot held by a 2 s `pg_sleep`, an audit insert took 1993 ms — the timer was
+never racing a slow write, it was racing a queue for a connection.
+
+The fix sits **below** the sink, so the seam's rule ("no retry, backoff, or queueing") stays literally true at the
+seam: `emitBoundedRunAudit` hands the row to a per-store drain and returns. `packages/core/src/run-audit/audit-sink-writer.ts`
+coalesces a 25 ms window into one batched insert of up to 50 rows (measured 8.1x the throughput of single-row writes
+and 50x fewer pool check-outs per row — the second number is what relieves a pool of 3), keeps at most 1000 rows in
+memory, runs one drain at a time, and reports a write that passes 2 s without ever abandoning it. Queue overflow
+spills the **newest** row rather than growing without bound. The row's primary key is assigned at submit, so a
+spilled-then-replayed row collides with `(project_id, id)` instead of duplicating. The pool size is deliberately
+unchanged: contention, not capacity, was the binding constraint, and raising it multiplies per-store connections in
+embedded multi-project hosts without removing the queue.
+
+**Every accepted row is accounted, and there is no `dropped` counter.** The vocabulary is `accepted`, `coalesced`,
+`written`, `batches`, `batchFailures`, `queueDepth`, `queuePeak`, `timedOut`, `lateRecorded`, `slowWrites`,
+`maxLatencyMs`, `spilledToDeadLetter`, `deadLetterSuppressed`, and `pid`. `timedOut` means a write still in flight
+past the bound, and `lateRecorded` counts the ones that then actually landed — that pair is the incident's shape made
+queryable, because the old warn line asserted a loss that usually had not happened.
+
+**The backup lives where PostgreSQL cannot reach it.** A refused batch is retried once and then appended as JSONL to
+`<rootDir>/.fusion/logs/run-audit-dead-letter.jsonl` — one line per row because every `fn` process on the host
+appends to the same file — under a byte cap (8 MB by default, `FUSION_RUN_AUDIT_DEAD_LETTER_MAX_BYTES`, measured
+against the file's existing size so a shared cap stays shared). A byte-level failure is counted as `writeFailures`,
+never thrown. Replay runs once at writer construction and is otherwise an explicit operator action
+(`TaskStore.replayRunAuditSinkDeadLetter()`); it archives by rename only after a fully clean pass, so a refused
+replay keeps its evidence on disk. The automatic pass is deliberately not on the emit path.
+
+**What the seam still refuses to do.** `emitBoundedRunAuditWithOutcome` keeps writing directly and awaiting, because
+its callers branch on whether the row landed — `recorded` must keep meaning "settled", not "queued". The same rule
+moved one emit site the other way: `store:open` is now emitted through `emitBoundedRunAuditWithOutcome`, since a row
+whose entire purpose is to be durable before a one-shot CLI exits contradicts its own `await` if it is queued.
+`recordRunAuditEvent`, `recordRunAuditEventBackend`, and `recordRunAuditEventWithinTransaction` are untouched.
+`FUSION_RUN_AUDIT_BUFFERED=0` is the kill switch and restores the direct bounded write. `store.close()` drains under
+its own 2 s deadline before the connections go away.
+
+**The consequence for readers, stated plainly:** an accepted emit is not yet a durable row. Any reader that counts
+rows a producer in the same process just emitted — a spec asserting on a sweep's audit, or an operator refreshing a
+surface a heartbeat wrote a frame earlier — takes the drain's bounded hand-off first
+(`TaskStore.flushRunAuditSink({ timeoutMs? })`). That hand-off is what makes "what did this pass record?" a question
+with an answer instead of a race against a 25 ms window; the shared PostgreSQL harness drains in `afterEach` so a
+previous test's still-queued telemetry cannot land inside the next test's freshly wiped database.
+
+The operator surface is `GET /api/diagnostics/run-audit-sink` (see
+[Run-audit sink diagnostics](diagnostics.md#run-audit-sink-diagnostics-get-apidiagnosticsrun-audit-sink)), which
+reports the daemon's own queue with its `pid` — every process owns its writer, so per-process numbers are never a
+cluster total — plus the backup file's path, bytes, and row count. `available: false` beside `buffered` distinguishes
+"switched off or not durable" from "nothing queued", and reading the rows themselves is an explicit `?rows=1`.
+
+Bounds are env-tunable for a host whose pool is genuinely different (`FUSION_RUN_AUDIT_SINK_QUEUE_MAX`,
+`FUSION_RUN_AUDIT_SINK_BATCH_MAX`, `FUSION_RUN_AUDIT_SINK_FLUSH_WINDOW_MS`,
+`FUSION_RUN_AUDIT_SINK_WRITE_BOUND_MS`). Pinned by `packages/core/src/__tests__/audit-sink-writer.test.ts`,
+`packages/core/src/__tests__/run-audit-dead-letter.test.ts`, and the symptom fixture
+`packages/core/src/__tests__/postgres/run-audit-sink-saturation.pg.test.ts`, which saturates a real runtime pool and
+proves `workflowWorkItem:reconcile-stranded-no-action` survives both the drain and a spill-plus-replay into the real
+table.
+
 ## Maintenance contract
 
 Adding a new catalogued run-audit event requires updating **both** the typed catalogue module (`packages/engine/src/run-audit/run-audit-catalogue.ts`) **and** this doc together — the parity test (`packages/engine/src/__tests__/run-audit-catalogue.test.ts`) fails if the documented event set and the catalogue module's set ever diverge, keeping the observability surface truthful as the real `DatabaseMutationType` union evolves. Removing an event likewise requires updating both in the same change.
 
+### Core barrel parity
+
+`@fusion/core` has two barrels: `packages/core/src/index.ts` (the package barrel) and `packages/core/src/index.gate.ts`, which the `engine-core` merge-gate vitest project aliases `@fusion/core` to and bundles into one file per run (FN-7667, to keep gate forks from transforming the whole graph). The gate barrel deliberately re-exports everything except a named list of modules the curated gate files never touch. That makes an unmirrored export a silent failure, not a build error: a module-scope import of a missing symbol binds `undefined` **inside `engine-core` only**, so a call site throws there and stays green everywhere else — including `pnpm typecheck`, `pnpm build`, and every other vitest project. Measured on RUFU-453: the drain hand-off `submitRunAuditToSinkWriter` was added to the package barrel only, the engine seam's synchronous hand-off threw, best-effort callers swallowed it, and 55 audits in `merger-merge-lifecycle.test.ts` vanished as `recordRunAuditEvent` called 0 times with no error naming the cause. Two defenses are in place: the seam treats an unresolvable hand-off helper as "write the row directly", so a barrel gap cannot silence telemetry, and `packages/core/src/__tests__/gate-barrel-run-audit-parity.test.ts` compares the two barrels' `run-audit/*` export lists directly. Mirror ordinary run-audit barrel additions into the gate barrel; if a module genuinely stays out of the gate closure, say why where the exclusion is recorded.
+
 ### Emit-seam policy
 
-All engine telemetry must use `emitBoundedRunAudit` from `packages/engine/src/util/emit-bounded-run-audit.ts`. It is best-effort and never load-bearing for lifecycle correctness: absent/non-function, synchronously throwing, rejecting, never-settling, and late-settling sinks are absorbed without altering the owning branch. The seam swallow-logs and bounds each write; it intentionally adds no retry, backoff, or queueing.
+All engine telemetry must use `emitBoundedRunAudit` from `packages/engine/src/util/emit-bounded-run-audit.ts`. It is best-effort and never load-bearing for lifecycle correctness: absent/non-function, synchronously throwing, rejecting, never-settling, and late-settling sinks are absorbed without altering the owning branch. The seam swallow-logs and bounds each write; it intentionally adds no retry, backoff, or queueing. Since RUFU-453 the queue exists — but one level **below** the sink, in the store's drain, so the seam itself still contains none of it; see [The sink drain](#the-sink-drain-how-a-best-effort-row-is-queued-counted-and-spilled-rufu-453).
 
 This applies to executor, run-auditor, self-healing, merger, PR reconciliation, scheduler, project-engine, plugin, mission-loop, hold-release, goal diagnostics, overseer advisor, mesh-lease, in-process runtime, credential rotation, and workflow-column-boundary emitters. `packages/engine/src/merge/merge-write-fence.ts` retains its bespoke non-`RunAuditEventInput` recorder. New engine emitters must ship with a behavioral sink-health regression covering hostile sink states, not only a source-routing assertion.
 
@@ -556,7 +627,7 @@ Core best-effort emitters use `packages/core/src/run-audit/emit-bounded-run-audi
 
 ### Awaited core exclusion decision
 
-FN-9178 classified awaited sites with hostile-sink characterization tests. RUFU-344 adds `store:open` as a class-C site that is awaited **through the bounded seam** rather than directly: it claims a durable forensic record before the open returns, and a void write would not survive a one-shot CLI exit, while the seam's settle-or-timeout bound keeps telemetry out of the store-open lifecycle; `init()` resolves for an absent, throwing, rejecting, never-settling, and late-settling sink. FN-9180 routed the class-A `task-deleted-outbox:catch-up`, `:reconciliation-fallback`, `:lease-fenced`, and `:retention-pruned` rows through `emitBoundedRunAudit`; each remains awaited at its post-acknowledgement, post-cursor, or post-DELETE position so bounded telemetry preserves ordering. FN-9181 routed detached recall capture through the same bounded seam. `task:workflow-switch-torn` and `task:reconcile-phantom-committed-reservation` are class B and use the bounded outcome seam because their throw/result payload depends on audit outcome. `task:bypass-review`, `task:resume-step`, and both resurrection-blocked records are class C and intentionally unbounded: they claim persistence before return, destructive cleanup, or a forensic throw.
+FN-9178 classified awaited sites with hostile-sink characterization tests. RUFU-344 adds `store:open` as a class-C site that is awaited **through the bounded seam** rather than directly: it claims a durable forensic record before the open returns, and a void write would not survive a one-shot CLI exit, while the seam's settle-or-timeout bound keeps telemetry out of the store-open lifecycle; `init()` resolves for an absent, throwing, rejecting, never-settling, and late-settling sink. Since RUFU-453 the awaited void seam also *queues* (see [The sink drain](#the-sink-drain-how-a-best-effort-row-is-queued-counted-and-spilled-rufu-453)), so an awaited site uses `emitBoundedRunAuditWithOutcome` to keep its direct write — which is where `store:open` now sits, still bounded, still never a lifecycle dependency. FN-9180 routed the class-A `task-deleted-outbox:catch-up`, `:reconciliation-fallback`, `:lease-fenced`, and `:retention-pruned` rows through `emitBoundedRunAudit`; each remains awaited at its post-acknowledgement, post-cursor, or post-DELETE position so bounded telemetry preserves ordering. FN-9181 routed detached recall capture through the same bounded seam. `task:workflow-switch-torn` and `task:reconcile-phantom-committed-reservation` are class B and use the bounded outcome seam because their throw/result payload depends on audit outcome. `task:bypass-review`, `task:resume-step`, and both resurrection-blocked records are class C and intentionally unbounded: they claim persistence before return, destructive cleanup, or a forensic throw.
 
 All `recordRunAuditEventWithinTransaction(tx, ...)` calls and the `recordRunAuditEventBackend(tx, ...)` transactional call are permanently out of scope. Their audit row shares a transaction with the mutation it describes; bounding would split that atomicity. The full matrix and evidence pointers are in the FN-9178 `decision` task document; `excluded-awaited-run-audit-store-sites.test.ts`, `excluded-awaited-run-audit-layer-sites.test.ts`, and the core routing ratchet pin this boundary.
 

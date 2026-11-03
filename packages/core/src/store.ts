@@ -168,6 +168,19 @@ import { getTaskSelectClauseImpl2, createTaskPersistSerializationContextImpl, ge
 import { recordHumanMergeDecisionImpl, setHumanMergeApprovalLockImpl, updateHumanMergeDecisionReceiptImpl, updateHumanMergeRejectionStateImpl } from "./task-store/human-merge-approval-ops.js";
 import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl, getSoftDeletedWriteConflictImpl, readTaskJsonImpl, writeConfigImpl, _resolveSameAgentDuplicateIntakeBackendImpl, updateBranchGroupImpl, updatePrEntityImpl, listTasksForGithubTrackingReconcileImpl, listTasksForGitlabTrackingReconcileImpl, renewCheckoutLeaseImpl, updateTaskAtomicImpl, applyInReviewStallObservationFencedImpl, updateWorkflowStepResultsFencedImpl, updateWorkflowStepResultsWithLogFencedImpl, issueStaleReviewCallbackWaiverImpl, publishReviewRemediationFencedImpl, linkTaskRecommendationImpl, normalizeWorkspaceTaskWorktreeMetadataImpl, mergeWorkspaceWorktreeEntryImpl, updateTaskRepositoryScopeImpl, updateWorkspaceReviewStateImpl, publishWorkspaceCodeReviewEvidenceImpl, resolveTaskWedgeNotificationEpisodeImpl, getWorkflowPromptOverridesImpl, updateWorkflowSettingValuesImpl, rollbackConfigurationImpl, cancelActiveWorkflowWorkItemsForTaskImpl, setCompletionHandoffAcceptedMarkerImpl, reconcileLegacyAutoMergeStampsImpl, recoverExpiredMergeQueueLeasesImpl, rewriteDependentsForRemovalImpl, cleanupBranchForTaskImpl, addAttachmentImpl, deleteAttachmentImpl, registerArtifactImpl, updatePrInfoImpl, unlinkGithubIssueImpl, generatePromptFromArchiveEntryImpl, listWorkflowOccupantTaskIdsImpl, listApprovedCliAutonomyAdaptersImpl, closeImpl, getActivityLogImpl } from "./task-store/task-mutation-ops.js";
 import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWithAuditImpl, type PlanningDependencyInvalidation, type TaskAtomicPersistFence, duplicateTaskImpl, listStrandedRefinementsImpl, tryClaimCheckoutImpl, evaluateWorkflowMovePoliciesImpl, recordRunAuditEventImpl, getRunAuditEventsImpl, dequeueMergeQueueOnColumnExitImpl, updateIssueInfoImpl, listWorkflowStepsImpl, getWorkflowStepImpl, createWorkflowDefinitionImpl, countActiveInCapacitySlotSyncImpl, countActiveInCapacitySlotAsyncImpl, generateSpecifiedPromptImpl, recordActivityImpl, getEvalStoreImpl } from "./task-store/project-store-ops.js";
+/* FNXC:RunAuditSink 2026-09-30 (RUFU-453): the drain writer behind the best-effort seam. */
+import {
+  recordRunAuditEventBuffered as recordRunAuditEventBufferedImpl,
+  getRunAuditSinkStats as getRunAuditSinkStatsImpl,
+  getRunAuditSinkDeadLetterStats as getRunAuditSinkDeadLetterStatsImpl,
+  flushRunAuditSink as flushRunAuditSinkImpl,
+  readRunAuditSinkDeadLetter as readRunAuditSinkDeadLetterImpl,
+  replayRunAuditSinkDeadLetter as replayRunAuditSinkDeadLetterImpl,
+  drainRunAuditSinkForClose,
+} from "./run-audit/sink-host.js";
+import type { RunAuditBufferedSubmitResult } from "./run-audit/emit-bounded-run-audit.js";
+import type { RunAuditSinkStats, RunAuditSinkWriter } from "./run-audit/audit-sink-writer.js";
+import type { RunAuditDeadLetterReadResult, RunAuditDeadLetterReplayResult } from "./run-audit/run-audit-dead-letter.js";
 import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl, type RehomeOccupantResult } from "./task-store/branch-group-ops.js";
 import { taskToArchiveEntryImpl, deleteTaskBackendImpl, deleteTaskIfBackendImpl, restoreFromArchiveImpl } from "./task-store/archive-lifecycle-2.js";
@@ -3574,6 +3587,43 @@ updates: { title?: string; description?: string; prompt?: string; worktree?: str
   async recordRunAuditEvent(input: RunAuditEventInput): Promise<RunAuditEvent> {
     return recordRunAuditEventImpl(this, input);
   }
+
+  /*
+  FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+  The seam's fire-and-forget lane asks for exactly this method and nothing else. Presence means "a drain
+  writer will own this row"; absence (a non-durable backend, or `FUSION_RUN_AUDIT_BUFFERED=0`) sends the
+  emit down the direct bounded write it used before the writer existed. It is deliberately NOT a variant
+  of `recordRunAuditEvent`: that method's awaited commit-before-return contract is what FN-9178 pinned,
+  and callers whose behavior branches on the write landing must keep getting the real answer.
+  */
+  recordRunAuditEventBuffered(input: RunAuditEventInput): RunAuditBufferedSubmitResult {
+    return recordRunAuditEventBufferedImpl(this, input);
+  }
+
+  /** Sink accounting for the diagnostics surface: null when this store has no drain writer. */
+  getRunAuditSinkStats(): RunAuditSinkStats | null {
+    return getRunAuditSinkStatsImpl(this);
+  }
+
+  /** Spill-file size/count without reading the file: null when there is no spill target or no writer. */
+  getRunAuditSinkDeadLetterStats(): ReturnType<RunAuditSinkWriter["deadLetterStats"]> {
+    return getRunAuditSinkDeadLetterStatsImpl(this);
+  }
+
+  /** Bounded drain. Used by shutdown, by the diagnostics surface, and by tests that must observe a row. */
+  async flushRunAuditSink(options?: { timeoutMs?: number }): Promise<void> {
+    await flushRunAuditSinkImpl(this, options);
+  }
+
+  /** The spill file itself — the answer to "what did the sink lose?", readable without a database. */
+  async readRunAuditSinkDeadLetter(): Promise<RunAuditDeadLetterReadResult> {
+    return readRunAuditSinkDeadLetterImpl(this);
+  }
+
+  /** Explicit operator replay of the spill file. The automatic pass runs once at writer construction. */
+  async replayRunAuditSinkDeadLetter(): Promise<RunAuditDeadLetterReplayResult | null> {
+    return replayRunAuditSinkDeadLetterImpl(this);
+  }
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
   `reviewColumns` is an optional RESOLVED answer; omitted, this is exactly today's behaviour.
@@ -4755,6 +4805,14 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     this.bumpWorkflowSelectionEpoch();
   }
   async close(): Promise<void> {
+    /*
+    FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+    Drain the run-audit sink while the connections that write it are still open, then let shutdown
+    continue whether or not the database took the rows. Without this ordering the rows still in the queue
+    at exit would be gone with the process; the call races its own deadline internally, so it can never
+    hold a shutdown open.
+    */
+    await drainRunAuditSinkForClose(this);
     this.intakeOwnerAgentStore?.close();
     this.intakeOwnerAgentStore = null;
     return closeImpl(this);

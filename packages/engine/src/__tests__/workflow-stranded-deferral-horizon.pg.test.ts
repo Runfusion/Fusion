@@ -130,6 +130,13 @@ pgDescribe("RUFU-299 stranded-deferral horizon against a live store", () => {
 
   /** Every stranded-reclaim audit row persisted for this project, oldest first. */
   async function auditRows(type: string): Promise<Array<Record<string, unknown>>> {
+    /*
+    FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+    A best-effort audit emit is accepted before it is durable. Every assertion downstream counts rows a sweep
+    just performed, so the drain's own bounded hand-off is part of the read, not a workaround: without it
+    `ORDER BY "timestamp"` would return whatever had landed so far and call that the whole record.
+    */
+    await h.store().flushRunAuditSink();
     const rows = await h.adminSql()<{ metadata: Record<string, unknown> }[]>`
       SELECT metadata FROM project.run_audit_events
        WHERE mutation_type = ${type}

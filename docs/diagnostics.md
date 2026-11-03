@@ -55,6 +55,28 @@ Dashboard server code uses the core logger only: `import { createLogger } from "
 
 `packages/engine/src/__tests__/log-severity-manifest.ts` and package contract tests pin individual demotions and the no-bare-console rule. This makes an accidental severity reversion a CI failure instead of an operator-visible log flood.
 
+## Run-audit sink diagnostics (`GET /api/diagnostics/run-audit-sink`)
+
+A best-effort audit row is accepted before it is durable, so "is telemetry being lost?" needs a number rather than a
+log grep. `GET /api/diagnostics/run-audit-sink` answers it from the daemon's own memory: `available`, `buffered`,
+`pid`, the sink writer's counters (`accepted`, `coalesced`, `written`, `batches`, `batchFailures`, `queueDepth`,
+`queuePeak`, `timedOut`, `lateRecorded`, `slowWrites`, `maxLatencyMs`, `spilledToDeadLetter`,
+`deadLetterSuppressed`), and the dead-letter file's `path`, `bytes`, `rows`, `suppressed`, and `writeFailures`.
+Appending `?rows=1` additionally returns the file's tail with `malformed` and `truncated`, which is the only path that
+parses the backup — a routine poll reads the in-memory accounting instead, so polling can never be a second source of
+pressure on a saturated host.
+
+Read it this way: `spilledToDeadLetter` above zero, or a non-empty `deadLetter`, is real loss. `timedOut` and
+`lateRecorded` beside a live `queueDepth` are a slow connection pool that has not cost anything yet — the old
+`[run-audit] timed out recording …` line called that shape a lost row and usually was wrong. `available: false` with
+`buffered: true` means the writer has not been built (no durable backend yet, or nothing emitted), while
+`buffered: false` is the `FUSION_RUN_AUDIT_BUFFERED=0` kill switch; the two flags exist so "switched off" and "nothing
+queued" do not both read as zeroes. `pid` is present because every process owns its own writer — an engine, a
+dashboard, a CLI, and a child worker each report their own numbers, and none of them is a cluster total.
+
+The drain, the byte-capped JSONL backup outside the PostgreSQL failure domain, and the replay contract are documented
+in [run-audit.md → The sink drain](run-audit.md#the-sink-drain-how-a-best-effort-row-is-queued-counted-and-spilled-rufu-453).
+
 ## Goal injection diagnostics (`[goal-injection]`)
 
 Executor, heartbeat, and planning runs emit one goal-injection diagnostic with outcome `applied`, `no-goals`, or `disabled-or-failed`.

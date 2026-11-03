@@ -10,7 +10,7 @@ import {
   registerDiagnosticsRoutes,
 } from "../register-diagnostics-routes.js";
 
-function createApp(getProjectContext = vi.fn(async () => ({ projectId: "proj-1", store: {} }))) {
+function createApp(getProjectContext = vi.fn(async () => ({ projectId: "proj-1", store: {} })), store: unknown = {}) {
   const router = express.Router();
   const rethrowAsApiError = vi.fn((error: unknown) => {
     throw error;
@@ -18,7 +18,7 @@ function createApp(getProjectContext = vi.fn(async () => ({ projectId: "proj-1",
 
   registerDiagnosticsRoutes({
     router,
-    store: {} as never,
+    store: store as never,
     runtimeLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as never,
     planningLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as never,
     chatLogger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as never,
@@ -204,5 +204,55 @@ describe("register-diagnostics-routes", () => {
 
     expect(response.status).toBe(500);
     expect(rethrowAsApiError).toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+  The sink is only worth having if its accounting is readable, so these cases pin the two answers an
+  operator distinguishes: a host with no drain writer must say `available: false` while still reporting
+  whether the kill switch is the reason, and a live writer must expose the full accounting plus the
+  spill file's size without ever parsing the backup unless `?rows=1` asks for the rows.
+  */
+  it("reports the run-audit sink when no drain writer exists", async () => {
+    const { app } = createApp(undefined, {});
+
+    const response = await performRequest(app, "GET", "/api/diagnostics/run-audit-sink");
+
+    expect(response.status).toBe(200);
+    expect(response.body.available).toBe(false);
+    expect(typeof response.body.buffered).toBe("boolean");
+    expect(response.body.pid).toBe(process.pid);
+  });
+
+  it("reports sink accounting and spill size without reading the backup", async () => {
+    const readRows = vi.fn(async () => ({ path: "/tmp/x.jsonl", bytes: 10, rows: [], malformed: 0, truncated: false }));
+    const { app } = createApp(undefined, {
+      getRunAuditSinkStats: () => ({
+        accepted: 12, coalesced: 4, written: 8, batches: 2, batchFailures: 1, queueDepth: 3, queuePeak: 9,
+        timedOut: 1, lateRecorded: 2, slowWrites: 3, maxLatencyMs: 1400, spilledToDeadLetter: 1,
+        deadLetterSuppressed: 0, pid: 4242,
+      }),
+      getRunAuditSinkDeadLetterStats: () => ({ path: "/tmp/x.jsonl", bytes: 4096, rows: 1, suppressed: 0, writeFailures: 0 }),
+      readRunAuditSinkDeadLetter: readRows,
+    });
+
+    const response = await performRequest(app, "GET", "/api/diagnostics/run-audit-sink");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      available: true,
+      buffered: true,
+      accepted: 12,
+      written: 8,
+      queueDepth: 3,
+      lateRecorded: 2,
+      spilledToDeadLetter: 1,
+      deadLetter: { path: "/tmp/x.jsonl", bytes: 4096, rows: 1 },
+    });
+    expect(readRows).not.toHaveBeenCalled();
+
+    const withRows = await performRequest(app, "GET", "/api/diagnostics/run-audit-sink?rows=1");
+    expect(withRows.body.deadLetter.entries).toEqual([]);
+    expect(readRows).toHaveBeenCalledOnce();
   });
 });

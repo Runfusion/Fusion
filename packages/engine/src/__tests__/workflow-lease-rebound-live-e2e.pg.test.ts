@@ -123,6 +123,13 @@ pgDescribe("live lease-rebound E2E: where a recovered lease lands, and what the 
       });
       await manager.recoverAbandonedLease(taskId, "e2e-owner-offline");
 
+      /*
+      FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+      A best-effort audit emit is accepted before it is durable, so "the recovery finished" no longer implies
+      "its row is readable". The drain's own bounded hand-off is what makes this e2e question answerable; the
+      assertions below are about what the recovery recorded, never about when it landed.
+      */
+      await h.store().flushRunAuditSink();
       const audit = await h.store().getRunAuditEventsAsync({ taskId });
       const recovery = audit.find((e) => String(e.mutationType).includes("unreachable"));
       expect(recovery, `no unreachable-owner audit; saw ${JSON.stringify(audit.map((e) => e.mutationType))}`).toBeDefined();
@@ -150,6 +157,7 @@ pgDescribe("live lease-rebound E2E: where a recovered lease lands, and what the 
     });
     await manager.recoverAbandonedLease(taskId, "e2e-decision-path");
 
+    await h.store().flushRunAuditSink(); // RUFU-453: best-effort emits land on the drain, not on return
     const audit = await h.store().getRunAuditEventsAsync({ taskId });
     const recovery = audit.find((e) => String(e.mutationType).includes("unreachable"));
     const metadata = (typeof recovery?.metadata === "string" ? JSON.parse(recovery.metadata) : recovery?.metadata) as

@@ -93,6 +93,13 @@ pgTest("approval-hold clear on review-lane exit (PostgreSQL, RUFU-297)", () => {
   }
 
   async function auditRows(taskId: string) {
+    /*
+    FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+    A best-effort audit emit is accepted before it is durable, so "the move returned" no longer means "its row
+    is readable". Taking the drain's bounded hand-off here keeps every count below a count of what the move
+    recorded, instead of a race against a 25ms coalescing window.
+    */
+    await h.store().flushRunAuditSink();
     return h.adminDb()
       .select({ mutationType: schema.project.runAuditEvents.mutationType, metadata: schema.project.runAuditEvents.metadata })
       .from(schema.project.runAuditEvents)

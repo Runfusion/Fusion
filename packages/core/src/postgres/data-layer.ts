@@ -371,6 +371,63 @@ export async function recordRunAuditEvent(
   );
 }
 
+/** A row the run-audit sink writer has already shaped for `project.run_audit_events`. */
+export type RunAuditEventBatchRow = {
+  id: string;
+  timestamp: string;
+  taskId: string | null;
+  agentId: string;
+  runId: string;
+  domain: string;
+  mutationType: string;
+  target: string;
+  metadata: Record<string, unknown> | null;
+};
+
+/**
+ * FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+ * One INSERT for a whole drained batch of run-audit rows, which is the point of the sink writer: the
+ * audit insert travels the runtime pool, so one transaction per row meant one pool check-out per
+ * telemetry row on a pool whose default ceiling is 3 (`DEFAULT_POOL_MAX`). Batched, a burst of 50 rows
+ * costs a single check-out.
+ *
+ * `ON CONFLICT (project_id, id) DO NOTHING` is what makes replay safe: the sink assigns each row's id
+ * when it accepts the row, so a row that was actually written but only REPORTED lost (the failure mode
+ * this whole task exists for) replays onto its own primary key and lands as a no-op rather than a
+ * duplicate. The returned count is therefore rows newly landed, not rows offered — the replay pass and
+ * the sink's `written` counter both read that distinction.
+ *
+ * `project_id` stays omitted on purpose: the column defaults to `current_setting('fusion.project_id')`
+ * and the runtime connection carries the binding, exactly as the single-row path above does.
+ */
+export async function insertRunAuditEventsBatched(
+  layer: AsyncDataLayer,
+  rows: readonly RunAuditEventBatchRow[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  return layer.transactionImmediate(async (tx) => {
+    const result = await tx.insert(schema.project.runAuditEvents)
+      .values(rows.map((row) => ({
+        // The id travels from the writer, never from the server: a spilled row and its replay must be
+        // the same row for `(project_id, id)` to be the idempotency key at all.
+        id: row.id,
+        timestamp: row.timestamp,
+        taskId: row.taskId,
+        agentId: row.agentId,
+        runId: row.runId,
+        domain: row.domain,
+        mutationType: row.mutationType,
+        target: row.target,
+        metadata: row.metadata,
+      })))
+      .onConflictDoNothing({
+        target: [schema.project.runAuditEvents.projectId, schema.project.runAuditEvents.id],
+      })
+      .returning({ id: schema.project.runAuditEvents.id });
+    return result.length;
+  });
+}
+
 /**
  * FNXC:AsyncDataLayer 2026-06-24-09:30:
  * Helper to build a qualified SQL fragment referencing a project-schema table.

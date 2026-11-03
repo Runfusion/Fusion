@@ -25,13 +25,23 @@ const awaitedClassifications = {
  * task-store/task-id-integrity.ts joined the list because the resurrection tombstone purge now
  * writes `task:row-purged-for-resurrection` inside its parent-delete transaction, which is what
  * makes the purge fail closed (`TombstonePurgeUnauditedError` keeps the tombstone intact).
+ *
+ * FNXC:RunAuditSink 2026-09-30 (RUFU-453):
+ * This list had drifted from the source it scans in both directions at once, so the guard was red on a
+ * clean tree: `async-comments-attachments.ts` was still listed two paragraphs after the note above
+ * recorded that FN-295 deleted its writer, while `task-id-integrity.ts` was missing despite its own
+ * RUFU-283 note one paragraph above. `task-store/audit-ops.ts` was absent for the same reason — its
+ * `task:log` row rides the transaction handle of the agent-log insert it describes, which is exactly a
+ * permanent atomicity boundary. The list now mirrors the source. Naming a boundary is the honest repair:
+ * the alternative is the audit write leaving its transaction, breaking the pairing the write exists to
+ * provide.
  */
 const transactionalSourceBoundaries = [
   "task-store/moves.ts", "task-store/symbol-locks.ts", "task-store/async/async-merge-coordination.ts",
   "task-store/lifecycle-ops.ts", "task-store/task-creation.ts", "task-store/project-store-ops.ts",
   "task-store/task-artifacts-ops.ts", "task-store/task-lifecycle-consumer-registry.ts",
   "task-store/async/async-workflow-workitems.ts",
-  "task-store/archive-lifecycle-2.ts", "task-store/async/async-comments-attachments.ts",
+  "task-store/archive-lifecycle-2.ts", "task-store/task-id-integrity.ts", "task-store/audit-ops.ts",
 ] as const;
 
 const files = [
