@@ -164,6 +164,55 @@ describe("wipAdmissionStallWrite", () => {
   });
 });
 
+/*
+FNXC:CapacityGateFacts 2026-11-02-23:20 (RUFU-372 second revision):
+The holder forensics ride the SAME accepted episode write as the counts, so three surfaces (audit row,
+History line, card-face notice) quote one measurement instead of the three reads that disagreed during
+the incident. Two properties are worth pinning because they are the easy ones to lose in a later refactor:
+an UNRECORDED holder set stays absent (never an empty list, which claims an empty pool), and a malformed
+holder field degrades only itself — dropping the whole episode would erase the wait the card sits in.
+*/
+describe("wipAdmissionStallWrite — holder forensics", () => {
+  it("carries holder ids and the oldest hold onto the episode", () => {
+    const written = wipAdmissionStallWrite(
+      undefined,
+      observation({ poolId: "in-progress", occupants: 2, limit: 2, heldBy: ["RUFU-H1", "RUFU-H2"], oldestHolderAgeMs: 2 * HOUR }),
+      NOW,
+    )!;
+    expect(written.heldBy).toEqual(["RUFU-H1", "RUFU-H2"]);
+    expect(written.oldestHolderAgeMs).toBe(2 * HOUR);
+  });
+
+  it("keeps an unrecorded holder set absent rather than writing an empty list", () => {
+    const written = wipAdmissionStallWrite(undefined, observation({ poolId: "in-progress", occupants: 2, limit: 2 }), NOW)!;
+    // An empty list would claim "we looked and the pool was empty"; absence claims "nobody recorded it".
+    // The card face renders those as two different sentences, so the stored shape must keep them apart.
+    expect("heldBy" in written).toBe(false);
+    expect("oldestHolderAgeMs" in written).toBe(false);
+  });
+
+  it("preserves a genuinely empty holder list as empty", () => {
+    const written = wipAdmissionStallWrite(undefined, observation({ heldBy: [] }), NOW)!;
+    expect(written.heldBy).toEqual([]);
+  });
+
+  it("caps the stored holder ids so one wide pool cannot bloat every board payload", () => {
+    const many = Array.from({ length: 60 }, (_unused, index) => `TASK-${index}`);
+    const written = wipAdmissionStallWrite(undefined, observation({ heldBy: many }), NOW)!;
+    expect(written.heldBy!.length).toBeLessThanOrEqual(20);
+    expect(written.heldBy![0]).toBe("TASK-0");
+  });
+
+  it("degrades a malformed holder field without losing the episode it belongs to", () => {
+    const dirty = ["OK-1", 42, "  "] as unknown as string[];
+    const written = wipAdmissionStallWrite(undefined, observation({ heldBy: dirty, oldestHolderAgeMs: -5 }), NOW)!;
+    const read = readWipAdmissionStallEpisode({ [WIP_ADMISSION_STALL_METADATA_KEY]: written })!;
+    expect(read).toBeDefined();
+    expect(read.heldBy).toEqual(["OK-1"]);
+    expect("oldestHolderAgeMs" in read).toBe(false);
+  });
+});
+
 describe("readWipAdmissionStallEpisode", () => {
   it("degrades a malformed or hand-edited value to silence rather than throwing", () => {
     const valid = wipAdmissionStallWrite(undefined, observation(), Date.parse("2026-11-01T00:00:00.000Z"))!;
@@ -194,6 +243,44 @@ describe("deriveTaskStallReason — wip-admission-throttled", () => {
     expect(stall?.code).toBe("wip-admission-throttled");
     expect(stall?.waitedMs).toBe(24 * HOUR + 12 * 60_000);
     expect(stall?.reason).toContain("work-in-progress");
+  });
+
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-23:25 (RUFU-372 second revision):
+  The stall row is the ONLY route by which the gate facts reach the dashboard — no board surface can read
+  run-audit — so what the episode stores has to survive the derivation unchanged, including the two
+  absences that carry meaning (`capacityPoolId: null` = no pool consulted, missing `capacityHeldBy` =
+  holders never recorded).
+  */
+  it("surfaces the gate facts the episode recorded, so the card face can answer without a database query", async () => {
+    const episode = {
+      ...episodeAgedAgo(24 * HOUR),
+      poolId: "in-progress",
+      occupants: 2,
+      limit: 2,
+      heldBy: ["RUFU-H1", "RUFU-H2"],
+      oldestHolderAgeMs: 3 * HOUR,
+    };
+    const stall = await deriveTaskStallReason(makeTask({ sourceMetadata: { [WIP_ADMISSION_STALL_METADATA_KEY]: episode } }), ctx());
+    expect(stall?.capacityPoolId).toBe("in-progress");
+    expect(stall?.capacityOccupants).toBe(2);
+    expect(stall?.capacityLimit).toBe(2);
+    expect(stall?.capacityHeldBy).toEqual(["RUFU-H1", "RUFU-H2"]);
+    expect(stall?.capacityOldestHolderAgeMs).toBe(3 * HOUR);
+  });
+
+  it("leaves the holder set absent when the writer never recorded one", async () => {
+    const episode = { ...episodeAgedAgo(24 * HOUR), poolId: "in-progress", occupants: 2, limit: 2 };
+    const stall = await deriveTaskStallReason(makeTask({ sourceMetadata: { [WIP_ADMISSION_STALL_METADATA_KEY]: episode } }), ctx());
+    expect(stall?.capacityLimit).toBe(2);
+    expect("capacityHeldBy" in (stall ?? {})).toBe(false);
+  });
+
+  it("reports no pool for a scheduler-seam episode rather than an empty one", async () => {
+    const stall = await deriveTaskStallReason(makeTask({ sourceMetadata: { [WIP_ADMISSION_STALL_METADATA_KEY]: episodeAgedAgo(24 * HOUR) } }), ctx());
+    // Absence here is the honest-absence rule: a seam hand-off never consulted a capacity pool, and a
+    // zero would read as "an empty pool" — the misread this whole task exists to retire.
+    expect(stall?.capacityPoolId).toBeNull();
   });
 
   it("defers to an operator pause and to any status another authority already owns", async () => {

@@ -359,15 +359,38 @@ Two additions make the row answer the question instead:
 
 | key | meaning |
 |---|---|
-| `suspendSource` | Fixed enum naming the refusal that parked the run: `scheduler-seam` (a hold→wip boundary the scheduler owns — no capacity pool was consulted), `column-capacity` (a real `capacity-exhausted` transition rejection), or `capacity-rejection-without-facts` (a rejection written before this change or restored from a payload that dropped the block). |
-| `capacityColumn`, `capacityOccupants`, `capacityLimit` | The gate that refused and how full it was, forwarded from the refusal's structured `CapacityRejectionFacts` (the moving task is excluded from `occupants`). Present only on a real pool refusal. |
+| `suspendSource` | Fixed enum naming the refusal that parked the run: `scheduler-seam` (a hold→wip boundary the scheduler owns — no capacity pool was consulted at the seam itself), `column-capacity` (a real `capacity-exhausted` transition rejection), or `capacity-rejection-without-facts` (a rejection written before this change or restored from a payload that dropped the block). |
+| `capacityColumn`, `capacityOccupants`, `capacityLimit` | The gate that refused and how full it was, forwarded from the refusal's structured `CapacityRejectionFacts` (the moving task is excluded from `occupants`). Present only on a real pool refusal — they are the refusal's own numbers, never a later recount. |
+| `reason` | The deferral class, from one shared vocabulary: `capacity` (a transient resource refusal whose remedy is to wait for a slot), `scheduler-owned-seam` (a structural hold→wip crossing only the release sweep may make), `pause`, `hold`. Before RUFU-372's second revision the first word covered both, and measured 2026-11-02 that mislabelled 98 of 152 rows on a card whose project held zero in-progress cards. |
+| `capacityGate` | WHICH ceiling bound: `columnWip` (an explicit per-column WIP config), `schedulerAgentActive` (the assigned agent is active and already at its `maxConcurrentRuns`), `maxConcurrent` (the cross-project read-through ceiling), or `unknown`. It names the knob an operator can turn, which the counts alone never identified. |
+| `capacityUsed` | Occupancy at the measurement instant — the refusal's own triple on a refusal row, one live snapshot elsewhere. `null` when no gate binds. |
+| `capacityHeldBy` | Holder ids, capped at **5** on this row (`CAPACITY_HOLDER_ID_CAP`). The durable park episode on the card carries a wider cap of 20 (`WIP_ADMISSION_HOLDER_ID_CAP`) — a different surface with a different bound, so size a "who holds my slot" query off the row's 5. `[]` means the pool was consulted and is genuinely empty; the key's ABSENCE means holders were never recorded. Those two sentences are different claims and the card face renders them apart. |
+| `capacityOldestHolderAgeMs` | Age of the longest-held occupant, or `null`. Answers "is a slot busy or just wedged?" — 5 s old is normal churn, 2 d 19 h is the incident shape. |
+| `capacityComputeOutcome`, `capacityStoreOutcome`, `capacityAgentGateError` | Fixed enums describing how much of the snapshot could be taken at all: `complete` / `partial` / `timed-out` / `threw`, `ok` / `failed` / `not-required`, `store-rejected` / `unavailable`. The failure of the diagnostic is itself reportable, because a diagnostic that fails silently is what left 185 rows unanswerable. `unavailable` means no agent ledger was reachable at all — agent rows live on `AgentStore`, never on the `TaskStore` the other inputs come from, so both production wirings resolve a reader explicitly (the executor's own store, else the task store's `getIntakeOwnerAgentStore()`); a row that says `unavailable` names missing wiring, not an empty agent set. |
 
-Two rules keep the surface honest. **Absence is meaningful**: `scheduler-seam` rows carry no capacity block
-at all, because inventing `occupants: 0` for a branch that never asked a pool would be a fabricated
-measurement. **Counts describe the first sample of an ongoing wait**: RUFU-442's notice signature stays
+The keys are emitted by ONE site (`execute-workflow-graph.ts`'s suspended branch) through the bounded
+wrapper, which owns a wall-clock bound, never rethrows, and resolves its own store/settings/IR reads inside
+that bound — a deferral `catch` may perform at most one await and it must be the wrapper's, because in this
+file a throw from that catch converts an explain-wait into a terminal `task:graph-failed` park. A refusal
+row never re-samples the pool: a second count would describe a different instant than the refusal it
+reports. A seam row pays for exactly one snapshot, and `unknown` beside nulls is treated as an answer —
+while a `pause` row, a `hold` row, and every structural-hold sentinel row grow no capacity keys at all,
+since keys there would claim a limit was consulted when none was. A static scan
+(`capacity-gate-facts-call-site-ratchet.test.ts`) forbids both the
+raw compute spelling and any direct await of the facts provider.
+
+Two rules keep the surface honest. **Absence is meaningful**: a non-capacity row carries no capacity block at
+all — `pause`, `hold`, and the principal-routing / human-merge sentinels. The sentinel test runs on the
+marker's `irHash` and BEFORE the reason test, because the reason is not a safe proxy for the class:
+the principal-routing and overlap-wait holds suspend with `reason: "capacity"`, and only the human
+merge-delivery barrier suspends with `hold`. Classifying on the reason alone therefore gave the principal
+sentinel a `capacityGate: "unknown"` beside a row a `reason=capacity` monitor also counts — the exact
+misleading-unknown plus inflated-monitor pair this event exists to delete. Inventing `occupants: 0`
+for a branch that never asked a pool would be a fabricated measurement.
+**Counts describe the first sample of an ongoing wait**: RUFU-442's notice signature stays
 over node, reason, and column boundary only, so a card polling a full pool keeps one row rather than one
 row per poll. Folding the fluctuating occupant count into wait identity would restore the flood this event
-exists to bound.
+exists to bound — which is also why `capacityHeldBy` and `capacityOldestHolderAgeMs` stay out of it.
 
 ### Dedupe authority moved onto the card (RUFU-393)
 

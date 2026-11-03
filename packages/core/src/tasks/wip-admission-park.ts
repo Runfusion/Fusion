@@ -142,6 +142,38 @@ export interface WipAdmissionStallObservation {
   poolId?: string;
   occupants?: number;
   limit?: number;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:12 (RUFU-372): who holds the refused pool, and how long its
+  longest-held occupant has been there. Both are forensic like `occupants`/`limit` — they never enter
+  `signature` (see `wipAdmissionParkSignature`) because a holder list churns whenever any card on the
+  board moves, which would restart the age of a wait that has not changed. They exist so the card face
+  can answer "who is holding my slot, and for how long" from the board payload alone; absent means the
+  refusal carried no holder set, which the notice renders as UNRECORDED, never as an empty pool.
+  */
+  heldBy?: string[];
+  oldestHolderAgeMs?: number;
+}
+
+/** Upper bound on persisted holder ids. A pool's occupants can exceed any display budget, so the stored
+ *  set is capped at write time — an unbounded id array in `sourceMetadata` would ride along on every
+  task hydration for a card that needs five names at most. */
+export const WIP_ADMISSION_HOLDER_ID_CAP = 20;
+
+/** Normalize a writer-supplied holder list to the storable shape: task ids only, capped, `undefined`
+ *  when nothing provable was supplied. An EMPTY array survives as empty — "full at zero occupancy" is a
+ *  real refusal shape (limit 0) and collapsing it to undefined would erase the distinction. */
+function normalizeHeldBy(heldBy: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(heldBy)) return undefined;
+  const ids = heldBy.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  return ids.slice(0, WIP_ADMISSION_HOLDER_ID_CAP);
+}
+
+/** Normalize a holder age: a finite non-negative number, or undefined. A negative or non-finite sample
+ *  (a clock skew between the writer and a holder's own row) is dropped rather than stored, because a
+ *  nonsense age is worse than an unrecorded one — the notice would render it as a fact. */
+function normalizeHolderAgeMs(ms: number | undefined): number | undefined {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return undefined;
+  return Math.floor(ms);
 }
 
 /**
@@ -161,7 +193,29 @@ export function readWipAdmissionStallEpisode(
   if (typeof candidate.lastAt !== "string" || typeof candidate.firstAt !== "string") return undefined;
   if (Number.isNaN(Date.parse(candidate.lastAt)) || Number.isNaN(Date.parse(candidate.firstAt))) return undefined;
   if (typeof candidate.stallCount !== "number" || !Number.isFinite(candidate.stallCount)) return undefined;
-  return candidate as TaskWipAdmissionStallEpisode;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:12 (RUFU-372):
+  The holder forensics are the ONE place this reader degrades a FIELD instead of the whole episode, and
+  the asymmetry is deliberate. The episode's identity fields are load-bearing for a lifecycle bound, so
+  a malformed one means the payload is not an episode at all. A holder list or age is decoration on a
+  valid episode: an older writer, a hand-edited row, or a partial JSON round-trip must not silence the
+  wait notice itself — it loses the names and keeps the truth that the card is being refused. Dropped
+  values read back as absent, which every consumer renders as "not recorded".
+  */
+  const heldBy = Array.isArray(candidate.heldBy)
+    ? candidate.heldBy.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : undefined;
+  const oldestHolderAgeMs = typeof candidate.oldestHolderAgeMs === "number"
+      && Number.isFinite(candidate.oldestHolderAgeMs)
+      && candidate.oldestHolderAgeMs >= 0
+    ? candidate.oldestHolderAgeMs
+    : undefined;
+  const { heldBy: _rawHeldBy, oldestHolderAgeMs: _rawAge, ...rest } = candidate;
+  return {
+    ...(rest as TaskWipAdmissionStallEpisode),
+    ...(heldBy ? { heldBy } : {}),
+    ...(oldestHolderAgeMs !== undefined ? { oldestHolderAgeMs } : {}),
+  };
 }
 
 /**
@@ -185,6 +239,10 @@ export function wipAdmissionStallWrite(
     ...(observation.poolId !== undefined ? { poolId: observation.poolId } : {}),
     ...(observation.occupants !== undefined ? { occupants: observation.occupants } : {}),
     ...(observation.limit !== undefined ? { limit: observation.limit } : {}),
+    ...(normalizeHeldBy(observation.heldBy) !== undefined ? { heldBy: normalizeHeldBy(observation.heldBy) } : {}),
+    ...(normalizeHolderAgeMs(observation.oldestHolderAgeMs) !== undefined
+      ? { oldestHolderAgeMs: normalizeHolderAgeMs(observation.oldestHolderAgeMs) }
+      : {}),
   };
   const shape = {
     code: observation.code,

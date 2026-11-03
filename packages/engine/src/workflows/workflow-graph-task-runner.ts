@@ -193,6 +193,13 @@ export interface WorkflowColumnBoundaryHooks {
   onSuspend?: WorkflowColumnBoundaryDeps["onSuspend"];
   /** FNXC:EnginePause 2026-08-01-00:20: polled at every node entry (see boundary deps). */
   isPaused?: WorkflowColumnBoundaryDeps["isPaused"];
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-20:55 (RUFU-372): threaded unchanged from the production hooks to
+  the boundary controller — the runner supplies per-run context and owns no store, so it must not own the
+  facts source either. Absent → the boundary attaches no gate facts and the suspended payload is
+  byte-identical to the pre-fix shape. See `WorkflowColumnBoundaryDeps.capacityFactsSource`.
+  */
+  capacityFactsSource?: WorkflowColumnBoundaryDeps["capacityFactsSource"];
 }
 
 /**
@@ -300,6 +307,7 @@ export class WorkflowGraphTaskRunner {
         onWarn: hooks.onWarn,
         onSuspend: hooks.onSuspend,
         isPaused: hooks.isPaused,
+        capacityFactsSource: hooks.capacityFactsSource,
       });
     }
 

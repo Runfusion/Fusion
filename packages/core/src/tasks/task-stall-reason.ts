@@ -134,6 +134,35 @@ export interface TaskStallReason {
    * operator the age is for. The number travels in the vocabulary; each surface formats it.
    */
   waitedMs?: number;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:20 (RUFU-372):
+  The capacity-gate forensics, carried for the throttle-class capacity codes only. They exist so a card
+  face can answer "which pool, how full, who holds it, since when" from the board payload it already
+  fetched — before this, the answer lived only in a run-audit table no dashboard route reads, which is
+  what made "capacity: none" on a stalled card a lie nobody could check.
+
+  The three absence shapes are load-bearing and must stay distinct across every hop:
+  - `capacityPoolId: null` — no pool was consulted (a scheduler-owned seam hand-off), so no fill exists.
+  - `capacityHeldBy: undefined` — the holder set was never recorded.
+  - `capacityHeldBy: []` — the pool is genuinely empty at zero occupancy (a limit-0 refusal).
+  A mapper that coerces either of the first two to the second would silently turn "we did not look" into
+  "we looked and found nothing", the exact misread that cost 16 536 rows to discover. `capacityGate` is
+  the only field carrying the gate IDENTITY (`columnWip` / `schedulerAgentActive` / `maxConcurrent` /
+  `unknown`); null means the writer predates the split, and a card that has since crossed a column may
+  legitimately keep an older row while its lane-appropriate stall copy still renders from `code`.
+  */
+  /** Which admission gate bound, in the engine's `CapacityGateId` vocabulary; null = writer predates it. */
+  capacityGate?: "columnWip" | "schedulerAgentActive" | "maxConcurrent" | "unknown" | null;
+  /** The refused pool's identity; null when no pool was consulted. */
+  capacityPoolId?: string | null;
+  /** Occupants at the refusing sample; absent when no sample was taken. */
+  capacityOccupants?: number;
+  /** The resolved limit at the refusing sample; absent when no pool was consulted. */
+  capacityLimit?: number;
+  /** Task ids occupying the pool at the refusing sample; undefined when unrecorded, [] when empty. */
+  capacityHeldBy?: string[];
+  /** How long the pool's longest-held occupant has stood there, in ms. */
+  capacityOldestHolderAgeMs?: number;
 }
 
 /** The task fields the derivation reads. `getTaskMergeBlocker`/`getTaskCompletionBlocker` take
@@ -510,6 +539,23 @@ function deriveWipAdmissionStall(
     reason: WIP_ADMISSION_STALL_SENTENCES[episode.code],
     observedAt,
     waitedMs,
+    /*
+    FNXC:CapacityGateFacts 2026-11-02-22:20 (RUFU-372):
+    The episode's forensics ride the derived stall reason so every surface that renders a stall can name
+    the pool, its fill, and its holders from the SAME accepted write that produced the audit row — one
+    measurement, three surfaces, no second read that could disagree.
+
+    Absence is a fact and is preserved as absence: `capacityPoolId: null` means no pool was consulted (a
+    scheduler-owned seam park), `capacityHeldBy: undefined` means the holder set was never recorded, and
+    an EMPTY `capacityHeldBy` means the pool is genuinely empty at zero occupancy. Collapsing any of those
+    three would recreate the defect this event exists to remove, which is why the copy on the other side
+    of this field is required to say "not recorded" rather than "nobody".
+    */
+    ...(episode.poolId !== undefined ? { capacityPoolId: episode.poolId } : { capacityPoolId: null }),
+    ...(episode.occupants !== undefined ? { capacityOccupants: episode.occupants } : {}),
+    ...(episode.limit !== undefined ? { capacityLimit: episode.limit } : {}),
+    ...(episode.heldBy !== undefined ? { capacityHeldBy: episode.heldBy } : {}),
+    ...(episode.oldestHolderAgeMs !== undefined ? { capacityOldestHolderAgeMs: episode.oldestHolderAgeMs } : {}),
   };
 }
 

@@ -47,6 +47,12 @@ import {
   emitWorkflowLifecycleEvent,
   type TaskWipAdmissionStallCode,
 } from "@fusion/core";
+/* FNXC:CapacityGateFacts 2026-11-02-19:56 (RUFU-372): suspended-arm payload type for the gate facts. */
+import {
+  safeComputeDeferralCapacityGateFacts,
+  type CapacityGateFacts,
+  type CapacityFactsAmbientSource,
+} from "./capacity-gate-facts.js";
 /*
 FNXC:WipAdmissionPark 2026-11-02-07:10 (RUFU-393):
 The human-hold exclusion for the durable park marker. `execution/wip-admission-park.ts` imports
@@ -124,7 +130,26 @@ export interface WorkflowColumnBoundaryDeps {
   a pause takes effect at the next boundary even if no event ever fires.
   */
   isPaused?: () => boolean | Promise<boolean>;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-20:30 (RUFU-372):
+  Where the capacity snapshot's inputs come from, supplied by the production wiring because the
+  controller deliberately owns no store. The boundary itself calls
+  `safeComputeDeferralCapacityGateFacts` — the ONLY form legal on a deferral path — so a refusing
+  column answers "which gate, how full, who holds the slots" from one snapshot instead of leaving
+  the operator to guess between a WIP pool, a worktree pool, and a wedged dispatcher (measured:
+  156 `reason=capacity` rows in 50 min with no limit, no used count, no gate identity).
+  Absent → no facts are computed and the suspended payload stays byte-identical to the pre-fix
+  shape, which is what minimal test harnesses and any store-less wiring depend on.
+  */
+  capacityFactsSource?: () => CapacityFactsInputSource | undefined | Promise<CapacityFactsInputSource | undefined>;
 }
+
+/** What {@link WorkflowColumnBoundaryDeps.capacityFactsSource} may hand back: the ambient snapshot inputs
+ *  the controller cannot know (store surface, ceilings, caches, assigned agent). The per-refusal fields —
+ *  the resolved IR, the target column, the deferring card, the carried refusal — are filled by the
+ *  controller itself, so no wiring site can name a different column than the move it refused. The provider
+ *  and resolver fields are excluded: this boundary already IS the provider. */
+export type CapacityFactsInputSource = CapacityFactsAmbientSource;
 
 /** The seam the graph executor consumes. */
 export interface WorkflowColumnBoundary {
@@ -146,7 +171,18 @@ export type WorkflowColumnBoundaryEntryResult =
   | { kind: "entered" }
   | {
       kind: "suspended";
-      reason: "capacity" | "pause";
+      /*
+      FNXC:CapacityGateFacts 2026-11-02-19:56 (RUFU-372):
+      ONE shared engine-local reason vocabulary for every pre-execution deferral, consumed by
+      the boundary result AND the graph executor's suspended marker — previously two parallel
+      string unions drifted one word at a time. `scheduler-owned-seam` is the second half of the
+      reason-code split: a scheduler-owned hold→WIP seam park that never consulted a capacity
+      pool stops claiming `reason: "capacity"` (RunFusion: 235 capacity rows, zero pool facts).
+      Deliberately engine-local: the CORE `WorkflowRunSuspendReason` enum stays untouched — the
+      locked value set plus a production row with `waitReason='capacity'` at the seam is a
+      documented no-migration contract.
+      */
+      reason: WorkflowDeferralReason;
       nodeId: string;
       fromColumn: string;
       toColumn: string;
@@ -178,6 +214,16 @@ export type WorkflowColumnBoundaryEntryResult =
       operator to a limit slider that has nothing to do with the hold.
       */
       park?: WipAdmissionParkFacts;
+      /*
+      FNXC:CapacityGateFacts 2026-11-02-19:56 (RUFU-372):
+      Which admission gate bound, from ONE snapshot, computed through the SAFE wrapper only
+      (this arm is built inside a deferral catch whose throw would convert an explain-wait into
+      a terminal graph-failed park). Carried for every capacity-bearing class so the audit row
+      and the card notice read the same facts; absent for the pause gate and when no facts
+      provider is wired (minimal harnesses keep the pre-fix payload byte-identical). Unknown +
+      nulls is a real answer and still carries the keys.
+      */
+      capacityFacts?: CapacityGateFacts;
     };
 
 /** A capacity suspension's park identity, carried from the branch that refused the crossing. */
@@ -190,6 +236,17 @@ export interface WipAdmissionParkFacts {
   poolId?: string;
   occupants?: number;
   limit?: number;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:30 (RUFU-372):
+  Who holds the pool and how long its longest-held occupant has been there, forwarded from the same
+  snapshot the audit row reports. They ride the refusal's own park facts rather than being re-read at
+  notice time, so the History line, the durable episode, the card face, and the audit row all describe the
+  instant the pool refused — three surfaces agreeing is the deliverable, and a second read is how they
+  stop agreeing. Absent means unrecorded (no pool consulted, or the holder walk could not run), which the
+  notice must render as unrecorded rather than as an empty pool.
+  */
+  holderIds?: string[];
+  oldestHolderAgeMs?: number;
 }
 
 /** Fixed vocabulary for what made a graph run suspend at a column boundary. */
@@ -200,6 +257,66 @@ export type WorkflowRunSuspendSource =
   | "column-capacity"
   /** A capacity rejection that arrived without structured facts (older writer or lost hop). */
   | "capacity-rejection-without-facts";
+
+/*
+FNXC:CapacityGateFacts 2026-11-02-19:56 (RUFU-372):
+The engine-local deferral-reason vocabulary shared by the boundary result and the executor's
+suspended marker. `scheduler-owned-seam` separates a scheduler-owned authority hand-off from a
+refused capacity crossing — the two shapes that made RunFusion's 235 `reason=capacity` rows
+undiagnosable. `hold` is the executor marker's human-wait class (the FN-514 merge-delivery barrier).
+`hold` and `pause` are structurally never capacity-bearing, so they never grow capacity keys — but the
+principal-routing / overlap-wait hold does NOT suspend as `hold`, it suspends as `capacity` and carries its
+identity in the marker's `irHash` sentinel (see `STRUCTURAL_HOLD_IR_HASHES` below), so the reason alone is
+not a complete class test. This union must NOT leak
+into the core `WorkflowRunSuspendReason` storage enum — a seam park's continuation keeps
+`waitReason: 'capacity'` by the documented no-migration contract (see
+workflow-column-boundary-hooks.ts onSuspend).
+*/
+export const WORKFLOW_DEFERRAL_REASONS = ["capacity", "pause", "hold", "scheduler-owned-seam"] as const;
+export type WorkflowDeferralReason = (typeof WORKFLOW_DEFERRAL_REASONS)[number];
+
+/*
+FNXC:CapacityGateFacts 2026-11-02-20:45 (RUFU-372):
+The two reason spellings as named constants, because the split is the deliverable and a bare
+string literal at four call sites is how the two classes drift back together. A producer picks
+one of these two; nothing else in the engine writes either.
+*/
+/** A real capacity refusal: a pool was consulted, it was full, waiting relieves it. */
+export const CAPACITY_REFUSAL = "capacity" as const satisfies WorkflowDeferralReason;
+/** A structural hand-off park: only the scheduler may cross, so waiting inside the run never does. */
+export const SCHEDULER_OWNED_SEAM = "scheduler-owned-seam" as const satisfies WorkflowDeferralReason;
+
+/*
+FNXC:CapacityGateFacts 2026-11-02-21:45 (RUFU-372 code review P0):
+The REASON value does not separate every structural park from every resource refusal, and the code that
+assumed it did was wrong about a reachable class. The principal-routing / overlap-wait hold suspends with
+`reason: "capacity"` (workflow-graph-executor.ts, the preflight refusal) and the human merge-delivery
+barrier with `reason: "hold"` — both carry their identity in the marker's `irHash`, not in the reason, so
+`capacity` alone cannot be the class test. Left as a reason test, the principal sentinel took the refusal
+arm and grew `capacityGate: "unknown"` plus `capacityComputeOutcome: "complete"` on a row that also still
+matched a `reason=capacity` monitor — the exact misleading-unknown + inflated-monitor pair this task exists
+to delete. These two sentinels are therefore the class test: a structural hold is recognized by its
+`irHash` BEFORE any reason comparison, and no capacity evidence is computed for it at all. The vocabulary
+lives here, next to the reason constants, because a consumer that classifies deferrals must consult one
+list rather than re-derive it from two throw sites.
+*/
+/** Principal-routing / overlap-wait hold — the marker's own refusal reason stays `capacity`. */
+export const WORKFLOW_PRINCIPAL_HOLD_IR_HASH = "workflow-principal-hold" as const;
+/** FN-514 human merge-delivery barrier hold — suspends with `reason: "hold"`. */
+export const HUMAN_MERGE_APPROVAL_HOLD_IR_HASH = "human-merge-approval-hold" as const;
+
+/** Every marker `irHash` that names a structural hold rather than a pinned workflow IR. A real pinned
+ *  IR hash is a content hash, so these literals cannot collide with one by accident. */
+export const STRUCTURAL_HOLD_IR_HASHES = [
+  WORKFLOW_PRINCIPAL_HOLD_IR_HASH,
+  HUMAN_MERGE_APPROVAL_HOLD_IR_HASH,
+] as const;
+
+/** Is this marker a structural hold the graph is waiting on a human or a router for? True means the
+ *  row may not carry capacity evidence: no pool was consulted for this deferral at all. */
+export function isStructuralHoldSentinel(irHash: string | undefined): boolean {
+  return irHash !== undefined && (STRUCTURAL_HOLD_IR_HASHES as readonly string[]).includes(irHash);
+}
 
 /*
 FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
@@ -464,7 +581,22 @@ export function createWorkflowColumnBoundary(
         });
         const suspension = {
           kind: "suspended",
-          reason: "capacity",
+          /*
+          FNXC:CapacityGateFacts 2026-11-02-20:35 (RUFU-372 second revision):
+          This park is STRUCTURAL, not a resource refusal. Under KTD-2 the graph may never cross a
+          hold→WIP boundary itself — the hold/release sweep is the sole mover — so waiting inside the
+          run can never resolve it, while a `capacity-exhausted` rejection two branches below clears
+          by itself once a slot frees. Opposite remedies may not share one reason value: measured on
+          SKEN-009, 98 of 152 `reason=capacity` rows in one 30-minute window were a single card in a
+          project with ZERO in-progress cards and zero worktree holders, so a monitor counting
+          capacity suspends was reporting an unrelievable wait as if it were relievable pressure.
+          `scheduler-owned-seam` is therefore the machine-readable discriminator, emitted on BOTH
+          halves of this pair (the suspension marker here and its paired RunSuspended event below).
+          No gate facts are attached at the seam — no pool is consulted here; the audit emit records
+          what a live snapshot can prove there, and `unknown` beside this reason honestly means
+          "look at the scheduler, not at a limit slider".
+          */
+          reason: SCHEDULER_OWNED_SEAM,
           nodeId: node.id,
           fromColumn,
           toColumn,
@@ -506,7 +638,10 @@ export function createWorkflowColumnBoundary(
           at: new Date().toISOString(),
           workflowId: deps.workflowId,
           nodeId: node.id,
-          reason: "capacity",
+          /* FNXC:CapacityGateFacts 2026-11-02-20:35 (RUFU-372): the paired half of the seam park —
+             the marker and the event must carry the SAME reason, or a monitor counting the event
+             and a reader counting the row disagree about which waits are capacity waits. */
+          reason: SCHEDULER_OWNED_SEAM,
           fromColumn,
           toColumn,
         });
@@ -539,9 +674,40 @@ export function createWorkflowColumnBoundary(
               toColumn,
               nodeId: node.id,
             });
+            /*
+            FNXC:CapacityGateFacts 2026-11-02-20:40 / 23:58 (RUFU-372):
+            A real refusal is the class where the numbers are worth having, so take ONE live snapshot
+            here — the rejection's own `CapacityRejectionFacts` is an input to the classification, not a
+            substitute for it, because the store refuses with a column/occupants/limit triple only and
+            can never see the agent gate or the holder ages. This branch is already inside a `catch`, and
+            in this file a throw from a catch converts an explain-wait into a terminal `task:graph-failed`
+            park plus `task.error`, so ONLY the safe wrapper is legal and it must be the ONE await this
+            path performs: the wiring hands over a provider the wrapper resolves inside its own bound,
+            rather than this branch awaiting a store read the wrapper cannot bound. The wrapper never
+            rethrows and returns whatever it proved before its bound as a bounded `partial`.
+            Without a wired source (minimal harnesses, store-less wiring) no facts are attached and the
+            payload stays byte-identical to the pre-fix shape.
+            */
+            const capacityFacts = deps.capacityFactsSource
+              ? await safeComputeDeferralCapacityGateFacts({
+                sourceProvider: deps.capacityFactsSource,
+                ir: deps.ir,
+                targetColumn: toColumn,
+                deferredTaskId: deps.taskId,
+                ...(err.rejection.capacity ? { carried: err.rejection.capacity } : {}),
+              })
+              : undefined;
             const suspension = {
               kind: "suspended",
-              reason: "capacity",
+              /*
+              FNXC:CapacityGateFacts 2026-11-02-20:40 (RUFU-372 second revision):
+              This pair KEEPS `capacity`, and that is the point: a capacity-exhausted refusal is a
+              transient resource refusal whose remedy is to wait for a slot, which is exactly what the
+              seam park above is not. A monitor may therefore count `reason=capacity` rows and count
+              only true refusals. Both halves keep the same value, and now also carry the binding
+              gate's facts, so the reason alone separates the classes with no column-traits lookup.
+              */
+              reason: CAPACITY_REFUSAL,
               nodeId: node.id,
               fromColumn,
               toColumn,
@@ -573,8 +739,21 @@ export function createWorkflowColumnBoundary(
                     poolId: err.rejection.capacity.column,
                     occupants: err.rejection.capacity.occupants,
                     limit: err.rejection.capacity.limit,
+                    /*
+                    FNXC:CapacityGateFacts 2026-11-02-22:30 (RUFU-372):
+                    The holder facts join the park identity from the SAME snapshot, so the durable episode,
+                    its History line, and the audit row are one measurement. A snapshot that could not walk
+                    the holders simply omits them — the notice then says "holders are not recorded", which is
+                    the honest rendering, rather than "held by nobody", which would send the operator to look
+                    for a stuck card that does not exist.
+                    */
+                    ...(capacityFacts?.capacityHeldBy ? { holderIds: capacityFacts.capacityHeldBy } : {}),
+                    ...(typeof capacityFacts?.capacityOldestHolderAgeMs === "number"
+                      ? { oldestHolderAgeMs: capacityFacts.capacityOldestHolderAgeMs }
+                      : {}),
                   }
                 : { code: "capacity-rejection-without-facts" as TaskWipAdmissionStallCode, eligible: true },
+              ...(capacityFacts ? { capacityFacts } : {}),
             } as const;
             await deps.onSuspend?.(suspension);
             // FNXC:WorkflowEvents 2026-07-27-12:06 (U3): see the hold→wip seam above.
@@ -584,7 +763,8 @@ export function createWorkflowColumnBoundary(
               at: new Date().toISOString(),
               workflowId: deps.workflowId,
               nodeId: node.id,
-              reason: "capacity",
+              // FNXC:CapacityGateFacts 2026-11-02-20:40 (RUFU-372): rejection class keeps `capacity`.
+              reason: CAPACITY_REFUSAL,
               fromColumn,
               toColumn,
             });

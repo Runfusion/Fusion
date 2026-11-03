@@ -88,6 +88,18 @@ import { recordWipAdmissionPark, wipAdmissionInLaneWorkProbe, wipAdmissionParkDe
 import { takePreHeldExecutorSlot } from "../concurrency/concurrency.js";
 import { resolveCompleteColumnFor } from "./lifecycle-columns.js";
 import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
+/*
+FNXC:CapacityGateFacts 2026-11-02-21:40 (RUFU-372): the shared capacity-gate evaluator plus the ONE
+metadata mapper, and the two deferral reason constants the audit row splits on. Imported as named
+constants rather than literals so a rename cannot leave the audit vocabulary half-migrated.
+*/
+import {
+  capacityGateFactsAuditMetadata,
+  resolveCapacityAgentSurface,
+  safeComputeDeferralCapacityGateFacts,
+  type CapacityGateFacts,
+} from "../workflows/capacity-gate-facts.js";
+import { CAPACITY_REFUSAL, SCHEDULER_OWNED_SEAM, isStructuralHoldSentinel } from "../workflows/workflow-column-boundary.js";
 import { nextPlanReviewAttemptCount, PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } from "../plan-review-feedback-history.js";
 import type { AgentSemaphore } from "../concurrency/concurrency.js";
 import type { WorkflowAgentCapacity } from "../agents/workflow-agent-capacity.js";
@@ -1424,8 +1436,17 @@ export async function executeWorkflowGraph(
 
         `eligible` false means a human or an external event owns the hold. Those suspensions keep the
         pre-existing memo path untouched: they are not a capacity park and must not gain a capacity marker.
+
+        FNXC:CapacityGateFacts 2026-11-02-20:50 (RUFU-372 second revision):
+        The gate is park PRESENCE, not `reason === "capacity"`. RUFU-393 authored this read against the
+        single reason word the boundary used to emit for every deferral; RUFU-372's reason split then gave
+        the structural hold→WIP seam its own code, `scheduler-owned-seam`, which is precisely the population
+        this durable episode exists to bound (one card wrote 16 536 refusal rows over 2 d 19 h). Matching
+        on the old word would have silently un-parked every seam card — the relabel must not be able to
+        reach a decision, and `park` is only ever carried by a branch that actually refused a crossing.
+        Non-capacity classes (pause, the principal-hold sentinel) carry no `park`, so nothing new parks.
         */
-        const parkFacts = suspension?.reason === "capacity" ? suspension.park : undefined;
+        const parkFacts = suspension?.park;
         const parkDecision = parkFacts?.eligible
           ? await recordWipAdmissionPark(deps.store, task, {
               code: parkFacts.code,
@@ -1435,6 +1456,9 @@ export async function executeWorkflowGraph(
               ...(parkFacts.poolId !== undefined ? { poolId: parkFacts.poolId } : {}),
               ...(parkFacts.occupants !== undefined ? { occupants: parkFacts.occupants } : {}),
               ...(parkFacts.limit !== undefined ? { limit: parkFacts.limit } : {}),
+              // FNXC:CapacityGateFacts 2026-11-02-22:30 (RUFU-372): holders ride the same episode write.
+              ...(parkFacts.holderIds !== undefined ? { heldBy: parkFacts.holderIds } : {}),
+              ...(parkFacts.oldestHolderAgeMs !== undefined ? { oldestHolderAgeMs: parkFacts.oldestHolderAgeMs } : {}),
             })
           : undefined;
         const signature = runSuspendedNoticeSignature({
@@ -1452,6 +1476,70 @@ export async function executeWorkflowGraph(
               `[workflow-graph] ${task.id} suspended at node '${suspension?.nodeId ?? "unknown"}' (${suspension?.reason ?? "unknown"})`,
             );
         if (!isNewWait) return;
+        /*
+        FNXC:CapacityGateFacts 2026-11-02-21:35 (RUFU-372):
+        A row is only worth its facts if the row is warranted, so this snapshot runs AFTER the notice
+        bound has already returned early — a bounded repeat of an ongoing wait adds zero host calls.
+        Two producer shapes reach this point and they are charged differently, because the numbers must
+        describe the refusal's own instant and never a later sample:
+        - a refusal the boundary already classified (`capacityFacts` present) is forwarded unchanged;
+        - a refusal that arrived without them (an older writer, or a hop that dropped the payload) is
+          classified from the carried triple with NO pool walk — the store already counted the column, so
+          re-counting it here would report a different instant than the refusal. Only the workflow IR is
+          read, and only to name WHICH ceiling that triple came from;
+        - a structural `scheduler-owned-seam` park carries NOTHING (no pool is consulted at the seam) and
+          takes exactly one full bounded snapshot, because "which gate" must have an answer for every
+          capacity-bearing class even when the answer is `unknown` beside nulls.
+        ONLY the safe wrapper may run here: this is a deferral report, and a second unbounded await on
+        a path that already swallowed a refusal is how an explain-wait becomes a hung dispatch. The IR
+        resolves inside the wrapper's bound via `irResolver` for the same reason.
+        */
+        const suspensionReason = suspension?.reason;
+        /*
+        FNXC:CapacityGateFacts 2026-11-02-21:45 (RUFU-372 code review P0):
+        The sentinel test runs BEFORE any reason comparison, and the order is the fix. The first cut
+        classified the capacity-bearing classes by the reason value alone on the premise that every
+        structural hold suspends as `hold`. That premise was false for a reachable class: the
+        principal-routing / overlap-wait hold throws `reason: "capacity"` with
+        `irHash: WORKFLOW_PRINCIPAL_HOLD_IR_HASH` (workflow-graph-executor.ts), only the FN-514 human
+        merge barrier uses `hold`. A reason-only test therefore routed that hold down the refusal arm and
+        emitted `capacityGate: "unknown"` with `capacityComputeOutcome: "complete"` on a row that also
+        matched a `reason=capacity` monitor — the misleading-unknown plus inflated-monitor combination the
+        contract forbids, and invisible from the inside because nothing in the row looked wrong. A
+        structural hold consulted no pool, so it gets no capacity evidence at all: not a name, not a
+        null, not an `unknown`.
+        */
+        const structuralHold = isStructuralHoldSentinel(suspension?.irHash);
+        const refusalClass = !structuralHold && suspensionReason === CAPACITY_REFUSAL;
+        const seamClass = !structuralHold && suspensionReason === SCHEDULER_OWNED_SEAM;
+        const capacityGateFacts: CapacityGateFacts | undefined =
+          refusalClass || seamClass
+            ? suspension?.capacityFacts ?? await safeComputeDeferralCapacityGateFacts({
+                ...(seamClass
+                  ? {
+                      store: deps.store,
+                      settings,
+                      deferredTaskId: task.id,
+                      assignedAgentId: task.assignedAgentId ?? task.checkedOutBy,
+                      /*
+                      FNXC:CapacityGateFacts 2026-11-02-21:45 (RUFU-372 code review P1):
+                      `TaskStore` carries no agent rows — they live on `AgentStore` — so a snapshot handed
+                      only the task store silently disabled the `schedulerAgentActive` gate and reported
+                      `capacityAgentGateError: "unavailable"` on every seam row for a card with an owner.
+                      That is the gate the incident's wrong guesses were about, so the wiring resolves a
+                      real agent reader: the engine's own AgentStore when the executor has one, otherwise
+                      the project-scoped AgentStore the TaskStore already owns, and only as a last resort
+                      nothing (which stays honest as `unavailable` rather than a fabricated evaluation).
+                      */
+                      agents: resolveCapacityAgentSurface(deps.store, deps.options.agentStore),
+                    }
+                  : {}),
+                irResolver: async ({ taskId }) =>
+                  taskId ? await resolveWorkflowIrForTask(deps.store, taskId) : undefined,
+                targetColumn: suspension?.toColumn ?? undefined,
+                ...(suspension?.capacity ? { carried: suspension.capacity } : {}),
+              })
+            : undefined;
         await emitBoundedRunAudit(deps.store, {
           taskId: task.id,
           agentId: "executor",
@@ -1482,7 +1570,32 @@ export async function executeWorkflowGraph(
             tame. Counts therefore describe the FIRST sample of an ongoing wait.
             */
             ...(suspension?.source ? { suspendSource: suspension.source } : {}),
-            ...(suspension?.capacity
+            /*
+            FNXC:CapacityGateFacts 2026-11-02-21:35 / 21:45 (RUFU-372):
+            The gate's own facts, emitted as a closed set on every capacity-bearing row. Three
+            invariants hold this shape:
+            1. `unknown` is an ANSWER, not a gap. It means no limit was provable in one bounded
+               snapshot, so the operator may act. Beside `scheduler-owned-seam` it specifically means
+               "look at the scheduler, not at a limit slider" — no pool was consulted at the seam.
+            2. A NON-capacity row grows NO capacity keys at all — a pause, and EVERY structural hold
+               sentinel. The sentinel test runs before the reason test (see above) precisely because the
+               reason is not a safe proxy here: the principal-routing / overlap-wait hold suspends as
+               `capacity`, only the human merge barrier suspends as `hold`. Classifying on the reason
+               alone gave that hold `capacityGate: "unknown"` beside a `reason=capacity` monitor, i.e. a
+               row that both lies about a consulted pool and inflates the refusal count.
+            3. These keys never enter `runSuspendedNoticeSignature` above. That bound counts ONE wait
+               by node/reason/columns; folding a fluctuating used-count or holder list into the
+               identity would make every poll of a full pool a new wait and restore the flood RUFU-442
+               removed. The numbers therefore describe the FIRST sample of an ongoing wait.
+            The `capacityColumn`/`capacityOccupants` keys below stay exactly as RUFU-372's first slice
+            shipped them: they are the raw refusal triple, while `capacityLimit`/`capacityUsed` are
+            the classified snapshot's view of the same ceiling. That triple is gated on the same
+            sentinel test rather than riding along unconditionally: a structural hold never carries one,
+            so the gate changes no reachable row today, but it makes the no-capacity-keys invariant hold
+            by construction instead of by coincidence.
+            */
+            ...capacityGateFactsAuditMetadata(capacityGateFacts),
+            ...(!structuralHold && suspension?.capacity
               ? {
                   capacityColumn: suspension.capacity.column,
                   capacityOccupants: suspension.capacity.occupants,

@@ -4769,7 +4769,17 @@
       "headline": "等待进行中的槽位（{{waited}}）",
       "headlineUnspecified": "等待进行中的槽位",
       "description": "此卡片已计划且空闲，但进入“进行中”的转换持续被拒绝，因此在有槽位或放行释放它之前会停留在当前位置。",
-      "suggestedAction": "检查“进行中”列被什么占用及其上限，或自行移动该卡片。"
+      "suggestedAction": "检查“进行中”列被什么占用及其上限，或自行移动该卡片。",
+      "descriptionWithFacts": "",
+      "facts": {
+        "noLimit": "",
+        "limitOnly": "",
+        "fill": "",
+        "holdersUnrecorded": "",
+        "holdersEmpty": "",
+        "holdersWithAge": "",
+        "holders": ""
+      }
     },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",

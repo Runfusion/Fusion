@@ -34,6 +34,7 @@ The three rules that make the marker safe to write on a hot path:
 import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   clearWipAdmissionStallPatch,
+  formatWipAdmissionStallWait,
   readWipAdmissionStallEpisode,
   resolveWorkflowIrForTask,
   WIP_ADMISSION_STALL_METADATA_KEY,
@@ -244,6 +245,15 @@ export interface WipAdmissionParkContext {
   poolId?: string;
   occupants?: number;
   limit?: number;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:15 (RUFU-372): who holds the pool and how long its longest-held
+  occupant has stood there, forwarded from the ONE snapshot that measured the refusal. They ride the same
+  accepted episode write as the counts, so the audit row, the History line, and the card-face notice all
+  describe the same instant — three surfaces, one measurement, which is what stops them disagreeing the
+  way three separate reads did during the incident.
+  */
+  heldBy?: string[];
+  oldestHolderAgeMs?: number;
 }
 
 /**
@@ -289,6 +299,8 @@ export async function recordWipAdmissionPark(
       ...(context.poolId !== undefined ? { poolId: context.poolId } : {}),
       ...(context.occupants !== undefined ? { occupants: context.occupants } : {}),
       ...(context.limit !== undefined ? { limit: context.limit } : {}),
+      ...(context.heldBy !== undefined ? { heldBy: context.heldBy } : {}),
+      ...(context.oldestHolderAgeMs !== undefined ? { oldestHolderAgeMs: context.oldestHolderAgeMs } : {}),
     },
     now,
   );
@@ -325,7 +337,22 @@ async function announceWipAdmissionPark(store: TaskStore, taskId: string, episod
   const occupancy = episode.limit === undefined
     ? ""
     : `, ${episode.occupants ?? "?"} of ${episode.limit} slots held`;
-  const action = `WIP admission withheld: refused at ${episode.fromColumn} to ${episode.toColumn} (gate: ${episode.code}${occupancy})`;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:15 (RUFU-372):
+  Names the holders on the card's own History line, because "who is holding my slot" is the question an
+  operator asks next and the answer must not require a database query. An UNRECORDED holder set is stated
+  as unrecorded: silence here would read as "no one holds it", which is the opposite claim — the same
+  honest-absence rule the audit row carries.
+  */
+  const holders = episode.heldBy === undefined
+    ? ", holders not recorded"
+    : episode.heldBy.length > 0
+      ? `, held by ${episode.heldBy.join(", ")}`
+      : ", held by no recorded card";
+  const oldestHold = typeof episode.oldestHolderAgeMs === "number"
+    ? ` (longest ${formatWipAdmissionStallWait(episode.oldestHolderAgeMs)})`
+    : "";
+  const action = `WIP admission withheld: refused at ${episode.fromColumn} to ${episode.toColumn} (gate: ${episode.code}${occupancy}${holders}${oldestHold})`;
   // The two deferring gates are ordinary resting states with their own announcers — a card waiting on the
   // planner is reported by the planning-lane family (RUFU-273), a card waiting on approval by the approval
   // path. Writing marker+audit for them stays valuable (age becomes diagnosable), but an hourly History

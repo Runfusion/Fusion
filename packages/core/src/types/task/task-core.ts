@@ -807,6 +807,27 @@ export interface TaskWipAdmissionStallEpisode {
   occupants?: number;
   /** The resolved limit at the refusing sample. Forensic only, as `occupants`. */
   limit?: number;
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:10 (RUFU-372):
+  WHO holds the slots, as task ids, capped by the writer. These are forensic like the counts and for the
+  same reason they are outside `signature`: a holder list churns whenever any card on the board moves, so
+  folding it into the wait identity would make every unrelated move a "new" refusal and restart `firstAt`
+  on a card that has waited two days — RUFU-442's failure mode reached from the other side.
+
+  The field is what makes the card notice answer "who is holding my slot?" without a database query:
+  the operator sees the board, not an audit table. ABSENT means unrecorded (the refusal carried no
+  holder set, or the class consulted no pool at all), which the notice must render as unrecorded rather
+  than as an empty pool — the same honest-absence rule RUFU-372's audit row uses, where an empty list
+  genuinely means "full at zero occupancy" and must not be conflated with "nobody knows".
+  */
+  heldBy?: string[];
+  /**
+   * How long the LONGEST-held occupant has been standing in the pool, in ms, measured from its own
+   * column-entry instant (`columnMovedAt`, falling back to `updatedAt` only when that is absent).
+   * `updatedAt` alone is unusable here: RUFU-350 measured that naming a card bumps the shared row clock,
+   * so a holder that was merely touched by a recovery pass would read as freshly arrived. Forensic only.
+   */
+  oldestHolderAgeMs?: number;
 }
 
 /** One cross-project handoff pointer record (see the FNXC block above). */

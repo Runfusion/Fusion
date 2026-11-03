@@ -4769,7 +4769,17 @@
       "headline": "Esperando un hueco de trabajo en curso ({{waited}})",
       "headlineUnspecified": "Esperando un hueco de trabajo en curso",
       "description": "Esta tarjeta está planificada e inactiva, pero su paso a trabajo en curso sigue siendo rechazado, así que permanece donde está hasta que se libere un hueco.",
-      "suggestedAction": "Revisa qué ocupa la columna de trabajo en curso y su límite, o mueve la tarjeta tú mismo."
+      "suggestedAction": "Revisa qué ocupa la columna de trabajo en curso y su límite, o mueve la tarjeta tú mismo.",
+      "descriptionWithFacts": "{{facts}} Esta tarjeta está planificada e inactiva, así que permanece donde está hasta que se libere un puesto.",
+      "facts": {
+        "noLimit": "No se consultó ningún grupo de capacidad para esta espera.",
+        "limitOnly": "El límite de {{limit}} en {{pool}} está completo.",
+        "fill": "El límite de {{limit}} en {{pool}} está completo ({{used}} en uso).",
+        "holdersUnrecorded": "Los ocupantes no están registrados.",
+        "holdersEmpty": "Ninguna tarjeta está registrada como ocupante de un puesto.",
+        "holdersWithAge": "Ocupado por {{holders}} (más tiempo: {{age}}).",
+        "holders": "Ocupado por {{holders}}."
+      }
     },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",

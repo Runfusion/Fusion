@@ -4769,7 +4769,17 @@
       "headline": "Aguardando uma vaga de trabalho em andamento ({{waited}})",
       "headlineUnspecified": "Aguardando uma vaga de trabalho em andamento",
       "description": "Este cartão está planejado e parado, mas sua entrada em trabalho em andamento continua sendo recusada, então ele fica onde está até uma vaga ou liberação.",
-      "suggestedAction": "Verifique o que ocupa a coluna de trabalho em andamento e o limite dela, ou mova o cartão você mesmo."
+      "suggestedAction": "Verifique o que ocupa a coluna de trabalho em andamento e o limite dela, ou mova o cartão você mesmo.",
+      "descriptionWithFacts": "{{facts}} Este cartão está planejado e ocioso, então permanece onde está até uma vaga ser liberada.",
+      "facts": {
+        "noLimit": "Nenhum grupo de capacidade foi consultado para esta espera.",
+        "limitOnly": "O limite de {{limit}} em {{pool}} está cheio.",
+        "fill": "O limite de {{limit}} em {{pool}} está cheio ({{used}} em uso).",
+        "holdersUnrecorded": "Os ocupantes não estão registrados.",
+        "holdersEmpty": "Nenhum cartão está registrado como ocupante de uma vaga.",
+        "holdersWithAge": "Ocupado por {{holders}} (mais tempo: {{age}}).",
+        "holders": "Ocupado por {{holders}}."
+      }
     },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",

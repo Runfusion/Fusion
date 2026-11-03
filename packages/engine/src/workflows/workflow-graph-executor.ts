@@ -56,6 +56,10 @@ import { runLoop, runOptionalGroup } from "./workflow-graph-loop.js";
 import type { WorkflowNodeRunnerRegistry } from "./workflow-node-runner.js";
 import { workflowNodeRequiresWorktree } from "./workflow-node-execution-needs.js";
 import type { WorkflowColumnBoundary } from "./workflow-column-boundary.js";
+import {
+  HUMAN_MERGE_APPROVAL_HOLD_IR_HASH,
+  WORKFLOW_PRINCIPAL_HOLD_IR_HASH,
+} from "./workflow-column-boundary.js";
 import { BranchWriteProvenanceError } from "@fusion/core";
 import { WorktreeBaseRefreshError, WorkspacePreparationError } from "../worktree/worktree-acquisition.js";
 
@@ -508,7 +512,14 @@ export interface WorkflowGraphExecutorResult {
   context: Record<string, unknown>;
   visitedNodeIds: string[];
   suspended?: {
-    reason: "capacity" | "pause" | "hold";
+    /*
+    FNXC:CapacityGateFacts 2026-11-02-19:56 (RUFU-372):
+    One shared deferral-reason vocabulary across the boundary result and this marker — the
+    two parallel unions previously drifted one word at a time. `scheduler-owned-seam` is the
+    structural hand-off class that must never claim `capacity` (RunFusion: 235 capacity rows,
+    zero pool facts); `hold` stays the admission-hold class. See the boundary for the contract.
+    */
+    reason: import("./workflow-column-boundary.js").WorkflowDeferralReason;
     nodeId: string;
     fromColumn: string;
     toColumn: string;
@@ -523,6 +534,13 @@ export interface WorkflowGraphExecutorResult {
     capacity?: import("@fusion/core").CapacityRejectionFacts;
     /** Mirrors the boundary's suspended arm — the durable-park identity. See the boundary for the contract. */
     park?: import("./workflow-column-boundary.js").WipAdmissionParkFacts;
+    /**
+     * Mirrors the boundary's suspended arm — the gate facts from ONE snapshot (gate identity,
+     * limit/used, holder ids, compute outcome). Emitted on every capacity-bearing deferral row
+     * by `execute-workflow-graph.ts`; absent for structural classes and unwired harnesses.
+     * FNXC:CapacityGateFacts 2026-11-02-19:56 (RUFU-372).
+     */
+    capacityFacts?: import("./capacity-gate-facts.js").CapacityGateFacts;
   };
 }
 
@@ -2341,7 +2359,14 @@ export class WorkflowGraphExecutor {
               nodeId: node.id,
               fromColumn: task.column,
               toColumn: task.column,
-              irHash: "human-merge-approval-hold",
+              /*
+              FNXC:CapacityGateFacts 2026-11-02-21:45 (RUFU-372 code review P0):
+              The sentinel is a shared constant, not a private literal: a consumer that has to tell a
+              structural hold apart from a capacity refusal reads the SAME vocabulary
+              (`STRUCTURAL_HOLD_IR_HASHES` in workflow-column-boundary.ts). Drift here would silently
+              re-classify this park as a resource refusal and grow capacity keys on it.
+              */
+              irHash: HUMAN_MERGE_APPROVAL_HOLD_IR_HASH,
             });
           }
         }
@@ -2377,12 +2402,23 @@ export class WorkflowGraphExecutor {
              * `running` forever, and name the reason in the task log.
              */
             context[`node:${node.id}:principal-hold`] = preflight.value;
+            /*
+            FNXC:CapacityGateFacts 2026-11-02-21:45 (RUFU-372 code review P0):
+            Read these two lines together before "simplifying" them: the REASON says `capacity` while the
+            IR-HASH sentinel says this is a structural routing hold. The reason is deliberately unchanged
+            (relabeling it would touch the workflow-principal machinery for no reader need, and the
+            sentinel is this class's existing discriminator) — which is precisely why any consumer that
+            classifies deferrals by the reason value alone MUST test the sentinel first, or this hold
+            reports as a resource refusal and grows `capacityGate: "unknown"` beside a `reason=capacity`
+            monitor it also matches. Both halves of that rule live in one place:
+            `isStructuralHoldSentinel` in workflow-column-boundary.ts.
+            */
             throw new WorkflowGraphSuspended({
               reason: "capacity",
               nodeId: node.id,
               fromColumn: task.column,
               toColumn: task.column,
-              irHash: "workflow-principal-hold",
+              irHash: WORKFLOW_PRINCIPAL_HOLD_IR_HASH,
             });
           }
           return preflight;

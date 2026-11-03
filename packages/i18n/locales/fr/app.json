@@ -4769,7 +4769,17 @@
       "headline": "En attente d'une place en cours de réalisation ({{waited}})",
       "headlineUnspecified": "En attente d'une place en cours de réalisation",
       "description": "Cette carte est planifiée et inactive, mais son passage en cours de réalisation continue d'être refusé ; elle reste en place jusqu'à la libération d'une place.",
-      "suggestedAction": "Vérifiez ce qui occupe la colonne en cours de réalisation et sa limite, ou déplacez vous-même la carte."
+      "suggestedAction": "Vérifiez ce qui occupe la colonne en cours de réalisation et sa limite, ou déplacez vous-même la carte.",
+      "descriptionWithFacts": "{{facts}} Cette carte est planifiée et inactive ; elle reste donc en place jusqu'à la libération d'une place.",
+      "facts": {
+        "noLimit": "Aucun réservoir de capacité n'a été consulté pour cette attente.",
+        "limitOnly": "La limite de {{limit}} pour {{pool}} est atteinte.",
+        "fill": "La limite de {{limit}} pour {{pool}} est atteinte ({{used}} en cours).",
+        "holdersUnrecorded": "Les occupants ne sont pas enregistrés.",
+        "holdersEmpty": "Aucune carte n'est enregistrée comme occupant une place.",
+        "holdersWithAge": "Occupé par {{holders}} (plus longue durée : {{age}}).",
+        "holders": "Occupé par {{holders}}."
+      }
     },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",

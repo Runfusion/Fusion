@@ -596,7 +596,15 @@ argument, so nothing engine- or store-shaped crosses into the browser graph; del
 module, which reaches `merge/task-merge.js` and would pull `node:crypto` into the bundle (see the hazard note
 there).
 */
-export { formatWipAdmissionStallWait } from "./tasks/wip-admission-park.js";
+/*
+FNXC:CapacityGateFacts 2026-11-02-23:55 (RUFU-372 second revision):
+`readWipAdmissionStallEpisode` joins the formatter here for the same reason and the same reason only: the
+dashboard's card face reads the capacity facts (pool, fill, holders) straight off the card's own
+`sourceMetadata`, because no board surface can read run-audit. It is a pure reader over a JSON blob it is
+handed — validation, no I/O — so nothing store-shaped crosses into the browser graph, while the derivation
+module that reads a whole Task stays out (it reaches `merge/task-merge.js` and `node:crypto`).
+*/
+export { formatWipAdmissionStallWait, readWipAdmissionStallEpisode } from "./tasks/wip-admission-park.js";
 
 export type { OverlapWaitPhase, OverlapWaitDecision, OverlapWaitFreshness, OverlapWaitLandedPath, OverlapWaitDeliverySnapshot, OverlapWaitDeliveryProof, OverlapWaitReceipt, TaskOverlapWait, OverlapWaitClaim, OverlapWaitExecutionIdentity } from "./types/task/task-overlap-wait.js";
 

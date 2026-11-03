@@ -121,7 +121,12 @@ describe("workflow column boundary — park facts on a withheld crossing", () =>
     });
 
     const result = await boundary.onNodeEntry(nodeIn(ir, "execute"));
-    expect(result).toMatchObject({ kind: "suspended", reason: "capacity", park: { code: "scheduler-seam", eligible: true } });
+    /*
+    FNXC:CapacityGateFacts 2026-11-02-21:50 (RUFU-372 second revision): the seam park's own reason code.
+    A hold→WIP seam park is scheduler-owned, not a pool refusal, so it no longer borrows `capacity`;
+    the `park` identity it carries is unchanged, which is exactly why the durable-park path still fires.
+    */
+    expect(result).toMatchObject({ kind: "suspended", reason: "scheduler-owned-seam", park: { code: "scheduler-seam", eligible: true } });
     const park = parkOf(result);
     expect(park).not.toHaveProperty("occupants");
     expect(park).not.toHaveProperty("limit");

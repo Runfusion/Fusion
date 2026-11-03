@@ -4769,7 +4769,17 @@
       "headline": "작업 중 슬롯을 대기 중입니다 ({{waited}})",
       "headlineUnspecified": "작업 중 슬롯을 대기 중입니다",
       "description": "이 카드는 계획이 완료되어 대기 중이지만, 작업 중 열로 이동이 계속 거부되어 슬롯이나 릴리스가 해제될 때까지 현재 위치에 남아 있습니다.",
-      "suggestedAction": "작업 중 열을 무엇이 점유하는지와 한도를 확인하거나, 직접 카드를 이동하세요."
+      "suggestedAction": "작업 중 열을 무엇이 점유하는지와 한도를 확인하거나, 직접 카드를 이동하세요.",
+      "descriptionWithFacts": "",
+      "facts": {
+        "noLimit": "",
+        "limitOnly": "",
+        "fill": "",
+        "holdersUnrecorded": "",
+        "holdersEmpty": "",
+        "holdersWithAge": "",
+        "holders": ""
+      }
     },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",

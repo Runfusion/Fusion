@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next";
 import type { Task, TaskExternalBlock, TaskStallReason } from "@fusion/core";
-import { formatTaskExternalBlockReason, formatWipAdmissionStallWait, isTaskExternallyBlocked } from "@fusion/core";
+import { formatTaskExternalBlockReason, formatWipAdmissionStallWait, isTaskExternallyBlocked, readWipAdmissionStallEpisode } from "@fusion/core";
 import { elapsedSinceMs } from "./dataFreshness";
 import { getInReviewStallCopy } from "./inReviewStallCopy";
 import { getStalePausedReviewCopy } from "./stalePausedReviewCopy";
@@ -484,7 +484,7 @@ function serverStallReason(subject: StallSubject, context: StallContext): StallR
   // dispatch and the face-visibility rule below can never disagree about which codes belong to the lane.
   if (isPlanningAdmissionStallCode(server.code)) return planAdmissionReason(server.code, context);
   // Same shared-list discipline for the execution-lane admission code (RUFU-393).
-  if (isWipAdmissionStallCode(server.code)) return wipAdmissionReason(server, context);
+  if (isWipAdmissionStallCode(server.code)) return wipAdmissionReason(server, context, subject);
   switch (server.code) {
     case "merge-blocker":
     // fallthrough: an enabled gate that has not run yet genuinely blocks the merge, so it shares the merge-blocker copy group; only its code (and therefore its test/data attribute) differs.
@@ -695,25 +695,133 @@ reads "(waiting )" — the same honesty rule `dependency-block` applies to a mis
 The wording never says "failed" and never says "stuck": nothing has gone wrong with the card, a gate is
 withholding a crossing, and the operator's lever is the column's limit or its occupants.
 */
-function wipAdmissionReason(server: TaskStallReason, context: StallContext): StallReason {
+function wipAdmissionReason(
+  server: TaskStallReason,
+  context: StallContext,
+  subject?: StallSubject,
+): StallReason {
   const { t } = context;
   const waited = typeof server.waitedMs === "number" ? formatWipAdmissionStallWait(server.waitedMs) : undefined;
   const badgeLabel = t("stall.wip-admission-throttled.badgeLabel", "Waiting for a WIP slot");
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-22:25 (RUFU-372):
+  The gate facts, phrased as ONE sentence here rather than as a per-surface paraphrase: every consumer of
+  a StallReason gets this same `description`, so the card chip, the list row, and the detail banner cannot
+  drift into three different accounts of one refusal (RUFU-175's whole reason for existing, applied to the
+  new fields).
+
+  Each clause is emitted only when its own fact exists, and an unrecorded holder set says so. "Held by
+  nobody" would be a fabrication when the set was never recorded, and the two arrived at the same UI once
+  already — that conflation is what made a full pool and an unconsulted one read identically for 235 rows.
+  */
+  const facts = capacityGateFactsSentence(server, subject, t);
   return {
     code: "wip-admission-throttled",
     badgeLabel,
     headline: waited
       ? t("stall.wip-admission-throttled.headline", "Waiting for a work-in-progress slot ({{waited}})", { waited })
       : t("stall.wip-admission-throttled.headlineUnspecified", "Waiting for a work-in-progress slot"),
-    description: t(
-      "stall.wip-admission-throttled.description",
-      "This card is planned and idle, but its crossing into work-in-progress keeps being refused, so it stays where it is until a slot or a release frees it.",
-    ),
+    description: facts
+      ? t("stall.wip-admission-throttled.descriptionWithFacts", "{{facts}} This card is planned and idle, so it stays where it is until a slot frees.", { facts })
+      : t(
+        "stall.wip-admission-throttled.description",
+        "This card is planned and idle, but its crossing into work-in-progress keeps being refused, so it stays where it is until a slot or a release frees it.",
+      ),
     suggestedAction: t(
       "stall.wip-admission-throttled.suggestedAction",
       "Check what occupies the work-in-progress column and its limit, or move the card yourself.",
     ),
   };
+}
+
+/*
+FNXC:CapacityGateFacts 2026-11-02-22:28 (RUFU-372):
+Fall back to the card's OWN durable episode when the hydrated `stallReason` row carries no facts. Two
+real cases need this: a card whose stall row was written by a build predating the facts, and a surface
+rendering a stall it derived locally. The episode is the same stored payload the server's derivation
+reads (core's `readWipAdmissionStallEpisode` is the shared reader — the dashboard re-implements nothing),
+so the fallback cannot disagree with the server: it is the same bytes, mapped to the same field names.
+
+The distinct-absence shapes survive the mapping: `capacityPoolId: null` means the episode named no pool
+(a scheduler-owned seam hand-off), `capacityHeldBy: undefined` means no holder set was ever written, and
+an empty array means a genuinely empty pool. This helper only renames; it never fills a gap in.
+*/
+function importWipAdmissionFacts(
+  subject: StallSubject | undefined,
+): Pick<TaskStallReason, "capacityPoolId" | "capacityOccupants" | "capacityLimit" | "capacityHeldBy" | "capacityOldestHolderAgeMs"> | undefined {
+  const episode = readWipAdmissionStallEpisode(subject?.sourceMetadata);
+  if (!episode) return undefined;
+  return {
+    capacityPoolId: episode.poolId ?? null,
+    ...(episode.occupants !== undefined ? { capacityOccupants: episode.occupants } : {}),
+    ...(episode.limit !== undefined ? { capacityLimit: episode.limit } : {}),
+    ...(episode.heldBy !== undefined ? { capacityHeldBy: episode.heldBy } : {}),
+    ...(episode.oldestHolderAgeMs !== undefined ? { capacityOldestHolderAgeMs: episode.oldestHolderAgeMs } : {}),
+  };
+}
+
+/*
+FNXC:CapacityGateFacts 2026-11-02-22:25 (RUFU-372):
+One place turns the gate's numbers into operator prose, and it reads ONLY the fields the engine wrote — it
+never re-derives which gate bound. Re-deriving is what produced two answers to the same question: the
+engine classified the gate at refusal time from one snapshot, while any client-side re-derivation would
+sample a board that had since moved. The vocabulary and the sentence are therefore authored once, here, and
+phrased over facts the engine already decided.
+
+Absence rules mirror the engine's exactly: a null pool means nothing was consulted (the scheduler-owned
+seam) and yields the plain wait sentence; an unrecorded holder list is named as unrecorded; an empty list
+is named as an empty pool, because a limit-0 refusal is real and looks exactly like this.
+*/
+type CapacityFactCarrier = Partial<Pick<TaskStallReason, "capacityPoolId" | "capacityLimit" | "capacityOccupants" | "capacityHeldBy" | "capacityOldestHolderAgeMs">>;
+
+/** True when a stall row carries at least one capacity fact, so a facts-less row cannot mask the card's own episode. */
+function hasCapacityFacts(source: CapacityFactCarrier): boolean {
+  return source.capacityPoolId !== undefined
+    || source.capacityLimit !== undefined
+    || source.capacityOccupants !== undefined
+    || source.capacityHeldBy !== undefined
+    || source.capacityOldestHolderAgeMs !== undefined;
+}
+
+function capacityGateFactsSentence(
+  server: TaskStallReason,
+  subject: StallSubject | undefined,
+  t: TFunction,
+): string | undefined {
+  // Prefer what the authority measured. A server row that predates the facts (or carries only nulls) is
+  // NOT a fact source — treating a keys-less object as one would suppress the episode fallback and make
+  // an older card face mute, which is the regression this fallback exists to prevent.
+  const facts = hasCapacityFacts(server) ? server : (importWipAdmissionFacts(subject) ?? server);
+  const poolId = facts.capacityPoolId ?? undefined;
+  const limit = facts.capacityLimit ?? undefined;
+  const occupants = facts.capacityOccupants ?? undefined;
+  const heldBy = facts.capacityHeldBy;
+  const oldestMs = facts.capacityOldestHolderAgeMs;
+  // The guard asks whether ANY fact was reported, not whether any is non-null: an explicit
+  // `capacityPoolId: null` IS a report — "no pool was consulted" — and suppressing it would send the
+  // operator to a capacity knob for a structural seam park.
+  if (!hasCapacityFacts(facts)) return undefined;
+
+  const parts: string[] = [];
+  parts.push(
+    limit === undefined
+      ? t("stall.wip-admission-throttled.facts.noLimit", "No capacity pool was consulted for this wait.")
+      : occupants === undefined
+        ? t("stall.wip-admission-throttled.facts.limitOnly", "The {{pool}} limit of {{limit}} is full.", { pool: poolId ?? "work-in-progress", limit })
+        : t("stall.wip-admission-throttled.facts.fill", "The {{pool}} limit of {{limit}} is full ({{used}} in use).", { pool: poolId ?? "work-in-progress", limit, used: occupants }),
+  );
+  if (heldBy === undefined) {
+    parts.push(t("stall.wip-admission-throttled.facts.holdersUnrecorded", "Holders are not recorded."));
+  } else if (heldBy.length === 0) {
+    parts.push(t("stall.wip-admission-throttled.facts.holdersEmpty", "No card is recorded as holding a slot."));
+  } else {
+    parts.push(
+      typeof oldestMs === "number"
+        ? t("stall.wip-admission-throttled.facts.holdersWithAge", "Held by {{holders}} (longest {{age}}).", { holders: heldBy.join(", "), age: formatWipAdmissionStallWait(oldestMs) })
+        : t("stall.wip-admission-throttled.facts.holders", "Held by {{holders}}.", { holders: heldBy.join(", ") }),
+    );
+  }
+  return parts.join(" ");
 }
 
 function failedReason(subject: StallSubject, context: StallContext): StallReason {

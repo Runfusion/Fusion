@@ -7828,7 +7828,17 @@
       "headline": "Waiting for a work-in-progress slot ({{waited}})",
       "headlineUnspecified": "Waiting for a work-in-progress slot",
       "description": "This card is planned and idle, but its crossing into work-in-progress keeps being refused, so it stays where it is until a slot or a release frees it.",
-      "suggestedAction": "Check what occupies the work-in-progress column and its limit, or move the card yourself."
+      "suggestedAction": "Check what occupies the work-in-progress column and its limit, or move the card yourself.",
+      "descriptionWithFacts": "{{facts}} This card is planned and idle, so it stays where it is until a slot frees.",
+      "facts": {
+        "noLimit": "No capacity pool was consulted for this wait.",
+        "limitOnly": "The {{pool}} limit of {{limit}} is full.",
+        "fill": "The {{pool}} limit of {{limit}} is full ({{used}} in use).",
+        "holdersUnrecorded": "Holders are not recorded.",
+        "holdersEmpty": "No card is recorded as holding a slot.",
+        "holdersWithAge": "Held by {{holders}} (longest {{age}}).",
+        "holders": "Held by {{holders}}."
+      }
     },
     "plan-admission-throttled": {
       "badgeLabel": "Queued for planning",

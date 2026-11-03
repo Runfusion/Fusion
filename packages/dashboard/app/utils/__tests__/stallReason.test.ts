@@ -6,6 +6,7 @@ import type {
   StalledReviewSignal,
   TaskExternalBlock,
 } from "@fusion/core";
+import { WIP_ADMISSION_STALL_METADATA_KEY } from "@fusion/core";
 
 import {
   PAUSE_REASON_LABELS,
@@ -942,6 +943,112 @@ describe("stallReason — the withheld hold→WIP crossing", () => {
     const withClientCause = subject({ column: "todo", blockedBy: "FN-9", stallReason: serverStall("wip-admission-throttled") });
     expect(resolveStallReason(subject({ column: "todo", blockedBy: "FN-9" }), { t })?.code).toBe("dependency-block");
     expect(resolveStallReason(withClientCause, { t })?.code).toBe("wip-admission-throttled");
+  });
+
+  /*
+  FNXC:CapacityGateFacts 2026-11-02-23:40 (RUFU-372 second revision):
+  "Which gate bound, how full was it, and who is standing in it" was the question a monitor could not
+  answer during the incident, and the card face is the only surface an operator has: no board surface can
+  read run-audit. These assertions follow this file's convention — the recorded (key, interpolation) pair,
+  not the rendered English — because the pair is what proves the copy reaches a translator AND that the
+  runtime numbers rode with it. The three holder states are asserted separately on purpose: unrecorded,
+  empty, and populated are three different claims, and collapsing them is the exact misread that made
+  235 capacity rows read as pressure when no pool had been consulted.
+  */
+  describe("names the gate, its fill, and its holders", () => {
+    it("renders the fill and the holders the authority measured", () => {
+      const { t, calls } = makeT();
+      const stall = {
+        ...serverStall("wip-admission-throttled"),
+        waitedMs: 3 * 60 * 60_000,
+        capacityPoolId: "in-progress",
+        capacityLimit: 2,
+        capacityOccupants: 2,
+        capacityHeldBy: ["FN-1", "FN-2"],
+        capacityOldestHolderAgeMs: 2 * 60 * 60_000,
+      } as never;
+
+      const result = resolveStallReason(subject({ column: "todo", stallReason: stall }), { t });
+
+      expect(result?.description).toBeTruthy();
+      const fill = calls.find((call) => call.key === "stall.wip-admission-throttled.facts.fill");
+      expect(fill).toBeDefined();
+      expect(fill?.resolved).toContain("in-progress");
+      // The numbers must arrive as data, not be baked into the default string.
+      expect(JSON.stringify(fill?.resolved ?? "")).toContain("2");
+      const holders = calls.find((call) => call.key === "stall.wip-admission-throttled.facts.holdersWithAge");
+      expect(holders).toBeDefined();
+      expect(holders?.resolved).toContain("FN-1, FN-2");
+      expect(holders?.resolved).toContain("2 h");
+      // The generic sentence is replaced, not appended to, so the card does not carry two descriptions.
+      expect(calls.some((call) => call.key === "stall.wip-admission-throttled.description")).toBe(false);
+    });
+
+    it("says holders are unrecorded when nothing recorded them", () => {
+      const { t, calls } = makeT();
+      const stall = {
+        ...serverStall("wip-admission-throttled"),
+        capacityPoolId: "in-progress",
+        capacityLimit: 2,
+        capacityOccupants: 2,
+      } as never;
+
+      resolveStallReason(subject({ column: "todo", stallReason: stall }), { t });
+
+      expect(calls.some((call) => call.key === "stall.wip-admission-throttled.facts.holdersUnrecorded")).toBe(true);
+    });
+
+    it("says no card holds a slot when the recorded holder set is empty", () => {
+      const { t, calls } = makeT();
+      const stall = {
+        ...serverStall("wip-admission-throttled"),
+        capacityPoolId: "in-progress",
+        capacityLimit: 0,
+        capacityHeldBy: [],
+      } as never;
+
+      resolveStallReason(subject({ column: "todo", stallReason: stall }), { t });
+
+      expect(calls.some((call) => call.key === "stall.wip-admission-throttled.facts.holdersEmpty")).toBe(true);
+      expect(calls.some((call) => call.key === "stall.wip-admission-throttled.facts.holdersUnrecorded")).toBe(false);
+    });
+
+    it("reads the facts off the card's own episode when the server row predates them", () => {
+      const { t, calls } = makeT();
+      // An older stall row has no capacity keys at all; the episode on the card row does. Falling back to
+      // the generic sentence there would leave a card that HAS the answer saying nothing.
+      const sourceMetadata = {
+        [WIP_ADMISSION_STALL_METADATA_KEY]: {
+          code: "column-capacity",
+          signature: "capacity|todo->in-progress",
+          nodeId: "parse",
+          fromColumn: "todo",
+          toColumn: "in-progress",
+          lastAt: ISO_T,
+          firstAt: ISO_T,
+          stallCount: 1,
+          poolId: "in-progress",
+          occupants: 4,
+          limit: 4,
+          heldBy: ["FN-7"],
+        },
+      };
+
+      resolveStallReason(subject({ column: "todo", sourceMetadata: sourceMetadata as never, stallReason: serverStall("wip-admission-throttled") }), { t });
+
+      const holders = calls.find((call) => call.key === "stall.wip-admission-throttled.facts.holders");
+      expect(holders).toBeDefined();
+      expect(holders?.resolved).toContain("FN-7");
+    });
+
+    it("keeps a scheduler-seam wait honest that no pool was consulted", () => {
+      const { t, calls } = makeT();
+      const stall = { ...serverStall("wip-admission-throttled"), capacityPoolId: null } as never;
+
+      resolveStallReason(subject({ column: "todo", stallReason: stall }), { t });
+
+      expect(calls.some((call) => call.key === "stall.wip-admission-throttled.facts.noLimit")).toBe(true);
+    });
   });
 });
 

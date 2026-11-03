@@ -138,7 +138,14 @@ describe("WorkflowColumnBoundary controller", () => {
     expect(warnings.some((w) => w.includes("hold→wip"))).toBe(true);
     expect(entry).toEqual({
       kind: "suspended",
-      reason: "capacity",
+      /*
+      FNXC:CapacityGateFacts 2026-11-02-21:52 (RUFU-372 second revision):
+      The seam park now carries its OWN reason. `capacity` used to cover both a refused crossing and this
+      scheduler-owned hand-off, which is why a project with zero in-progress cards reported 98 capacity
+      suspends in 30 minutes. The `source`/`park` identity below is deliberately unchanged — the reason
+      split may not reach a lifecycle decision, only the explanation.
+      */
+      reason: "scheduler-owned-seam",
       nodeId: "execute",
       fromColumn: "todo",
       toColumn: "in-progress",

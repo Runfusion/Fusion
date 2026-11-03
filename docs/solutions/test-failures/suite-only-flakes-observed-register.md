@@ -1029,3 +1029,16 @@ discretion, per the standing rule in AGENTS.md.
 - **Observed frequency:** 1 of 4 runs, and only under one invocation path: `pnpm --filter @fusion/dashboard exec vitest run <file>` fails (project `dashboard-app-quality-backfill`), while `npx vitest run <file>` from `packages/dashboard` passed 84/84 twice. Same file, same code, different pool assignment.
 - **Root cause hypothesis (not proven):** pool/shard-dependent state leaking between files that share the mock dashboard lane — the same shape FN-9510 just quarantined for pause/resume and FN-9511 tried to stabilise here. It is NOT a widened-wait problem, so no timeout was touched, no retry added, and no assertion relaxed.
 - **What a second sighting should do:** add the `scripts/lib/test-quarantine.json` entry plus the matching vitest-config `exclude` in the same commit, per AGENTS.md. Do not "fix" it by adding an `await`.
+
+## Entry: executor-wip-admission-deferral `executeCore` group — fixture-pinned wall clock (first sighting)
+
+- **File:** `packages/engine/src/__tests__/executor-wip-admission-deferral.test.ts`
+- **Exact cases (3):**
+  - `executeCore — the outer dispatch surface honors the marker > defers dispatch without claiming graph routing`
+  - `executeCore — the outer dispatch surface honors the marker > keeps deferring across repeated dispatches, which is the hot loop it exists to stop`
+  - `executeCore — the outer surface never starves in-lane work > still defers a card with no in-lane work, on every pass — the storm bound is intact`
+- **Observed tree/SHA:** worktree branch off `14bd96f1a9` while implementing RUFU-372's second revision, observed 2026-11-02 ~21:47 UTC. The other 26 tests in the file passed in the same run.
+- **Observed symptom:** all three assert `deps.executeWorkflowGraph` was NOT called, and each gets exactly one call.
+- **Root cause (proven by reading, not hypothesis):** the fixture hard-codes `const NOW = Date.parse("2026-11-02T12:00:00.000Z")` and builds its parked episode with `lastAt: new Date(NOW - 60_000)`. The predicate under test, `wipAdmissionParkDefersDispatch(task, now = Date.now())` (`packages/engine/src/execution/wip-admission-park.ts`), releases the deferral once `now - lastAt >= WIP_ADMISSION_STALL_REFRESH_FLOOR_MS` (15 min) — by design, freshness is the release signal. The test file calls `vi.useRealTimers()`, so after 2026-11-02 ~12:14 UTC the episode is permanently stale and the deferral correctly declines to hold the card. The test therefore passes only inside a ~14-minute window after its own fixture timestamp and self-decays; nothing in the product is wrong — the row it simulates has genuinely aged out.
+- **Why recorded rather than quarantined:** the failure is a fixture that encodes a wall-clock instant, and the fix belongs to whoever owns this file (inject `now` into `executeCore`'s call path or derive `NOW` from `Date.now()`), not to a quarantine that would evict the 26 still-meaningful tests around it. No timeout was widened, no retry added, no assertion relaxed, and no `.skip` was added.
+- **What a second sighting should do:** add the `scripts/lib/test-quarantine.json` entry plus the matching vitest-config `exclude` in the same commit, or fix the fixture to derive `NOW` from `Date.now()` so the freshness window is always live.
