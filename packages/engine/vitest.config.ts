@@ -310,6 +310,7 @@ export default defineConfig({
             "src/__tests__/triage-preflight.test.ts",
             "src/__tests__/mission-scheduler.test.ts",
             "src/__tests__/heartbeat-monitor.test.ts",
+            "src/__tests__/review-lane-dispatch-sweep.test.ts",
             "src/__tests__/workflow-node-handlers.test.ts",
             "src/__tests__/workflow-policy-ownership-map.test.ts",
           ],
@@ -399,7 +400,6 @@ export default defineConfig({
             Quarantined on sight per AGENTS.md; mirrored in scripts/lib/test-quarantine.json.
             */
             // SQLite-path gate test evicted + quarantined (see engine-core comment + ledger).
-            "src/__tests__/agent-activity-writers.test.ts",
             /*
             FNXC:ExecutorPauseResumeQuarantine 2026-10-05-17:10:
             FN-9510's second full-suite sighting again observed zero agent creations only under
@@ -407,7 +407,6 @@ export default defineConfig({
             engine-default until the deletion-ratchet deadline rather than weakening its resume
             assertion or changing the production lifecycle fence.
             */
-            "src/__tests__/executor-prompt.test.ts",
             "node_modules/**",
             "dist/**",
             // FNXC:PgMigrationQuarantine 2026-07-18-04:30: FN-8270 rescued the final seven VAL-REMOVAL-005 holdouts by awaiting PG audit reads and modeling async collaborators. Their paired ledger entries and excludes were removed only after targeted green runs.

@@ -112,7 +112,6 @@ const quarantinedCliTests: string[] = [
   Keep the 14-day deletion ratchet and direct-file diagnostic bypass; do not appease this with timeout,
   retry, or assertion changes. This is not an engine-core merge-gate eviction.
   */
-  "src/commands/__tests__/skills-get.test.ts",
 ];
 
 /*

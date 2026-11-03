@@ -60,16 +60,25 @@ describe("CLI quarantine ledger lockstep", () => {
     }
   });
 
-  it("retains the FN-9425 skills-get quarantine exactly once", () => {
-    const quarantinedFile = "src/commands/__tests__/skills-get.test.ts";
+  /*
+  FNXC:TestQuarantineLockstep 2026-11-03-14:31:
+  FN-9425 quarantined skills-get.test.ts on 2026-09-29 for Full Suite timeouts. The quarantine expired at the
+  14-day deletion clock, and `check-quarantine-ledger.mjs --strict` fails on any expired entry - that, not eslint,
+  was what made CI's Lint job red. Measured on a built tree the file passes 7/7 with no assertion defect, so the
+  correct ratchet outcome is RESCUE (quarantine lifted, coverage kept), not deletion.
+  This guard therefore pins the rescue in lockstep: neither the vitest exclude nor the ledger row may reference
+  the file again, and the file itself must still exist so a later "cleanup" cannot quietly turn the rescue back
+  into a deletion. Both sides move together or this test fails, which is the whole point of the guard.
+  */
+  it("rescued the FN-9425 skills-get quarantine in lockstep", () => {
+    const rescuedFile = "src/commands/__tests__/skills-get.test.ts";
     const configPaths = parseQuarantinedCliTests(readFileSync(configPath, "utf8"));
     const ledger = JSON.parse(readFileSync(ledgerPath, "utf8")) as { entries: QuarantineEntry[] };
-    const entries = ledger.entries.filter((entry) => entry.file === `${cliPathPrefix}${quarantinedFile}`);
+    const entries = ledger.entries.filter((entry) => entry.file === `${cliPathPrefix}${rescuedFile}`);
 
-    expect(configPaths.filter((path) => path === quarantinedFile)).toHaveLength(1);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      quarantinedAt: "2026-09-29",
-    });
+    expect(configPaths.filter((path) => path === rescuedFile)).toHaveLength(0);
+    expect(entries).toHaveLength(0);
+    // Rescued means kept and running, so the file must still be on disk.
+    expect(() => readFileSync(resolve(repoRoot, "packages/cli", rescuedFile))).not.toThrow();
   });
 });
