@@ -148,6 +148,15 @@ function sweepStore(live: Task, hooks: { onSeed?: () => void; discardClearPatche
     return { seeded: true };
   });
   const store = Object.assign(new EventEmitter(), {
+    /*
+    FNXC:WorkflowBatchCacheEpoch 2026-11-01-19:17 (RUFU-300 Step 5 fixture repair, RUFU-584 seam):
+    RUFU-584's shared epoch-guarded IR cache reads `store.workflowDefinitionEpoch()` UNGUARDED, so this
+    reduced fake made every `recoverMergeableReviewTasks` leg die on the TypeError before it could seed
+    anything (`expect(seed).toHaveBeenCalledTimes(1)` → 0 calls). Base-proved red at d3a59f0491; see the
+    identical repair in `unrun-pre-merge-gate-wedge.test.ts` for the full evidence chain. This file never
+    writes a workflow definition, so a constant epoch is what the real store would report.
+    */
+    workflowDefinitionEpoch: vi.fn(() => 0),
     getSettings: vi.fn(async () => ({ autoMerge: true })),
     listTasks: vi.fn(async (options?: { column?: string }) => (options?.column === "in-review" ? [slimBoardProjection(live)] : [])),
     getTask: vi.fn(async (id: string) => (id === live.id ? live : undefined)),
@@ -462,6 +471,10 @@ describe("RUFU-217 verdict-less pre-merge gate re-run", () => {
     const resultless = revivalCard("RUFU-217H", []);
     const cards = [authoredRevise, pendingOnly, resultless];
     const store = Object.assign(new EventEmitter(), {
+      /* FNXC:WorkflowBatchCacheEpoch 2026-11-01-19:18 (RUFU-300 Step 5 fixture repair): same RUFU-584
+       * unguarded `store.workflowDefinitionEpoch()` seam as the two repairs above; this inline fake was
+       * written before it, so the revival sweep died on the TypeError and reported zero calls. */
+      workflowDefinitionEpoch: vi.fn(() => 0),
       getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false })),
       listTasks: vi.fn(async (options?: { column?: string }) =>
         options?.column === "in-review" ? cards : []),

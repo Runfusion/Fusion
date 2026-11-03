@@ -705,10 +705,20 @@ describe("Workflow Steps Execution", () => {
         description: "Test task",
         column: "in-progress",
         dependencies: [],
-        steps: [{ name: "Implement", status: "done" }],
+        /*
+        FNXC:ResumePlacement 2026-11-01-19:45 (RUFU-300):
+        The subject of this leg is what the SESSION does: it finishes its step and exits without
+        calling `fn_task_done`, and that implicit completion is accepted without burning a retry. The
+        ledger therefore has to carry a step for a session to run. Pre-seeding the step as `done` only
+        worked while a re-entry re-parsed the ledger back to `pending` and re-ran finished work — the
+        churn RUFU-300 removes: a card whose ledger is already terminal now goes straight to the
+        completion boundary without an implementation pass. The pending step is the state the leg's
+        own note describes, and the session still marks it `done` from inside the run.
+        */
+        steps: [{ name: "Implement", status: "pending" }],
         currentStep: 0,
         log: [],
-        prompt: "# test\n## Steps\n### Step 1: Implement\n- [x] implement",
+        prompt: "# test\n## Steps\n### Step 1: Implement\n- [ ] implement",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };

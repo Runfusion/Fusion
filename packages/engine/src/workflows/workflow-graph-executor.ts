@@ -60,6 +60,11 @@ import {
   HUMAN_MERGE_APPROVAL_HOLD_IR_HASH,
   WORKFLOW_PRINCIPAL_HOLD_IR_HASH,
 } from "./workflow-column-boundary.js";
+import {
+  announceResumePlacement,
+  resolveResumePlacement,
+  type ResumePlacementSinks,
+} from "./resume-placement.js";
 import { BranchWriteProvenanceError } from "@fusion/core";
 import { WorktreeBaseRefreshError, WorkspacePreparationError } from "../worktree/worktree-acquisition.js";
 
@@ -500,6 +505,15 @@ export interface WorkflowGraphExecutorDeps {
    * executor/runner test stays byte-identical.
    */
   columnBoundary?: WorkflowColumnBoundary;
+  /*
+  FNXC:ResumePlacement 2026-11-01-19:05 (RUFU-300):
+  Where a run re-enters is decided by one evidence-aware resolver; these are the sinks that make a
+  pin/column disagreement LOUD when that decision disagrees with the card's own IR pin. Absent → the
+  graph still resolves placement but records nothing, which keeps every in-memory test byte-inert.
+  Production wires both sinks from the store (`logEntry` + a bounded run-audit emit); a hostile,
+  rejecting, or absent sink cannot change the placement (AGENTS.md FN-9175).
+  */
+  resumePlacementSinks?: ResumePlacementSinks;
 }
 
 /** Context key set when a run is aborted before traversal by an IR-drift park
@@ -739,9 +753,27 @@ export class WorkflowGraphExecutor {
     ir: WorkflowIr = BUILTIN_CODING_WORKFLOW_IR,
     startNodeId?: string,
   ): Promise<WorkflowGraphExecutorResult> {
+    /*
+     * FNXC:ResumePlacement 2026-11-01-19:05 (RUFU-300):
+     * THE PLACEMENT DECISION, made in ONE place. An explicit `startNodeId` stays the caller's
+     * override — a durable continuation is a promise about where the run stopped, and callers that
+     * hold it (the scheduler resume, the executor's continuation passthrough) must be able to say
+     * "enter HERE". What the caller may no longer do is place the run BLIND: the card's own gate
+     * evidence is read either way, both to keep an automatic re-entry from replaying a released gate
+     * and to classify a pin/column disagreement.
+     *
+     * Before this, the no-continuation fallback asked only the column entry contract, which answers
+     * `start` for a card in the planning lane — so a card whose `plan-review` row was already
+     * `passed` re-ran the whole planning prologue (RUFU-292). The resolver layers the card's
+     * `workflowStepResults` on top of that same column contract; with no released gate and no pin it
+     * answers exactly what the contract answered, so nothing moves without evidence.
+     */
+    const placement = resolveResumePlacement({ ir, task, ...(startNodeId ? { continuationNodeId: startNodeId } : {}) });
     const startNode = startNodeId
       ? ir.nodes.find((node) => node.id === startNodeId)
-      : resolveColumnResumeNode(ir, task.column) ?? ir.nodes.find((node) => node.kind === "start");
+      : (placement.nodeId ? ir.nodes.find((node) => node.id === placement.nodeId) : undefined)
+        ?? resolveColumnResumeNode(ir, task.column)
+        ?? ir.nodes.find((node) => node.kind === "start");
     /*
      * FNXC:WorkflowExecution 2026-08-08-01:40:
      * Name WHICH lookup failed. One message covered two unrelated causes: a genuinely
@@ -758,6 +790,21 @@ export class WorkflowGraphExecutor {
           : "Workflow IR missing start node",
       );
     }
+
+    /*
+     * FNXC:ResumePlacement 2026-11-01-19:05 (RUFU-300):
+     * A pin/column disagreement is announced here — at the one place the placement is decided — so no
+     * recovery lane has to remember to report it. `announceResumePlacement` is bounded to one row per
+     * (card, mismatch signature) episode and absorbs a hostile or absent sink, which is what keeps a
+     * card legally parked at the scheduler's release seam from announcing on every poll while a real
+     * wedge can never sit silent the way RUFU-292 sat for 6h33m.
+     */
+    await announceResumePlacement(this.deps.resumePlacementSinks, {
+      taskId: task.id,
+      task,
+      ir,
+      placement: { ...placement, nodeId: startNode.id },
+    });
 
     const nodeMap = new Map(ir.nodes.map((node) => [node.id, node]));
     const outgoingMap = new Map<string, WorkflowIrEdge[]>();

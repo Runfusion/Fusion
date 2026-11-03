@@ -44,6 +44,7 @@ import { resolveWorkflowGateActivityClaim } from "./workflow-gate-activity.js";
 import type { ImplementationExit } from "./implementation-exit.js";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 import { WorkflowGraphTaskRunner } from "../workflows/workflow-graph-task-runner.js";
+import { resolveResumePlacement } from "../workflows/resume-placement.js";
 /* FNXC:HumanMergeApproval 2026-09-17-18:09: FN-514's per-card delivery barrier and its create-only PR handoff. */
 /* FNXC:HumanMergeApproval 2026-09-17-22:32: FN-514 P0 remediation — the graph is also the rejection-processing owner. */
 import {
@@ -984,6 +985,43 @@ export async function executeWorkflowGraph(
           getTask: (taskId: string) => deps.store.getTask(taskId),
         },
         runId: resolvedRunId,
+        /*
+        FNXC:ResumePlacement 2026-11-01-19:40 (RUFU-300):
+        The two records that make a resume-placement disagreement visible after the fact: one History
+        line on the card, one bounded run-audit row. Both are best-effort — `emitBoundedRunAudit`
+        absorbs an absent, throwing, rejecting or hanging sink (AGENTS.md FN-9175), because telemetry
+        that could fail a placement is how a recovery seam turns into a lifecycle dependency. The
+        metadata is ids and fixed enums only: no verdict text, no step-result content, no prose.
+        */
+        resumePlacementSinks: {
+          logEntry: async (taskId: string, message: string) => {
+            try {
+              await deps.store.logEntry(taskId, message, undefined, deps.getRunContextFor(taskId));
+            } catch {
+              // A dead History sink must never change where a run is placed.
+            }
+          },
+          emitAudit: async (event) => {
+            await emitBoundedRunAudit(deps.store, {
+              taskId: event.taskId,
+              agentId: "executor",
+              runId: resolvedRunId ?? `resume-placement:${event.taskId}`,
+              domain: "database",
+              mutationType: event.mutationType,
+              target: event.taskId,
+              metadata: {
+                taskId: event.taskId,
+                column: event.column,
+                workflowIrPinColumnId: event.workflowIrPinColumnId ?? null,
+                workflowIrPinNodeId: event.workflowIrPinNodeId ?? null,
+                placedNodeId: event.placedNodeId ?? null,
+                placementSource: event.placementSource,
+                mismatchKind: event.mismatchKind,
+                outcome: event.outcome,
+              },
+            });
+          },
+        },
         isLiveSharedBranchMember: (nodeTask) =>
           deps.isLiveSharedBranchGroupMember(nodeTask),
         primitives: deps.createAuthoritativeWorkflowPrimitives(settings, outputLanguage),
@@ -1284,15 +1322,43 @@ export async function executeWorkflowGraph(
          * FNXC:WorkflowExecution 2026-08-08-01:40:
          * Only a TOP-LEVEL node id is a legal resume point. A foreach template node id
          * is not in ir.nodes; re-enter at the column resume node instead of terminalizing.
+         *
+         * FNXC:ResumePlacement 2026-11-01-19:40 (RUFU-300):
+         * That check now lives inside the ONE shared resolver, which also reads the card's own gate
+         * evidence. A raw `continuation?.nodeId` passthrough re-dispatches whatever the continuation
+         * names, so a continuation that parked ON a gate the card has since passed replays that gate
+         * — which is how RUFU-292 re-ran its Plan Review prologue. The resolver keeps the continuation
+         * as a source and drops it only when it is not a top-level node or sits at/behind a released
+         * gate, so the passthrough survives everywhere it was ever correct.
          */
-        const resumeNodeId = continuation?.nodeId
-          && columnAgentIr?.nodes.some((candidate) => candidate.id === continuation?.nodeId)
-          ? continuation.nodeId
+        const placement = columnAgentIr
+          ? resolveResumePlacement({
+              ir: columnAgentIr,
+              task: detail,
+              ...(continuation?.nodeId ? { continuationNodeId: continuation.nodeId } : {}),
+            })
           : undefined;
-        if (continuation?.nodeId && resumeNodeId === undefined) {
+        // A resolver answer this IR cannot run (a substituted/defaulted IR disagreeing with the
+        // runner's own resolution) must never terminalize the card, so it degrades to the pre-existing
+        // passthrough instead of throwing at graph entry.
+        const placedNodeId = placement?.nodeId && columnAgentIr?.nodes.some((candidate) => candidate.id === placement.nodeId)
+          ? placement.nodeId
+          : undefined;
+        const resumeNodeId = placedNodeId
+          ?? (continuation?.nodeId
+            && columnAgentIr?.nodes.some((candidate) => candidate.id === continuation?.nodeId)
+            ? continuation.nodeId
+            : undefined);
+        if (continuation?.nodeId && resumeNodeId !== continuation.nodeId) {
           executorLog.debug(
-            `[workflow-graph] ${task.id}: continuation node '${continuation.nodeId}' is not a top-level graph node `
-            + `(instance '${continuation.nodeInstanceId ?? "none"}') — re-entering at the column resume node`,
+            `[workflow-graph] ${task.id}: continuation node '${continuation.nodeId}' is not a legal resume point `
+            + `(instance '${continuation.nodeInstanceId ?? "none"}') — placed at '${resumeNodeId ?? "column default"}' `
+            + `(source: ${placement?.source ?? "unresolved"}, released gates: ${placement?.releasedNodeIds.join(",") || "none"})`,
+          );
+        } else if (placement) {
+          executorLog.debug(
+            `[workflow-graph] ${task.id}: resume placed at '${placement.nodeId ?? "column default"}' `
+            + `(source: ${placement.source}, released gates: ${placement.releasedNodeIds.join(",") || "none"})`,
           );
         }
         result = await runner.run(detail, settings, resumeNodeId, continuationContext);

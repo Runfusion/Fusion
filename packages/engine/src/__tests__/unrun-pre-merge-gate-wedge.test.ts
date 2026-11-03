@@ -81,6 +81,19 @@ function resultlessReviewTask(overrides: Partial<Task> = {}): Task {
 function recoveryStore(task: Task) {
   const seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async () => ({ seeded: true }));
   return {
+    /*
+    FNXC:WorkflowBatchCacheEpoch 2026-11-01-19:16 (RUFU-300 Step 5 fixture repair, RUFU-584 seam):
+    RUFU-584 replaced SelfHealingManager's per-sweep IR caches with one epoch-guarded pair and
+    `batchWorkflowIrCache()` calls `this.store.workflowDefinitionEpoch()` UNGUARDED, so this reduced fake
+    made `recoverMergeableReviewTasks` die as `TypeError: ... is not a function` before its first decision.
+    Base-proved: 8 legs here plus 6 in `verdictless-pre-merge-gate-rerun.test.ts` fail identically at
+    d3a59f0491 with `Mergeable review recovery failed: this.store.workflowDefinitionEpoch is not a
+    function`, so the red is a fixture gap RUFU-584 left behind, not an assertion this task changed.
+    A constant epoch is the honest fake: this file never writes a workflow definition, so a cache that
+    never invalidates reports exactly what the real store would. Same repair precedent as
+    `self-healing-stale-overlap-blocker.test.ts` and `self-healing-agent-link-drift.test.ts`.
+    */
+    workflowDefinitionEpoch: vi.fn(() => 0),
     updateTaskAtomic: vi.fn(async (_id: string, reduce: (t: Task) => Partial<Task> | null) => { const patch = reduce(task); if (patch) Object.assign(task, patch); return task; }),
     getTask: vi.fn(async () => task),
     getSettings: vi.fn(async () => ({ autoMerge: true })),

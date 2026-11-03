@@ -85,6 +85,9 @@ function createHarness() {
     pollIntervalMs: 15 * 60_000,
   } as Settings;
   const store = Object.assign(emitter, {
+    /* FNXC:WorkflowBatchCacheEpoch 2026-11-01-19:19 (RUFU-300 Step 5 fixture repair probe): this manager
+     * runs for real, and RUFU-584's shared IR cache reads `store.workflowDefinitionEpoch()` UNGUARDED. */
+    workflowDefinitionEpoch: vi.fn(() => 0),
     getSettings: vi.fn(async () => settings),
     getRootDir: vi.fn(() => "/repo"),
     getTasksDir: vi.fn(() => "/repo/.fusion/tasks"),

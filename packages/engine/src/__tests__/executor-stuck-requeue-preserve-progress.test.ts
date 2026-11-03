@@ -268,9 +268,39 @@ describe("stuck-session in-place resume", () => {
       agentStore: createWorkflowRoutingAgentStore(store).agentStore,
     });
 
+    /*
+    FNXC:ResumePlacement 2026-11-03-13:45 (RUFU-300):
+    The leg selects its callback sets by task identity and asserts the refusal invariant over ALL of
+    them, instead of waiting on a shared-mock call count and indexing one position.
+
+    Why the old shape could not carry this requirement: `waitFor(() => expect(mockExecuteAll)
+    .toHaveBeenCalledTimes(2))` counted a module-level mock shared by every run in the file, and a
+    previous leg's step session was still blocked in flight when this leg started, so the count
+    reached 2 from a FOREIGN task's session — measured: the call list held
+    `0:FN-312-STEP-STALE | 1:FN-312-STALE-STEP-CALLBACK` for a leg whose subject is only the second
+    id. `calls[0]` then named a callback set that had never held this leg's lease, and the whole
+    leg was order-dependent. Position 0 additionally encoded the pre-RUFU-300 entry order, where a
+    re-entry RE-PARSED the durable ledger, reset the finished Step 0 to `pending`, and constructed a
+    throwaway session before the live one; a card with durable progress is no longer re-parsed, so
+    its statuses survive re-entry and the run enters directly at the live step.
+
+    The requirement is unchanged in meaning and now stated as the invariant: every callback set this
+    run constructed must write nothing once its lease is invalidated.
+    */
+    const sessionMark = mockedStepSessionExecutor.mock.calls.length;
     const oldRun = (executor as any).runImplementation(subject, vi.fn(), vi.fn());
-    await vi.waitFor(() => expect(mockExecuteAll).toHaveBeenCalledTimes(2));
-    const callbacks = mockedStepSessionExecutor.mock.calls[0]?.[0] as any;
+    await vi.waitFor(() =>
+      expect(mockedStepSessionExecutor.mock.calls.slice(sessionMark).some(
+        (call) => (call[0] as any)?.sourceTaskId === subject.id,
+      )).toBe(true),
+    );
+    const legCallbackSets = mockedStepSessionExecutor.mock.calls
+      .slice(sessionMark)
+      .map((call) => call[0] as any)
+      .filter((options) => options?.sourceTaskId === subject.id && typeof options.onStepStart === "function");
+    // Non-vacuity: the invariant below is meaningless if the leg never produced a callback set.
+    expect(legCallbackSets.length).toBeGreaterThan(0);
+    const callbacks = legCallbackSets[legCallbackSets.length - 1];
     const oldLease = executingTaskLock.currentLease(subject.id);
     if (!oldLease) throw new Error("old execution lease missing");
     expect(await executingTaskLock.invalidate(oldLease)).toMatchObject({ executed: true });
@@ -280,7 +310,9 @@ describe("stuck-session in-place resume", () => {
     const completeCount = store.updateStep.mock.calls.length;
     const tokenWriteCount = store.updateTask.mock.calls.length;
 
-    await expect(callbacks.onStepStart(1)).resolves.toBe(false);
+    for (const stale of legCallbackSets) {
+      await expect(stale.onStepStart(1)).resolves.toBe(false);
+    }
     await callbacks.onStepComplete(1, {
       success: true,
       retries: 0,
@@ -366,8 +398,16 @@ describe("stuck-session in-place resume", () => {
     const subject = task({
       id: "FN-312-SESSION",
       enabledWorkflowSteps: [],
-      prompt: "# Task\n## Steps\n### Step 0: Done\n- [x] done",
-      steps: [{ name: "Done", status: "done" }],
+      /*
+      FNXC:ResumePlacement 2026-11-01-19:45 (RUFU-300):
+      The leg's subject is a run that is MID-FLIGHT when it is declared stuck, so the ledger has to
+      say mid-flight. Seeding the only step as `done` was only ever workable because re-entry
+      re-parsed the ledger back to `pending` and re-ran finished work — the exact churn RUFU-300
+      removes. An in-progress step now resumes at that step instead, which is the state the leg's
+      own closing assertion already expects (`currentStep: 0`, still `in-progress`).
+      */
+      prompt: "# Task\n## Steps\n### Step 0: Running\n- [ ] work",
+      steps: [{ name: "Running", status: "in-progress" }],
       currentStep: 0,
       baseCommitSha: "base-sha",
     });

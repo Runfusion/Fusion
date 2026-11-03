@@ -7,9 +7,13 @@ pull-from-todo path is dead behind the workflow-column runtime) and the pure
 budget-set resolution.
 */
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolveWipBudgetColumns, evaluateCapacityRejection, type Task, type TaskStore, type WorkflowIr } from "@fusion/core";
 
 import { runHoldReleaseSweep } from "../execution/hold-release.js";
+import { getPromptPath } from "../execution/spec-staleness.js";
 
 const WF = "custom:wf";
 
@@ -77,6 +81,25 @@ function twoWipIr(): WorkflowIr {
 }
 
 function storeWith(tasks: Task[], ir: WorkflowIr, settings: Record<string, unknown> = {}): TaskStore {
+  /*
+  FNXC:PlanPremises 2026-11-01-20:55 (RUFU-300, fixture repair): this file used to omit `getTasksDir`
+  on the theory that "no tasks dir → the cards count as planned". RUFU-246 added a second reader of
+  the plan on the release path: entering a processing column verifies the premises the plan STATES, and
+  a plan the engine cannot read at all answers `unavailable` — a refusal, not a pass. These scenarios
+  are about capacity and shared WIP budgets (KTD-2/KTD-9), not about premises, so the fixture now says
+  that out loud: each card gets a real PROMPT.md with an EMPTY `## Plan Premises` section, which is the
+  documented vacuously-satisfied shape (a plan stating no facts needs no repository to prove them).
+  Every assertion below is unchanged.
+  */
+  const tasksDir = mkdtempSync(join(tmpdir(), "fusion-scheduler-dispatch-"));
+  for (const card of tasks) {
+    mkdirSync(join(tasksDir, card.id), { recursive: true });
+    writeFileSync(
+      getPromptPath(tasksDir, card.id),
+      `# ${card.id}\n\n## Mission\n\nExercise the ${ir.name} capacity seam.\n\n## Plan Premises\n\n## Steps\n\n### Step 0: Work\n- [ ] do it\n`,
+      "utf8",
+    );
+  }
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const selection = { workflowId: WF, stepIds: [] as string[] };
   return {
@@ -101,7 +124,9 @@ function storeWith(tasks: Task[], ir: WorkflowIr, settings: Record<string, unkno
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
     getWorkflowDefinition: vi.fn(async () => ({ ir })),
-    // No getTasksDir → isUnplannedForExecution returns false (cards are "planned").
+    getTasksDir: () => tasksDir,
+    // Cards are planned by the PROMPT.md written above: an empty `## Plan Premises` section is the
+    // vacuously-satisfied verdict, so the capacity behaviour under test stays the only variable.
   } as unknown as TaskStore;
 }
 

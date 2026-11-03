@@ -34,6 +34,14 @@ only on `status === "needs-replan"`, and the card's own replan flag had been cle
 The card then produced no run-audit rows at all for 7+ hours: unowned by both lanes, not looping.
 
 Invariant: a lone principal-routing planning hold past the grace window is always re-queued for planning.
+
+FNXC:ResumePlacement 2026-11-01-19:15 (RUFU-300 Step 5): that "always" is now narrowed by ONE admission,
+so it is recorded here rather than left as prose the next author will trust too far. A card whose own gate
+evidence already reaches PAST the planning lane (a released `plan-review` whose successor sits in the
+execution lane) is NOT re-queued: `needs-replan` would discard an approved plan, and the re-plan would
+supersede the approval that made the card runnable. Every candidacy gate below is unchanged — the sweep
+still owns the unowned hold — it simply no longer resets durable progress to get there. The narrowed
+pair is covered in `requeue-authorities-resume-after-released-gate.test.ts`, which drives both shapes.
 */
 
 const HOLD_REASON = "workflow-principal-role-pool-exhausted:triage";

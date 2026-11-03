@@ -90,7 +90,23 @@ describe("FN-4851 reliability interactions: task-done refusals x invariant", () 
   it("does not let summary prose prevent the scope-leak guard from running", async () => {
     const invariantSpy = vi.spyOn(TaskExecutor.prototype as any, "verifyWorktreeInvariants").mockResolvedValue({ ok: true });
     const scopeSpy = vi.spyOn(TaskExecutor.prototype as any, "evaluateTaskDoneScopeLeak");
-    const { doneTool } = await setup();
+    /*
+    FNXC:ResumePlacement 2026-11-03-13:46 (RUFU-300 Step 5 fixture repair):
+    This leg asserts ONE thing: uncooperative `summary` prose must not short-circuit the scope-leak
+    guard. It always needed "no OTHER refusal class fires" to be true, and it used to get that for free
+    from the graph re-parsing the ledger on re-entry — which replaced this file's literal two-step list
+    with a single parsed step, so the bulk-step-completion guard (which needs ≥2 unfinished steps)
+    could not fire. RUFU-300 removed that accidental reset: a ledger that already carries progress
+    survives re-entry instead of being rebuilt (`ledger-progress` placement in
+    `packages/engine/src/workflows/resume-placement.ts`), so the two unfinished literal steps now reach
+    `fn_task_done` intact and the guard refuses for a reason this leg never intended to test.
+    Staged honestly at the fixture seam: a ledger with exactly one unfinished step states the
+    precondition outright instead of inheriting it from a progress-destroying re-parse. Nothing is
+    weakened — the scope-leak assertion below is unchanged, and the refusal class must still be absent.
+    */
+    const { doneTool } = await setup({
+      steps: [{ name: "Step 1", status: "done" as const }, { name: "Step 2", status: "in-progress" as const }],
+    });
 
     const result = await doneTool.execute("done", { summary: "To unblock, land FN-4789 first." });
 

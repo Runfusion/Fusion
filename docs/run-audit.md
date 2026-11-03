@@ -431,6 +431,59 @@ This event stays deliberately outside the curated delivery-pipeline catalogue an
 Still not carried, and the reason this section is not called a solution: **who holds the slots**. Holder
 identity is not in the refusal, so the row answers "which gate, how full" but not "which cards occupy it".
 
+## Resume-placement coherence diagnostics
+
+RUFU-300: `task:resume-placement-mismatch` records one classified pin/column disagreement observed while an
+automatic re-entry decided where to place a run. It exists because the two facts it joins are visible to
+nobody else at once: `workflowIrPinColumnId`/`workflowIrPinNodeId` (what the run's pin claims) and
+`task.column` (where the card actually is). The measured motivating case, RUFU-292, carried
+`workflowIrPinNodeId: "parse"` with `workflowIrPinColumnId: "in-progress"` while sitting `column: "todo"`
+for 6 h 33 min — `updatedAt` moving, zero new agent-log lines, and no row, History line, or badge anywhere
+recording the contradiction.
+
+Two producers write it, and they are the same seam rather than two opinions: `announceResumePlacement`
+on a dispatched graph run (`workflow-graph-executor.ts` / `execute-workflow-graph.ts`), and the
+`reconcile-pin-column-coherence` self-healing sweep for a card nobody dispatches — a wedged card emits no
+run, so without the sweep the row would exist only for cards that keep getting picked up.
+
+| key | meaning |
+|---|---|
+| `taskId`, `column` | The card, and its column at the moment of re-entry. |
+| `workflowIrPinColumnId`, `workflowIrPinNodeId` | What the pin claims, `null` when that half of the triple is absent — a half-null pin is reported as it is, never guessed at. |
+| `placedNodeId` | The node the resolver chose. `null` when the caller keeps its own fallback. |
+| `placementSource` | Fixed enum of what justified the placement: `continuation`, `column`, `after-released-gate`, `ledger-progress`, or `start`. |
+| `mismatchKind` | Fixed enum: `pin-at-release-seam`, `pin-ahead-of-column`, or `pin-behind-column`. |
+| `outcome` | `awaiting-scheduler-release` for the legal seam park, `announced` for genuine incoherence. |
+| `source` | `coherence-sweep`, present only on rows written by the self-healing sweep. |
+
+**A legal park is never an alarm, and that distinction is the event's whole shape.** The KTD-2 refusal
+(`workflow-column-boundary.ts`) writes the pin *before* it refuses a `hold → wip` crossing, so
+`pin(in-progress) / column(todo)` is the designed signature of a card waiting for the scheduler — the only
+mover across that boundary. Such a card reports `pin-at-release-seam` with
+`outcome: "awaiting-scheduler-release"` and claims nothing about delivery; only `pin-ahead-of-column` with
+no live release reason, and `pin-behind-column`, are incoherence. Without the enum every capacity-bound
+card would announce forever and the signal would die the way the pre-RUFU-372 `reason: "capacity"` row did.
+
+Bounding follows the `reconcile-stranded-*` convention: one row per `(card, mismatch signature)` episode,
+where the signature is `(kind, pinNodeId, pinColumnId, column)` and carries no growth counter, so a
+sustained wedge collapses instead of re-announcing per pass. Marking happens *before* the emits, so a sink
+that explodes cannot turn a bounded notice into a flood, and a pass with no sink wired consumes no episode
+— the first sink-less pass would otherwise swallow every later real announcement. Emission is the FN-9175
+bounded seam, so an absent, throwing, rejecting, or hanging sink cannot change the placement.
+
+**Neither event may carry step-result content.** No `workflowStepResults` body, verdict text, review
+findings, prompt text, blocker sentence, or error string enters the row; the sentence a human reads lives
+on the card's History line. It complements `task:workflow-run-suspended` and never duplicates it: that row
+says a run suspended and which gate refused, this row says the card's own pin disagrees with its column
+and how that disagreement was classified. The companion notice — the bounded
+`[workflow-graph] ... resume skipped released gate(s): ...` History line recording that a placement left a
+released gate behind — is deliberately task-log only, because a released gate is skipped on nearly every
+resume of a planned card and an audit row per skip is the 185-rows-an-hour flood shape.
+
+The event is intentionally outside the curated delivery-pipeline event catalogue; its shape is pinned by
+`packages/engine/src/__tests__/pin-column-coherence.test.ts` and
+`packages/engine/src/__tests__/resume-placement-after-passed-gate.test.ts`.
+
 ## Planning re-seed ceiling
 
 RUFU-768: `task:planning-reseed-cycle` records one planning escalation for one card, either the cycle

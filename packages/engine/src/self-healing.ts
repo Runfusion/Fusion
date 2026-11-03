@@ -280,6 +280,14 @@ import {
 import { getPromptPath } from "./execution/spec-staleness.js";
 import { evaluateStrandedHoldContinuation, seedPreReleasePlanReviewContinuation } from "./plan-review-continuation.js";
 import { evaluateStrandedContinuationReclaim, needsOverlapHolderProof, strandedHoldConditionKey, RECLAIM_RETIRED_STATE, RECLAIM_STALENESS_GRACE_MS, RECLAIM_DEFERRAL_HORIZON_MS } from "./workflows/stranded-continuation-reclaim.js";
+/* FNXC:ResumePlacement 2026-11-01-22:05 (RUFU-300): the advanced-triage pin re-home asks the same
+   evidence-aware placement question the graph asks, instead of trusting the pin as a naked claim. */
+import {
+  resolveResumePlacement,
+  pinContradictedByGateEvidence,
+  announceResumePlacement,
+  type ResumePlacementSinks,
+} from "./workflows/resume-placement.js";
 /*
 FNXC:Workspace 2026-06-22-14:10 (Phase D review G — cycle dissolved):
 `isRepoLanded` is the CANONICAL per-repo landed predicate (Phase C, exported A6). It now lives in
@@ -2715,6 +2723,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // FNXC:PrincipalHeldPlanning 2026-08-10-08:20: a planning hold from principal routing has no other
       // retry owner, so it must be re-queued before the steps below classify the card as simply idle.
       { name: "reconcile-principal-held-planning", fn: () => this.reconcilePrincipalHeldPlanningContinuations().then(() => undefined) },
+      // FNXC:ResumePlacement 2026-11-01-23:55 (RUFU-300): F-03 — a pin/column disagreement on a card nobody
+      // dispatches had no reader at all. Report-only, bounded per episode, and the same seam the graph uses.
+      { name: "reconcile-pin-column-coherence", fn: () => this.reconcilePinColumnCoherence().then(() => undefined) },
       // FNXC:PlanningFenceRecovery 2026-10-02-01:20 (RUFU-288): a fence-refused planning park has no other
       // retry owner — triage discovery excludes `status:"failed"` — and a restart is exactly when a store
       // availability refusal has most often cleared.
@@ -4052,6 +4063,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // no benefit.
           { name: "reconcile-stranded-hold-continuations", fn: () => this.reconcileStrandedHoldContinuations() },
           { name: "reconcile-principal-held-planning", fn: () => this.reconcilePrincipalHeldPlanningContinuations() },
+          // FNXC:ResumePlacement 2026-11-01-23:55 (RUFU-300): steady-state half of the coherence report —
+          // a backward move or a wiped gate ledger can strand a pin without any dispatch to witness it.
+          { name: "reconcile-pin-column-coherence", fn: () => this.reconcilePinColumnCoherence() },
           // FNXC:PlanningFenceRecovery 2026-10-02-01:20 (RUFU-288): steady-state half of the startup sweep —
           // a fence can recover without a restart, and the grace window plus the live re-probe keep the
           // repair to cards the fence itself admits are reachable again.
@@ -4606,6 +4620,103 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     return kept;
   }
 
+  /*
+  FNXC:ResumePlacement 2026-11-01-23:55 (RUFU-300 Step 4, audit RUFU-296 rev 3 finding F-03):
+  "The `workflowIrPinColumnId` vs `column` disagreement is tracked nowhere." The placement seam does
+  announce it, but that seam only runs when something DISPATCHES the card. A card that is parked,
+  dependency-blocked, waiting in review, or simply finished keeps its stale pin forever with no row and
+  no History line anywhere — an operator asking "why does this card think it is in in-progress?" gets
+  nothing, and the next recovery sweep that trusts the pin inherits the same unexamined claim Step 3
+  removed from the advanced-triage re-home.
+
+  This sweep closes that gap by being the SAME seam, not a second opinion: it resolves the card's own IR,
+  runs the one classifier (`resolveResumePlacement` → `pin/column mismatch`), and hands the result to the
+  one announcement (`announceResumePlacement`), so the dispatch path and the idle path share a single
+  episode bound and can never disagree or double-write. It repairs nothing — a pin is a claim, and
+  inventing a lane move from a disagreement is how a recovery sweep becomes the bug — and it never
+  touches a card a live owner is driving, which is the false-alarm shape: a run mid-flight legitimately
+  carries a pin naming the column it is on its way into.
+
+  Only the pin/column pair and the IR classify the verdict, never the step ledger or the gate rows, so
+  the slim board read is sufficient and no per-card `getTask` is taken.
+  */
+  async reconcilePinColumnCoherence(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, excludeLog: true });
+      const candidates = tasks.filter((task) =>
+        Boolean(task.column)
+        && Boolean(task.workflowIrPinNodeId)
+        && Boolean(task.workflowIrPinColumnId)
+        // Same column is coherence by definition; the classifier's undecidable shapes (half-null pin,
+        // a column the IR no longer declares) are filtered inside it, not guessed here.
+        && task.workflowIrPinColumnId !== task.column
+        && !executingIds.has(task.id)
+        && this.options.isTaskActive?.(task.id) !== true
+        && task.userPaused !== true
+        && task.paused !== true);
+      if (candidates.length === 0) return 0;
+
+      /*
+       * A per-pass Map, not `batchWorkflowIrCache()`: that helper needs the store's workflow-definition
+       * epoch to invalidate across sweeps, and a sweep that runs every cycle cannot serve a stale IR from
+       * a previous one anyway. Same reason `resolvePreWipColumns` is called with a fresh Map elsewhere.
+       */
+      const irCache = new Map<string, WorkflowIr>();
+      const selection = await this.newSelectionCache(candidates.map((task) => task.id));
+      const sinks: ResumePlacementSinks = {
+        logEntry: async (taskId, message) => {
+          await this.store.logEntry(taskId, message);
+        },
+        emitAudit: async (event) => {
+          await emitBoundedRunAudit(this.store, {
+            taskId: event.taskId,
+            agentId: "self-healing",
+            runId: generateSyntheticRunId("reconcile-pin-column-coherence", event.taskId),
+            domain: "database",
+            mutationType: event.mutationType,
+            target: event.taskId,
+            metadata: {
+              taskId: event.taskId,
+              column: event.column,
+              workflowIrPinColumnId: event.workflowIrPinColumnId ?? null,
+              workflowIrPinNodeId: event.workflowIrPinNodeId ?? null,
+              placedNodeId: event.placedNodeId ?? null,
+              placementSource: event.placementSource,
+              mismatchKind: event.mismatchKind,
+              outcome: event.outcome,
+              source: "coherence-sweep",
+            },
+          }, { log });
+        },
+      };
+
+      let announced = 0;
+      for (const snapshot of candidates) {
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, snapshot.id, irCache, selection);
+          if (!ir) continue;
+          const placement = resolveResumePlacement({ ir, task: snapshot });
+          const { mismatchAnnounced } = await announceResumePlacement(sinks, {
+            taskId: snapshot.id,
+            ir,
+            task: snapshot,
+            placement,
+          });
+          if (mismatchAnnounced) announced += 1;
+        } catch (err: unknown) {
+          log.warn(`reconcilePinColumnCoherence: failed for ${snapshot.id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      return announced;
+    } catch (err: unknown) {
+      log.error(`reconcilePinColumnCoherence failed: ${err instanceof Error ? err.message : String(err)}`);
+      return 0;
+    }
+  }
+
   async recoverAdvancedTriageTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
@@ -4723,6 +4834,46 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
           const resumeColumn = live.workflowIrPinColumnId;
           if (!resumeColumn || resumeColumn === liveColumns.intake) continue;
+
+          /*
+          FNXC:ResumePlacement 2026-11-01-22:05 (RUFU-300):
+          This sweep is a RECOVERY mover: it re-homes a card out of the planning lane into the column its
+          KTD-3 pin names. Before RUFU-300 the pin ALONE was the authority, which is the same defect as
+          replaying a released gate seen from the other end — a pin is a CLAIM about evidence, and RUFU-292
+          sat six and a half hours carrying `workflowIrPinNodeId: "parse"` against
+          `workflowIrPinColumnId: "in-progress"` while its column said `todo`, so every authority that
+          trusted the pin without reading the gate rows was a candidate to move it.
+          The re-home now asks what the graph asks: does any gate the pinned node sits BEHIND positively
+          refuse the card (`pinContradictedByGateEvidence` — a latest row that failed, was REVISEd, was
+          superseded, or never completed)? Absence of a row is NOT a refusal here on purpose: a card that
+          legitimately reached in-progress and lost its plan-review row to archiving or to another gate's
+          remediation must still be rescued, which is the whole reason this sweep exists. A contradicted pin
+          stands the sweep down — the card stays where its evidence says it is — announced once per
+          (card, pin, contradicting gate) so a sustained disagreement cannot flood the History.
+          */
+          const placementIr = await resolveWorkflowIrForTask(this.store, live.id, preWipCache, preWipSelection);
+          const contradictedGate = placementIr
+            ? pinContradictedByGateEvidence({
+              ir: placementIr,
+              task: live,
+              pinnedNodeId: live.workflowIrPinNodeId,
+            })
+            : undefined;
+          if (contradictedGate) {
+            const signature = `${live.workflowIrPinNodeId}:${contradictedGate}`;
+            if (this.pinDisagreementSignatures.get(live.id) !== signature) {
+              this.pinDisagreementSignatures.set(live.id, signature);
+              await this.store.logEntry(
+                live.id,
+                `[self-healing] ${live.id}: advanced-triage recovery stood down — the pin names` 
+                + ` '${live.workflowIrPinNodeId}' in '${resumeColumn}' but gate '${contradictedGate}' before it`
+                + " has a latest result that does not authorise that position. The card stays where its evidence says it is.",
+              );
+            }
+            continue;
+          }
+          this.pinDisagreementSignatures.delete(live.id);
+
           const moved = await this.store.moveTaskIf(live.id, resumeColumn, (current) =>
             current.column === liveColumns.intake
             && current.status == null
@@ -11516,6 +11667,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 await audit("task:reconcile-principal-held-planning-no-action", "raced");
                 return false;
               }
+              /*
+               * FNXC:ResumePlacement 2026-11-01-22:20 (RUFU-300):
+               * `needs-replan` sends the card back to triage for a NEW plan. For a card whose gate evidence already
+               * authorises work PAST the planning lane — a `passed` Plan Review row, or a row an operator waived —
+               * that write silently discards an approved plan, and the re-plan supersedes the very approval that
+               * made the card runnable. This is the same defect RUFU-300 removes on the execution side (a re-entry
+               * that replays a released gate), arriving from the planning side: a re-queue that resets durable
+               * progress because a naked retry signal was written without reading the evidence. A principal-routing
+               * hold that cannot resolve is a routing defect (RUFU-285's subject), not evidence the plan is wrong,
+               * so recovery stands down and says why instead of replanning around it.
+               */
+              if (laneIr && "columns" in laneIr) {
+                const evidence = resolveResumePlacement({ ir: laneIr, task: fresh });
+                const placedColumn = evidence.nodeId
+                  ? laneIr.columns.find((entry) => entry.id === laneIr!.nodes.find((node) => node.id === evidence.nodeId)?.column)
+                  : undefined;
+                const placedFlags = placedColumn ? resolveColumnFlags(placedColumn) : undefined;
+                if (evidence.releasedNodeIds.length > 0 && !(placedFlags?.hold || placedFlags?.intake)) {
+                  await audit("task:reconcile-principal-held-planning-no-action", "released-gate-downstream");
+                  return false;
+                }
+              }
               await this.store.updateTask(task.id, { status: "needs-replan" });
               await this.store.logEntry(
                 task.id,
@@ -12200,6 +12373,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   Deduped per (taskId, shape) so a genuinely parked card does not re-emit every sweep.
   */
   private readonly stalledCardSignatures = new Map<string, string>();
+
+  /*
+  FNXC:ResumePlacement 2026-11-01-22:05 (RUFU-300): last standing-down signature per card for the
+  advanced-triage pin check above. Process-local memory, not a durable counter: the point is one History
+  line per disagreement, not a budget that could itself strand a card.
+  */
+  private readonly pinDisagreementSignatures = new Map<string, string>();
 
   async detectStalledCards(): Promise<number> {
     try {

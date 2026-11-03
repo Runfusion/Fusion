@@ -177,6 +177,13 @@ export interface WorkflowGraphTaskRunnerDeps {
    * run-audit + the U9b task-row IR pin (createStoreIrPinPersistence).
    */
   columnBoundaryHooks?: WorkflowColumnBoundaryHooks;
+  /*
+   * FNXC:ResumePlacement 2026-11-01-19:40 (RUFU-300):
+   * Forwards the placement announcement sinks to the graph executor (see
+   * `WorkflowGraphExecutorDeps.resumePlacementSinks`). Absent → nothing is announced, which keeps
+   * every existing runner test byte-inert.
+   */
+  resumePlacementSinks?: WorkflowGraphExecutorDeps["resumePlacementSinks"];
 }
 
 /** Task/workflow-independent hooks the runner needs to build a column-boundary
@@ -451,6 +458,7 @@ export class WorkflowGraphTaskRunner {
         publishTaskProjection: this.deps.publishTaskProjection,
         signal: this.deps.signal,
         columnBoundary,
+        resumePlacementSinks: this.deps.resumePlacementSinks,
         publishTouchedFiles: this.deps.publishTouchedFiles,
         // Single source of truth (KTD-6): prefer the caller-threaded run id so the
         // executor's persistence deps probe/flip rows under the SAME id; fall back

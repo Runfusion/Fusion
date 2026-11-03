@@ -239,6 +239,8 @@ The enforced integrity classes include:
 
 At run time, `WorkflowGraphTaskRunner` resolves the selected built-in or custom workflow, re-runs this integrity validation before any seam, primitive, or custom-node side effect, and fails closed with an `invalid-ir: <message>` reason when the resolved IR is malformed. Once a node side effect has run, runtime failures keep the existing failed-run behavior rather than re-running the legacy pipeline.
 
+**A cleared gate is not re-run on a later pass.** Where an automatic re-entry places the run is decided by one evidence-aware resolver, not by the column the card happens to sit in: a gate node whose latest step result is `passed`, satisfies the Plan Review satisfaction predicate, or carries an operator bypass waiver is treated as released, and the run enters the first main-path node strictly after it. For the built-in coding workflow that node is `parse`, because the Plan Review optional group sits between `plan` and `parse` — so an approved card resumes at step parsing and never re-runs planning or Plan Review, while a card with no released gate still enters at `start` exactly as before. The graph records the ready-for-release seam when the next lane is a `hold → wip` crossing and moves nothing itself; the hold/release sweep is the only mover across that boundary. See `docs/architecture.md` § Resume placement after a released gate.
+
 ### Overriding built-in workflow prompts
 
 <!--

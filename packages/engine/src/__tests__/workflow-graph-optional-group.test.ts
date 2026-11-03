@@ -850,6 +850,8 @@ describe("WorkflowGraphExecutor optional-group", () => {
         },
       },
       logTaskEntry: (summary) => { logs.push(summary); },
+      // RUFU-300: the placement notice rides the placement sinks, not the node-handler log.
+      resumePlacementSinks: { logEntry: (_taskId: string, message: string) => { logs.push(message); } },
       requestPreMergeOptionalStepFix: requestFix,
     });
 
@@ -862,7 +864,18 @@ describe("WorkflowGraphExecutor optional-group", () => {
     expect(result.outcome).toBe("success");
     expect(calls).toEqual(["execute"]);
     expect(requestFix).not.toHaveBeenCalled();
-    expect(logs).toContain("[pre-merge] Workflow step already satisfied: Plan Review");
+    /*
+    FNXC:ResumePlacement 2026-11-01-21:25 (RUFU-300):
+    This assertion used to read `"[pre-merge] Workflow step already satisfied: Plan Review"` — the line the
+    per-node pre-merge gate wrote when the released gate was ENTERED and then short-circuited. RUFU-300
+    moved the skip earlier: a re-entry is now PLACED behind the released gate, so the node is never
+    entered and that gate has nothing to report. The operator-visible property the old line protected —
+    the card itself says why the gate did not run — is asserted here in its new form, together with the
+    absence of the old one, so a regression that silently re-enters the gate (or silently stops
+    explaining the skip) fails this leg.
+    */
+    expect(logs.some((line) => line.includes("resume skipped released gate(s)") && line.includes("plan-review"))).toBe(true);
+    expect(logs.some((line) => line.includes("[pre-merge] Workflow step already satisfied"))).toBe(false);
   });
 
   it.each(["passed", "live pending lease"] as const)(
