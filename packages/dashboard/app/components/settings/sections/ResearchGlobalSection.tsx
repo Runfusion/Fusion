@@ -35,7 +35,8 @@ export function ResearchGlobalSection({ form, setForm, authProviders, onNavigate
     const externalProvider = resolvedProvider === "searxng" ||
         resolvedProvider === "brave" ||
         resolvedProvider === "google" ||
-        resolvedProvider === "tavily";
+        resolvedProvider === "tavily" ||
+        resolvedProvider === "keenable";
     const selectedCredentialProvider = resolvedProvider === "brave" || resolvedProvider === "tavily" ? resolvedProvider : null;
     const hasMissingResearchCredential = selectedCredentialProvider
         ? authProviders.some((provider) => provider.id === selectedCredentialProvider && !provider.authenticated)
@@ -75,6 +76,7 @@ export function ResearchGlobalSection({ form, setForm, authProviders, onNavigate
                   { value: "brave", label: t("settings.researchGlobal.brave", "Brave") },
                   { value: "google", label: t("settings.researchGlobal.googleCustomSearch", "Google Custom Search") },
                   { value: "tavily", label: t("settings.researchGlobal.tavily", "Tavily") },
+                  { value: "keenable", label: t("settings.researchGlobal.keenable", "Keenable (free, no key)") },
                 ],
               }}
               value={externalProvider ? resolvedProvider : "searxng"}
