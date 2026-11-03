@@ -81,6 +81,7 @@ import { isTaskExecutionLive } from "./merge/merge-execution-exclusion.js";
 import { isMergeActiveStatus } from "./merge/merge-active-status.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
 import { resolveIntegrationBranch } from "./merge/integration-branch.js";
+import { shouldEmitUnrunPreMergeGateNotice } from "./merge/finalization-refusal-notice.js";
 import { recoverConfirmedMergePush } from "./merge/recover-confirmed-merge-push.js";
 import { resumeMissingPostMergeGate, isPostMergeGateRecoveryDue } from "./merge/post-merge-gate-reseed.js";
 import { resolvePostMergeEvidenceContract } from "./merge/post-merge-evidence-contract.js";
@@ -3488,11 +3489,27 @@ export class ProjectEngine {
           ? "[pre-merge] The workflow graph was re-seeded at a required pre-merge gate whose last run died without a verdict."
           : "[pre-merge] The workflow graph was re-seeded at an enabled pre-merge gate that never ran.");
       }
-      await emitBoundedRunAudit(store, {
-        taskId: task.id, agentId: "merge-gate", runId: `${task.id}:merge-gate`, domain: "database",
-        mutationType: "task:merge-unrun-pre-merge-gate-rerouted", target: task.id,
-        metadata: { taskId: task.id, nodeId: reroute.nodeId, workflowStepId: reroute.workflowStepId, reason: reroute.reason, source: "merge-gate", missingGateCount: mergeGate.requiredPreMergeStepIds.size },
-      });
+      /*
+      FNXC:UnrunGateRefusalBounded 2026-11-03-16:08 (RUFU-655):
+      This arm runs on every merge-lane pass, so an unguarded emit restates the same refusal forever:
+      measured 23 rows in 12 minutes for one card whose review attempt was still `running` while the merge
+      door kept re-evaluating it. A seed is a state change and always writes; a refusal writes on the
+      transition into it (reason, named gate, or required-gate count changed). The durable task-log line
+      above stays untouched because it is only written for a real seed.
+      */
+      if (shouldEmitUnrunPreMergeGateNotice({
+        taskId: task.id,
+        rerouted: reroute.rerouted,
+        reason: reroute.reason,
+        workflowStepId: reroute.workflowStepId,
+        requiredGateCount: mergeGate.requiredPreMergeStepIds.size,
+      })) {
+        await emitBoundedRunAudit(store, {
+          taskId: task.id, agentId: "merge-gate", runId: `${task.id}:merge-gate`, domain: "database",
+          mutationType: "task:merge-unrun-pre-merge-gate-rerouted", target: task.id,
+          metadata: { taskId: task.id, nodeId: reroute.nodeId, workflowStepId: reroute.workflowStepId, reason: reroute.reason, source: "merge-gate", missingGateCount: mergeGate.requiredPreMergeStepIds.size },
+        });
+      }
     }
     if (isStaleContentApprovalBlocker(blocker) && mergeContent.kind === "singular") {
       const reroute = await rerouteSingularStaleContentToReview(store, task, {
