@@ -371,6 +371,35 @@ Re-assigning or un-assigning a card that already has a live execution session us
 
 **Lane-capability revalidation at wake (RUFU-272).** A heartbeat wake that arrives carrying an explicitly assigned card re-runs the *same* bind verdict that the binding primitive applies (`evaluateImplementationTaskBind`, evaluated against the card's **workflow-resolved implementation lanes**, so renamed/custom boards are first-class). If the lane is capability-ineligible for the card — e.g. an audit-only reviewer (`assignmentPolicy: "none"`) that was bound before its policy was set — the wake **declines this dispatch**: it logs the named reason, records one bounded `task:lane-capability-declined` audit row (10-minute cooldown per lane/card/policy), and falls through to inbox/auto-claim exactly as an unbound lane would. Decline is never an unbind: the wake path mutates no binding, and it absolutely skips cards that are paused/user-paused, carried by a live session or another live heartbeat run, or unreadable (the gate fails open to pre-existing behavior). The mutation owner is the self-healing sweep `reconcile-lane-capability-misbind` (registered after the agent-link mirror sweeps): it re-binds stranded cards via the `TaskStore.updateTask(..., { assignedAgentId })` assignment seam only — branch, worktree, and step progress preserved, no lifecycle column move — choosing among lanes that are auto-eligible for the card (deterministic order: idle first, then id), and when no eligible lane exists it freezes the card **once** with the named `lane-capability-mismatch` external-block decline (resumable through the ordinary external-block resume surface) instead of looping silently. See `docs/solutions/reliability/implementation-card-bound-to-audit-only-lane.md`.
 
+**Reviewer candidacy is the second question at that one seam (RUFU-369).** Capability answers whether a lane may ever
+touch a card of this kind; it cannot answer whether *this card owes this lane work now*, and conflating the two is what
+burned whole reviewer sessions on cards that could not carry an open `code-review` gate (RUFU-350: `done`, landed, gate
+already approved; RUFU-365/RUFU-366: `todo`, every step `pending`, `No commits expected: true`). Wake-time bind
+revalidation is therefore the single wake-admission owner for reviewer lanes too, through `evaluateWakeTaskBind`
+(`packages/engine/src/agents/wake-bind.ts`), and it runs on **every** provenance that resolves `agent.taskId` —
+`assignment`/`on_demand` carries, `timer` wakes that read the stored bind, and `automation`/`routine` sweep wakes — so a
+mis-bound reviewer cannot be re-woken every tick on a bind the seam already refused. The rule set is deliberately narrow:
+
+- Only a **reviewer-only** lane is put through candidacy. A lane that can also execute (`reviewer` + `executor` or
+  `engineer`) is never candidacy-declined and pays no extra store read, because refusing those lanes is the RUFU-682 /
+  SANE-484 over-refusal shape that silences legitimate review dispatch.
+- Exclusions, each verified against board state before any session opens: a recorded `code-review` verdict (a verdict is
+  an exclusion, never a wake reason), `noCommitsExpected: true` on the card, a terminal lane, a plan-only fast lane
+  waiting on human plan approval, or zero board evidence. Positive admission is a review-class column (resolved from the
+  card's own workflow, so renamed boards are first-class) or an open reviewer run.
+- A wake carrying genuinely new comment evidence, and any `automation` wake, is never candidacy-declined — comment
+  delivery stays delivered and the review-dispatch sweep's own dispatch is never swallowed by the seam that guards it.
+- A withheld wake reuses the RUFU-272 decline mechanics with `code: "review-candidacy-mismatch"` and mutates nothing: no
+  `moveTask`, no `status: "failed"`, no strike, no durable unbind. Shared verdict/exclusion predicates live in
+  `packages/core/src/workflows/review-verdict-state.ts`, which the review dispatch sweep consumes too, so the two cannot
+  disagree about what a verdict means.
+
+**The wake delta states only what this wake verified.** The previous run's stored context snapshot is labelled
+`Carried comment context` and is never re-advertised as new; a carried comment-id list is dropped from the persisted run
+snapshot so the next wake cannot read yesterday's comments back as fresh. A heading that says "N new comments" is now
+produced only from ids re-derived this wake, and no wake sentence asserts an open review gate — the seam either verified
+candidacy or never opened a session.
+
 **A review-lane refusal settles the attempt it refused (RUFU-682).** A review-lane card is implementation-class at wake time (a review
 is a workflow-node run, so the implementation-lane verdict applies), which means a reviewer-only lane — the shape every reviewer agent
 on a default board has — refuses every review dispatch its own sweep opens. Left at that, the ledger row stayed `running` with no session,

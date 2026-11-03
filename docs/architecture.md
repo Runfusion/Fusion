@@ -110,6 +110,34 @@ outcome, one in-process duration, and a fixed refusal reason code. It is emitted
 handoff. Cross-process times are reported as observations, not as durations computed between
 unsynchronized clocks.
 
+### Wake-time bind revalidation is the single wake-admission owner (RUFU-272 / RUFU-369)
+
+A wake answers *when* to look; it must never answer *whether this lane owes this card work now*. That second
+question has exactly one owner: the bind revalidation inside `executeHeartbeat` (`packages/engine/src/agent-heartbeat.ts`,
+helper `evaluateWakeTaskBind` in `packages/engine/src/agents/wake-bind.ts`). Every provenance that resolves
+`agent.taskId` passes through it — `assignment` and `on_demand` carries, `timer` wakes that read the stored bind, and
+`automation`/`routine` sweep wakes — so a second copy of the decision in a provider or a sweep cannot disagree with it,
+and no lane can be re-woken on a bind the seam already refused.
+
+The seam asks two different questions and only the lane's own role decides which one runs:
+
+- **Capability** (`evaluateWakeCapabilityBind` → `lane-not-executable` / `review-lane-capability-mismatch`): may this lane
+  ever touch a card in this lane-class? Pre-existing RUFU-272 owner; RUFU-766 made it pick the bar from the wake's
+  `wakePurpose` (review purpose on a review-owned card is scored by the reviewer tag, everything else keeps the
+  implementation verdict byte-for-byte).
+- **Candidacy** (`review-candidacy-mismatch`, RUFU-369): for a **reviewer-only** lane, does this card owe a review
+  *right now*? A recorded `code-review` verdict, a plan-declared `noCommitsExpected: true`, a terminal lane, a
+  plan-only fast lane awaiting human approval, or zero board evidence (no reviewer run, no code-review result row,
+  no execution lane) each exclude the wake. Positive evidence — the card sits in a review-class column or an open
+  reviewer run exists — admits it. Lanes that can also execute (`reviewer` + `executor`/`engineer`) are never
+  candidacy-declined and cost no extra store read, because an over-broad refusal here is the RUFU-682/SANE-484
+  failure shape that silences legitimate review dispatch.
+
+A withheld wake reuses the existing decline mechanics (deduped `task:lane-capability-declined` audit row with the
+class in its `code`, plus the reviewer-run refusal witness) and mutates nothing: no `moveTask`, no `status: "failed"`,
+no strike, no durable unbind. The verdict/exclusion predicates live in
+`packages/core/src/workflows/review-verdict-state.ts` so this seam and the review dispatch sweep cannot drift apart.
+
 ## 1) Overview
 
 Fusion is an AI-orchestrated task board. It takes tasks through a structured lifecycle (`planning → todo → in-progress → in-review → done`) and automates planning, execution, review, merge, and operational recovery.

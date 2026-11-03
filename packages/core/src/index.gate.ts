@@ -1241,6 +1241,24 @@ one already-loaded leaf — `agent-role-policy.ts` and `task-external-block.ts` 
 */
 export { LANE_CAPABILITY_DECLINE_CODE, LANE_CAPABILITY_DECLINE_REMEDY, REVIEW_CAPABILITY_DECLINE_CODE, REVIEW_CAPABILITY_DECLINE_REMEDY, REVIEWER_RUN_LANE_DECLINE_PREFIX, formatLaneCapabilityDeclineReason, formatReviewCapabilityDeclineReason, describeLaneCapabilityDecline, laneCapabilityDeclinePolicy, reviewerRunLaneDeclineReason, reviewerRunLaneDeclineSignature, buildLaneCapabilityFreezePatch, isLaneCapabilityDecline, hasLaneCapabilityFreeze } from "./tasks/lane-capability-decline.js";
 export type { LaneCapabilityDeclineDescriptor } from "./tasks/lane-capability-decline.js";
+/*
+FNXC:ReviewerWakeCandidacy 2026-10-19-15:30 (RUFU-369):
+The durable review-verdict / exclusion predicates moved out of `scheduling/review-dispatch-sweep.ts` into core so the
+wake-time candidacy seam and the dispatch sweep answer from ONE state table. `review-lane-dispatch-sweep.test.ts` is a
+merge-gate file, so the gate barrel must carry them — the same FN-8651 failure mode (an export the barrel does not
+surface appears as `isCodeReviewExcluded is not a function` ONLY under `engine-core`) that the lane-capability leaf
+above already documents. Measured cost: one already-loaded workflow leaf.
+
+The barrel also lacked `CODE_REVIEW_GROUP_ID` itself, which had a subtler cost than a TypeError: the merge-gate file
+`review-lane-dispatch-sweep.test.ts` builds its fixtures with `workflowStepId: CODE_REVIEW_GROUP_ID`, so under
+`engine-core` that id resolved to `undefined` and every verdict assertion passed only because BOTH sides of the
+comparison were `undefined`. Exporting `hasRecordedCodeReviewVerdict` from this barrel made the module-side constant
+real while the fixture id stayed `undefined`, and 7 gate assertions went red — the accidental match, not the test, was
+wrong. Admitting the constant makes the gate lane assert what the default lane already asserts.
+*/
+export { CODE_REVIEW_GROUP_ID } from "./workflows/builtin-code-review-group.js";
+export { hasRecordedCodeReviewVerdict, carriesAuthoredReviewOutcome, isCodeReviewExcluded, hasNoCommitReviewExclusion } from "./workflows/review-verdict-state.js";
+export type { WorkflowStepResultLike } from "./workflows/review-verdict-state.js";
 export { emitBoundedRunAudit, submitRunAuditToSinkWriter } from "./run-audit/emit-bounded-run-audit.js";
 export type { RunAuditBufferedSubmitResult } from "./run-audit/emit-bounded-run-audit.js";
 /*

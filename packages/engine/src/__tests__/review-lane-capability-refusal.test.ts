@@ -429,9 +429,22 @@ describe("wake decline records the review refusal in the same call", () => {
   });
 
   it("scores the wake through the single purpose-aware entry point", () => {
-    // No wake-path call site may go back to scoring a bound card with the implementation bar directly.
-    expect(occurrences("evaluateWakeCapabilityBind(")).toBeGreaterThanOrEqual(1);
+    /*
+    FNXC:ReviewerWakeCandidacy 2026-11-03-17:05 (RUFU-369):
+    The wake seam gained a layer: `agent-heartbeat.ts` now calls `evaluateWakeTaskBind` (agents/wake-bind.ts), which
+    resolves reviewer candidacy and then delegates the capability half to `evaluateWakeCapabilityBind`. The invariant
+    belongs to the SEAM, not to one file, so the scan reads both: the purpose-aware entry point must be reachable
+    from the wake path, and neither half of the seam may score a bound card with `evaluateImplementationTaskBind`
+    directly. Same teeth, one wider net — the wake may not go back to the implementation bar.
+    */
+    const wakeBindSource = readFileSync(fileURLToPath(new URL("../agents/wake-bind.ts", import.meta.url)), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    const capabilityCalls = occurrences("evaluateWakeCapabilityBind(")
+      + (wakeBindSource.split("evaluateWakeCapabilityBind(").length - 1);
+    expect(capabilityCalls).toBeGreaterThanOrEqual(1);
     const gate = source.slice(source.indexOf("if (declineable) {"));
     expect(gate.slice(0, gate.indexOf("if (!taskId) {"))).not.toContain("evaluateImplementationTaskBind(");
+    expect(wakeBindSource).not.toContain("evaluateImplementationTaskBind(");
   });
 });

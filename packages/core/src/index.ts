@@ -464,6 +464,8 @@ export {
 export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional-steps.js";
 export { resolveWorkflowStepVerdictRequirement } from "./workflows/review-verdict-authority.js";
 export type { WorkflowStepVerdictRequirementInput } from "./workflows/review-verdict-authority.js";
+// RUFU-369: the review STATE predicates shared by the review-dispatch sweep and the heartbeat wake seam.
+export { hasRecordedCodeReviewVerdict, carriesAuthoredReviewOutcome, isCodeReviewExcluded, hasNoCommitReviewExclusion, type WorkflowStepResultLike } from "./workflows/review-verdict-state.js";
 export {
   FAST_LANE_STEP_NAME,
   FAST_LANE_SKIP_VALUE,

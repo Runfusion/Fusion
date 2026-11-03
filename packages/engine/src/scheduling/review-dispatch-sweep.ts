@@ -1,5 +1,4 @@
 import {
-  CODE_REVIEW_GROUP_ID,
   completeReviewerRunForTask,
   formatReviewCapabilityDeclineReason,
   hasWorkflowRoleCapability,
@@ -14,6 +13,9 @@ import {
   resolveWorkflowIrForTaskWithProvenance,
   isEngineLossReviewerRun,
   reviewerRunLaneDeclineSignature,
+  hasRecordedCodeReviewVerdict,
+  isCodeReviewExcluded,
+  hasNoCommitReviewExclusion,
 } from "@fusion/core";
 import type {
   Agent,
@@ -296,7 +298,16 @@ export function classifyReviewCard(input: {
     return skip("excluded-paused");
   }
   if (!input.reviewerFound) return skip("no-reviewer");
-  if (isCodeReviewExcluded(input.task)) return skip("excluded-review-level");
+  /*
+  FNXC:ReviewVerdictState 2026-10-19-12:20 (RUFU-369):
+  E1 is the "this card never asked to be reviewed" bucket, and it now carries a second durable intent: a card
+  whose own plan declares `**No commits expected:** true` has, by that contract, no diff to review — the same
+  authorization `merge/zero-commit-landing-proof.ts` accepts as "git has nothing to show" and the same flag
+  `merge/no-commits-finalize-guard.ts` lets a zero-diff lane finalize WITHOUT an approved code review. RUFU-365
+  and RUFU-366 measured the cost of missing it: both carried the flag with zero steps run, were dispatched to
+  the reviewer lane anyway, and burned a full session on a review whose subject cannot exist.
+  */
+  if (isCodeReviewExcluded(input.task) || hasNoCommitReviewExclusion(input.task)) return skip("excluded-review-level");
 
   const rows = input.rows;
   // An invalidated attempt is history, not work in flight: supersession clears `invalidated_at`
@@ -353,59 +364,15 @@ export function classifyReviewCard(input: {
   return { bucket: "never-dispatched", dispatch: true, supersedeFirst: false, nextRound: 1 };
 }
 
-/**
- * `enabledWorkflowSteps` is the runtime source of truth for which optional review groups a card
- * wants (reviewLevel is creation-time only). An unset list means the card never restricted
- * itself, so only an explicit list without code-review counts as a deliberate exclusion.
- */
-function isCodeReviewExcluded(task: Task): boolean {
-  if (task.reviewLevel === 0) return true;
-  const enabled = task.enabledWorkflowSteps;
-  return Array.isArray(enabled) && !enabled.includes(CODE_REVIEW_GROUP_ID);
-}
-
-/**
- * The lane's own authority on "review happened": a non-superseded code-review step result that
- * carries an authored outcome.
- * FNXC:ReviewLaneDispatch 2026-09-16-13:22 (#3619 review G2):
- * `skipped` counts only when a named authority skipped the step (`bypassedBy`, FN-7720) — that is
- * a recorded human decision. A `skipped` with a `notRunReason` and no bypass is the MISSING-review
- * shape this sweep exists to rescue: the merge gate refuses to approve on it for exactly the same
- * reason, so treating it as a verdict would hide the card from both authorities at once.
- * `failed`/`advisory_failure` are authored review outcomes: their re-run belongs to the bounded
- * remediation authority (failed-pre-merge-step recovery, FN-7720 bypass), and dispatching a second
- * review here would race it. Superseded results (a newer commit invalidated them) and `pending`
- * results (dispatched, verdict never delivered) must not count, or the sweep would call an
- * unanswered review a completed one.
- */
-function hasRecordedCodeReviewVerdict(task: Task): boolean {
-  return (task.workflowStepResults ?? []).some(
-    (result) =>
-      result.workflowStepId === CODE_REVIEW_GROUP_ID &&
-      result.supersededAt == null &&
-      (result.status === "passed" ||
-        ((result.status === "failed" || result.status === "advisory_failure") &&
-          carriesAuthoredReviewOutcome(result)) ||
-        (result.status === "skipped" && result.bypassedBy != null)),
-  );
-}
-
 /*
-FNXC:ReviewDispatch 2026-10-04-17:25 (RUFU-343):
-The `failed` / `advisory_failure` arm above used to count ANY row with that status, on the premise that such a
-row is an authored reviewer outcome. Measured on production it is not always one: SANE-406/468/504/531 carry
-`code-review -> {status: "failed", verdict: null, bypassedBy: null}` with ZERO completed reviewer runs
-(`task_reviewer_runs`: 3 rows, 0 completed, 2 invalidated), while their `plan-review` row on the same card does
-carry a real verdict. An evidence-free failure row is the exact shape this sweep exists to rescue, and counting
-it as a verdict made the card invisible to BOTH authorities at once: dispatch said `verdict-recorded` while the
-merge gate refused the same reason.
-The authority split stays: a failure that carries its verdict (REVISE/RETHINK/UNAVAILABLE) or an operator bypass
-is still authored work, owned by failed-pre-merge-step recovery and FN-7720, and must not be re-dispatched here.
-Only the row with no authored evidence at all stops counting.
+FNXC:ReviewVerdictState 2026-10-19-12:20 (RUFU-369):
+`isCodeReviewExcluded`, `hasRecordedCodeReviewVerdict` and `carriesAuthoredReviewOutcome` moved verbatim to
+`packages/core/src/workflows/review-verdict-state.ts`. They were private to this DISPATCH authority, but the
+reviewer lane's heartbeat wake has to answer the identical question, and an unshared copy is how RUFU-350 got
+woken to "supply your verdict" on a card whose code-review gate had already been approved for 19 minutes: the
+wake seam had no verdict authority at all. Both authorities now read one implementation, so a card cannot be
+"already reviewed" to the merge door and "needs a reviewer" to the wake.
 */
-function carriesAuthoredReviewOutcome(result: { verdict?: unknown; bypassedBy?: unknown }): boolean {
-  return result.verdict != null || result.bypassedBy != null;
-}
 
 /**
  * Which reviewer slot a card gets, and which run the classifier must see.

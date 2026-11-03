@@ -46,7 +46,6 @@ import {
   resolveEffectiveAgentPermissionPolicy,
   canAgentTakeImplementationTask,
   evaluateImplementationTaskBind,
-  evaluateWakeCapabilityBind,
   isReviewOwnedTask,
   describeLaneCapabilityDecline,
   type WakePurpose,
@@ -80,6 +79,19 @@ import { createHash } from "node:crypto";
 import { createTaskCreateTool, createTaskLogToolWithContext, createTaskLogsReadTool, createTaskDocumentWriteTool, createTaskDocumentReadTool, createTaskReadTools, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createTaskAssignTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createMissionTools, createIdeationTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createWorkflowValidateTool, createWorkflowSelectTool, createTaskPromoteTool, createWorkflowCreateTool, createWorkflowUpdateTool, createWorkflowDeleteTool, createWorkflowSettingsTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agents/agent-logger.js";
 import { isTaskPlanningOrExecutionLive } from "./agents/planning-execution-liveness.js";
+/*
+FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369):
+Wake-time bind admission (reviewer candidacy + comment-id provenance) lives in `agents/wake-bind.ts` so the
+wake seam, the review-dispatch sweep, and the merge door read ONE set of predicates over card state.
+*/
+import {
+  REVIEW_CANDIDACY_DECLINE_CODE,
+  evaluateWakeTaskBind,
+  isReviewWakeCandidate,
+  resolveWakeReviewCandidacyContext,
+  resolveWakeCommentIds,
+  wakeLaneIsReviewerOnly,
+} from "./agents/wake-bind.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { emitApprovalMail } from "./agents/approval-mail.js";
 import {
@@ -3247,17 +3259,59 @@ export class HeartbeatMonitor {
         || contextSnapshot?.triggeringCommentType === "pr"
           ? contextSnapshot.triggeringCommentType
           : undefined;
-      const effectiveTriggeringCommentIds = triggeringCommentIds ?? contextTriggeringCommentIds;
+      /*
+      FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369):
+      The `??` merge below used to be invisible to everything downstream: a comment id that arrived only in the
+      caller's `contextSnapshot` — a PREVIOUS wake's delivery — became `effectiveTriggeringCommentIds`, which
+      `deriveWakeReason()` turned into `comment_task`, which the wake delta titled "New comments since last run",
+      and which this run then re-published as its own `triggeringCommentIds`. A carried id could therefore never
+      stop being fresh: the count and the heading could not fall, and a wake that was not caused by a comment
+      announced one. The provenance is now resolved once here and carried, so every consumer states what it
+      actually observed. A carried id is still readable (its body is looked up live against the card), it is
+      just never advertised as new.
+      */
+      const wakeCommentIds = resolveWakeCommentIds({
+        paramIds: triggeringCommentIds,
+        snapshotIds: contextTriggeringCommentIds,
+      });
+      const effectiveTriggeringCommentIds = wakeCommentIds.ids;
+      /*
+      A `wake-on-comment` delivery is itself proof that this wake was caused by comments, even when the caller
+      passed no ids; a carried id without that trigger is not.
+      */
+      const wakeHasFreshCommentEvidence =
+        wakeCommentIds.origin === "fresh" || triggerDetail === "wake-on-comment";
       const effectiveTriggeringCommentType = triggeringCommentType ?? contextTriggeringCommentType;
 
-      const runContextSnapshot = {
+      const runContextSnapshot: Record<string, unknown> = {
         ...(contextSnapshot ?? {}),
         ...(resolvedTaskId ? { taskId: resolvedTaskId } : {}),
-        ...(effectiveTriggeringCommentIds?.length
-          ? { triggeringCommentIds: effectiveTriggeringCommentIds }
-          : {}),
-        ...(effectiveTriggeringCommentType ? { triggeringCommentType: effectiveTriggeringCommentType } : {}),
       };
+      /*
+      FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369):
+      A FRESH wake re-publishes its own ids. A wake carrying only an inherited id does NOT stamp it into the new
+      run's `triggeringCommentIds` — it records it under `carriedTriggeringCommentIds` and marks the origin, so
+      the run is still diagnosable but the next wake cannot read it back as this run's delivery.
+      */
+      if (effectiveTriggeringCommentIds?.length) {
+        if (wakeCommentIds.origin === "fresh") {
+          runContextSnapshot.triggeringCommentIds = effectiveTriggeringCommentIds;
+        } else {
+          runContextSnapshot.carriedTriggeringCommentIds = effectiveTriggeringCommentIds;
+          runContextSnapshot.triggeringCommentIdsOrigin = "carried";
+        }
+      }
+      /*
+      FNXC:ReviewerWakeCandidacy 2026-10-19-15:05 (RUFU-369):
+      The spread above copies the INCOMING snapshot, so a wake that only inherited ids would otherwise re-publish
+      the previous wake's `triggeringCommentIds` under THIS run. The next wake reads that key as this run's own
+      delivery, which is the exact loop that made a carried id unable to stop being fresh. Only a fresh delivery
+      may own the key; a carried one is stored under its provenance name and stripped from here.
+      */
+      if (wakeCommentIds.origin !== "fresh") delete runContextSnapshot.triggeringCommentIds;
+      if (effectiveTriggeringCommentType) {
+        runContextSnapshot.triggeringCommentType = effectiveTriggeringCommentType;
+      }
 
       // Start run
       const run = await this.startRun(agentId, {
@@ -3644,12 +3698,30 @@ export class HeartbeatMonitor {
               leaves `undefined`, which routes back to the implementation bar exactly as before.
               */
               const reviewColumn = (await resolveTaskLifecycleColumns(taskStore, wakeTaskId).catch(() => undefined))?.review;
-              const wakeBindVerdict = evaluateWakeCapabilityBind(agent, boundTask, {
+              /*
+              FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369):
+              Candidacy is resolved before the bind verdict and for EVERY wake that resolves a card, because the
+              lane this catches is the one the capability bar waves through: a `done` or `todo` lane is not
+              implementation-class, so `evaluateWakeCapabilityBind` returns allowed whatever role the lane holds
+              and the reviewer session ran on a card that cannot hold the gate it was told to clear.
+              An unreadable workflow yields `{known:false}`, which performs no decline — the wake keeps the
+              pre-existing behavior rather than being refused on an unknown.
+              */
+              const reviewCandidacy = wakeLaneIsReviewerOnly(agent)
+                ? await Promise.resolve()
+                  .then(() => resolveWakeReviewCandidacyContext(taskStore, boundTask))
+                  .then((ctx) => isReviewWakeCandidate(boundTask, ctx))
+                  .catch(() => ({ known: false as const }))
+                : ({ known: false as const });
+              const wakeBindVerdict = evaluateWakeTaskBind(agent, boundTask, {
                 purpose: wakePurpose ?? "implementation",
                 reviewColumn,
                 explicitRouting: boundTask.assignedAgentId === agent.id,
                 executorRoleOverride: boundTask.sourceMetadata?.executorRoleOverride === true,
                 implementationColumns: await resolveTaskImplementationColumns(taskStore, wakeTaskId),
+                reviewCandidacy,
+                automationCorroborated: source === "automation",
+                freshCommentWake: wakeHasFreshCommentEvidence,
               });
               if (!wakeBindVerdict.allowed) {
                 /*
@@ -3668,7 +3740,24 @@ export class HeartbeatMonitor {
                 const declinePurpose: WakePurpose = wakePurpose ?? "implementation";
                 const reviewOwnedCard = isReviewOwnedTask(boundTask, reviewColumn);
                 if (declinePurpose === "review" || !reviewOwnedCard) {
-                  await this.recordLaneCapabilityDecline(agent, boundTask, run.id, declinePurpose);
+                  /*
+                  FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369):
+                  A wake withheld on reviewer candidacy is a second refusal at the SAME seam, so it reuses the SAME
+                  ceremony (operator line, bounded deduped audit row, review-ledger witness) and differs only in the
+                  named code and the operator sentence. Forking a parallel decline path is what produced the
+                  pre-RUFU-682 split where the log, the audit row, and the ledger disagreed about one refusal. A
+                  role/policy mismatch keeps RUFU-766's purpose-selected descriptor verbatim.
+                  */
+                  const candidacyDecline = wakeBindVerdict.code === REVIEW_CANDIDACY_DECLINE_CODE;
+                  await this.recordLaneCapabilityDecline(
+                    agent,
+                    boundTask,
+                    run.id,
+                    declinePurpose,
+                    candidacyDecline
+                      ? { code: wakeBindVerdict.code, reason: wakeBindVerdict.reason }
+                      : undefined,
+                  );
                   if (declinePurpose === "review") {
                     /*
                     FNXC:LaneCapabilityWake 2026-10-22-15:48 (RUFU-766):
@@ -3706,10 +3795,11 @@ export class HeartbeatMonitor {
                       heartbeatLog.warn(`Lane-capability decline release failed for ${agentId}/${wakeTaskId}: ${handoffErr instanceof Error ? handoffErr.message : String(handoffErr)}`);
                       return null;
                     });
+                    // FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369): the line names WHICH refusal spoke.
                     if (released && !released.ok) {
-                      heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} kept the binding — Workflow Executor release refused (${released.reason})`);
+                      heartbeatLog.log(`${candidacyDecline ? "Reviewer-candidacy" : "Lane-capability"} decline for ${agentId}/${wakeTaskId} kept the binding — Workflow Executor release refused (${released.reason})`);
                     } else if (released) {
-                      heartbeatLog.log(`Lane-capability decline for ${agentId}/${wakeTaskId} released the queued card to Workflow Executor admission`);
+                      heartbeatLog.log(`${candidacyDecline ? "Reviewer-candidacy" : "Lane-capability"} decline for ${agentId}/${wakeTaskId} released the queued card to Workflow Executor admission`);
                     }
                   }
                 } else {
@@ -4975,13 +5065,17 @@ export class HeartbeatMonitor {
           const wakeInboxEmpty =
             unreadTotal === 0
             && pendingRoomMessages.total === 0
-            && (effectiveTriggeringCommentIds?.length ?? 0) === 0;
+            // A carried comment id is not an unread delivery; counting it here would report a message-bearing
+            // wake for a tick that nothing sent.
+            && !(wakeHasFreshCommentEvidence && (effectiveTriggeringCommentIds?.length ?? 0) > 0);
 
           // Derive a stable wake reason from source, triggerDetail, and trigger
           // type so the agent can change its strategy based on *why* it woke up.
           // Mirrors paperclip's PAPERCLIP_WAKE_REASON (see plan: wake delta).
           const deriveWakeReason = (): string => {
-            if (effectiveTriggeringCommentType) return `comment_${effectiveTriggeringCommentType}`;
+            // FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369): only a wake this delivery caused is a
+            // comment wake; an id inherited through the context snapshot names a timer/assignment wake instead.
+            if (wakeHasFreshCommentEvidence) return `comment_${effectiveTriggeringCommentType ?? "task"}`;
             if (triggerDetail === "wake-on-message") {
               return wakeInboxEmpty ? "message_received_already_consumed" : "message_received";
             }
@@ -5320,9 +5414,17 @@ export class HeartbeatMonitor {
               if (bodyLines.length > 0 || missingIds.length > 0) {
                 triggeringCommentLines.push(
                   "",
-                  "You were woken because of new comments on this task. Review them and take appropriate action.",
-                  `Triggering comment type: ${effectiveTriggeringCommentType ?? "task"}`,
-                  "New comments since last run:",
+                  // FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369): these ids were inherited from a
+                  // previous wake, so the block must not claim this heartbeat was caused by new comments.
+                  wakeHasFreshCommentEvidence
+                    ? "You were woken because of new comments on this task. Review them and take appropriate action."
+                    : "Comment ids from an earlier wake of this card are carried into this run's context. They are NOT new since your last pass — read their current bodies before acting on them.",
+                  wakeHasFreshCommentEvidence
+                    ? `Triggering comment type: ${effectiveTriggeringCommentType ?? "task"}`
+                    : `Carried comment context${effectiveTriggeringCommentType ? ` (type: ${effectiveTriggeringCommentType})` : ""}.`,
+                  wakeHasFreshCommentEvidence
+                    ? "New comments since last run:"
+                    : "Carried comment ids (bodies below are the card's current state, not a new delivery):",
                   ...bodyLines,
                 );
                 for (const commentId of missingIds) {
@@ -5365,7 +5467,7 @@ export class HeartbeatMonitor {
               ...(wakeTriggerSourceLine ? [wakeTriggerSourceLine] : []),
               ...(pendingMessagesLine ? [pendingMessagesLine] : []),
               `- pending room messages: ${pendingRoomMessages.total}`,
-              `- triggering comments: ${readableTriggeringCommentCount} of ${(effectiveTriggeringCommentIds ?? []).length} readable on this card`,
+              `- triggering comments: ${readableTriggeringCommentCount} of ${(effectiveTriggeringCommentIds ?? []).length} readable on this card${wakeHasFreshCommentEvidence ? "" : " (carried from an earlier wake — not new)"}`,
               "",
               "Treat this wake delta as the highest-priority change for this heartbeat.",
               "This is an autonomous heartbeat run (manual or automatic): re-anchor on",
@@ -6307,15 +6409,27 @@ export class HeartbeatMonitor {
     task: Pick<TaskDetail, "id" | "column">,
     runId: string,
     purpose: WakePurpose,
+    /*
+    FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369):
+    A wake withheld on reviewer candidacy is a second reason at the SAME seam, so it reuses the SAME mechanics —
+    the operator-visible line, the cooldown-deduped bounded audit row, and the review-ledger refusal witness — and
+    differs only in the named code and the sentence. Forking a parallel decline path is what produced the
+    pre-RUFU-682 split where the log, the audit row, and the ledger disagreed about the same refusal. Omitting it
+    keeps RUFU-766's purpose-selected descriptor byte-for-byte.
+    */
+    decline?: { code: string; reason: string },
   ): Promise<void> {
     const descriptor = describeLaneCapabilityDecline(agent, task, purpose);
-    heartbeatLog.warn(`Agent ${agent.id} declined bound task ${task.id}: ${descriptor.reason}`);
-    await this.auditLaneCapabilityDecline(agent.id, task.id, task.column, agent, runId, purpose, descriptor.auditCode);
+    heartbeatLog.warn(`Agent ${agent.id} declined bound task ${task.id}: ${decline?.reason ?? descriptor.reason}`);
+    await this.auditLaneCapabilityDecline(agent.id, task.id, task.column, agent, runId, purpose, decline?.code ?? descriptor.auditCode);
     if (!this.taskStore) return;
     try {
       const refused = await declineReviewerRunForLane(this.taskStore, {
         taskId: task.id,
         reviewerAgentId: agent.id,
+        // The ledger reason stays the shared prefixed sentence for BOTH refusal reasons at this seam
+        // (`descriptor.ledgerReason` is `reviewerRunLaneDeclineReason(agent)`): `reviewerRunLaneDeclineSignature`
+        // dedups refusal witnesses on that prefix, so a candidacy decline must not write its own sentence here.
         reason: descriptor.ledgerReason,
         at: new Date().toISOString(),
       });
@@ -6336,7 +6450,9 @@ export class HeartbeatMonitor {
     purpose: WakePurpose,
     auditCode: string,
   ): Promise<void> {
-    const key = `${agentId}:${taskId}:${laneCapabilityDeclinePolicy(agent)}`;
+    // FNXC:ReviewerWakeCandidacy 2026-10-19-12:40 (RUFU-369): the decline code joins the dedup key so a lane
+    // whose refusal changes WHICH question it refused (capability vs candidacy) is announced again.
+    const key = `${agentId}:${taskId}:${auditCode}:${laneCapabilityDeclinePolicy(agent)}`;
     const now = Date.now();
     const prior = this.laneCapabilityDeclineAuditAt.get(key);
     if (prior !== undefined && now - prior < HeartbeatMonitor.LANE_CAPABILITY_DECLINE_AUDIT_COOLDOWN_MS) return;

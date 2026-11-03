@@ -172,7 +172,17 @@ Both events are deliberately outside the curated delivery-pipeline event catalog
 
 ### Lane-capability bind revalidation and repair (RUFU-272)
 
-`task:lane-capability-declined` is emitted by the heartbeat wake gate when a wake carrying an explicitly assigned card re-runs the bind verdict and the lane is capability-ineligible for it. The decline suppresses only this dispatch — the binding is untouched — so without this row the only trace was a warn log and the card sat in the lane's todo forever. Metadata: `{ outcome: "declined", taskId, agentId, column, code: "lane-capability-mismatch" }`, emitted through the FN-9175 bounded seam under the wake's real `runId`, deduped with a 10-minute cooldown per (lane, card, policy); the decline sentence is never recorded.
+`task:lane-capability-declined` is emitted by the heartbeat wake gate when a wake carrying an explicitly assigned card re-runs the bind verdict and the lane is capability-ineligible for it. The decline suppresses only this dispatch — the binding is untouched — so without this row the only trace was a warn log and the card sat in the lane's todo forever. Metadata: `{ outcome: "declined", taskId, agentId, column, code }`, emitted through the FN-9175 bounded seam under the wake's real `runId`, deduped with a 10-minute cooldown per (lane, card, policy, code); the decline sentence is never recorded.
+
+`code` names WHICH question refused (RUFU-369): `lane-capability-mismatch` is the executor-side verdict (may this lane
+ever touch a card in this lane-class), while `review-candidacy-mismatch` is the reviewer-side one (does this card owe a
+review right now — a recorded `code-review` verdict, `noCommitsExpected: true`, a terminal lane, a plan-only fast lane,
+or zero board evidence all exclude it). The code joins the dedup key deliberately: a lane whose refusal changes reason
+must be announced again, and the two classes are different operator decisions. Both ride the same row, the same cooldown
+map, and the same no-mutation settle contract — a candidacy decline moves no card, fails nothing, strikes nothing, and
+never unbinds. Which arm refused is readable from the code, so no exclusion prose enters the row: the sentence naming
+the reason (`No commits expected: true`, `code-review already approved`) is written to the engine heartbeat log, and the
+review-ledger refusal witness keeps its own shared prefixed reason sentence so its signature dedup stays intact.
 
 The same decline now settles the review attempt it refused, and RUFU-682 is why. When the refused attempt is one the
 review dispatch sweep opened, the decline closes that reviewer-run row as `failed` with reason
