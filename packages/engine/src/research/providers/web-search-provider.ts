@@ -13,7 +13,12 @@ export interface WebSearchProviderOptions {
   googleApiKey?: string;
   googleCx?: string;
   tavilyApiKey?: string;
-  /** Optional; without it Keenable's free public endpoint is used. */
+  /**
+   * FNXC:ResearchWebSearch 2026-11-03-23:30:
+   * Optional Keenable API key. When omitted (or whitespace-only), Keenable's free
+   * keyless public endpoint (/v1/search/public) is used so the backend works out
+   * of the box; a key switches to the keyed /v1/search endpoint with higher limits.
+   */
   keenableApiKey?: string;
   maxResults?: number;
   timeoutMs?: number;
@@ -270,7 +275,7 @@ export class WebSearchProvider implements ResearchProvider {
           "X-Keenable-Title": "Fusion",
           ...(apiKey ? { "X-API-Key": apiKey } : {}),
         },
-        body: JSON.stringify({ query, max_results: maxResults }),
+        body: JSON.stringify({ query, max_results: Math.min(Math.max(1, maxResults), 50) }),
         signal,
       },
       "keenable",
