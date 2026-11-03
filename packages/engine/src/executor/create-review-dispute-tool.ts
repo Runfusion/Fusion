@@ -8,6 +8,7 @@ import { Type, type Static } from "@earendil-works/pi-ai";
 import { isOpenWorkflowReviewFinding, type TaskStore, type WorkflowStepResult } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { guardBoundWriteTarget } from "../task-write-target.js";
 import { emitBoundedRunAudit } from "./emit-bounded-run-audit.js";
 
 const MAX_DISPUTE_RATIONALE_LENGTH = 4_000;
@@ -88,6 +89,14 @@ export function createReviewDisputeTool(deps: ReviewDisputeToolDeps, taskId: str
     description: "Record a rationale contesting one open review finding. The finding remains open and blocking until a reviewer rules.",
     parameters: reviewDisputeParams,
     execute: async (_id: string, params: Static<typeof reviewDisputeParams>) => {
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: a dispute is an append to the review record that a later verdict must rule on. Annotating
+      another card's review from this session would put words into a review this implementer never had, so a
+      named foreign card is refused before the `updateTaskAtomic` write.
+      */
+      const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_review_dispute");
+      if (writeTargetRefusal) return writeTargetRefusal;
       const rationale = params.rationale.trim();
       if (!rationale || rationale.length > MAX_DISPUTE_RATIONALE_LENGTH) {
         return { content: [{ type: "text" as const, text: `rationale must contain 1–${MAX_DISPUTE_RATIONALE_LENGTH} characters.` }], details: { outcome: "invalid-rationale" } };

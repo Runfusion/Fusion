@@ -181,6 +181,7 @@ import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { AgentLogger } from "./agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
 import { mergerLog } from "./logger.js";
+import { guardBoundWriteTarget } from "./task-write-target.js";
 import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { captureMergeContentDescriptor } from "./merge/merge-content-capture.js";
@@ -11033,6 +11034,39 @@ interface AiAgentParams {
  * @returns `{ success: true }` on successful commit, `{ success: false, error }`
  *          when build verification fails, or throws on unrecoverable errors.
  */
+/**
+ * The merge lane's build-failure reporter, extracted so the target rule is testable at a seam.
+ *
+ * FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+ * RUFU-281: this flag IS the merge lane's build verdict — it decides whether the task's merge proceeds. The
+ * schema declares no target, yet the pinned runtime still forwards an undeclared `task_id` from the model, so
+ * the tool refuses a card other than the one it is merging instead of silently writing the bound card's
+ * verdict. The guard runs before `report()`, so a refusal leaves the merge decision exactly as it was.
+ */
+export function createReportBuildFailureTool(
+  taskId: string,
+  report: (message: string) => void,
+): ToolDefinition {
+  return {
+    name: "fn_report_build_failure",
+    label: "Report Build Failure",
+    description: "Report that the build verification failed. Use this when the build command returns a non-zero exit code. Provide the error details in the message parameter. Always reports for the task being merged — a task_id naming another card is refused.",
+    parameters: Type.Object({
+      message: Type.String({ description: "Error message describing why the build failed" }),
+    }),
+    execute: async (_toolCallId: string, params: unknown) => {
+      const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_report_build_failure");
+      if (writeTargetRefusal) return writeTargetRefusal;
+      const { message } = params as { message: string };
+      report(message);
+      return {
+        content: [{ type: "text", text: `Build failure reported: ${message}` }],
+        details: undefined
+      };
+    },
+  };
+}
+
 async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: boolean; error?: string }> {
   const {
     store,
@@ -11069,23 +11103,10 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
   let buildErrorMessage = "";
 
   // Create custom tool for reporting build failures
-  const reportBuildFailureTool: ToolDefinition = {
-    name: "fn_report_build_failure",
-    label: "Report Build Failure",
-    description: "Report that the build verification failed. Use this when the build command returns a non-zero exit code. Provide the error details in the message parameter.",
-    parameters: Type.Object({
-      message: Type.String({ description: "Error message describing why the build failed" }),
-    }),
-    execute: async (_toolCallId: string, params: unknown) => {
-      const { message } = params as { message: string };
-      buildFailed = true;
-      buildErrorMessage = message;
-      return {
-        content: [{ type: "text", text: `Build failure reported: ${message}` }],
-        details: undefined
-      };
-    },
-  };
+  const reportBuildFailureTool = createReportBuildFailureTool(taskId, (message) => {
+    buildFailed = true;
+    buildErrorMessage = message;
+  });
 
   // FNXC:EngineDiagnostics 2026-07-26-10:10: routine finalize bookkeeping; conflict/AI outcomes log elsewhere.
   mergerLog.debug(`${taskId}: ${hasConflicts ? "resolving conflicts + " : ""}writing commit message`);

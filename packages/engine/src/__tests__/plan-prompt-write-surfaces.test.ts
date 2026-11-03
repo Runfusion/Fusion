@@ -83,7 +83,17 @@ describe("planning prompt-write surfaces", () => {
     const result = await runTool(createTriagePromptWriteTool(store, TASK_ID));
 
     expect(updateTask).toHaveBeenCalledTimes(1);
+    /*
+    FNXC:PlanArtifactPersistence 2026-09-24-00:45:
+    The authoritative read-back is exactly ONE getTask. This assertion counted 2 until FN-258
+    (14babc48fb) deleted the pre-write `store.getTask` that used to read `repositoryScope` before
+    publishing; the count was never updated, so the case was red at main tip long before RUFU-281
+    (verified by running this file at 5bb42c13fc: same 2-vs-1 assertion failure).
+    The invariant this case owns is unchanged: the write must be verified by reading the task back,
+    and a promptless read-back must reject rather than report success.
+    */
     expect(getTask).toHaveBeenCalledTimes(1);
+    expect(getTask).toHaveBeenCalledWith(TASK_ID);
     expect(getText(result)).toContain("could not be verified");
   });
 });

@@ -84,6 +84,16 @@ export function createTaskDocumentReadTool(deps: SharedWorkerToolsDeps, taskId: 
   return sharedCreateTaskDocumentReadTool(deps.store, taskId);
 }
 
+/*
+FNXC:CrossCardWriteAuth 2026-09-24-00:45:
+RUFU-281 left these two wrappers deliberately pre-binding the REGISTRATION card (its run context and its id)
+rather than resolving the caller's `task_id` first, because both shared tools carry the `refuses` disposition:
+a params `task_id` naming any other card returns an isError result before the pre-bound run context or the
+pre-bound id is ever read. So the resolved write target can only ever BE the registration card, and the run
+context stays correctly attributed. Widening either tool to `honours` requires moving this context resolution
+inside the tool's execute (derive it from the resolved target) — do not widen the disposition in
+`agent-tools.ts` without doing that first.
+*/
 export function createTaskPromptWriteTool(deps: SharedWorkerToolsDeps, taskId: string): ToolDefinition {
   return sharedCreateTaskPromptWriteTool(deps.store, taskId, deps.getRunContextFor(taskId));
 }

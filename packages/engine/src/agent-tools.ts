@@ -30,6 +30,7 @@ import { createLogger } from "./logger.js";
 import { mirrorPlanToProjectDb } from "./plan-artifact-writeback.js";
 import { fetchWebContent, WebFetchError } from "./util/web-fetch.js";
 import type { RunAuditor } from "./util/run-audit.js";
+import { guardBoundWriteTarget, resolveWriteTarget, writeTargetErrorResult } from "./task-write-target.js";
 import { computeApprovalDedupeKey } from "./agents/agent-action-gate.js";
 import { MessageDeliveryAutoRecoveryHandler } from "./auto-recovery-handlers/message-delivery.js";
 import { emitGoalRetrievalAudit } from "./goals/goal-anchoring-audit.js";
@@ -92,9 +93,24 @@ export const taskCreateParams = Type.Object({
   mission_lineage: Type.Optional(missionLineageParams),
 });
 
+/*
+FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+RUFU-281: a write tool that can legitimately target another card must DECLARE that target — the schema
+is the advertisement of the capability, and an undeclared `task_id` is exactly the value the runtime
+forwards and the handler used to drop (measured: `fn_task_log` with `task_id:"RUFU-275"` returned success
+and wrote to the session-bound card). Tools whose write must stay on the bound card deliberately do NOT
+declare this field; they read the undeclared argument and refuse it. See task-write-target.ts.
+*/
+export const crossCardWriteTargetParam = Type.Optional(Type.String({
+  description:
+    "Write to this card instead of the one this session is bound to. Omit to write to the bound card. "
+    + "An id that cannot name a card (a path separator, `..`, an absolute path, an over-length value) is refused and nothing is written.",
+}));
+
 export const taskLogParams = Type.Object({
   message: Type.String({ description: "What happened" }),
   outcome: Type.Optional(Type.String({ description: "Result or consequence (optional)" })),
+  task_id: crossCardWriteTargetParam,
 });
 
 const agentLogTypeParams = Type.Union([
@@ -186,12 +202,14 @@ export const taskDocumentWriteParams = Type.Object({
   author: Type.Optional(Type.String({ description: "Who is writing (default: 'agent')" })),
   expected_revision: Type.Optional(Type.Integer({ minimum: 0, description: "CAS precondition: 0 requires absence; a positive value must match the current revision." })),
   expected_content_hash: Type.Optional(Type.String({ pattern: "^sha256:[0-9a-f]{64}$", description: "CAS precondition: current exact-content SHA-256 (`sha256:<64 lowercase hex>`) must match." })),
+  task_id: crossCardWriteTargetParam,
 });
 
 export const taskDocumentReadParams = Type.Object({
   key: Type.Optional(
     Type.String({ description: "Document key to read. Omit to list all documents for this task." }),
   ),
+  task_id: crossCardWriteTargetParam,
 });
 
 export const taskPromptWriteParams = Type.Object({
@@ -1961,6 +1979,13 @@ FNXC:HistoryChat 2026-09-04-09:35:
 FN-293 completes the agent-facing rename by exposing only `fn_history_read`, without a compatibility alias.
 The HTTP route, PostgreSQL table, view id, i18n keys, and `@fusion/core` types and methods intentionally retain their stable `patchnode` identifiers.
 */
+/*
+FNXC:CrossCardWriteAuth 2026-09-24-00:45:
+RUFU-281 carve-out: `fn_history_read` is TARGETLESS BY DESIGN and stays outside the write-target seam. It is
+a read over the permanent daily delivery ledger (`store.listPatchnodeEntries`) filtered by query/date/limit —
+it resolves no card at all, so there is no default-vs-named-target ambiguity to guard and nothing to misfile.
+A per-card target would be a new filter feature, not a write-authorization fix.
+*/
 export function createHistoryReadTool(store: TaskStore): ToolDefinition {
   return {
     name: "fn_history_read",
@@ -2090,10 +2115,21 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
     label: "Log Entry",
     description:
       "Log an important action, decision, or issue for this task. " +
-      "Use for significant events — not every small step.",
+      "Use for significant events — not every small step. " +
+      "Omit task_id to write the bound card; supply task_id to annotate that card instead.",
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
-      await store.logEntry(taskId, params.message, params.outcome);
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: this is the tool from the measured incident — it used to close over the bound card and
+      discard a supplied task_id, so the entry landed on the wrong card while the call returned success.
+      The target is now resolved (and path-validated) before the store seam, so a named card is honoured
+      and an unusable one writes nothing.
+      */
+      const target = resolveWriteTarget(taskId, params, { toolName: "fn_task_log", disposition: "honours" });
+      if (!target.ok) return writeTargetErrorResult(target.refusal);
+
+      await store.logEntry(target.taskId, params.message, params.outcome);
 
       return {
         content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
@@ -2120,7 +2156,12 @@ export function createTaskLogToolWithContext(store: TaskStore, taskId: string, r
       "Use for significant events — not every small step.",
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
-      await store.logEntry(taskId, params.message, params.outcome, runContext);
+      // FNXC:CrossCardWriteAuth 2026-09-23-22:56: RUFU-281 — same target resolution as the plain variant;
+      // the run context still attributes the write to this session's run, which is the writer's identity.
+      const target = resolveWriteTarget(taskId, params, { toolName: "fn_task_log", disposition: "honours" });
+      if (!target.ok) return writeTargetErrorResult(target.refusal);
+
+      await store.logEntry(target.taskId, params.message, params.outcome, runContext);
 
       return {
         content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
@@ -2284,6 +2325,13 @@ function resolveTaskLogsReadTarget(
  * chat/pi surfaces already allow the same cross-task read. An unknown-but-well-formed id keeps returning
  * an empty answer (`0/0 entries` + `(no matching log entries)`), never fabricated rows or a made-up error.
  */
+/*
+FNXC:CrossCardWriteAuth 2026-09-24-00:45:
+RUFU-281 disposition: COMPLIANT, unwired. This read declared its target seam before RUFU-281 existed
+(`resolveTaskLogsReadTarget` resolves the omitted-vs-`task_id`-vs-`id` spellings and refuses conflicting or
+path-unsafe ids), so it never had the silent-redirect defect and needs no `resolveWriteTarget` call — two
+resolution helpers for one question would only invite them to drift.
+*/
 export function createTaskLogsReadTool(store: TaskStore, taskId: string): ToolDefinition {
   return {
     name: "fn_task_logs_read",
@@ -2367,9 +2415,19 @@ export function createTaskDocumentWriteTool(store: TaskStore, taskId: string): T
     name: "fn_task_document_write",
     label: "Write Document",
     description:
-      "Save a named document for this task. Read first, then pass expected_revision and/or expected_content_hash for safe CAS publication; stale writes fail and require an explicit rebase.",
+      "Save a named document for this task. Read first, then pass expected_revision and/or expected_content_hash for safe CAS publication; stale writes fail and require an explicit rebase. "
+      + "Omit task_id to write the bound card; supply task_id to document that card instead.",
     parameters: taskDocumentWriteParams,
     execute: async (_id: string, params: Static<typeof taskDocumentWriteParams>) => {
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: documents are a write surface, so this lane resolves its target the same way the chat lane
+      (which requires task_id outright) does. The CAS preconditions are unchanged — the target decision and
+      the stale-write guard are independent guarantees.
+      */
+      const target = resolveWriteTarget(taskId, params, { toolName: "fn_task_document_write", disposition: "honours" });
+      if (!target.ok) return writeTargetErrorResult(target.refusal);
+
       const input: TaskDocumentCreateInput = {
         key: params.key,
         content: params.content,
@@ -2379,7 +2437,7 @@ export function createTaskDocumentWriteTool(store: TaskStore, taskId: string): T
       };
 
       try {
-        const document: TaskDocument = await store.upsertTaskDocument(taskId, input);
+        const document: TaskDocument = await store.upsertTaskDocument(target.taskId, input);
         return taskDocumentWriteResult(document);
       } catch (error: unknown) {
         return taskDocumentWriteError(error, params.key);
@@ -2400,9 +2458,14 @@ export function createTaskDocumentReadTool(store: TaskStore, taskId: string): To
     name: "fn_task_document_read",
     label: "Read Document",
     description:
-      "Read a named document for this task, or list all documents when no key is provided.",
+      "Read a named document for this task, or list all documents when no key is provided. Omit task_id to read the bound card; supply task_id (or its id alias) to read another card — conflicting or path-unsafe ids are refused, never guessed.",
     parameters: taskDocumentReadParams,
-    execute: async (_id: string, params: Static<typeof taskDocumentReadParams>) => readTaskDocuments(store, taskId, params.key),
+    execute: async (_id: string, params: Static<typeof taskDocumentReadParams>) => {
+      // FNXC:CrossCardWriteAuth 2026-09-23-22:56: RUFU-281 — read parity with fn_task_logs_read (RUFU-204).
+      const target = resolveWriteTarget(taskId, params, { toolName: "fn_task_document_read", disposition: "honours" });
+      if (!target.ok) return writeTargetErrorResult(target.refusal);
+      return readTaskDocuments(store, target.taskId, params.key);
+    },
   };
 }
 
@@ -2440,6 +2503,15 @@ export function createInstallWorktreeDependenciesTool(
       "Plan Review will continue to request revision until dependency readiness is durable.",
     parameters: installWorktreeDependenciesParams,
     execute: async (_id: string, params: Static<typeof installWorktreeDependenciesParams>) => {
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: this tool runs an install in the bound card's acquired worktree and records dependency
+      readiness on the bound card. A foreign card's worktree is not this session's checkout, so honouring a
+      named target would execute this session's command against another card's workspace AND attribute that
+      card's readiness to this run. Refuse before the worktree is read.
+      */
+      const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_install_worktree_dependencies");
+      if (writeTargetRefusal) return writeTargetRefusal;
       const task = await store.getTask(taskId);
       if (!task) return errorResult(`Task ${taskId} no longer exists.`);
       const workspaceRepos = (await fusionCore.loadWorkspaceConfig(options.rootDir))?.repos ?? [];
@@ -2608,6 +2680,15 @@ export function createTaskPromptWriteTool(
     parameters: taskPromptWriteParams,
     execute: async (_id: string, params: Static<typeof taskPromptWriteParams>) => {
       /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: PROMPT.md IS the planning surface — writing another card's spec from this session would
+      replace a plan its own planner is mid-review on, so this tool refuses a named foreign card instead of
+      dropping it silently. The guard runs before the try block and before any planning-lock entry, so a
+      refusal leaves zero bytes behind.
+      */
+      const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_task_prompt_write");
+      if (writeTargetRefusal) return writeTargetRefusal;
+      /*
       FNXC:RepositoryScope 2026-08-21-00:58:
       updateTask's authoritative prompt path owns the planning lifecycle lock. Do not wrap this
       tool in that non-reentrant lock: prompt publication would wait on itself before scope
@@ -2740,6 +2821,13 @@ export function createTaskFileScopeAddTool(store: TaskStore, taskId: string, run
         details: {},
         isError: true as const,
       });
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: File Scope is a merge-boundary write — widening ANOTHER card's scope from this session would
+      move that card's merge gate, which the squash-merge scope guard then enforces. Refuse, never redirect.
+      */
+      const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_task_file_scope_add");
+      if (writeTargetRefusal) return writeTargetRefusal;
       try {
         const requested = params.files.map((f) => f.trim()).filter((f) => f.length > 0);
         const rejected = requested.filter((f) => !fusionCore.isValidFileScopeEntry(f));
@@ -2948,6 +3036,13 @@ export function createChatArtifactTools(store: TaskStore, messageStore?: Message
  * lands in the per-task Artifacts tab (and gallery task context) even when the agent omits taskId.
  * `baseDir` anchors relative `path` payloads at the agent's worktree so "screenshots/after.png"
  * resolves where the agent actually saved it.
+ *
+ * FNXC:CrossCardWriteAuth 2026-09-24-00:45:
+ * RUFU-281 disposition: COMPLIANT, unwired. `taskId` is a declared parameter and wins over
+ * `options.defaultTaskId`, so a named target was always honoured and the bound-card default only applies
+ * when no target is named — the invariant RUFU-281 asks of every write tool. Both branches are pinned in
+ * `agent-artifact-tools.test.ts` ("prefers an explicit taskId over the defaultTaskId" and the default-task
+ * case) plus the cross-card case in `write-target-conformance.test.ts`.
  */
 export interface ArtifactRegisterToolOptions {
   baseDir?: string;
@@ -3515,6 +3610,9 @@ export function createWorkflowSelectTool(store: TaskStore, currentTaskId: string
       "next executes its steps. Use fn_workflow_list to find valid IDs.",
     parameters: workflowSelectParams,
     execute: async (_id: string, params: Static<typeof workflowSelectParams>) => {
+      // FNXC:CrossCardWriteAuth 2026-09-24-00:45: RUFU-281 disposition COMPLIANT — the declared `task_id` wins
+      // and the session card is only the omitted-target default, so the guard is "the write names the target".
+      // Pinned both ways by write-target-conformance.test.ts.
       const taskId = params.task_id?.trim() || currentTaskId;
       try {
         const { enabledWorkflowSteps: enabled, reconciliation } =
@@ -3588,6 +3686,9 @@ export function createTaskPromoteTool(store: TaskStore, currentTaskId: string): 
       "is not held, is still waiting on planning or plan review, or the destination is full.",
     parameters: taskPromoteParams,
     execute: async (_id: string, params: Static<typeof taskPromoteParams>) => {
+      // FNXC:CrossCardWriteAuth 2026-09-24-00:45: RUFU-281 disposition COMPLIANT — declared `task_id` wins over
+      // the session-card default; the default (release THIS card) stays intact. Both branches pinned by
+      // write-target-conformance.test.ts.
       const taskId = params.task_id?.trim() || currentTaskId;
       try {
         const outcome = await promoteHeldTask(store, taskId);
@@ -3827,6 +3928,13 @@ export function createTaskRetryTool(store: TaskStore, options: TaskRetryToolOpti
   };
 }
 
+/*
+FNXC:CrossCardWriteAuth 2026-09-24-00:45:
+RUFU-281 carve-out: pause/unpause are TARGET-FORCED, not session-bound. Their schemas declare a required `id`
+and they carry no session card, so there is no ambient default a supplied target could be silently ignored
+against — the card named in `id` IS the card written, which is the invariant the seam protects. Routing them
+through `resolveWriteTarget` would only add a second name for one target.
+*/
 export function createTaskPauseTool(store: TaskStore): ToolDefinition {
   return {
     name: "fn_task_pause",
@@ -3912,9 +4020,20 @@ export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefi
       "Update a task step status, title, dependencies, or workflow custom fields without leaving chat. " +
       "Use step+status to report progress, dependencies to rewire blockers, or custom_fields to set workflow-defined fields. " +
       "Pass `title` to rename the card — that is the remediation path when a card you created got a junk title " +
-      "(a markdown heading or a multi-line description slice) instead of a real one.",
+      "(a markdown heading or a multi-line description slice) instead of a real one. " +
+      "Writes the card this session is bound to — a task_id naming another card is refused.",
     parameters: taskUpdateParams,
     execute: async (_id: string, params: Static<typeof taskUpdateParams>) => {
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: step-status writes are a lifecycle boundary. Marking a foreign card's step `done` — or, with
+      autoMerge on, handing it the pre-merge review gate — is a lifecycle move the bound session was never
+      authorized to make, so the target is refused before any store call. Board-level cross-card updates stay
+      on the operator surfaces and the deliberately-cross-card `fn_task_update` sibling in `createTaskReadTools`
+      style lanes (fn_task_promote / fn_workflow_select), which honour an explicit id.
+      */
+      const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_task_update");
+      if (writeTargetRefusal) return writeTargetRefusal;
       try {
         /*
         FNXC:TaskTitleDerivation 2026-09-26-04:45:
@@ -4033,9 +4152,17 @@ export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefi
     label: "Add Task Dependency",
     description:
       "Add a dependency to the current task. Adding a dependency to an in-progress task will stop execution " +
-      "and discard current work. Confirm is required for in-progress tasks.",
+      "and discard current work. Confirm is required for in-progress tasks. " +
+      "task_id names the card to depend ON, not the card being edited — the write always targets this session's card.",
     parameters: taskAddDepParams,
     execute: async (_id: string, params: Static<typeof taskAddDepParams>) => {
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: deliberately NOT routed through the write-target seam. Here `task_id` is the DECLARED
+      dependency being added, while the write target is always the bound card; sending it through the seam
+      would refuse every legitimate call. The description now names the collision so a caller cannot read
+      the field as a write target.
+      */
       try {
         const depId = params.task_id?.trim();
         if (!depId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], details: {}, isError: true };

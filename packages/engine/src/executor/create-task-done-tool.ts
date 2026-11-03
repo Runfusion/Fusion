@@ -24,6 +24,7 @@ import {
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ReviewVerdict } from "../execution/reviewer.js";
+import { guardBoundWriteTarget } from "../task-write-target.js";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -152,6 +153,15 @@ export function createTaskDoneTool(
         }, { description: "Optional safe operator report for an accepted outside-worktree block. State what was verified, why work stopped, what remains undone, and the precise unblock condition. Never include prompts, logs, stack traces, or credentials." })),
       }),
       execute: async (_id: string, params: { summary?: string; recommendations?: TaskRecommendation[]; outcome?: "completed" | "blocked"; blockedBy?: string[]; obstacle?: "outside-worktree" | "inside-worktree"; reason?: string; blockedReport?: { verifiedCondition?: string; stopReason?: string; unimplementedWork?: string; unblockCondition?: string } }) => {
+        /*
+        FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+        RUFU-281: `fn_task_done` is the terminal transition — bulk step completion, the completion blocker,
+        review hand-off or the honest blocked park. Completing or parking ANOTHER card from this session is
+        the highest-consequence version of the silent-drop defect, so a named foreign card is refused before
+        the blocked branch and before any gate runs; nothing is written and the other card's status is intact.
+        */
+        const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_task_done");
+        if (writeTargetRefusal) return writeTargetRefusal;
         /*
         FNXC:Lifecycle 2026-07-16-10:20:
         FN-8141 — the blocked exit runs BEFORE every completion gate (completion blocker, verdict providers, worktree

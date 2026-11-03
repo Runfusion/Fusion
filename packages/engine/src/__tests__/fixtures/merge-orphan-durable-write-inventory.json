@@ -3570,7 +3570,7 @@
     },
     {
       "callSiteId": "packages/engine/src/agent-tools.ts::createTaskDocumentWriteTool>document::store.upsertTaskDocument::#1",
-      "callSiteFingerprint": "store.upsertTaskDocument(taskId,input)",
+      "callSiteFingerprint": "store.upsertTaskDocument(target.taskId,input)",
       "file": "packages/engine/src/agent-tools.ts",
       "enclosingSymbolPath": "createTaskDocumentWriteTool>document",
       "writer": "store.upsertTaskDocument",
@@ -3646,7 +3646,7 @@
     },
     {
       "callSiteId": "packages/engine/src/agent-tools.ts::createTaskLogTool::store.logEntry::#1",
-      "callSiteFingerprint": "store.logEntry(taskId,params.message,params.outcome)",
+      "callSiteFingerprint": "store.logEntry(target.taskId,params.message,params.outcome)",
       "file": "packages/engine/src/agent-tools.ts",
       "enclosingSymbolPath": "createTaskLogTool",
       "writer": "store.logEntry",
@@ -3666,7 +3666,7 @@
     },
     {
       "callSiteId": "packages/engine/src/agent-tools.ts::createTaskLogToolWithContext::store.logEntry::#1",
-      "callSiteFingerprint": "store.logEntry(taskId,params.message,params.outcome,runContext)",
+      "callSiteFingerprint": "store.logEntry(target.taskId,params.message,params.outcome,runContext)",
       "file": "packages/engine/src/agent-tools.ts",
       "enclosingSymbolPath": "createTaskLogToolWithContext",
       "writer": "store.logEntry",

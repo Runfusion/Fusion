@@ -53,7 +53,7 @@ Agents should still use `fn_workflow_select` only when the user explicitly reque
 
 ## Runtime task-document publication
 
-`fn_task_document_write` is an agent-extension/runtime tool, not an `fn task` binary subcommand. Task-bound lanes supply `key`, `content`, optional `author`, and optional `expected_revision` / `expected_content_hash`; dashboard chat and planning use the same fields plus required `task_id` for explicit cross-task publication.
+`fn_task_document_write` is an agent-extension/runtime tool, not an `fn task` binary subcommand. Task-bound lanes supply `key`, `content`, optional `author`, and optional `expected_revision` / `expected_content_hash`, plus an optional `task_id` (or its `id` alias) to publish onto a named sibling card; omitting the target keeps the session's own card, and a target that names two different cards or is not a single safe id is refused with an error and nothing written (RUFU-281). Dashboard chat and planning use the same fields plus required `task_id` for explicit cross-task publication.
 
 For safe publication, first call `fn_task_document_read`, then write with the returned revision and hash:
 

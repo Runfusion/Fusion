@@ -35,6 +35,7 @@ import {
   type VerificationResourceBoundLane,
 } from "./verification-resource-bound.js";
 import type { RunAuditSinkHost } from "../util/emit-bounded-run-audit.js";
+import { guardBoundWriteTarget } from "../task-write-target.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1082,6 +1083,16 @@ export function createRunVerificationTool(
       _toolCallId: string,
       params: Static<typeof runVerificationParams>,
     ): ReturnType<NonNullable<ToolDefinition["execute"]>> {
+      /*
+      FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+      RUFU-281: `fn_run_verification` executes a command in the bound card's worktree and files the
+      verification run under the bound card. Honouring a foreign `task_id` would run this session's command
+      against another card's checkout and attribute its verification to that card, so the target is refused
+      before the worktree is resolved or the concurrency slot is taken — including for the workspace fan-out
+      branch, which re-enters `execute` per repository.
+      */
+      const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_run_verification");
+      if (writeTargetRefusal) return writeTargetRefusal;
       /*
       FNXC:WorkspaceVerification 2026-08-22-22:49:
       A workspace command without an explicit target verifies every repository with a fresh

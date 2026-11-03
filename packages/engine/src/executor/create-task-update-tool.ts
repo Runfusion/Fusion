@@ -19,6 +19,7 @@ import type { ReviewVerdict } from "../execution/reviewer.js";
 import type { StuckTaskDetector } from "../healing/stuck-task-detector.js";
 import { executorLog } from "../logger.js";
 import { stepLifecycleNoopResult, storeErrorResult } from "../tool-store-errors.js";
+import { guardBoundWriteTarget } from "../task-write-target.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -86,10 +87,21 @@ export function createTaskUpdateTool(
         "Optionally set workflow-defined custom field values by passing a custom_fields patch " +
         "(keyed by field id; validated against the workflow's field schema; pass null to clear a field). " +
         "step/status may be omitted to update only a title, custom_fields, or dependencies. " +
+        "Always writes the card this session is executing — a task_id naming another card is refused. " +
         "The board updates in real-time.",
       parameters: taskUpdateParams,
       execute: async (_id: string, params: Static<typeof taskUpdateParams>) => {
         const { step, status, summary, dependencies, custom_fields, title } = params;
+        /*
+        FNXC:CrossCardWriteAuth 2026-09-23-22:56:
+        RUFU-281: the executor lane is the widest offender — a step-status write also feeds the step ledger,
+        the completion gate, and (autoMerge on) the hand-off to pre-merge review, so a `task_id` naming
+        another card is refused rather than dropped. The guard runs before the bare-call guard and every
+        store call, so the refusal — not an unrelated no-op message — is what the caller sees, and the ledger
+        stays untouched.
+        */
+        const writeTargetRefusal = guardBoundWriteTarget(taskId, params, "fn_task_update");
+        if (writeTargetRefusal) return writeTargetRefusal;
 
         /*
         Bare-call guard (P1 api-contract): a call with none of
