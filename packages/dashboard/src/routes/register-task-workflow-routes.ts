@@ -5834,8 +5834,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       The commit-free workspace discharge is a success arm — it completes the card — so it joins the
       200 list; the widened refusal (reason + structured per-repo `repos`) stays a 409 and the route
       adds no decision logic: the body is the fence's own result, unchanged.
+
+      FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:35 (RUFU-384):
+      Same rule for the singular commit-free discharge: it moves the card to its complete lane, so a 409 would
+      tell the operator the reconcile failed on the request it just honoured. RUFU-365 is the shape this fixes —
+      the route answered 409 `{outcome:"not-landed"}` for a card that could never land, which is the same
+      permanent-refusal read the CLI printed. Still no decision logic here: the body is the fence's own result.
       */
-      if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "already-complete" || result.outcome === "workspace-discharged") {
+      if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "already-complete" || result.outcome === "workspace-discharged" || result.outcome === "zero-commit-discharged") {
         return res.json(result);
       }
       return res.status(409).json(result);

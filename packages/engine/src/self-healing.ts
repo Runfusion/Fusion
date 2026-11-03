@@ -359,6 +359,7 @@ writer of the symptom: it classifies a card as `proven-no-op` from a revision wa
 that card's checkout. It now answers the shared landing-proof predicate before it finalizes.
 */
 import {
+  collectZeroCommitEvidence,
   collectZeroCommitFinalizeEvidence,
   enforceZeroCommitLandingProof,
   resolveNoOpFinalizeGateIds,
@@ -1342,6 +1343,18 @@ export type LandedReviewReconcileResult =
   (proven through `findProvenLandedCommit`, whose sha is the only one echoed).
   */
   | { outcome: "workspace-discharged"; repoCount: number; dischargedCount: number; repos: Array<{ repo: string; basis: "zero-ahead" | "landed" | "absent"; baseBranch: string; branchTipSha?: string; landedSha?: string }> }
+  /*
+  FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:35 (RUFU-384):
+  The SINGULAR commit-free discharge success arm, mirroring `workspace-discharged` for the one-card shape.
+  It carries NO `sha`/`strategy` for the same reason RUFU-504 and RUFU-357 forbid one: the card authored no
+  commit, so echoing a branch tip would claim an authorship this card does not have, and the `reconciled`
+  arm demands both `sha` and `strategy` and is therefore unusable here. `basis` is a fixed vocabulary
+  rather than a free sentence — `empty-input-approval` names the proof that closed the card (an approval
+  bound to the canonical empty review input, on a card holding its own zero-commit authorization, over a
+  diff that cannot be computed because there is nothing to compute). No commit was authored and no sha was
+  invented; that is the whole content of this arm.
+  */
+  | { outcome: "zero-commit-discharged"; baseBranch: string; basis: "empty-input-approval" }
   | { outcome: "not-landed"; baseBranch: string }
   | { outcome: "raced"; reason: string }
   /*
@@ -19725,7 +19738,28 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const mergeTarget = await this.resolveSelfHealingMergeTarget(task, settings, "reconcile-absent-branch");
     const check = await this.isBranchTipMisboundToTask({ branch, taskId: task.id, lineageId: task.lineageId, baseBranch: mergeTarget.branch });
     if (check.rejection) return { outcome: "ineligible", reason: "foreign-ownership" };
-    if (!check.landed) return { outcome: "not-landed", baseBranch: mergeTarget.branch };
+    if (!check.landed) {
+      /*
+      FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:35 (RUFU-384):
+      The refusal below is correct for every card that was supposed to leave a commit behind, and it is the
+      dead end RUFU-365 fell into: a card authorized to deliver zero commits never lands, so a landed-content
+      test can never be satisfied by construction, and every sweep visit and every `fn task reconcile` said
+      `not-landed` forever. `dischargeZeroCommitReview` recognises that ONE shape (branch proven gone + the
+      card's own zero-commit authorization + an empty-input approval the canonical door accepts + the shared
+      zero-commit delivery door saying allow) and closes the card commit-free. Returning `null` means "not
+      this shape", and the card keeps this exact refusal, byte-for-byte.
+      */
+      const discharged = await this.dischargeZeroCommitReview(task, {
+        settings,
+        reviewColumns,
+        requiredPreMergeStepIds,
+        mergeTarget,
+        branchMissing: check.branchMissing === true,
+        source: options.source,
+      });
+      if (discharged) return discharged;
+      return { outcome: "not-landed", baseBranch: mergeTarget.branch };
+    }
     if (!check.branchMissing) {
       /*
       FNXC:LandedReviewReconciliation 2026-09-20-02:17:
@@ -19780,6 +19814,156 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     */
     await emitBoundedRunAudit(this.store, { taskId: task.id, agentId: "self-healing", runId: generateSyntheticRunId("reconcile-absent-branch", task.id), domain: "database", mutationType: "task:reconcile-absent-branch-landed", target: task.id, metadata: { taskId: task.id, source: options.source, branch, baseBranch: mergeTarget.branch, mergeSha: check.landed.sha, mergeStrategy: check.landed.strategy, ownershipProof: "trailer" } }, { log });
     return { outcome: "reconciled", sha: check.landed.sha, strategy: check.landed.strategy, baseBranch: mergeTarget.branch };
+  }
+
+  /*
+  FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:35 (RUFU-384):
+  The commit-free discharge for a SINGULAR zero-commit card, reached ONLY from the `not-landed` refusal of
+  `reconcileLandedReviewTask` — i.e. after every shared fence already passed (review lane, required pre-merge
+  approval pre-check, pause/user-pause, live session, executing and merge-active status, checkout lease,
+  auto-merge hold) and after the workspace arms claimed nothing. RUFU-365 is the witness: a reconciliation
+  card whose plan declared `No commits expected: true`, all eight steps done, Code Review APPROVE bound to the
+  canonical empty review input, and no branch anywhere in refs, remotes, or a `*-stranded` recovery ref. Auto-merge
+  rejected it with "task has no provable approval for the content being merged", the card parked `failed`, and
+  this fence answered `not-landed` on every visit forever, because a zero-commit delivery leaves no commit for
+  a landed test to find.
+
+  Returns `null` — "not this shape, keep refusing" — for everything except the conjunction below. Four
+  independent facts must all hold, and each closes a different hole:
+  1. `branchMissing` — git proves the branch is GONE. A card whose branch still exists has content that could
+     be landed, and the ordinary unlanded-content arms must decide it; this arm never runs for it.
+  2. the card's own zero-commit authorization (`hasZeroCommitDeliveryAuthorization`, read from the row) — a
+     card expected to deliver content cannot claim its diff is legitimately uncomputable.
+  3. APPROVAL PARITY OVER REAL CONTENT EVIDENCE: the descriptor is captured through the SAME
+     `captureMergeContentDescriptor` the merge door uses (a missing worktree yields diff state `unavailable`, the
+     RUFU-365 shape) and the canonical `getTaskHardMergeBlocker` must answer `undefined` for it. The wrapper is
+     used rather than the raw door on purpose: the raw door's failed-status arm structurally returns
+     "task is marked 'failed': AUTO_MERGE_RETRY_REJECTED: …" for exactly this wedge and its sole waiver is
+     forbidden to widen, while the wrapper self-clears the engine's own park and is already this fence's authority
+     twice (the approval pre-check and the CAS re-check) under the FN-514 waiver it inherits — this arm adds no
+     waiver. The approval question is NEVER asked descriptorless here: descriptorless answers `approved` for every
+     row including real-fingerprint ones, and it is the captured descriptor that makes the core arm answer
+     `approved` only for a flagged empty-input row over unavailable content.
+  4. DELIVERY PROOF through the engine's existing zero-commit door (RUFU-274): one `collectZeroCommitEvidence`
+     read, handed to `enforceZeroCommitLandingProof` as `preCollected` so both authorities answer from the same
+     observation. Only `allow` finalizes; `retry` and `held` keep this card's ordinary `not-landed` refusal plus
+     the guard's own durable hold, and never a new failed status — an unobservable tree resolves itself on the
+     next pass, and a hold is the human's decision, not this fence's.
+
+  The finalize is commit-free, mirroring RUFU-357's discharge tail rather than the landed tail above:
+  `mergeConfirmed` with `mergedAt`/`mergeTargetBranch`/`mergeTargetSource` and NO `commitSha`, because RUFU-504's
+  rule is that a lane must never echo a sha it did not author. It therefore cannot reuse
+  `moveToCompleteLaneAfterLandedCleanup`, which is built around a landed sha; the card moves through the shared
+  complete-lane `moveTask`, exactly as the workspace discharge does. No branch-group landing is recorded — nothing landed.
+
+  No audit row is emitted from this arm. The FN-9304 taxonomy is a locked table in `docs/run-audit.md` and the
+  `-landed` row would require a `mergeSha` and `mergeStrategy` this card does not have, so the correct
+  consequence of the repair is simply that the `-unproven` row STOPS being written for a discharged card.
+  */
+  private async dischargeZeroCommitReview(
+    task: Task,
+    context: {
+      settings: Settings;
+      reviewColumns: ReadonlySet<string>;
+      requiredPreMergeStepIds: ReadonlySet<string>;
+      mergeTarget: { branch: string; source?: MergeDetails["mergeTargetSource"] };
+      branchMissing: boolean;
+      source: "self-healing" | "manual";
+    },
+  ): Promise<LandedReviewReconcileResult | null> {
+    const { settings, reviewColumns, requiredPreMergeStepIds, mergeTarget, branchMissing } = context;
+    if (!branchMissing) return null;
+    if (!hasZeroCommitDeliveryAuthorization(task)) return null;
+
+    // (3) Approval parity — real content evidence, never the descriptorless question.
+    const descriptor = await captureMergeContentDescriptor(task, {
+      workspaceRootDir: this.options.rootDir,
+      settings,
+    }).catch(() => null);
+    // A workspace card is decided by `reconcileWorkspaceLandedReview` and can never reach this arm; a capture
+    // that does not describe one singular card is not evidence this arm is allowed to reason over.
+    if (!descriptor || descriptor.kind !== "singular") return null;
+    if (getTaskHardMergeBlocker(task, { reviewColumns, requiredPreMergeStepIds, mergeContent: descriptor })) return null;
+
+    // (4) Delivery proof — the shared zero-commit door, one git observation.
+    const collected = await collectZeroCommitEvidence({
+      store: this.store,
+      task,
+      repoDir: this.options.rootDir,
+      integrationBranch: mergeTarget.branch,
+    });
+    const outcome = await enforceZeroCommitLandingProof({
+      store: this.store,
+      task,
+      repoDir: this.options.rootDir,
+      integrationBranch: mergeTarget.branch,
+      source: "self-healing-reconcile-commit-free",
+      preCollected: collected,
+    });
+    if (outcome.disposition !== "allow") return null;
+
+    /*
+    Commit-free landing record. `commitSha` is DELIBERATELY ABSENT (RUFU-504's rule) and `noOpMerge`/`noOpReason`
+    carry the delivery claim in the same vocabulary the merge lane writes, so a row cannot state a landing the
+    lane never performed.
+    */
+    const mergeDetails: MergeDetails = {
+      mergedAt: new Date().toISOString(),
+      mergeConfirmed: true,
+      noOpMerge: true,
+      noOpReason: "zero-commit-discharged:empty-input-approval",
+      prNumber: getPrimaryPrInfo(task)?.number,
+      mergeTargetBranch: mergeTarget.branch,
+      mergeTargetSource: mergeTarget.source,
+    };
+    // The same compare-and-set fence the landed finalize above uses, over the same field set.
+    const fingerprintOf = (current: Task) => JSON.stringify({
+      column: current.column,
+      status: current.status ?? null,
+      paused: !!current.paused,
+      userPaused: !!current.userPaused,
+      branch: current.branch ?? null,
+      mergeConfirmed: !!current.mergeDetails?.mergeConfirmed,
+      checkoutRunId: current.checkoutRunId ?? null,
+      checkoutLeaseRenewedAt: current.checkoutLeaseRenewedAt ?? null,
+      enabledWorkflowSteps: current.enabledWorkflowSteps ?? [],
+      steps: current.steps ?? [],
+      workflowStepResults: current.workflowStepResults ?? [],
+    });
+    const fingerprint = fingerprintOf(task);
+    let committed = false;
+    const commitIfCurrent = (current: Task) => {
+      if (fingerprintOf(current) !== fingerprint) return null;
+      if (getTaskHardMergeBlocker(current, { reviewColumns, requiredPreMergeStepIds, mergeContent: descriptor })) return null;
+      committed = true;
+      return {
+        mergeDetails,
+        branch: null,
+        branchWriteOrigin: "engine" as const,
+        status: null,
+        error: null,
+        paused: false as const,
+      };
+    };
+    if (typeof this.store.updateTaskAtomic === "function") {
+      await this.store.updateTaskAtomic(task.id, commitIfCurrent);
+    } else {
+      // Lightweight in-memory stores used by legacy recovery tests predate the atomic seam.
+      const current = await this.store.getTask(task.id);
+      const patch = current && commitIfCurrent(current);
+      if (patch) await this.store.updateTask(task.id, patch);
+    }
+    if (!committed) return { outcome: "raced", reason: "task-state-changed" };
+
+    const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
+    const movedTask = await this.store.moveTask(task.id, completeLane);
+    this.emitTaskMerged(movedTask, { mergeConfirmed: true });
+    await this.store.logEntry(
+      task.id,
+      `Auto-reconciled (commit-free): the card declared zero commits, its Code Review approval is bound to the canonical empty review input, git proves the branch is gone, and the shared zero-commit door confirmed the delivery — the card is closed with no commit authored and no commit sha recorded.`,
+    );
+    await this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined });
+    return { outcome: "zero-commit-discharged", baseBranch: mergeTarget.branch, basis: "empty-input-approval" };
   }
 
   /*
@@ -20373,12 +20557,20 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
             it is failing on cards it actually repaired. Upstream FN-9442 counts that same action in the
             sweep's recovered tally, so the tally and the audit exclusion travel together.
             */
-            if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "workspace-discharged") recovered++;
+            if (result.outcome === "reconciled" || result.outcome === "resumed" || result.outcome === "workspace-discharged" || result.outcome === "zero-commit-discharged") recovered++;
             /*
             FNXC:WorkspaceLandedReconcile 2026-11-01-08:27 (RUFU-357):
             The tally learns the new success arm so a future automatic admission can never under-count a
             discharge as a refusal. The sweep's own workspace `continue` above still makes this arm
             unreachable for workspace cards TODAY — the widening is exhaustiveness, not admission.
+
+            FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:35 (RUFU-384):
+            Same rule for the singular commit-free discharge, and its mirror is the point: RUFU-365's card sat
+            in this very `else` branch, emitting `task:reconcile-absent-branch-unproven` with `reason:
+            "not-landed"` on every pass forever. A discharge is an action, so it joins the tally and the `-unproven`
+            row simply stops being written for it — which is all "change no FN-9304 audit taxonomy" asks of this arm.
+            Adding the outcome above is sufficient: the union narrows through this `if`, so the emit branch below
+            never sees a discharged arm (and could not read `reason` off one — a discharge carries `basis`).
             */
             else if (result.outcome !== "already-complete") {
               const reason = result.outcome === "not-landed" ? "not-landed" : result.reason;

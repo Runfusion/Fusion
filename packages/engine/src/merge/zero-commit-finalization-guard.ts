@@ -54,6 +54,16 @@ export type ZeroCommitGuardSource =
   | "finalize-proven-auto-merge"
   | "self-healing-landed-cleanup"
   | "self-healing-no-op-finalize"
+  /*
+  FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:35 (RUFU-384):
+  The FN-9304 landed-review fence discharging a SINGULAR zero-commit card whose branch and worktree are gone.
+  Neither existing self-healing source described it: `self-healing-no-op-finalize` is the no-op finalize sweep
+  and the workspace obligation-free door (both already have producers, so reusing it would make an operator's
+  `source` query unable to tell which lane held the card), and `self-healing-landed-cleanup` has had no
+  producer since RUFU-274 declared it — a lane cannot inherit the semantics of a literal nothing writes.
+  This is the ONLY edit this card makes to this union, and it names a lane that now actually exists.
+  */
+  | "self-healing-reconcile-commit-free"
   | "project-engine-merge-confirmed"
   | "workflow-merge-primitive"
   | "post-landing-cleanup";

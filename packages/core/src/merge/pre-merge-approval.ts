@@ -1,4 +1,5 @@
 import type { Task, WorkflowStepResult } from "../types.js";
+import { evaluateZeroCommitEmptyInputContentProof } from "./zero-commit-landing-proof.js";
 import { PLAN_REVIEW_GROUP_ID } from "../workflows/builtin-plan-review-group.js";
 import { FAST_MODE_BYPASS_ACTOR } from "../workflows/workflow-fast-lane.js";
 import { deriveStaleReviewCallbackAttemptId, isWorkflowStepNotRun } from "../workflows/workflow-step-results.js";
@@ -322,7 +323,7 @@ audit history only: allowing them to reopen approval after a retry, reset, or wo
 let stale review evidence authorize current content.
 */
 export function evaluatePreMergeApprovals(
-  task: Pick<Task, "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "id">>,
+  task: Pick<Task, "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "id" | "noCommitsExpected">>,
   options: {
     requiredPreMergeStepIds?: ReadonlySet<string>;
     mergeContent?: MergeContentDescriptor;
@@ -341,7 +342,7 @@ export function evaluatePreMergeApprovals(
 }
 
 export function evaluatePreMergeAdmissionDecision(
-  task: Pick<Task, "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "id">>,
+  task: Pick<Task, "workflowStepResults" | "repositoryScope"> & Partial<Pick<Task, "id" | "noCommitsExpected">>,
   options: {
     requiredPreMergeStepIds?: ReadonlySet<string>;
     mergeContent?: MergeContentDescriptor;
@@ -379,7 +380,7 @@ export function evaluatePreMergeAdmissionDecision(
 function evaluateStep(
   workflowStepId: string,
   results: readonly WorkflowStepResult[],
-  task: Pick<Task, "repositoryScope"> & Partial<Pick<Task, "id">>,
+  task: Pick<Task, "repositoryScope"> & Partial<Pick<Task, "id" | "noCommitsExpected">>,
   descriptor: MergeContentDescriptor | undefined,
   options: {
     requiredPreMergeStepIds?: ReadonlySet<string>;
@@ -473,7 +474,41 @@ function evaluateStep(
   if (!descriptor) return { workflowStepId, state: "approved" };
   if (descriptor.kind === "singular") {
     if (descriptor.diff.state === "empty") return { workflowStepId, state: "approved" };
-    if (descriptor.diff.state === "unavailable") return { workflowStepId, state: "unprovable-content" };
+    /*
+    FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-17:27 (RUFU-384):
+    The ONE widening this gate gets, and it is narrow on purpose: an `unavailable` singular diff is still
+    `unprovable-content` for every card EXCEPT one whose own plan authorized a zero-commit delivery and
+    whose reviewer positively approved the canonical empty review input. See
+    `evaluateZeroCommitEmptyInputContentProof` in `zero-commit-landing-proof.ts` for the full requirement
+    set and for why RUFU-337 left this arm refusing until this shape wedged live (RUFU-365).
+
+    The refusal stays for every card NOT authorized to deliver zero commits — that is the whole point of
+    deriving the fact from `task.noCommitsExpected` on the row rather than from an option: `getTaskHardMergeBlocker`
+    forwards a fixed inline option whitelist, so a flag threaded through `options` would be silently dropped
+    by the very recovery lane this arm exists to serve, while every existing pick already carries the row field.
+    A caller that withholds the field keeps today's refusal, the same fail-closed direction the workspace
+    land-park predicate documents.
+
+    Deliberately NOT touched by this arm: the descriptorless question (`descriptor` undefined returns above,
+    which is the question `evaluateNoCommitsNoOpFinalize` asks and must keep answering exactly as before), the
+    fingerprint-match and stale-content paths below, and the whole workspace branch — an `unavailable`
+    workspace descriptor still answers from `repositoryScope`, never from this marker.
+
+    FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:50 (RUFU-384, code-review P0):
+    The arm keys on the unavailability REASON, not on the state. `unavailable` alone is not evidence of an
+    empty delivery: `git-diff-too-large` is positive proof a patch larger than 10 MiB EXISTS, and
+    `git-diff-failed` means git could not read a checkout that is present — both keep answering
+    `unprovable-content` byte-for-byte even for a flagged row, because merging over them is exactly the
+    FN-9234 hazard (an approval bound to an empty diff shipping content that appeared afterwards). Only
+    `missing-worktree-or-base` — no checkout or no diff base to compute from — is the RUFU-365 shape this
+    waiver exists for. See `CORE_MISSING_CHECKOUT_DIFF_REASON` for the per-reason reading.
+    */
+    if (descriptor.diff.state === "unavailable") {
+      if (evaluateZeroCommitEmptyInputContentProof(task, result, workflowStepId, options.requiredPreMergeStepIds, descriptor.diff.reason)) {
+        return { workflowStepId, state: "approved" };
+      }
+      return { workflowStepId, state: "unprovable-content" };
+    }
     return result?.reviewInputFingerprint === descriptor.diff.fingerprint
       ? { workflowStepId, state: "approved" }
       : { workflowStepId, state: result?.reviewInputFingerprint ? "stale-content" : "unprovable-content" };

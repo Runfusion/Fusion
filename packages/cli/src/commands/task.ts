@@ -1466,6 +1466,19 @@ export async function runTaskReconcile(id: string, projectName?: string) {
       console.log(`Discharged ${id}: ${result.dischargedCount}/${result.repoCount} repositories proven commit-free (${repoClause}); card moved to complete, no commit authored.`);
       return;
     }
+    /*
+    FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:35 (RUFU-384):
+    The SINGULAR commit-free discharge gets its own sentence for exactly RUFU-357's reason: the singular
+    success line below prints `Merged ${id} at <sha> via <strategy>`, and this card authored neither. Before
+    this arm existed, `fn task reconcile RUFU-365` printed the `not-landed` refusal here — "no commit with
+    Fusion-Task-Id: … was found on main" — forever, on a card that was never going to produce one. The word
+    "Discharged" now matches the workspace lane's vocabulary, and "no commit authored" keeps the claim honest.
+    The basis names the proof rather than a sha, because the basis IS the proof.
+    */
+    if (result.outcome === "zero-commit-discharged") {
+      console.log(`Discharged ${id}: zero-commit delivery authorized and Code Review approved over the canonical empty review input on ${result.baseBranch} (basis: ${result.basis}); card moved to complete, no commit authored.`);
+      return;
+    }
     if (result.outcome === "already-complete") {
       /*
       FNXC:UnrunPostMergeGateRecovery 2026-09-25-15:35 (RUFU-306):

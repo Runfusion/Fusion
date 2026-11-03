@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getTaskMergeBlocker } from "../merge/task-merge.js";
 import { evaluatePreMergeAdmissionDecision, evaluatePreMergeApprovals, hasValidStaleReviewCallbackWaiver, resolveUnprovenReviewApproval } from "../merge/pre-merge-approval.js";
+import { evaluateZeroCommitEmptyInputContentProof } from "../merge/zero-commit-landing-proof.js";
 
 const base = {
   column: "in-review", paused: false, steps: [], repositoryScope: undefined,
@@ -134,15 +135,167 @@ describe("positive pre-merge approval gate", () => {
       requiredPreMergeStepIds: required,
       mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "a".repeat(64) } },
     });
+    /*
+    FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-17:27 (RUFU-384):
+    RUFU-337 pinned the `unavailable` case as a single unconditional refusal. It is now a PAIR, because the
+    two cards that reach this question are different: a commit-expected card whose diff became unreadable
+    after review still gets RUFU-337's exact answer, and only a card that holds its own zero-commit
+    authorization gets the recognition. The flag is the ONLY difference between the two calls below — same
+    row, same marker, same descriptor — so this test is itself the proof that the arm is flag-derived.
+    */
     const unavailable = evaluatePreMergeApprovals(task, {
       requiredPreMergeStepIds: required,
       mergeContent: { kind: "singular", diff: { state: "unavailable", reason: "git" } },
+    });
+    const unavailableAuthorized = evaluatePreMergeApprovals({ ...task, noCommitsExpected: true }, {
+      requiredPreMergeStepIds: required,
+      mergeContent: { kind: "singular", diff: { state: "unavailable", reason: "missing-worktree-or-base" } },
     });
 
     expect(empty[0]?.state).toBe("approved");
     expect(populated[0]?.state).toBe("stale-content");
     expect(unavailable[0]?.state).toBe("unprovable-content");
+    expect(unavailableAuthorized[0]?.state).toBe("approved");
   });
+
+  /*
+  FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-17:27 (RUFU-384):
+  The rest of the content-proof matrix the new arm must classify, one case per row. RUFU-365 wedged
+  because exactly ONE cell of this matrix had no honest answer: an approved empty-input row over a diff
+  that cannot be computed because there is nothing to compute. Every other cell keeps RUFU-337's answer.
+  */
+  const emptyApprovalRow = {
+    workflowStepId: "code-review", workflowStepName: "Code", status: "passed" as const,
+    verdict: "APPROVE" as const, reviewKind: "code" as const,
+    reviewInputFingerprint: "empty-review-input:v1",
+  };
+  const unavailableContent = { kind: "singular" as const, diff: { state: "unavailable" as const, reason: "missing-worktree-or-base" } };
+
+  /*
+  FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:50 (RUFU-384, code-review P0):
+  `unavailable` is a STATE, not a finding. `probeReviewDiffFingerprint` reaches it for three reasons and two
+  of them are evidence that content EXISTS: `git-diff-too-large` means more than 10 MiB of patch was streamed,
+  and `git-diff-failed` means a present checkout could not be read. A waiver keyed on the state alone would
+  squash-merge that content under an approval bound to an empty diff — the FN-9234 class this change is
+  forbidden to weaken — so each content-bearing reason is pinned here at BOTH seams the operator sees: the
+  gate state and the door sentence.
+  */
+  const contentBearingUnavailableReasons = ["git-diff-too-large", "git-diff-failed"] as const;
+
+  it.each(contentBearingUnavailableReasons)(
+    "refuses an authorized empty-marker row whose diff is unavailable because %s proves content exists",
+    (reason) => {
+      const approvals = evaluatePreMergeApprovals({ ...base, noCommitsExpected: true, workflowStepResults: [emptyApprovalRow] }, {
+        requiredPreMergeStepIds: required,
+        mergeContent: { kind: "singular", diff: { state: "unavailable", reason } },
+      });
+      expect(approvals[0]?.state).toBe("unprovable-content");
+    },
+  );
+
+  it("keeps an empty-marker approval stale when content appears after review", () => {
+    const approved = evaluatePreMergeApprovals({ ...base, noCommitsExpected: true, workflowStepResults: [emptyApprovalRow] }, {
+      requiredPreMergeStepIds: required,
+      mergeContent: { kind: "singular", diff: { state: "fingerprint", fingerprint: "a".repeat(64) } },
+    });
+    expect(approved[0]?.state).toBe("stale-content");
+  });
+
+  it("reports a required gate with no row as missing even for an authorized zero-commit card", () => {
+    const noRow = evaluatePreMergeApprovals({ ...base, noCommitsExpected: true, workflowStepResults: [] }, {
+      requiredPreMergeStepIds: required,
+      mergeContent: unavailableContent,
+    });
+    expect(noRow[0]?.state).toBe("missing");
+  });
+
+  it("answers the descriptorless question unchanged for the authorized empty-input row", () => {
+    /*
+    `evaluateNoCommitsNoOpFinalize` asks this gate DESCRIPTORLESS (no `mergeContent` argument), and the
+    zero-commit finalize lanes route through it. The arm lives INSIDE the `unavailable` descriptor branch,
+    so the descriptorless answer must not move — pinning it here is what stops a later widening of the
+    arm from quietly becoming the only approval authority in the finalize lanes.
+    */
+    const descriptorless = evaluatePreMergeApprovals({ ...base, noCommitsExpected: true, workflowStepResults: [emptyApprovalRow] }, {
+      requiredPreMergeStepIds: required,
+    });
+    expect(descriptorless[0]?.state).toBe("approved");
+  });
+
+  it("refuses a version-mismatched empty-input marker over unavailable content", () => {
+    const future = { ...emptyApprovalRow, reviewInputFingerprint: "empty-review-input:v2" };
+    const approvals = evaluatePreMergeApprovals({ ...base, noCommitsExpected: true, workflowStepResults: [future] }, {
+      requiredPreMergeStepIds: required,
+      mergeContent: unavailableContent,
+    });
+    expect(approvals[0]?.state).toBe("unprovable-content");
+  });
+
+  it("never speaks for a gate the workflow did not require", () => {
+    /*
+    Condition (d) is only observable at the predicate seam: `evaluatePreMergeAdmissionDecision` calls
+    `evaluateStep` once per REQUIRED gate, so a non-required marker row is never even looked at. Asserted
+    directly here so the guard has a real owner — the door half of the assertion shows that an unrequired
+    marker row cannot stand in for the required gate that has no row.
+    */
+    const authorized = { noCommitsExpected: true as const };
+    const missingCheckout = "missing-worktree-or-base";
+    expect(evaluateZeroCommitEmptyInputContentProof(authorized, emptyApprovalRow, "code-review", required, missingCheckout)).toBe(true);
+    expect(evaluateZeroCommitEmptyInputContentProof(authorized, emptyApprovalRow, "docs-delivery", required, missingCheckout)).toBe(false);
+    expect(evaluateZeroCommitEmptyInputContentProof(authorized, emptyApprovalRow, "code-review", undefined, missingCheckout)).toBe(false);
+    expect(evaluateZeroCommitEmptyInputContentProof({}, emptyApprovalRow, "code-review", required, missingCheckout)).toBe(false);
+    expect(evaluateZeroCommitEmptyInputContentProof({ noCommitsExpected: false }, emptyApprovalRow, "code-review", required, missingCheckout)).toBe(false);
+    expect(evaluateZeroCommitEmptyInputContentProof(authorized, undefined, "code-review", required, missingCheckout)).toBe(false);
+    // Condition (e): the reason is a REQUIRED argument, so no caller can ask this question without saying
+    // why the diff is unavailable, and every reason but the missing-checkout one answers false.
+    for (const reason of contentBearingUnavailableReasons) {
+      expect(evaluateZeroCommitEmptyInputContentProof(authorized, emptyApprovalRow, "code-review", required, reason)).toBe(false);
+    }
+
+    const optionalGate = { ...base, noCommitsExpected: true, workflowStepResults: [{ ...emptyApprovalRow, workflowStepId: "docs-delivery" }] };
+    const approvals = evaluatePreMergeApprovals(optionalGate, {
+      requiredPreMergeStepIds: required,
+      mergeContent: unavailableContent,
+    });
+    expect(approvals[0]).toMatchObject({ workflowStepId: "code-review", state: "missing" });
+  });
+
+  it("refuses an empty-marker approval the reviewer did not authorize", () => {
+    const revise = { ...emptyApprovalRow, verdict: "REVISE" as const };
+    const pending = { ...emptyApprovalRow, status: "pending" as const, verdict: undefined };
+    const archived = { ...emptyApprovalRow, remediationArchivedAt: "2026-10-01T00:00:00.000Z" };
+    for (const row of [revise, pending, archived]) {
+      const approvals = evaluatePreMergeApprovals({ ...base, noCommitsExpected: true, workflowStepResults: [row] }, {
+        requiredPreMergeStepIds: required,
+        mergeContent: unavailableContent,
+      });
+      expect(approvals[0]?.state).toBe("not-approved");
+    }
+  });
+
+  it("shows the door refusal sentence only for the card without zero-commit authorization", () => {
+    /*
+    Door level (Symptom Verification assertion 2): RUFU-365's card reached the operator as this exact
+    sentence from `getTaskMergeBlocker`, so the sentence is the assertion. It must appear for the
+    flagless row and must NOT appear for the flagged one.
+    */
+    const row = { ...base, workflowStepResults: [emptyApprovalRow] };
+    expect(getTaskMergeBlocker(row, { requiredPreMergeStepIds: required, mergeContent: unavailableContent }))
+      .toBe("task has no provable approval for the content being merged");
+    expect(getTaskMergeBlocker({ ...row, noCommitsExpected: true }, { requiredPreMergeStepIds: required, mergeContent: unavailableContent }))
+      .toBeUndefined();
+  });
+
+  it.each(contentBearingUnavailableReasons)(
+    "keeps the door refusal sentence for an authorized row whose diff is unavailable because %s", (reason) => {
+      // The flagged card is the one the arm exists for, so this is the sharpest negative: the SAME row that
+      // merges over a missing checkout still refuses when the unavailability proves a patch is there.
+      expect(getTaskMergeBlocker(
+        { ...base, noCommitsExpected: true, workflowStepResults: [emptyApprovalRow] },
+        { requiredPreMergeStepIds: required, mergeContent: { kind: "singular", diff: { state: "unavailable", reason } } },
+      )).toBe("task has no provable approval for the content being merged");
+    },
+  );
 
   it.each([
     ["kind and identity", { reviewKind: "code" as const }],

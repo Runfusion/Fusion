@@ -29,7 +29,7 @@ the empty-merge lane produced RUFU-262 in the first place (`noOpResult()` writes
 row carrying it).
 */
 
-import type { MergeDetails, Task, UncommittedWorkHold } from "../types.js";
+import type { MergeDetails, Task, UncommittedWorkHold, WorkflowStepResult } from "../types.js";
 import type { WorktreeContentClassification, WorktreeContentState } from "../types/merge/worktree-content.js";
 import { CLEAN_WORKTREE_CONTENT } from "../types/merge/worktree-content.js";
 
@@ -465,6 +465,101 @@ export function hasZeroCommitDeliveryAuthorization(
   task: Partial<Pick<Task, "noCommitsExpected">>,
 ): boolean {
   return task.noCommitsExpected === true;
+}
+
+/*
+FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-17:27 (RUFU-384):
+The CORE-side spelling of the engine's canonical empty-review-input fingerprint marker
+(`EMPTY_REVIEW_DIFF_FINGERPRINT` in `packages/engine/src/worktree/review-diff-fingerprint.ts`).
+Core cannot import engine, so this is a declared twin, not a second implementation: one exported
+constant that every core consumer compares against, so the marker can never be re-typed per site and
+a core lane can recognise the marker without a string literal of its own.
+
+Only the CANONICAL version matches. An `empty-review-input:v2`-shaped string is a different marker and
+must keep whatever answer an unknown fingerprint gets today — recognising by prefix would let a future
+producer change the marker's meaning while old rows silently kept the zero-commit waiver.
+*/
+export const CORE_EMPTY_REVIEW_INPUT_FINGERPRINT = "empty-review-input:v1";
+
+/*
+FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-18:50 (RUFU-384, code-review P0):
+THE OTHER HALF OF THE PROOF: not every `unavailable` diff means "there is nothing to compute".
+The engine's `probeReviewDiffFingerprint` (`packages/engine/src/worktree/review-diff-fingerprint.ts`)
+answers `unavailable` for three reasons, and only ONE of them is evidence of an absent checkout:
+ - `missing-worktree-or-base` — no worktree path or no diff base. This IS RUFU-365's shape: the card
+   authored no commits, so its checkout is gone and no patch exists to hash.
+ - `git-diff-too-large` — more than 10 MiB of streamed patch. This is POSITIVE PROOF that content
+   EXISTS, the opposite of what the waiver is for.
+ - `git-diff-failed` — the git spawn errored, timed out, or exited non-zero while the worktree was
+   present. Content may exist and be unreadable; absence is unproven.
+Waving through the last two would merge content that appeared (or only became visible) AFTER a Code
+Review whose approval is bound to an empty diff — precisely the FN-9234 class RUFU-337 refused and
+RUFU-384's own PROMPT.md forbids weakening. So the waiver names the one reason it means, by exact
+spelling, rather than matching the state alone.
+*/
+export const CORE_MISSING_CHECKOUT_DIFF_REASON = "missing-worktree-or-base";
+
+/**
+ * Does the selected pre-merge gate row carry the canonical empty-review-input marker?
+ * Exact equality only (see the marker note above).
+ */
+export function hasEmptyReviewInputApproval(
+  result: Partial<Pick<WorkflowStepResult, "reviewInputFingerprint">> | undefined,
+): boolean {
+  return result?.reviewInputFingerprint === CORE_EMPTY_REVIEW_INPUT_FINGERPRINT;
+}
+
+/*
+FNXC:ZeroCommitEmptyInputContentProof 2026-11-03-17:27 (RUFU-384):
+THE CONSUMER RUFU-337 deliberately left unbuilt. RUFU-337 made the empty-input shape storable (an
+empty review input fingerprints to the canonical marker, and a Code Review APPROVE may bind to it)
+and left the sole site that could use it — the singular `unavailable` arm of `evaluateStep` — as a hard
+`unprovable-content` refusal ON PURPOSE, because recognising it there would silently merge cards whose
+content vanished AFTER review. RUFU-365 is the shape that refusal was wrong about: a reconciliation card
+whose own plan declared `noCommitsExpected: true`, approved over the canonical empty input, whose diff
+reports `unavailable` only because there is nothing to compute — no worktree, no branch. The refusal is
+not fail-closed for that card, it is terminal: the merge door, auto-merge, and the FN-9304 fence each
+answered "task has no provable approval for the content being merged" about a diff that does not and
+should not exist, and the card sat wedged in review with every recovery lane saying the same thing back.
+
+The arm therefore requires every one of these facts at once, and each one closes a different hole:
+  (a) the selected row carries the canonical empty-input marker — the reviewer positively approved
+      THIS shape, so nothing is being inferred from a missing diff;
+  (c) the card holds its own explicit zero-commit authorization (`hasZeroCommitDeliveryAuthorization`,
+      read from the task ROW, never from an option or an error-sentence substring) — a card that was
+      expected to deliver content cannot claim its diff is legitimately uncomputable;
+  (d) this gate is one the workflow actually REQUIRED — an arm must never speak for a gate the
+      workflow never asked for, and `requiredPreMergeStepIds` is what the merge door itself uses to
+      decide requirement.
+  (e) the unavailability is the ONE reason that proves there is no checkout to compute from
+      (`CORE_MISSING_CHECKOUT_DIFF_REASON`). The reason is a required argument, not an optional filter:
+      a caller that cannot say why the diff is unavailable does not get the waiver. `git-diff-too-large`
+      and `git-diff-failed` keep refusing because each is evidence that content EXISTS or may exist —
+      see that constant's note for the per-reason reading.
+
+Condition (b) — the row is otherwise approving — is NOT re-derived here on purpose. The caller reaches
+this question only after `evaluateStep`'s existing approval evaluation passed, so re-implementing
+approval semantics here would create a second approval authority that could disagree with the door.
+A pending, failed, authored-REVISE, or `remediationArchivedAt` carrier never reaches the arm at all.
+
+What stays refused, byte-for-byte as RUFU-337 pinned it: every card NOT authorized to deliver zero
+commits, every row without the marker, a real-fingerprint mismatch, the marker against an AVAILABLE
+non-empty diff (that is stale-content — content appeared after review), every `unavailable` reason other
+than the missing-checkout one, and the descriptorless question (`options.mergeContent` omitted), which
+answers exactly as it always did. The workspace branch below the singular arms is untouched, and an
+empty-marker row never binds `repositoryScopeRevision` anyway.
+*/
+export function evaluateZeroCommitEmptyInputContentProof(
+  task: Partial<Pick<Task, "noCommitsExpected" | "id">>,
+  result: Partial<Pick<WorkflowStepResult, "reviewInputFingerprint">> | undefined,
+  workflowStepId: string,
+  requiredPreMergeStepIds: ReadonlySet<string> | undefined,
+  diffUnavailableReason: string,
+): boolean {
+  if (diffUnavailableReason !== CORE_MISSING_CHECKOUT_DIFF_REASON) return false;
+  if (!requiredPreMergeStepIds?.has(workflowStepId)) return false;
+  return hasEmptyReviewInputApproval(result)
+    && hasZeroCommitDeliveryAuthorization(task);
 }
 
 /**
