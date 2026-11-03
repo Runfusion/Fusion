@@ -8,6 +8,65 @@ export const COMPLETED_BLOCKED_PAUSE_REASON = "completed-work-blocked";
 export const STALE_TEMP_MERGE_WORKTREE_MS = 2 * 60 * 60 * 1000;
 export const DONE_TASK_TEMP_WORKTREE_GRACE_MS = 10 * 60 * 1000;
 export const MIN_TEMP_WORKTREE_REAP_AGE_MS = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
+/*
+FNXC:TempScratchSweep 2026-11-03-08:14 (RUFU-397):
+A distinct, LONGER floor for Fusion's own leaked scratch directories, deliberately separate from
+`STALE_TEMP_MERGE_WORKTREE_MS` / `DONE_TASK_TEMP_WORKTREE_GRACE_MS` / `MIN_TEMP_WORKTREE_REAP_AGE_MS`.
+
+Why a separate number instead of reusing `tempMergeReapAgeMs` (RUFU-290 made it the shared selector for
+the two halves of the merge sweep): an AI-merge clean room is disposable — its content is reproducible
+from git, so a 2 h floor is safe. A code-node / git-baseline / agent-companies / feature-video / usage-
+probe / agent-import / pr-conflict scratch dir holds a UNIQUE artifact a live request may still be
+reading (a generated video, an in-flight import body), and nothing about its age proves its owner is
+gone: `extractTaskIdFromTempMergeDir` matches only `fusion-ai-merge-(fn-\d+)-<rand>`, so a scratch
+directory gets no task-lookup early release, and `activeSessionRegistry.isPathActive` is in-process
+only — it cannot see a request owned by another engine process. The floor is therefore the sole
+protection for this class, so it is an order of magnitude longer than the merge floor and is never
+shortened by an early-release leg.
+
+This sweep is a capacity repair, not a lifecycle move: it changes no task row, no column, and no status.
+*/
+export const TEMP_SCRATCH_REAP_AGE_MS = 24 * 60 * 60 * 1000;
+/*
+FNXC:TempScratchSweep 2026-11-03-08:14 (RUFU-397):
+Admission gate for extending the stale-tmpdir sweep beyond merge/verify worktrees. A prefix enters this
+list ONLY when its creator's release path was verified to run on every leg (a `finally` that removes the
+directory, or a single shared cleanup site), because an unqualified prefix would delete the in-flight
+workspace of another process — the same class of data loss the 2026-06 `fn-verify-` leak taught the
+opposite lesson about (see the sweep's own comment). Every entry below was read at its create site and
+its release site before being listed here:
+
+- `fusion-code-node-`      — created `engine/src/execution/code-node-runner.ts`, removed in its `finally`.
+- `fusion-git-baseline-`   — created `core/src/git/git-repository.ts`, removed in its `finally`.
+- `agent-companies-`       — created `core/src/agents/agent-companies-parser.ts`, `rmSync`ed in its `finally`.
+- `fusion-feature-video-`  — created `engine/src/review-artifacts/feature-video.ts`, removed in its `finally`
+                             (the bytes are read into memory before cleanup, so the sweep cannot race a reader).
+- `fusion-usage-probe-`    — created `dashboard/src/usage.ts`, single shared cleanup site.
+- `fn-agent-import-`       — created `register-agent-import-export-generation-routes.ts`, removed in its `finally`.
+- `fn-pr-conflict-`        — created `dashboard/src/github.ts`, removed in its `finally`.
+
+Never admitted, on purpose:
+- Process-lifetime artifacts a live process still owns: `fn-pkg-`, `fn-bunfs-<pid>`, `fn-experiment-*`,
+  `fusion-worktree-sync-*`, `fusion-agent-export-*`, `fusion-test-workers-*`, `fusion-engine-*.sock`.
+  Age is not evidence of death for these, and `fusion-engine-*.sock` IS the engine singleton guard.
+- Third-party or unrelated content: `dgxs*`, `sane083*`, `.fusion-*`. Not Fusion's to delete, and
+  sweeping them would repeat the mistake of naming a foreign file's problem as Fusion's.
+- `fusion-worktree-sync-` specifically has no product creator at all (only a `run-audit.ts` comment and
+  three dashboard test fixtures reference it), so there is no release invariant to audit against.
+
+The sweep reads each root with ONE non-recursive `readdirSync` filtered by these prefixes. It never
+shells out to `find` or `du` over the temp root: the bounded-scan rule exists because an unbounded
+recursive walk of the OS temp root can pin I/O for minutes.
+*/
+export const TEMP_SCRATCH_SWEEP_PREFIXES = [
+  "fusion-code-node-",
+  "fusion-git-baseline-",
+  "agent-companies-",
+  "fusion-feature-video-",
+  "fusion-usage-probe-",
+  "fn-agent-import-",
+  "fn-pr-conflict-",
+] as const;
 export const STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS = 10 * 60_000;
 export const COMPLETION_HANDOFF_LIMBO_GRACE_MS = 5 * 60_000;
 export const MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES = 3;

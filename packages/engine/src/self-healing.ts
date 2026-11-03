@@ -549,6 +549,8 @@ export {
   STALE_TEMP_MERGE_WORKTREE_MS,
   DONE_TASK_TEMP_WORKTREE_GRACE_MS,
   MIN_TEMP_WORKTREE_REAP_AGE_MS,
+  TEMP_SCRATCH_REAP_AGE_MS,
+  TEMP_SCRATCH_SWEEP_PREFIXES,
   STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
   COMPLETION_HANDOFF_LIMBO_GRACE_MS,
   MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES,
@@ -566,6 +568,8 @@ import {
   STALE_TEMP_MERGE_WORKTREE_MS,
   DONE_TASK_TEMP_WORKTREE_GRACE_MS,
   MIN_TEMP_WORKTREE_REAP_AGE_MS,
+  TEMP_SCRATCH_REAP_AGE_MS,
+  TEMP_SCRATCH_SWEEP_PREFIXES,
   STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
   COMPLETION_HANDOFF_LIMBO_GRACE_MS,
   MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES,
@@ -23402,6 +23406,25 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     );
   }
 
+  /*
+  FNXC:TempScratchSweep 2026-11-03-08:15 (RUFU-397):
+  The reap floor for one tmpdir entry, chosen by class. Merge clean rooms and verification checkouts
+  keep the RUFU-290 shared selector exactly as it was; Fusion's own leaked scratch directories get the
+  dedicated longer floor and can NEVER take an early release, because nothing observable about them
+  proves their owner is gone — `extractTaskIdFromTempMergeDir` matches only `fusion-ai-merge-(fn-\d+)-`,
+  and `activeSessionRegistry.isPathActive` sees only this process's sessions.
+  */
+  private tempSweepReapAgeMs(entry: string, earlyRelease: boolean): number {
+    const isPlainScratch = (TEMP_SCRATCH_SWEEP_PREFIXES as readonly string[]).some((prefix) => entry.startsWith(prefix));
+    if (!isPlainScratch) return this.tempMergeReapAgeMs(earlyRelease);
+    return Math.max(this.tempMergeReapAgeMs(false), TEMP_SCRATCH_REAP_AGE_MS);
+  }
+
+  /** True for a tmpdir entry that is Fusion's own leaked scratch directory, not a merge worktree. */
+  private isTempScratchEntry(entry: string): boolean {
+    return (TEMP_SCRATCH_SWEEP_PREFIXES as readonly string[]).some((prefix) => entry.startsWith(prefix));
+  }
+
   /**
    * True when the task a scratch entry is named after no longer needs its clean-room (finished lane,
    * or the card is gone entirely) — the condition that shortens the age gate to the early-release floor.
@@ -23590,18 +23613,33 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       for (const tempRoot of roots) {
         let entries: string[];
         try {
-          /*
-          FNXC:TempWorktreeSweep 2026-07-31-22:55:
-          `fn-verify-` (and `fn-verify-app-`) checkouts from mission-verification's
-          GitCheckoutMaterializer leak when the process dies between materialize and dispose — seven
-          registered worktrees aged Jul 24-27 were found holding registrations, and on the live board
-          the visible symptom was planning admission queueing behind exhausted worktree slots
-          ("queued to plan" for ~6 minutes). Their dispose() is best-effort in-process only; this
-          sweep is the only out-of-process reaper, so it must know the prefix. Verification checkouts
-          are detached throwaways that only ever live under tmpdir(), so the extra prefixes apply to
-          that root alone; the same age gates, active-session refusal, and audit rows govern them.
-          */
-          const sweepPrefixes = tempRoot === tmpdir() ? ["fusion-ai-merge-", "fn-verify-"] : ["fusion-ai-merge-"];
+            /*
+            FNXC:TempWorktreeSweep 2026-07-31-22:55:
+            `fn-verify-` (and `fn-verify-app-`) checkouts from mission-verification's
+            GitCheckoutMaterializer leak when the process dies between materialize and dispose — seven
+            registered worktrees aged Jul 24-27 were found holding registrations, and on the live board
+            the visible symptom was planning admission queueing behind exhausted worktree slots
+            ("queued to plan" for ~6 minutes). Their dispose() is best-effort in-process only; this
+            sweep is the only out-of-process reaper, so it must know the prefix. Verification checkouts
+            are detached throwaways that only ever live under tmpdir(), so the extra prefixes apply to
+            that root alone; the same age gates, active-session refusal, and audit rows govern them.
+
+            FNXC:TempScratchSweep 2026-11-03-08:15 (RUFU-397):
+            The same "best-effort in-process cleanup is the only cleanup" argument that admitted
+            `fn-verify-` applies to Fusion's own plain scratch directories, which leak the same way when
+            the process dies mid-request and are the class that starves tmpfs inodes (each holds at least
+            one file, and an inode is consumed per file regardless of how many bytes are free). They join
+            the tmpdir root only, are gated by the dedicated longer floor in `tempSweepReapAgeMs`, and
+            enter only through the admission gate documented on `TEMP_SCRATCH_SWEEP_PREFIXES` — a prefix
+            whose creator's release path was verified on every leg. Third-party tmpdir content
+            (`dgxs*`, `sane083*`, `.fusion-*`) and process-lifetime artifacts (`fn-pkg-`, `fn-bunfs-*`,
+            `fn-experiment-*`, `fusion-worktree-sync-*`, `fusion-agent-export-*`, `fusion-test-workers-*`,
+            `fusion-engine-*.sock`) stay out: they are not Fusion's to delete, and the socket file IS the
+            engine singleton guard.
+            */
+          const sweepPrefixes = tempRoot === tmpdir()
+            ? ["fusion-ai-merge-", "fn-verify-", ...(TEMP_SCRATCH_SWEEP_PREFIXES as readonly string[])]
+            : ["fusion-ai-merge-"];
           entries = readdirSync(tempRoot).filter((entry) => sweepPrefixes.some((prefix) => entry.startsWith(prefix)));
         } catch (err: unknown) {
           if (!existsSync(tempRoot)) continue;
@@ -23650,7 +23688,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
                 }
               }
             }
-            const ageGateMs = this.tempMergeReapAgeMs(earlyRelease);
+            const ageGateMs = this.tempSweepReapAgeMs(entry, earlyRelease);
             if (ageMs < ageGateMs) continue;
             try {
               canonicalPath = realpathSync(path);
@@ -23671,16 +23709,26 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
           }
 
           let cleanupAttempted = false;
-          try {
-            cleanupAttempted = true;
-            await execAsync(`git worktree remove --force ${shellQuote(canonicalPath)}`, {
-              cwd: this.options.rootDir,
-              timeout: 120_000,
-            });
-          } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            log.warn(`[self-healing] temp-dir sweep: git worktree remove failed for ${canonicalPath}: ${errorMessage} — falling back to filesystem removal`);
-            await auditor.git({ type: "worktree:tempdir-sweep", target: canonicalPath, metadata: { path: canonicalPath, success: false, reason: "git-remove-failed", error: errorMessage } });
+          /*
+          FNXC:TempScratchSweep 2026-11-03-08:15 (RUFU-397):
+          A plain scratch directory never had a Git registration, so attempting `git worktree remove`
+          on it would fail for every entry and fill the audit log with `git-remove-failed` rows that
+          describe nothing. Worktree-bearing classes (merge clean rooms, `fn-verify-` checkouts) keep
+          the existing remove-then-prune path byte-for-byte.
+          */
+          const isPlainScratch = this.isTempScratchEntry(entry);
+          if (!isPlainScratch) {
+            try {
+              cleanupAttempted = true;
+              await execAsync(`git worktree remove --force ${shellQuote(canonicalPath)}`, {
+                cwd: this.options.rootDir,
+                timeout: 120_000,
+              });
+            } catch (err: unknown) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              log.warn(`[self-healing] temp-dir sweep: git worktree remove failed for ${canonicalPath}: ${errorMessage} — falling back to filesystem removal`);
+              await auditor.git({ type: "worktree:tempdir-sweep", target: canonicalPath, metadata: { path: canonicalPath, success: false, reason: "git-remove-failed", error: errorMessage } });
+            }
           }
 
           try {

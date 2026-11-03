@@ -308,6 +308,74 @@ git worktree list --porcelain | grep -F "<temp-worktree-path>"
 
 No output means Git no longer registers that temp path; matching `worktree <temp-worktree-path>` output means the leak is still registered and needs operator cleanup.
 
+## Temp-filesystem ENOSPC class: bytes-full vs inodes-exhausted (RUFU-397)
+
+An `ENOSPC` failure says "no space left on device" and nothing else, but a filesystem runs out of space in two different ways: the byte pool can be full, or the **inode table** can be empty while most bytes are still free. tmpfs sizes its inode table at mount time, so the second shape is common on `/tmp` and is invisible to `df -h`. Both return the same errno (28), so every failure record reads as a full disk on a host that is not full, and the operator cannot reach the real remedy (release inodes, or move the lane off tmpfs).
+
+Fusion now names the class in the failure record itself. One helper owns the classification — `classifyTempFs` / `annotateEnospcFailure` / `annotateEnospcError` / `tempFsClassSuffix` in `packages/core/src/temp-fs-diagnostics.ts` — and it **never throws**: an implausible, unreadable, or unsupported `statfs` result means "no opinion", and the original message passes through byte-for-byte. The probe runs only after text detection has already decided a failure is ENOSPC, so a normal failing test never pays for it, and at most once per recorded failure.
+
+The class line is appended to the message text, so it reaches the operator through the record each lane already writes — no new lifecycle owner, no new park lane, no new audit reason:
+
+| Lane | Record that carries the class |
+|---|---|
+| AI-merge clean-room creation | the merge park on the card, plus the engine merge-retry History line |
+| `fn_run_verification` | the tool response `Failure summary:` block |
+| Engine boot singleton guard | the `Engine start failed: …` runtime log line |
+| Stale-tmpdir sweep | the `cleaned …` engine log line for each scratch directory it reaps |
+
+The sweep is the **remedy**, not another annotated record: its `worktree:tempdir-sweep` audit row carries counts and fixed reasons only, never the class or a path, because the inode figures are a filesystem measurement and the sweep's own contract forbids putting paths in run-audit. Where the class is concerned, the sweep reduces how often the other three records have to be written at all.
+
+Because a creation failure targets a path that by definition does not exist — the socket file was never bound, the scratch directory was never made — the probe reads the target and then its nearest existing ancestors, up to four levels, and stops at the filesystem root. The class line therefore names the path it actually measured (`on /var/folders/…`, not the phantom path that failed), and an unreadable chain yields no opinion rather than a guess.
+
+Shape of the annotation (integers stay unseparated so a grep for them works):
+
+```text
+ENOSPC: no space left on device, mkdtemp '/tmp/fusion-ai-merge-fn-1-a1b2c3' [temp-fs class: inode-exhausted (ENOSPC) on /tmp — 0 of 1048576 inodes free, 52G bytes free (not a byte-full disk; release inodes or move the lane off tmpfs)]
+```
+
+Two deliberate consequences:
+
+- **Engine boot stops claiming "already running" for a filesystem refusal.** `acquireEngineSingleton` folds any guard-creation error into `EngineAlreadyRunningError`, whose only consumer reads that class as positive proof another process owns the project and skips it silently — a clean startup log and no engine. A creation failure the probe can classify as errno 28 now throws `EngineStartupEnvironmentError`, so the project lands on the honest `Engine start failed:` warning. `EADDRINUSE`, the genuine already-bound case, keeps its existing error and message unchanged.
+- **The class line repeats the `ENOSPC` token**, because the honest-blocked classifier matches that literal token and a prose-only sentence ("no space left on device") matched no host code before, which made a genuine host failure look AI-repairable. The guarantee the tests pin is asymmetric on purpose: annotating may never remove or reroute a classification, and may add one.
+
+Fusion also reaps its own contribution to the problem. The stale-tmpdir sweep covers Fusion-created scratch prefixes under `os.tmpdir()` under a dedicated floor (`TEMP_SCRATCH_REAP_AGE_MS`, 24 h — an order of magnitude above the merge clean-room floor, because a scratch directory carries no task id and in-process session liveness cannot see another process's request, so age is the only available evidence). A prefix is admitted only when its creator's release path was verified to run on every leg, and the list records both the admitted prefixes and the ones deliberately excluded: process-lifetime artifacts (`fn-pkg-`, `fn-bunfs-<pid>`, `fn-experiment-*`, `fusion-worktree-sync-*`, `fusion-agent-export-*`, `fusion-test-workers-*`, and `fusion-engine-*.sock`, which is the singleton guard itself) and third-party temp content are never touched. The sweep is one non-recursive prefix-filtered directory read per root; it never runs `find` or `du` over the temp root.
+
+Operator verification — read the two pools separately, because `df -h` alone cannot distinguish them:
+
+```bash
+df -h "$(node -e 'process.stdout.write(require("node:os").tmpdir())')"
+df -i "$(node -e 'process.stdout.write(require("node:os").tmpdir())')"
+```
+
+`Use%` near 100 on the `-i` line with a healthy `-h` line is this class. `IFree` recovering after a sweep pass means Fusion reaped its own litter; if it does not, the remaining consumers are outside Fusion's admitted prefixes and only the operator can clear them.
+
+### Redirecting TMPDIR for test lanes on an inode-starved host
+
+While the inode table is exhausted, a test lane that calls `mkdtemp` cannot even produce its own fixtures — the suite dies in setup with errno 28 and looks like a product failure. Redirect the temp root to a filesystem that has inodes for the duration of the run:
+
+```bash
+mkdir -p .tmp-rufu397
+TMPDIR="$PWD/.tmp-rufu397" <test command>
+```
+
+`os.tmpdir()` honours `TMPDIR`, so every Fusion helper that reads it — including the annotation probe and the sweep roots — follows the redirect with no code change, and the run stops depending on host `/tmp` state at all. Two cautions: delete the directory when the run ends and never stage it into a commit, because it holds test fixtures inside the repository; and note that a host genuinely out of inodes on its project filesystem too cannot be rescued this way — that is a real byte/filesystem problem, not this class.
+
+<!--
+FNXC:TempFsDiagnostics 2026-11-03-08:19 (RUFU-397):
+Field evidence: a host whose tmpfs inode table was fully exhausted while 52 G of bytes were free made every file and directory creation fail with errno 28, and because the wording blamed the byte pool the operator's own diagnosis was blocked — `df -h` contradicted the error. A full inode table also makes a recursive scan of the temp root *appear* to hang rather than fail, since creating each new directory entry is what blocks. Naming the pool in the failure record is the fix; the sweep keeps Fusion's own leaked scratch directories from refilling it.
+-->
+
+<!--
+FNXC:TempFsDiagnostics 2026-11-03-08:52 (RUFU-397 code-review remediation):
+Two documentation defects corrected against the shipped code. (1) The sweep row claimed the
+`worktree:tempdir-sweep` audit row carries the class; it does not — that row's metadata is counts and
+fixed reasons only, and the sweep never calls the annotators. Claiming an unreadable record exists sends
+an operator to query a field that is never written, so the row now states what the sweep actually is:
+the remedy that lowers how often the annotated records fire. (2) The mandated TMPDIR guidance was
+missing: on an inode-exhausted host a test lane's own `mkdtemp` setup fails, which reads as a product
+failure rather than a host condition, and `TMPDIR` is the documented escape that needs no code change.
+-->
+
 ## Bounded hold-release and health diagnostics (FN-8856)
 
 Hold-release summaries include prefetch, IR-resolution, and evaluation accumulators; measured sweep-attributable read counts; scanned-task and held-candidate counts; released/held totals; `unevaluatedCount`; and `budgetOverrunMs`. A budget-truncated sweep warns even when it stops in the preamble. Resolver reads are measured by a delegating counting facade (and direct sweep reads at their call sites), not cache-size inference. PostgreSQL health probes return a degraded timeout reason when the pool is saturated. Migration-state probe timeouts remain advisory after database and task-ID integrity checks succeed.

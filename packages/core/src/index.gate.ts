@@ -3045,3 +3045,26 @@ export type {
 } from "./agents/heartbeat-recovery-state.js";
 
 export { findWorkflowNodeInstance } from "./workflows/workflow-node-instance.js";
+
+/*
+FNXC:TempFsDiagnostics 2026-11-03-08:05 (RUFU-397):
+Mirror of the `index.ts` export block, identical line-for-line. The gate's "modules the gate genuinely
+never touches" exclusion clause deliberately does NOT apply here: `merger-ai.ts`,
+`run-verification-tool.ts`, and `engine-singleton-lock.ts` import this helper and sit inside the
+engine-core gate's transitive closure, so excluding it would resolve the symbol to `undefined` in
+that lane only (the U3 `classifyReviewLease` / RUFU-204 `assertAgentLogTaskId` breakage class).
+*/
+export {
+  classifyTempFs,
+  annotateEnospcFailure,
+  annotateEnospcError,
+  tempFsClassSuffix,
+  isEnospcFailureText,
+  ENOSPC_TOKEN_PATTERN,
+} from "./temp-fs-diagnostics.js";
+export type {
+  TempFsClass,
+  TempFsVerdict,
+  TempFsStatfsLike,
+  TempFsDiagnosticDeps,
+} from "./temp-fs-diagnostics.js";

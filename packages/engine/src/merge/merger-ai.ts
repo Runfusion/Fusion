@@ -74,6 +74,8 @@ import {
   type TaskStore,
   type WorkspaceLeaseHandle,
   resolveReviewColumns,
+  annotateEnospcError,
+  type TempFsDiagnosticDeps,
 } from "@fusion/core";
 import { selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
@@ -175,7 +177,7 @@ import { isPushAfterMergeEnabled, explainPushAfterMergeDecision, type PushAfterM
 import { resolveWorkspaceIntegrationTarget, WorkspaceEnvironmentError, WorkspaceIntegrationTargetError, type WorkspaceIntegrationTarget } from "./workspace-integration-target.js";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { getCommitTaskOwnership, detectAlreadyLandedOnMain } from "./already-merged-detector.js";
-import { resolveAiMergeSearchRoots } from "../worktree/worktree-paths.js";
+import { resolveAiMergeSearchRoots, resolveAiMergeRootPath } from "../worktree/worktree-paths.js";
 import {
   cleanupAiMergeWorktree,
   pruneExistingAiMergeWorktrees,
@@ -323,6 +325,50 @@ async function gitOk(args: string[], cwd: string): Promise<boolean> {
 
 function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/*
+FNXC:TempFsDiagnostics 2026-11-03-08:09 (RUFU-397):
+The AI-merge clean room is created with `mkdtemp`, so its creation is one of the lanes that dies when
+the host's tmpfs inode table is exhausted (0 free inodes while 52 G of bytes are free). Node's own
+sentence for that is `ENOSPC: no space left on device`, which is what every merge park then recorded
+— and it contradicted `df -h`, which is exactly why the class went undiagnosed.
+
+The class now rides the message text instead of acquiring a new owner: `project-engine.ts` builds its
+merge-retry log line and merge park from `err instanceof Error ? err.message : String(err)`, so the
+annotation is carried into the recorded failure with no new lifecycle authority, no new park lane,
+and no new audit event. Non-ENOSPC creation failures return the ORIGINAL error object untouched, so
+every existing leg (retries, `MergeAbortedError` / `MergeGateRevokedError` / workspace-name branches,
+the `EADDRINUSE`-style code branching) is provably unchanged.
+
+The `resolveAiMergeRoot` caller can still resolve into tmpdir, so this annotation belongs at the
+creation site even though the DEFAULT root is project-local `<worktreesDir>/.ai-merge`.
+
+FNXC:TempFsDiagnostics 2026-11-03-08:52 (RUFU-397 code-review remediation):
+`resolveAiMergeRoot` is not a pure path computation — it `mkdirSync`s the root — so an exhausted inode
+table can refuse the ROOT itself, before any `mkdtemp` runs. Calling it outside the `try` left exactly
+that first-touch failure with the bare errno-28 sentence. It is now inside the guarded block, and the
+probe target is the pure resolved path (`resolveAiMergeRootPath`, no filesystem writes), whose nearest
+existing ancestor is the mount that actually refused.
+
+`deps` exists so the consumer test stays fake-based (no real tmpfs, no host state); production call
+sites pass nothing, exactly as `runAiMerge`'s own `deps: AgentDeps = {}` seam does.
+*/
+export async function createAiMergeScratchDir(
+  rootDir: string,
+  settings: Settings | undefined,
+  prefix: string,
+  deps: TempFsDiagnosticDeps = {},
+): Promise<string> {
+  // Pure path resolution: no filesystem write, so it is safe to compute before the guard opens.
+  const probePath = resolveAiMergeRootPath(rootDir, settings);
+  try {
+    // `resolveAiMergeRoot` creates the root, so this line can itself be the ENOSPC site.
+    const parentDir = resolveAiMergeRoot(rootDir, settings);
+    return await mkdtemp(join(parentDir, prefix));
+  } catch (err: unknown) {
+    throw annotateEnospcError(err, probePath, deps);
+  }
 }
 
 function short(sha: string): string {
@@ -1235,7 +1281,7 @@ export async function landOneRepo(
       registeredMergePaths.add(pathToRegister);
     };
     try {
-      mergeRoot = await mkdtemp(join(resolveAiMergeRoot(repoRootDir, settings), `fusion-ai-merge-${taskId.toLowerCase()}-`));
+      mergeRoot = await createAiMergeScratchDir(repoRootDir, settings, `fusion-ai-merge-${taskId.toLowerCase()}-`);
       /*
        * FNXC:AIMerge 2026-06-14-16:36:
        * The AI-merge clean-room directory must be created and registered inside the cleanup guard. Any terminal path or interrupt after `mkdtemp`, including active-session registration failure before `git worktree add`, must still unregister known paths and remove the `fusion-ai-merge-*` directory.
@@ -4803,7 +4849,7 @@ export async function pushAfterMergeToRemote(input: {
   let worktreeAdded = false;
   const registeredPaths = new Set<string>();
   try {
-    pushRoot = await mkdtemp(join(resolveAiMergeRoot(projectRootDir, settings), `fusion-ai-merge-push-${taskId.toLowerCase()}-`));
+    pushRoot = await createAiMergeScratchDir(projectRootDir, settings, `fusion-ai-merge-push-${taskId.toLowerCase()}-`);
     for (const p of [pushRoot]) {
       activeSessionRegistry.registerPath(p, { taskId, kind: "ai-merge", ownerKey: `ai-merge-push:${taskId}` });
       registeredPaths.add(p);

@@ -3789,3 +3789,26 @@ export {
   ProtectedCheckoutError,
   assertAgentCwdAllowed,
 } from "./agent-cwd-policy.js";
+
+/*
+FNXC:TempFsDiagnostics 2026-11-03-08:05 (RUFU-397):
+Publishes the tmpfs "bytes free, inodes exhausted" ENOSPC classifier. Mirrored byte-identically in
+`index.gate.ts`: the `engine-core` merge-gate vitest project resolves this package through the bundle
+built from that file, and `merger-ai.ts`, `run-verification-tool.ts`, and `engine-singleton-lock.ts`
+all import these symbols inside the gate's transitive closure — a barrel-only omission here is
+invisible locally and TypeError-red in the CI merge gate.
+*/
+export {
+  classifyTempFs,
+  annotateEnospcFailure,
+  annotateEnospcError,
+  tempFsClassSuffix,
+  isEnospcFailureText,
+  ENOSPC_TOKEN_PATTERN,
+} from "./temp-fs-diagnostics.js";
+export type {
+  TempFsClass,
+  TempFsVerdict,
+  TempFsStatfsLike,
+  TempFsDiagnosticDeps,
+} from "./temp-fs-diagnostics.js";

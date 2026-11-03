@@ -26,6 +26,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import lockfile from "proper-lockfile";
+import { annotateEnospcError, type TempFsDiagnosticDeps } from "@fusion/core";
 
 const STALE_MS = 30_000;
 const UPDATE_MS = 10_000;
@@ -77,6 +78,73 @@ export function computeEngineSocketPath(projectId: string): string {
 
 export function computeEngineLockFilePath(workingDir: string): string {
   return join(workingDir, ".fusion", "engine.lock");
+}
+
+/*
+FNXC:TempFsDiagnostics 2026-11-03-08:11 (RUFU-397):
+Engine boot acquires TWO filesystem-backed guards: a lockfile under `<workingDir>/.fusion/` and a Unix
+socket under `os.tmpdir()`. Either creation can fail with errno 28, and `acquireEngineSingleton` used
+to fold ANY creation error into `EngineAlreadyRunningError` — whose consumer
+(`project-engine-manager.ts`) treats it as POSITIVE "the engine is already live here" evidence and
+skips the project silently, so the operator saw a clean startup log and no engine.
+
+This is the one lane where annotating the message is not enough: the wrong message is not the only
+loss, the wrong CONTROL FLOW is. An ENOSPC-shaped creation failure therefore throws a distinct error
+that is NOT `EngineAlreadyRunningError`, so the consumer's `instanceof` leg cannot swallow it and the
+project lands on its honest `Engine start failed:` warning leg instead. Every other creation error
+keeps the existing class and reason verbatim.
+*/
+export class EngineStartupEnvironmentError extends Error {
+  constructor(
+    public readonly projectId: string,
+    public readonly reason: "lockfile" | "socket",
+    cause?: unknown,
+  ) {
+    super(
+      `Engine startup for project ${projectId} could not create its ${reason} guard: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = "EngineStartupEnvironmentError";
+    if (cause !== undefined) {
+      (this as { cause?: unknown }).cause = cause;
+    }
+  }
+}
+
+/**
+ * Wraps a guard-creation failure. Returns `EngineAlreadyRunningError` for every failure the probe
+ * cannot classify as a temp-filesystem failure (the pre-existing leg: unchanged object type and
+ * message), and `EngineStartupEnvironmentError` when the errno-28 class IS provable — because
+ * "already running" is a claim about another process, and a filesystem refusal disproves it.
+ *
+ * Exported for unit testing: the invariant under test is a class identity (`instanceof
+ * EngineAlreadyRunningError`), which is exactly what the consumer branches on. `deps` exists so the
+ * probe stays fake-based; production call sites pass nothing.
+ */
+/*
+FNXC:TempFsDiagnostics 2026-11-03-08:52 (RUFU-397):
+The target path passed to the probe is the path the failed creation ACTUALLY targeted, and it is
+recorded only as a locator — `classifyTempFs` reads the nearest existing ancestor, because a creation
+failure's own target was never created. That matters most here: when `net.Server.listen()` dies with
+errno 28 the `.sock` file does not exist, and an earlier revision that statfs'd the socket path got
+ENOENT back, produced no opinion, and therefore produced the OLD misclassification in production
+while every path-blind fake-based test stayed green. The containing tmpfs is the resource that
+refused, and that is the mount the record now names.
+
+On Windows the address is a named pipe, not a filesystem path; every probe on it fails and the helper
+degrades to the original sentence, which is the card's sanctioned behaviour for that branch.
+*/
+export function guardCreationError(
+  err: unknown,
+  projectId: string,
+  reason: "lockfile" | "socket",
+  targetPath: string,
+  deps: TempFsDiagnosticDeps = {},
+): Error {
+  const annotated = annotateEnospcError(err, targetPath, deps);
+  if (annotated === err) {
+    return new EngineAlreadyRunningError(projectId, reason, err);
+  }
+  return new EngineStartupEnvironmentError(projectId, reason, annotated);
 }
 
 async function ensureLockTargetExists(lockPath: string): Promise<void> {
@@ -190,12 +258,12 @@ export async function acquireEngineSingleton(
     try {
       lock = await acquireLockfile(workingDir, onCompromised);
     } catch (err) {
-      throw new EngineAlreadyRunningError(projectId, "lockfile", err);
+      throw guardCreationError(err, projectId, "lockfile", workingDir);
     }
     try {
       server = await bindLoopback(socketPath);
     } catch (err) {
-      throw new EngineAlreadyRunningError(projectId, "socket", err);
+      throw guardCreationError(err, projectId, "socket", socketPath);
     }
   } catch (err) {
     if (server) {

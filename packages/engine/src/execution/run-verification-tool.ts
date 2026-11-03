@@ -18,8 +18,9 @@
  * without a full agent session.
  */
 
-import { applyNonInteractiveGitEnv, superviseSpawn, type SupervisedChild } from "@fusion/core";
+import { applyNonInteractiveGitEnv, superviseSpawn, isEnospcFailureText, tempFsClassSuffix, type TempFsDiagnosticDeps, type SupervisedChild } from "@fusion/core";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import type { SandboxBackend, SandboxPolicy, SandboxStreamingResult } from "../sandbox/types.js";
@@ -576,6 +577,33 @@ function prioritizeTerminalFailureLines(lines: string[]): string[] {
   ];
 }
 
+/*
+FNXC:TempFsDiagnostics 2026-11-03-08:11 (RUFU-397):
+A verification spawn that cannot create its sandbox temp dir reports `Spawn error: ENOSPC: no space
+left on device`, and the third-party tool that actually dies reports the same words mid-capture. Both
+read as "the machine is out of disk" while `df -h` showed 56 G free, because the real exhaustion was
+the tmpfs inode table (0 of 1048576 inodes free) — bytes and inodes are different resource pools that
+both surface as errno 28.
+
+Detection runs over the WHOLE capture (spawn warnings + stderr + stdout), not over the recorded
+summary: that summary is compaction-bounded and its line selection may legitimately drop the ENOSPC
+line, which would silently lose the class. The probe runs at most once per recorded failure, only
+after text detection says this is an ENOSPC failure, and only against `os.tmpdir()` — the device every
+spawn sandbox is created on.
+
+Deliberately NOT an obstacle reclassification: the tool response text is this lane's only failure
+record, and the honest-blocked classifier keys on the `ENOSPC` token, which stays present either way.
+*/
+export function verificationTempFsSuffix(
+  result: { stdout: string; stderr: string; warnings: string[] },
+  extraWarnings: string[],
+  deps: TempFsDiagnosticDeps = {},
+): string {
+  const capture = [...result.warnings, ...extraWarnings, result.stderr, result.stdout].join("\n");
+  if (!isEnospcFailureText(capture)) return "";
+  return tempFsClassSuffix(tmpdir(), deps);
+}
+
 /**
  * FNXC:Verification 2026-07-26-14:29:
  * Green verification output stays quiet unless it reports a failure or proves that no work ran; those signals must remain visible so agents do not complete tasks on a vacuous success.
@@ -978,6 +1006,16 @@ export interface CreateRunVerificationToolOpts {
    */
   resourceBound?: VerificationResourceBoundConfig;
   auditHost?: RunAuditSinkHost;
+  /*
+  FNXC:TempFsDiagnostics 2026-11-03-08:52 (RUFU-397 code-review remediation):
+  Seam for the temp-fs probe used when a recorded failure is annotated with its capacity class.
+  Production passes nothing and gets the real `statfs` reading of `os.tmpdir()`; a test that must
+  prove the class reaches the ASSEMBLED tool response — not just the helper — injects the fake here.
+  Without this seam the wiring at the `Failure summary:` assembly site is untested, and a refactor
+  that dropped the call (or handed it only `result.stderr`, losing the `Spawn error:` warnings) would
+  keep the whole suite green while the operator-facing record silently lost the class.
+  */
+  tempFsDeps?: TempFsDiagnosticDeps;
   taskId: string;
   /** Called on every output line AND on synthetic quiet-interval heartbeats. */
   recordActivity: () => void;
@@ -1023,6 +1061,7 @@ export function createRunVerificationTool(
     verificationCommandTimeoutMs,
     resourceBound,
     auditHost,
+    tempFsDeps,
     onVerificationStart,
     onVerificationEnd,
     log,
@@ -1212,7 +1251,7 @@ export function createRunVerificationTool(
       const hasFailureOutput = result.exitCode !== 0 || result.timedOut;
       if (hasFailureOutput) {
         lines.push(
-          `\nFailure summary:\n${summarizeVerificationFailureOutput(result.stdout, result.stderr)}`,
+          `\nFailure summary:\n${summarizeVerificationFailureOutput(result.stdout, result.stderr)}${verificationTempFsSuffix(result, allWarnings, tempFsDeps)}`,
         );
       } else {
         const successWarnings = summarizeSuccessfulVerificationWarnings(result.stdout, result.stderr);
