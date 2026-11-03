@@ -22,6 +22,8 @@ RUFU-231 bounded-budget accounting for the executor's sticky branch-conflict par
 */
 import {
   branchConflictRecoveryCounterPatch,
+  branchConflictRecoveryCounterShouldWrite,
+  branchConflictRecoveryParkAlreadyApplied,
   buildBranchConflictRecoveryParkPatch,
   branchConflictDispatchEvidenceCounts,
   conflictAttributionBase,
@@ -323,18 +325,31 @@ export async function handleBranchConflict(
   re-offering "retry"; the retained checkout stays inspectable (park is separated from lease
   release). Successful force-cleanup returns before this point and consumes no budget.
   */
+  /*
+  FNXC:BranchConflictRecovery 2026-11-02-23:50 (RUFU-432):
+  This site kept RUFU-231's terminal short-circuit (a terminal pass must not re-offer "retry"), but the
+  short-circuit used to author the park on EVERY pass after the budget was spent — re-writing the counter
+  the park itself carried, and re-stamping the row clock the heartbeat reads as liveness. A pass that
+  finds its own park already applied now returns "sticky" having authored nothing. The predicate reads the
+  LIVE row rather than the run's snapshot, because the case that matters is a card parked by an EARLIER
+  dispatch whose snapshot this run may hold pre-park.
+  */
   const recoveryPass = planBranchConflictRecoveryPass(task, settings.autoRecovery);
+  const liveForPark = await deps.store.getTask(task.id).catch(() => null) ?? task;
+  const parkAlreadyApplied = branchConflictRecoveryParkAlreadyApplied(liveForPark, settings.autoRecovery);
   if (recoveryPass.counted && recoveryPass.terminal) {
-    await deps.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, error.startPoint, conflictMessage));
-    await emitBranchConflictRecoveryParkAudit({
-      store: deps.store,
-      agentId: "executor",
-      runId: deps.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("executor-branch-conflict-park", task.id),
-      task,
-      pass: recoveryPass,
-      source: "executor-conflict",
-    });
-    await deps.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: parked terminal after ${recoveryPass.attempt} bounded passes (checkout retained)`, undefined, deps.getRunContextFor(task.id));
+    if (!parkAlreadyApplied) {
+      await deps.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, error.startPoint, conflictMessage));
+      await emitBranchConflictRecoveryParkAudit({
+        store: deps.store,
+        agentId: "executor",
+        runId: deps.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("executor-branch-conflict-park", task.id),
+        task,
+        pass: recoveryPass,
+        source: "executor-conflict",
+      });
+      await deps.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: parked terminal after ${recoveryPass.attempt} bounded passes (checkout retained)`, undefined, deps.getRunContextFor(task.id));
+    }
     return "sticky";
   }
   const autoRecoveryDispatcher = deps.getAutoRecoveryDispatcher(deps.createRunAuditor(deps.getRunContextFor(task.id)));
@@ -398,16 +413,18 @@ export async function handleBranchConflict(
   and is reseeded above.
   */
   if (decision.rationale === "destructive-ambiguity") {
-    await deps.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, error.startPoint, conflictMessage));
-    await emitBranchConflictRecoveryParkAudit({
-      store: deps.store,
-      agentId: "executor",
-      runId: deps.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("executor-branch-conflict-park", task.id),
-      task,
-      pass: recoveryPass,
-      source: "executor-conflict",
-    });
-    await deps.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: ${decision.rationale} — parked terminal (checkout retained)`, undefined, deps.getRunContextFor(task.id));
+    if (!parkAlreadyApplied) {
+      await deps.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, error.startPoint, conflictMessage));
+      await emitBranchConflictRecoveryParkAudit({
+        store: deps.store,
+        agentId: "executor",
+        runId: deps.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("executor-branch-conflict-park", task.id),
+        task,
+        pass: recoveryPass,
+        source: "executor-conflict",
+      });
+      await deps.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: ${decision.rationale} — parked terminal (checkout retained)`, undefined, deps.getRunContextFor(task.id));
+    }
     return "sticky";
   }
 
@@ -469,7 +486,13 @@ export async function handleBranchConflict(
     }
   }
 
-  if (recoveryPass.counted) {
+  /*
+  FNXC:BranchConflictRecovery 2026-11-02-23:22 (RUFU-432):
+  The shared write guard, not `recoveryPass.counted`: a pass whose counter value does not change must
+  not reach `updateTask` at all, because the write itself re-stamps `updated_at` — the row clock the
+  heartbeat reads as recovery liveness.
+  */
+  if (branchConflictRecoveryCounterShouldWrite(recoveryPass)) {
     await deps.store.updateTask(task.id, branchConflictRecoveryCounterPatch(recoveryPass));
   }
 

@@ -3,6 +3,14 @@ import type { TaskStore } from "../store.js";
 
 export const IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON = "in-review-stall-deadlock";
 export const BRANCH_CONFLICT_UNRECOVERABLE_PAUSE_REASON = "branch-conflict-unrecoverable";
+/*
+FNXC:BranchConflictRecovery 2026-11-02-22:10 (RUFU-432):
+The pause reason the branch-conflict recovery's TERMINAL park writes (`buildBranchConflictRecoveryParkPatch`
+in `packages/engine/src/recovery/branch-conflict-recovery-accounting.ts`, which imports this constant so the
+literal has exactly one spelling across the two packages). It joins the Retry allowlist below because the
+park's own remedy sentence names Retry as its door — see the note on `buildAutoPauseClearPatch`.
+*/
+export const BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON = "branch-conflict-recovery-exhausted";
 
 export const MANUAL_RETRY_RESET_COUNTER_KEYS = [
   "stuckKillCount",
@@ -31,12 +39,28 @@ export const MANUAL_RETRY_RESET_COUNTER_KEYS = [
 export function buildAutoPauseClearPatch(
   task: Pick<Task, "paused" | "userPaused" | "pausedReason">,
 ): Partial<Task> {
+  /*
+  FNXC:BranchConflictRecovery 2026-11-02-22:12 (RUFU-432):
+  `branch-conflict-recovery-exhausted` joins this allowlist. It was missing, and the missing entry made
+  the park self-contradictory three ways at once: a plain `fn task retry` / `POST /tasks/:id/retry` reset
+  the counters and left `paused: true` with the exhausted reason in place, so (a) the remedy text named a
+  door the engine refused to walk through, (b) the card needed a second Retry to actually restart, and
+  (c) while the pause stood, the park retained `branch`/`worktree` — a dormant file-scope lease on every
+  peer card that touches the same branch.
+
+  The clear is safe by the same argument the two existing entries already rest on: this is a recovery
+  park the ENGINE authored (an engine-owned disposition, like `in-review-stall-deadlock`), not an operator
+  hold, so `userPaused === true` is checked FIRST and an operator's pause is never lifted here. It is also
+  what makes the engine's applied-park suppression revocable: `branchConflictRecoveryParkAlreadyApplied`
+  stops holding once the counter is zeroed, and this clear is the door the operator actually presses.
+  */
   if (
     task.paused === true
     && task.userPaused !== true
     && (
       task.pausedReason === IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON
       || task.pausedReason === BRANCH_CONFLICT_UNRECOVERABLE_PAUSE_REASON
+      || task.pausedReason === BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON
     )
   ) {
     return {

@@ -1494,6 +1494,7 @@ export {
   normalizeTitleForTaskId,
 } from "./tasks/task-title-id-drift.js";
 export {
+  BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON,
   IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
   MANUAL_RETRY_RESET_COUNTER_KEYS,
   buildAutoPauseClearPatch,

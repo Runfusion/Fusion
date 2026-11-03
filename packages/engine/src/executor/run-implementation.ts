@@ -217,6 +217,7 @@ authority as the sweep/executor refusal parks — persisted `recoveryRetryCount`
 operator-facing named remedy instead of a raw error echo.
 */
 import {
+  branchConflictRecoveryParkAlreadyApplied,
   buildBranchConflictRecoveryParkPatch,
   emitBranchConflictRecoveryParkAudit,
   planBranchConflictRecoveryPass,
@@ -4143,9 +4144,21 @@ export async function runImplementation(
               `handleBranchConflict` passes already advanced the counter on the row, so re-plan
               from the FRESH row) and the named operator remedy instead of the raw error echo.
               Zero git mutation, checkout fields untouched.
+
+              FNXC:BranchConflictRecovery 2026-11-02-23:55 (RUFU-432):
+              This park re-entered the same way the sweep's did — the in-session loop can hand back a
+              card an EARLIER dispatch already parked, and the fresh-row read that RUFU-231 added for
+              budget accuracy is exactly the row the applied-park predicate needs. A re-encounter
+              authors no park, no audit row and no counter: the in-session exhaustion is the same park
+              the sweep would re-author, and one park must stay one write.
               */
               const freshTask = (await deps.store.getTask(task.id).catch(() => null)) ?? task;
-              const exhaustionPass = planBranchConflictRecoveryPass(freshTask, (await deps.store.getSettings()).autoRecovery);
+              const exhaustionSettings = (await deps.store.getSettings()).autoRecovery;
+              if (branchConflictRecoveryParkAlreadyApplied(freshTask, exhaustionSettings)) {
+                executorLog.debug(`In-session branch-conflict exhaustion park already applied for ${task.id} — refusing without writing`);
+                return;
+              }
+              const exhaustionPass = planBranchConflictRecoveryPass(freshTask, exhaustionSettings);
               await deps.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(
                 exhaustionPass,
                 err.startPoint,

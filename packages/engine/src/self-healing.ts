@@ -363,11 +363,15 @@ PR catch, sweep self-owned catch, dirty-checkout hold, already-merged rejection)
 */
 import {
   branchConflictRecoveryCounterPatch,
+  branchConflictRecoveryCounterShouldWrite,
+  branchConflictRecoveryParkAlreadyApplied,
+  branchConflictRefusalHistoryDedupeKey,
   buildBranchConflictRecoveryParkPatch,
   branchConflictDispatchEvidenceCounts,
   conflictAttributionBase,
   emitBranchConflictRecoveryParkAudit,
   planBranchConflictRecoveryPass,
+  recordBranchConflictRefusalHistory,
 } from "./recovery/branch-conflict-recovery-accounting.js";
 import {
   buildNtfyClickUrl,
@@ -3328,7 +3332,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
 
   private async rejectForeignAlreadyMergedCandidate(input: {
-    task: Pick<Task, "id" | "lineageId" | "recoveryRetryCount">;
+    task: Pick<Task, "id" | "lineageId" | "recoveryRetryCount" | "paused" | "pausedReason">;
     candidateSha: string;
     candidateOwner?: string;
     taskBranch?: string | null;
@@ -3353,10 +3357,34 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     FNXC:WorkflowRecovery 2026-06-29-00:15:
     Ownership lookup failures are also unsafe evidence. Record them through the same rejection audit path with `ownership-unverifiable` so transient git-show/rev-parse failures cannot proceed into reclaim or auto-finalize as if the tip were verified non-foreign.
     */
-    await this.store.logEntry(
-      task.id,
-      `[recovery] already-merged rejected ${task.id} candidate=${candidateSha.slice(0, 12)} owner=${candidateOwner ?? "unknown"} branch=${taskBranch ?? "?"} base=${baseBranch} reason=${reason}`,
-    );
+    /*
+    FNXC:BranchConflictRecovery 2026-11-02-23:05 (RUFU-432):
+    The refusal note used to be authored unconditionally here, ahead of the budget block, so a card
+    parked behind one persistent refusal accumulated an identical History line on every sweep pass —
+    the same pathology RUFU-312 removed for the review-dispatch sweep, reached by a different lane.
+    It now goes through the shared windowed helper, and `parkApplied` (the live row's verdict, read
+    below) suppresses it entirely for a re-encounter of a park this recovery already authored. The
+    refusal itself is NOT loosened: the audit row below still fires per pass, and a counted
+    non-terminal pass still advances the budget by exactly 1.
+    */
+    const rejectSettings = await this.store.getSettings().catch(() => undefined);
+    const rejectPass = planBranchConflictRecoveryPass(task, rejectSettings?.autoRecovery);
+    const refusalDetail = `already-merged rejected ${task.id} candidate=${candidateSha.slice(0, 12)} owner=${candidateOwner ?? "unknown"} branch=${taskBranch ?? "?"} base=${baseBranch} reason=${reason}`;
+    /*
+    FNXC:BranchConflictRecovery 2026-11-02-23:10 (RUFU-432):
+    The applied-park verdict is read from the LIVE row, never from the caller's snapshot: a caller
+    that collected this card before its own earlier pass parked it would otherwise hand this helper
+    a pre-park row and author the park a second time. A failed read is treated as "not applied", so
+    the refusal keeps its shipped behaviour instead of silently vanishing.
+    */
+    const liveTask = await this.store.getTask(task.id).catch(() => null);
+    const parkApplied = branchConflictRecoveryParkAlreadyApplied(liveTask ?? task, rejectSettings?.autoRecovery);
+    await recordBranchConflictRefusalHistory(this.store, {
+      taskId: task.id,
+      message: `[recovery] ${refusalDetail}`,
+      dedupeKey: branchConflictRefusalHistoryDedupeKey({ taskId: task.id, reason, candidateSha }),
+      parkApplied,
+    });
     try {
       await emitBoundedRunAudit(this.store, {
         taskId: task.id,
@@ -3385,10 +3413,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     checkout retained for inspection) after `autoRecovery.maxRetries` bounded rejections instead
     of re-logging the refusal pair forever. A manual retry resets the budget through
     MANUAL_RETRY_RESET_COUNTER_KEYS.
+
+    FNXC:BranchConflictRecovery 2026-11-02-23:12 (RUFU-432):
+    Two arms of this block learned to recognise an applied park. The terminal arm skips the park
+    write, the park audit row and the exhaustion History line together — a re-encounter of the park
+    it already authored must leave `updated_at` untouched, because the heartbeat's liveness read is
+    the row clock and a card that re-stamps it every pass looks like a recovery that is working.
+    The counted arm writes only when the shared guard says the counter changes; an empty patch sent
+    through `updateTask` was itself a mutation.
     */
-    const rejectSettings = await this.store.getSettings();
-    const rejectPass = planBranchConflictRecoveryPass(task, rejectSettings.autoRecovery);
     if (countRecoveryBudget && rejectPass.counted && rejectPass.terminal) {
+      if (parkApplied) {
+        log.debug(`Already-merged rejection park already applied for ${task.id} — refusing without writing`);
+        return;
+      }
       await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(
         rejectPass,
         baseBranch,
@@ -3403,11 +3441,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         source: "foreign-tip-reject",
       });
       await this.store.logEntry(task.id, `[recovery] already-merged rejection budget exhausted ${task.id}: parked terminal after ${rejectPass.attempt} bounded rejections (${reason})`);
-    } else {
-      const counterPatch = branchConflictRecoveryCounterPatch(rejectPass);
-      if (countRecoveryBudget && rejectPass.counted) {
-        await this.store.updateTask(task.id, counterPatch);
-      }
+    } else if (countRecoveryBudget && branchConflictRecoveryCounterShouldWrite(rejectPass)) {
+      await this.store.updateTask(task.id, branchConflictRecoveryCounterPatch(rejectPass));
     }
   }
 
@@ -5345,7 +5380,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       two branches stay disjoint and both behaviours survive.
       */
       if (decision.rationale === "destructive-ambiguity") {
-        await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, undefined, message));
+        /*
+        FNXC:BranchConflictRecovery 2026-11-02-23:05 (RUFU-432):
+        The safety stop parks without a write guard today, so a card that stayed ambiguous across
+        passes re-authored the same park and re-stamped its own row clock every pass. A re-encounter
+        of an already-applied park now authors nothing at all — no task-row write, no park audit row,
+        no History append — while the refusal itself stays: the dispatcher still refused, the outcome
+        returned below is unchanged, and the card stays parked.
+        */
+        if (branchConflictRecoveryParkAlreadyApplied(task, recoverySettings.autoRecovery)) {
+          log.debug(`PR-reclaim destructive-ambiguity park already applied for ${task.id} — refusing without writing`);
+          return withPerPr({ outcome: "paused-unrecoverable", reason: "branch-conflict-recovery-exhausted" });
+        }
+        await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, undefined, `reclaim rationale destructive-ambiguity: ${message}`));
         await emitBranchConflictRecoveryParkAudit({
           store: this.store,
           agentId: "self-healing",
@@ -5391,7 +5438,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
           await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
         }
-      } else if (recoveryPass.counted) {
+      } else if (branchConflictRecoveryCounterShouldWrite(recoveryPass)) {
+        // No counter change to persist → no store call. An empty patch was still a write.
         await this.store.updateTask(task.id, branchConflictRecoveryCounterPatch(recoveryPass));
       }
       if (decision.action === "pause") {
@@ -5960,29 +6008,43 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   budget. Persistent capture failure parks terminal (checkout retained, operator
                   remedy named in the error) instead of head-of-line blocking peers forever behind
                   the held lease.
+
+                  FNXC:BranchConflictRecovery 2026-11-02-23:20 (RUFU-432):
+                  Both arms now recognise an applied park / a no-op pass. This hold is the site that
+                  inflated its own budget fastest: it re-enters every sweep on a card already parked
+                  with `recoveryRetryCount` written by the park, so the stored counter climbed one per
+                  pass (measured 19 against a declared budget of 3) and every climb re-stamped
+                  `updated_at`, which is the row clock the heartbeat reads as recovery liveness. The
+                  park no longer carries a counter at all, and a re-encounter writes nothing — so the
+                  counter stops, the row clock stops, and the release doors (`stale`, `stale-resolved`,
+                  the never-delivered rescue, the ghost reclaim) stay reachable because they run BEFORE
+                  this arm, not behind it.
                   */
                   const holdSettings = await this.store.getSettings();
                   const holdPass = planBranchConflictRecoveryPass(task, holdSettings.autoRecovery);
+                  const holdParkApplied = branchConflictRecoveryParkAlreadyApplied(task, holdSettings.autoRecovery);
                   if (holdPass.counted && holdPass.terminal) {
-                    await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(
-                      holdPass,
-                      inspection.integrationRef ?? integrationBranch,
-                      "checkout stayed dirty for a branch landed only on the remote-tracking integration identity, and the pre-release change capture failed.",
-                    ));
-                    await emitBranchConflictRecoveryParkAudit({
-                      store: this.store,
-                      agentId: "self-healing",
-                      runId: generateSyntheticRunId("branch-conflict-recovery-park", task.id),
-                      task,
-                      pass: holdPass,
-                      source: "dirty-checkout-hold",
-                    });
-                    await this.store.logEntry(task.id, `[recovery] tip-already-merged ${task.id} parked terminal: branch-conflict recovery exhausted after ${holdPass.attempt} bounded passes (checkout retained)`);
-                  } else {
-                    const counterPatch = branchConflictRecoveryCounterPatch(holdPass);
-                    if (holdPass.counted) {
-                      await this.store.updateTask(task.id, counterPatch);
+                    if (holdParkApplied) {
+                      log.debug(`Dirty-checkout hold park already applied for ${task.id} — holding without writing`);
+                    } else {
+                      await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(
+                        holdPass,
+                        inspection.integrationRef ?? integrationBranch,
+                        // R4-F1: name the delivery verdict the park is standing on, not just the symptom.
+                        `delivery verdict ${inspection.kind}: checkout stayed dirty for a branch landed only on the remote-tracking integration identity, and the pre-release change capture failed.`,
+                      ));
+                      await emitBranchConflictRecoveryParkAudit({
+                        store: this.store,
+                        agentId: "self-healing",
+                        runId: generateSyntheticRunId("branch-conflict-recovery-park", task.id),
+                        task,
+                        pass: holdPass,
+                        source: "dirty-checkout-hold",
+                      });
+                      await this.store.logEntry(task.id, `[recovery] tip-already-merged ${task.id} parked terminal: branch-conflict recovery exhausted after ${holdPass.attempt} bounded passes (checkout retained)`);
                     }
+                  } else if (branchConflictRecoveryCounterShouldWrite(holdPass)) {
+                    await this.store.updateTask(task.id, branchConflictRecoveryCounterPatch(holdPass));
                   }
                   continue;
                 }
@@ -6478,17 +6540,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           */
           const recoverySettings = await this.store.getSettings();
           const recoveryPass = planBranchConflictRecoveryPass(task, recoverySettings.autoRecovery);
+          /*
+          FNXC:BranchConflictRecovery 2026-11-02-23:35 (RUFU-432):
+          This short-circuit is the shape that made the loop look alive: it fired on EVERY pass once
+          the budget was spent, re-writing the park patch that itself carried `recoveryRetryCount: attempt`,
+          so the stored counter climbed past its own declared budget (26 against 3), the reported
+          attempt grew with it, and each pass re-stamped `updated_at` — the row clock the heartbeat reads
+          as recovery liveness. The short-circuit stays (a terminal pass must not re-dispatch), but a pass
+          that finds its own park already applied authors nothing. The release doors are NOT behind it:
+          `stale`, `stale-resolved`, the `tip-already-merged` never-delivered rescue and the ghost-pointer
+          reclaim all run inside the `try` above, so a parked card is still re-inspected every pass and a
+          real rescue still lands.
+          */
+          const parkAlreadyApplied = branchConflictRecoveryParkAlreadyApplied(task, recoverySettings.autoRecovery);
           if (recoveryPass.counted && recoveryPass.terminal) {
-            await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, integrationBranch, message));
-            await emitBranchConflictRecoveryParkAudit({
-              store: this.store,
-              agentId: "self-healing",
-              runId: generateSyntheticRunId("branch-conflict-recovery-park", task.id),
-              task,
-              pass: recoveryPass,
-              source: "self-owned-reclaim",
-            });
-            await this.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: parked terminal after ${recoveryPass.attempt} bounded passes (checkout retained)`);
+            if (!parkAlreadyApplied) {
+              await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(
+                recoveryPass,
+                integrationBranch,
+                `reclaim verdict ${classification.class}: ${message}`,
+              ));
+              await emitBranchConflictRecoveryParkAudit({
+                store: this.store,
+                agentId: "self-healing",
+                runId: generateSyntheticRunId("branch-conflict-recovery-park", task.id),
+                task,
+                pass: recoveryPass,
+                source: "self-owned-reclaim",
+              });
+              await this.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: parked terminal after ${recoveryPass.attempt} bounded passes (checkout retained)`);
+            } else {
+              log.debug(`Self-owned reclaim park already applied for ${task.id} — refusing without writing`);
+            }
             continue;
           }
           const decision = await recoveryDispatcher.dispatch({
@@ -6528,16 +6611,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           two branches stay disjoint and both behaviours survive.
           */
           if (decision.rationale === "destructive-ambiguity") {
-            await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, integrationBranch, message));
-            await emitBranchConflictRecoveryParkAudit({
-              store: this.store,
-              agentId: "self-healing",
-              runId: generateSyntheticRunId("branch-conflict-recovery-park", task.id),
-              task,
-              pass: recoveryPass,
-              source: "self-owned-reclaim",
-            });
-            await this.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: ${decision.rationale} — parked terminal (checkout retained)`);
+            // RUFU-432: same no-op rule as the short-circuit above — a park already applied is not re-authored.
+            if (!parkAlreadyApplied) {
+              await this.store.updateTask(task.id, buildBranchConflictRecoveryParkPatch(recoveryPass, integrationBranch, `reclaim verdict ${classification.class}: ${message}`));
+              await emitBranchConflictRecoveryParkAudit({
+                store: this.store,
+                agentId: "self-healing",
+                runId: generateSyntheticRunId("branch-conflict-recovery-park", task.id),
+                task,
+                pass: recoveryPass,
+                source: "self-owned-reclaim",
+              });
+              await this.store.logEntry(task.id, `[recovery] branch-conflict recovery exhausted ${task.id}: ${decision.rationale} — parked terminal (checkout retained)`);
+            } else {
+              log.debug(`Self-owned reclaim destructive-ambiguity park already applied for ${task.id} — refusing without writing`);
+            }
             continue;
           }
           if (decision.action === "pause") {
@@ -6574,7 +6662,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               await this.handoffTaskToReview(task.id, "branch-conflict-unrecoverable-repromote");
               await this.store.logEntry(task.id, `Auto-recovery failed: branch conflict unrecoverable — ${message}`);
             }
-          } else if (recoveryPass.counted) {
+          } else if (branchConflictRecoveryCounterShouldWrite(recoveryPass)) {
+            // No counter change to persist → no store call (an empty patch was still a re-stamp).
             await this.store.updateTask(task.id, branchConflictRecoveryCounterPatch(recoveryPass));
           }
         }

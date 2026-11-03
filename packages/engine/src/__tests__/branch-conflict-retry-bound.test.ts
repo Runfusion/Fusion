@@ -60,6 +60,9 @@ vi.mock("../project/effective-settings.js", () => ({
 
 const BRANCH = "fusion/rufu-231";
 const WORKTREE = "/wt/rufu-231";
+/** Fixed epoch for the fake's row clock, so stamps are deterministic and strictly increasing. */
+const BASE_TS = 1_700_000_000_000;
+let writeTicks = 0;
 
 function conflictError(): BranchConflictError {
   return new BranchConflictError({
@@ -82,27 +85,46 @@ function wedgedTask(recoveryRetryCount?: number): Task {
     worktree: WORKTREE,
     baseBranch: "main",
     recoveryRetryCount,
+    updatedAt: new Date(BASE_TS).toISOString(),
   } as Task;
 }
 
-/** Store fake that APPLIES patches to the live task object, like the real store does. */
+/**
+ * Store fake that APPLIES patches to the live task object, like the real store does.
+ *
+ * FNXC:BranchConflictRecovery 2026-11-02-22:45 (RUFU-432) — HARNESS FIDELITY:
+ * The real `updateTask` re-stamps `updated_at` on every write, and "a re-encounter of an applied park
+ * leaves the row clock alone" is one of the invariants this file now asserts. A double that applied
+ * patches without the stamp would make every `updatedAt` assertion here pass vacuously — it would
+ * prove the absence of a stamp the fake never performed. So the update seam stamps, and the History
+ * seam deliberately does not (it writes a log row, not the task row). The stamping behaviour is
+ * itself asserted in `branch-conflict-recovery-harness-fidelity.test.ts`-shape below.
+ */
 function createStore(task: Task) {
   const patches: Array<Partial<Task>> = [];
   const auditEvents: Array<Record<string, unknown>> = [];
+  const history: string[] = [];
   const store = {
     getSettings: vi.fn(async () => ({})),
     getTask: vi.fn(async () => task),
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
       patches.push(patch);
       Object.assign(task, patch);
+      // The real store re-stamps the row clock on every write; the fake must too, or a
+      // "the row clock stayed put" assertion proves nothing. Monotonic per write so two writes
+      // inside one millisecond stay distinguishable.
+      writeTicks += 1;
+      task.updatedAt = new Date(BASE_TS + writeTicks * 1_000).toISOString();
     }),
-    logEntry: vi.fn(async () => {}),
+    logEntry: vi.fn(async (_id: string, action: string) => {
+      history.push(action);
+    }),
     appendAgentLog: vi.fn(async () => {}),
     recordRunAuditEvent: vi.fn(async (input: Record<string, unknown>) => {
       auditEvents.push(input);
     }),
   };
-  return { store: store as unknown as TaskStore, patches, auditEvents };
+  return { store: store as unknown as TaskStore, patches, auditEvents, history };
 }
 
 function makeDeps(store: TaskStore, task: Task, dispatch = vi.fn(async (_req: any, _ctx: any) => ({ action: "retry" as const }))) {
@@ -151,15 +173,28 @@ describe("RUFU-231 executor branch-conflict retry bound", () => {
     expect(task.paused).toBe(true);
     expect(task.pausedReason).toBe("branch-conflict-recovery-exhausted");
     expect(task.status).toBe("failed");
-    expect(task.recoveryRetryCount).toBe(3);
+    /*
+    FNXC:BranchConflictRecovery 2026-11-02-22:50 (RUFU-432) — CONTRACT CHANGE from the old assertion:
+    This line used to read `expect(task.recoveryRetryCount).toBe(3)`, i.e. it asserted the terminal park
+    ADVANCES the counter. That was the bug: the park wrote `recoveryRetryCount: pass.attempt`, so every
+    re-admitted pass read its own park value, incremented it and wrote it back — the budget outran its own
+    declaration (26 against 3) and each write re-stamped `updated_at`. The new truth: the park persists no
+    counter, so the stored value freezes at the last counted pass (2) while the REPORTED attempt (the audit
+    row, the remedy sentence) stays `maxRetries + 1`.
+    */
+    expect(task.recoveryRetryCount).toBe(2);
     // The remedy names the integration branch and at least one recovery door.
     expect(task.error).toContain("main");
     expect(task.error).toMatch(/retry|todo/i);
-    // Park is separated from lease release: the patch never touches the retained checkout.
+    // The remedy no longer claims the false suppression it used to promise.
+    expect(task.error).not.toMatch(/automatic reclaim passes stay suppressed/);
+    // Park is separated from lease release: the patch never touches the retained checkout,
+    // and it never touches the budget either.
     const parkPatch = patches.at(-1) as Partial<Task>;
     expect(parkPatch).not.toHaveProperty("worktree");
     expect(parkPatch).not.toHaveProperty("branch");
     expect(parkPatch).not.toHaveProperty("baseCommitSha");
+    expect(parkPatch).not.toHaveProperty("recoveryRetryCount");
     expect(task.worktree).toBe(WORKTREE);
     expect(task.branch).toBe(BRANCH);
     // Audit row recorded through the bounded seam with fixed metadata.

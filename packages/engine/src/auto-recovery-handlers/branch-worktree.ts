@@ -17,7 +17,7 @@ RUFU-231: every branch-conflict pause — including this handler's irreducible p
 advance the persisted `recoveryRetryCount`, or the dispatcher's `retryCount >= maxRetries`
 budget (Mission defect 4) can never reach exhaustion and the refusal loops unbounded.
 */
-import { branchConflictRecoveryCounterPatch, planBranchConflictRecoveryPass } from "../recovery/branch-conflict-recovery-accounting.js";
+import { branchConflictRecoveryCounterPatch, branchConflictRecoveryCounterShouldWrite, branchConflictRecoveryParkAlreadyApplied, planBranchConflictRecoveryPass } from "../recovery/branch-conflict-recovery-accounting.js";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../healing/auto-recovery.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
@@ -344,9 +344,17 @@ export class BranchWorktreeAutoRecoveryHandler {
     RUFU-231: persist this pass on the card's bounded recovery budget (mode "off" opt-out
     respected) so repeated irreducible pauses advance toward the terminal park instead of
     re-offering recovery forever.
+
+    FNXC:BranchConflictRecovery 2026-11-02-23:58 (RUFU-432):
+    "Advance toward the terminal park" was implemented as "advance on every pass", which is an
+    unbounded counter writer — the exact shape RUFU-432 removes. This handler is the shipped instance:
+    an irreducible pause re-offered each pass wrote `attempt` (persisted + 1) forever, so a card that
+    could never be recovered climbed past `maxRetries` without limit and re-stamped its row clock each
+    time. It now advances only while the budget still has room, and writes nothing at all once the
+    park is applied.
     */
     const pass = planBranchConflictRecoveryPass(task, ctx.settings);
-    if (pass.counted) {
+    if (branchConflictRecoveryCounterShouldWrite(pass) && !branchConflictRecoveryParkAlreadyApplied(task, ctx.settings)) {
       await this.deps.taskStore.updateTask(task.id, branchConflictRecoveryCounterPatch(pass)).catch(() => undefined);
     }
     await this.deps.runAudit.database({

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON,
   IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON,
   MANUAL_RETRY_RESET_COUNTER_KEYS,
   buildAutoPauseClearPatch,
@@ -39,6 +40,52 @@ describe("buildAutoPauseClearPatch", () => {
       paused: false,
       pausedReason: null,
     });
+  });
+
+  /*
+  FNXC:BranchConflictRecovery 2026-11-02-23:20 (RUFU-432):
+  The terminal branch-conflict recovery park named Retry as its remedy while `buildAutoPauseClearPatch`
+  refused to lift its reason, so a plain `fn task retry` reset the counters and left the card parked —
+  the operator pressed the door the sentence pointed at and a second Retry was needed to actually move.
+  These two cases pin the lift and the limit of the lift.
+  */
+  it("clears the terminal branch-conflict recovery park for a fresh retry", () => {
+    expect(buildAutoPauseClearPatch({
+      paused: true,
+      userPaused: undefined,
+      pausedReason: BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON,
+    })).toEqual({
+      paused: false,
+      pausedReason: null,
+    });
+  });
+
+  it("still refuses to lift an operator pause that happens to carry the recovery-exhausted reason", () => {
+    // The recovery park is an engine disposition; an operator hold is not, and the allowlist must
+    // never become a way for an automatic Retry to overrule a human.
+    expect(buildAutoPauseClearPatch({
+      paused: true,
+      userPaused: true,
+      pausedReason: BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON,
+    })).toEqual({});
+  });
+
+  it("lifts the recovery park through the plain Retry patch, in the shape every Retry surface spreads", () => {
+    const live = {
+      paused: true,
+      userPaused: undefined,
+      pausedReason: BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON,
+      branch: "fusion/rufu-432",
+      worktree: "/wt/rufu-432",
+      status: "failed",
+      error: "Branch-conflict recovery exhausted",
+    };
+    const patch = buildManualRetryResetPatchIfCurrent(live as never, live as never, buildManualRetryResetPatch());
+    expect(patch).not.toBeNull();
+    expect(patch).toMatchObject({ paused: false, pausedReason: null });
+    // The budget the park spent is the budget the Retry zeroes — this pairing is what makes the
+    // engine's applied-park suppression revocable rather than permanent.
+    expect(patch).toHaveProperty("recoveryRetryCount", 0);
   });
 
   it("does not clear an unrelated automatic pause reason", () => {
