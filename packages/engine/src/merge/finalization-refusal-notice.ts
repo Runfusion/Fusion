@@ -41,10 +41,24 @@ const finalizationNotice = createRepeatSuppressedLog();
  */
 const SILENT_LOGGER: Logger = { log: () => {}, debug: () => {}, warn: () => {}, error: () => {} };
 
+/*
+FNXC:UnrunGateRefusalBounded 2026-11-03-16:08 (RUFU-655):
+The merge-gate arm of the unrun-gate re-seed restates its refusal on EVERY merge-lane pass, and RUFU-431's
+bounded-refusal sweep never covered it because that sweep gated only the surfaces sharing
+`recordFinalizationAudit`. Measured on this board 2026-11-03: one card (`RUFU-369`) produced 23
+`task:merge-unrun-pre-merge-gate-rerouted` rows in 12 minutes — one every ~30 s — all of them the identical
+`reason: "active-continuation"` refusal, because the card's own review attempt was still parked in
+`running` while the merge door kept re-evaluating it. Other cards carry the same shape at scale in 24 h:
+`RUFU-386` 57 rows, `RUFU-397` 25, `RUFU-450` 22, `RUFU-439` 17, `RUFU-451` 16. Each row also costs a merge
+queue cycle and a write, and it buries the sibling `seeded`/`verdictless-seeded` rows that are actual state
+changes. Same decision rule as RUFU-431: a refusal is a STATE, so it is recorded on the transition into it.
+*/
+
 /** Audit-mutation types that restate a refusal with no state change, and are therefore bounded. */
 const BOUNDED_REFUSAL_TYPES: ReadonlySet<string> = new Set([
   "task:auto-merge-finalize-column-mismatch-no-action",
   "task:auto-merge-finalize-post-merge-gate-unreachable",
+  "task:merge-unrun-pre-merge-gate-rerouted",
 ]);
 
 /** True when `type` restates a refusal rather than recording a state change. */
@@ -65,6 +79,35 @@ export function shouldRecordFinalizationRefusal(taskId: string, type: string, re
     `audit|${taskId}|${type}`,
     reason,
     "",
+  );
+}
+
+/** The merge-gate re-seed arm that restates its refusal per merge-lane pass. */
+export const UNRUN_PRE_MERGE_GATE_REROUTE_TYPE = "task:merge-unrun-pre-merge-gate-rerouted";
+
+/**
+ * Decide whether the merge-gate unrun-gate re-seed writes its audit row for this pass.
+ *
+ * A seed that actually re-armed the gate is always news — it changed the card. A refusal is only news when
+ * the reason, the named gate, or the required-gate count changes, because each of those is a different
+ * state the operator would read differently. `workflowStepId` and `requiredGateCount` ride in the signature
+ * deliberately: a refusal that moved from `code-review` to `post-merge-verification`, or that gained a second
+ * missing gate, is not the same refusal.
+ *
+ * @returns `false` only for a verbatim restatement of the refusal already recorded for this card.
+ */
+export function shouldEmitUnrunPreMergeGateNotice(outcome: {
+  taskId: string;
+  rerouted: boolean;
+  reason: string;
+  workflowStepId?: string;
+  requiredGateCount: number;
+}): boolean {
+  if (outcome.rerouted) return true;
+  return shouldRecordFinalizationRefusal(
+    outcome.taskId,
+    UNRUN_PRE_MERGE_GATE_REROUTE_TYPE,
+    `${outcome.reason}:${outcome.workflowStepId ?? "none"}:${outcome.requiredGateCount}`,
   );
 }
 
