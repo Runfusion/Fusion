@@ -283,9 +283,36 @@ describe("resumeMissingPostMergeGate", () => {
     const projectOff = fakeStore();
     (projectOff.store as unknown as { getSettings: () => Promise<Record<string, unknown>> }).getSettings
       = async () => ({ autoMerge: false });
+    /*
+    FNXC:PostMergeReseedRefusalNaming 2026-11-04-00:54 (RUFU-873):
+    This assertion used to read `.toBe("engine-paused")` for a board whose only condition was auto-merge Off,
+    which is what an operator then had to chase: the audit row named a pause that did not exist. The arm is now
+    pinned to the condition that withheld it, and the other two withholdings in the same compound are pinned
+    beside it so the three cannot collapse back into one label. Withholding itself is unchanged: every case
+    below still seeds nothing.
+    */
     expect((await resumeMissingPostMergeGate(projectOff.store, task(), { source: "self-healing", contract: undefined })).reason)
-      .toBe("engine-paused");
+      .toBe("auto-merge-off");
     expect(projectOff.calls.seed).toHaveLength(0);
+
+    const enginePaused = fakeStore();
+    (enginePaused.store as unknown as { getSettings: () => Promise<Record<string, unknown>> }).getSettings
+      = async () => ({ enginePaused: true });
+    expect((await resumeMissingPostMergeGate(enginePaused.store, task(), { source: "self-healing", contract: undefined })).reason)
+      .toBe("engine-paused");
+    expect(enginePaused.calls.seed).toHaveLength(0);
+
+    const manualPr = fakeStore();
+    const manualPrTask = task({ prInfo: { number: 1, status: "open", manual: true } as never } as never);
+    expect((await resumeMissingPostMergeGate(manualPr.store, manualPrTask, { source: "self-healing", contract: undefined })).reason)
+      .toBe("manual-pr-open");
+    expect(manualPr.calls.seed).toHaveLength(0);
+
+    /* None of these may be terminal: each names a condition that clears on a later pass (setting flipped back,
+    pause lifted, PR closed), so the card keeps transient-defer instead of being handed to an operator. */
+    expect(["auto-merge-off", "manual-pr-open", "engine-paused"]
+      .map((r) => isTerminalPostMergeReseedRefusal(r as never)))
+      .toEqual([false, false, false]);
 
     const perCardFalse = fakeStore();
     expect((await resumeMissingPostMergeGate(perCardFalse.store, task({ autoMerge: false } as never), { source: "self-healing", contract: undefined })).outcome)

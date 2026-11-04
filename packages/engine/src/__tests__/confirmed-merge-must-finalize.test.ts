@@ -234,9 +234,18 @@ the reason that names the operator action) — see the FNXC:PostMergeRecovery no
 asserts the same absence of merge, completion, evidence rewrite, and mutation.
 */
 describe("missing post-merge continuation recovery", () => {
+  /*
+  FNXC:FixtureTaskIdIsolation 2026-11-04-00:57 (RUFU-873):
+  Every case here used to share one task id. Two seams key their state by the CARD — the per-card refusal-line
+  bound in `auto-merge-finalization.ts` and the session/liveness registries — so cases with a shared id were
+  asserting against each other's leftovers, and the refusal-line bound could not be tested across cards at all
+  while both cards were literally the same card. A fresh id per fixture call is what makes the cases independent.
+  */
+  let fixtureSequence = 0;
   function recoveryFixture() {
+    fixtureSequence += 1;
     const task = {
-      id: "FN-9368", column: "in-review", updatedAt: "2026-10-01T04:43:00.000Z",
+      id: `FN-9368-${fixtureSequence}`, column: "in-review", updatedAt: "2026-10-01T04:43:00.000Z",
       autoMerge: true, steps: [], mergeDetails: { mergeConfirmed: true },
       enabledWorkflowSteps: ["post-merge-verification"], workflowStepResults: [],
     } as unknown as Task;
@@ -253,8 +262,15 @@ describe("missing post-merge continuation recovery", () => {
 
   it("resumes required closeout after manual landing without re-admitting merge", async () => {
     const { task, store, items } = recoveryFixture();
-    task.autoMerge = false;
-    store.getSettings = vi.fn(async () => ({ autoMerge: false }));
+    /*
+    FNXC:PostMergeReseedRefusalNaming 2026-11-04-00:52 (RUFU-873):
+    This case previously ran with `autoMerge:false` on both task and settings, which the reseed seam withholds
+    for human-lane ownership — so the pass under test never reached the arm it claimed to test and asserted
+    `resumedPostMergeEvidence:true` against a `not-seeded` result. The auto-merge authorization is now pinned
+    ON here, because this case's subject is closeout after a proven landing, not lane ownership; the withheld
+    lane is asserted on its own in `post-merge-gate-reseed.test.ts` with the reason that names it.
+    */
+    store.getSettings = vi.fn(async () => ({ autoMerge: true }));
 
     const result = await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
 
@@ -483,6 +499,31 @@ describe("missing post-merge continuation recovery", () => {
     expect(task.workflowStepResults).toEqual(original.workflowStepResults);
     expect(store.seedWorkspaceCodeReviewContinuationIfIdle).not.toHaveBeenCalled();
     expect(store.logEntry).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:RefusalLineScopePerCard 2026-11-04-00:56 (RUFU-873):
+  The churn bound exists per card and per refusal. Asserting it across TWO cards is what keeps the fallback key
+  from ever going back to a bare episode signature: both cards refuse the same gate for the same reason, so a
+  signature-keyed bound hands the line to whichever pass ran first and the other card's History stays silent —
+  an operator then reads a card with a withheld finalization and no explanation on it.
+  */
+  it("gives each card its own refusal line, so one card's signature cannot silence another's", async () => {
+    const first = recoveryFixture();
+    const second = recoveryFixture();
+    // Force the fallback path: a store that does not expose the per-card `logEntryOnce` seam.
+    (first.store as unknown as { logEntryOnce?: unknown }).logEntryOnce = undefined;
+    (second.store as unknown as { logEntryOnce?: unknown }).logEntryOnce = undefined;
+
+    await finalizeProvenAutoMergeTask({ store: first.store, taskId: first.task.id, source: "self-healing" });
+    await finalizeProvenAutoMergeTask({ store: second.store, taskId: second.task.id, source: "self-healing" });
+
+    const firstLines = (first.store.logEntry as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    const secondLines = (second.store.logEntry as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+
+    // The invariant: the second card is not silenced by the first card's identical refusal signature.
+    expect(firstLines).toBeGreaterThan(0);
+    expect(secondLines).toBe(firstLines);
   });
 
   it("resumes the missing gate exactly once across repeated finalization polls, without merging or completing", async () => {

@@ -391,9 +391,21 @@ async function logPostMergeEvidenceOnce(
       });
       return;
     }
-    const lastAt = historyFallbackBound.get(dedupeKey) ?? 0;
+    /*
+    FNXC:RefusalLineScopePerCard 2026-11-04-00:56 (RUFU-873):
+    `historyFallbackBound` is module-level and was keyed by the bare `dedupeKey`, which at every call site is
+    built from the refusal EPISODE SIGNATURE (gate + state + reason) and names no card. Two cards refusing the
+    same gate for the same reason therefore shared one bound, and the card that happened to lose the race lost
+    its History line entirely — while the `logEntryOnce` path above is naturally per-card because the store
+    scopes the once-window by `taskId`. The asymmetry only bites stores without `logEntryOnce`, which is why it
+    went unseen: measured here as `store.logEntry` called 2 times instead of 3 across three polls once a sibling
+    case in the same file had already written the same signature. Scoping the fallback key by the card makes the
+    two paths agree and keeps the churn bound exactly where it was designed to live: per card, per refusal.
+    */
+    const boundedKey = `${taskId}|${dedupeKey}`;
+    const lastAt = historyFallbackBound.get(boundedKey) ?? 0;
     if (Date.now() - lastAt < POST_MERGE_EVIDENCE_REFUSAL_REFRESH_FLOOR_MS) return;
-    historyFallbackBound.set(dedupeKey, Date.now());
+    historyFallbackBound.set(boundedKey, Date.now());
     await seam.logEntry?.(taskId, action);
   } catch {
     // Degraded History only — the durable episode and its audit row are already committed.

@@ -45,6 +45,7 @@ is dropped, and nothing the fork layered on is dropped either:
 import {
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
   allowsAutoMergeProcessing,
+  taskHasManualOpenPullRequest,
   computeWorkflowIrPin,
   getPostMergeEvidenceGateStatuses,
   getPostMergeFinalizeBlocker,
@@ -95,6 +96,8 @@ export type PostMergeGateReseedReason =
   | "workspace"
   | "operator-held"
   | "engine-paused"
+  | "auto-merge-off"
+  | "manual-pr-open"
   | "finalize-blocked"
   | "checkout-lease"
   | "execution-live"
@@ -403,8 +406,26 @@ async function runPostMergeGateResume(
   through `allowsAutoMergeProcessing`, because under that setting the lane is human-owned end to end. The
   refusal taxonomy (RUFU-370) still names every withheld arm, so a withheld seeding remains observable.
   */
-  if (settings.globalPause || settings.enginePaused || !allowsAutoMergeProcessing(task, settings)) {
+  /*
+  FNXC:PostMergeReseedRefusalNaming 2026-11-04-00:52 (RUFU-873):
+  This one arm folded THREE different withholdings into `engine-paused`, so the audit row and the log line
+  told an operator the engine was paused when the real condition was that the board runs with auto-merge
+  Off (or a manual PR is open). Measured: `confirmed-merge-must-finalize.test.ts` failed with
+  `{outcome:"not-seeded", reason:"engine-paused"}` on a fixture whose only special property was
+  `autoMerge:false` — the withheld seeding was correct, the named cause was not. RUFU-370's whole contract is
+  that a withheld arm names its own condition, and the taxonomy note directly above this line already
+  promised exactly that. The three arms below keep every withhold (the lane stays human-owned end to end)
+  and only make the cause truthful. None of the new reasons joins the terminal set: an auto-merge setting
+  flipped back On, or a manual PR closed, genuinely clears on a later pass, so the card keeps transient-defer.
+  */
+  if (settings.globalPause || settings.enginePaused) {
     return { outcome: "not-seeded", reason: "engine-paused" };
+  }
+  if (taskHasManualOpenPullRequest(task)) {
+    return { outcome: "not-seeded", reason: "manual-pr-open" };
+  }
+  if (!allowsAutoMergeProcessing(task, settings)) {
+    return { outcome: "not-seeded", reason: "auto-merge-off" };
   }
   if (getPostMergeFinalizeBlocker(task)) return { outcome: "not-seeded", reason: "finalize-blocked" };
   if (hasFreshCheckoutLease(task, settings)) return { outcome: "not-seeded", reason: "checkout-lease" };
