@@ -768,6 +768,45 @@ multi-remote board while looking authoritative.
   can never reach a model: either it is filled, or the gate refuses.
 
 
+<!-- FNXC:MergerLaneCensus 2026-11-04-02:43 (RUFU-463): what the merge lane may conclude, and from which read. -->
+
+### What a merge lane may conclude from a board census (RUFU-463)
+
+The Workflow Merger wakes on a heartbeat and re-reads its instructions on every wake, so a lane that
+could not answer "which cards may I actually land?" cheaply re-derived the answer with a hand-written
+scan each time. Measured on one board: ~50 merger ticks a day, nearly all record-only, each re-deriving
+merge authority from task mirrors, `git` ref listings, and gate rows. Four defects in one week each
+printed a value with exactly the shape that authorizes an unauthorised merge — a derived value bound
+inside a collection loop and read after it, which reported two review cards as `column=done` with a false
+`APPROVE_WITH_NOTES`; a text grep for a task id that matched a commit merely *mentioning* that id; an
+anchored `for-each-ref --format=… %(objectname)` read that reported no refs at all while 46 lived; and a
+field read from the wrong path that reported "cards filed by me: []" on 38/38 rows. None of those was
+plausible-but-wrong; each was a wrong read of a real store.
+
+The lane's answer is one canonical, read-only tool: `node scripts/merge-census.mjs --repo .` (stderr
+captured, `2>&1`). It prints sentinel-delimited output (`SENTINEL-START` / `SENTINEL-END`), a `mirrors: N`
+count **before** the report, and exactly one machine-readable
+`disposition laneRows=N authorityVerdict=<v> actionTaken=<a>` line. Rules the lane must respect:
+
+| Question | The only answer the lane may take |
+| --- | --- |
+| Which verdict governs a card? | The **latest authoritative verdict** over the card's gate rows and their nested `priorAttempts`, ranked by full ISO `completedAt`. A row with only `output` bytes is **not** a verdict; a `skipped` row with no verdict and no waiver is not an approval. |
+| When does a verdict authorize merging? | Only when it sits on the card's own **content gate** (`code-review`). A `plan-review` approval never authorizes a merge, so `authorityVerdict` can read `covered-approval` while `actionTaken` reads `hold`. |
+| What is an operator waiver? | A bypass is operator-covered approval only when **both** `bypassedBy` and `bypassedAt` are present; one key alone is a partial write, not a waiver. |
+| How many tries did a gate get? | `1 + len(priorAttempts)` on that gate's own row — the live engine nests attempt history **per gate row**, not at task level. |
+| May anything be concluded from a broken read? | **No.** A non-zero exit, an `incomplete:` line, or a `refProbe:invalid` marker forbids every negative conclusion (branch absent, no approval, not landed): wait or escalate. An empty `refs/heads/fusion/*` census is treated as an unreadable namespace, never as absence — the two are indistinguishable from the read, and the §1d incident was exactly that confusion. |
+| Does a branch belong to a card? | The commit's trailer **value** (`Fusion-Task-Id:` / `Task-Id:`) must equal the card id; a message that only mentions the id proves nothing. Landed means the ref tip is an ancestor of `HEAD` (`merge-base --is-ancestor`), never a message grep. |
+| Did the lane change since last tick? | `laneDigest`, a SHA-256 prefix over the lane's authority facts plus the worktree inventory, deliberately excluding run wall-clock. When it equals the stamp the lane already holds (`unchanged: yes`), the tick is record-only. `--task <ID>` cross-checks never read or write that stamp. |
+
+A decision to act additionally requires a **second, differently-written read** — the same card through
+`node scripts/merge-census.mjs --repo . --task <ID>` — agreeing with the lane row. The durable wording of
+this rule lives in the built-in lane seed
+(`BUILTIN_WORKFLOW_ROLE_AGENT_DEFAULTS.merger.instructionsText`,
+`packages/core/src/agents/workflow-role-agent-defaults.ts`), it is pinned by
+`packages/core/src/__tests__/workflow-role-agent-defaults-merger.test.ts`, and the extractor defects above
+have fixture regressions in `scripts/__tests__/merge-census-contract.test.mjs` and
+`scripts/__tests__/merge-census-git.test.mjs`.
+
 ## Execution Modes
 
 - **Prompt mode**: starts an AI agent for the step

@@ -587,6 +587,46 @@ For the current filtered/visible agent set, the panel shows:
 
 If either token field is missing for an agent, the dashboard treats it as `0` so the panel stays stable and never crashes on partial/migrating data.
 
+<!-- FNXC:MergerLaneCensus 2026-11-04-02:43 (RUFU-463): the lane-facing census inventory. -->
+
+### Census and inventory scripts for lanes and automation
+
+Board-wide questions — which lane holds what, which cache fields are live, which merge authority a card
+actually carries — belong in tracked `scripts/*.mjs` files, not in shell snippets a lane re-derives every
+wake. Every census here runs the same way:
+
+```bash
+node scripts/merge-census.mjs --repo .          # merge-lane authority census (see docs/workflow-steps.md)
+node scripts/lifecycle-column-census.mjs        # lifecycle-column conversion census
+node scripts/pg-loaded-failure-census.mjs       # pg-load failure inventory
+node scripts/cache-stats.mjs                    # cache-field coverage inventory
+```
+
+Their contract-test seam is `pnpm test:scripts -- <path>` (`scripts/run-script-tests.mjs` → `node --test`);
+a contract test in `scripts/__tests__/` is a first-class deliverable of a census tool.
+
+Two placement rules, both learned the expensive way:
+
+- **Never author a census tool under `.fusion/`.** `.fusion/` is gitignored repo-wide, so the tool is
+  invisible to the next session, untracked, and un-testable in CI. A merge-lane census written to
+  `.fusion/scripts/` was confirmed absent from disk on the next session at its own recorded path, while a
+  different one survived — a tool that no later session or CI can find is not an asset, it is a lead.
+  Lane census tools go in `scripts/` next to the siblings above.
+- **Never let a tick's census dump into a lane's long-term `MEMORY.md`.** The file has a code-owned
+  budget (`MEMORY_LONG_TERM_BYTE_BUDGET`, the working-set bound enforced by the append tool and the
+  consolidation sweep — `packages/engine/src/memory/memory-budget.ts`) precisely because it is injected
+  into agent context. A tick that pastes its full scan into that file evicts the lane's own durable
+  notes: one merger tick produced a 54 762-byte entry, larger than the whole budget, whose tail was the
+  census output itself and whose merge-decision reasoning was truncated away. Lane tools therefore print
+  a compact authority-only default by default and make the verbose mode opt-in, and lane instructions
+  say plainly that the output is not to be pasted into long-term memory. The size bound is asserted
+  against the constant in `packages/core/src/__tests__/workflow-role-agent-defaults-merger.test.ts`.
+
+Reading discipline: **print only fields whose path was just verified against a real mirror.** When two
+readers disagreed about whether one field was an array or an object, the census printed neither and
+reported which reader was wrong rather than silently coercing the shape. See the merge-census contract
+tests (`scripts/__tests__/merge-census-contract.test.mjs`) for the field paths that hold today.
+
 ### Agent Detail bulk lifecycle actions
 
 The **Agent Detail** header includes a kebab-menu button in the utility actions cluster (`Bulk agent actions`), beside refresh/close controls. This menu runs **project-scoped** lifecycle changes from the detail view: it fetches agents for the current project and then calls the same per-agent lifecycle API (`POST /api/agents/:id/state`) used by the single-agent header buttons.
