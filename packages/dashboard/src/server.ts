@@ -54,6 +54,8 @@ import type { BadgePubSub } from "./badge-pubsub.js";
 import { createBadgePubSub, type BadgePubSubMessage } from "./badge-pubsub.js";
 import { createRuntimeLogger, type RuntimeLogger } from "./runtime-logger.js";
 import { createRetentionPressureNotifier } from "./retention-pressure-notice.js";
+import { reportHeapCeilingAtBoot } from "./heap-ceiling-notice.js";
+import { getBootHeapCeiling, type HeapCeiling } from "./lib/heap-ceiling.js";
 import { registerGithubTrackingHook } from "./github-tracking-hook.js";
 import { registerBeforeExitCleanup } from "./process-lifecycle.js";
 import { createTerminalWebSocketDiagnostics } from "./terminal-websocket-diagnostics.js";
@@ -172,6 +174,8 @@ export function buildHealthPayload(args: {
   migration?: import("./dashboard-postgres-health.js").DashboardMigrationHealth;
   cliPackageVersion: string;
   engineAvailable: boolean;
+  /** Defaults to this process's one memoized ceiling snapshot; injectable so tests can pin a source. */
+  heapCeiling?: HeapCeiling;
 }) {
   const { database, cliPackageVersion, engineAvailable, migration } = args;
   const taskIdIntegrity = buildTaskIdIntegrityHealth(args.taskIdIntegrityReport);
@@ -191,6 +195,7 @@ export function buildHealthPayload(args: {
     || !database.healthy
     || taskIdIntegrity.status === "error";
   const corruptionDetected = blockingErrors ? true : database.corruptionDetected;
+  const heapCeiling = args.heapCeiling ?? getBootHeapCeiling();
   return {
     // Durable running/failed migration markers must never be hidden behind ok health.
     status: migration || !database.healthy || corruptionDetected || taskIdIntegrity.status !== "ok" ? "degraded" : "ok",
@@ -223,6 +228,22 @@ export function buildHealthPayload(args: {
       available: engineAvailable,
     },
     taskIdIntegrity,
+    /*
+    FNXC:HeapCeilingObservability 2026-10-01-11:02 (RUFU-462):
+    The V8 heap ceiling is now an observed fact of every boot, and a monitoring poll that gets `ok` while the
+    process is one allocation away from an OOM death is the blind spot that let 28 supervisor restarts pass
+    unnoticed. These three fields are ADDITIVE — they never feed `status`, and the boot-window holding payload
+    (a separate shape that omits fields by contract) is untouched — so a consumer reading only the pre-existing
+    fields is unaffected.
+
+    `/api/health` is auth-exempt (external monitors poll it), so this payload carries only the numeric ceiling
+    and the fixed three-value source enum. The raw `NODE_OPTIONS` string is launch-environment content and
+    never enters it: a value like a connection string in that variable would otherwise leak to any host that
+    can reach the port. `heapLimitSource` names the SITE, never its contents.
+    */
+    heapLimitBytes: heapCeiling.heapLimitBytes,
+    heapLimitSource: heapCeiling.source,
+    heapLimitIsV8Default: heapCeiling.isV8Default,
     ...(migration ? { migration } : {}),
   };
 }
@@ -1124,6 +1145,24 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   at construction time.
   */
   const runtimeLogger = options?.runtimeLogger ?? createRuntimeLogger("server");
+  /*
+  FNXC:HeapCeilingObservability 2026-10-01-11:34 (RUFU-462 Step 4):
+  Every boot states the heap ceiling it is running under, before the first health probe can land and while a
+  crash-looping process is still alive to say it. This is the ONLY call site: `createServer()` is what the CLI
+  boot (`packages/cli/src/commands/dashboard.ts`), the embedded desktop host, and tests all go through, so one
+  wiring covers every boot shape with one decision — a CLI-side copy would have been the second source of
+  truth this task exists to remove. The ceiling line and the `v8-default` warning are synchronous, so they are
+  already out before anything awaits; the Mailbox notice and the `runtime:heap-ceiling` audit row are
+  fire-and-forget on bounded/swallowing sinks, and the detached `.catch` is insurance so a boot can never be
+  failed by the thing that reports on it. The mailbox is resolved lazily for the same reason the retention
+  notifier below resolves it lazily: `options.engine` may attach its message store after this point, and a
+  headless `--no-engine` boot has none — it still gets its log line.
+  */
+  void reportHeapCeilingAtBoot({
+    logger: runtimeLogger.child("heap-ceiling"),
+    resolveMailbox: () => options?.engine?.getMessageStore(),
+    auditHost: store,
+  }).catch(() => undefined);
   const retentionPressureNotifier = createRetentionPressureNotifier({
     logger: runtimeLogger.child("retention-pressure"),
     resolveMailbox: () => options?.engine?.getMessageStore(),

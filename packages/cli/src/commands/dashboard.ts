@@ -97,6 +97,13 @@ import {
   registerGithubTrackingHook,
   stopAllDevServers,
   type RuntimeLogger,
+  // RUFU-462: the boot banner and the supervisor lines report the ceiling through the SAME resolver the
+  // server publishes on /api/health, so a terminal line and a health payload cannot disagree about it.
+  getBootHeapCeiling,
+  MAX_OLD_SPACE_FLAG,
+  formatHeapCeilingLine,
+  formatHeapCeilingCompact,
+  describeHeapCeilingRespawnCarry,
 } from "@fusion/dashboard";
 import {
   runAiMerge,
@@ -3867,6 +3874,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         tui.log("AI engine paused");
       }
       tui.log("File watcher active");
+      /*
+      FNXC:HeapCeilingObservability 2026-10-01-12:44 (RUFU-462):
+      The ceiling the process actually resolved belongs in the startup output, because the crash it explains
+      is invisible otherwise: this host ran 28 supervisor restarts at a 4.09 GiB V8 default while its launch
+      environment declared 16 GiB, and every log and health probe read normal. Rendered by the dashboard's
+      single resolver so the terminal line and `/api/health` state the same number and the same site.
+      */
+      tui.log(formatHeapCeilingLine(getBootHeapCeiling()));
       if (updateMessage) {
         tui.log(updateMessage);
       }
@@ -3909,6 +3924,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         console.log(`    • cron: scheduled task execution`);
       }
       console.log(`  File watcher: ✓ active`);
+      // RUFU-462: same fact, same renderer as the TUI branch above — a CI or headless boot is exactly where
+      // a hand-started process loses its launch environment, so this branch must not be the silent one.
+      console.log(`  Heap ceiling: ${formatHeapCeilingCompact(getBootHeapCeiling())}`);
       if (updateMessage) {
         console.log(`  ${updateMessage}`);
       }
@@ -3979,14 +3997,24 @@ How the supervisor respawns "itself", per install shape:
     process.execPath alone.
 Returns null when no respawn command can be determined (then supervision is
 skipped and the dashboard runs unsupervised).
+
+FNXC:HeapCeilingObservability 2026-10-01-12:44 (RUFU-462):
+`execArgv` and `entryPoint` became injectable parameters (same shape as
+`shouldSuperviseDashboard`) so a test can PROVE the rebuild keeps a `--max-old-space-size` flag ahead of the
+entry script. That carry is the reason a supervisor restart must not change the ceiling an operator chose, and
+it is a claim about argument order — a V8 flag after the script name is a program argument, not a flag — so it
+needs an assertion, not a comment. Defaults are the values read here, so every production call site is
+unchanged.
 */
-export function resolveSupervisorRespawnCommand(): { command: string; args: string[] } | null {
+export function resolveSupervisorRespawnCommand(
+  execArgv: readonly string[] = process.execArgv,
+  entryPoint: string | undefined = process.argv[1],
+): { command: string; args: string[] } | null {
   if (isCompiledBinary()) {
     return { command: process.execPath, args: [] };
   }
-  const entryPoint = process.argv[1];
   if (!entryPoint) return null;
-  return { command: process.execPath, args: [...process.execArgv, entryPoint] };
+  return { command: process.execPath, args: [...execArgv, entryPoint] };
 }
 
 /*
@@ -4144,9 +4172,24 @@ export async function runDashboardSupervised(
     }
   });
 
+  /*
+  FNXC:HeapCeilingObservability 2026-10-01-12:44 (RUFU-462):
+  Every supervisor line states the ceiling and WHICH launch site carries it, because the supervisor is where a
+  lost ceiling becomes a body count. The respawn rebuilds the child from `process.execArgv` and passes the
+  environment through (`resolveSupervisorRespawnCommand`), so an `execArgv` flag is rebuilt into every child
+  while a `NODE_OPTIONS` ceiling is inherited — but a bun-compiled respawn rebuilds with NO execArgv flags at
+  all. Naming the site on each attempt is what stops a restart from silently changing the picture, and names
+  the first suspect when a card gets stuck at the same ceiling over and over (the 28-restart episode on this
+  host died at 3.90-4.03 GiB under a V8 default while the host declared 16 GiB).
+  */
+  const ceiling = getBootHeapCeiling();
+  // Semicolon joiner: the compact ceiling string already contains an em-dash for the default case, and two
+  // em-dashes in one operator line read like a broken sentence.
+  const ceilingCarry = `${formatHeapCeilingCompact(ceiling)}; ${describeHeapCeilingRespawnCarry(ceiling)}`;
+
   while (true) {
     const attemptLabel = `${restartCount + 1}/${SUPERVISE_MAX_RESTARTS + 1}`;
-    console.log(`[dashboard:supervisor] starting dashboard (attempt ${attemptLabel})`);
+    console.log(`[dashboard:supervisor] starting dashboard (attempt ${attemptLabel}) · heap ceiling ${ceilingCarry}`);
 
     try {
       activeChild = spawnAttached(respawn.command, [...respawn.args, ...childArgs]);
@@ -4204,6 +4247,11 @@ export async function runDashboardSupervised(
         `Giving up. If using Tailscale Serve, the remote URL will return 502\n` +
         `until the dashboard is restarted manually:\n\n` +
         `  ${restartCommand}\n\n` +
+        `Heap ceiling for this process group: ${ceilingCarry}.\n` +
+        (ceiling.isV8Default
+          ? `That is V8's own default: no ${MAX_OLD_SPACE_FLAG} appeared in execArgv or NODE_OPTIONS.\n` +
+            `Verify and record the per-host value in docs/solutions/performance/dashboard-heap-growth-runbook.md.\n`
+          : ``) +
         `To check if a listener is still active:\n` +
         `  curl http://127.0.0.1:${port}/api/health\n`,
       );
@@ -4215,7 +4263,7 @@ export async function runDashboardSupervised(
       SUPERVISE_MAX_DELAY_MS,
     );
     console.log(
-      `[dashboard:supervisor] restarting in ${Math.round(delay / 1000)}s (attempt ${restartCount}/${SUPERVISE_MAX_RESTARTS})`,
+      `[dashboard:supervisor] restarting in ${Math.round(delay / 1000)}s (attempt ${restartCount}/${SUPERVISE_MAX_RESTARTS}) · heap ceiling ${ceilingCarry}`,
     );
     await new Promise((resolve) => setTimeout(resolve, delay));
   }

@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { findVitestProcessIds, getAvailableMemoryBytes, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import type { WorkflowIr } from "@fusion/core";
 import { ApiError, notFound, rethrowAsApiError } from "../api-error.js";
+import { resolveHeapCeiling } from "../lib/heap-ceiling.js";
 import { fetchFromRemoteNode } from "./register-settings-sync-helpers.js";
 import type { ApiRouteRegistrar } from "./types.js";
 import os from "node:os";
@@ -143,12 +144,24 @@ const collectSystemStatsResponse = async (req: Request) => {
     // System stats should still be available even when project resolution/scoped store fails.
   }
 
+  /*
+  FNXC:HeapCeilingObservability 2026-10-01-11:02 (RUFU-462):
+  `heapLimit` already published the ceiling, but with no provenance — the panel could show "16 GiB" while the
+  process actually ran on the ~4 GiB V8 default under a different label, which is precisely the ambiguity that
+  hid the 28-restart OOM. The source is classified FROM THE SAME `heapStats` sample on the same line, so the
+  reported number and its provenance cannot drift apart (a live re-read against a boot-time memo would).
+  Observation only: this never changes the ceiling.
+  */
+  const heapCeiling = resolveHeapCeiling({ heapSizeLimitBytes: heapStats.heap_size_limit });
+
   return {
     systemStats: {
       rss: mem.rss,
       heapUsed: mem.heapUsed,
       heapTotal: mem.heapTotal,
       heapLimit: heapStats.heap_size_limit,
+      heapLimitSource: heapCeiling.source,
+      heapLimitIsV8Default: heapCeiling.isV8Default,
       external: mem.external,
       arrayBuffers: mem.arrayBuffers,
       cpuPercent,

@@ -1010,3 +1010,37 @@ deliberately outside the curated delivery-pipeline catalogue and document as pro
 `scheduler:pass-stalled` records one scheduling pass whose re-entrance guard had to be forced open, emitted once per stall episode (not per interval tick) from `Scheduler.reportStuckPass`. Metadata is `leg` (the pass leg reached, from the closed set `idle` / `board-read` / `mission-symbol-locks` / `hold-release-sweep` / `post-sweep-reread` / `advisory-reporters`), `inFlightMs` rounded to whole seconds, `thresholdMs`, and the fixed `outcome` `guard-forced-open`. `target` and `runId` carry the project id; the board's root path never enters the row.
 
 The row exists because the log line is not durable: the process log was measured truncating in place on 2026-10-30, which destroyed every force-open reading that day. Emission goes through the FN-9175 bounded seam, so an absent, throwing, rejecting, or hanging sink cannot delay or change the dispatch decision that follows the force-open. This event is deliberately outside the curated delivery-pipeline catalogue and is documented here as prose.
+
+### Boot heap ceiling observation (RUFU-462)
+
+`runtime:heap-ceiling` records one boot of a dashboard process whose V8 heap ceiling nobody chose: no
+`--max-old-space-size` in `execArgv` and none in `NODE_OPTIONS`, so V8 used its platform default. On the
+host that motivated this row the board was killed 28 times under the supervisor at 3.90–4.03 GB heap
+(`Ineffective mark-compacts near heap limit`) while `/api/health` answered `ok` on every one of those
+probes, because the health payload reported uptime, RSS, and event-loop delay while omitting the one
+number that explained the deaths. The condition was therefore knowable only from a body count, and the
+cardinality of "how many boots came up unconfigured?" existed nowhere.
+
+The row is written by `reportHeapCeilingAtBoot()` (`packages/dashboard/src/heap-ceiling-notice.ts`), whose
+sole call site is `createServer()` — the same function the CLI boot, the embedded desktop host, and tests
+all go through, so one wiring covers every boot shape instead of maintaining a second copy of the
+decision. It is emitted once per boot, fire-and-forget, through the FN-9177 bounded core seam
+(`emitBoundedRunAudit`), so an absent, throwing, rejecting, or hanging audit sink cannot alter, delay, or
+fail the boot that is reporting it. Only the default case writes a row: a ceiling a launch site declared
+gets a log line and no audit row, because a declared value is not a condition worth counting and a quiet
+row set is what makes this one countable.
+
+Metadata is a byte count, one fixed three-value enum, and one boolean — `heapLimitBytes`, `source`
+(`execArgv` / `NODE_OPTIONS` / `v8-default`), and `isV8Default`. The row describes the *site* and never its
+*contents*: `source` says which launch site carried the flag, while the raw `NODE_OPTIONS` string is never
+recorded. That variable legitimately carries connection strings and credential arguments on some hosts,
+and the audit store is readable by anything with query access to it, so quoting it would turn an
+observability row into a secret-leak surface. `runId` is `runtime:heap-ceiling:boot:<pid>`, which names the
+process without putting a filesystem path or launch-environment text into metadata.
+
+Like RUFU-279's `memory:*` trio, this event is deliberately absent from the curated delivery-pipeline
+catalogue: `run-audit-catalogue.test.ts` locks that list table-for-table against the category tables above,
+and a process's memory ceiling is not a delivery-pipeline step, so this section is written in prose rather
+than as a table row. It is declared in `@fusion/core`'s `RunAuditMutationType` — the same placement as
+RUFU-259's dashboard-emitted `task:comment-delivery` pair — because the emitter reaches its sink through
+the core seam, not the engine's `DatabaseMutationType`.

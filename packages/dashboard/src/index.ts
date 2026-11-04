@@ -156,6 +156,44 @@ export {
   type NeutralizeResult,
 } from "./cli-session-output-filter.js";
 
+// Heap-ceiling observability — re-exported so the CLI boot and supervisor
+// (packages/cli `fn dashboard`) report the SAME resolved ceiling the server publishes on
+// `/api/health` and `/api/system-stats`, from the SAME `v8.getHeapStatistics()` source. The CLI must not
+// fork a second resolver: a boot line and a health payload disagreeing about the number is the failure
+// this module exists to prevent (RUFU-462).
+export {
+  resolveHeapCeiling,
+  getBootHeapCeiling,
+  resetBootHeapCeilingForTesting,
+  formatHeapCeilingBytes,
+  formatHeapCeilingLine,
+  formatHeapCeilingCompact,
+  describeHeapCeilingSource,
+  describeHeapCeilingRespawnCarry,
+  MAX_OLD_SPACE_FLAG,
+  type HeapCeiling,
+  type HeapCeilingInit,
+  type HeapCeilingSource,
+} from "./lib/heap-ceiling.js";
+export { formatBytes } from "./lib/format-bytes.js";
+// RUFU-462 Steps 3-4: the operator-facing half of the same observation, on the channels the retention
+// notice already uses, plus the once-per-boot report that drives them. Exported so the CLI boot composes
+// the boot report without reaching into dashboard internals, exactly like the resolver above.
+export {
+  buildHeapCeilingLogContext,
+  buildHeapCeilingLogMessage,
+  buildHeapCeilingNoticeContent,
+  buildHeapCeilingNoticeIdempotencyKey,
+  HEAP_CEILING_MUTATION_TYPE,
+  HEAP_CEILING_NOTICE_BUCKET_MS,
+  notifyDefaultHeapCeiling,
+  reportHeapCeilingAtBoot,
+  resetHeapCeilingBootReportForTesting,
+  type HeapCeilingBootReport,
+  type HeapCeilingMailbox,
+  type HeapCeilingReportDeps,
+} from "./heap-ceiling-notice.js";
+
 // CLI Agent Executor transport dependencies — re-exported so the CLI boot
 // (packages/cli dashboard command) can construct the per-session attach-ticket
 // store, input-attribution log, and confirm-advance/relaunch registries that the

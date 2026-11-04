@@ -37,6 +37,7 @@ slow mailbox cannot stall or fail the census tick that was trying to report the 
 */
 
 import { DASHBOARD_USER_ID, type MessageCreateInput } from "@fusion/core";
+import { formatBytes } from "./lib/format-bytes.js";
 import type { RuntimeLogger } from "./runtime-logger.js";
 import type { RetentionPressureSignal } from "./metrics/retention-sampler.js";
 
@@ -69,14 +70,10 @@ export interface RetentionPressureNotifierInit {
   noticeBucketMs?: number;
 }
 
-/** Format bytes for an operator-facing sentence; whole units below 1 GiB, decimal GiB above. */
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
-  const mib = bytes / (1024 * 1024);
-  if (mib < 1) return `${Math.round(bytes / 1024)} KiB`;
-  if (mib < 1024) return `${mib.toFixed(1)} MiB`;
-  return `${(mib / 1024).toFixed(2)} GiB`;
-}
+/*
+FNXC:HeapCeilingObservability 2026-10-01-10:56 (RUFU-462): the byte formatter moved to `lib/format-bytes.ts`
+so the heap-ceiling notices render the SAME ceiling this notice already quotes as "% of <ceiling>".
+*/
 
 /** The share of the heap ceiling in use, as a percentage string; "unknown" when the limit is unreadable. */
 function formatHeapShare(signal: RetentionPressureSignal): string {

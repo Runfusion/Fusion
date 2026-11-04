@@ -135,6 +135,38 @@ describe("resolveSupervisorRespawnCommand", () => {
     expect(respawn!.args.slice(0, -1)).toEqual(process.execArgv);
   });
 
+  /*
+  FNXC:HeapCeilingObservability 2026-10-01-12:44 (RUFU-462):
+  The ceiling a supervisor must not lose. An operator's `--max-old-space-size` reaches a child ONLY because the
+  rebuild splices `execArgv` in AHEAD of the entry script — after it, V8 would read the flag as a program
+  argument and the child would come up on the default ceiling while the supervisor's own log still claimed the
+  host value. This is the crash-loop shape this host lived through (28 restarts at a 4.09 GiB default under a
+  16 GiB launch environment), so the ordering claim is pinned as data rather than left in a comment.
+  */
+  it("carries a heap-ceiling execArgv flag ahead of the entry script", () => {
+    const respawn = resolveSupervisorRespawnCommand(["--max-old-space-size=16384", "--experimental-loader=tsx"], "/opt/fusion/cli.mjs");
+
+    expect(respawn).not.toBeNull();
+    expect(respawn!.args).toEqual(["--max-old-space-size=16384", "--experimental-loader=tsx", "/opt/fusion/cli.mjs"]);
+    expect(respawn!.args.indexOf("--max-old-space-size=16384")).toBeLessThan(respawn!.args.indexOf("/opt/fusion/cli.mjs"));
+  });
+
+  /*
+  FNXC:HeapCeilingObservability 2026-10-01-12:44 (RUFU-462):
+  The one install shape where the ceiling genuinely cannot ride: a bun-compiled single-file binary re-execs
+  itself with no arguments at all, so only a NODE_OPTIONS ceiling survives a restart there. The supervisor's
+  per-attempt line names the site precisely so an operator on that shape is not hunting for a lost execArgv
+  flag that was never carrying anything.
+  */
+  it("carries no execArgv ceiling under a bun-compiled build", () => {
+    (globalThis as { Bun?: { embeddedFiles: unknown[] } }).Bun = { embeddedFiles: [{}] };
+
+    expect(resolveSupervisorRespawnCommand(["--max-old-space-size=16384"], "/opt/fusion/cli.mjs")).toEqual({
+      command: process.execPath,
+      args: [],
+    });
+  });
+
   it("re-execs the compiled binary itself (no args) under a bun-compiled build", () => {
     // A bun-compiled single-file `fn` binary exposes `Bun.embeddedFiles`; argv[1]
     // is then a virtual embedded path, so the binary must re-exec process.execPath

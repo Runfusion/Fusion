@@ -139,6 +139,23 @@ export type RunAuditMutationType =
   hanging audit sink cannot delay or fail startup.
   */
   | "build:provenance-stale"
+  /*
+  FNXC:HeapCeilingObservability 2026-10-01-11:34 (RUFU-462):
+  One row per boot of a dashboard process whose V8 heap ceiling nobody chose. On the host that motivated
+  this event the board was OOM-killed 28 times at 3.90-4.03 GB under the supervisor while `/api/health`
+  answered `ok` every time, because the process had been launched without `NODE_OPTIONS` and V8 therefore
+  used its ~4.09 GB platform default; no surface named the ceiling, so the condition was only discoverable
+  from a body count. Metadata is a byte count, a fixed three-value site enum, and one boolean:
+  `{ heapLimitBytes, source, isV8Default }`. The raw `NODE_OPTIONS` string is launch-environment content
+  and never enters the row — a connection string in that variable would otherwise be readable by anyone
+  with query access to the audit store, and `source` names the SITE rather than its contents.
+  Emitted through the FN-9177 bounded core seam, so an absent or hostile audit sink cannot alter boot.
+  Deliberately OUTSIDE the curated delivery-pipeline catalogue, the same exclusion RUFU-279's `memory:*`
+  trio carries: a process's memory ceiling is not a delivery-pipeline step, so `docs/run-audit.md`
+  documents it in prose and keeps it out of the category tables that the catalogue's table-for-table
+  lock-step guard compares against `DELIVERY_PIPELINE_RUN_AUDIT_EVENTS`.
+  */
+  | "runtime:heap-ceiling"
   | (string & {});
 
 /** Input for recording a run-audit event. */

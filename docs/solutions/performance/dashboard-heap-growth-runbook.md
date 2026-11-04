@@ -241,6 +241,26 @@ repeal the rule above. Two consequences for anyone reading the numbers there:
   When restarting that host, carry the flag in the environment (so agent-session children inherit it) and
   keep any diagnostic flag in `execArgv`, which is what the dashboard supervisor preserves across respawn.
 
+### Record the per-host value — the ceiling now states itself (RUFU-462)
+
+The `/proc`/`node -e` probe above is a cross-check now, not the only route. The resolved ceiling and the site
+it came from are printed by the boot banner (TUI and plain-text branches) and the dashboard startup log, restated
+on every supervisor attempt/backoff/give-up line together with which site carries it across a respawn, served on
+`/api/health` (`heapLimitBytes`, `heapLimitSource`, `heapLimitIsV8Default`) and `/api/system-stats`, recorded as
+one `runtime:heap-ceiling` run-audit row per boot, and warned in the Mailbox once per UTC day while the process is
+sitting on V8's own default. One resolver backs all of it, so a terminal line, a health payload, and an audit row
+cannot disagree about the number.
+
+When you verify a host, record the triple — resolved ceiling, declaring site, date — next to the incident it
+explains. The first row is the host this runbook was written for:
+
+| Host | Resolved ceiling | Declaring site | Observed |
+| --- | --- | --- | --- |
+| production dashboard host (this runbook's subject) | 16.09 GB intended / **4.09 GB resolved** during the incident | `NODE_OPTIONS` in the launch environment, absent from the hand-started process | 28 supervisor restarts dying at 3.90–4.03 GB; the `/api/health` ceiling fields would have named it in one request |
+
+Nothing in the product sets that value. If a declared ceiling stops appearing, the launch environment lost it —
+repair it there, per *Do not raise the heap ceiling* above.
+
 ## Recurrence guard (what CI now refuses)
 
 ```bash
