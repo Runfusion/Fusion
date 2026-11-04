@@ -152,6 +152,37 @@ The membership of each member is stated with the schema, not invented:
   that name is never sourced from a live list row. Naming it here would promise a projection that
   cannot exist, so it is omitted, with this sentence as the evidence.
 
+FNXC:ListReadFieldDeclaration 2026-11-04-19:43 (RUFU-883):
+`comments` was the last heavy payload the union could not drop, and the one the reader census proved
+load-bearing for memory rather than for bytes-per-page. Measured offline from a 10.35 GiB production
+snapshot (41.6 M nodes): 394 503 live copies of ONE steering sentence, held as `text` on 394 503
+comment records inside 37 616 arrays, hanging off 18 801 `comments` + 18 751 `steeringComments`
+properties of hydrated Task rows — against a board of 2 766 live cards of which 836 carry any comment
+at all. That is ~22 living hydrations of every commented card, and the reader turned out to be the 5 s
+metrics sampler, which reads exactly one column (`column`) and discards the rest. Before this member
+existed it could not declare that: `comments` and `steeringComments` were unnameable, so they stayed
+in EVERY projection including `fields: []`. RUFU-756 (`log`), RUFU-615 (`search_vector`) and RUFU-495
+(PROMPT.md re-parse) had each removed one payload from the same hot read; this is the third and last.
+
+One member owns BOTH columns on purpose, against the one-column-per-member pattern of `log`/`steps`:
+`rowToTask` deliberately does NOT merge `steeringComments` into `comments` (a steering write also
+appends to `comments`, and merging re-duplicated every record on each read-write cycle — see the note
+in `serialization.ts`). A reader that gets one of the pair therefore sees a `Task` whose comment view
+is complete only because the other is absent, which is a shape no mapper documents. Splitting them
+would advertise a declaration whose result the mapper cannot honour, so they are declared together or
+not at all, exactly as the six `sourceIssue*` columns above are.
+
+ADDING THIS MEMBER RE-AUDITED EVERY EXISTING DECLARED CALL SITE, and that is a rule every future member
+must obey: a new declarable column silently leaves EVERY declared read, not just the one being
+converted, because "declared" means "the row minus everything undeclared". The four production declared
+read sites were re-read for comment access and all four are clean: `engine/src/triage.ts:3202` and
+`:6368` (duplicate-candidate discovery — reads `id`, `title`, `description`, `column`, `createdAt`, and
+`resolveTerminalColumnsForTasks`, whose body reads column identity only), and
+`engine/src/scheduling/auto-claim-snapshot.ts:237` and `:335` (a file with zero `.comments` or
+`.steeringComments` reads at all). `triage.ts` does read `.comments` twice, at `:4152` and `:6970`, and
+both are single-task `getTask` reads (`:3370`) or a prompt builder fed by one (`buildSpecificationPrompt`),
+so neither travels on a declared list row. A future member added here owes the same sweep.
+
 Every column NOT named by any member stays in every projection, declared or not: identity, lane,
 status, timestamps, `queueBoost`, `nextRecoveryAt`, `dependencies`, `timing_total_ms`, `log_recent`
 and the rest are narrow, and the derived board signals plus every engine sweep read them. A
@@ -161,6 +192,7 @@ export type TaskListReadField =
   | "log"
   | "description"
   | "summary"
+  | "comments"
   | "steps"
   | "attachments"
   | "workflowStepResults"
@@ -174,6 +206,9 @@ export const TASK_LIST_READ_FIELD_COLUMNS: Record<TaskListReadField, readonly st
   steps: ["steps"],
   attachments: ["attachments"],
   workflowStepResults: ["workflowStepResults"],
+  // See the RUFU-883 block above: the pair is one member because the mapper treats the comment view
+  // as one field, so a declaration that named only half of it would describe an unreadable shape.
+  comments: ["comments", "steeringComments"],
   source: [
     "sourceType",
     "sourceAgentId",

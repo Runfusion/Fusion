@@ -529,3 +529,47 @@ describe("restart fence (RUFU-081 Greptile P1 review fix)", () => {
     vi.useRealTimers();
   });
 });
+/*
+FNXC:MetricsBoardReadPayload 2026-11-04-19:43 (RUFU-883):
+The sampler runs every 5 s for every registered project, and its declared need is one field
+(`SlimTaskLike { column: string }`). It used to travel in a read that still carried every card's
+`comments` and `steeringComments`, which a production heap snapshot showed as 18 801 hydrated rows
+alive against 2 766 live cards. Every other test in this file injects `listTasksInStore`, so none of
+them can see what the DEFAULT read asks the store for — and the option bag is exactly the thing that
+decides whether comment text crosses the database boundary. This is the guard for that bag.
+*/
+describe("default task read shape", () => {
+  it("asks the store for the narrow read: slim plus an empty declared field set", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const store = {
+      listTasks: async (opts: Record<string, unknown>) => {
+        seen.push(opts);
+        return [{ column: "todo" }, { column: "in-progress" }];
+      },
+    };
+    const sampler = createDomainSampler({
+      registeredStores: () => [{ projectId: "proj-a", store }],
+      countAgentsInStore: async () => 0,
+    });
+
+    await sampler.sampleDomain();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual({ slim: true, fields: [] });
+  });
+
+  it("still counts every card per column on that narrow read", async () => {
+    const store = {
+      listTasks: async () => [{ column: "todo" }, { column: "todo" }, { column: "done" }],
+    };
+    const sampler = createDomainSampler({
+      registeredStores: () => [{ projectId: "proj-a", store }],
+      countAgentsInStore: async () => 0,
+    });
+
+    await sampler.sampleDomain();
+
+    const board = sampleByName(sampler.buildSnapshot(), "fusion_domain_board_tasks")!;
+    expect(board.samples.reduce((sum, s) => sum + s.value, 0)).toBe(3);
+  });
+});

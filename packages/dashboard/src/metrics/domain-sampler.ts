@@ -28,6 +28,7 @@
  */
 
 import { drizzleSql } from "@fusion/core";
+import type { TaskListReadField } from "@fusion/core";
 import type { MetricFamily } from "./prometheus-text.js";
 
 const sql = drizzleSql;
@@ -78,7 +79,11 @@ export interface DomainSamplerInit {
   registeredStores?: RegisteredStoreRegistry;
   /** Per-store running-agent counter (defaults to `countRunningAgentsInStore`). */
   countAgentsInStore?: (store: unknown) => Promise<number>;
-  /** Per-store slim task listing (defaults to `store.listTasks({ slim: true })`). */
+  /**
+   * Per-store slim task listing. Defaults to `defaultListTasks` above, which asks the store for
+   * `listTasks({ slim: true, fields: [] })` — the empty declared field set is what keeps comment
+   * text out of this 5 s read (RUFU-883).
+   */
   listTasksInStore?: (store: unknown) => Promise<SlimTaskLike[]>;
   /** PG cumulative-counter reader (defaults to the store-layer `pg_stat_database` probe). */
   pgStatsReader?: PgStatsReader;
@@ -128,11 +133,31 @@ async function defaultCountAgents(store: unknown): Promise<number> {
   return countRunningAgentsInStore(store as Parameters<typeof countRunningAgentsInStore>[0]);
 }
 
-/** Default slim task listing through the store's public `listTasks({ slim: true })`. */
+/**
+ * Default slim task listing through the store's public `listTasks`.
+ *
+ * FNXC:MetricsBoardReadPayload 2026-11-04-19:43 (RUFU-883):
+ * `fields: []` is the whole point of this function. The sampler's declared need is
+ * `SlimTaskLike { column: string }` — it tallies cards per column and reads nothing else — so it
+ * declares that it reads NONE of the wide fields, and the SELECT stops carrying them. Before this
+ * the read shipped every card's `comments` and `steeringComments` here every 5 s, for every
+ * registered project, and they were discarded after `task.column` was read. Measured offline from a
+ * 10.35 GiB production heap snapshot: 394 503 live copies of one steering sentence held as `text` on
+ * comment records inside 37 616 arrays, hanging off 18 801 `comments` + 18 751 `steeringComments`
+ * properties of hydrated rows, against a board of 2 766 live cards of which only 836 carry any
+ * comment — ~22 living hydrations of every commented card. That is why the writer bound in RUFU-640
+ * (2026-10-11) stopped the growth of the DATA and not the growth of the HEAP.
+ *
+ * `slim: true` is kept, not replaced: it is what excludes `log`, and `fields` cannot buy that column
+ * back. The declared set is part of the read-shape key (RUFU-627), so this read can never be served
+ * a wide row by memo or in-flight coalescing.
+ */
 async function defaultListTasks(store: unknown): Promise<SlimTaskLike[]> {
-  const anyStore = store as { listTasks?: (opts: { slim: true }) => Promise<SlimTaskLike[]> };
+  const anyStore = store as {
+    listTasks?: (opts: { slim: true; fields?: readonly TaskListReadField[] }) => Promise<SlimTaskLike[]>;
+  };
   if (typeof anyStore.listTasks !== "function") return [];
-  return anyStore.listTasks({ slim: true });
+  return anyStore.listTasks({ slim: true, fields: [] });
 }
 
 /** Default PG cumulative-counter reader. Reads `pg_stat_database` (one row per database) on the
