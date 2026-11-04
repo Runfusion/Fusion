@@ -38,6 +38,7 @@ import {
 import { buildSessionSkillContext } from "../cli-runtime/session-skill-context.js";
 import { AgentLogger } from "../agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
+import { emitLaneTokenUsage } from "../agents/prompt-telemetry.js";
 import { reviewerLog } from "../logger.js";
 import { checkSessionError } from "../errors/usage-limit-detector.js";
 import {
@@ -514,6 +515,20 @@ export async function reviewStep(
     if (!activeSessions.delete(session)) {
       return;
     }
+    /*
+    FNXC:LaneTelemetry 2026-11-04-05:09 (R3):
+    The reviewer lane has no `task.tokenUsage` writer at all — review spend is invisible in every
+    existing surface — so this event-only emit is its ONLY row and it never touches the task row.
+    Disposal is the single seam every reviewer session (including a fallback attempt) passes through,
+    which is what keeps it at one row per session rather than one per prompt turn.
+    */
+    if (options.store) {
+      emitLaneTokenUsage(options.store, "reviewer", session, {
+        taskId: options.taskId ?? null,
+        agentId: options.agentId ?? options.task?.assignedAgentId ?? null,
+        nodeId: options.task?.effectiveNodeId ?? options.task?.nodeId ?? null,
+      });
+    }
     session.dispose();
     options.onSessionEnded?.(session);
   };
@@ -573,6 +588,13 @@ export async function reviewStep(
     ];
 
     const { session } = await createResolvedAgentSession({
+      promptTelemetry: options.store ? {
+        store: options.store,
+        lane: "reviewer",
+        taskId: options.taskId ?? null,
+        agentId: options.agentId ?? options.task?.assignedAgentId ?? null,
+        nodeId: options.task?.effectiveNodeId ?? options.task?.nodeId ?? null,
+      } : undefined,
       sessionPurpose: "reviewer",
       runtimeHint: extractRuntimeHint(memoryAgent?.runtimeConfig),
       pluginRunner: options.pluginRunner,

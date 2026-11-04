@@ -93,6 +93,7 @@ import {
   wakeLaneIsReviewerOnly,
 } from "./agents/wake-bind.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "./agents/agent-usage-telemetry.js";
+import { emitLaneTokenUsage } from "./agents/prompt-telemetry.js";
 import { emitApprovalMail } from "./agents/approval-mail.js";
 import {
   resolveAgentInstructionPartsWithRatings,
@@ -1406,6 +1407,7 @@ export class HeartbeatMonitor {
     try {
       const models = resolveHeartbeatSessionModels(settings, agent.runtimeConfig, agent);
       const created = await createResolvedAgentSession({
+        ...(this.taskStore ? { promptTelemetry: { store: this.taskStore, lane: "heartbeat" as const, agentId: agent.id } } : {}),
         sessionPurpose: "heartbeat",
         runtimeHint: extractRuntimeHint(agent.runtimeConfig),
         pluginRunner: this.pluginRunner,
@@ -4976,6 +4978,7 @@ export class HeartbeatMonitor {
         // Create agent session
         const heartbeatRetryAbortController = new AbortController();
         let { session } = await createResolvedAgentSession({
+        promptTelemetry: { store: taskStore, lane: "heartbeat", taskId: taskId ?? null, agentId },
           sessionPurpose: "heartbeat",
           runtimeHint: extractRuntimeHint(agent.runtimeConfig),
           pluginRunner: this.pluginRunner,
@@ -5672,6 +5675,7 @@ export class HeartbeatMonitor {
                 dispatchedRotation = true;
                 session.dispose();
                 const created = await createResolvedAgentSession({
+                    promptTelemetry: { store: taskStore, lane: "heartbeat", taskId: taskId ?? null, agentId },
                   sessionPurpose: "heartbeat", runtimeHint: extractRuntimeHint(agent.runtimeConfig), pluginRunner: this.pluginRunner,
                   cwd: sessionCwd, systemPrompt: systemPromptFinal, systemPromptLayers: heartbeatLayers, tools: "coding", customTools: heartbeatTools, fusionTools: heartbeatTools,
                   defaultProvider: heartbeatSessionModels.defaultProvider, defaultModelId: heartbeatSessionModels.defaultModelId,
@@ -5748,10 +5752,20 @@ export class HeartbeatMonitor {
 
           if (!isNoTaskRun && taskId) {
             try {
-              await accumulateSessionTokenUsage(taskStore, taskId, session);
+              await accumulateSessionTokenUsage(taskStore, taskId, session, { lane: "heartbeat" });
             } catch (accumulateErr) {
               heartbeatLog.warn(`Agent ${agentId} task token usage accumulate failed: ${accumulateErr instanceof Error ? accumulateErr.message : String(accumulateErr)}`);
             }
+          } else {
+            /*
+            FNXC:LaneTelemetry 2026-11-04-05:09:
+            An idle `isNoTaskRun` heartbeat still spends tokens — message triage, mailbox reads, the
+            standing-instruction work — and until now none of it reached any surface: the task credit
+            above is skipped for want of a task, and the run row stores only an estimated total plus
+            cost. This is the lane's ONLY row for such a run, it is event-only, and the spend stays
+            attributed to no task.
+            */
+            emitLaneTokenUsage(taskStore, "heartbeat", session, { agentId });
           }
 
           await flushAgentLogger();

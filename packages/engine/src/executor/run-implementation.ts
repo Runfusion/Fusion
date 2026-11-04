@@ -2551,6 +2551,7 @@ export async function runImplementation(
         let sessionFile: string | null | undefined;
         try {
           const createdSession = await createResolvedAgentSession({
+            promptTelemetry: { store: deps.store, lane: "executor", taskId: task.id, agentId: task.assignedAgentId ?? null, nodeId: task.effectiveNodeId ?? task.nodeId ?? null },
             sessionPurpose: "executor",
         taskExecutionSession: true,
             runtimeHint: executorRuntimeHint,
@@ -3106,6 +3107,7 @@ export async function runImplementation(
               let retrySession: AgentSession | null = null;
               try {
                 const createdRetrySession = await createResolvedAgentSession({
+                  promptTelemetry: { store: deps.store, lane: "executor", taskId: task.id, agentId: task.assignedAgentId ?? null, nodeId: task.effectiveNodeId ?? task.nodeId ?? null },
                   sessionPurpose: "executor",
             taskExecutionSession: true,
                   runtimeHint: executorRuntimeHint,

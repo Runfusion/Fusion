@@ -1174,6 +1174,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
       const mcpServers = await deps.resolveMcpServers(undefined);
       if (graphSignal?.aborted) return graphAbortedOutcome();
       const { session } = await createResolvedAgentSession({
+        promptTelemetry: { store: deps.store, lane: "workflow-step", taskId: task.id, agentId: task.assignedAgentId ?? null, nodeId: task.effectiveNodeId ?? task.nodeId ?? null },
         sessionPurpose: "executor",
         taskExecutionSession: true,
         runtimeHint: workflowRuntimeHint,
@@ -1362,7 +1363,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
           }
           // FNXC:TaskCost 2026-07-30-21:40: Plan Review tokens are task cost;
           // snapshot before timeout disposal just like normal completion.
-          await accumulateSessionTokenUsage(deps.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
+          await accumulateSessionTokenUsage(deps.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor", lane: "workflow-step" });
           try { session.dispose(); } catch { /* best-effort */ }
           await agentLogger.flush();
           return {
@@ -1525,6 +1526,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
         await accumulateSessionTokenUsage(deps.store, task.id, session, {
           agentId: task.assignedAgentId ?? undefined,
           role: "executor",
+          lane: "workflow-step",
         });
         acceptSessionEvents = false;
         session.dispose();
@@ -1703,7 +1705,7 @@ CRITICAL SCOPING RULES — read before doing anything else:
         await agentLogger.flush();
         // Persist the delta before error disposal so graph-owned planning reviews
         // cannot disappear from operator cost totals.
-        await accumulateSessionTokenUsage(deps.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
+        await accumulateSessionTokenUsage(deps.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor", lane: "workflow-step" });
         try { session.dispose(); } catch { /* best-effort */ }
         if ((err instanceof ReadonlyViolationError) || ((err as { code?: string } | null)?.code === "READONLY_VIOLATION")) {
           const violation = err as ReadonlyViolationError;

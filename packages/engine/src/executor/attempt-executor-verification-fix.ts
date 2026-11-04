@@ -119,6 +119,7 @@ export async function attemptExecutorVerificationFix(
 
     // Create the fix agent session
     const { session } = await createResolvedAgentSession({
+      promptTelemetry: { store: deps.store, lane: "executor", taskId: task.id, agentId: task.assignedAgentId ?? null, nodeId: task.effectiveNodeId ?? task.nodeId ?? null },
       sessionPurpose: "executor",
         taskExecutionSession: true,
       pluginRunner: deps.pluginRunner,
@@ -210,6 +211,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       await accumulateSessionTokenUsage(deps.store, task.id, session, {
         agentId: task.assignedAgentId ?? undefined,
         role: "executor",
+        lane: "executor",
       });
 
       // Re-run full deterministic verification (test AND build) after the fix attempt

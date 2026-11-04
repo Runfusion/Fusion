@@ -8917,6 +8917,46 @@
       "cpuTrend": "",
       "detailsTitle": ""
     },
+    "llmTelemetry":     {
+      "title": "Telemetría de LLM",
+      "window": "Ventana de telemetría de LLM",
+      "lane": "Carril",
+      "unknownModel": "(desconocido)",
+      "cacheShare": "Cuota de lecturas de caché",
+      "cacheShareHint": "Ningún proveedor de este carril informó de lecturas de caché",
+      "distinctHeads": "Cabeceras distintas",
+      "divergences": "Divergencias del prompt",
+      "divergenceHint": "Base {{baselineCount}}, idénticos {{identicalCount}}, desplazamientos desconocidos para {{unknownCount}}",
+      "requests": "{{n}} solicitudes",
+      "unmeasured": "sin medir",
+      "promptTokens": "Tokens de prompt (todos los carriles)",
+      "heartbeatShare": "Cuota del heartbeat",
+      "truncated": "Ventana demasiado grande: los recuentos son parciales",
+      "empty": "Ningún carril informó en esta ventana",
+      "loading": "Cargando telemetría de carriles…",
+      "windowCaption": "usage_events de {{from}} a {{to}} — fuente de contabilidad aparte, nunca se suma a los totales de arriba",
+      "medianHeadBytes": "Bytes medianos del sistema",
+      "tileLabel": "{{lane}} con {{model}}: {{tokens}} tokens en {{events}} solicitudes. Mostrar los encabezados del prompt de este carril.",
+      "offsetBuckets": "{{known}} localizados, {{unknown}} no",
+      "heads": {
+        "title": "Encabezados de prompt en esta ventana",
+        "clear": "Quitar el filtro de carril ({{lane}})",
+        "empty": "Ningún encabezado de prompt registrado en esta ventana",
+        "emptyLane": "Ningún encabezado de prompt registrado para {{lane}} en esta ventana",
+        "listLabel": "Registros de encabezados de prompt"
+      },
+      "head": {
+        "hash": "Hash del encabezado (sha256)",
+        "staticBytes": "Bytes estáticos",
+        "dynamicBytes": "Bytes dinámicos",
+        "dynamicStart": "Inicio dinámico",
+        "firstDivergenceOffset": "Primer desplazamiento de divergencia",
+        "source": "Origen",
+        "runtime": "Runtime",
+        "request": "Id de solicitud",
+        "toggleLabel": "Encabezado {{hash}} de {{lane}} — mostrar tamaños, desplazamientos y procedencia"
+      }
+    },
     "tokens": {
       "stalePricing": "",
       "totalTokens": "",

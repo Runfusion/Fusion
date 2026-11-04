@@ -2036,6 +2036,46 @@ export default interface Resources {
         "totalsTitle": "GitLab issue and MR flow"
       },
       "heading": "Dashboard",
+      "llmTelemetry": {
+        "cacheShare": "Cache-read share",
+        "cacheShareHint": "No provider in this lane reported cache reads",
+        "distinctHeads": "Distinct heads",
+        "divergenceHint": "Baseline {{baselineCount}}, identical {{identicalCount}}, offsets unknown for {{unknownCount}}",
+        "divergences": "Prompt divergences",
+        "empty": "No lane reported in this window",
+        "head": {
+          "dynamicBytes": "Dynamic bytes",
+          "dynamicStart": "Dynamic start",
+          "firstDivergenceOffset": "First divergence offset",
+          "hash": "Head hash (sha256)",
+          "request": "Request id",
+          "runtime": "Runtime",
+          "source": "Source",
+          "staticBytes": "Static bytes",
+          "toggleLabel": "{{lane}} head {{hash}} — show sizes, offsets and provenance"
+        },
+        "heads": {
+          "clear": "Clear lane filter ({{lane}})",
+          "empty": "No prompt head recorded in this window",
+          "emptyLane": "No prompt head recorded for {{lane}} in this window",
+          "listLabel": "Prompt head records",
+          "title": "Prompt heads in this window"
+        },
+        "heartbeatShare": "Heartbeat share",
+        "lane": "Lane",
+        "loading": "Loading lane telemetry…",
+        "medianHeadBytes": "Median system bytes",
+        "offsetBuckets": "{{known}} localised, {{unknown}} not",
+        "promptTokens": "Prompt tokens (all lanes)",
+        "requests": "{{n}} requests",
+        "tileLabel": "{{lane}} on {{model}}: {{tokens}} tokens over {{events}} requests. Show this lane's prompt heads.",
+        "title": "LLM telemetry",
+        "truncated": "Window too large — counts are partial",
+        "unknownModel": "(unknown)",
+        "unmeasured": "unmeasured",
+        "window": "LLM telemetry window",
+        "windowCaption": "usage_events from {{from}} to {{to}} — a separate accounting source, never added to the totals above"
+      },
       "loading": "Loading dashboard...",
       "missionControl": {
         "activeNodes": "Active nodes",
@@ -9228,6 +9268,16 @@ export default interface Resources {
       "wip-admission-throttled": {
         "badgeLabel": "Waiting for a WIP slot",
         "description": "This card is planned and idle, but its crossing into work-in-progress keeps being refused, so it stays where it is until a slot or a release frees it.",
+        "descriptionWithFacts": "{{facts}} This card is planned and idle, so it stays where it is until a slot frees.",
+        "facts": {
+          "fill": "The {{pool}} limit of {{limit}} is full ({{used}} in use).",
+          "holders": "Held by {{holders}}.",
+          "holdersEmpty": "No card is recorded as holding a slot.",
+          "holdersUnrecorded": "Holders are not recorded.",
+          "holdersWithAge": "Held by {{holders}} (longest {{age}}).",
+          "limitOnly": "The {{pool}} limit of {{limit}} is full.",
+          "noLimit": "No capacity pool was consulted for this wait."
+        },
         "headline": "Waiting for a work-in-progress slot ({{waited}})",
         "headlineUnspecified": "Waiting for a work-in-progress slot",
         "suggestedAction": "Check what occupies the work-in-progress column and its limit, or move the card yourself."

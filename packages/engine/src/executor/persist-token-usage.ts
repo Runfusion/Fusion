@@ -18,6 +18,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../logger.js";
 import { enforceTaskTokenBudgetForPersist } from "../concurrency/token-budget-enforcer.js";
 import type { EngineRunContext } from "../util/run-audit.js";
+import { emitLaneTokenUsageEvent, readSessionModelIdentity } from "../agents/prompt-telemetry.js";
 import {
   accumulateTokenUsage,
   extractSessionTokenUsage,
@@ -42,6 +43,13 @@ export type PersistTokenUsageDeps = {
   getActiveSession: (taskId: string) => AgentSession | undefined;
 };
 
+/**
+ * Whole-object writer for `task.tokenUsage`. It deliberately emits NOTHING.
+ *
+ * FNXC:LaneTelemetry 2026-11-04-05:09:
+ * Its input is an already-cumulative object, not a delta, so a `token_usage` row here would credit the
+ * whole task lifetime on every write. Only delta seams are allowed to speak to `usage_events`.
+ */
 export async function persistTaskTokenUsage(
   deps: Pick<PersistTokenUsageDeps, "store" | "getRunContextFor">,
   taskId: string,
@@ -99,6 +107,26 @@ export async function persistTokenUsage(
   }
 
   const task = await deps.store.getTask(taskId);
+  /*
+  FNXC:LaneTelemetry 2026-11-04-05:09 (F1):
+  This is the executor's authoritative delta seam: a central executor session never passes through
+  `accumulateSessionTokenUsage` — roughly seventy call sites (prompt path, retry path, final cleanup)
+  all land here, so an emit anywhere else in the executor would either double-count the same session
+  counters or sit in dead code. The row is emitted from the DELTA the write uses, so the panel and
+  `task.tokenUsage` can never disagree, and it is emitted before the write so a task-write failure
+  still leaves the (already spent) tokens visible.
+  */
+  const modelIdentity = readSessionModelIdentity(activeSession);
+  emitLaneTokenUsageEvent({
+    store: deps.store,
+    lane: "executor",
+    taskId,
+    agentId: task.assignedAgentId ?? null,
+    model: modelIdentity.model,
+    provider: modelIdentity.provider,
+    cacheReadReported: currentUsage.cacheReadReported,
+    delta,
+  });
   const merged = accumulateTokenUsage(task.tokenUsage, delta);
   if (!merged) return;
   const tokenUsage = tokenUsageWithModelSnapshot(merged, activeSession, task.tokenUsage, delta);

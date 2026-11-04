@@ -1,0 +1,350 @@
+/*
+FNXC:LaneTelemetry 2026-11-04-05:09:
+Styles for the LLM lane-telemetry plate. Cell heat is a `color-mix` over the accent so a busy lane reads
+as density rather than as a colored badge, and the first column stays sticky on narrow screens because a
+lane row that scrolls out of its label is unreadable. Tokenized throughout — no hex, no raw pixels.
+*/
+.cc-llm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.cc-llm-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.cc-llm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-sm, 0.875rem);
+}
+
+.cc-llm-caption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-muted);
+  font-size: var(--font-xs, 0.75rem);
+}
+
+.cc-llm-table th,
+.cc-llm-table td {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.cc-llm-table thead th {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: var(--font-xs, 0.75rem);
+}
+
+/* The lane column carries the row identity, so it reads as a header and stays pinned when the table scrolls sideways. */
+.cc-llm-lane-col {
+  position: sticky;
+  inset-inline-start: 0;
+  background: var(--surface-1);
+  text-align: start !important;
+  min-inline-size: 9rem;
+}
+
+.cc-llm-table thead .cc-llm-lane-col {
+  z-index: 2;
+  background: var(--surface-2);
+}
+
+.cc-llm-lane-name {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cc-llm-lane-sub {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--font-xs, 0.75rem);
+  font-weight: 400;
+}
+
+.cc-llm-model-col {
+  text-align: center !important;
+}
+
+.cc-llm-cell {
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--accent) calc(var(--cc-llm-heat, 0) * 42%), transparent);
+  transition: background var(--duration-fast) ease;
+}
+
+.cc-llm-cell-empty {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.cc-llm-agg-col {
+  font-variant-numeric: tabular-nums;
+  text-align: center !important;
+}
+
+.cc-llm-unmeasured {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.cc-llm-diverged {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.cc-llm-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  align-items: baseline;
+}
+
+.cc-llm-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.cc-llm-stat-label {
+  color: var(--text-muted);
+  font-size: var(--font-xs, 0.75rem);
+}
+
+.cc-llm-stat-value {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-llm-empty {
+  color: var(--text-muted);
+  margin: 0;
+  font-size: var(--font-sm, 0.875rem);
+}
+
+.cc-llm-truncated {
+  color: var(--color-warning);
+  font-size: var(--font-xs, 0.75rem);
+}
+
+/*
+FNXC:LaneTelemetry 2026-11-04-07:20:
+A spend tile is a press target, so it owns its minimum size instead of shrinking to its glyph: a 20px
+number in a table cell is not operable by thumb. The transparent border keeps the box the same size in
+both the pressed and unpressed state, so filtering a lane never nudges the row it sits in.
+*/
+.cc-llm-tile {
+  display: block;
+  inline-size: 100%;
+  min-block-size: 2.25rem;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  cursor: pointer;
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.cc-llm-tile:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.cc-llm-tile[aria-pressed="true"] {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.cc-llm-tile:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 2px;
+}
+
+.cc-llm-offset-buckets {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--font-xs, 0.75rem);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+FNXC:LaneTelemetry 2026-11-04-07:20:
+The head list is capped and scrolls: per-request prompt evidence is the densest row the surface emits, and
+a section that grows the page pushes every other Tokens section out of view.
+*/
+.cc-llm-heads {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.cc-llm-heads-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.cc-llm-heads-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-xs, 0.75rem);
+  font-weight: 600;
+}
+
+.cc-llm-head-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-block-size: 18rem;
+  overflow-y: auto;
+}
+
+.cc-llm-head-row {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cc-llm-head-row:last-child {
+  border-bottom: none;
+}
+
+.cc-llm-head-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: baseline;
+  inline-size: 100%;
+  min-block-size: 2.25rem;
+  padding: var(--space-xs) 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-xs, 0.75rem);
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--duration-fast) ease;
+}
+
+.cc-llm-head-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.cc-llm-head-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 2px;
+}
+
+.cc-llm-head-time,
+.cc-llm-head-lane,
+.cc-llm-head-bytes {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-llm-head-lane {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cc-llm-head-hash {
+  font-family: var(--font-mono, monospace);
+}
+
+.cc-llm-head-divergence {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+}
+
+.cc-llm-head-divergence-diverged {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.cc-llm-head-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2xs, var(--space-xs)) var(--space-sm);
+  margin: 0;
+  padding: var(--space-xs) 0 var(--space-sm);
+  font-size: var(--font-xs, 0.75rem);
+}
+
+.cc-llm-head-detail dt {
+  color: var(--text-muted);
+}
+
+.cc-llm-head-detail dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .cc-llm-table th,
+  .cc-llm-table td {
+    padding: var(--space-sm);
+  }
+}
+
+@media (max-width: 768px) {
+  .cc-llm-table {
+    font-size: var(--font-xs, 0.75rem);
+  }
+
+  .cc-llm-table th,
+  .cc-llm-table td {
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .cc-llm-lane-col {
+    min-inline-size: 7rem;
+  }
+
+  .cc-llm-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-sm);
+  }
+
+  .cc-llm-heads {
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .cc-llm-head-list {
+    max-block-size: 14rem;
+  }
+
+  .cc-llm-head-detail {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-llm-cell {
+    transition: none;
+  }
+}

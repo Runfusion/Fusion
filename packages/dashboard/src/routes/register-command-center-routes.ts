@@ -1,6 +1,8 @@
 import {
   resolveWorkflowIrById,
   aggregateTokenAnalytics,
+  aggregateLlmLaneTelemetry,
+  type LlmTelemetryWindow,
   aggregateToolAnalytics,
   aggregateActivityAnalytics,
   aggregateProductivityAnalytics,
@@ -141,6 +143,17 @@ export function resolveTokenGranularity(query: Request["query"]): TokenTimeGranu
   return raw !== undefined && VALID_TOKEN_GRANULARITY.has(raw) ? (raw as TokenTimeGranularity) : undefined;
 }
 
+/*
+FNXC:LaneTelemetry 2026-11-04-05:09:
+`?window=` for the LLM-telemetry surface, defaulting to 1h. An unknown value falls back to the default
+rather than 400ing, because no Command Center resolver in this file rejects an unknown enum and a panel
+that sent a stale window value would rather show a real window than an error card.
+*/
+export function resolveLlmTelemetryWindow(query: Request["query"]): LlmTelemetryWindow {
+  const raw = typeof query.window === "string" ? query.window : undefined;
+  return raw === "10m" || raw === "1h" ? raw : "1h";
+}
+
 /** True when the caller asked for CSV via `?format=csv` (case-insensitive). */
 /*
 FNXC:SdlcFunnelColumns 2026-07-30-10:15:
@@ -240,6 +253,33 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err, "Failed to aggregate token analytics");
+    }
+  });
+
+  /**
+   * GET /api/command-center/llm-telemetry
+   * Per-lane LLM spend, cache-read share, and prompt-head stability over a short window.
+   * Query: window = `10m` | `1h` (default `1h`).
+   *
+   * FNXC:LaneTelemetry 2026-11-04-05:09 (R1/R5):
+   * A THIRD accounting source next to /command-center/tokens, deliberately its own route with its own
+   * window: `/tokens` answers "what did the board cost" from task and chat rows, this answers "what did
+   * each lane actually send" from `usage_events`. The two are never summed, so they are never merged
+   * into one payload either, and the window is minutes rather than days because a cache that regressed
+   * must be visible inside the session that caused it.
+   */
+  router.get("/command-center/llm-telemetry", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const window = resolveLlmTelemetryWindow(req.query);
+      const result = await aggregateLlmLaneTelemetry(
+        requireAsyncLayer(store, "Command Center LLM telemetry"),
+        { window },
+      );
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to aggregate LLM lane telemetry");
     }
   });
 

@@ -8917,6 +8917,46 @@
       "cpuTrend": "CPU ao longo do tempo",
       "detailsTitle": "Detalhes do runtime"
     },
+    "llmTelemetry":     {
+      "title": "Telemetria de LLM",
+      "window": "Janela de telemetria de LLM",
+      "lane": "Faixa",
+      "unknownModel": "(desconhecido)",
+      "cacheShare": "Taxa de leitura de cache",
+      "cacheShareHint": "Nenhum provedor desta faixa relatou leituras de cache",
+      "distinctHeads": "Cabeçalhos distintos",
+      "divergences": "Divergências de prompt",
+      "divergenceHint": "Base {{baselineCount}}, idênticos {{identicalCount}}, deslocamentos desconhecidos para {{unknownCount}}",
+      "requests": "{{n}} solicitações",
+      "unmeasured": "não medido",
+      "promptTokens": "Tokens de prompt (todas as faixas)",
+      "heartbeatShare": "Parcela do heartbeat",
+      "truncated": "Janela grande demais — contagens parciais",
+      "empty": "Nenhuma faixa relatou nesta janela",
+      "loading": "Carregando telemetria de faixas…",
+      "windowCaption": "usage_events de {{from}} até {{to}} — fonte de contabilidade separada, nunca somada aos totais acima",
+      "medianHeadBytes": "Bytes médios do sistema",
+      "tileLabel": "{{lane}} em {{model}}: {{tokens}} tokens em {{events}} solicitações. Mostrar cabeçalhos de prompt desta faixa.",
+      "offsetBuckets": "{{known}} localizados, {{unknown}} não",
+      "heads": {
+        "title": "Cabeçalhos de prompt nesta janela",
+        "clear": "Limpar filtro de faixa ({{lane}})",
+        "empty": "Nenhum cabeçalho de prompt registrado nesta janela",
+        "emptyLane": "Nenhum cabeçalho de prompt registrado para {{lane}} nesta janela",
+        "listLabel": "Registros de cabeçalhos de prompt"
+      },
+      "head": {
+        "hash": "Hash do cabeçalho (sha256)",
+        "staticBytes": "Bytes estáticos",
+        "dynamicBytes": "Bytes dinâmicos",
+        "dynamicStart": "Início do dinâmico",
+        "firstDivergenceOffset": "Primeiro deslocamento de divergência",
+        "source": "Origem",
+        "runtime": "Runtime",
+        "request": "ID da solicitação",
+        "toggleLabel": "Cabeçalho {{hash}} de {{lane}} — mostrar tamanhos, deslocamentos e procedência"
+      }
+    },
     "tokens": {
       "stalePricing": "os preços podem estar desatualizados",
       "totalTokens": "Total de tokens",

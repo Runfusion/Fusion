@@ -669,6 +669,7 @@ function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string,
     { attachAgentUsageTelemetry(logger, { store, agentId: task?.assignedAgentId ?? null, taskId, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null, model: model.modelId ?? null, provider: model.provider ?? null, lane: "merger" }); }
 
     const { session } = await createResolvedAgentSession({
+      promptTelemetry: { store, lane: "merger", taskId, agentId: task?.assignedAgentId ?? null, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null },
       sessionPurpose: "merger",
       pluginRunner: options.pluginRunner,
       cwd,
@@ -698,7 +699,7 @@ function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string,
         await promptWithFallback(session, prompt);
         checkSessionError(session);
       }, { signal: options.signal });
-      await accumulateSessionTokenUsage(store, taskId, session);
+      await accumulateSessionTokenUsage(store, taskId, session, { lane: "merger" });
     } finally {
       await logger.flush();
       session.dispose();
@@ -739,6 +740,7 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
     { attachAgentUsageTelemetry(logger, { store, agentId: task?.assignedAgentId ?? null, taskId, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null, model: model.modelId ?? null, provider: model.provider ?? null, lane: "merger" }); }
 
     const { session } = await createResolvedAgentSession({
+      promptTelemetry: { store, lane: "merger", taskId, agentId: task?.assignedAgentId ?? null, nodeId: task?.effectiveNodeId ?? task?.nodeId ?? null },
       sessionPurpose: "merger",
       pluginRunner: options.pluginRunner,
       cwd,
@@ -771,7 +773,7 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
         await promptWithFallback(session, prompt);
         checkSessionError(session);
       }, { signal: options.signal });
-      await accumulateSessionTokenUsage(store, taskId, session);
+      await accumulateSessionTokenUsage(store, taskId, session, { lane: "merger" });
     } finally {
       await logger.flush();
       session.dispose();

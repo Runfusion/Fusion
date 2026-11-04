@@ -8917,6 +8917,46 @@
       "cpuTrend": "",
       "detailsTitle": ""
     },
+    "llmTelemetry":     {
+      "title": "LLM 찰레머트리",
+      "window": "LLM 찰레머트리 창",
+      "lane": "레인",
+      "unknownModel": "(알 수 없음)",
+      "cacheShare": "캐시 읽기 바월",
+      "cacheShareHint": "이 레인의 제공자가 캐시 읽기를 보고하지 않었습니다",
+      "distinctHeads": "고유 헤드",
+      "divergences": "프롬프트 이탈",
+      "divergenceHint": "기준 {{baselineCount}}, 동일 {{identicalCount}}, {{unknownCount}}개의 오프셋을 알 수 없음",
+      "requests": "{{n}}개 요청",
+      "unmeasured": "측정하지 않음",
+      "promptTokens": "프롬프트 토큰 (모든 레인)",
+      "heartbeatShare": "하트비트 바월",
+      "truncated": "창이 너무 큽니다 — 집계 일부만 포함",
+      "empty": "이 창에서 보고한 레인이 없습니다",
+      "loading": "레인 찰레머트리 불러오는 중…",
+      "windowCaption": "{{from}}부터 {{to}}까지 usage_events — 별도 가계 원이며 위의 합계에 더하지 않습니다",
+      "medianHeadBytes": "시스템 바이트 중앙값",
+      "tileLabel": "{{lane}} 레인의 {{model}}: {{events}}개 요청에서 {{tokens}} 토큰. 이 레인의 프롬프트 헤드 표시",
+      "offsetBuckets": "{{known}}개 위치 확정, {{unknown}}개 미확정",
+      "heads": {
+        "title": "이 창에서 기록된 프롬프트 헤드",
+        "clear": "레인 필터 해제 ({{lane}})",
+        "empty": "이 창에 기록된 프롬프트 헤드가 없습니다",
+        "emptyLane": "{{lane}} 레인의 프롬프트 헤드가 이 창에 기록되지 않았습니다",
+        "listLabel": "프롬프트 헤드 기록"
+      },
+      "head": {
+        "hash": "헤드 해시(sha256)",
+        "staticBytes": "정적 바이트",
+        "dynamicBytes": "동적 바이트",
+        "dynamicStart": "동적 시작 위치",
+        "firstDivergenceOffset": "첫 이탈 오프셋",
+        "source": "출처",
+        "runtime": "런타임",
+        "request": "요청 ID",
+        "toggleLabel": "{{lane}} 헤드 {{hash}} — 크기, 오프셋, 출처 표시"
+      }
+    },
     "tokens": {
       "stalePricing": "",
       "totalTokens": "",

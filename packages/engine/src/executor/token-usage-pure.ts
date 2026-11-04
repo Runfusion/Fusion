@@ -53,9 +53,23 @@ export function tokenUsageWithModelSnapshot(
   };
 }
 
+/**
+ * A session's cumulative token counters, plus whether the provider actually answers the cache-read
+ * question.
+ *
+ * FNXC:LaneTelemetry 2026-11-04-05:09:
+ * `cachedTokens: 0` is ambiguous — it is what `tokens.cacheRead ?? 0` produces both when a provider
+ * reports zero cache reads and when it never reports the counter at all. RUFU-267's acceptance claim
+ * is about a cache-read SHARE rising, so the two must stay distinguishable at the source; the flag is
+ * additive and the coalescing arithmetic below is unchanged for every existing consumer.
+ */
+export type SessionTokenUsage =
+  & Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens">
+  & { cacheReadReported: boolean };
+
 export async function extractSessionTokenUsage(
   session: AgentSession | undefined,
-): Promise<Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens"> | undefined> {
+): Promise<SessionTokenUsage | undefined> {
   if (!session) return undefined;
 
   try {
@@ -96,6 +110,7 @@ export async function extractSessionTokenUsage(
       cachedTokens,
       cacheWriteTokens,
       totalTokens,
+      cacheReadReported: typeof tokens.cacheRead === "number",
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

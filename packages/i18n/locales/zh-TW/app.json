@@ -8917,6 +8917,46 @@
       "cpuTrend": "",
       "detailsTitle": ""
     },
+    "llmTelemetry":     {
+      "title": "LLM 遙測",
+      "window": "LLM 遙測時間窗",
+      "lane": "通道",
+      "unknownModel": "（未知）",
+      "cacheShare": "快取讀取占比",
+      "cacheShareHint": "該通道沒有任何提供方回報快取讀取",
+      "distinctHeads": "不同提示頭",
+      "divergences": "提示詞偏移",
+      "divergenceHint": "基準 {{baselineCount}}，完全一致 {{identicalCount}}，{{unknownCount}} 個偏移量未知",
+      "requests": "{{n}} 次請求",
+      "unmeasured": "未量測",
+      "promptTokens": "提示詞從牌（所有通道）",
+      "heartbeatShare": "心跳占比",
+      "truncated": "時間窗過大 — 計數不完整",
+      "empty": "該時間窗內沒有通道上報",
+      "loading": "正在載入通道遥測…",
+      "windowCaption": "usage_events {{from}} 至 {{to}} — 獨立的計數來源，絕不與上方合計相加",
+      "medianHeadBytes": "系統位元午中位數",
+      "tileLabel": "{{lane}} 使用 {{model}}：{{events}} 次請求共 {{tokens}} 從牌。顯示該通道的提示頭",
+      "offsetBuckets": "{{known}} 個已定位，{{unknown}} 個未定位",
+      "heads": {
+        "title": "該時間窗內的提示頭",
+        "clear": "清除通道篩選（{{lane}}）",
+        "empty": "該時間窗內沒有記錄提示頭",
+        "emptyLane": "{{lane}} 通道在該時間窗內沒有記錄提示頭",
+        "listLabel": "提示頭記錄"
+      },
+      "head": {
+        "hash": "提示頭雜渡（sha256）",
+        "staticBytes": "靜態位元組",
+        "dynamicBytes": "動態位元組",
+        "dynamicStart": "動態起始位置",
+        "firstDivergenceOffset": "首次偏移位置",
+        "source": "來源",
+        "runtime": "執行期",
+        "request": "請求 ID",
+        "toggleLabel": "{{lane}} 提示頭 {{hash}} — 顯示大小、偏移位置與來源"
+      }
+    },
     "tokens": {
       "stalePricing": "",
       "totalTokens": "",

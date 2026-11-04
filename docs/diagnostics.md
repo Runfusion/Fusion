@@ -506,3 +506,94 @@ The retention families answer a question the earlier families structurally could
 - **Pressure notice** (`packages/dashboard/src/__tests__/retention-pressure-notice.test.ts`): the log lane always warns, the payload carries only ids/counts/enum reasons and named top sources (never heap contents), delivery is rate-limited and once-per-reason-per-UTC-day, and every mailbox failure shape (absent seam, throwing store, rejecting store, late-settling store) leaves the census tick and the server alive.
 - **Recurrence guard** (`scripts/__tests__/check-retention-coverage.test.mjs` + `packages/dashboard/src/__tests__/retention-coverage-ratchet.test.ts`): the blocking structural check fails on a stale inventory entry, a missing registration, and an injected unregistered TTL cache, with floors on scanned-declaration and census-registered counts so a guard that classifies nothing cannot pass. See *Recurrence guard* in the runbook.
 - **Parser unit cases** (`packages/dashboard/src/__tests__/prometheus-text-parse.test.ts`): gauge/counter `_total`/NaN/Inf/labeled families and non-exposition-text rejection.
+
+## LLM prompt-cache telemetry (RUFU-284)
+
+Per-request LLM behaviour is measured, not inferred. Three event kinds share the existing
+`usage_events` table (no migration, no new database):
+
+| kind | category | one row per |
+| --- | --- | --- |
+| `token_usage` | `llm-usage` | LLM call, carrying `inputTokens`, `outputTokens`, `cachedTokens`, `cacheWriteTokens`, `cacheReadReported` |
+| `prompt_head` | `llm-prompt` | LLM call, carrying the serialized system-prompt identity: sha256 `headHash`, `headBytes`, `staticBytes`/`dynamicBytes`, `divergenceStatus`, `firstDivergenceOffset` |
+| `prompt_end` | `llm-prompt` | LLM call, pairing `requestId` to the head so a lane's real head+tail composition is countable |
+
+The writer is `emitLlm*Meta` in `packages/core/src/telemetry/llm-prompt-telemetry.ts`, reached through
+`TaskStore.emitUsageEvent`. The value-builder is pure (it only returns the meta object); a build error —
+over-budget meta, malformed token shape — becomes a swallowed fail-soft and the row is simply not
+written. **Telemetry can therefore be missing while the call ran normally**, which is the first thing to
+rule out before concluding a lane is idle. The whole meta block fits the shared 4096-byte
+`usage_events.meta` budget (`LLM_TELEMETRY_META_BUDGET_BYTES`), and the divergence locator is dropped
+before the row is ever attempted rather than allowed to overflow the budget and take the usage counters
+with it.
+
+### A lane shows no record: which seam to suspect
+
+Lanes do not inherit a record; each one is an explicit decision at a call site. When a lane is missing
+from Command Center → Tokens → LLM telemetry, check the named owner:
+
+- **executor** — `packages/engine/src/executor/persist-token-usage.ts`. A central executor session never
+  passes through `accumulateSessionTokenUsage`; ~70 call sites land in this one delta seam. A `prompt_head`
+  row additionally needs the lane's `promptTelemetry` record (passed where the session is built, e.g.
+  `run-implementation.ts`) so the pi session factory in `packages/engine/src/pi.ts` can install the
+  per-request patcher.
+- **heartbeat** — `packages/engine/src/agent-heartbeat.ts`. A run that holds a task credits
+  `task.tokenUsage` and emits from there; an idle `isNoTaskRun` heartbeat emits event-only, so a lane
+  that shows rows only while agents are idle is behaving correctly.
+- **workflow-step** — `packages/engine/src/execution/step-session-executor.ts`. Event-only by design:
+  step spend deliberately does not credit `task.tokenUsage`, which is the third accounting source.
+- **reviewer** — `packages/engine/src/execution/reviewer.ts`. Reviewer spend has no `task.tokenUsage`
+  writer at all, so this event is its only row.
+- **merger** — `packages/engine/src/merge/merger-ai.ts` via the same delta seam as the executor.
+- **chat** — `packages/dashboard/src/chat.ts`, beside the existing `chat_token_usage` write, never
+  through a second accumulation path.
+- **triage / planner** — `packages/engine/src/triage.ts`.
+
+A lane absent from the vocabulary but present in the engine (`custom` agents, ephemeral task workers) has
+no row by construction: `lane` has no default and an absent lane means no row, never a mislabelled one.
+
+### Reading the head columns
+
+- `divergenceStatus: baseline` — the first head this process sent for the lane, so there is nothing to
+  compare against. After a restart every lane reports `baseline` once; that is a restart, not a prompt
+  change. `resetPromptHeadDivergenceLedger()` is the test/operator seam for that ledger.
+- `identical` — same `headHash` as the previous request in the lane: a stable prefix, which is what
+  RUFU-267/RUFU-268 (serialized-prompt byte stability) is supposed to produce.
+- `diverged` + `firstDivergenceOffset` — the prefix moved, and the offset is the **character offset of the
+  first difference against the previous head**, which localises the change: an offset near the end of
+  `staticBytes` means something small moved at the tail of the stable half, while a small offset means the
+  leading blocks changed and the provider cache for everything after it is cold.
+- `diverged` + `firstDivergenceOffset: null` — the prefix moved but the previous head was not retained for
+  comparison (oversized head, or a lane whose first observation was not retained). The divergence is real;
+  only its position is unknown, and it is counted in `offsetUnknownCount` rather than being folded into a
+  bucket.
+
+`firstDivergenceOffset` is a *comparison against the previous request*, not a position inside a canonical
+prompt, and it is computed in-process: two daemons observing the same lane each start from `baseline`.
+
+### Query shape
+
+The panel reads `GET /api/command-center/llm-telemetry?window=10m|1h` (read-only, project-scoped, unknown
+window resolves to `1h`). The same aggregate is available directly for diagnosis, and the privacy
+invariant is visible in the result: `meta` carries ids, numbers and fixed enums only.
+
+```sql
+select meta ->> 'lane'                      as lane,
+       meta ->> 'requestId'                 as request_id,
+       (meta ->> 'cachedTokens')::int       as cached_tokens,
+       meta ->> 'headHash'                  as head_hash,
+       meta ->> 'divergenceStatus'          as divergence
+  from usage_events
+ where kind in ('token_usage', 'prompt_head', 'prompt_end')
+   and ts > now() - interval '1 hour'
+ order by ts desc;
+```
+
+No new log namespace was added: this surface reports through its stored rows and the Command Center
+section, never through `FUSION_DEBUG` lines, because a per-request log line is the thing that would leak
+prompt content. Head text is never stored anywhere — hash, byte lengths and offsets only — so cache
+behaviour stays measurable without the corpus being reconstructable.
+<!-- FNXC:LaneTelemetry 2026-11-04-07:00 (RUFU-284 R2/R4): cache economics and prompt drift were unmeasurable and
+therefore unfalsifiable; the diagnostics contract names one owning seam per lane so "no rows" is
+answerable, and states that `firstDivergenceOffset` is a previous-request comparison computed in-process.
+-->

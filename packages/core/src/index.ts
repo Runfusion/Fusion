@@ -1356,6 +1356,54 @@ export type {
   UsageEventRangeQuery,
 } from "./tasks/usage-events.js";
 export {
+  LLM_TOKEN_USAGE_EVENT_KIND,
+  LLM_PROMPT_HEAD_EVENT_KIND,
+  LLM_PROMPT_END_EVENT_KIND,
+  LLM_TELEMETRY_EVENT_KINDS,
+  LLM_TELEMETRY_LANES,
+  LLM_TELEMETRY_WINDOW_MS,
+  LLM_TELEMETRY_WINDOWS,
+  LLM_TELEMETRY_META_BUDGET_BYTES,
+  PROMPT_HEAD_SOURCES,
+  PROMPT_HEAD_DIVERGENCE_BYTE_CAP,
+  PROMPT_DIVERGENCE_STATUSES,
+  PROMPT_OFFSET_BUCKETS,
+  PROMPT_END_OUTCOMES,
+  LlmTelemetryMetaTooLargeError,
+  buildLlmTokenUsageMeta,
+  buildLlmPromptHeadMeta,
+  buildLlmPromptEndMeta,
+  bucketDivergenceOffset,
+  cacheReadShareOf,
+  firstDivergenceOffset,
+  hashPromptHead,
+  heartbeatPromptTokenShareOf,
+  isLlmTelemetryLane,
+  isPromptHeadSource,
+  lowerMedian,
+  normalizePromptHeadBytes,
+  promptHeadByteLength,
+  promptTokensOf,
+} from "./telemetry/llm-prompt-telemetry.js";
+export type {
+  LlmLaneAggregate,
+  LlmLaneHeadStability,
+  LlmLaneTokenSums,
+  LlmPromptEndMeta,
+  LlmPromptHeadMeta,
+  LlmTelemetryLane,
+  LlmTelemetryEventKind,
+  LlmTelemetryGridCell,
+  LlmTelemetryHeadEvent,
+  LlmTelemetryReport,
+  LlmTelemetryWindow,
+  LlmTokenUsageMeta,
+  PromptDivergenceStatus,
+  PromptEndOutcome,
+  PromptHeadSource,
+  PromptOffsetBucket,
+} from "./telemetry/llm-prompt-telemetry.js";
+export {
   costFor,
   lookupPricing,
   parseLiteLLMPricing,
@@ -1373,6 +1421,14 @@ export type {
   CostResult,
 } from "./ai/model-pricing.js";
 export { aggregateTokenAnalytics } from "./board/token-analytics.js";
+/*
+ * FNXC:LaneTelemetry 2026-11-04-05:09:
+ * The LLM-telemetry reader ships next to the token analytics it must NEVER be summed with: it reads
+ * only `usage_events`, and its own test scans its imports to keep `tasks.token_usage` and
+ * `chat_token_usage` out of it.
+ */
+export { aggregateLlmLaneTelemetry, computeLlmLaneTelemetry } from "./board/lane-usage-analytics.js";
+export type { LlmLaneTelemetryQuery } from "./board/lane-usage-analytics.js";
 export type {
   TokenAnalytics,
   TokenAnalyticsQuery,

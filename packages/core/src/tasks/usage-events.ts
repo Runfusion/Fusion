@@ -23,6 +23,8 @@ const severityAuditLog = createLogger("core-usage-events");
  * - `tool_result` / `tool_error` — the tool completed / failed.
  * - `user_message` — a human-authored message (chat/CLI sessions).
  * - `session_start` / `session_stop` — session lifecycle.
+ * - `token_usage` / `prompt_head` / `prompt_end` — LLM lane telemetry (RUFU-284);
+ *   see `telemetry/llm-prompt-telemetry.ts` for the meta contract.
  */
 export type UsageEventKind =
   | "tool_call"
@@ -30,8 +32,18 @@ export type UsageEventKind =
   | "tool_error"
   | "user_message"
   | "session_start"
-  | "session_stop";
+  | "session_stop"
+  | "token_usage"
+  | "prompt_head"
+  | "prompt_end";
 
+/*
+FNXC:LaneTelemetry 2026-11-04-05:09:
+This sync set and the private mirror in `task-store/async/async-events.ts` are TWO allow-lists over the
+same column. The async writer is the production path, but a kind missing here is still a typed
+`UsageEventKind` rejection at every caller, and a kind missing THERE is a silent fail-soft skip. The
+LLM-telemetry kinds are therefore declared in both sets by the same change.
+*/
 const USAGE_EVENT_KINDS: ReadonlySet<string> = new Set<UsageEventKind>([
   "tool_call",
   "tool_result",
@@ -39,6 +51,9 @@ const USAGE_EVENT_KINDS: ReadonlySet<string> = new Set<UsageEventKind>([
   "user_message",
   "session_start",
   "session_stop",
+  "token_usage",
+  "prompt_head",
+  "prompt_end",
 ]);
 
 /**
@@ -241,12 +256,66 @@ export interface UsageEventRangeQuery {
   /** ISO-8601 upper bound (inclusive). */
   to?: string;
   kind?: UsageEventKind;
+  /**
+   * Multi-kind read (RUFU-284): the LLM-telemetry surface needs `token_usage` + `prompt_head` +
+   * `prompt_end` in ONE windowed scan, because per-lane cache share and head stability must be
+   * computed over the same window boundaries or the two halves of a row cannot be compared.
+   * ANDed with `kind` when both are given.
+   */
+  kinds?: readonly UsageEventKind[];
   taskId?: string;
   agentId?: string;
+  /**
+   * Maximum rows to return. Newest-first in the async layer (which already orders `ts DESC`),
+   * so a limit keeps the RECENT window rather than truncating it away.
+   */
+  limit?: number;
 }
 
-function rowToUsageEvent(row: UsageEventRow): UsageEvent {
-  let meta: Record<string, unknown> | null = null;
+/**
+ * Shared WHERE-clause builder for the two range scans, so `kinds` can never be honored by one
+ * reader and silently ignored by the other.
+ */
+function appendRangeFilters(
+  clauses: string[],
+  params: string[],
+  query: UsageEventRangeQuery,
+): void {
+  if (query.from !== undefined) {
+    clauses.push("ts >= ?");
+    params.push(query.from);
+  }
+  if (query.to !== undefined) {
+    clauses.push("ts <= ?");
+    params.push(query.to);
+  }
+  if (query.kind !== undefined) {
+    clauses.push("kind = ?");
+    params.push(query.kind);
+  }
+  if (query.kinds !== undefined && query.kinds.length > 0) {
+    clauses.push(`kind IN (${query.kinds.map(() => "?").join(", ")})`);
+    params.push(...query.kinds);
+  }
+  if (query.taskId !== undefined) {
+    clauses.push("taskId = ?");
+    params.push(query.taskId);
+  }
+  if (query.agentId !== undefined) {
+    clauses.push("agentId = ?");
+    params.push(query.agentId);
+  }
+}
+
+/** Interpolated into SQL directly, so it is clamped to a plain positive integer. */
+function normalizeLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  const truncated = Math.trunc(limit);
+  if (!Number.isFinite(truncated) || truncated <= 0) return undefined;
+  return truncated;
+}
+
+function rowToUsageEvent(row: UsageEventRow): UsageEvent {  let meta: Record<string, unknown> | null = null;
   if (row.meta) {
     try {
       meta = JSON.parse(row.meta) as Record<string, unknown>;
@@ -277,29 +346,11 @@ function rowToUsageEvent(row: UsageEventRow): UsageEvent {
 export function queryUsageEvents(db: Database, query: UsageEventRangeQuery = {}): UsageEvent[] {
   const clauses: string[] = [];
   const params: Array<string> = [];
-  if (query.from !== undefined) {
-    clauses.push("ts >= ?");
-    params.push(query.from);
-  }
-  if (query.to !== undefined) {
-    clauses.push("ts <= ?");
-    params.push(query.to);
-  }
-  if (query.kind !== undefined) {
-    clauses.push("kind = ?");
-    params.push(query.kind);
-  }
-  if (query.taskId !== undefined) {
-    clauses.push("taskId = ?");
-    params.push(query.taskId);
-  }
-  if (query.agentId !== undefined) {
-    clauses.push("agentId = ?");
-    params.push(query.agentId);
-  }
+  appendRangeFilters(clauses, params, query);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const limit = normalizeLimit(query.limit);
   const rows = db
-    .prepare(`SELECT * FROM usage_events ${where} ORDER BY ts ASC, id ASC`)
+    .prepare(`SELECT * FROM usage_events ${where} ORDER BY ts ASC, id ASC${limit ? ` LIMIT ${limit}` : ""}`)
     .all(...params) as UsageEventRow[];
   return rows.map(rowToUsageEvent);
 }
@@ -315,26 +366,7 @@ export function countUsageEventsBy(
 ): Array<{ key: string | null; count: number }> {
   const clauses: string[] = [];
   const params: Array<string> = [];
-  if (query.from !== undefined) {
-    clauses.push("ts >= ?");
-    params.push(query.from);
-  }
-  if (query.to !== undefined) {
-    clauses.push("ts <= ?");
-    params.push(query.to);
-  }
-  if (query.kind !== undefined) {
-    clauses.push("kind = ?");
-    params.push(query.kind);
-  }
-  if (query.taskId !== undefined) {
-    clauses.push("taskId = ?");
-    params.push(query.taskId);
-  }
-  if (query.agentId !== undefined) {
-    clauses.push("agentId = ?");
-    params.push(query.agentId);
-  }
+  appendRangeFilters(clauses, params, query);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = db
     .prepare(`SELECT ${column} AS key, COUNT(*) AS count FROM usage_events ${where} GROUP BY ${column}`)

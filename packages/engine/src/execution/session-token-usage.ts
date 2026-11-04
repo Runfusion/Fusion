@@ -1,7 +1,8 @@
-import type { AgentRole, RunMutationContext, TaskStore, TaskTokenUsage, TaskTokenUsagePerModel } from "@fusion/core";
+import type { AgentRole, LlmTelemetryLane, RunMutationContext, TaskStore, TaskTokenUsage, TaskTokenUsagePerModel } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../logger.js";
 import { enforceTaskTokenBudgetForPersist } from "../concurrency/token-budget-enforcer.js";
+import { emitLaneTokenUsageEvent, readSessionModelIdentity } from "../agents/prompt-telemetry.js";
 
 const log = createLogger("session-token-usage");
 const cacheMetricsLog = createLogger("token-cache-metrics");
@@ -104,7 +105,7 @@ export async function accumulateSessionTokenUsage(
   store: TaskStore,
   taskId: string,
   session: AgentSession,
-  options?: { agentId?: string; role?: AgentRole; runContext?: RunMutationContext },
+  options?: { agentId?: string; role?: AgentRole; runContext?: RunMutationContext; lane?: LlmTelemetryLane },
 ): Promise<void> {
   try {
     const stats = readSessionStats(session);
@@ -132,6 +133,35 @@ export async function accumulateSessionTokenUsage(
     if (inputDelta === 0 && outputDelta === 0 && cachedDelta === 0 && cacheWriteDelta === 0) return;
 
     const task = await store.getTask(taskId);
+    /*
+    FNXC:LaneTelemetry 2026-11-04-05:09 (R3/R4):
+    `role` decides which task aggregate the credit lands in and defaults to "executor"; `lane` decides
+    what the telemetry panel says and has NO default. Emitting only on an explicit lane keeps every
+    pre-existing call site binary-compatible (no row, same accounting) while making each lane's row a
+    deliberate call-site decision. The row is emitted from the same delta object the write uses, so a
+    lane can never both credit and double-credit — and lanes that already credit `task.tokenUsage`
+    (workflow-step, merger, heartbeat-with-task, triage) get exactly one row from THIS call rather than
+    a second one at the end of their run.
+    */
+    if (options?.lane) {
+      const modelIdentity = readSessionModelIdentity(session);
+      emitLaneTokenUsageEvent({
+        store,
+        lane: options.lane,
+        taskId,
+        agentId: options?.agentId ?? null,
+        model: modelIdentity.model,
+        provider: modelIdentity.provider,
+        cacheReadReported: typeof tokens.cacheRead === "number",
+        delta: {
+          inputTokens: inputDelta,
+          outputTokens: outputDelta,
+          cachedTokens: cachedDelta,
+          cacheWriteTokens: cacheWriteDelta,
+          totalTokens: inputDelta + outputDelta + cachedDelta + cacheWriteDelta,
+        },
+      });
+    }
     const now = new Date().toISOString();
     const newInput = (task.tokenUsage?.inputTokens ?? 0) + inputDelta;
     const newOutput = (task.tokenUsage?.outputTokens ?? 0) + outputDelta;

@@ -7142,6 +7142,46 @@
     "restore": "Restore windows"
   },
   "commandCenter": {
+    "llmTelemetry":     {
+      "title": "LLM telemetry",
+      "window": "LLM telemetry window",
+      "lane": "Lane",
+      "unknownModel": "(unknown)",
+      "cacheShare": "Cache-read share",
+      "cacheShareHint": "No provider in this lane reported cache reads",
+      "distinctHeads": "Distinct heads",
+      "divergences": "Prompt divergences",
+      "divergenceHint": "Baseline {{baselineCount}}, identical {{identicalCount}}, offsets unknown for {{unknownCount}}",
+      "requests": "{{n}} requests",
+      "unmeasured": "unmeasured",
+      "promptTokens": "Prompt tokens (all lanes)",
+      "heartbeatShare": "Heartbeat share",
+      "truncated": "Window too large — counts are partial",
+      "empty": "No lane reported in this window",
+      "loading": "Loading lane telemetry…",
+      "windowCaption": "usage_events from {{from}} to {{to}} — a separate accounting source, never added to the totals above",
+      "medianHeadBytes": "Median system bytes",
+      "tileLabel": "{{lane}} on {{model}}: {{tokens}} tokens over {{events}} requests. Show this lane's prompt heads.",
+      "offsetBuckets": "{{known}} localised, {{unknown}} not",
+      "heads": {
+        "title": "Prompt heads in this window",
+        "clear": "Clear lane filter ({{lane}})",
+        "empty": "No prompt head recorded in this window",
+        "emptyLane": "No prompt head recorded for {{lane}} in this window",
+        "listLabel": "Prompt head records"
+      },
+      "head": {
+        "hash": "Head hash (sha256)",
+        "staticBytes": "Static bytes",
+        "dynamicBytes": "Dynamic bytes",
+        "dynamicStart": "Dynamic start",
+        "firstDivergenceOffset": "First divergence offset",
+        "source": "Source",
+        "runtime": "Runtime",
+        "request": "Request id",
+        "toggleLabel": "{{lane}} head {{hash}} — show sizes, offsets and provenance"
+      }
+    },
     "tokens": {
       "model": "Model",
       "total": "Total",

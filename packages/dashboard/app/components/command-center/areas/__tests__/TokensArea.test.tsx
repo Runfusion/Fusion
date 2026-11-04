@@ -328,8 +328,19 @@ describe("FUX-037: TokensArea projectId scoping", () => {
   it("appends projectId to the tokens request when supplied, and omits it when not", async () => {
     render(<TokensArea range={range7d} projectId="proj-tokens" />);
     await screen.findByTestId("cc-tokens-table");
-    expect(apiMock.mock.calls.at(-1)?.[0]).toBe(
+    /*
+    FNXC:LaneTelemetry 2026-11-04-05:45:
+    RUFU-284 gave this area a second fetch (`/command-center/llm-telemetry`), so `mock.calls.at(-1)` is
+    no longer reliably the tokens request — which endpoint lands last depends on resolution order. The
+    scoping invariant is per-endpoint, so the assertions select by path and each keeps its exact URL.
+    The telemetry request must be scoped too, or the panel would mix projects.
+    */
+    const callPaths = apiMock.mock.calls.map((call) => String(call[0]));
+    expect(callPaths.find((p) => p.startsWith("/command-center/tokens"))).toBe(
       "/command-center/tokens?groupBy=model&granularity=day&from=2026-06-08&projectId=proj-tokens",
+    );
+    expect(callPaths.find((p) => p.startsWith("/command-center/llm-telemetry"))).toBe(
+      "/command-center/llm-telemetry?window=1h&from=2026-06-08&projectId=proj-tokens",
     );
   });
 });

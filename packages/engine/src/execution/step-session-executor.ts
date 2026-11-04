@@ -61,6 +61,7 @@ import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
 import { AgentLogger, summarizeToolArgs } from "../agents/agent-logger.js";
 import { attachAgentUsageTelemetry, emitAgentSessionStart } from "../agents/agent-usage-telemetry.js";
+import { emitLaneTokenUsageEvent } from "../agents/prompt-telemetry.js";
 import { createLogger } from "../logger.js";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
@@ -132,6 +133,13 @@ export interface StepResult {
     cachedTokens: number;
     cacheWriteTokens: number;
     totalTokens: number;
+    /*
+     * FNXC:LaneTelemetry 2026-11-04-05:09:
+     * False when the provider never answered the cache-read counter, which is NOT the same fact as a
+     * reported zero. The step's telemetry row must keep the distinction or the panel's cache-read share
+     * would read a silent provider as a zero-hit cache.
+     */
+    cacheReadReported?: boolean;
     /** Provider of the model that produced these step tokens. */
     modelProvider?: string;
     /** Id of the model that produced these step tokens. */
@@ -1348,6 +1356,7 @@ export class StepSessionExecutor {
         cachedTokens,
         cacheWriteTokens,
         totalTokens,
+        cacheReadReported: typeof tokens.cacheRead === "number",
         modelProvider: model?.provider,
         modelId: model?.id,
       };
@@ -1359,6 +1368,38 @@ export class StepSessionExecutor {
   }
 
   private async extractStepTokenUsage(session: AgentSession | null | undefined, reusePrimarySession: boolean): Promise<StepResult["tokenUsage"] | undefined> {
+    const usage = await this.computeStepTokenUsage(session, reusePrimarySession);
+    /*
+     * FNXC:LaneTelemetry 2026-11-04-05:09:
+     * This is the step lane's single accounting point: the same object is what the activity run's
+     * `usageJson` and `resultJson.tokenUsage` carry, so the telemetry row can never disagree with the
+     * Command Center activity run. It is the DELTA (reuse-aware), never the cumulative session counters,
+     * and the step lane stays event-only — step spend deliberately does not credit `task.tokenUsage`,
+     * which is the third accounting source and would double-count the executor's central-session credit.
+     */
+    if (usage) {
+      emitLaneTokenUsageEvent({
+        store: this.store,
+        lane: "workflow-step",
+        taskId: this.options.taskDetail.id,
+        agentId: this.options.taskDetail.assignedAgentId ?? null,
+        nodeId: this.options.taskDetail.effectiveNodeId ?? this.options.taskDetail.nodeId ?? null,
+        model: usage.modelId ?? null,
+        provider: usage.modelProvider ?? null,
+        cacheReadReported: usage.cacheReadReported ?? true,
+        delta: {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cachedTokens: usage.cachedTokens,
+          cacheWriteTokens: usage.cacheWriteTokens,
+          totalTokens: usage.totalTokens,
+        },
+      });
+    }
+    return usage;
+  }
+
+  private async computeStepTokenUsage(session: AgentSession | null | undefined, reusePrimarySession: boolean): Promise<StepResult["tokenUsage"] | undefined> {
     const current = await this.extractTokenUsageFromSession(session);
     if (!reusePrimarySession || !current) {
       return current;
@@ -1376,6 +1417,7 @@ export class StepSessionExecutor {
       cachedTokens: Math.max(0, current.cachedTokens - previous.cachedTokens),
       cacheWriteTokens: Math.max(0, current.cacheWriteTokens - previous.cacheWriteTokens),
       totalTokens: Math.max(0, current.totalTokens - previous.totalTokens),
+      cacheReadReported: current.cacheReadReported,
       modelProvider: current.modelProvider,
       modelId: current.modelId,
     };
@@ -1726,6 +1768,7 @@ export class StepSessionExecutor {
             session = this.reusablePrimarySession;
           } else {
             const createResult = await createResolvedAgentSession({
+              promptTelemetry: { store: this.store, lane: "workflow-step", taskId: taskDetail.id, agentId: taskDetail.assignedAgentId ?? null, nodeId: taskDetail.effectiveNodeId ?? taskDetail.nodeId ?? null },
               sessionPurpose: "executor",
             taskExecutionSession: true,
               runtimeHint: this.options.runtimeHint,

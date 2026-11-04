@@ -6,6 +6,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   CostResult,
+  LlmTelemetryReport,
+  LlmTelemetryWindow,
   TokenAnalytics,
   TokenGroupSummary,
   TokenTimeGranularity,
@@ -17,6 +19,7 @@ import { Bar } from "../charts/Bar";
 import { TokenSeriesChart } from "../charts/TokenSeriesChart";
 import { LineChart as RechartsLineChart, PieChart } from "../charts/recharts";
 import { AreaShell } from "./AreaShell";
+import { LLMHourGrid } from "./LLMHourGrid";
 import { useAnalyticsArea } from "./useAnalyticsArea";
 import { formatCost, formatCount } from "./areaShared";
 
@@ -28,6 +31,17 @@ The Tokens detail area is the canonical token-usage live view. Polling must upda
 */
 const TOKENS_LIVE_REFRESH_MS = 15_000;
 const GRANULARITIES: TokenTimeGranularity[] = ["hour", "day", "week"];
+
+/*
+FNXC:LaneTelemetry 2026-11-04-05:09 (R1/R6):
+The LLM-telemetry section measures a different thing from the rest of this area: what each lane SENT
+(usage_events), not what the board COST (task + chat token columns). It therefore keeps its own short
+window axis — 10 minutes and 1 hour — instead of following the shared date-range picker, because a cache
+that regressed has to be visible inside the session that caused it, and a 7-day average would bury it.
+The picker's from/to params are ignored by this endpoint, and the plate's caption prints the window the
+server actually used so the two axes can never be misread as one.
+*/
+const LLM_WINDOWS: LlmTelemetryWindow[] = ["10m", "1h"];
 
 /*
 FNXC:CommandCenterCharts 2026-06-18-23:20:
@@ -93,11 +107,23 @@ function sortGroups(groups: TokenGroupSummary[], key: SortKey, dir: 1 | -1): Tok
 export function TokensArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
   const [granularity, setGranularity] = useState<TokenTimeGranularity>("day");
+  const [llmWindow, setLlmWindow] = useState<LlmTelemetryWindow>("1h");
   const endpoint = `/command-center/tokens?groupBy=model&granularity=${granularity}`;
   const { data, isLoading, error } = useAnalyticsArea<TokenAnalytics>(endpoint, range, {
     pollMs: TOKENS_LIVE_REFRESH_MS,
     projectId,
   });
+  const llm = useAnalyticsArea<LlmTelemetryReport>(`/command-center/llm-telemetry?window=${llmWindow}`, range, {
+    pollMs: TOKENS_LIVE_REFRESH_MS,
+    projectId,
+  });
+  /*
+  FNXC:LaneTelemetry 2026-11-04-05:09:
+  The plate needs an aggregates ARRAY before anything can read it. The endpoint's contract guarantees
+  one, but this area's job is board spend and a malformed telemetry payload must not take the token
+  totals down with it — an absent lane list renders the section's own empty sentence instead.
+  */
+  const llmReport = llm.data && Array.isArray(llm.data.aggregates) && llm.data.aggregates.length > 0 ? llm.data : null;
 
   const groups = useMemo(() => data?.groups ?? [], [data?.groups]);
   const series = useMemo(() => data?.series ?? [], [data?.series]);
@@ -299,6 +325,43 @@ export function TokensArea({ range, projectId }: { range: DateRange; projectId?:
             </tbody>
           </table>
         </div>
+      </div>
+      <div className="cc-area-section" data-testid="cc-llm-telemetry">
+        <div className="cc-area-section-header">
+          <h3 className="cc-area-section-title">{t("commandCenter.llmTelemetry.title", "LLM telemetry")}</h3>
+          <div
+            className="cc-token-granularity"
+            role="group"
+            aria-label={t("commandCenter.llmTelemetry.window", "LLM telemetry window")}
+          >
+            {LLM_WINDOWS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={`btn ${option === llmWindow ? "active" : ""}`}
+                aria-pressed={option === llmWindow}
+                data-testid={`cc-llm-window-${option}`}
+                onClick={() => setLlmWindow(option)}
+              >
+                {t(`commandCenter.llmTelemetry.window.${option}`, option)}
+              </button>
+            ))}
+          </div>
+        </div>
+        {llmReport ? (
+          <LLMHourGrid report={llmReport} />
+        ) : (
+          /*
+          An empty window is rendered as its own sentence, not as a plate of zeroes: a lane that
+          reported nothing and a lane that reported nothing are the same pixels, and an operator
+          reading "0%" cannot tell "no traffic" from "no cache hits".
+          */
+          <p className="cc-llm-empty" data-testid="cc-llm-empty">
+            {llm.isLoading
+              ? t("commandCenter.llmTelemetry.loading", "Loading lane telemetry…")
+              : t("commandCenter.llmTelemetry.empty", "No lane reported in this window")}
+          </p>
+        )}
       </div>
     </AreaShell>
   );

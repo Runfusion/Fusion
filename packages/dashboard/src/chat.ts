@@ -30,6 +30,7 @@ import type {
   PermanentAgentGatingContext,
 } from "@fusion/core";
 import { completeColumnsForTask, wipColumnsForTask } from "./task-lifecycle-lanes.js";
+import { buildLlmTokenUsageMeta, LLM_TOKEN_USAGE_EVENT_KIND } from "@fusion/core";
 import type { AgentActionGateContext, SkillSelectionContext } from "@fusion/engine";
 import {
   ApprovalRequestStore,
@@ -541,7 +542,7 @@ function normalizeChatTokenDelta(stats: ChatSessionStatsLike | undefined): ChatT
 FNXC:ChatContextWindow 2026-08-22-23:57:
 pi is the source of truth for conversation context: contextUsage.tokens is calculateContextTokens(usage), using total tokens or input, output, cache-read, and cache-write tokens. pi reports tokens and percent as null immediately after compaction until a fresh assistant reply. Read this counts-only metadata best-effort so absent or failing session accessors never block a successful chat turn.
 */
-async function readChatSessionUsageSnapshot(session: unknown): Promise<{ tokens?: ChatTokenDelta; contextUsage?: ChatMessageContextUsage }> {
+async function readChatSessionUsageSnapshot(session: unknown): Promise<{ tokens?: ChatTokenDelta; contextUsage?: ChatMessageContextUsage; cacheReadReported?: boolean }> {
   let stats: ChatSessionStatsLike | undefined;
   try {
     const statsAccessor = (session as { getSessionStats?: () => ChatSessionStatsLike | Promise<ChatSessionStatsLike | undefined> }).getSessionStats;
@@ -565,6 +566,9 @@ async function readChatSessionUsageSnapshot(session: unknown): Promise<{ tokens?
   return {
     ...(tokens ? { tokens } : {}),
     ...(contextUsage ? { contextUsage } : {}),
+    // RUFU-284: cachedTokens cannot tell a reported zero from a silent provider, and the raw stats are
+    // only in scope here, so the answer has to leave this function alongside the snapshot.
+    cacheReadReported: typeof stats?.tokens?.cacheRead === "number",
   };
 }
 
@@ -2134,6 +2138,49 @@ export class ChatManager {
   }
 
   /**
+   * The chat lane's single LLM-usage telemetry seam.
+   *
+   * FNXC:LaneTelemetry 2026-11-04-05:09 (R3):
+   * Every chat turn already credits exactly one `chat_token_usage` row, and chat is the THIRD accounting
+   * source — `tasks.token_usage`, `chat_token_usage`, and `usage_events` are never summed together.
+   * This wrapper emits the lane's `token_usage` row beside that write instead of introducing a second
+   * accumulation path, so a turn can never produce two rows and the panel's numbers stay comparable
+   * with the other lanes. The write stays authoritative: a refused or absent telemetry sink cannot fail
+   * a chat turn, and the row carries numbers plus `sourceKind` only — never prompt or answer text.
+   */
+  private async recordChatTurnTokenUsage(
+    input: ChatTokenUsageCreateInput,
+    cacheReadReported = true,
+  ): Promise<void> {
+    await this.chatStore.recordTokenUsage(input);
+    try {
+      const store = this.taskStore;
+      if (!store?.emitUsageEvent) return;
+      const settled = store.emitUsageEvent({
+        kind: LLM_TOKEN_USAGE_EVENT_KIND,
+        taskId: null,
+        agentId: input.agentId ?? null,
+        model: input.modelId ?? null,
+        provider: input.modelProvider ?? null,
+        category: "llm-usage",
+        meta: buildLlmTokenUsageMeta({
+          lane: "chat",
+          inputTokens: input.inputTokens,
+          outputTokens: input.outputTokens,
+          cachedTokens: input.cachedTokens,
+          cacheWriteTokens: input.cacheWriteTokens,
+          totalTokens: input.totalTokens ?? (input.inputTokens + input.outputTokens + input.cachedTokens + input.cacheWriteTokens),
+          cacheReadReported,
+          sourceKind: input.sourceKind,
+        }),
+      });
+      void Promise.resolve(settled).catch(() => { /* telemetry sink failure never reaches a chat turn */ });
+    } catch {
+      // Same rule as the emit itself: a synchronous throw cannot fail a completed turn.
+    }
+  }
+
+  /**
    * Runner for CLI-agent-backed chat sessions (CLI Agent Executor). When a chat
    * session selects a cli-agent executor (`cliExecutorAdapterId`), composer sends
    * are brokered to the live PTY through this runner instead of the model agent
@@ -2782,7 +2829,7 @@ export class ChatManager {
           mentions: mentions.map((mention) => mention.agentId),
         });
         if (response.tokenUsage) {
-          await this.chatStore.recordTokenUsage({
+          await this.recordChatTurnTokenUsage({
             sourceKind: "room-chat",
             roomId,
             messageId: assistantMessage.id,
@@ -3167,7 +3214,7 @@ export class ChatManager {
           metadata: { senderAgentId: responder.id, senderAgentName: responder.name, ...(response.fallback ? { fallback: response.fallback } : {}) },
         });
         if (response.tokenUsage) {
-          await this.chatStore.recordTokenUsage({ sourceKind: "chat", chatSessionId: input.sessionId, messageId: message.id, projectId: input.session.projectId ?? null, agentId: responder.id, createdAt: message.createdAt, ...response.tokenUsage });
+          await this.recordChatTurnTokenUsage({ sourceKind: "chat", chatSessionId: input.sessionId, messageId: message.id, projectId: input.session.projectId ?? null, agentId: responder.id, createdAt: message.createdAt, ...response.tokenUsage });
         }
         replies++;
         chatStreamManager.broadcast(input.sessionId, {
@@ -3531,7 +3578,7 @@ export class ChatManager {
            * FNXC:ChatTokenAccounting 2026-07-02-00:00:
            * CLI-agent-backed chat returns before the dashboard model loop, so read the runner's per-turn telemetry snapshot here and persist it as `cli-chat`. This keeps CLI/pi chat tokens in Command Center while leaving task execution tokenUsage untouched.
            */
-          await this.chatStore.recordTokenUsage({
+          await this.recordChatTurnTokenUsage({
             sourceKind: "cli-chat",
             chatSessionId: sessionId,
             messageId: usageSnapshot?.messageId ?? null,
@@ -3541,7 +3588,7 @@ export class ChatManager {
             modelId: usageSnapshot?.modelId ?? session.modelId ?? null,
             createdAt: usageSnapshot?.createdAt ?? new Date().toISOString(),
             ...tokenDelta,
-          });
+          }, typeof sessionStats?.tokens?.cacheRead === "number");
         }
       } finally {
         const current = this.activeGenerations.get(sessionId);
@@ -4584,7 +4631,7 @@ export class ChatManager {
          * FNXC:ChatTokenAccounting 2026-07-02-00:00:
          * Successful dashboard chat turns persist provider-reported session stats as chat-token rows. Task-detail planner chat uses sourceKind `task-planner-chat` instead of task.tokenUsage so the planner's own model call is visible in Command Center without mutating execution totals for the task it discusses.
          */
-        await this.chatStore.recordTokenUsage({
+        await this.recordChatTurnTokenUsage({
           sourceKind: taskPlannerChatTaskId ? "task-planner-chat" : "chat",
           chatSessionId: sessionId,
           messageId: assistantMessage.id,
@@ -4594,7 +4641,7 @@ export class ChatManager {
           modelId: model.modelId,
           createdAt: assistantMessage.createdAt,
           ...usageSnapshot.tokens,
-        });
+        }, usageSnapshot.cacheReadReported ?? true);
       }
 
       await this.flushInFlightGenerationPersist(sessionId, null, generationId);

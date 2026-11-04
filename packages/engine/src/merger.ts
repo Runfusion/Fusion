@@ -1123,6 +1123,7 @@ async function attemptInMergeVerificationFix(
       // FN-5279: verification-fix sessions run in the resolved integration root,
     // which is the reused task worktree in handoff mode.
     const { session } = await createResolvedAgentSession({
+    promptTelemetry: { store, lane: "merger", taskId },
       sessionPurpose: "merger",
       runtimeHint: mergerRuntimeHint,
       pluginRunner: options.pluginRunner,
@@ -1234,7 +1235,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
         },
         signal: options.signal,
       });
-      await accumulateSessionTokenUsage(store, taskId, session);
+      await accumulateSessionTokenUsage(store, taskId, session, { lane: "merger" });
 
       // Compute which paths the fix agent introduced or modified, then
       // accumulate them into the caller's mutable set.
@@ -2426,6 +2427,7 @@ ${fileList}
   mergerLog.log(`${taskId}: starting autostash-conflict resolution agent (${conflictedFiles.length} file(s))`);
 
   const { session } = await createResolvedAgentSession({
+  promptTelemetry: { store, lane: "merger", taskId },
     sessionPurpose: "merger",
     runtimeHint: mergerRuntimeHint,
     pluginRunner: options.pluginRunner,
@@ -2874,6 +2876,7 @@ ${fileList}
   mergerLog.log(`${taskId}: starting autostash hard-fail recovery agent (${stashFiles.length} file(s))`);
 
   const { session } = await createResolvedAgentSession({
+  promptTelemetry: { store, lane: "merger", taskId },
     sessionPurpose: "merger",
     runtimeHint: mergerRuntimeHint,
     pluginRunner: options.pluginRunner,
@@ -5974,6 +5977,7 @@ You are assisting with a paused \`git pull --rebase\`.
 
   const mergerFallbackModel = resolveMergerFallbackModel(settings);
   const { session } = await createResolvedAgentSession({
+  promptTelemetry: { store, lane: "merger", taskId },
     sessionPurpose: "merger",
     runtimeHint: options?.runtimeHint,
     pluginRunner: options?.pluginRunner,
@@ -6044,7 +6048,7 @@ You are assisting with a paused \`git pull --rebase\`.
       },
       signal: options?.signal,
     });
-    await accumulateSessionTokenUsage(store, taskId, session);
+    await accumulateSessionTokenUsage(store, taskId, session, { lane: "merger" });
   } finally {
     try {
       await agentLogger.flush();
@@ -11220,6 +11224,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
   // root so arbiter edits land in the reused task worktree when handoff mode
   // is active.
   const { session } = await createResolvedAgentSession({
+    promptTelemetry: { store, lane: "merger", taskId },
     sessionPurpose: "merger",
     runtimeHint: mergerRuntimeHint,
     pluginRunner: options.pluginRunner,
@@ -11442,7 +11447,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
 
     throw err;
   } finally {
-    await accumulateSessionTokenUsage(store, taskId, session);
+    await accumulateSessionTokenUsage(store, taskId, session, { lane: "merger" });
     await agentLogger.flush();
     session.dispose();
   }

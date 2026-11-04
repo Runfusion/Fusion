@@ -40,6 +40,8 @@ import {
   type ResolvedModelSelection,
   type Settings,
   type ThinkingLevel,
+  type LlmTelemetryLane,
+  type TaskStore,
 } from "@fusion/core";
 import { resolveRuntime, buildRuntimeResolutionContext, isMockProviderId, type SessionPurpose } from "../execution/runtime-resolution.js";
 import { resolveSessionSandboxPolicy } from "../sandbox/session-policy.js";
@@ -54,6 +56,7 @@ import {
   type FallbackModelUsedPayload,
 } from "../pi.js";
 import * as piModuleForRegistration from "../pi.js";
+import { attachPromptHeadRecord } from "./prompt-telemetry.js";
 import type { RunAuditor } from "../util/run-audit.js";
 import { createFusionAuthStorage, resolveCredentialInstanceRef, type FusionAuthStorage } from "../auth/auth-storage.js";
 import { MockAgentRuntime } from "../providers/mock-provider.js";
@@ -282,6 +285,26 @@ export interface ResolvedSessionOptions extends AgentRuntimeOptions {
    * {@link AgentRuntimeOptions}. Both are forwarded verbatim to
    * `runtime.createSession()`.
    */
+  /*
+   * FNXC:LaneTelemetry 2026-11-04-05:09 (R2):
+   * Optional prompt-evidence identity for the session. Recording it here — at the ONE session-creation
+   * seam every lane passes through — is what lets the per-request wrapper know a lane exists; a caller
+   * that omits it gets no head/tail rows and no behavior change. The head itself is never snapshotted
+   * here: pi evaluates its system prompt per request, so the record stores a reader.
+   */
+  promptTelemetry?: PromptTelemetryOptions;
+}
+
+/** Identity a caller supplies so prompt/head-tail rows can be attributed to a lane. Numbers only. */
+export interface PromptTelemetryOptions {
+  store: TaskStore;
+  lane: LlmTelemetryLane;
+  taskId?: string | null;
+  agentId?: string | null;
+  nodeId?: string | null;
+  /** Which session of this object this is (a reused runtime bumps it); defaults to 1.
+   *  It is an opaque integer carried on both rows of a pair, never a path. */
+  sessionEpoch?: number;
 }
 
 /**
@@ -1069,6 +1092,34 @@ export async function createResolvedAgentSession(
     subscribeCompatibility?.options ?? sessionCreateOptions,
   );
   subscribeCompatibility?.attach(result.session);
+
+  if (options.promptTelemetry) {
+    /*
+     * FNXC:LaneTelemetry 2026-11-04-05:09:
+     * Attach BEFORE any audit/telemetry bookkeeping below and outside the try/catch contract of the
+     * resolution path: recording how to read the head cannot fail a session that was created
+     * successfully, which is why the call itself is the fail-soft one inside the module.
+     */
+    const telemetry = options.promptTelemetry;
+    const finalCreateOptions = subscribeCompatibility?.options ?? sessionCreateOptions;
+    attachPromptHeadRecord(result.session, {
+      lane: telemetry.lane,
+      store: telemetry.store,
+      source: "engine-assembly",
+      runtimeId: resolved.runtimeId,
+      // Read per request: pi's systemPromptOverride is a callback, so a stored snapshot would go stale.
+      readHead: () => {
+        const layers = finalCreateOptions.systemPromptLayers;
+        const stable = layers?.stable ?? finalCreateOptions.systemPrompt;
+        if (typeof stable !== "string") return undefined;
+        return { stable, ...(layers?.dynamic ? { dynamic: layers.dynamic } : {}) };
+      },
+      agentId: telemetry.agentId ?? null,
+      taskId: telemetry.taskId ?? null,
+      nodeId: telemetry.nodeId ?? null,
+      sessionEpoch: telemetry.sessionEpoch ?? 1,
+    });
+  }
 
   const noModelResolved = !mockProviderActive && !testModeActive && (!runtimeOptions.defaultProvider || !runtimeOptions.defaultModelId);
   const runtimeBuiltInFallbackModel = noModelResolved ? resolved.runtime.describeModel(result.session) : undefined;

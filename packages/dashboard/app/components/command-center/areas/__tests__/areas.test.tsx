@@ -13,6 +13,7 @@ import { render, screen, fireEvent, waitFor, within, act, renderHook } from "@te
 // Mock the api() helper so the areas fetch deterministic fixtures.
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
+  llmTelemetryApi: vi.fn(),
   backfillGithubSourceIssueClosedAt: vi.fn(),
   backfillCommitAssociationDiffStats: vi.fn(),
   fetchOrgTree: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   appSettings: { globalPaused: false, enginePaused: false },
 }));
 const apiMock = mocks.api;
+const llmTelemetryApiMock = mocks.llmTelemetryApi;
 const backfillGithubSourceIssueClosedAtMock = mocks.backfillGithubSourceIssueClosedAt;
 const backfillCommitAssociationDiffStatsMock = mocks.backfillCommitAssociationDiffStats;
 const fetchOrgTreeMock = mocks.fetchOrgTree;
@@ -31,7 +33,12 @@ const toggleEnginePauseMock = mocks.toggleEnginePause;
 const appSettingsMock = mocks.appSettings;
 vi.mock("../../../../api/legacy", () => ({
   fetchCodebaseMetrics: vi.fn().mockResolvedValue({ tokenEstimate: 0, sourceFileCount: 0, sourceByteCount: 0, diskBytes: 0, diskFileCount: 0, method: "local", truncated: false }),
-  api: (path: string, opts?: RequestInit) => mocks.api(path, opts),
+  api: (path: string, opts?: RequestInit) =>
+    // RUFU-284: TokensArea now also fetches /command-center/llm-telemetry. Routing it to its own mock
+    // keeps every tokens test's positional expectation (`mock.calls.at(-1)`, `toHaveBeenCalledTimes(1)`,
+    // `mockResolvedValueOnce` polling queues) about the TOKENS request, which is what those tests
+    // actually assert. Without the route, an llm payload could be handed to the tokens area.
+    (String(path).includes("llm-telemetry") ? mocks.llmTelemetryApi(path, opts) : mocks.api(path, opts)),
   withProjectId: (path: string, projectId?: string) =>
     projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   apiBackfillGithubSourceIssueClosedAt: (options?: { offset?: number; limit?: number }, projectId?: string) =>
@@ -96,6 +103,25 @@ describe("Command Center cost formatting", () => {
 
 beforeEach(() => {
   apiMock.mockReset();
+  /*
+  FNXC:LaneTelemetry 2026-11-04-05:45:
+  The telemetry endpoint answers with an empty window by default so the tokens tests render their own
+  content while the new section shows its empty sentence. A test that wants a populated plate uses
+  `llmTelemetryApiMock` directly.
+  */
+  llmTelemetryApiMock.mockReset();
+  llmTelemetryApiMock.mockResolvedValue({
+    window: "1h",
+    from: "2026-11-04T11:00:00.000Z",
+    to: "2026-11-04T12:00:00.000Z",
+    grid: [],
+    aggregates: [],
+    totalPromptTokens: 0,
+    heartbeatPromptTokenShare: null,
+    headEvents: [],
+    gridTruncated: false,
+    headTruncated: false,
+  });
   backfillGithubSourceIssueClosedAtMock.mockReset();
   backfillCommitAssociationDiffStatsMock.mockReset();
   fetchOrgTreeMock.mockReset();

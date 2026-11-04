@@ -8917,6 +8917,46 @@
       "cpuTrend": "",
       "detailsTitle": ""
     },
+    "llmTelemetry":     {
+      "title": "Télémétrie LLM",
+      "window": "Fenêtre de télémétrie LLM",
+      "lane": "Voie",
+      "unknownModel": "(inconnu)",
+      "cacheShare": "Part des lectures du cache",
+      "cacheShareHint": "Aucun fournisseur de cette voie n’a signalé de lecture du cache",
+      "distinctHeads": "En-têtes distincts",
+      "divergences": "Divergences du prompt",
+      "divergenceHint": "Base {{baselineCount}}, identiques {{identicalCount}}, décalages inconnus pour {{unknownCount}}",
+      "requests": "{{n}} requêtes",
+      "unmeasured": "non mesuré",
+      "promptTokens": "Jetons de prompt (toutes les voies)",
+      "heartbeatShare": "Part du heartbeat",
+      "truncated": "Fenêtre trop grande — décomptes partiels",
+      "empty": "Aucune voie n’a signalé de donnée sur cette fenêtre",
+      "loading": "Chargement de la télémétrie des voies…",
+      "windowCaption": "usage_events de {{from}} à {{to}} — source comptable distincte, jamais ajoutée aux totaux ci-dessus",
+      "medianHeadBytes": "Octets système médians",
+      "tileLabel": "{{lane}} sur {{model}} : {{tokens}} jetons sur {{events}} requêtes. Afficher les en-têtes de prompt de cette voie.",
+      "offsetBuckets": "{{known}} localisés, {{unknown}} non",
+      "heads": {
+        "title": "En-têtes de prompt sur cette fenêtre",
+        "clear": "Effacer le filtre de voie ({{lane}})",
+        "empty": "Aucun en-tête de prompt enregistré sur cette fenêtre",
+        "emptyLane": "Aucun en-tête de prompt enregistré pour {{lane}} sur cette fenêtre",
+        "listLabel": "Enregistrements d’en-têtes de prompt"
+      },
+      "head": {
+        "hash": "Hash de l’en-tête (sha256)",
+        "staticBytes": "Octets statiques",
+        "dynamicBytes": "Octets dynamiques",
+        "dynamicStart": "Début du dynamique",
+        "firstDivergenceOffset": "Premier décalage de divergence",
+        "source": "Source",
+        "runtime": "Runtime",
+        "request": "Id de requête",
+        "toggleLabel": "En-tête {{hash}} de {{lane}} — afficher tailles, décalages et provenance"
+      }
+    },
     "tokens": {
       "stalePricing": "",
       "totalTokens": "",

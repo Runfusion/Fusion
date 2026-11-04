@@ -1602,6 +1602,12 @@ export class TriageProcessor {
     await accumulateSessionTokenUsage(this.store, taskId, session, {
       agentId: options?.agentId,
       role: "triage",
+      /*
+      RUFU-284 (R3): triage already credits task.tokenUsage through THIS call, so this call is also its
+      single telemetry row. A second emit at the end of the planning run would credit the same session
+      counters twice into the cache-read numbers RUFU-267 is verified against.
+      */
+      lane: "triage",
     });
   }
 
@@ -3970,6 +3976,7 @@ export class TriageProcessor {
         };
 
         const { session, settleFallbackDispatch, runtimeId } = await createResolvedAgentSession({
+          promptTelemetry: { store: this.store, lane: "triage", taskId: task.id },
           sessionPurpose: "triage",
           runtimeHint: triageRuntimeHint,
           pluginRunner: this.options.pluginRunner,

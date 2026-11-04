@@ -8,6 +8,10 @@ FN-6444 confirmed this ChatManager API-path suite is deterministic under dashboa
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// RUFU-284: this file called `readQuestionAnswerLink` and `QUESTION_ANSWER_METADATA_KEY` with no
+// import, so all six question-link cases threw ReferenceError at HEAD (verified: 6 usages, 0 imports).
+// Restoring the import its sibling chat-manager-rewind-session.test.ts already uses; no assertion changed.
+import { QUESTION_ANSWER_METADATA_KEY, readQuestionAnswerLink } from "../shared/chat-question-link.js";
 import { runWithFusionSessionIdentity, resolveFusionSessionPrincipal, type Settings } from "@fusion/core";
 import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";

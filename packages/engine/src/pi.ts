@@ -77,6 +77,7 @@ import { applyClaudeAcpEnable } from "./cli-runtime/claude-acp-enable.js";
 import { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
 import { refreshFusionModelRegistry } from "./auth/model-registry-refresh.js";
 import { piLog, extensionsLog } from "./logger.js";
+import { withPromptRequestTelemetry } from "./agents/prompt-telemetry.js";
 import { readCustomProviders } from "./auth/custom-providers.js";
 import { buildCustomProviderModels } from "./auth/custom-provider-registry.js";
 import {
@@ -464,6 +465,18 @@ export async function promptSessionAndCheck(session: AgentSession, prompt: strin
 const promptWithFallbackInFlight = new WeakSet<object>();
 
 export async function promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
+  /*
+  FNXC:LaneTelemetry 2026-11-04-05:09 (R2):
+  Head/tail evidence is emitted HERE, not where a session is created. The executor's dominant path is
+  the session-attached `promptWithFallback` closure below, so a creation-time emit would fire once per
+  session and could never answer the acceptance question ("did this request's head differ from the last
+  one?"). Wrapping the whole body also pairs the tail across the context-limit compact retries.
+  A session with no attached head record runs through untouched, so unwired lanes pay nothing.
+  */
+  await withPromptRequestTelemetry(session, () => runPromptWithFallback(session, prompt, options));
+}
+
+async function runPromptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
   const sessionWithDispatch = session as AgentSession & {
     promptWithFallback?: (prompt: string, options?: unknown) => Promise<void>;
   };

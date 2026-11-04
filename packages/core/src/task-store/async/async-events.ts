@@ -28,7 +28,7 @@ const severityAuditLog = createLogger("core-async-events");
  *   These helpers are the async target the migrating store and the PostgreSQL
  *   integration tests consume.
  */
-import { and, desc, eq, gte, lte, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
 import * as schema from "../../postgres/schema/index.js";
 import { projectScopeFor } from "../../postgres/data-layer.js";
 import type { AsyncDataLayer, DbTransaction } from "../../postgres/data-layer.js";
@@ -179,11 +179,19 @@ FNXC:CommandCenterActivity 2026-08-09-17:00:
 The PostgreSQL writer is the production usage-event seam. It must accept every normalized
 session, tool completion, and human-message kind that durable agent lanes emit; otherwise
 fail-soft rejection silently recreates the Activity area's permanent-agent zero telemetry.
+
+FNXC:LaneTelemetry 2026-11-04-05:09:
+`prompt_head` / `prompt_end` are added here as well as in the sync `USAGE_EVENT_KINDS`. This mirror is
+private to the async layer and rejects an unknown kind by returning false, so an omission would have
+dropped every prompt-head row with no error anywhere — the fail-soft path is indistinguishable from
+"the lane never ran".
 */
 const USAGE_EVENT_KINDS: ReadonlySet<string> = new Set([
   "agent_run_started",
   "agent_run_completed",
   "token_usage",
+  "prompt_head",
+  "prompt_end",
   "tool_call",
   "tool_result",
   "tool_error",
@@ -227,6 +235,17 @@ function rowToUsageEvent(row: Record<string, unknown>): UsageEvent {
     category: (row.category as string | null) ?? null,
     meta,
   };
+}
+
+/**
+ * Interpolated by Drizzle as a bind parameter, but clamped anyway so a caller cannot ask for an
+ * unbounded scan through a malformed `limit`.
+ */
+function normalizeLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  const truncated = Math.trunc(limit);
+  if (!Number.isFinite(truncated) || truncated <= 0) return undefined;
+  return truncated;
 }
 
 /**
@@ -300,6 +319,15 @@ export async function queryUsageEvents(
   if (query.kind) {
     conditions.push(eq(schema.project.usageEvents.kind, query.kind));
   }
+  /*
+  FNXC:LaneTelemetry 2026-11-04-05:09:
+  Multi-kind windowed read (RUFU-284). The LLM-telemetry endpoint must see `token_usage` and
+  `prompt_head` rows from ONE scan of ONE window; two queries would sample two different windows and
+  the per-lane cache share would no longer describe the same traffic as the head-stability numbers.
+  */
+  if (query.kinds && query.kinds.length > 0) {
+    conditions.push(inArray(schema.project.usageEvents.kind, [...query.kinds]));
+  }
   if (query.taskId) {
     conditions.push(eq(schema.project.usageEvents.taskId, query.taskId));
   }
@@ -307,11 +335,13 @@ export async function queryUsageEvents(
     conditions.push(eq(schema.project.usageEvents.agentId, query.agentId));
   }
 
-  const q = db
+  const limit = normalizeLimit(query.limit);
+  const ordered = db
     .select()
     .from(schema.project.usageEvents)
     .orderBy(desc(schema.project.usageEvents.ts));
-  const rows = (conditions.length > 0 ? await q.where(and(...conditions)) : await q) as Record<string, unknown>[];
+  const filtered = conditions.length > 0 ? ordered.where(and(...conditions)) : ordered;
+  const rows = (await (limit ? filtered.limit(limit) : filtered)) as Record<string, unknown>[];
   return rows.map((row) => rowToUsageEvent(row));
 }
 
