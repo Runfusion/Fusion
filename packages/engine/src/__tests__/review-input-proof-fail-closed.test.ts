@@ -211,13 +211,22 @@ describe("content-binding review dispatch proof", () => {
     },
   );
 
-  it("keeps a refusal off the node-error key when the review produced a verdict", async () => {
+  /*
+  FNXC:NoVerdictFailureDiagnostic 2026-11-04-05:38 (RUFU-381):
+  This case pinned the OLD narrowing — "only the input-proof refusal publishes `node:<id>:error`; an
+  ordinary failure keeps its existing shape" — and RUFU-381 deliberately removes that narrowing, because
+  it is what made seven identical `Code Review failed before producing a verdict: failed` lines possible
+  on RUFU-259 while the session's own error text was dropped at the mapping. The assertion is inverted to
+  the new contract, not weakened: an ordinary failed review result now publishes its cause on the same
+  carrier, and a failure with NO cause still publishes nothing (covered in
+  `run-graph-custom-node-error-forwarding.test.ts`).
+  */
+  it("publishes an ordinary failed review result's error on the node-error key", async () => {
     const row = task();
     const harness = graphHarness(row);
     harness.executeWorkflowStep.mockResolvedValue({ success: false, error: "reviewer session died", failureValue: "exception" });
     const result = await runGraphCustomNode(harness as never, codeNode("prompt") as never, row, {} as Settings);
-    // Only the input-proof refusal publishes this key; an ordinary failure keeps its existing shape.
-    expect(result.contextPatch ?? {}).not.toHaveProperty("node:custom-review:error");
+    expect(result.contextPatch?.[`node:custom-review:error`]).toBe("reviewer session died");
   });
 
   it("attaches node-captured proof to a script review outcome", async () => {

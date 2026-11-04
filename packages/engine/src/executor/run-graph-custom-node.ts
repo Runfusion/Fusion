@@ -921,7 +921,23 @@ export async function runGraphCustomNode(
         );
         await acknowledgeCustomContext();
         const blocking = node.kind === "gate" || cfg.gateMode === "gate";
-        return { outcome: out.success || !blocking ? "success" : "failure", value: out.success ? "passed" : "failed" };
+        /*
+        FNXC:NoVerdictFailureDiagnostic 2026-11-04-05:25:
+        RUFU-381 — this raw-CLI gate branch minted `value: "failed"` and returned NO contextPatch at
+        all, so a blocking CLI gate that refused carried nothing but the status echo into the recorded
+        `WorkflowStepResult` output. Same defect class as the prompt/script mapping below, one seam
+        earlier. The command's own error text now rides the canonical `node:<id>:error` carrier. An
+        advisory (non-blocking) CLI failure is unchanged: it records `passed`, so its text is not a
+        no-verdict diagnostic and must not grow an error key.
+        */
+        const cliErrorText = !out.success && blocking && typeof out.error === "string" && out.error.trim()
+          ? out.error.trim()
+          : undefined;
+        return {
+          outcome: out.success || !blocking ? "success" : "failure",
+          value: out.success ? "passed" : "failed",
+          ...(cliErrorText ? { contextPatch: { [`node:${node.id}:error`]: cliErrorText } } : {}),
+        };
       }
       // No raw command: fall back to a named script (still required).
       if (!scriptName) {
@@ -1310,14 +1326,34 @@ export async function runGraphCustomNode(
     reviewer verdict, and RUFU-773's classifier constraint holds: the sentence is not a
     session-contention pattern and never starts with the missing-worktree prefix whose tail is read as
     a filesystem path, so no throw-site frames are appended and no classifier is misled.
+
+    FNXC:NoVerdictFailureDiagnostic 2026-11-04-05:25:
+    RUFU-381 — that arm was scoped to ONE refusal value, so every other failed gate result lost its
+    cause right here. The `code-review` gate on RUFU-259 died seven times in four hours carrying the
+    byte-identical record output `Code Review failed before producing a verdict: failed`: this mapping
+    mints `value: "failed"` for a non-malformed failed result, the session's own `error` string (the
+    timeout shape `workflow step timed out after Nms`, the `[readonly-violation] …` shape, the generic
+    catch's `err.message`) was structurally dropped at this line, and
+    `synthesizeNonVerdictFailureOutput` then echoed the minted value back as the "diagnostic". The
+    publication is now general: a failed mapped result carrying a non-empty `error` publishes it, and an
+    existing key is never overwritten.
+
+    Widening what may ride this key is a deliberate routing-posture change, not an oversight, and it
+    follows the precedent already on this branch of the graph: the THROW sites (`plugin-node-handler-error`,
+    the exception and retry-exhausted paths in `workflow-graph-executor.ts`) have always written raw
+    error text into this same key, so `isSessionContentionGraphFailure` and
+    `extractUnusableWorktreeGraphFailure` already consume arbitrary session error text today. Returned
+    failures now agree with thrown ones. The consequence is that a returned failure whose text really
+    IS contention, or a really unusable worktree, routes to that self-recovering lane instead of the
+    terminal park — which is exactly what those classifiers exist to decide and what dropping the text
+    made impossible. Graph EDGE routing (the `outcome`/`value` pair below) is untouched.
     */
-    if (
-      !outcome.success
-      && outcome.failureValue === "review-input-unprovable"
-      && typeof outcome.error === "string"
-      && outcome.error.trim()
-    ) {
-      contextPatch[`node:${node.id}:error`] = outcome.error.trim();
+    if (!outcome.success && typeof outcome.error === "string" && outcome.error.trim()) {
+      const nodeErrorKey = `node:${node.id}:error`;
+      const existingNodeError = contextPatch[nodeErrorKey];
+      if (typeof existingNodeError !== "string" || !existingNodeError.trim()) {
+        contextPatch[nodeErrorKey] = outcome.error.trim();
+      }
     }
     const stepFindings = outcome.findings;
     if (stepFindings?.length) contextPatch.findings = stepFindings;

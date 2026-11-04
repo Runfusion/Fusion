@@ -39,6 +39,15 @@ import {
 } from "./workflow-node-handlers.js";
 import type { WorkflowRuntimePrimitives } from "../execution/runtime-primitives.js";
 import type { PrNodeDeps } from "../merge/pr-nodes.js";
+/*
+FNXC:NoVerdictFailureDiagnostic 2026-11-04-05:58 (RUFU-381): value-level import of the ONE
+verdict-less-gate re-run budget authority. It is value-level (not `import type`) on purpose: the
+no-cause diagnostic quotes the number. Cycle-free — `pre-merge-gate-reseed.ts` reaches only
+`@fusion/core` and `stale-content-park.ts` (which reaches only `@fusion/core`), never back into
+`workflows/`. Do not re-declare a second cap here; the coherence test fails if the sentence and the
+constant ever disagree.
+*/
+import { MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS } from "../merge/pre-merge-gate-reseed.js";
 import {
   runSplitJoin,
   type BranchEnvironment,
@@ -205,6 +214,98 @@ export function postMergeEvidenceKindOfContext(
   return authoredPostMergeEvidenceKindOf({ evidence: { kind: context?.[WORKFLOW_POST_MERGE_EVIDENCE_KIND_CONTEXT_KEY] } });
 }
 export const WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND: WorkflowNodeAbortKind = "engine-pause";
+
+/*
+FNXC:NoVerdictFailureDiagnostic 2026-11-04-05:55 (RUFU-381):
+A no-verdict gate failure used to be allowed to name its own status as its cause. Card RUFU-259's
+`code-review` gate died seven times in four hours and every durable History line read
+`Code Review failed before producing a verdict: failed` — six byte-identical rows, zero information —
+and nothing on the card or in run-audit said which lane kept driving the retries or how many attempts
+were left, so the only way to answer was to reconstruct the cadence by hand from the store.
+
+Two rules follow, and both are load-bearing:
+
+1. `NO_VERDICT_STATUS_ECHO_VALUES` is the deny-list of strings that are NOT a cause. The record's own
+   `status` is `"failed"`, so a diagnostic whose detail is `"failed"` restates the field it sits next
+   to. Legitimate categorizations (`aborted`, `exception`, `timeout`, `malformed`,
+   `plugin-node-handler-error`) stay accepted — the deny-list is exactly the bare status word, never a
+   whole vocabulary.
+2. When no cause exists, the diagnostic says so AND names where the card stands in the automatic
+   re-run budget, taken from the ONE authority constant
+   ({@link MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS}) rather than a second number that could drift.
+*/
+export const NO_VERDICT_STATUS_ECHO_VALUES: ReadonlySet<string> = new Set(["failed"]);
+
+/** The stable phrase a no-verdict failure records when it genuinely has no cause to name. */
+export const NO_VERDICT_CAUSE_UNDETECTED_PHRASE = "no cause detected";
+
+/**
+ * Count the consecutive no-verdict failures already recorded for one gate, newest first.
+ *
+ * The walk is over the CURRENT row plus its bounded `priorAttempts` history (the recorder's
+ * upsert moves each replaced terminal attempt there), which is the only durable trace a repeating
+ * gate leaves — the record slot itself is replaced on every attempt, so counting rows would always
+ * return 1. A row counts when it is a failure with NO authored verdict: a superseded or
+ * remediation-archived row still consumed a real dispatch, so excluding it would understate the
+ * streak the operator is looking at. The walk stops at the first row that proves the gate was
+ * settled by something other than an unexplained death — an authored verdict, a `passed`, or an
+ * operator `bypassedBy` waiver — so the number names the current episode, not the gate's lifetime.
+ *
+ * FNXC:NoVerdictFailureDiagnostic 2026-11-04-06:58 (RUFU-381):
+ * This count is the DISPLAY signal only. The enforcement source of truth stays the durable per-gate
+ * marker tally in `merge/pre-merge-gate-reseed.ts`, which counts per episode and is re-armed solely by
+ * an operator restart. A deliberate operator restart therefore inflates this streak on purpose, which is
+ * the conservative direction: `attempt 6 of 4` reads as "more people tried than the automatic envelope
+ * allows", never as "the bound was lifted". The walk is also bounded by
+ * `MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS = 5`, so what is visible saturates at the current row plus five
+ * archived deaths instead of growing without limit — it tells the operator the envelope is gone, it is
+ * not an attempt ledger.
+ */
+export function countConsecutiveNoVerdictAttempts(
+  results: readonly WorkflowStepResult[] | undefined | null,
+  workflowStepId: string,
+): number {
+  if (!results?.length) return 0;
+  const rows: WorkflowStepResult[] = [];
+  for (const row of results) {
+    if (row.workflowStepId !== workflowStepId) continue;
+    rows.push(row);
+    for (const prior of row.priorAttempts ?? []) rows.push(prior);
+  }
+  const timeOf = (row: WorkflowStepResult): number =>
+    Date.parse(row.completedAt ?? row.startedAt ?? "") || 0;
+  rows.sort((a, b) => timeOf(b) - timeOf(a));
+  let streak = 0;
+  for (const row of rows) {
+    // An in-flight lease (the attempt now being recorded) is not evidence about prior attempts.
+    if (row.status === "pending") continue;
+    if (row.verdict !== undefined || row.bypassedBy !== undefined) break;
+    if (row.status === "failed" || row.status === "advisory_failure") {
+      streak += 1;
+      continue;
+    }
+    break;
+  }
+  return streak;
+}
+
+/**
+ * The exact diagnostic sentence recorded when a no-verdict gate failure has no cause to name.
+ * `streak` is the count of PRIOR no-verdict attempts on this gate; `undefined` means the caller had
+ * no record context at all, which is reported honestly as an unavailable count rather than as 1.
+ *
+ * Budget shape: the first attempt plus `MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS` automatic re-runs is the
+ * whole automatic envelope, so the denominator is `MAX + 1` while the re-run budget shown is `MAX`.
+ */
+export function formatNoVerdictCauseUndetected(streak: number | undefined): string {
+  if (streak === undefined) return `${NO_VERDICT_CAUSE_UNDETECTED_PHRASE} (attempt count unavailable)`;
+  const attempt = streak + 1;
+  const remaining = Math.max(0, MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS - streak);
+  const budget = remaining > 0
+    ? `automatic re-run budget: ${remaining} of ${MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS} left`
+    : "automatic re-run budget exhausted";
+  return `${NO_VERDICT_CAUSE_UNDETECTED_PHRASE} (attempt ${attempt} of ${MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS + 1}; ${budget})`;
+}
 
 export interface WorkflowNodeResult {
   outcome: WorkflowNodeOutcome;
@@ -1446,6 +1547,13 @@ export class WorkflowGraphExecutor {
               contextPatch: exitContextPatch,
               templateNodeId,
               failureValue: verdictRaw,
+              /*
+               * FNXC:NoVerdictFailureDiagnostic 2026-11-04-06:05 (RUFU-381): the group surface quotes the
+               * attempts already on the row, so a repeating gate's History lines differ from their
+               * predecessors by the attempt/budget clause instead of being byte-identical.
+               */
+              workflowStepId: node.id,
+              priorResults: task.workflowStepResults,
               fallbackText: node.id === PLAN_REVIEW_GROUP_ID
                 ? "Plan Review failed before execution. Re-run triage to revise PROMPT.md before implementation continues."
                 : undefined,
@@ -2180,8 +2288,16 @@ export class WorkflowGraphExecutor {
      * every other caller keeps the generic fallback sentence.
      */
     fallbackText?: string;
+    /**
+     * FNXC:NoVerdictFailureDiagnostic 2026-11-04-06:00 (RUFU-381):
+     * The gate's own step id plus the task's recorded step results, so the diagnostic can say where
+     * the card stands in the automatic re-run budget instead of silently repeating itself. Both are
+     * optional: a caller with no record context gets `attempt count unavailable`, never a fabricated 1.
+     */
+    workflowStepId?: string;
+    priorResults?: readonly WorkflowStepResult[] | null;
   }): string {
-    const { stepLabel, contextPatch, templateNodeId, failureValue, fallbackText } = params;
+    const { stepLabel, contextPatch, templateNodeId, failureValue, fallbackText, workflowStepId, priorResults } = params;
     let errorText: string | undefined;
     if (contextPatch) {
       if (templateNodeId) {
@@ -2197,9 +2313,21 @@ export class WorkflowGraphExecutor {
         }
       }
     }
-    const detail = errorText || (typeof failureValue === "string" && failureValue.trim() ? failureValue.trim() : undefined);
-    if (detail) return `${stepLabel} failed before producing a verdict: ${detail}`;
-    return fallbackText || "Workflow step failed before producing a verdict (no reviewer output captured).";
+    const rawDetail = errorText || (typeof failureValue === "string" && failureValue.trim() ? failureValue.trim() : undefined);
+    /*
+     * FNXC:NoVerdictFailureDiagnostic 2026-11-04-06:00 (RUFU-381):
+     * A detail that IS the record's own status word names nothing. The record this string lands in has
+     * `status: "failed"`, so `...verdict: failed` is a tautology — which is exactly what seven
+     * consecutive rows on RUFU-259 said. Such a detail is treated as "no cause", not as a diagnostic.
+     */
+    const statusEcho = rawDetail !== undefined && NO_VERDICT_STATUS_ECHO_VALUES.has(rawDetail);
+    if (rawDetail && !statusEcho) return `${stepLabel} failed before producing a verdict: ${rawDetail}`;
+    // An explicit caller sentinel (Plan Review's handoff sentence) still wins over the generic phrasing.
+    if (!rawDetail && fallbackText) return fallbackText;
+    const streak = workflowStepId
+      ? countConsecutiveNoVerdictAttempts(priorResults, workflowStepId)
+      : undefined;
+    return `${stepLabel} failed before producing a verdict: ${formatNoVerdictCauseUndetected(streak)}`;
   }
 
   /*
@@ -2489,7 +2617,7 @@ export class WorkflowGraphExecutor {
             throw new WorkflowGraphSuspended({ reason: "pause", nodeId: node.id, fromColumn: task.column, toColumn: task.column, irHash: "dependency-configuration-block" });
           }
           const terminalResult = progressRecord
-            ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)
+            ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected, task.workflowStepResults)
             : undefined;
           if (signal?.aborted) {
             if (progressRecord) await this.discardWorkflowStepLease(task.id, node.id, progressRecord.result.startedAt!);
@@ -2517,7 +2645,7 @@ export class WorkflowGraphExecutor {
           throw new WorkflowGraphSuspended({ reason: "pause", nodeId: node.id, fromColumn: task.column, toColumn: task.column, irHash: "dependency-configuration-block" });
         }
         const terminalResult = progressRecord
-          ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected)
+          ? await this.recordNodeProgressFinish(task.id, node, progressRecord, projected, task.workflowStepResults)
           : undefined;
         if (signal?.aborted) {
           if (progressRecord) await this.discardWorkflowStepLease(task.id, node.id, progressRecord.result.startedAt!);
@@ -2571,7 +2699,7 @@ export class WorkflowGraphExecutor {
             },
           };
           if (recordProgress && this.shouldRecordNodeProgress(node)) {
-            await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+            await this.recordNodeProgressFinish(task.id, node, null, failureResult, task.workflowStepResults);
           }
           return failureResult;
         }
@@ -2587,7 +2715,7 @@ export class WorkflowGraphExecutor {
           /* FNXC:WorktreeBaseRefresh 2026-09-19-20:13: Foreach does not merge a failed template's patch; retain the diagnostic in its active context before returning the typed refusal. */
           Object.assign(context, failureResult.contextPatch);
           if (recordProgress && this.shouldRecordNodeProgress(node)) {
-            await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+            await this.recordNodeProgressFinish(task.id, node, null, failureResult, task.workflowStepResults);
           }
           return failureResult;
         }
@@ -2645,7 +2773,7 @@ export class WorkflowGraphExecutor {
         },
       };
       if (recordProgress && this.shouldRecordNodeProgress(node)) {
-        await this.recordNodeProgressFinish(task.id, node, null, degraded);
+        await this.recordNodeProgressFinish(task.id, node, null, degraded, task.workflowStepResults);
       }
       return degraded;
     }
@@ -2666,7 +2794,7 @@ export class WorkflowGraphExecutor {
       },
     };
     if (recordProgress && this.shouldRecordNodeProgress(node)) {
-      await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+      await this.recordNodeProgressFinish(task.id, node, null, failureResult, task.workflowStepResults);
     }
     return failureResult;
   }
@@ -2719,6 +2847,12 @@ export class WorkflowGraphExecutor {
     node: WorkflowIrNode,
     started: WorkflowNodeProgressLease | null,
     nodeResult: WorkflowNodeResult,
+    /*
+     * FNXC:NoVerdictFailureDiagnostic 2026-11-04-06:05 (RUFU-381): the `source:"node"` surface must
+     * carry the SAME attempt/budget clause as the optional-group surface. A fix delivered on one of
+     * the two record surfaces only would leave the other still recording the status echo.
+     */
+    priorResults?: readonly WorkflowStepResult[],
   ): Promise<WorkflowStepResultPersistenceOutcome> {
     const contextPatch = nodeResult.contextPatch ?? {};
     const notRunReason = node.id === PLAN_REVIEW_GROUP_ID
@@ -2780,6 +2914,8 @@ export class WorkflowGraphExecutor {
         contextPatch,
         templateNodeId: node.id,
         failureValue: nodeResult.value,
+        workflowStepId: node.id,
+        priorResults,
       });
     }
     const recorded = await this.recordOptionalGroupStepResult(taskId, {

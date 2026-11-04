@@ -22,8 +22,19 @@ genuine verdicts and disabled groups are byte-inert.
 
 const settingsOn = () => ({ experimentalFeatures: { workflowGraphExecutor: true } });
 
-function taskWith(enabled: string[] | undefined): TaskDetail {
-  return { id: "FN-NFC", enabledWorkflowSteps: enabled } as TaskDetail;
+/*
+FNXC:NoVerdictFailureDiagnostic 2026-11-04-06:20 (RUFU-381):
+`priorResults` seeds the row's recorded step results so a test can stand where the re-seed lane stands
+after N earlier verdict-less deaths. The attempt/budget cases that use it moved to
+`workflow-graph-no-verdict-cause-fidelity.test.ts`; the seam stays here because the recorder reads
+this field on every attempt regardless of which suite drives it.
+*/
+function taskWith(enabled: string[] | undefined, priorResults?: Array<Record<string, unknown>>): TaskDetail {
+  return {
+    id: "FN-NFC",
+    enabledWorkflowSteps: enabled,
+    ...(priorResults ? { workflowStepResults: priorResults } : {}),
+  } as TaskDetail;
 }
 
 /** A single-node `code-review` optional-group between start/end, configurable phase. */

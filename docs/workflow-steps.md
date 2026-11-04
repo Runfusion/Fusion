@@ -1244,6 +1244,36 @@ Prompt-mode workflow agents should emit a trailing JSON object:
 - Backward compatibility remains only in the fail-safe direction: `REQUEST REVISION` or an explicit prose `REVISE` line may request changes, but approving prose never grants approval.
 - If neither structured JSON nor fail-safe revision prose can be interpreted, the live reviewer receives one bounded verdict-only request. A response that still has no verdict is recorded as `malformed`, and the optional-group result is terminally `failed` even for an advisory gate.
 
+### No-Verdict Gate Failure Diagnostics
+
+When a review gate ends `failed` without any verdict and without reviewer output, the recorded `WorkflowStepResult.output` is synthesized. The synthesis has one contract: **the recorded output must never be indistinguishable from the record's own status.** A failed record already says `status: "failed"`; an `output` that repeats the word `failed` restates a field and names no cause, which is what made one card's six consecutive full review runs (`16–20` minutes each) read byte-identically.
+
+Cause precedence, in order:
+
+1. **Session error text** — a non-empty `node:<templateNodeId>:error` (or any `*:error`) value on the node's `contextPatch` wins verbatim. This is the only carrier for a real cause, and the custom-node boundary publishes it for *returned* failed gate results as well as thrown handler errors, so a provider `502` or a step timeout reaches the durable row instead of dying at the mapping seam.
+2. **A genuine categorization** — a non-empty failure `value` such as `aborted`, `exception`, `malformed`, `advisory_failure`, or `plugin-node-handler-error` is recorded as the cause. The deny-list is exactly the bare status word (`failed`), never a vocabulary: legitimate categorizations keep flowing through.
+3. **An authored caller sentinel** — Plan Review's hard-failure sentence (`"Plan Review failed before execution. Re-run triage to revise PROMPT.md before implementation continues."`) is returned unchanged when no real diagnostic exists, so its pre-merge fix `feedback` stays byte-identical.
+4. **The explicit no-cause sentence** — when none of the above exists, the record says so and names the position in the automatic re-run budget:
+
+```
+<Gate Name> failed before producing a verdict: no cause detected (attempt N of 4; automatic re-run budget: R of 3 left)
+```
+
+Once the automatic re-runs are spent the clause reads `automatic re-run budget exhausted`. `N` comes from counting the consecutive no-verdict failures already on the gate's row (the current row plus its bounded `priorAttempts`, newest-first, stopping at the first row that settled the gate by another route — an authored verdict, a `passed`, or an operator `bypassedBy` waiver), so the number names the current episode rather than the gate's lifetime. A superseded or remediation-archived death counts, because it consumed a real dispatch; an in-flight pending lease does not. With no record context at all the sentence degrades honestly to `no cause detected (attempt count unavailable)` rather than inventing `attempt 1`.
+
+**Budget ownership — what is enforced versus what is displayed.** The displayed denominator is the same constant the automatic lanes enforce; nothing introduces a second number:
+
+| Route | Budgeted? | Authority |
+|---|---|---|
+| Automatic re-seed of an **unrun** required gate | Yes — `MAX_VERDICTLESS_GATE_RERUN_ATTEMPTS = 3` re-runs per gate per episode | `rerouteUnrunPreMergeGateToReview` in `packages/engine/src/merge/pre-merge-gate-reseed.ts` |
+| Automatic re-seed of a **verdict-less failed** gate (idle review-lane recovery, graph-failure sink, merge-queue admission deferral) | Yes — the **same** marker budget as the row above, deliberately shared so total re-runs of one crashing gate are bounded across both lanes (3 total, not 3 + 3) | `rerouteFailedNoVerdictPreMergeGateToReview` → `seedPreMergeReviewIfIdle` (counter added by RUFU-449, read from the durable row by RUFU-452) |
+| Reviewer-lane dispatch sweep | Yes — its own `unfinishedAttempts >= DEFAULT_REVIEW_MAX_ATTEMPTS = 3` park; engine-loss and lane-capability refusals are exempt so a card is never parked for attempts it never got | `packages/engine/src/scheduling/review-dispatch-sweep.ts` |
+| Explicit operator Retry (`POST /api/tasks/:id/retry`) | Opens a **fresh episode**: strikes are counted from the newest operator-opened episode marker, so the restart re-arms both re-seed lanes together. It buys at most 3 further runs and then stops and reaches the operator again — it outranks the spent episode, it does not remove the bound. No automatic lane may open an episode. | `openVerdictlessGateRerunEpisode` (only `restartTaskStage` writes it) |
+
+The row-level count and the lane's wording are two framings of one envelope: the lane says `rerun N of 3`, while the row counts the initial attempt too, so at exhaustion the row carries four no-verdict deaths and reads `attempt 4 of 4; automatic re-run budget exhausted`. The streak-derived number is a **display** signal; the enforcement source of truth stays the durable marker count. Deliberate operator restarts therefore inflate the displayed attempt number on purpose — an `attempt 6 of 4` line means "more people tried than the automatic envelope allows", and the display never under-reports. The walk is also bounded by `MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS = 5`, so the visible attempt number saturates once the row holds the current death plus five archived ones, rather than growing without limit; it exists to tell the operator the envelope is gone, not to be an attempt ledger.
+
+The synthesis is `output`-only. `status` (`"failed"`), `verdict`, `verdictRequired`, edge routing, `priorAttempts` supersession, and eligibility for `latestFailedPreMergeStep` / the audited operator bypass (all of which select on `status === "failed"`) are unchanged by design — a diagnostic may be improved only by saying more, never by changing what a failure means. `aborted` on a top-level gate node produces no record at all: an engine-pause abort is intercepted before the recorder, because it is a re-entrant interruption rather than a gate failure (the optional-group surface has no such interception and does record it as a cause).
+
 ## Workflow Graph Executor
 
 Workflow graph execution is the task lifecycle runtime. `TaskExecutor` pins `workflowGraphExecutor` for the run and unselected tasks resolve to `builtin:coding`.
