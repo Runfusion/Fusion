@@ -975,8 +975,9 @@ CRITICAL SCOPING RULES — read before doing anything else:
       Why `tsc` cannot catch this class: `resolveInstructionPartsForRole` is typed `AnyFn` in the executor deps
       bag, so the array literal widens to `any[]` and `.trim()` on a `string | undefined` element typechecks.
       The runtime predicate below is therefore the guard, pinned by
-      `__tests__/workflow-step-operator-language-totality.test.ts` and ratcheted by
-      `__tests__/prompt-composition-nullish-sites.test.ts`.
+      `__tests__/workflow-step-operator-language-totality.test.ts`, the default-`"auto"` executor-lane case in
+      `__tests__/executor-step-text-fidelity.test.ts` (RUFU-233 — the first test to reach this line at all),
+      and ratcheted by `__tests__/prompt-composition-nullish-sites.test.ts`.
       */
       const stepSystemPrompt = buildSystemPromptWithInstructions(
         systemPrompt,

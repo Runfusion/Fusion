@@ -1,0 +1,127 @@
+{
+  "$comment": "Raw bytes from the reported evidence log. Each raw value is the exact JSONL line as stored on disk (JSON.parse-verified at extraction time); never paraphrase it.",
+  "source": {
+    "path": ".fusion/tasks/RUFU-196/agent-log.jsonl",
+    "scope": "project root, outside the worktree",
+    "extraction": "sed bounded line windows only; whole-file reads are forbidden by the task spec"
+  },
+  "bucketing": {
+    "rule": "Bucket per Step 1 by timestamp: (i) pre-remediation (<= 2026-09-13T~20:00Z), (ii) after the remediation stamps but pre content-verified deploy, (iii) after a content-verified deploy.",
+    "remediationStamps": [
+      "2026-09-13-21:15",
+      "2026-09-13-22:55"
+    ],
+    "bucket": "(i) - every holed row here predates both RUFU-234 remediation stamps"
+  },
+  "exclusionRules": [
+    "grep/tool previews truncate at 500 chars with a [truncated] marker: that is the tool, not disk.",
+    "a row that quotes another row is not corruption.",
+    "hyphen-dropped IDs (RUFU-234 -> RUFU234) are the pre-fix space-loss signature, not post-fix evidence.",
+    "a candidate counts only when a whole run is absent OR duplicated with independently confirmable intent."
+  ],
+  "controls": [
+    {
+      "line": 1,
+      "raw": "{\"timestamp\":\"2026-09-07T19:42:42.251Z\",\"taskId\":\"RUFU-196\",\"text\":\"Planning using model: dsai1/deepseek-v4 (thinking effort: off)\",\"type\":\"status\",\"agent\":\"triage\"}",
+      "control": "status row written whole into the same file: byte-clean control"
+    },
+    {
+      "line": 54950,
+      "raw": "{\"timestamp\":\"2026-09-13T18:39:00.986Z\",\"taskId\":\"RUFU-196\",\"text\":\"fn_task_logs_read\",\"type\":\"tool\",\"agent\":\"engineer\"}",
+      "control": "tool row written whole into the same file: byte-clean control, tool name intact"
+    }
+  ],
+  "holedRows": [
+    {
+      "line": 54925,
+      "raw": "{\"timestamp\":\"2026-09-13T18:27:20.662Z\",\"taskId\":\"RUFU-196\",\"text\":\"All done.All done. me summarize the userrecord. The hint mentions handling messages, this had no pending room (the delta  0). post needed The heartbeat has\",\"type\":\"text\",\"agent\":\"engineer\"}",
+      "window": "A 2026-09-13T18:27:2xZ",
+      "residuals": [
+        {
+          "class": "duplicate-run",
+          "observed": "All done.All done.",
+          "intended": "All done.",
+          "note": "opening run handed out twice"
+        },
+        {
+          "class": "lost-inter-word-space",
+          "observed": "the userrecord",
+          "intended": "the user record"
+        },
+        {
+          "class": "interior-drop",
+          "observed": "(the delta  0)",
+          "note": "double space where a run of words vanished"
+        }
+      ]
+    },
+    {
+      "line": 55000,
+      "raw": "{\"timestamp\":\"2026-09-13T18:39:30.504Z\",\"taskId\":\"RUFU-196\",\"text\":\" attribution) exist. If the raw lines are, that arguably distinct defect: \\\"-log appends content when sessions write — but it?UFU-15's: heartbeat writes mistributed. A defect would\",\"type\":\"text\",\"agent\":\"engineer\"}",
+      "window": "B 2026-09-13T18:39:3xZ",
+      "residuals": [
+        {
+          "class": "prefix-drop",
+          "observed": "?UFU-1",
+          "intended": "?RUFU-196"
+        },
+        {
+          "class": "interior-drop",
+          "observed": "writes mistributed",
+          "intended": "writes distributed"
+        },
+        {
+          "class": "interior-drop",
+          "observed": "-log appends",
+          "intended": "agent-log appends"
+        }
+      ]
+    },
+    {
+      "line": 55001,
+      "raw": "{\"timestamp\":\"2026-09-13T18:39:31.043Z\",\"taskId\":\"RUFU-196\",\"text\":\" be different worse.Let me check raw file. Use bash tail on the specific filebounded, single file).\\n\\nI need to be careful with cwd:home/schler/git/F/.fusion/worktreesufu-1\",\"type\":\"text\",\"agent\":\"engineer\"}",
+      "window": "B 2026-09-13T18:39:3xZ",
+      "residuals": [
+        {
+          "class": "lost-inter-word-space",
+          "observed": "filebounded",
+          "intended": "file bounded"
+        },
+        {
+          "class": "path-lose",
+          "observed": "cwd:home/schler/git/F/.fusion/worktreesufu-1",
+          "intended": "cwd /home/schindler/git/Fusion/.fusion/worktrees/rufu-1.."
+        }
+      ]
+    },
+    {
+      "line": 55003,
+      "raw": "{\"timestamp\":\"2026-09-13T18:39:32.157Z\",\"taskId\":\"RUFU-196\",\"text\":\" acting, let me a suspicious: my agent entries appear with dropped (e.g. \\\"RUF-223\\\" → \\\"RU-2 3\\\"). Checking the log file see whether stored bytes are corrupted or just\",\"type\":\"text\",\"agent\":\"engineer\"}",
+      "window": "B 2026-09-13T18:39:3xZ",
+      "residuals": [
+        {
+          "class": "row-quoting-another-row",
+          "observed": "\"RUF-223\" → \"RU-2 3\"",
+          "note": "stored bytes drop interior characters of quoted identifiers; the arrow is the U+2192 the row actually carries"
+        },
+        {
+          "class": "interior-drop",
+          "observed": "let me a suspicious",
+          "intended": "let me see something suspicious"
+        }
+      ]
+    },
+    {
+      "line": 55007,
+      "raw": "{\"timestamp\":\"2026-09-13T18:39:34.626Z\",\"taskId\":\"RUFU-196\",\"text\":\"BashBash is restricted to the worktree boundary. So I can't read the primary checkout via bash. But the `read` tool may also be boundary-restricted. Let me try read on absolute path memory\",\"type\":\"text\",\"agent\":\"engineer\"}",
+      "window": "B 2026-09-13T18:39:3xZ",
+      "residuals": [
+        {
+          "class": "duplicate-run",
+          "observed": "BashBash is restricted",
+          "intended": "Bash is restricted"
+        }
+      ]
+    }
+  ]
+}

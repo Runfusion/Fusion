@@ -1419,6 +1419,8 @@ export class HeartbeatMonitor {
         settings,
       });
       try {
+        // agent-log-fidelity-allowlist: RUFU-268's preflight verdict is read into `responseText` and parsed in
+        // memory — this capture writes no agent-log row, so it has no streamed-text fidelity to preserve.
         const capture = createAssistantStreamCapture({ onText: (delta: string) => { responseText += delta; } });
         const unsubscribe = created.session.subscribe?.((event: unknown) => { capture.handleAgentEvent(event); });
         try {

@@ -456,44 +456,52 @@ export const mockTerminateAllSessions: Mock<() => Promise<void>> = vi.fn().mockR
 export const mockCleanup: Mock<() => Promise<void>> = vi.fn().mockResolvedValue(undefined);
 export const mockSteerActiveSessions: Mock<(message: string) => Promise<void>> = vi.fn().mockResolvedValue(undefined);
 
-vi.mock("../execution/step-session-executor.js", () => ({
-  StepSessionExecutor: vi.fn().mockImplementation(function () {
-    return {
-      executeAll: mockExecuteAll,
-      terminateAllSessions: mockTerminateAllSessions,
-      cleanup: mockCleanup,
-      steerActiveSessions: mockSteerActiveSessions,
-    };
-  }),
-  /*
-  FNXC:ExecutorTestHarness 2026-10-22-15:31 (RUFU-707):
-  This factory replaces the whole module, so every export `executeWorkflowStep` reads has to be named here.
-  `workflowStepTaskIdentityLine` joined that module with RUFU-267 (the per-card identity line moved out of the
-  step's system prompt into its request tail), and the mock never gained it — every case in this harness died
-  on "No 'workflowStepTaskIdentityLine' export is defined on the mock". RUFU-707 exposed it because those cases
-  had been throwing one statement earlier (the nullish operator-language section) and never reached this line.
-  Wording mirrors the production builder; only the identity line matters to assertions.
-  */
-  workflowStepTaskIdentityLine: (taskId: string) => `You are executing steps for task ${taskId}.`,
-  extractSection: (prompt: string, sectionName: string) => {
-    const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const match = new RegExp(`^## ${escaped}\\s*$`, "m").exec(prompt);
-    if (!match) return "";
-    const start = match.index;
-    const afterStart = start + match[0].length;
-    const nextHeading = prompt.indexOf("\n## ", afterStart);
-    const end = nextHeading === -1 ? prompt.length : nextHeading;
-    return prompt.slice(start, end).trim();
-  },
-  buildFastLanePrompt: (task: { id: string; description?: string; attachments?: Array<{ originalName: string }> }, _rootDir?: string, _settings?: unknown, worktreePath?: string) => [
-    `## Task: ${task.id}`,
-    "## Original Request",
-    task.description ?? "",
-    ...(task.attachments?.map((attachment) => attachment.originalName) ?? []),
-    `Work only inside ${worktreePath ?? "the assigned task worktree"}.`,
-    `fix(${task.id}): <short summary>`,
-  ].join("\n"),
-}));
+/*
+FNXC:ExecutorTestHarness 2026-10-22-15:31 (RUFU-707):
+This factory replaced the whole module, so every export `executeWorkflowStep` reads had to be named here.
+`workflowStepTaskIdentityLine` joined that module with RUFU-267 (the per-card identity line moved out of the
+step's system prompt into its request tail), and the mock never gained it — every case in this harness died
+on "No 'workflowStepTaskIdentityLine' export is defined on the mock". RUFU-707 exposed it because those cases
+had been throwing one statement earlier (the nullish operator-language section) and never reached this line.
+
+FNXC:PromptByteStability 2026-10-16-12:05:
+RUFU-233 fixed that gap structurally instead of by hand. Spreading the real module means pure helpers
+(the identity line, the section builders) keep production behavior and future exports arrive automatically,
+so a new export can never again kill every case in this harness; the harness-owned overrides stay exactly
+as they were.
+*/
+vi.mock("../execution/step-session-executor.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../execution/step-session-executor.js")>();
+  return {
+    ...actual,
+    StepSessionExecutor: vi.fn().mockImplementation(function () {
+      return {
+        executeAll: mockExecuteAll,
+        terminateAllSessions: mockTerminateAllSessions,
+        cleanup: mockCleanup,
+        steerActiveSessions: mockSteerActiveSessions,
+      };
+    }),
+    extractSection: (prompt: string, sectionName: string) => {
+      const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = new RegExp(`^## ${escaped}\\s*$`, "m").exec(prompt);
+      if (!match) return "";
+      const start = match.index;
+      const afterStart = start + match[0].length;
+      const nextHeading = prompt.indexOf("\n## ", afterStart);
+      const end = nextHeading === -1 ? prompt.length : nextHeading;
+      return prompt.slice(start, end).trim();
+    },
+    buildFastLanePrompt: (task: { id: string; description?: string; attachments?: Array<{ originalName: string }> }, _rootDir?: string, _settings?: unknown, worktreePath?: string) => [
+      `## Task: ${task.id}`,
+      "## Original Request",
+      task.description ?? "",
+      ...(task.attachments?.map((attachment) => attachment.originalName) ?? []),
+      `Work only inside ${worktreePath ?? "the assigned task worktree"}.`,
+      `fix(${task.id}): <short summary>`,
+    ].join("\n"),
+  };
+});
 
 vi.mock("../errors/rate-limit-retry.js", () => ({
   withRateLimitRetry: vi.fn((fn: () => Promise<unknown>) => fn()),

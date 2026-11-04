@@ -20,6 +20,10 @@ related_components:
   - "packages/engine/src/execution/reviewer.ts"
   - "packages/dashboard/src/chat.ts"
   - "packages/dashboard/src/sse-buffer.ts"
+  - "packages/engine/src/agents/agent-logger.ts"
+  - "packages/engine/src/__tests__/agent-log-round-trip-fidelity.test.ts"
+  - "packages/engine/src/__tests__/heartbeat-text-fidelity.test.ts"
+  - "packages/engine/src/__tests__/triage-text-fidelity.test.ts"
 tags:
   - streaming
   - pi-event-shape
@@ -28,6 +32,7 @@ tags:
   - agent-log
   - openai-completions
   - RUFU-234
+  - RUFU-233
 ---
 
 # Stream capture trusted the delta against a stale block snapshot and deleted characters the provider actually sent
@@ -242,3 +247,127 @@ affected lanes had distinct deltas, so the collapse never appeared.
   replacement never delivered) before the production edit.
 - Sibling context: RUFU-233 independently attributed the same corruption to this seam by its own
   investigation; both fixes converge on deriving from the authoritative block text.
+
+<!--
+FNXC:AgentLogFidelity 2026-10-16-13:58:
+RUFU-233 closed the residual duplicate-run branch of this seam (branch 4 handed a contradicting
+authoritative block WHOLE to an append-only sink) and settled the persisted-log question this file could
+only claim: the holes were proven to exist in the bytes on disk, so the capture seam — not the store, the
+framer, the reader, or the operator read route — is the author of a holed `text` row.
+-->
+
+## Post-remediation verdict from the persisted bytes (RUFU-233, 2026-10-16)
+
+RUFU-233 was filed against **persisted** `agent-log.jsonl` rows and was resolved from raw bytes rather
+than from any lane's narration, per this file's own detection guidance. The disk-first method and the
+exoneration of the read route are recorded separately in
+[agent-log-read-route-is-append-free.md](agent-log-read-route-is-append-free.md); the conclusions that
+belong to *this* seam are:
+
+- **The layer is this seam, proven on disk.** In the reported 19.5 MB / 73 668-line evidence file, 1 057
+  distinct `text` rows (1.74 %) carry token-internal drops, and **0 of 13 042** `tool` / `tool_result` /
+  `tool_error` / `status` rows do — same file, same sessions, same writer, same read route. The `}{`
+  row-boundary count is 0. No discrete-row path and no read/serialize surface can produce that split;
+  the buffered streaming face can, which is the definition of this capture seam.
+- **Bucketing is per deploy-clock, not per file.** Every holed row is bucket (i) — produced by a build
+  without today's fix. The window tip that wrote the reported rows is `840759dda4` (2026-09-13); all of
+  RUFU-234's commits (`e3dbcee152`, `9bca0ab281`, `8b1d215b11`) and the three later remediations
+  (`250911cc78`, `6a4b3e16cd`, `8fadafc819`) post-date it, and the file froze at 2026-09-15T21:16:59Z.
+  Bucket (iii) — rows written by a provably fixed deployed bundle — is **permanently unreachable from
+  this evidence**, so the residual question "does today's code still produce the shape?" was answered by
+  replay, not by waiting. Two remediation SHAs named in the original spec (`0941918a73`, `f23b15d610`)
+  do not exist in this repository.
+- **Which residual branch this card closed: branch 4's hand-off.** Replaying identical event builders
+  against the window-tip capture and current tip separated the classes. The scattered 1–4 character holes
+  and the `BashBash is restricted` whole-block re-hand were both bucket-(i) and are exact at current tip.
+  The **duplicate-run** class was the opposite: the window-tip build is exact for the two shapes that
+  duplicate today — a terminal authority that **shortens** the block (the operator's
+  `All done.All done.`) and a block snapshot that **regresses** mid-`text_delta` — so half of the
+  duplicate-run symptom was a live defect in this seam. Branch 4 delivered the contradicting authoritative
+  block *whole* to a sink that had already received, and persisted, its head. It now hands
+  `novelSpan(authoritative, delivered)`: the run past the point where the block's new claim stops agreeing
+  with what the sink holds, and nothing when the revision trims back to an already-held prefix. **That clip
+  was itself too wide and was narrowed the same day — see "The append-only floor is owed to a revision,
+  not to a replacement" below.**
+
+### New reachability boundary discovered: an append-only sink cannot un-say a span
+
+The four earlier remediations assumed a sink that could be re-synchronised with the authoritative block.
+For `agent-log.jsonl` that assumption is false: `AgentLogger.onText` concatenates into one row, so the
+only durable form of a block revision is an **addition**. Three consequences are now pinned by tests and
+must be treated as the seam's floor:
+
+1. A revision that **diverges mid-text** costs the row exactly one divergence span. No byte-exact cursor
+   exists past a divergence that has already been written, so the ledger records the *block's claim*, not
+   the row's bytes — recording the row's bytes instead would make the terminal re-assertion of the same
+   revised authority read as new text and duplicate the divergence a second time.
+2. A revision that **trims** back to a prefix the sink already holds hands nothing, and the cursor must
+   **not** follow the block down: it records what the sink holds, and a shortened cursor makes the next
+   growth span re-hand the region the trim just cancelled. That mutant is pinned by a
+   revision-then-catch-up case.
+3. This boundary is face-specific and does **not** extend the partial-free limit above: on the
+   partial-free face there is no authority to contradict, so branch 4 is unreachable there and verbatim
+   delivery stays unconditional.
+
+### The append-only floor is owed to a revision, not to a replacement (RUFU-233 code-review P0)
+
+The clip above was written as if every contradiction inside branch 4 were the *same* block's text changing
+under a sink that already holds its head. It is not. Branch 4 admits two shapes whose correct hand-off is
+opposite, and clipping both re-opened the lossless half of the contract:
+
+- **REVISION** — a contradiction arriving at `text_delta`, `text_end`, or `message_end` for the block
+  instance currently being streamed. The floor above applies: the row holds the agreed head, so only the
+  divergence run may follow it.
+- **REPLACEMENT** — the next message's block reusing an index because the producer shares one `partial`
+  object across messages with no `message_start`/`message_end` between. Its leading characters were never
+  this message's text, so clipping them against the previous message's span is plain deletion. Measured on
+  the shape this file already carries: delivered `"notes/origin/using-39"` replaced by
+  `"notes/origin/README.md"` emitted `notes/origin/using-39README.md` — **13 characters of a genuine new
+  reply dropped** — and a replacement that is a prefix of the previous block (`"notes/origin"`) clipped to
+  `""`, so the new message reached **no sink at all**: RUFU-234's `stale-ledger-hole-shorter-replacement`
+  total-loss outcome, worse than the head-slice branch 4 was written to fix. Two consecutive replies that
+  begin with the same words are ordinary for one model, so this is the shape's common case, not an edge;
+  the RUFU-234 pair survived only because `"OK"` shares no prefix with `"notes/origin/using-39"`.
+
+The discriminator is the event, not the text: a real stream opens a block exactly once per message, and the
+ledger is cleared by `message_start`/`message_end`, so **a second `${kind}_start` for a (kind, index) whose
+ledger is already populated inside one message can only announce a new block instance**. `advance` takes
+that as `announcesReplacement` and, for it alone, restarts the block's ledger and hands the replacement
+whole — RUFU-234's length-independent rule, restored. The event-based test costs nothing else: copied
+snapshot providers still share one ledger because identity is never consulted.
+
+Two boundaries survive and are stated rather than papered over:
+
+1. A replacement whose `text_start` is never emitted — the new message appears only as deltas on the stale
+   index — is indistinguishable from a revision by any signal this seam receives, so it keeps the clip and
+   the row can lose the shared head. Nothing in the event vocabulary separates them; guessing from length or
+   from `consumed` would re-buy the loss with duplication on the revision face.
+2. The floor itself is unchanged for a revision: one divergence span per revision is the most an
+   append-only row can carry.
+
+<!--
+FNXC:AssistantTextCapture 2026-11-03-22:26:
+RUFU-233 code-review P0 remediation recorded here because this file is the seam's contract: the
+`novelSpan` clip introduced earlier the same day applied the append-only floor to a whole class it does not
+own. `announcesReplacement` (set at the `${kind}_start` call site from the populated-ledger condition) now
+splits branch 4, and both halves are pinned in assistant-text-capture-fidelity.test.ts — each replacement
+case RED on the clip-only build (measured: `notes/origin/using-39README.md` and a wholly dropped prefix
+replacement) and the revision case green on both builds, so neither half can silently take the other back.
+-->
+
+### Coverage this card added (and one methodological lesson)
+
+- `agent-log-round-trip-fidelity.test.ts` — real capture → real `AgentLogger` → real
+  `appendAgentLogEntriesSync` → real `readAgentLogEntries` over a temp task dir, plus the operator read
+  route (`buildTaskAgentLogReadText`, previously tested only by `vi.fn(() => "")` stubs), the
+  token-straddling-two-rows case, the 500 ms timer flush under fake timers, and the branch-a4
+  cross-runtime bridge exactly-once replay. No `node:fs` mock anywhere in the file.
+- `heartbeat-text-fidelity.test.ts` and `triage-text-fidelity.test.ts` — the two lanes that had no
+  fidelity test, each asserting its own `onText` wiring against a real file round-trip. The executor lane
+  asserts the entry-handoff seam; disk bytes for that shape are the shared round-trip file's job.
+- RUFU-208's flush levers (`FLUSH_SIZE_BYTES`, `FLUSH_INTERVAL_MS`, `ENTRY_BATCH_SIZE`) and the append
+  strategy are untouched; every test drives them through the constructor's overrides.
+- **Lesson for the next fidelity suite:** the executor-lane fidelity case was written long before it ever
+  ran, and it was vacuous — a hand-enumerated module mock upstream (`executor-test-helpers.ts`) starved
+  the lane so the test died before reaching streamed text. A zero-executed-test check is worth more than
+  another assertion; the helper now uses `importOriginal` + spread.

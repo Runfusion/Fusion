@@ -10,6 +10,30 @@ type CaptureSinks = {
 type EventRecord = Record<string, unknown>;
 type PartialShape = { content?: Array<{ type?: string; text?: string; thinking?: string }> } | undefined;
 
+/** How many leading code units `a` and `b` agree on — the boundary past which two claims about one block differ. */
+function commonPrefixLen(a: string, b: string): number {
+  const limit = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < limit && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  return i;
+}
+
+/**
+ * What a sink that already holds `held` may still receive for `text`, or "" when nothing may.
+ *
+ * FNXC:AgentLogFidelity 2026-10-16-11:15:
+ * RUFU-233. Every sink behind this seam is APPEND-ONLY — `AgentLogger.onText` concatenates into one
+ * `agent-log.jsonl` text row and cannot unsay a span — so the only durable form of a block revision is an
+ * ADDITION. Text the sink already holds in full (a revision that trims back to a prefix of the stream) adds nothing;
+ * a revision that diverges mid-text adds only the run past the point where the two stop agreeing. Re-handing the
+ * agreed head is what wrote the operator's `All done.All done.` and `BashBash is restricted` rows.
+ */
+function novelSpan(text: string, held: string): string {
+  if (!text || held === text || held.startsWith(text)) return "";
+  if (text.startsWith(held)) return text.slice(held.length);
+  return text.slice(commonPrefixLen(text, held));
+}
+
 function record(value: unknown): EventRecord | undefined {
   return value !== null && typeof value === "object" ? value as EventRecord : undefined;
 }
@@ -83,11 +107,17 @@ function blockPresent(partial: unknown, index: number | undefined, kind: Kind): 
  *  3. Authoritative text extended what was delivered → deliver `authoritative.slice(delivered.length)`.
  *     It cannot skip a character the block holds and cannot re-hand a covered span, so the
  *     producer-mutation race that RUFU-230 patched by coincidence test is now handled by construction.
- *  4. Authoritative text contradicts what the block itself confirmed → the block instance was replaced (the
- *     same `partial` reused across messages with no `message_start`), so the stale span must not slice or
- *     suppress the replacement: restart the ledger and deliver it whole, REGARDLESS OF LENGTH. A length-gated
- *     reset covers only the longer half of that shape; the shorter half matched no branch at all and the
- *     replacement reached no sink — total loss, worse than the head-slice the branch was written to fix.
+ *  4. Authoritative text contradicts what the block itself confirmed. Two different shapes reach here and the
+ *     hand-off differs, because only one of them has an append-only floor:
+ *       - REPLACEMENT (`${kind}_start` for an index whose ledger is already populated in this message — real
+ *         streams open a block once per message, so a second start names the next message's block at a reused
+ *         index): the stale span must not slice or suppress it. Restart the ledger and deliver the replacement
+ *         whole, REGARDLESS OF LENGTH and regardless of how much it shares with the previous block. A length-gated
+ *         reset covers only the longer half of that shape; the shorter half matched no branch at all and the
+ *         replacement reached no sink — total loss, worse than the head-slice the branch was written to fix.
+ *       - REVISION (a contradiction at `text_delta`/`text_end`/`message_end` for the block instance currently
+ *         being streamed): the sink already holds the agreed head and cannot unsay it, so only the span past the
+ *         divergence may be handed out — see `novelSpan`.
  *  5. No new authoritative text but a delta carries text the block has not absorbed (FN-9277's populated
  *     start plus a continuation delta) → deliver it as a provisional continuation, deduplicated by
  *     containment in what was already delivered. Deferring it would drop text whose block never catches up.
@@ -119,6 +149,18 @@ export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgent
     normalizer.noteBoundary("text"); normalizer.noteBoundary("thinking");
     if (sawText) pendingBoundary = true;
   };
+  /**
+   * Whether a `${kind}_start` arriving now names a NEW block instance at `index` rather than the one being streamed.
+   *
+   * FNXC:AssistantTextCapture 2026-11-03-22:26:
+   * RUFU-233 code-review P0. `reset()` clears the ledger on `message_start` and on every `message_end`, so a start
+   * event that finds a non-empty ledger for its (kind, index) sits inside one message span that has already opened
+   * that block. Real pi streams emit one content_block_start per block per message, so the event can only be the
+   * next message's block reusing a stale index with no lifecycle event between — the replacement shape advance's
+   * branch 4 must deliver whole.
+   */
+  const startAnnouncesReplacement = (kind: Kind, index: number | undefined): boolean =>
+    index !== undefined && (ledger.get(kind)?.get(index)?.delivered.length ?? 0) > 0;
   const handOff = (kind: Kind, text: string, partial: unknown, index: number, restarted = false) => {
     if (!text) return;
     if (kind === "text") {
@@ -135,7 +177,7 @@ export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgent
    * Spans cut from it are final, so the normalizer repairs their sentence boundary against the block it
    * was read from; a provisional delta is repaired against the delivered text that precedes it instead.
    */
-  const advance = (kind: Kind, partial: unknown, index: number | undefined, authoritative: string, delta?: string, hasBlock = true) => {
+  const advance = (kind: Kind, partial: unknown, index: number | undefined, authoritative: string, delta?: string, hasBlock = true, announcesReplacement = false) => {
     if (index === undefined) return;
     const state = ledger.get(kind)?.get(index) ?? { delivered: "", provisional: "", consumed: 0 };
     const save = () => {
@@ -221,19 +263,72 @@ export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgent
       return;
     }
 
-    // 4. Authoritative text contradicts what the BLOCK itself confirmed: the block instance was replaced (the
-    // same `partial` reused across messages with no `message_start`). Its head must not be sliced or
-    // suppressed by the previous block's span, so restart the ledger and deliver the replacement whole.
-    // The reset is length-independent on purpose: the shorter half of that shape (replacement text shorter
-    // than the stale span) satisfied a length gate never, and fell through every branch, so the replacement
-    // message reached no sink at all. Text still held provisionally is excluded from the comparison — a block
-    // merely lagging behind deltas it already received is not a replaced block, and resetting on that would
-    // re-hand the whole text and duplicate it.
+    // 4. Authoritative text contradicts what the BLOCK itself confirmed: either the same `partial` was reused across
+    // messages with no `message_start` (a new block instance at a stale index — `announcesReplacement`), or the text
+    // of the block instance currently being streamed was revised under this seam. Text still held provisionally is
+    // excluded from the CONTRADICTION comparison — a block merely lagging behind deltas it already received is
+    // neither a replacement nor a revision.
     const confirmed = state.delivered.slice(0, state.delivered.length - state.provisional.length);
     if (authoritative && !authoritative.startsWith(confirmed)) {
+      /*
+      FNXC:AssistantTextCapture 2026-11-03-22:26:
+      RUFU-233 code-review P0 — the two shapes inside this branch need opposite hand-offs, and clipping both broke
+      the lossless half of the contract this seam exists to hold. `announcesReplacement` is set at the `${kind}_start`
+      call site when this (kind, index) already has a non-empty ledger entry inside the current message; because a
+      real stream opens a block exactly once per message, that start can only be the NEXT message's block reusing the
+      index with no `message_start` to reset. Its leading characters belong to the previous message and are
+      unrecoverable for this one, so clipping against `delivered` DELETES them: replaying RUFU-234's own fixture
+      shape, a delivered "notes/origin/using-39" replaced by "notes/origin/README.md" emitted
+      `notes/origin/using-39README.md` (13 characters of a genuine new reply dropped), and a replacement that is a
+      prefix of the previous text ("notes/origin") clipped to "" and reached NO sink at all — RUFU-234's
+      `stale-ledger-hole-shorter-replacement` total-loss outcome, which is worse than the head-slice it replaced.
+      Two consecutive replies that merely begin with the same words are common for one model, so this is the normal
+      case of the shape, not an edge. Deliver the replacement whole and restart the block's ledger; the append-only
+      clip below stays reserved for a REVISION of the block instance currently being streamed.
+      */
+      if (announcesReplacement) {
+        state.delivered = authoritative; state.provisional = ""; state.consumed = 0;
+        save();
+        handOff(kind, normalizer.normalize(blockScoped, index, authoritative, kind), partial, index, true);
+        return;
+      }
+      /*
+      FNXC:AgentLogFidelity 2026-10-16-11:15:
+      RUFU-233: hand out `novelSpan`, never a revision whole. The reported duplicate-run class — the operator's
+      `All done.All done.` (line 54925) and `BashBash is restricted` (line 55007) — is this branch handing the whole
+      authoritative block to a sink that had already received, and written, its head. Measured at current tip this
+      duplicates for BOTH witnesses — a terminal authority that trims or repairs the block, and a block snapshot that
+      regresses mid-`text_delta` — and measured at the build that wrote the rows (window tip `840759dda4`) both were
+      exact, so this is a regression introduced in this seam rather than pre-remediation history.
+
+      The clip basis is `delivered`, which is the raw text this seam has already handed this sink for the block, and
+      it is deliberately wider than `confirmed`: provisional text was handed out too, so re-handing it would
+      duplicate it on disk even though the block has not absorbed it yet. The floor it enforces is owed ONLY to a
+      revision of the block instance the row is already carrying — a start-announced replacement is handled above,
+      because its head was never this message's text to keep.
+
+      After a MID-TEXT hand-off the cursor takes the block's claim, not the row's bytes: the row keeps its
+      unrecoverable head, so no byte-exact cursor exists past the divergence point. Recording the block's text is what
+      makes the terminal event that re-asserts the SAME revised authority add nothing; recording the row's bytes
+      instead would make that re-assertion read as new text and duplicate the divergence run a second time. The
+      row's fidelity therefore degrades to one divergence span per revision, which is the floor an append-only sink
+      can offer.
+      */
+      const span = novelSpan(authoritative, state.delivered);
+      if (!span) {
+        /*
+        The revision names text the row already holds: the block trimmed back to a prefix of what was streamed. The
+        cursor must NOT follow the block down — it records what the sink holds, and a cursor shortened below the row
+        would make the next growth span re-hand the region this trim just cancelled. Only the unvalidated tail and
+        the delta-stream position are stale.
+        */
+        state.provisional = ""; state.consumed = 0;
+        save();
+        return;
+      }
       state.delivered = authoritative; state.provisional = ""; state.consumed = 0;
       save();
-      handOff(kind, normalizer.normalize(blockScoped, index, authoritative, kind), partial, index, true);
+      handOff(kind, normalizer.normalize(blockScoped, index, span, kind), partial, index, true);
       return;
     }
 
@@ -315,7 +410,17 @@ export function createAssistantStreamCapture(sinks: CaptureSinks): { handleAgent
            * FN-9277's populated-start shape that carries no delta. Terminal events still recover
            * anything the block had not absorbed.
            */
-          advance(kind, partial, index, blockText(partial, index, kind), undefined, hasBlock);
+          /*
+           * FNXC:AssistantTextCapture 2026-11-03-22:26:
+           * RUFU-233 code-review P0: a `${kind}_start` for a (kind, index) whose ledger is already populated inside
+           * the current message is the signal that the BLOCK INSTANCE was replaced — a real stream opens a block once
+           * per message, and `reset()` clears the ledger on `message_start`/`message_end`, so the only way to see a
+           * second start here is a producer that reuses one `partial` across messages with no lifecycle event between
+           * them. `advance` uses that to deliver the replacement whole instead of clipping it against the previous
+           * message's span; a contradiction announced by a delta or a terminal event stays the append-only revision
+           * case. Copied-snapshot providers still share one ledger: identity is not consulted, only the ledger.
+           */
+          advance(kind, partial, index, blockText(partial, index, kind), undefined, hasBlock, startAnnouncesReplacement(kind, index));
         } else if (type === `${kind}_end`) {
           /*
            * FNXC:AssistantTextCapture 2026-09-13-21:15:
