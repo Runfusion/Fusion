@@ -77,6 +77,18 @@ function createStore(tasks: TaskMap, settings: Partial<Settings> = {}): TaskStor
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => ""),
     recordRunAuditEvent: vi.fn(async () => undefined),
+    /*
+    FNXC:SelfHealingBatchWorkflowCache 2026-11-02-19:45 (RUFU-450, Step 4):
+    The sweeps reached by `recoverAlreadyMergedReviewTasks` resolve the workflow IR through the manager's
+    pass-scoped `batchWorkflowIrCache()`, which asks the store for its definition/selection epoch so a
+    mid-pass workflow write invalidates the cache. A hand-rolled fake that omits those accessors does not
+    relax any assertion — it makes the whole sweep die on `this.store.workflowDefinitionEpoch is not a
+    function` before it can heal anything, so every "recovers …" expectation in this file failed while the
+    product path was never exercised. Same two lines the other self-healing fakes ship (e.g.
+    `merge-not-run-gate-wedge.test.ts`).
+    */
+    workflowDefinitionEpoch: vi.fn(() => 0),
+    workflowSelectionEpoch: vi.fn(() => 0),
   }) as unknown as TaskStore & EventEmitter;
 
   return store;

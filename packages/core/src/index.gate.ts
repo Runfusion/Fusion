@@ -1437,6 +1437,26 @@ export {
 export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { RequiredPostMergeEvidenceDecision } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+The engine-core gate project resolves `@fusion/core` through THIS reduced barrel, and both
+`merge/auto-merge-finalization.ts` and `merge/post-merge-gate-reseed.ts` read the producer-surface
+observation and the bounded refusal episode as VALUES. A value import that the gate barrel does not carry
+resolves as undefined at gate-bundle runtime, so the family is re-exported here alongside the gate readers
+it feeds.
+*/
+export { isPostMergeProducerUnreachable } from "./merge/post-merge-producer-surface.js";
+export type { PostMergeProducerSurface, PostMergeProducerSurfaceObservation } from "./merge/post-merge-producer-surface.js";
+export {
+  POST_MERGE_EVIDENCE_REFUSAL_METADATA_KEY,
+  POST_MERGE_EVIDENCE_REFUSAL_REFRESH_FLOOR_MS,
+  postMergeEvidenceRefusalSignature,
+  readPostMergeEvidenceRefusalEpisode,
+  decidePostMergeEvidenceRefusal,
+  postMergeEvidenceRefusalAgeMs,
+  clearPostMergeEvidenceRefusalPatch,
+} from "./merge/post-merge-evidence-refusal-episode.js";
+export type { PostMergeEvidenceRefusalEpisode, PostMergeEvidenceRefusalObservation, PostMergeEvidenceRefusalDecision } from "./merge/post-merge-evidence-refusal-episode.js";
 export type { PreMergeAdmissionDecision, PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {
   isBranchGroupMemberLanded,

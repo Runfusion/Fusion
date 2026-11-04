@@ -30,6 +30,22 @@ import {
   type PostMergeGateReseedReason,
 } from "./post-merge-gate-reseed.js";
 import { resolvePostMergeEvidenceContract } from "./post-merge-evidence-contract.js";
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+The observation is resolved once per finalize pass beside the contract and handed to every gate read, so the
+blocker, the deferral fact, the fenced re-read, and the re-seed seam all answer from one measurement. The
+episode seam beside it is what turns this lane's unsatisfiable refusal into a bounded record instead of a
+restatement at the poll rate.
+*/
+import { resolvePostMergeProducerSurface } from "./post-merge-producer-surface.js";
+import {
+  POST_MERGE_EVIDENCE_REFUSAL_METADATA_KEY,
+  POST_MERGE_EVIDENCE_REFUSAL_REFRESH_FLOOR_MS,
+  decidePostMergeEvidenceRefusal,
+  isPostMergeProducerUnreachable,
+  readPostMergeEvidenceRefusalEpisode,
+  type PostMergeEvidenceRefusalEpisode,
+} from "@fusion/core";
 import { deliverMailboxMessageOnce } from "../notification/mailbox-delivery.js";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
@@ -311,6 +327,79 @@ export async function notifyUnreachablePostMergeGate(args: {
   return notice;
 }
 
+/*
+FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450):
+The card's own History is the third surface of a bounded refusal — episode, audit row, History line — and it
+goes through the durable once-seam keyed by the refusal SIGNATURE, the shape RUFU-382 settled for the planning
+mirror: one changed condition announces once, an unchanged wait re-announces at most once per window. A store
+without `logEntryOnce` keeps the shipped `logEntry` fallback inside the same path, and every failure is
+swallowed: an unwriteable History line must never become a finalization dependency.
+
+The sentence names the gate, the evidence state, the disposition this pass applied, and what the mailbox
+actually did. An arm that sends no message says so rather than implying a hand-off — a History line claiming
+a notice nobody sent is the same defect as a refusal nobody was told about.
+*/
+type PostMergeEvidenceNoticeOutcome = "not-sent" | "delivered" | "unavailable";
+
+async function announcePostMergeEvidenceRefusal(
+  store: TaskStore,
+  taskId: string,
+  episode: PostMergeEvidenceRefusalEpisode,
+  evidenceBlocker: string,
+  notification: PostMergeEvidenceNoticeOutcome,
+): Promise<void> {
+  const stateWord = episode.state === "not-approved" ? "was not approved" : "has not reported";
+  const action = `Post-merge evidence refused for ${taskId}: gate '${episode.gateId ?? "?"}' ${stateWord}; `
+    + `re-seed ${episode.reseedReason ? `refused (${episode.reseedReason})` : "was accepted"}; `
+    + `operator notification ${describePostMergeEvidenceNotice(notification)}. ${evidenceBlocker}`;
+  await logPostMergeEvidenceOnce(store, taskId, action, `post-merge-evidence-refusal:${episode.signature}`);
+}
+
+/** What the mailbox actually did, in words a card reader can act on. */
+function describePostMergeEvidenceNotice(notification: PostMergeEvidenceNoticeOutcome): string {
+  if (notification === "delivered") return "was delivered to the operator mailbox";
+  if (notification === "unavailable") return "could not be delivered (no mailbox store wired)";
+  return "was not sent (this refusal is still retryable)";
+}
+
+/** `logEntryOnce` with the shipped `logEntry` fallback; failures degrade to a missing line, never a throw. */
+/*
+FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450):
+The fallback exists for a store without the once-seam, and such a store cannot dedupe — so the fallback keeps
+its own process-local bound, the same shape `recordFinalizationAudit` already uses in this file. It is bounded
+because it is a fallback, not instead of the durable episode: across a restart the durable episode resumes the
+bound, which is precisely what the in-process gate alone could not do.
+*/
+const historyFallbackBound = new Map<string, number>();
+
+async function logPostMergeEvidenceOnce(
+  store: TaskStore,
+  taskId: string,
+  action: string,
+  dedupeKey: string,
+): Promise<void> {
+  const seam = store as unknown as {
+    logEntryOnce?: (id: string, input: { action: string; outcome?: string; dedupeKey: string; windowMs: number }) => Promise<boolean>;
+    logEntry?: (id: string, action: string, outcome?: string) => Promise<unknown>;
+  };
+  try {
+    if (typeof seam.logEntryOnce === "function") {
+      await seam.logEntryOnce(taskId, {
+        action,
+        dedupeKey,
+        windowMs: POST_MERGE_EVIDENCE_REFUSAL_REFRESH_FLOOR_MS,
+      });
+      return;
+    }
+    const lastAt = historyFallbackBound.get(dedupeKey) ?? 0;
+    if (Date.now() - lastAt < POST_MERGE_EVIDENCE_REFUSAL_REFRESH_FLOOR_MS) return;
+    historyFallbackBound.set(dedupeKey, Date.now());
+    await seam.logEntry?.(taskId, action);
+  } catch {
+    // Degraded History only — the durable episode and its audit row are already committed.
+  }
+}
+
 async function recordFinalizationAudit(args: {
   store: TaskStore;
   audit?: RunAuditor;
@@ -443,8 +532,15 @@ export async function finalizeProvenAutoMergeTask({
   the fenced re-read answer the same question. An unresolvable contract keeps today's demand unchanged.
   */
   const evidenceContract = await resolvePostMergeEvidenceContract(store, { auditHost: store });
+  /*
+  FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+  Resolved ONCE per pass, beside the contract, and handed to every read below — the same discipline RUFU-430
+  states for the contract, for the same reason: a blocker, a deferral fact, and a fenced re-read that each
+  ask their own question can disagree. An unresolvable observation keeps today's demand unchanged.
+  */
+  const producerSurface = await resolvePostMergeProducerSurface(store, latest);
 
-  const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest, evidenceContract);
+  const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(store, latest, evidenceContract, producerSurface);
   if (evidenceBlocker) {
     /*
     FNXC:PostMergeEvidence 2026-09-30-09:57:
@@ -456,8 +552,17 @@ export async function finalizeProvenAutoMergeTask({
     pending / non-approval stays fatal.
     */
     const postMergeIr = await resolveWorkflowIrForTask(store, latest.id).catch(() => null);
-    const deferredPostMergeEvidence = postMergeIr
-      ? getPostMergeEvidenceGateStatuses(latest, postMergeIr, evidenceContract).some((status) => status.state === "missing") || undefined
+    /*
+    FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+    The statuses are read ONCE and kept, rather than collapsed to a boolean at the call site: Half 1 needs
+    the same `gateId`/`state` the deferral fact needs, and a second derivation of the same question is what
+    this module's own history keeps calling a defect.
+    */
+    const postMergeGateStatuses = postMergeIr
+      ? getPostMergeEvidenceGateStatuses(latest, postMergeIr, evidenceContract, producerSurface)
+      : null;
+    const deferredPostMergeEvidence = postMergeGateStatuses
+      ? postMergeGateStatuses.some((status) => status.state === "missing") || undefined
       : evidenceBlocker.includes("has not reported") || undefined;
     /*
     FNXC:PostMergeRecovery 2026-10-01-09:01 (upstream FN-9442 adopted; RUFU-306 / RUFU-370 kept on top):
@@ -474,10 +579,18 @@ export async function finalizeProvenAutoMergeTask({
     // the outer `fence.write` below only checks ownership on ENTRY — an abort that lands DURING the resume
     // (between the work-item read and the continuation insert) would otherwise still schedule a reviewer
     // run on a card this merge body no longer owns.
-    const resume = () => resumeMissingPostMergeGate(store, latest, { source: "auto-merge", contract: evidenceContract, fence });
+    const resume = () => resumeMissingPostMergeGate(store, latest, {
+      source: "auto-merge",
+      contract: evidenceContract,
+      fence,
+      producerSurface,
+    });
     const reseed = (fence ? await fence.write("finalization", resume) : await resume())
       // A fenced write that was suppressed means this lane no longer owns the card: nothing was seeded.
       ?? { outcome: "not-seeded" as const, reason: "finalize-blocked" as const };
+    // Hoisted above both refusal arms: the terminal arm names the owed gate in its History line and the
+    // pending-evidence arm keys its episode by the same gate/state pair, so one read answers both.
+    const owedGate = postMergeGateStatuses?.find((status) => status.state !== "not-applicable");
     if (reseed.outcome !== "seeded" && isTerminalPostMergeReseedRefusal(reseed.reason)) {
       const notice = await notifyUnreachablePostMergeGate({
         store,
@@ -489,6 +602,24 @@ export async function finalizeProvenAutoMergeTask({
       });
       await log?.(`Auto-merge finalization deferred for ${taskId}: ${evidenceBlocker}`
         + ` [post-merge gate reseed: ${reseed.reason}; operator handoff: ${notice}]`);
+      /*
+      FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450, Step 5):
+      This arm already tells the operator, but it told them on the mailbox while the CARD kept only a merged
+      engine-log sentence. The card's own History now names this card by its own id — never a summary that
+      lets one card's name stand for four separate observations — states the git/producer observation that
+      produced the exemption decision, and repeats the notification outcome the mailbox actually returned.
+      */
+      await logPostMergeEvidenceOnce(
+        store,
+        taskId,
+        `Post-merge evidence needs a human decision for ${taskId}: gate '${reseed.workflowStepId ?? owedGate?.gateId ?? "?"}'`
+        + ` has not reported and cannot be re-seeded (${reseed.reason}); delivery surface read as `
+        + `${producerSurface?.surface ?? "unreadable"}, landing `
+        + `${producerSurface?.mergeConfirmed ? "confirmed" : "unconfirmed"}, producer `
+        + `${producerSurface?.producerCanRun === false ? "cannot run" : producerSurface?.producerCanRun === true ? "can still run" : "not measured"}; `
+        + `operator notification ${describePostMergeEvidenceNotice(notice)}. ${evidenceBlocker}`,
+        `post-merge-evidence-refusal:${reseed.workflowStepId ?? "gate"}:terminal:${reseed.reason}:${notice}`,
+      );
       return {
         outcome: "blocked",
         task: latest,
@@ -498,15 +629,54 @@ export async function finalizeProvenAutoMergeTask({
         postMergeEvidenceBlocked: true,
       };
     }
-    await recordFinalizationAudit({
-      store,
-      audit,
-      task: latest,
-      type: "task:auto-merge-finalize-column-mismatch-no-action",
-      reason: evidenceBlocker,
-      auditAgentId,
-      auditPhase,
-    });
+    /*
+    FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450, Half 1):
+    THIS is the arm VLLM-081 churned: a refusal the lane cannot satisfy, restated at the poll rate (5 audit
+    rows inside the single minute 19:44), with the shipped in-process gate holding nothing across a restart.
+    The refusal is now a durable episode keyed by which gate, which state, and which re-seed refusal, so an
+    unchanged refusal records at most once per the shipped 15-minute floor while any real change — the gate
+    finally reporting, a different refusal — records immediately. A failed episode write degrades to today's
+    in-process-bounded record rather than silencing the refusal.
+    */
+    const refusalObservation = owedGate
+      ? {
+        gateId: owedGate.gateId,
+        state: owedGate.state,
+        reseedReason: reseed.outcome === "seeded" ? null : reseed.reason,
+      }
+      : undefined;
+    const episodeDecision = refusalObservation
+      ? decidePostMergeEvidenceRefusal(
+        readPostMergeEvidenceRefusalEpisode(latest.sourceMetadata?.[POST_MERGE_EVIDENCE_REFUSAL_METADATA_KEY]),
+        refusalObservation,
+      )
+      : undefined;
+    /*
+    A suppressed fenced write (`finalize-blocked`) means this merge body no longer owns the card, so this pass
+    records an episode or a History line for a card it cannot describe — the audit row stays, bounded as today,
+    because a withheld finalization is still worth counting. Ownership is the fence's fact, never a guess.
+    */
+    const recordsOwnership = reseed.reason !== "finalize-blocked";
+    const recordedEpisode = recordsOwnership ? episodeDecision?.episode : undefined;
+    if (!episodeDecision || episodeDecision.write) {
+      if (recordedEpisode) {
+        await store.updateTask(taskId, {
+          sourceMetadataPatch: { [POST_MERGE_EVIDENCE_REFUSAL_METADATA_KEY]: recordedEpisode },
+        }).catch(() => undefined);
+      }
+      await recordFinalizationAudit({
+        store,
+        audit,
+        task: latest,
+        type: "task:auto-merge-finalize-column-mismatch-no-action",
+        reason: evidenceBlocker,
+        auditAgentId,
+        auditPhase,
+      });
+      if (recordedEpisode) {
+        await announcePostMergeEvidenceRefusal(store, taskId, recordedEpisode, evidenceBlocker, "not-sent");
+      }
+    }
     await log?.(`Auto-merge finalization deferred for ${taskId}: ${evidenceBlocker}`
       + ` [post-merge gate reseed: ${reseed.outcome === "seeded" ? `seeded '${reseed.workflowStepId}'` : reseed.reason}]`);
     return {
@@ -530,6 +700,31 @@ export async function finalizeProvenAutoMergeTask({
     };
   }
 
+  /*
+  FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450, Step 5):
+  An exemption that completes a card silently is an exemption nobody can audit after the fact. When the
+  producer-surface observation is what released the card, the card's own History says which gate it released,
+  on which git verdict, and that no notification was needed — naming THIS card by its own id, never a
+  roll-up under one card's name for four separate observations. The IR read is gated on the observation being
+  CONCLUSIVE, so the common path pays nothing for a sentence it will never write.
+  */
+  if (isPostMergeProducerUnreachable(producerSurface)) {
+    const exemptIr = await resolveWorkflowIrForTask(store, latest.id).catch(() => null);
+    const exempted = exemptIr
+      ? getPostMergeEvidenceGateStatuses(latest, exemptIr, evidenceContract, producerSurface)
+        .find((status) => status.state === "not-applicable" && status.notApplicableReason === "producer-unreachable")
+      : undefined;
+    if (exempted) {
+      await logPostMergeEvidenceOnce(
+        store,
+        taskId,
+        `Post-merge evidence was not required for ${taskId}: gate '${exempted.gateId}' has no report because the `
+        + `delivery surface can no longer produce one (git surface ${producerSurface?.surface}, landing confirmed, `
+        + `no producer left to dispatch); no operator notification was needed.`,
+        `post-merge-evidence-refusal:${exempted.gateId}:producer-unreachable:${producerSurface?.surface}`,
+      );
+    }
+  }
 
   const validationMergeDetails = buildFinalizationMergeDetails(latest, result);
   const cleanupLandedWorktree = async (task: Task, mergeDetails: NonNullable<Task["mergeDetails"]>): Promise<void> => {
@@ -713,7 +908,7 @@ export async function finalizeProvenAutoMergeTask({
         finalizationBlocker = "missing-merge-confirmation";
         return false;
       }
-      finalizationBlocker = await getRequiredPostMergeEvidenceBlocker(store, live, evidenceContract);
+      finalizationBlocker = await getRequiredPostMergeEvidenceBlocker(store, live, evidenceContract, producerSurface);
       if (finalizationBlocker) return false;
       finalizationBlocker = getPostMergeFinalizeBlocker({
         status: clearMergeConfirmedTransientStatus(live.status),
@@ -735,7 +930,7 @@ export async function finalizeProvenAutoMergeTask({
       : { moveSource: "engine", workflowMoveSource: "auto-merge-finalization", preserveProgress: true });
     if (!move.moved) {
       const currentBlocker = finalizationBlocker
-        ?? await getRequiredPostMergeEvidenceBlocker(store, move.task, evidenceContract)
+        ?? await getRequiredPostMergeEvidenceBlocker(store, move.task, evidenceContract, producerSurface)
         ?? "finalization-fence-refused";
       await recordFinalizationAudit({
         store,

@@ -19,6 +19,14 @@ The move seam owns the ONLY clear of the withheld-hold->WIP marker, because the 
 column-scoped and a real column change falsifies it whoever moved the card.
 */
 import { clearWipAdmissionStallPatch } from "../tasks/wip-admission-park.js";
+/*
+FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450): the bounded finalize-refusal episode is
+released by THIS rule, the column-change site, and by no releasing lane of its own.
+*/
+import {
+  POST_MERGE_EVIDENCE_REFUSAL_METADATA_KEY,
+  clearPostMergeEvidenceRefusalPatch,
+} from "../merge/post-merge-evidence-refusal-episode.js";
 import { WIP_ADMISSION_STALL_METADATA_KEY } from "../types.js";
 
 /** @internal A fenced terminal-failure apply lost ownership before its move transaction. */
@@ -1911,6 +1919,25 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         .catch((err: unknown) => {
           storeLog.warn("Failed to clear wip-admission park marker on move (degraded)", {
             phase: "moveTaskInternal:wip-admission-clear",
+            taskId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    }
+    /*
+    FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450):
+    Same column-scoped claim, same one-site release. The episode records that THIS card was refused in THIS
+    lane for one named gate/state/refusal; a real column change makes that description false, so the episode is
+    cleared here rather than at each lane that could move the card — the RUFU-258 lesson the block above names.
+    A signature change would already have opened a new episode, so the only thing a missed clear could do is
+    hold one repeat of an identical refusal back for a refresh floor; the clear removes even that.
+    */
+    if (fromColumn !== toColumn && task.sourceMetadata?.[POST_MERGE_EVIDENCE_REFUSAL_METADATA_KEY] != null) {
+      void store
+        .updateTask(id, { sourceMetadataPatch: clearPostMergeEvidenceRefusalPatch() })
+        .catch((err: unknown) => {
+          storeLog.warn("Failed to clear post-merge evidence refusal episode on move (degraded)", {
+            phase: "moveTaskInternal:post-merge-evidence-refusal-clear",
             taskId: id,
             error: err instanceof Error ? err.message : String(err),
           });

@@ -1736,6 +1736,25 @@ export {
 export { getPostMergeFinalizeBlocker, getRequiredPostMergeEvidenceBlocker, getRequiredPostMergeEvidenceDecision, getPostMergeEvidenceGateStatuses, isNotRunPostMergeEvidence, resolveRequiredPostMergeGateIds, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
 export type { ConfirmedMergeChecklistReconciliation, PostMergeEvidenceGateState, PostMergeEvidenceGateStatus, PostMergeEvidenceNotApplicableReason } from "./merge/confirmed-merge-reconciliation.js";
 /*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+The observation the engine reports about a landed card's delivery surface, the pure rule over it, and the
+bounded refusal episode (Half 1) are engine-consumed values, so they leave core's barrel alongside the gate
+family the re-seed lane and the finalizer already import. Core stays pure: no git, no store method, no
+sentence — `PostMergeProducerSurfaceObservation` is data the engine measured.
+*/
+export { isPostMergeProducerUnreachable } from "./merge/post-merge-producer-surface.js";
+export type { PostMergeProducerSurface, PostMergeProducerSurfaceObservation } from "./merge/post-merge-producer-surface.js";
+export {
+  POST_MERGE_EVIDENCE_REFUSAL_METADATA_KEY,
+  POST_MERGE_EVIDENCE_REFUSAL_REFRESH_FLOOR_MS,
+  postMergeEvidenceRefusalSignature,
+  readPostMergeEvidenceRefusalEpisode,
+  decidePostMergeEvidenceRefusal,
+  postMergeEvidenceRefusalAgeMs,
+  clearPostMergeEvidenceRefusalPatch,
+} from "./merge/post-merge-evidence-refusal-episode.js";
+export type { PostMergeEvidenceRefusalEpisode, PostMergeEvidenceRefusalObservation, PostMergeEvidenceRefusalDecision } from "./merge/post-merge-evidence-refusal-episode.js";
+/*
 FNXC:PostMergeEvidenceContract 2026-09-30-22:29 (RUFU-430):
 The post-merge gate's evidence contract was hardcoded GitHub Actions and applied to every project, so a
 board without a CI reporter could only ever answer it with an operator waiver. This is the fact the seam

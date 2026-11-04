@@ -14,7 +14,16 @@ import { resumeMissingPostMergeGate } from "../merge/post-merge-gate-reseed.js";
 function makeStore(task: Task): TaskStore {
   const store = {
     getTask: vi.fn(async () => task),
-    updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => Object.assign(task, patch)),
+    // FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450): the real store interprets
+    // `sourceMetadataPatch` as a key-level merge (task-update.ts); a fixture that assigns it literally would
+    // model a store that cannot persist a durable episode, and every bounded-record assertion below would
+    // measure the fixture's gap instead of the lane's behavior.
+    updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
+      const { sourceMetadataPatch, ...rest } = patch as Partial<Task> & { sourceMetadataPatch?: Record<string, unknown> | null };
+      if (sourceMetadataPatch === null) task.sourceMetadata = undefined;
+      else if (sourceMetadataPatch !== undefined) task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...sourceMetadataPatch };
+      return Object.assign(task, rest);
+    }),
     updateTaskAtomic: vi.fn(async (_id: string, update: (current: Task) => Partial<Task> | Promise<Partial<Task>>) => Object.assign(task, await update(task))),
     moveTask: vi.fn(async (_id: string, column: string) => Object.assign(task, { column })),
     logEntry: vi.fn(), recordRunAuditEvent: vi.fn(), getSettings: vi.fn(async () => ({})),
@@ -500,7 +509,21 @@ describe("missing post-merge continuation recovery", () => {
     expect(task.workflowStepResults).toEqual([]);
     expect(task.column).toBe("in-review");
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledTimes(1);
+    /*
+    FNXC:PostMergeEvidenceRefusalEpisode 2026-11-02-18:16 (RUFU-450): the VLLM-081 churn bound, asserted where
+    the churn happened. One line per DISTINCT refusal (the pass that seeded, then the pass whose re-seed is
+    refused `active-continuation`) and silence for every further identical poll — previously each poll restated
+    the same blocker. A fourth poll must add nothing at all.
+    */
+    const refusalLines = () => store.logEntry.mock.calls
+      .filter((call: unknown[]) => String(call[1]).includes("Post-merge evidence refused")).length;
+    expect(store.logEntry).toHaveBeenCalledTimes(3);
+    expect(refusalLines()).toBe(2);
+    const linesBeforeQuietPoll = store.logEntry.mock.calls.length;
+    const quiet = await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
+    expect(quiet).toMatchObject({ outcome: "blocked", deferredPostMergeEvidence: true });
+    expect(store.logEntry).toHaveBeenCalledTimes(linesBeforeQuietPoll);
+    expect(refusalLines()).toBe(2);
   });
 
   it.each([
@@ -598,7 +621,11 @@ describe("missing post-merge continuation recovery", () => {
     const { task, store } = recoveryFixture();
     store.seedWorkspaceCodeReviewContinuationIfIdle = vi.fn(async () => ({ seeded: false, reason: "task-state-changed" }));
     await finalizeProvenAutoMergeTask({ store, taskId: task.id, source: "self-healing" });
-    expect(store.logEntry).not.toHaveBeenCalled();
+    // The refusal is no longer silent: RUFU-450 records one bounded History line per refusal episode, so this
+    // case asserts what the fence actually guarantees — no lifecycle mutation — and that the one line written
+    // names the refusal rather than a completion.
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+    expect(store.logEntry.mock.calls[0][1]).toContain("Post-merge evidence refused");
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 });

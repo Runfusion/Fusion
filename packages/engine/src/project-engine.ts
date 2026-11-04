@@ -85,6 +85,11 @@ import { shouldEmitUnrunPreMergeGateNotice } from "./merge/finalization-refusal-
 import { recoverConfirmedMergePush } from "./merge/recover-confirmed-merge-push.js";
 import { resumeMissingPostMergeGate, isPostMergeGateRecoveryDue } from "./merge/post-merge-gate-reseed.js";
 import { resolvePostMergeEvidenceContract } from "./merge/post-merge-evidence-contract.js";
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450): resolved once per merge-pump pass beside the
+evidence contract and threaded into the decision, the re-seed, and the blocker below.
+*/
+import { resolvePostMergeProducerSurface } from "./merge/post-merge-producer-surface.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
@@ -3416,11 +3421,19 @@ export class ProjectEngine {
     */
     if (task.mergeDetails?.mergeConfirmed) {
       const evidenceContract = await resolvePostMergeEvidenceContract(store, { auditHost: store });
+      /*
+      FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+      The merge pump asks the same delivery-surface question the finalizer asks, from the same single
+      resolution, so a landed card whose ref is gone cannot be told at the pump that it owes evidence the
+      finalizer already agreed it cannot produce — and cannot be released at the pump while the finalizer
+      still demands it.
+      */
+      const producerSurface = await resolvePostMergeProducerSurface(store, task);
       if (!await this.isMergePending(task.id)) await recoverConfirmedMergePush(store, task, settings);
-      const decision = await getRequiredPostMergeEvidenceDecision(store, task, evidenceContract);
+      const decision = await getRequiredPostMergeEvidenceDecision(store, task, evidenceContract, producerSurface);
       if (decision.outcome !== "blocked") return undefined;
       if (isPostMergeGateRecoveryDue(task, decision) && !await this.isMergePending(task.id)) {
-        await resumeMissingPostMergeGate(store, task, { source: "auto-merge", contract: evidenceContract });
+        await resumeMissingPostMergeGate(store, task, { source: "auto-merge", contract: evidenceContract, producerSurface });
       }
       if (!task.paused && !task.userPaused && !task.deletedAt && task.autoMerge !== false
         && !settings.globalPause && !settings.enginePaused && isMergeActiveStatus(task.status)
@@ -3438,7 +3451,7 @@ export class ProjectEngine {
         if (cleared) await store.logEntry(task.id,
           `[post-merge] Landing is complete; cleared stale merge activity while '${decision.gateId}' remains ${decision.reason}. Verification evidence is unchanged.`);
       }
-      return await getRequiredPostMergeEvidenceBlocker(store, task, evidenceContract)
+      return await getRequiredPostMergeEvidenceBlocker(store, task, evidenceContract, producerSurface)
         ?? `required post-merge evidence gate '${decision.gateId}' is not approved`;
     }
     const injected = this.options.getTaskMergeBlocker?.(task);

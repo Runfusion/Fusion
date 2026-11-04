@@ -258,6 +258,12 @@ import {
   type PostMergeGateReseedReason,
 } from "./merge/post-merge-gate-reseed.js";
 import { resolvePostMergeEvidenceContract } from "./merge/post-merge-evidence-contract.js";
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450): the delivery-surface observation is resolved once
+per recovery pass beside the evidence contract, so the blocker, the decision, and the re-seed all read one
+measurement rather than three.
+*/
+import { resolvePostMergeProducerSurface } from "./merge/post-merge-producer-surface.js";
 import { cleanupLandedTaskWorktree, removeEmptyWorkspaceTaskDirectory } from "./merge/post-landing-worktree-cleanup.js";
 import { cleanupDeletedTaskWorktrees } from "./worktree/deleted-task-worktree-cleanup.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
@@ -4299,15 +4305,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         FNXC:PostMergeEvidenceFence 2026-09-23-08:05:
         Post-merge evidence is unavailable until merge succeeds. Unmerged recovery must re-enter
         the normal graph path to reach merge and its gate; proven-merged recovery must retain it.
+
+        FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+        The contract and the delivery-surface observation are each resolved ONCE for this pass and shared by
+        the blocker, the decision, and the re-seed. Two sibling resolutions of one fact is how the three lanes
+        start disagreeing about the same card, and a recovery pass that exempts on one read and re-seeds on the
+        next is exactly the loop this card exists to end.
         */
         if (task.mergeDetails?.mergeConfirmed === true) {
-          // FNXC:PostMergeEvidenceContract 2026-09-30-22:29 (RUFU-430): same project-level fact as the finalizer's.
-          const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(
-            this.store, task, await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store }));
+          const contract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
+          const producerSurface = await resolvePostMergeProducerSurface(this.store, task);
+          const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task, contract, producerSurface);
           if (evidenceBlocker) {
-            const contract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
-            if ((await getRequiredPostMergeEvidenceDecision(this.store, task, contract)).outcome === "resumable") {
-              await resumeMissingPostMergeGate(this.store, task, { source: "self-healing", contract });
+            if ((await getRequiredPostMergeEvidenceDecision(this.store, task, contract, producerSurface)).outcome === "resumable") {
+              await resumeMissingPostMergeGate(this.store, task, { source: "self-healing", contract, producerSurface });
             }
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
@@ -4442,15 +4453,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         FNXC:PostMergeEvidenceFence 2026-09-23-08:05:
         An unmerged task resumes through the graph to reach its post-merge node; only a
         proven-merged recovery can require evidence that is already durable.
+
+        FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450): one contract and one observation per pass,
+        shared by all three reads — the sibling of the site above, and the reason a stranded-todo card cannot
+        be exempted by one read and re-seeded by the next.
         */
         if (task.mergeDetails?.mergeConfirmed === true) {
-          // FNXC:PostMergeEvidenceContract 2026-09-30-22:29 (RUFU-430): same project-level fact as the finalizer's.
-          const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(
-            this.store, task, await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store }));
+          const contract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
+          const producerSurface = await resolvePostMergeProducerSurface(this.store, task);
+          const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, task, contract, producerSurface);
           if (evidenceBlocker) {
-            const contract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
-            if ((await getRequiredPostMergeEvidenceDecision(this.store, task, contract)).outcome === "resumable") {
-              await resumeMissingPostMergeGate(this.store, task, { source: "self-healing", contract });
+            if ((await getRequiredPostMergeEvidenceDecision(this.store, task, contract, producerSurface)).outcome === "resumable") {
+              await resumeMissingPostMergeGate(this.store, task, { source: "self-healing", contract, producerSurface });
             }
             log.debug(`${task.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
             continue;
@@ -4827,15 +4841,17 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             FNXC:PostMergeEvidenceFence 2026-09-23-08:05:
             This is pre-merge recovery unless durable proof exists. Do not strand graph re-entry
             waiting for evidence that can only be produced after merge.
+
+            FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450): one contract and one observation for the
+            re-read row, shared by the three reads below.
             */
             if (live.mergeDetails?.mergeConfirmed === true) {
-              // FNXC:PostMergeEvidenceContract 2026-09-30-22:29 (RUFU-430): same project-level fact as the finalizer's.
-              const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(
-                this.store, live, await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store }));
+              const liveContract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
+              const liveProducerSurface = await resolvePostMergeProducerSurface(this.store, live);
+              const evidenceBlocker = await getRequiredPostMergeEvidenceBlocker(this.store, live, liveContract, liveProducerSurface);
               if (evidenceBlocker) {
-                const liveContract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
-                if ((await getRequiredPostMergeEvidenceDecision(this.store, live, liveContract)).outcome === "resumable") {
-                  await resumeMissingPostMergeGate(this.store, live, { source: "self-healing", contract: liveContract });
+                if ((await getRequiredPostMergeEvidenceDecision(this.store, live, liveContract, liveProducerSurface)).outcome === "resumable") {
+                  await resumeMissingPostMergeGate(this.store, live, { source: "self-healing", contract: liveContract, producerSurface: liveProducerSurface });
                 }
                 log.debug(`${live.id} remains blocked pending post-merge evidence: ${evidenceBlocker}`);
                 continue;
@@ -19576,8 +19592,20 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
     const reviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     if (!reviewColumns.has(task.column)) {
       const completeLane = (await resolveTaskLifecycleColumns(this.store, task.id))?.complete ?? "done";
+      /*
+      FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+      "This card is already complete" is only true if nothing is still owed on it, and this predicate is the
+      one `fn task reconcile` answers with — so it asks the same delivery-surface question every other lane
+      asks. A card whose ref is gone with a durable landing and no producer left is complete; a divergent ref
+      or an unreadable probe keeps answering `not-in-review` exactly as it does today.
+      */
       return task.column === completeLane && task.mergeDetails?.mergeConfirmed
-        && !await getRequiredPostMergeEvidenceBlocker(this.store, task)
+        && !await getRequiredPostMergeEvidenceBlocker(
+          this.store,
+          task,
+          undefined,
+          await resolvePostMergeProducerSurface(this.store, task),
+        )
         ? { outcome: "already-complete" } : { outcome: "ineligible", reason: "not-in-review" };
     }
     /*
@@ -19680,7 +19708,8 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
       landing is closeout work, so auto-merge authorization no longer suppresses its existing gate.
       */
       const contract = await resolvePostMergeEvidenceContract(this.store, { auditHost: this.store });
-      const decision = await getRequiredPostMergeEvidenceDecision(this.store, task, contract);
+      const producerSurface = await resolvePostMergeProducerSurface(this.store, task);
+      const decision = await getRequiredPostMergeEvidenceDecision(this.store, task, contract, producerSurface);
       /*
       FNXC:PostMergeRecovery 2026-10-09-13:04 (RUFU-611):
       The manual arm used to reach this seam only when the gate had NO row (`resumable`). A card whose gate
@@ -19698,6 +19727,7 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         const resumed = await resumeMissingPostMergeGate(this.store, task, {
           source: "manual-reconcile",
           contract,
+          producerSurface,
           manualRetry: rejectedEvidence,
         });
         if (resumed.outcome === "seeded") {

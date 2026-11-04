@@ -15,7 +15,7 @@ This lane must repair that WITHOUT three failure modes, and each has its own tes
   stops a gate that dies identically from burning model budget until the operator arrives.
 */
 import { describe, expect, it, vi } from "vitest";
-import { IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON, type Task, type TaskStore } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON, type PostMergeProducerSurfaceObservation, type Task, type TaskStore } from "@fusion/core";
 
 import {
   MAX_POST_MERGE_GATE_RESEED_ATTEMPTS,
@@ -450,5 +450,49 @@ describe("resumeMissingPostMergeGate stale continuation reclaim", () => {
 
     expect(result.reason).toBe("active-continuation");
     expect(transitions).toEqual([]);
+  });
+});
+
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-20:25 (RUFU-450):
+This seam and the finalizer used to answer "is this gate owed?" from two independent readings, which is how a
+landed card got `has not reported` from one lane and `gate-not-resumable` from the other while both were
+"correct". The seam now consumes the caller's already-resolved observation in its own core reads, so the
+exemption is ONE fact every surface reads — and it still never produces that observation or consults its own
+refusal taxonomy to decide dispatchability. The paired cases below are the non-vacuous form of that claim:
+the observation is the only difference between the two fixtures, so a threading regression (an argument
+dropped on the way to `getPostMergeEvidenceGateStatuses`) turns the first case red, and an over-broad
+exemption (resolving a live hop away) turns the second red.
+*/
+describe("resumeMissingPostMergeGate under the producer-surface observation", () => {
+  it("refuses to seed a gate whose requirement the observation resolved, and spends no budget doing it", async () => {
+    const { store, calls } = fakeStore();
+    const producerGone: PostMergeProducerSurfaceObservation = {
+      surface: "ref-absent", mergeConfirmed: true, producerCanRun: false,
+    };
+
+    const result = await resumeMissingPostMergeGate(store, task(), {
+      source: "self-healing", contract: undefined, producerSurface: producerGone,
+    });
+
+    expect(result).toMatchObject({ outcome: "not-seeded", reason: "gate-not-resumable" });
+    expect(calls.seed).toHaveLength(0);
+    // Nothing was owed, so nothing may be charged: a refused-but-not-needed seed would spend the card's
+    // durable per-gate budget for a gate that will never run.
+    expect(calls.logged.filter((line) => line.startsWith(postMergeGateReseedLogMarker(GATE_ID)))).toHaveLength(0);
+  });
+
+  it("keeps seeding the identical card when the observation says a producer can still run", async () => {
+    const { store, calls } = fakeStore();
+    const producerLive: PostMergeProducerSurfaceObservation = {
+      surface: "ref-absent", mergeConfirmed: true, producerCanRun: true,
+    };
+
+    const result = await resumeMissingPostMergeGate(store, task(), {
+      source: "self-healing", contract: undefined, producerSurface: producerLive,
+    });
+
+    expect(result.outcome).toBe("seeded");
+    expect(calls.seed).toHaveLength(1);
   });
 });

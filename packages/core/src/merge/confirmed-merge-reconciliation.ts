@@ -7,6 +7,7 @@ import { BLOCKING_TASK_STATUSES, clearMergeConfirmedTransientStatus } from "./ta
 import { isAuditedOperatorBypass } from "./pre-merge-approval.js";
 import { isWorkflowStepNotRun } from "../workflows/workflow-step-results.js";
 import { isPostMergeEvidenceUnreportable, type PostMergeEvidenceContract } from "./post-merge-evidence-contract.js";
+import { isPostMergeProducerUnreachable, type PostMergeProducerSurfaceObservation } from "./post-merge-producer-surface.js";
 
 export type ConfirmedMergeChecklistReconciliation = {
   skippedStepIndexes: number[];
@@ -93,10 +94,26 @@ project has no CI reporter at all); `verdict-precedes-contract` is the history c
 carried on the status so a caller can name it in a log or audit row without re-deriving anything — the
 blocker TEXT stays one sentence per state, so no consumer's wording contract changes.
 */
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+`producer-unreachable` is the third cause, and it is the one the other two cannot cover: RUFU-430's own
+board PROVES the narrowness, because vllm-rocm demonstrably produces post-merge rows (VLLM-075/076/078/079
+each carry exactly one and reached `done`), so "the project cannot report" is false there — what is true is
+that FROM THIS CARD'S CURRENT STATE the row can no longer be produced: the landing is durable, the delivery
+ref is gone or fully contained in its merge target, and no producer of the card can still be dispatched.
+Reachability is therefore per card and per current state, never per project capability, and it is decided
+from a git ground-truth probe rather than from the card's `branch`/`worktree` pointers (which post-landing
+cleanup leaves half-cleaned: `worktree` null, `branch` a stale string).
+
+The negative direction is unchanged: a verdict that exists and is not an approval still resolves
+`not-approved` and still blocks, because a requirement this delivery surface CANNOT answer is a different
+fact from a requirement somebody REFUSED.
+*/
 export type PostMergeEvidenceNotApplicableReason =
   | "delivery-shape"
   | "no-evidence-reporter"
-  | "verdict-precedes-contract";
+  | "verdict-precedes-contract"
+  | "producer-unreachable";
 
 /*
 FNXC:PostMergeCiRepository 2026-10-11-03:59 (RUFU-375, Code Review finding P0):
@@ -134,6 +151,7 @@ export function getPostMergeEvidenceGateStatuses(
   task: Pick<Task, "enabledWorkflowSteps" | "workflowStepResults" | "workspaceWorktrees">,
   ir: WorkflowIr,
   contract?: PostMergeEvidenceContract,
+  producerSurface?: PostMergeProducerSurfaceObservation,
 ): PostMergeEvidenceGateStatus[] {
   const workspaceShaped = isWorkspaceTask(task);
   const unreportable = isPostMergeEvidenceUnreportable(contract);
@@ -203,6 +221,16 @@ export function getPostMergeEvidenceGateStatuses(
         return [{ gateId, state: "not-applicable", notApplicableReason: "no-evidence-reporter" }];
       }
       if (workspaceShaped) return [{ gateId, state: "not-applicable", notApplicableReason: "delivery-shape" }];
+      /*
+      FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+      LAST in this branch on purpose. A workspace lane keeps `delivery-shape` and a reporter-less board keeps
+      `no-evidence-reporter` exactly as shipped — the new arm must never outrank an exemption that already
+      explains the same absence, and it never reads the contract, because the whole point of this cause is
+      that a reporter-CAPABLE board can still be unable to answer for one specific landed card.
+      */
+      if (isPostMergeProducerUnreachable(producerSurface)) {
+        return [{ gateId, state: "not-applicable", notApplicableReason: "producer-unreachable" }];
+      }
       return [{ gateId, state: "missing" }];
     }
     /*
@@ -256,12 +284,13 @@ export async function getRequiredPostMergeEvidenceDecision(
   store: WorkflowIrResolverStore,
   task: Pick<Task, "id" | "enabledWorkflowSteps" | "workflowStepResults" | "workspaceWorktrees">,
   contract?: PostMergeEvidenceContract,
+  producerSurface?: PostMergeProducerSurfaceObservation,
 ): Promise<RequiredPostMergeEvidenceDecision> {
   const reader = store as Partial<WorkflowIrResolverStore>;
   if (typeof reader.getTaskWorkflowSelection !== "function") return { outcome: "finalizable" };
 
   const ir = await resolveWorkflowIrForTask(store, task.id);
-  const statuses = new Map(getPostMergeEvidenceGateStatuses(task, ir, contract).map((status) => [status.gateId, status]));
+  const statuses = new Map(getPostMergeEvidenceGateStatuses(task, ir, contract, producerSurface).map((status) => [status.gateId, status]));
   for (const gateId of resolveRequiredPostMergeGateIds(task, ir)) {
     const results = (task.workflowStepResults ?? []).filter((entry) => entry.workflowStepId === gateId);
     /*
@@ -307,8 +336,9 @@ export async function getRequiredPostMergeEvidenceBlocker(
   store: WorkflowIrResolverStore,
   task: Pick<Task, "id" | "enabledWorkflowSteps" | "workflowStepResults" | "workspaceWorktrees">,
   contract?: PostMergeEvidenceContract,
+  producerSurface?: PostMergeProducerSurfaceObservation,
 ): Promise<string | undefined> {
-  const decision = await getRequiredPostMergeEvidenceDecision(store, task, contract);
+  const decision = await getRequiredPostMergeEvidenceDecision(store, task, contract, producerSurface);
   if (decision.outcome === "finalizable") return undefined;
   if (decision.outcome === "resumable") return `required post-merge evidence gate '${decision.gateId}' has not reported`;
   return `required post-merge evidence gate '${decision.gateId}' is not approved`;

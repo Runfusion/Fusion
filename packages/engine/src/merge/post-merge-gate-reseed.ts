@@ -53,6 +53,7 @@ import {
   isWorkspaceTask,
   resolveWorkflowIrForTaskWithProvenance,
   type PostMergeEvidenceContract,
+  type PostMergeProducerSurfaceObservation,
   type Task,
   type TaskStore,
   type WorkflowStepResult,
@@ -214,8 +215,14 @@ async function countReseedAttempts(store: TaskStore, task: Task, gateId: string)
 const DEFAULT_CHECKOUT_LEASE_GRACE_MS = 10 * 60_000;
 const CHECKOUT_LEASE_STALENESS_MULTIPLIER = 3;
 
-/** A fresh durable checkout lease is live ownership even when this process holds no session (FN-9442). */
-function hasFreshCheckoutLease(
+/**
+ * A fresh durable checkout lease is live ownership even when this process holds no session (FN-9442).
+ *
+ * FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450): exported (one keyword, behavior untouched) so
+ * the producer-surface probe reads the SAME lease grace this seam already treats as a live owner. A second
+ * copy of that grace arithmetic is how two lanes end up disagreeing about whether a card is busy.
+ */
+export function hasFreshCheckoutLease(
   task: { checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null },
   settings: { taskStuckTimeoutMs?: number },
 ): boolean {
@@ -343,6 +350,13 @@ async function runPostMergeGateResume(
      * the whole call externally (as `auto-merge-finalization.ts` does around this function).
      */
     fence?: MergeWriteFence;
+    /**
+     * FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450): the caller's already-resolved delivery-surface
+     * observation, handed to this seam's own core reads so the re-seed and the finalizer cannot disagree about
+     * whether the gate is owed. This seam never produces the observation and never derives dispatchability from
+     * its own refusal taxonomy — it consumes the measurement or reads without it.
+     */
+    producerSurface?: PostMergeProducerSurfaceObservation;
   },
 ): Promise<PostMergeGateReseedResult> {
   const fence = options.fence ?? createMergeWriteFence({ taskId: incomingTask.id });
@@ -454,9 +468,9 @@ async function runPostMergeGateResume(
 
   // A gate that already holds a result — approved, REVISE, or failed — is authoritative; never seed over it.
   const irForGate = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
-  const statuses = getPostMergeEvidenceGateStatuses(task, irForGate.ir, options.contract);
+  const statuses = getPostMergeEvidenceGateStatuses(task, irForGate.ir, options.contract, options.producerSurface);
 
-  const decision = await getRequiredPostMergeEvidenceDecision(store, task, options.contract);
+  const decision = await getRequiredPostMergeEvidenceDecision(store, task, options.contract, options.producerSurface);
   const manualRetry = options.manualRetry === true && decision.outcome === "blocked" && decision.reason === "failed";
   /*
   FNXC:PostMergeRecovery 2026-10-05-09:31:

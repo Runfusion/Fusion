@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   CompleteColumnGateEvidenceRejectionError,
   classifyEmptyRequiredPreMergeSet,
@@ -235,6 +236,38 @@ describe("resolveCompleteColumnGateEvidence", () => {
     });
     expect(negative.findings).toEqual([{ gateId: "post-merge-verification", lane: "post-merge", state: "not-approved" }]);
     expect(negative.refuse).toBe(true);
+  });
+
+  /*
+  FNXC:PostMergeProducerSurface 2026-11-02-20:30 (RUFU-450):
+  RUFU-450 adds a fourth reason a post-merge requirement can be `not-applicable`, and this consumer had to keep
+  compiling UNTOUCHED: it refuses on `state === "not-approved"` only, so a new reason inside an existing
+  non-demanding state cannot make it refuse a completion move. The workspace card below is the live proof of
+  that shape — its gate resolves `not-applicable` for a reason the classifier never names, and the move still
+  goes through. A future edit that reasons over `notApplicableReason` VALUES instead of the state turns this
+  red, which is the point: the consumer must stay reason-blind.
+
+  The second assertion is a code-construct guard, not a prose assertion: the exemption's authority is a git
+  probe, and core never touches git. So this consumer must never name the observation at all — an exemption
+  invented here would be a second, git-free authority over the same question, which is the failure this whole
+  card is about.
+  */
+  it("never refuses a completion move for an inapplicable post-merge requirement, and never derives that exemption itself", () => {
+    const readFileSync = require("node:fs").readFileSync as (path: string) => string;
+    const consumerSource = readFileSync(new URL("../complete-column-gate-evidence.ts", import.meta.url), "utf8");
+    expect(consumerSource).not.toMatch(/PostMergeProducerSurface|producerSurface|resolvePostMergeProducerSurface/);
+
+    const enabled = [...BOTH_GATES, "post-merge-verification"];
+    const landedWorkspaceCard = {
+      ...taskWith(approvedPreMerge, enabled),
+      workspaceWorktrees: { repo: { path: "/repo/sane-447/.fusion/worktrees/sane-447" } },
+      mergeDetails: { mergeConfirmed: true },
+    };
+
+    const evidence = resolveCompleteColumnGateEvidence({ ir: BUILTIN_CODING_WORKFLOW_IR, task: landedWorkspaceCard });
+
+    expect(evidence.refuse).toBe(false);
+    expect(evidence.findings).toEqual([]);
   });
 
   it("lets an audited operator waiver satisfy a gate that never approved", () => {

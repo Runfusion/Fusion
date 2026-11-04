@@ -17,6 +17,12 @@ import {
 } from "../merge/confirmed-merge-reconciliation.js";
 import { FAST_MODE_BYPASS_ACTOR } from "../workflows/workflow-fast-lane.js";
 import { derivePostMergeEvidenceContract, type PostMergeEvidenceContract } from "../merge/post-merge-evidence-contract.js";
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450): imported through the barrel rather than the
+domain file on purpose, because the `engine-core` gate project resolves `@fusion/core` through the reduced
+gate bundle — an export that exists only in the domain file passes a source-reaching test and fails there.
+*/
+import { isPostMergeProducerUnreachable, type PostMergeProducerSurfaceObservation } from "../index.js";
 import type { Task, WorkflowIr } from "../types.js";
 
 const GATE_ID = "post-merge-verification";
@@ -459,6 +465,47 @@ describe("a post-merge row that records an honest not-run cause is judged as an 
       workspaceWorktrees: { app: { path: "/repo/.worktrees/app" } },
     } as never, ir)).toEqual([{ gateId: GATE_ID, state: "not-applicable", notApplicableReason: "delivery-shape" }]);
     expect(getPostMergeEvidenceGateStatuses(taskWithRow(notRunRow) as never, ir, unreportable))
+      .toEqual([{ gateId: GATE_ID, state: "not-applicable", notApplicableReason: "no-evidence-reporter" }]);
+  });
+});
+
+/*
+FNXC:PostMergeProducerSurface 2026-11-02-18:16 (RUFU-450):
+The RUFU-375 honest not-run carrier rides the SAME requirement ladder as a row that was never written, so the
+producer-surface arm has to reach it too: a gate that refused to run on a card whose delivery surface is gone
+is the same absence, and a stricter status there would put the finalizer back on a doomed retry loop against
+a requirement nothing can answer.
+*/
+describe("producer surface over the RUFU-375 not-run carrier", () => {
+  const carrierRow = {
+    workflowStepId: GATE_ID,
+    workflowStepName: GATE_ID,
+    phase: "post-merge",
+    status: "skipped",
+    notRunReason: "ci-repository-unresolved",
+    completedAt: "2026-10-11T00:00:00.000Z",
+  };
+  const carrierTask = () => ({ ...taskWith([GATE_ID]), workflowStepResults: [carrierRow] }) as never;
+  const unreachable: PostMergeProducerSurfaceObservation = { surface: "ref-absent", mergeConfirmed: true, producerCanRun: false };
+  const divergent: PostMergeProducerSurfaceObservation = { surface: "ref-divergent", mergeConfirmed: true, producerCanRun: false };
+  const unreportableContract: PostMergeEvidenceContract = derivePostMergeEvidenceContract({
+    declared: { provider: "none" },
+    repo: { factsReadable: true, remoteUrl: "https://example.invalid/repo.git", githubWorkflowFileCount: 0 },
+  });
+
+  it("exempts an honest not-run carrier whose delivery surface can no longer answer", () => {
+    expect(isPostMergeProducerUnreachable(unreachable)).toBe(true);
+    expect(getPostMergeEvidenceGateStatuses(carrierTask(), irWithPostMergeGate(true), undefined, unreachable))
+      .toEqual([{ gateId: GATE_ID, state: "not-applicable", notApplicableReason: "producer-unreachable" }]);
+  });
+
+  it("keeps the not-run carrier's status byte-for-byte while the ref still owes the target commits", () => {
+    expect(getPostMergeEvidenceGateStatuses(carrierTask(), irWithPostMergeGate(true), undefined, divergent))
+      .toEqual([{ gateId: GATE_ID, state: "missing" }]);
+  });
+
+  it("never outranks the exemptions that already explain the same absence", () => {
+    expect(getPostMergeEvidenceGateStatuses(carrierTask(), irWithPostMergeGate(true), unreportableContract, unreachable))
       .toEqual([{ gateId: GATE_ID, state: "not-applicable", notApplicableReason: "no-evidence-reporter" }]);
   });
 });

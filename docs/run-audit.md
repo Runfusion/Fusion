@@ -506,6 +506,49 @@ The row exists because the park is the whole point of the fix: without it a stop
 curated delivery-pipeline catalogue, following the same precedent as `task:planning-admission-stalled`,
 which is why it is documented here as prose rather than as a catalogue table row.
 
+## Post-merge evidence refusal episode
+
+RUFU-450 adds no new event type: it bounds how often the existing `task:auto-merge-finalize-column-mismatch-no-action`
+row is written by the pending-evidence arm of auto-merge finalization. Before this, that arm restated an
+unsatisfiable refusal at the poll rate — five rows inside one measured minute for one card that had been waiting
+for days — because the only bound was a process-local signature that reset on every engine restart. The refusal is
+now a durable episode on the card (`sourceMetadata.postMergeEvidenceRefusal`), keyed by which gate, which evidence
+state, and which post-merge gate re-seed refusal produced it, and the audit row is written only on the passes
+whose episode write was accepted: an unchanged refusal records at most once per 15 minutes, while any change of
+gate, state, or refusal records immediately. The row's metadata is untouched — the same `taskId`, `previousColumn`,
+`targetColumn`, `commitSha`, `status`, `blockedBy`, `overlapBlockedBy` and `reason` fields it carried before this
+change, one of which (`reason`) is the blocker sentence RUFU-431 already keys its in-process bound on. The episode
+adds nothing to the row: the gate id, evidence state, re-seed refusal, and notification outcome live on the card's
+History line and in `sourceMetadata`, not in run-audit — which is why bounding this row needed no new event. A second event for the same fault was
+deliberately not added: it would split the very count this bound exists to make honest.
+
+Nothing was added to the `DatabaseMutationType` union in `packages/engine/src/util/run-audit.ts` either, and that
+union must not be read as the authoritative catalogue — several emitted merge events are absent from it
+(`task:auto-merge-finalize-post-merge-gate-unreachable`, `task:merge-unrun-gate-park-repaired`, the
+`merge:publish-before-finalize` pair), so a missing entry there is not evidence an event does not exist. What the
+union does declare, this change reuses: the refusal's outcome vocabulary is the fixed `PostMergeGateReseedReason`
+enum returned by `resumeMissingPostMergeGate` (`gate-not-resumable`, `rerun-budget-exhausted`, `no-post-merge-node`,
+`unsupported-store`, `operator-held`, …) paired with the gate's evidence state (`missing` / `not-approved`); the
+episode stores both verbatim under `gateId` / `state` / `reseedReason`. The notification word on a History line
+comes from `PostMergeEvidenceNoticeOutcome` — `delivered`, `unavailable`, or `not-sent` for an arm that has no
+terminal notice to send — and it states what the mailbox actually did rather than implying a hand-off.
+
+The row remains outside the curated delivery-pipeline catalogue, following the same precedent as
+`task:planning-reseed-cycle`, because the episode is a record of a wait rather than a step of the delivery
+pipeline. Two queries answer the operator's questions now: the row count per card answers "how often did the lane
+refuse this card", and `sourceMetadata.postMergeEvidenceRefusal` answers "which refusal, since when, and how many
+times" — which the row alone could not, because it carried no wait identity at all. No dashboard surface reads
+either the row or the episode; both are read through the store, which is why this section lives here rather than in
+`docs/dashboard-guide.md`.
+
+The same pass can now also settle the wait instead of only counting it. When a required post-merge gate has no
+report and the delivery surface shows the task ref gone or fully contained in the merge target, the landing durable,
+and no producer left that could be dispatched, the gate resolves `not-applicable` with reason `producer-unreachable`
+and the card finalizes; the card's History records which gate was released on which git verdict. A refusal that stays terminal (a workspace lane, a
+lane with no post-merge node, an exhausted re-run budget, an unsupported store) still notifies the operator once
+per six-hour window as before, and now also writes its own History line naming the observation and the mailbox
+outcome it actually had.
+
 ## Store-open provenance
 
 RUFU-344: `store:open` records one process that opened a `TaskStore`, so a mutation on a shared database can be
