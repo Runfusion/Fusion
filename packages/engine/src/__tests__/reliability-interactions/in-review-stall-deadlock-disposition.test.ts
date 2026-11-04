@@ -37,6 +37,16 @@ function createStore(task: Task, settings: Record<string, unknown> = {}): TaskSt
   });
   (emitter as any).moveTask = vi.fn().mockResolvedValue(undefined);
   (emitter as any).enqueueMergeQueue = vi.fn().mockResolvedValue(undefined);
+  /*
+  FNXC:ReviewStallDisposition 2026-11-04-05:30 (RUFU-398):
+  `SelfHealingManager.batchWorkflowIrCache()` builds `new EpochedWorkflowIrCache(() => store
+  .workflowDefinitionEpoch())` unconditionally, so a hand-rolled fake that omits it throws the moment a
+  case reaches any sweep that resolves workflow IR — which is how the limbo-requeue case below died with
+  `workflowDefinitionEpoch is not a function` instead of asserting its own claim. Same one-line stub the
+  other reduced self-healing fakes carry (`merge-not-run-gate-wedge.test.ts`,
+  `self-healing-076-pause-storm.test.ts`); a constant epoch just means the IR cache never invalidates.
+  */
+  (emitter as any).workflowDefinitionEpoch = vi.fn(() => 0);
 
   return emitter;
 }
@@ -455,5 +465,188 @@ describe("reliability interactions: in-review stall deadlock disposition", () =>
     expect(((store as any).__auditEvents as any[]).some((event) => event.mutationType === "task:in-review-stall-deadlock-disposed")).toBe(false);
 
     manager.stop();
+  });
+
+  /*
+  FNXC:ReviewStallDisposition 2026-11-04-05:30 (RUFU-398) — Symptom Verification.
+  The reported failure was an operator told a stall release had held, who then found the same card in the
+  same engine park ~11 h later with `mergeRetries` still 0: "the release survived 0 cycles" was arguable
+  because the disposition row recorded nothing about the episode. These cases replay the measured row
+  shape through the real sweep seam — park, release exactly as the release arms do, park again — and pin
+  the three new metadata keys on the SECOND row. The control case is what an honest release looks like.
+  */
+  describe("release-durability evidence on the disposition row", () => {
+    const BLOCKER = "unchanged merge failure";
+    const BLOCKER_REASON = `task is marked 'failed': ${BLOCKER}`;
+
+    const blockedCard = (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      status: "failed",
+      error: BLOCKER,
+      branch: `fusion/${id.toLowerCase()}`,
+      worktree: `/tmp/${id.toLowerCase()}`,
+      mergeDetails: {},
+      mergeRetries: 0,
+      steps: [{ name: "implementation", status: "done" }],
+      workflowStepResults: [],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      log: [],
+    } as any satisfies Task);
+
+    const disposedRows = (store: any) => ((store).__auditEvents as any[])
+      .filter((event) => event.mutationType === "task:in-review-stall-deadlock-disposed");
+
+    /** Three cycles at the configured threshold of 3: two surfaced observations, then the park. */
+    async function driveToPark(manager: SelfHealingManager, atMinutes: [number, number, number]) {
+      for (const minutes of atMinutes) {
+        vi.setSystemTime(new Date(`2026-01-01T00:${String(minutes).padStart(2, "0")}:00.000Z`));
+        await manager.surfaceInReviewStalls();
+      }
+    }
+
+    /**
+     * The release, in the shape the release arms write it: the four park fields are the exact inverse of
+     * the disposition's write, and the underlying merge blocker is what remains on the row once the merge
+     * fails again. `mergeRetries` is left to the caller because whether it advanced IS the question.
+     */
+    function releasePark(task: any, errorAfterRelease = BLOCKER) {
+      task.paused = false;
+      task.pausedReason = null;
+      task.status = "failed";
+      task.error = errorAfterRelease;
+    }
+
+    it("labels a re-park that survived zero merge cycles, and counts the first park as zero", async () => {
+      const task = blockedCard("RUFU-398-EPISODE");
+      const store = createStore(task, { inReviewStallDeadlockThreshold: 3 });
+      const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+      await driveToPark(manager, [10, 12, 14]);
+      expect(task.paused).toBe(true);
+      expect(task.pausedReason).toBe("in-review-stall-deadlock");
+      expect(disposedRows(store)).toHaveLength(1);
+
+      // The observation arm writes no audit row at all: two surfaced cycles, zero disposition rows.
+      expect(task.log.filter((entry: { action: string }) => entry.action.startsWith("In-review stall surfaced ["))).toHaveLength(2);
+
+      // First park of the episode: the park line being written must NOT count itself.
+      expect(disposedRows(store)[0].metadata).toMatchObject({
+        code: "merge-blocker",
+        repetitionCount: 3,
+        threshold: 3,
+        priorParkCount: 0,
+        mergeRetriesAtPark: 0,
+        episodeHasMergeAttempt: false,
+      });
+
+      // Byte-identical History sentence, exactly as authored before RUFU-398 — the new keys are audit-only.
+      expect(task.log.filter((entry: { action: string }) => entry.action.startsWith("In-review stall auto-disposed ["))[0].action)
+        .toBe(`In-review stall auto-disposed [merge-blocker]: deadlock-prevention threshold reached after 3 identical stalls — pausing task. last reason: ${BLOCKER_REASON}`);
+      // Unchanged pause payload.
+      expect(task.status).toBe("failed");
+      expect(task.error).toBe(`In-review stall deadlock: merge-blocker repeated 3× without progress. ${BLOCKER_REASON}`);
+
+      releasePark(task);
+      await driveToPark(manager, [20, 22, 24]);
+
+      const rows = disposedRows(store);
+      expect(rows).toHaveLength(2);
+      expect(task.pausedReason).toBe("in-review-stall-deadlock");
+      // The reported symptom, now answerable by query: released, never attempted, parked again.
+      expect(rows[1].metadata).toMatchObject({
+        code: "merge-blocker",
+        repetitionCount: 3,
+        threshold: 3,
+        priorParkCount: 1,
+        mergeRetriesAtPark: 0,
+        episodeHasMergeAttempt: false,
+      });
+
+      manager.stop();
+    });
+
+    it("reports an honest release: a merge attempt that ran between the parks is recorded", async () => {
+      const task = blockedCard("RUFU-398-MERGE-ATTEMPT");
+      const store = createStore(task, { inReviewStallDeadlockThreshold: 3 });
+      const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+      await driveToPark(manager, [10, 12, 14]);
+      expect(disposedRows(store)).toHaveLength(1);
+
+      releasePark(task);
+      // The merge lane really ran and failed: that increment is what the release arms do NOT reset.
+      task.mergeRetries = 2;
+      await driveToPark(manager, [20, 22, 24]);
+
+      const rows = disposedRows(store);
+      expect(rows).toHaveLength(2);
+      expect(rows[1].metadata).toMatchObject({
+        priorParkCount: 1,
+        mergeRetriesAtPark: 2,
+        episodeHasMergeAttempt: true,
+      });
+
+      manager.stop();
+    });
+
+    it("starts a fresh episode when the reason changed, so a re-park under a new reason counts zero", async () => {
+      const task = blockedCard("RUFU-398-NEW-REASON");
+      const store = createStore(task, { inReviewStallDeadlockThreshold: 3 });
+      const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+      await driveToPark(manager, [10, 12, 14]);
+      expect(disposedRows(store)).toHaveLength(1);
+
+      // Same code, different blocker sentence: a different episode signature, so no prior park of THIS one.
+      releasePark(task, "a genuinely different merge blocker appeared");
+      await driveToPark(manager, [20, 22, 24]);
+
+      const rows = disposedRows(store);
+      expect(rows).toHaveLength(2);
+      expect(rows[1].metadata).toMatchObject({
+        reason: "task is marked 'failed': a genuinely different merge blocker appeared",
+        priorParkCount: 0,
+        mergeRetriesAtPark: 0,
+        episodeHasMergeAttempt: false,
+      });
+
+      manager.stop();
+    });
+
+    it("keeps the terminal provider-error arm free of the episode keys", async () => {
+      const task = {
+        id: "RUFU-398-TERMINAL",
+        column: "in-review",
+        paused: false,
+        userPaused: false,
+        status: "failed",
+        error: "HTTP 400 invalid_request_error: model gpt-5.3-codex is not supported by this provider",
+        steps: [{ name: "implementation", status: "done" }],
+        workflowStepResults: [],
+        worktree: "/tmp/rufu-398-terminal",
+        mergeDetails: {},
+        mergeRetries: 0,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        log: [],
+      } as any satisfies Task;
+      const store = createStore(task, { inReviewStallDeadlockThreshold: 3 });
+      const manager = new SelfHealingManager(store, { rootDir: "/tmp/repo" });
+
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      await manager.surfaceInReviewStalls();
+
+      expect(disposedRows(store)).toHaveLength(0);
+      const terminal = ((store as any).__auditEvents as any[])
+        .filter((event) => event.mutationType === "task:in-review-stall-terminal-provider-error");
+      expect(terminal).toHaveLength(1);
+      for (const key of ["priorParkCount", "mergeRetriesAtPark", "episodeHasMergeAttempt", "repetitionCount", "threshold"]) {
+        expect(terminal[0].metadata).not.toHaveProperty(key);
+      }
+
+      manager.stop();
+    });
   });
 });

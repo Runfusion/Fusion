@@ -6,12 +6,26 @@ states, so the fixture types come from the feature rather than a structural copy
 import type { HumanMergeApprovalState } from "../merge/human-merge-approval.js";
 import {
   classifyProviderError,
+  countPriorStallDeadlockParks,
   countRecentIdenticalStallEntries,
   DEFAULT_MAX_AUTO_MERGE_RETRIES,
   DEFAULT_STALE_MERGING_MIN_AGE_MS,
   getInReviewStallReason,
   getLatestFailedPreMergeStepProgressAt,
 } from "../tasks/in-review-stall.js";
+/*
+FNXC:ReviewStallDisposition 2026-11-04-05:26 (RUFU-398):
+The engine-core merge-gate project resolves `@fusion/core` through the REDUCED `index.gate.ts` barrel,
+so a helper exported only from `index.ts` is not a build failure there — it is a TypeError at the first
+call from the sweep that decides whether a card stays frozen. The dual import below is the load-bearing
+half of that parity (same shape as `review-revision-wait.test.ts`).
+*/
+import {
+  countPriorStallDeadlockParks as countPriorStallDeadlockParksFromGateBarrel,
+} from "../index.gate.js";
+import {
+  countPriorStallDeadlockParks as countPriorStallDeadlockParksFromMainBarrel,
+} from "../index.js";
 
 const NOW = Date.parse("2026-05-12T12:00:00.000Z");
 
@@ -128,6 +142,108 @@ describe("countRecentIdenticalStallEntries", () => {
     expect(getLatestFailedPreMergeStepProgressAt({ workflowStepResults: [
       { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "failed", startedAt: "2026-05-12T11:59:00.000Z", completedAt: "2026-05-12T12:00:00.000Z" },
     ] })).toBe(Date.parse("2026-05-12T12:00:00.000Z"));
+  });
+});
+
+/*
+FNXC:ReviewStallDisposition 2026-11-04-05:26 (RUFU-398):
+A stall-deadlock disposition must be able to say whether this episode had already parked the card.
+The counter below is deliberately the OPPOSITE walk of countRecentIdenticalStallEntries: park lines are
+separated by surfaced lines, so a trailing-run walk over them always answers 0 or 1. These two tests
+naming the same log shape and disagreeing on the answer is the contract, not an oversight.
+*/
+describe("countPriorStallDeadlockParks", () => {
+  const reason = "task is marked 'failed': AUTO_MERGE_RETRY_REJECTED: Cannot merge RUFU-301: task has a pre-merge approval recorded against different content";
+  const task = (log: Array<{ timestamp: string; action: string }>) => ({ log });
+  /** Byte-shape the engine actually writes (self-healing.ts stall sweep); park lines are what this counts. */
+  const park = (timestamp: string, code = "merge-blocker", text = reason, count = 3) => ({
+    timestamp,
+    action: `In-review stall auto-disposed [${code}]: deadlock-prevention threshold reached after ${count} identical stalls — pausing task. last reason: ${text}`,
+  });
+  const surfaced = (timestamp: string, code = "merge-blocker", text = reason) => ({
+    timestamp,
+    action: `In-review stall surfaced [${code}]: ${text}`,
+  });
+
+  it("returns 0 with no log at all", () => {
+    expect(countPriorStallDeadlockParks({}, { code: "merge-blocker", reason })).toBe(0);
+    expect(countPriorStallDeadlockParks(task([]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("returns 0 for the first park of an episode (surfaced lines alone)", () => {
+    expect(countPriorStallDeadlockParks(task([
+      surfaced("2026-05-12T11:57:00.000Z"),
+      surfaced("2026-05-12T11:58:00.000Z"),
+      surfaced("2026-05-12T11:59:00.000Z"),
+    ]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("counts every earlier park of the episode across the WHOLE log, not a trailing run", () => {
+    expect(countPriorStallDeadlockParks(task([
+      park("2026-05-12T10:00:00.000Z"),
+      surfaced("2026-05-12T11:00:00.000Z"),
+      surfaced("2026-05-12T11:30:00.000Z"),
+      park("2026-05-12T12:00:00.000Z"),
+      surfaced("2026-05-12T13:00:00.000Z"),
+    ]), { code: "merge-blocker", reason })).toBe(2);
+  });
+
+  it("does not gate on the count clause, so a re-park with a different repetition count still counts", () => {
+    expect(countPriorStallDeadlockParks(task([
+      park("2026-05-12T10:00:00.000Z", "merge-blocker", reason, 3),
+      park("2026-05-12T12:00:00.000Z", "merge-blocker", reason, 10),
+    ]), { code: "merge-blocker", reason })).toBe(2);
+  });
+
+  it("does not count a park recorded under the same code with a different reason", () => {
+    expect(countPriorStallDeadlockParks(task([
+      park("2026-05-12T10:00:00.000Z", "merge-blocker", "a different blocker entirely"),
+    ]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("does not count a park recorded under a different code with the same reason", () => {
+    expect(countPriorStallDeadlockParks(task([
+      park("2026-05-12T10:00:00.000Z", "merge-retries-exhausted", reason),
+    ]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("counts a reason that differs only by surrounding whitespace (trim parity)", () => {
+    expect(countPriorStallDeadlockParks(task([
+      park("2026-05-12T10:00:00.000Z", "merge-blocker", `  ${reason}  `),
+    ]), { code: "merge-blocker", reason: ` ${reason} ` })).toBe(1);
+  });
+
+  it("does not count a reason that is only a strict prefix of the recorded reason", () => {
+    expect(countPriorStallDeadlockParks(task([
+      park("2026-05-12T10:00:00.000Z", "merge-blocker", `${reason} (extended by a later clause)`),
+    ]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("ignores a surfaced line with the identical code and reason", () => {
+    expect(countPriorStallDeadlockParks(task([
+      surfaced("2026-05-12T10:00:00.000Z"),
+    ]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("ignores a terminal-disposal line (a distinct prefix owned by the provider-error arm)", () => {
+    expect(countPriorStallDeadlockParks(task([
+      { timestamp: "2026-05-12T10:00:00.000Z", action: `In-review stall terminal disposed [merge-blocker]: last reason: ${reason}` },
+    ]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("ignores a deadlock line whose reason marker is absent (defensive)", () => {
+    expect(countPriorStallDeadlockParks(task([
+      { timestamp: "2026-05-12T10:00:00.000Z", action: "In-review stall auto-disposed [merge-blocker]: truncated sentence" },
+    ]), { code: "merge-blocker", reason })).toBe(0);
+  });
+
+  it("resolves the same behaviour through the main barrel and the reduced gate barrel", () => {
+    const log = task([park("2026-05-12T10:00:00.000Z"), surfaced("2026-05-12T11:00:00.000Z")]);
+    const signal = { code: "merge-blocker" as const, reason };
+    expect(countPriorStallDeadlockParksFromMainBarrel(log, signal)).toBe(1);
+    expect(countPriorStallDeadlockParksFromGateBarrel(log, signal)).toBe(1);
+    expect(countPriorStallDeadlockParksFromGateBarrel).toBe(countPriorStallDeadlockParksFromMainBarrel);
+    expect(countPriorStallDeadlockParksFromGateBarrel).toBe(countPriorStallDeadlockParks);
   });
 });
 

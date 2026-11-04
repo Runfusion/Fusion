@@ -1905,6 +1905,7 @@ export {
 } from "./process/vitest-processes.js";
 export {
   classifyProviderError,
+  countPriorStallDeadlockParks,
   countRecentIdenticalStallEntries,
   getLatestFailedPreMergeStepProgressAt,
   getInReviewStallReason,

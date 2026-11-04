@@ -37,7 +37,7 @@ getMergeConfirmedFinalizationBlocker (beta.8 merge-boundary feature), plus the t
 type imports (ChatSession, ChatInFlightGenerationState) that the post-merge body still
 uses. parseExplicitDuplicateMarker survives only in an FNXC history comment — every
 call site uses the renamed resolver. */
-import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasUserAutoMergeHold, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, WEDGE_RENOTIFY_COOLDOWN_MS, countRecentIdenticalStallEntries,
+import { PRE_MERGE_STEPS_NOT_RUN_BLOCKER, loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, hasUserAutoMergeHold, hasSharedBranchMemberAutoMergeHold, resolveEffectiveAutoMerge, WEDGE_RENOTIFY_COOLDOWN_MS, countPriorStallDeadlockParks, countRecentIdenticalStallEntries,
   /* FNXC:SelfHealing 2026-09-10-23:14 (merge origin/main 2026-09-10): upstream's stall-deadlock
      repetition logic calls these two in-review-stall helpers; the union import carries them. */
   getLatestFailedPreMergeStepProgressAt, resolveInReviewStallDeadlockThreshold,
@@ -15302,6 +15302,20 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
         let appliedSignal: typeof selectedSignal | undefined;
         let repetitionCount = 0;
         let disposition: "observation" | "deadlock" | "terminal-provider" | undefined;
+        /*
+        FNXC:ReviewStallDisposition 2026-11-04-05:30 (RUFU-398):
+        Release-durability evidence, captured here rather than read back later, because both halves are
+        only true AT THE PARK. `repetitionCount` above is a trailing-run count and park lines sit far apart
+        separated by the next episode's surfaced lines, so nothing on the row says whether THIS code+reason
+        episode has parked this card before; and every arm that lifts this pause resets `mergeRetries`
+        alongside the four park fields, so a later reader cannot distinguish "released, then given a real
+        merge attempt, stalled again on new content" from "released cosmetically and re-parked without a
+        single attempt". Same closure shape as `appliedSignal` / `repetitionCount` — assigned inside the
+        synchronous fenced callback, from the live row, awaiting nothing.
+        */
+        let priorParkCount = 0;
+        let mergeRetriesAtPark = 0;
+        let episodeHasMergeAttempt = false;
         const outcome = await this.store.applyInReviewStallObservationFenced(task.id, (live) => {
           if (live.deletedAt || live.paused) return null;
           if (!allowsAutoMergeProcessing(live, settings)) return null;
@@ -15380,6 +15394,23 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
           ) {
             disposition = "deadlock";
             /*
+            FNXC:ReviewStallDisposition 2026-11-04-05:30 (RUFU-398):
+            OBSERVABILITY ONLY — these three reads decide nothing about whether or when this arm parks.
+            They are computed HERE, before the callback returns, for two reasons that are both load-bearing:
+            the core fenced writer appends the park's own log entry AFTER the callback returns
+            (`applyInReviewStallObservationFencedImpl`), so counting here excludes the park being written
+            and the first park of an episode correctly reads 0; and `live.mergeRetries` is the counter the
+            merge lanes increment and the release arms reset, so it is the ONLY evidence of a merge attempt
+            that exists at this instant. Clearing the pause is not a release — a release counts only once a
+            merge attempt has actually run, which is exactly what `episodeHasMergeAttempt: false` on a
+            re-park states. The transient merge-retry counter is deliberately NOT consulted: it is a second
+            counter with its own reset semantics, and folding it in would be a mergeRetries-provenance
+            redesign, not a measurement.
+            */
+            priorParkCount = countPriorStallDeadlockParks(live, signal);
+            mergeRetriesAtPark = live.mergeRetries ?? 0;
+            episodeHasMergeAttempt = mergeRetriesAtPark > 0;
+            /*
             FNXC:EmptyLandEvidence 2026-09-25-10:55 (RUFU-293):
             One predicate feeds both the log line and the terminal error so the two surfaces can never
             disagree about whether this park was contradicted. Re-checked against `live.error` because the
@@ -15438,7 +15469,9 @@ const reroute = await rerouteUnrunPreMergeGateToReview(this.store, task, {
           metadata: {
             code: appliedSignal.code,
             reason: appliedSignal.reason,
-            ...(disposition === "deadlock" ? { repetitionCount, threshold } : {}),
+            ...(disposition === "deadlock"
+              ? { repetitionCount, threshold, priorParkCount, mergeRetriesAtPark, episodeHasMergeAttempt }
+              : {}),
             branch: outcome.task.branch ?? null,
             worktree: outcome.task.worktree ?? null,
           },

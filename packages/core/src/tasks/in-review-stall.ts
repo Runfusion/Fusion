@@ -313,6 +313,60 @@ export function countRecentIdenticalStallEntries(
   return count;
 }
 
+/**
+ * The clause the engine's stall-deadlock park sentence puts before the reason it froze the card on.
+ *
+ * Kept as a named constant because a second copy of this fragment would silently blind the prior-park
+ * counter below: the counter reads the reason back OUT of a park line, so a reworded park sentence is a
+ * measurement change wearing an authoring change's clothes.
+ */
+const IN_REVIEW_STALL_DEADLOCK_REASON_MARKER = "last reason: ";
+
+/*
+FNXC:ReviewStallDisposition 2026-11-04-05:26 (RUFU-398):
+Answers one operator question that was previously answerable only by reading task mirrors by hand: did
+THIS stall episode already park this card, and was a merge ever attempted since the last park?
+
+DELIBERATELY the opposite walk of `countRecentIdenticalStallEntries` above, and that is not an oversight.
+The counter there breaks at the first non-matching entry because a *run* is a property of the trailing
+entries (its own RUFU-615 block records why the log projection can answer it). A park is not a run: park
+lines sit far apart, separated by the surfaced lines of the following episode, so a trailing-run walk
+over park lines can only ever answer 0 or 1. This helper therefore scans the ENTIRE log and counts every
+match, and takes no `progressAt` reset and no projection envelope — the only caller reads the fenced
+row, which carries the whole log, and an episode's park history must survive whatever surfaced since.
+
+Matching mirrors the private surfaced-entry matcher's strictness on purpose (same code, and the reason
+compared after trim by STRICT equality), and deliberately does not reuse or widen it: that matcher is
+gated on the surfaced prefix, and a park line carries a count-varying clause between the code and the
+reason, so the reason is neither the start of the tail nor the whole tail. The marker is located with
+`lastIndexOf` so a reason that itself quotes the phrase cannot shift the split. It is NOT a release
+detector: clearing the pause is not a release — a release counts only once a merge attempt actually ran,
+which is what the caller's `mergeRetriesAtPark` half of the same reading records.
+
+The caller-side drift guard is behavioral: the engine's episode test counts the engine's OWN authored
+park line, so a park sentence that stopped carrying this marker fails a test rather than quietly
+under-counting.
+*/
+export function countPriorStallDeadlockParks(
+  task: Pick<Task, "log">,
+  signal: Pick<InReviewStallSignal, "code" | "reason">,
+): number {
+  const prefix = `${IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX}${signal.code}]: `;
+  const trimmedReason = signal.reason.trim();
+  let count = 0;
+
+  for (const entry of task.log ?? []) {
+    if (!entry.action.startsWith(prefix)) continue;
+    const markerAt = entry.action.lastIndexOf(IN_REVIEW_STALL_DEADLOCK_REASON_MARKER);
+    if (markerAt < 0) continue;
+    const recordedReason = entry.action.slice(markerAt + IN_REVIEW_STALL_DEADLOCK_REASON_MARKER.length).trim();
+    if (recordedReason !== trimmedReason) continue;
+    count += 1;
+  }
+
+  return count;
+}
+
 function matchesStallEntry(entry: TaskLogEntry, code: InReviewStallCode, reason: string): boolean {
   const prefix = `${IN_REVIEW_STALL_LOG_PREFIX}${code}]:`;
   if (!entry.action.startsWith(prefix)) return false;
