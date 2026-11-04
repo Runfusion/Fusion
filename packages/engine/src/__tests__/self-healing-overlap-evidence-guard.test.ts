@@ -134,7 +134,16 @@ describe("self-healing withholds tip-already-merged reclaim on pending overlap e
     const writes = (store.updateTask as any).mock.calls as Array<[string, Record<string, unknown>]>;
     expect(writes).toHaveLength(1);
     expect(writes[0]![0]).toBe("FN-9002");
-    expect(writes[0]![1]).toEqual({ recoveryRetryCount: 1 });
+    /*
+    FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+    The sweep's single budget write now carries a second register — this family's own refusal count,
+    which is what decides exhaustion (the shared field is written by planning, the executor and triage).
+    The veto is still asserted by what stays untouched below: no worktree/branch/base clear, no reclaim
+    log. Exact equality here would only have pinned the key count, which is not what this case guards.
+    */
+    expect(writes[0]![1]).toEqual(expect.objectContaining({ recoveryRetryCount: 1 }));
+    expect((writes[0]![1] as { sourceMetadataPatch?: Record<string, { refusalCount: number }> })
+      .sourceMetadataPatch?.branchConflictRecoveryEpisode?.refusalCount).toBe(1);
     for (const [, patch] of writes) {
       expect(Object.keys(patch)).not.toContain("worktree");
       expect(Object.keys(patch)).not.toContain("branch");

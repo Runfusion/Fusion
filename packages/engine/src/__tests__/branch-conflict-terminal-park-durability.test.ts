@@ -85,6 +85,7 @@ function card(recoveryRetryCount?: number): Task {
     worktree: WORKTREE,
     baseBranch: "main",
     recoveryRetryCount,
+    sourceMetadata: {},
     updatedAt: new Date(BASE_TS).toISOString(),
   } as Task;
 }
@@ -110,7 +111,22 @@ function makeHarness(task: Task, inspection: Record<string, unknown> = { kind: "
     getTask: vi.fn(async () => task),
     updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
       patches.push(patch);
-      Object.assign(task, patch);
+      /*
+      FIDELITY (RUFU-395): the store merges `sourceMetadataPatch` at KEY level with null-as-delete
+      (RUFU-246). A flat `Object.assign` would land the family's refusal register on a bogus top-level
+      key, so every register assertion in this file would read `undefined` — the harness would decide
+      the feature is broken when only the mock is.
+      */
+      const { sourceMetadataPatch, ...rest } = patch as { sourceMetadataPatch?: Record<string, unknown> };
+      Object.assign(task, rest);
+      if (sourceMetadataPatch) {
+        const merged: Record<string, unknown> = { ...(task.sourceMetadata ?? {}) };
+        for (const [key, value] of Object.entries(sourceMetadataPatch)) {
+          if (value === null) delete merged[key];
+          else merged[key] = value;
+        }
+        task.sourceMetadata = merged as Task["sourceMetadata"];
+      }
       writeTicks += 1;
       task.updatedAt = new Date(BASE_TS + writeTicks * 1_000).toISOString();
     }),
@@ -242,23 +258,48 @@ describe("RUFU-432 suppression lives in the write arms, not in front of the git 
 });
 
 describe("RUFU-432 refusals get quieter, not looser", () => {
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+  Every claim in this test survives; the field that carries them moves. The budget that must advance by
+  exactly 1 per refusal, terminate on the (budget + 1)-th pass, author exactly one park, and be revoked
+  by an operator Retry is now THIS FAMILY'S register — because `recoveryRetryCount` is written by
+  planning, the executor and triage, and a card was being called exhausted for refusals this recovery
+  never made. The shared dispatcher budget is still written (RUFU-231 keeps its contract) but only up to
+  the declared ceiling, and it no longer decides anything here.
+  */
   it("every counted pass still advances the budget by exactly 1 and still reaches the dispatcher", async () => {
     const task = card();
     const h = makeHarness(task);
+    const episode = () => (task.sourceMetadata as Record<string, { refusalCount: number }> | undefined)?.branchConflictRecoveryEpisode;
     for (let pass = 1; pass <= MAX_RETRIES; pass += 1) {
       await expect(handleBranchConflict(h.deps, task, conflictError())).resolves.toBe("retry");
-      expect(task.recoveryRetryCount).toBe(pass);
+      expect(episode()?.refusalCount).toBe(pass);
     }
+    /*
+    The shared dispatcher budget still advances while it sits below the ceiling — that is RUFU-231's
+    contract and this change does not take it away. What RUFU-395 takes away is its authority to DECIDE:
+    it stays bounded by the same declared budget (never inflated past it) and it is no longer the value
+    the exhaustion test reads.
+    */
+    expect(task.recoveryRetryCount ?? 0).toBeLessThanOrEqual(MAX_RETRIES);
     expect(h.dispatch).toHaveBeenCalledTimes(MAX_RETRIES);
     // The (budget + 1)-th pass is the terminal one, and it is the ONLY pass that authors a park.
     await expect(handleBranchConflict(h.deps, task, conflictError())).resolves.toBe("sticky");
     expect(h.auditEvents.filter((e) => e.mutationType === "task:branch-conflict-recovery-parked")).toHaveLength(1);
     expect(h.history.filter((line) => line.includes("parked terminal"))).toHaveLength(1);
-    // An operator Retry zeroes the counter, which alone invalidates the applied-park state: the very
-    // next pass is counted again, so the park is revocable rather than permanent.
-    task.recoveryRetryCount = 0;
+    /*
+    An operator Retry is the sole exit, and it revokes the park by EMPTYING the register — not by
+    zeroing it. A `refusalCount: 0` row would leave the episode present, which is the state the lift
+    must not produce: the next pass has to read the same thing a never-refused card reads. The pause
+    half of the lift is what makes the hold unreadable, so both halves are applied here exactly as
+    `buildManualRetryResetPatch` composes them (core's own suite pins that patch; this asserts the
+    consequence on the executor's decision).
+    */
+    task.paused = false;
+    task.pausedReason = null;
+    delete (task.sourceMetadata as Record<string, unknown>).branchConflictRecoveryEpisode;
     await expect(handleBranchConflict(h.deps, task, conflictError())).resolves.toBe("retry");
-    expect(task.recoveryRetryCount).toBe(1);
+    expect(episode()?.refusalCount).toBe(1);
   });
 
   it("a foreign-unmerged collision still refuses with the card's own commits on the branch — the park is not a release", async () => {

@@ -43,9 +43,23 @@ function makeHarness(seed: Partial<Task> = {}) {
     getSettings: vi.fn(async () => ({ autoRecovery: { mode: "deterministic", maxRetries: MAX_RETRIES } })),
     // FIDELITY: the real store re-stamps updatedAt on every task-row write; without the stamp a
     // "the row clock stayed put" assertion would pass vacuously.
-    updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
+    //
+    // FIDELITY (RUFU-395): `sourceMetadataPatch` is a KEY-LEVEL channel — the real store merges each
+    // entry into `sourceMetadata` and deletes on a null value (RUFU-246). A flat `Object.assign` here
+    // would park the fake's `sourceMetadata` on a bogus top-level key, so the family's own register
+    // could never advance and every park-on-own-count assertion would fail for the wrong reason.
+    updateTask: vi.fn(async (_id: string, patch: Partial<Task> & { sourceMetadataPatch?: Record<string, unknown> }) => {
       updates.push(patch);
-      Object.assign(task, patch);
+      const { sourceMetadataPatch, ...rest } = patch;
+      Object.assign(task, rest);
+      if (sourceMetadataPatch) {
+        const merged: Record<string, unknown> = { ...(task.sourceMetadata ?? {}) };
+        for (const [key, value] of Object.entries(sourceMetadataPatch)) {
+          if (value === null) delete merged[key];
+          else merged[key] = value;
+        }
+        task.sourceMetadata = merged as Task["sourceMetadata"];
+      }
       ticks += 1;
       task.updatedAt = new Date(1_700_000_000_000 + ticks * 1_000).toISOString();
     }),
@@ -95,6 +109,12 @@ const rejectionAudit = (events: Array<Record<string, unknown>>) =>
   events.filter((e) => e.mutationType === "task:auto-recover-already-merged-rejected");
 const parkAudit = (events: Array<Record<string, unknown>>) =>
   events.filter((e) => e.mutationType === "task:branch-conflict-recovery-parked");
+/*
+The bounded evidence a SUPPRESSED pass leaves behind (RUFU-395): RUFU-356's refusal event, deduped per
+(card, code), carrying `code: "recovery-park-hold"`. A skipped card must still be debuggable.
+*/
+const parkHoldNoAction = (events: Array<Record<string, unknown>>) =>
+  events.filter((e) => e.mutationType === "task:reconcile-stale-acquisition-conflict-no-action");
 
 describe("RUFU-432 the already-merged refusal helper", () => {
   it("announces one windowed History line per (card, reason, tip) while still counting every pass", async () => {
@@ -147,33 +167,74 @@ describe("RUFU-432 the already-merged refusal helper", () => {
     expect(parkAudit(h.auditEvents)).toHaveLength(1); // no second park row
     expect(h.task.updatedAt).toBe(clock); // no row-clock re-stamp
     expect(h.task.recoveryRetryCount).toBe(MAX_RETRIES); // counter frozen
-    // The refusal itself survives: 3 passes to the park + 4 re-encounters = 7 passes, each still
-    // recording its rejection audit row even though the last four authored no task-row write.
-    expect(rejectionAudit(h.auditEvents)).toHaveLength(7);
+    /*
+    FNXC:BranchConflictRecovery 2026-11-04-14:25 (RUFU-395) — this assertion changed subject on
+    purpose. RUFU-432 asserted 7 rejection rows ("quieter, not looser" = every pass still inserted its
+    audit row). RUFU-395's Step 2 requires a parked card to be skipped "before work is done, before a
+    store write, and before a log line is authored", and a run-audit INSERT is a store write — the
+    acceptance test is literally "two consecutive sweeps produce zero new emissions". The refusal is
+    still LOOSE-NOT-QUIET in the only way that matters: the card stays parked and the bounded
+    `-no-action` row below names why nobody touches it.
+    */
+    expect(rejectionAudit(h.auditEvents)).toHaveLength(3); // one per counted/parking pass, none suppressed
+    // Suppression is still evidence: exactly one deduped row for the whole run of re-encounters.
+    expect(parkHoldNoAction(h.auditEvents)).toHaveLength(1);
+    expect(parkHoldNoAction(h.auditEvents)[0]).toEqual(expect.objectContaining({
+      metadata: expect.objectContaining({ code: "recovery-park-hold", outcome: "no-action" }),
+    }));
     // Checkout retained for the operator's inspection.
     expect(h.task.worktree).toBe("/wt/rufu-432");
     expect(h.task.branch).toBe("fusion/rufu-432");
   });
 
-  it("never raises a counter a previous build already inflated, and reports it bounded", async () => {
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-14:28 (RUFU-395) — the borrowed-authority inversion:
+  This test used to seed `recoveryRetryCount: 26` and expect a PARK on the next refusal, because the
+  shared dispatcher counter was the ceiling. That field is written by planning, the executor and
+  triage; parking a card because ANOTHER layer spent its budget is the defect this card files (measured
+  live: shared 10, zero own refusals, budget 3 — and the sentence still read "after 4 bounded passes
+  (budget 3)"). Both halves are kept, with the authority corrected.
+  */
+  it("a borrowed-high shared counter neither parks nor lowers; this family's own count does both", async () => {
+    // Half 1 — an already-parked legacy row that ALSO carries an inflated shared count: still zero
+    // writes, because its own park is applied and the park persists no counter.
     const h = makeHarness({ recoveryRetryCount: 26, paused: true, pausedReason: "branch-conflict-recovery-exhausted", status: "failed" } as Partial<Task>);
     await h.reject("foreign-task-tip");
     expect(h.task.recoveryRetryCount).toBe(26);
     expect(h.updates).toHaveLength(0);
     expect(h.history).toHaveLength(0);
     expect(parkAudit(h.auditEvents)).toHaveLength(0);
-    // A legacy-inflated row can only ever be REPORTED bounded — the sentence the operator reads.
-    const fresh = makeHarness({ recoveryRetryCount: 26 } as Partial<Task>);
-    await fresh.reject("foreign-task-tip");
-    expect(fresh.task.error).not.toMatch(/after 26 bounded passes/);
-    expect(parkAudit(fresh.auditEvents)[0]).toEqual(expect.objectContaining({
-      metadata: expect.objectContaining({ attempt: MAX_RETRIES + 1 }),
+
+    // Half 2 — a fresh card whose shared count another layer inflated to 26: this family has refused
+    // it nothing, so it must NOT be called exhausted, and the shared value must survive untouched.
+    const borrowed = makeHarness({ recoveryRetryCount: 26 } as Partial<Task>);
+    await borrowed.reject("foreign-task-tip");
+    expect(borrowed.task.pausedReason).toBeNull();
+    expect(borrowed.task.recoveryRetryCount).toBe(26);
+    expect(parkAudit(borrowed.auditEvents)).toHaveLength(0);
+    // The one thing it DOES do: record its own first refusal.
+    expect((borrowed.task.sourceMetadata as Record<string, { refusalCount: number }>)["branchConflictRecoveryEpisode"]?.refusalCount).toBe(1);
+
+    // Half 3 — and when THIS family's own count is spent, the park is authored and REPORTS BOUNDED:
+    // the number in the sentence is the register, never the borrowed 26.
+    const spent = makeHarness({ recoveryRetryCount: 26 } as Partial<Task>);
+    await spent.reject("foreign-task-tip");
+    await spent.reject("foreign-task-tip");
+    await spent.reject("foreign-task-tip");
+    expect(spent.task.pausedReason).toBe("branch-conflict-recovery-exhausted");
+    expect(spent.task.error).not.toMatch(/after 26 bounded passes/);
+    expect(spent.task.error).toMatch(/after 2 bounded passes \(budget 2\)/);
+    expect(spent.task.recoveryRetryCount).toBe(26);
+    expect(parkAudit(spent.auditEvents)[0]).toEqual(expect.objectContaining({
+      metadata: expect.objectContaining({ attempt: MAX_RETRIES + 1, boundedPasses: MAX_RETRIES }),
     }));
   });
 
   it("still writes a transient refusal path for a card that is not parked: a counted pass always advances", async () => {
     // Guards the negative: the applied-park predicate must not swallow the FIRST park authorship.
-    const h = makeHarness({ recoveryRetryCount: MAX_RETRIES } as Partial<Task>);
+    // RUFU-395: the spend lives in this family's own register now, so the seed is the register (the
+    // shared counter is deliberately left at 0 — seeding it would test the borrowed authority again).
+    const h = makeHarness({ sourceMetadata: { branchConflictRecoveryEpisode: { refusalCount: MAX_RETRIES, firstAt: "", lastAt: "", lastSource: "foreign-tip-reject" } } } as Partial<Task>);
     await h.reject("foreign-task-tip");
     expect(h.task.pausedReason).toBe("branch-conflict-recovery-exhausted");
     expect(parkAudit(h.auditEvents)).toHaveLength(1);

@@ -3706,7 +3706,14 @@ describe("runTaskRetry", () => {
       reset patch clears the plan-premise refusal and planning-admission episodes at the key level (never the whole sourceMetadata
       field). Keep both retry-status assertions aligned with buildManualRetryResetPatch.
       */
-      sourceMetadataPatch: { planPremiseRejection: null, planAdmissionStall: null },
+      /*
+      FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+      The reset patch gained a third key-level clear: branch-conflict recovery now keeps its refusal
+      count in its own episode, and Manual Retry is the only door out of that park, so the same
+      statement must empty it. A patch that zeroed the value instead of deleting the key would leave
+      the episode present, which is the state the lift must not produce.
+      */
+      sourceMetadataPatch: { planPremiseRejection: null, planAdmissionStall: null, branchConflictRecoveryEpisode: null },
     });
     // FNXC:TaskRetryReleaseIntent 2026-09-22-07:39 (RUFU-261): the CLI retry re-queue must state release intent — without parkOnHold:false the rebound parks the card it was asked to run.
     expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", { parkOnHold: false });
@@ -3809,7 +3816,12 @@ describe("runTaskRetry", () => {
       reset patch clears the plan-premise refusal and planning-admission episodes at the key level (never the whole sourceMetadata
       field). Keep both retry-status assertions aligned with buildManualRetryResetPatch.
       */
-      sourceMetadataPatch: { planPremiseRejection: null, planAdmissionStall: null },
+      /*
+      FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+      Third key-level clear on the stuck-killed path too — the same patch builder backs both retry
+      statuses, so both assertions track it.
+      */
+      sourceMetadataPatch: { planPremiseRejection: null, planAdmissionStall: null, branchConflictRecoveryEpisode: null },
     });
     // FNXC:TaskRetryReleaseIntent 2026-09-22-07:39 (RUFU-261): release intent pinned on the retry move args.
     expect(mockMoveTask).toHaveBeenCalledWith("FN-001", "todo", { parkOnHold: false });

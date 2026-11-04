@@ -187,9 +187,67 @@ describe("buildManualRetryResetPatch", () => {
   planning-admission clear: the object is still pinned literally, so a constant rename that would orphan
   persisted episodes is still caught, and the whole-field wipe guard below is unchanged.
   */
-  it("clears the plan-premise and planning-admission episodes at the key level, never the whole field", () => {
-    expect(buildManualRetryResetPatch().sourceMetadataPatch).toEqual({ planPremiseRejection: null, planAdmissionStall: null });
-    expect(buildManualRetryResetPatch({ resetMergeRetries: true }).sourceMetadataPatch).toEqual({ planPremiseRejection: null, planAdmissionStall: null });
+  it("clears the plan-premise, planning-admission and branch-conflict-refusal episodes at the key level, never the whole field", () => {
+    /*
+    FNXC:BranchConflictRecovery 2026-11-04-14:36 (RUFU-395):
+    The third key is this family's own refusal register. RUFU-395 made `refusalCount` the sole
+    authority for the terminal park, so a Retry that lifted the pause while leaving the register would
+    be a no-op: the next refusal recomputes exhaustion from the surviving count and re-parks the card
+    the operator just released. The literal stays pinned on purpose — a constant rename that would
+    orphan a persisted episode is still caught here rather than in production.
+    */
+    expect(buildManualRetryResetPatch().sourceMetadataPatch).toEqual({ planPremiseRejection: null, planAdmissionStall: null, branchConflictRecoveryEpisode: null });
+    expect(buildManualRetryResetPatch({ resetMergeRetries: true }).sourceMetadataPatch).toEqual({ planPremiseRejection: null, planAdmissionStall: null, branchConflictRecoveryEpisode: null });
     expect(buildManualRetryResetPatch()).not.toHaveProperty("sourceMetadata");
+  });
+
+  it("lifts the recovery park AND empties its register in one patch, so a Retry is not a no-op", () => {
+    /*
+    The pairing is the whole point of RUFU-395's lift: the park reads the register, the suppression
+    reads the pause state, and both must go in the SAME statement or the card re-parks on its next
+    refusal with the pause already lifted — a worse failure than the permanent park, because the card
+    looks released while behaving as if it were not.
+    */
+    const live = {
+      paused: true,
+      userPaused: undefined,
+      pausedReason: BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON,
+      recoveryRetryCount: 3,
+      sourceMetadata: { branchConflictRecoveryEpisode: { refusalCount: 3, firstAt: "2026-11-04T00:00:00.000Z", lastAt: "2026-11-04T00:00:00.000Z", lastSource: "self-owned-reclaim" } },
+      status: "failed",
+      error: "Branch-conflict recovery exhausted",
+    };
+    const patch = buildManualRetryResetPatchIfCurrent(live as never, live as never, buildManualRetryResetPatch());
+    expect(patch).not.toBeNull();
+    expect(patch).toMatchObject({ paused: false, pausedReason: null, recoveryRetryCount: 0 });
+    expect(Object.keys((patch as { sourceMetadataPatch: Record<string, unknown> }).sourceMetadataPatch)).toContain("branchConflictRecoveryEpisode");
+  });
+
+  it("refuses to lift a userPaused card through the automatic clear, but still empties its register", () => {
+    /*
+    RUFU-395 acceptance: a `userPaused` card is never auto-cleared; a manual retry on one is still
+    honored. These are two authorities and the fix must not lose the second one.
+    `buildManualRetryResetPatch` carries no `paused` claim of its own — the pause lift is
+    `buildAutoPauseClearPatch`, layered by `buildManualRetryResetPatchIfCurrent`, which refuses an
+    operator hold by design (an automatic Retry may not overrule a human). What the retry patch DOES
+    do for a held card is empty the register, so when the operator eventually un-pauses, the card
+    starts from zero refusals instead of re-parking on the count it was held with.
+    */
+    const held = {
+      paused: true,
+      userPaused: true,
+      pausedReason: BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON,
+      recoveryRetryCount: 3,
+      sourceMetadata: { branchConflictRecoveryEpisode: { refusalCount: 3, firstAt: "", lastAt: "", lastSource: "pr-reclaim" } },
+    };
+    expect(buildAutoPauseClearPatch(held as never)).toEqual({});
+    const explicit = buildManualRetryResetPatch();
+    expect("paused" in explicit).toBe(false);
+    expect(explicit.sourceMetadataPatch).toMatchObject({ branchConflictRecoveryEpisode: null });
+    // The composed patch for a held card keeps the hold and still clears the register.
+    const composed = buildManualRetryResetPatchIfCurrent(held as never, held as never, explicit);
+    expect(composed).not.toBeNull();
+    expect(composed).not.toHaveProperty("paused");
+    expect(composed!.sourceMetadataPatch).toMatchObject({ branchConflictRecoveryEpisode: null });
   });
 });

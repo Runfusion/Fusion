@@ -1000,6 +1000,32 @@ branch that no longer exists all report `premise-cleared`, which is also the onl
 A refusal is deduped per `(card, code)`, so a card that keeps refusing for the same reason reports once
 per process rather than once per hourly pass, while a new reason for the same card is announced.
 
+**`recovery-park-hold` (RUFU-395)** is the gate code for a card sitting on its own branch-conflict
+exhaustion park. Every re-encounter of that park is now silent by contract — no task-row write, no
+History line, no park row, no refusal row — so without this code the suppression would be literally
+unobservable and "why is this card not moving" would have no answer. It is emitted once per card rather
+than once per pass, which is what keeps the silence from becoming a void. The same change made
+`priorStatus` honest on this family: it previously hardcoded `"failed"`, while a card parked on the
+exhaustion hold is `paused`, and a diagnostic that misreports the state it is describing is worse than
+none.
+
+### The branch-conflict exhaustion register (RUFU-395)
+
+`task:branch-conflict-recovery-parked` is emitted once per exhaustion park from any of its six sources,
+with `boundedPasses` carrying **this recovery family's own** refusal count from
+`sourceMetadata.branchConflictRecoveryEpisode`. It never carries `task.recoveryRetryCount`, which is
+also written by planning's stale-branch recovery, the executor's worktree-failure path, triage's
+planning budget, and `recordRetry`: a park row that reported that field could state a pass count the
+branch-conflict family never produced (`after 26 bounded passes (budget 3)` was measured against a
+single unmerged commit). A park persists no counter at all, so the reported number cannot exceed the
+declared budget from any source.
+
+`branch-worktree:irreducible-pause` gains `recoverySuppressed: true` plus `boundedPasses` on a pass
+that found the hold already standing, which is the only trace such a pass leaves. Its metadata stays
+ids/counts/fixed outcomes; the refusal sentence, the branch name, the worktree path, and any reviewer
+prose stay out of both events, and both travel the FN-9175 bounded seam, so telemetry can neither
+change nor delay a park.
+
 The branch name, the worktree path, the refusal sentence, and any commit SHA are never recorded. That
 is not tidiness: the probe returns an enum precisely so no caller can decide from prose, and the
 sentence it replaced is exactly the artefact this sweep exists to stop trusting. Both events are

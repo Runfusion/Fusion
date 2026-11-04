@@ -107,9 +107,24 @@ function createStore(task: Task) {
   const store = {
     getSettings: vi.fn(async () => ({})),
     getTask: vi.fn(async () => task),
-    updateTask: vi.fn(async (_id: string, patch: Partial<Task>) => {
+    updateTask: vi.fn(async (_id: string, patch: Partial<Task> & { sourceMetadataPatch?: Record<string, unknown> }) => {
       patches.push(patch);
-      Object.assign(task, patch);
+      /*
+      FIDELITY (RUFU-395): `sourceMetadataPatch` is the store's KEY-LEVEL channel (RUFU-246) — each
+      entry merges into `sourceMetadata`, a null deletes. A flat Object.assign would leave the family's
+      own register unwritten, so the executor lane could never reach its own exhaustion and this
+      suite's central RUFU-231 assertion would fail for a harness reason rather than a product one.
+      */
+      const { sourceMetadataPatch, ...rest } = patch;
+      Object.assign(task, rest);
+      if (sourceMetadataPatch) {
+        const merged: Record<string, unknown> = { ...(task.sourceMetadata ?? {}) };
+        for (const [key, value] of Object.entries(sourceMetadataPatch)) {
+          if (value === null) delete merged[key];
+          else merged[key] = value;
+        }
+        task.sourceMetadata = merged as Task["sourceMetadata"];
+      }
       // The real store re-stamps the row clock on every write; the fake must too, or a
       // "the row clock stayed put" assertion proves nothing. Monotonic per write so two writes
       // inside one millisecond stay distinguishable.
@@ -260,15 +275,31 @@ describe("RUFU-231 executor branch-conflict retry bound", () => {
 });
 
 describe("RUFU-231 recovery-budget seams", () => {
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-14:32 (RUFU-395):
+  The terminal half of this seam assertion moved onto the family's own register. It used to read
+  `{ recoveryRetryCount: 2 }` and expect terminal — the SHARED dispatcher budget, which planning,
+  the executor and triage also write. The `attempt: 2` / `counted: true` half is unchanged: RUFU-231's
+  dispatcher semantics on that field still hold exactly as shipped.
+  */
   it("the budget plan is terminal exactly past maxRetries and uncounted only under mode off", () => {
     const settings = { mode: "deterministic-only" as const, maxRetries: 2 };
-    expect(planBranchConflictRecoveryPass({ recoveryRetryCount: 1 }, settings)).toMatchObject({ attempt: 2, terminal: false, counted: true });
-    expect(planBranchConflictRecoveryPass({ recoveryRetryCount: 2 }, settings).terminal).toBe(true);
+    const ownRegister = (refusalCount: number) => ({
+      recoveryRetryCount: 0,
+      sourceMetadata: { branchConflictRecoveryEpisode: { refusalCount, firstAt: "", lastAt: "", lastSource: "executor-conflict" } },
+    });
+    expect(planBranchConflictRecoveryPass({ recoveryRetryCount: 1, sourceMetadata: {} }, settings)).toMatchObject({ attempt: 2, terminal: false, counted: true });
+    // Own refusals spent exactly at the budget: the NEXT pass is the terminal one.
+    expect(planBranchConflictRecoveryPass(ownRegister(1), settings).terminal).toBe(false);
+    expect(planBranchConflictRecoveryPass(ownRegister(2), settings).terminal).toBe(true);
+    // A borrowed shared count alone never decides terminal, however high it is.
+    expect(planBranchConflictRecoveryPass({ recoveryRetryCount: 2, sourceMetadata: {} }, settings).terminal).toBe(false);
+    expect(planBranchConflictRecoveryPass({ recoveryRetryCount: 40, sourceMetadata: {} }, settings).terminal).toBe(false);
     expect(planBranchConflictRecoveryPass({}, undefined).maxRetries).toBe(3);
-    const off = planBranchConflictRecoveryPass({ recoveryRetryCount: 9 }, { mode: "off", maxRetries: 2 });
+    const off = planBranchConflictRecoveryPass({ recoveryRetryCount: 9, sourceMetadata: {} }, { mode: "off", maxRetries: 2 });
     expect(off.counted).toBe(false);
     expect(off.terminal).toBe(false);
-    expect(branchConflictRecoveryCounterPatch(off)).toEqual({});
+    expect(branchConflictRecoveryCounterPatch(off, "executor-conflict")).toEqual({});
   });
 
   it("the terminal park resolves to a wedge descriptor with an operator action", () => {

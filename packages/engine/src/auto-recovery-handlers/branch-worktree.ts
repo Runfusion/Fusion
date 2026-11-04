@@ -17,12 +17,12 @@ RUFU-231: every branch-conflict pause — including this handler's irreducible p
 advance the persisted `recoveryRetryCount`, or the dispatcher's `retryCount >= maxRetries`
 budget (Mission defect 4) can never reach exhaustion and the refusal loops unbounded.
 */
-import { branchConflictRecoveryCounterPatch, branchConflictRecoveryCounterShouldWrite, branchConflictRecoveryParkAlreadyApplied, planBranchConflictRecoveryPass } from "../recovery/branch-conflict-recovery-accounting.js";
+import { branchConflictRecoveryCounterPatch, branchConflictRecoveryCounterShouldWrite, branchConflictRecoveryParkAlreadyApplied, buildBranchConflictRecoveryParkPatch, emitBranchConflictRecoveryParkAudit, planBranchConflictRecoveryPass } from "../recovery/branch-conflict-recovery-accounting.js";
 import type { AutoRecoveryContext, AutoRecoveryDecision, AutoRecoveryFailure } from "../healing/auto-recovery.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { createLogger, type Logger } from "../logger.js";
-import type { RunAuditor } from "../util/run-audit.js";
+import { generateSyntheticRunId, type RunAuditor } from "../util/run-audit.js";
 
 const execAsync = promisify(exec);
 const baseLog = createLogger("auto-recovery:branch-worktree");
@@ -352,10 +352,67 @@ export class BranchWorktreeAutoRecoveryHandler {
     could never be recovered climbed past `maxRetries` without limit and re-stamped its row clock each
     time. It now advances only while the budget still has room, and writes nothing at all once the
     park is applied.
+
+    FNXC:BranchConflictRecovery 2026-11-04-13:40 (RUFU-395):
+    "Advance toward the terminal park" still never arrived. This writer — reached from five sites, two
+    of them the AI-recovery lane — incremented the counter and emitted a `branch-worktree:irreducible-
+    pause` row, and then took its terminal branch through the dispatcher's non-terminal `pause` shape,
+    which wrote `pausedReason: branch-conflict-unrecoverable`. A card parked here therefore could never
+    carry `branch-conflict-recovery-exhausted`, so no suppression predicate could ever name it, and the
+    RUFU-356 sweep that clears stale acquisition parks explicitly excludes `userPaused`/foreign-tip
+    shapes: this was the writer with no terminal disposition at all.
+
+    It now shares the ONE park writer with the other sources, at the top of the handler, before the
+    irreducible-pause row is authored: `buildBranchConflictRecoveryParkPatch` +
+    `emitBranchConflictRecoveryParkAudit` + one History line naming the operator's doors. Suppression is
+    the same hold predicate the sweeps use and it gates BOTH the park and the counter, so a
+    re-encounter of its own park writes, counts, and stamps nothing. A pass at `mode: "off"` stays
+    exactly as shipped — the operator opted out of accounting, so it gets neither counter nor park.
     */
     const pass = planBranchConflictRecoveryPass(task, ctx.settings);
-    if (branchConflictRecoveryCounterShouldWrite(pass) && !branchConflictRecoveryParkAlreadyApplied(task, ctx.settings)) {
-      await this.deps.taskStore.updateTask(task.id, branchConflictRecoveryCounterPatch(pass)).catch(() => undefined);
+    if (pass.counted && branchConflictRecoveryParkAlreadyApplied(task, ctx.settings)) {
+      this.logger.debug(`Irreducible-pause recovery suppressed for ${task.id}: its own recovery park is still applied (${reason})`);
+      await this.deps.runAudit.database({
+        type: "branch-worktree:irreducible-pause",
+        target: task.id,
+        metadata: {
+          class: failure.class,
+          reason,
+          evidence,
+          recoverySuppressed: true,
+          boundedPasses: pass.boundedPassCount,
+        },
+      }).catch(() => undefined);
+      return;
+    }
+    if (pass.counted && pass.terminal) {
+      /*
+      The integration branch is not resolvable from this handler's deps (it needs ProjectSettings, and
+      `ctx.settings` here is the AutoRecovery slice), so the park patch gets `undefined` and the remedy
+      names its documented `main` fallback. The doors the RUFU-231 contract demands — retry / reset to
+      todo — are named regardless, and the detail carries the failure class and the pause reason.
+      */
+      await this.deps.taskStore.updateTask(task.id, buildBranchConflictRecoveryParkPatch(
+        pass,
+        undefined,
+        `Irreducible branch-worktree pause (${failure.class}, reason=${reason}) — recovery could not make the branch safe.`,
+      )).catch(() => undefined);
+      await emitBranchConflictRecoveryParkAudit({
+        store: this.deps.taskStore,
+        agentId: "auto-recovery",
+        runId: generateSyntheticRunId("branch-conflict-recovery-park", task.id),
+        task,
+        pass,
+        source: "dispatcher-irreducible-pause",
+      });
+      await this.deps.taskStore.logEntry(
+        task.id,
+        `[recovery] branch-worktree irreducible pause exhausted ${task.id}: parked terminal after ${pass.boundedPassCount} bounded passes (reason=${reason}, checkout retained)`,
+      ).catch(() => undefined);
+      return;
+    }
+    if (branchConflictRecoveryCounterShouldWrite(pass)) {
+      await this.deps.taskStore.updateTask(task.id, branchConflictRecoveryCounterPatch(pass, "dispatcher-irreducible-pause")).catch(() => undefined);
     }
     await this.deps.runAudit.database({
       type: "branch-worktree:irreducible-pause",
@@ -364,6 +421,7 @@ export class BranchWorktreeAutoRecoveryHandler {
         class: failure.class,
         reason,
         evidence,
+        boundedPasses: pass.boundedPassCount,
       },
     });
   }

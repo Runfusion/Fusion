@@ -213,6 +213,15 @@ export type AcquisitionConflictSweepCode =
   | "wrong-lane"
   | "paused"
   | "workspace-task"
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-13:24 (RUFU-395):
+  A sweep that finds its OWN terminal park already on the card and therefore refuses to write, log, or
+  count is exactly the question this event family exists to answer — "why is this card still parked" —
+  and it is a candidate gate, not a probe verdict, so it belongs with `paused` rather than with the
+  probe codes. Without it, the suppression RUFU-395 adds would be invisible: a card silently skipped
+  every pass is indistinguishable from a sweep that never ran.
+  */
+  | "recovery-park-hold"
   | "probe-threw";
 
 /** True only for the four outcomes whose premise git now proves absent. `probe-unknown` never clears. */

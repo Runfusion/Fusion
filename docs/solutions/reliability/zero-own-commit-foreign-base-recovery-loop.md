@@ -16,6 +16,9 @@ symptoms:
   - "a review-lane card stays failed+paused `branch-conflict-unrecoverable` forever"
   - "every maintenance pass repeats the same refusal pair (`already-merged rejected`, `is already checked out at`)"
   - "a peer card's `overlapBlockedBy` points at the wedge indefinitely"
+  - "`recoveryRetryCount` climbs far past the declared budget (`after 26 bounded passes (budget 3)`) while the card never moves"
+  - "an exhausted park survives the operator's Retry and re-forms on the next sweep"
+  - "a parked card re-stamps `updated_at` every pass, so the heartbeat reads a dead card as live liveness"
 root_cause: "two closed exits that were both unreachable: the zero-loss proof refused the identity the branch actually landed on, and no refusal path persisted `recoveryRetryCount`, so the dispatcher retry budget could never advance"
 resolution_type: product-fix
 applies_when: "diagnosing a branch-conflict wedge, changing the branch-conflict refusal sites, or touching checkout-emptiness / landedness proofs"
@@ -134,3 +137,51 @@ recovery budget is untouched.
 - An approved content-review row (`reviewKind: "code"` / `code-review`, `status: passed`, an APPROVE verdict,
   not operator-bypassed) is an independent delivery signal and vetoes the rescue: a scope mismatch after a
   human sign-off is the scope drift the board's own rules permit, not an undelivered card.
+
+## Third failure mode: the bound was real but the authority was borrowed (RUFU-395)
+
+RUFU-432 made the ceiling honest on the write side, and the loop still repeated. Three causes were left
+behind, and none of them is a counting bug:
+
+1. **The decision read someone else's field.** `recoveryRetryCount` is written by planning's stale-branch
+   auto-recovery and scheduler spec-staleness (`recovery-retry`), the executor's worktree-failure path
+   (`executor-worktree-failure`), triage's planning budget, and `recordRetry` under its own
+   `maxBranchConflictRecoveries` ceiling. Branch-conflict recovery was consuming a budget it did not own,
+   so a card could be declared exhausted for refusals it never received — and an operator's Retry, which
+   zeroes that field, no longer lifted a park whose evidence lived elsewhere.
+2. **One writer had no terminal branch.** `BranchWorktreeAutoRecoveryHandler.emitIrreduciblePause` advanced
+   the counter because RUFU-231 told it to, then always handed the card to the dispatcher's non-terminal
+   `pause` shape. A card parked there carried `branch-conflict-unrecoverable`, a reason no suppression
+   predicate reads, so nothing could ever notice the loop.
+3. **Suppression gated the wrong things.** RUFU-432 suppressed the park write, its audit row and its
+   History line, but a re-encounter still wrote a counter, still appended a refusal row, and still returned
+   `retry` — which re-stamps `updated_at`, the row clock the heartbeat reads as liveness.
+
+The fix is an authority split, not another clamp:
+
+- **A register of its own.** `sourceMetadata.branchConflictRecoveryEpisode.refusalCount`, written only by
+  `branchConflictRecoveryCounterPatch`, is what decides exhaustion. The shared field is still advanced for
+  the dispatcher's benefit, but through a clamp that returns `null` rather than LOWERING a borrowed-high
+  value — this layer has no authority to hand back a budget another subsystem spent.
+- **Terminal means silent.** A pass that finds the card's own hold standing performs no write of any kind.
+  The only emission is one deduped `code: "recovery-park-hold"` no-action row per card, so "why is this
+  card not moving" stays answerable without the silence becoming a void.
+- **Every writer reaches the same park.** The dispatcher handler now authors the shared park patch and
+  attributes it to `dispatcher-irreducible-pause`; the executor's `pause` arm refuses to overwrite an
+  existing hold (that write would erase the key the suppression reads) and returns `sticky`, never `retry`,
+  for a held card.
+- **One door, and it works.** `buildManualRetryResetPatch` nulls the episode key beside the legacy counter
+  reset, so a single `fn task retry` — or the agent tool, or the dashboard button, all of which already
+  route through that builder — makes the whole declared budget consumable again.
+
+Two traps worth remembering:
+
+- **A harness that flat-merges `sourceMetadata` silently invalidates the feature.** Four test harnesses
+  spread `updateTask`'s patch over the row, which lands `sourceMetadataPatch` as a bogus top-level key;
+  every register assertion then reads `undefined` and the mock, not the product, looks broken. Same class
+  as a missing `updateTaskAtomic`: the sweep throws, the pass goes vacuous, and the file's assertions pass
+  while guarding nothing.
+- **Do not suppress in front of `inspectBranchConflict()`.** The release doors (stale-pointer clear,
+  ghost reclaim, `tip-already-merged` rescue) must stay reachable for a parked card; suppression belongs to
+  the mutating and announcement arms. A card whose git verdict changed has to be rescued on the pass that
+  proves it.

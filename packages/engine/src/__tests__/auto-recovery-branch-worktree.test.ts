@@ -164,7 +164,18 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
     branch stays put and no phantom worktree is persisted.
     */
     expect(f.taskStore.updateTask).toHaveBeenCalledTimes(1);
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { recoveryRetryCount: 1 });
+    /*
+    FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+    The one write an irreducible pause makes now carries a second register beside the shared budget, so
+    the exact-equality form would fail on the addition alone. What this case guards is unchanged and is
+    asserted twice: no checkout identity is rewritten (no `branch`, no `worktree`), which is the phantom
+    echo RUFU-376 removed.
+    */
+    const pausePatch = f.taskStore.updateTask.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(pausePatch).toEqual(expect.objectContaining({ recoveryRetryCount: 1 }));
+    expect(pausePatch).not.toHaveProperty("branch");
+    expect(pausePatch).not.toHaveProperty("worktree");
+    expect(pausePatch).not.toHaveProperty("pausedReason");
     expect(f.runAudit.database).toHaveBeenCalledWith(expect.objectContaining({
       type: "branch-worktree:irreducible-pause",
       metadata: expect.objectContaining({ reason: "operator-branch-preserved" }),
@@ -375,10 +386,22 @@ describe("BranchWorktreeAutoRecoveryHandler", () => {
   shared bounded budget and that the mode-off operator opt-out keeps the write suppressed
   (the audit row still fires — the pause itself remains observable).
   */
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+  The irreducible pause now writes two registers in one statement: the shared dispatcher budget it
+  always advanced (RUFU-231 — still advanced, still bounded, still the value the dispatcher routes on)
+  and this family's own refusal count, which is the one that decides exhaustion. The assertion is
+  `objectContaining` because the added key is the point of the change; the shared value is pinned
+  exactly so a regression that stops advancing the dispatcher budget still fails here.
+  */
   it("irreducible pause advances the persisted recovery budget", async () => {
     const f = createFixtures({ recoveryRetryCount: 2 }, "ai-assisted");
     await f.handler.spawnAiRecovery(f.failure, { ...f.decision, auditMetadata: { mode: "ai-assisted" } }, f.ctx);
-    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", { recoveryRetryCount: 3 });
+    expect(f.taskStore.updateTask).toHaveBeenCalledWith("FN-4536", expect.objectContaining({ recoveryRetryCount: 3 }));
+    const patch = f.taskStore.updateTask.mock.calls.at(-1)?.[1] as {
+      sourceMetadataPatch?: Record<string, { refusalCount: number } | null>;
+    };
+    expect(patch.sourceMetadataPatch?.branchConflictRecoveryEpisode?.refusalCount).toBe(1);
   });
 
   it("irreducible pause under mode off pauses visibly but writes no counter", async () => {

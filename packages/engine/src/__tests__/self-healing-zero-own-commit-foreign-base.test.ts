@@ -118,13 +118,48 @@ function createStore(initialTasks: Task[], settings: Partial<Settings> = {}) {
     ...settings,
   } as Settings;
 
+  /*
+  FIDELITY (RUFU-395): the store applies `sourceMetadataPatch` at KEY level with null-as-delete
+  (RUFU-246), and the branch-conflict family now carries its refusal register on that channel.
+  A flat spread would park the register on a bogus top-level key, so the sweep's own exhaustion could
+  never be reached and this file's central RUFU-231 assertion would fail for a harness reason.
+  */
+  const applyPatch = (current: Task, patch: Record<string, unknown>): Task => {
+    const { sourceMetadataPatch, ...rest } = patch as { sourceMetadataPatch?: Record<string, unknown> };
+    const next = { ...current, ...rest } as Task;
+    if (sourceMetadataPatch) {
+      const merged: Record<string, unknown> = { ...(current.sourceMetadata ?? {}) };
+      for (const [key, value] of Object.entries(sourceMetadataPatch)) {
+        if (value === null) delete merged[key];
+        else merged[key] = value;
+      }
+      next.sourceMetadata = merged as Task["sourceMetadata"];
+    }
+    return next;
+  };
+
   const updateTask = vi.fn(withBranchWriteProvenance(async (id: string, patch: Partial<Task>) => {
     const current = tasks.get(id);
     if (!current) throw new Error(`Task ${id} missing`);
-    const next = { ...current, ...patch } as Task;
+    const next = applyPatch(current, patch as Record<string, unknown>);
     tasks.set(id, next);
     return next;
   }));
+  /*
+  FIDELITY: the self-owned reclaim persists its pause through `updateTaskAtomic` under the task
+  advisory lock. A store without the seam made the whole sweep throw (`is not a function`) and every
+  assertion in this file failed on an empty sweep — a harness gap that had been silently hiding the
+  sweep's behavior, not a product defect.
+  */
+  const updateTaskAtomic = vi.fn(async (id: string, mutate: (live: Task) => Record<string, unknown> | null) => {
+    const current = tasks.get(id);
+    if (!current) throw new Error(`Task ${id} missing`);
+    const patch = mutate(current);
+    if (patch === null) return null;
+    const next = applyPatch(current, patch);
+    tasks.set(id, next);
+    return next;
+  });
   const moveTask = vi.fn(async (id: string, column: Task["column"]) => {
     const current = tasks.get(id);
     if (!current) throw new Error(`Task ${id} missing`);
@@ -142,6 +177,7 @@ function createStore(initialTasks: Task[], settings: Partial<Settings> = {}) {
     }),
     getTask: vi.fn(async (id: string) => tasks.get(id)),
     updateTask,
+    updateTaskAtomic,
     moveTask,
     logEntry,
     handoffToReview: vi.fn(async (id: string) => tasks.get(id)!),
@@ -150,7 +186,7 @@ function createStore(initialTasks: Task[], settings: Partial<Settings> = {}) {
     clearStaleExecutionStartBranchReferences: vi.fn(() => []),
   }) as unknown as TaskStore & EventEmitter;
 
-  return { mergedSettings, store, tasks, updateTask, moveTask, logEntry };
+  return { mergedSettings, store, tasks, updateTask, updateTaskAtomic, moveTask, logEntry };
 }
 
 function managerFor(store: TaskStore & EventEmitter) {
@@ -173,7 +209,7 @@ beforeEach(() => {
 describe("RUFU-231 zero-own-commit / foreign-base recovery loop (sweep)", () => {
   it("persists recoveryRetryCount on every branch-conflict pause so the retry budget advances", async () => {
     const task = wedgedTask();
-    const { store, tasks, updateTask } = createStore([task]);
+    const { store, tasks, updateTaskAtomic } = createStore([task]);
     const manager = managerFor(store);
     mocked.inspectBranchConflict.mockImplementation(() => liveForeignThrow(task));
 
@@ -181,11 +217,24 @@ describe("RUFU-231 zero-own-commit / foreign-base recovery loop (sweep)", () => 
 
     // Pre-fix this fails: the pause writes `pausedReason: branch-conflict-unrecoverable`
     // but never the counter, so the dispatcher budget can never reach exhaustion.
-    expect(updateTask).toHaveBeenCalledWith(
+    /*
+    FIDELITY (RUFU-395): the pause travels through `updateTaskAtomic`, the same seam the reclaim
+    persists under the task advisory lock. The assertion followed the write to the seam the product
+    actually uses; the load-bearing claim is unchanged and is checked twice — on the patch AND on the
+    row that ends up in the store — because a patch that never lands is the failure mode here.
+    */
+    expect(updateTaskAtomic).toHaveBeenCalledWith(
       task.id,
-      expect.objectContaining({ recoveryRetryCount: 1, paused: true, status: "failed" }),
+      expect.any(Function),
     );
     expect(tasks.get(task.id)?.recoveryRetryCount).toBe(1);
+    expect(tasks.get(task.id)).toMatchObject({ paused: true, status: "failed" });
+    /*
+    RUFU-395: the same pause must also record this family's OWN refusal, because that register — not
+    the shared field — is what decides exhaustion. Without this, a lane that zeroed the shared counter
+    could silently stop the family from ever counting toward its park.
+    */
+    expect((tasks.get(task.id)?.sourceMetadata as Record<string, { refusalCount: number }> | undefined)?.branchConflictRecoveryEpisode?.refusalCount).toBe(1);
   });
 
   it("each sweep advances the counter and the (maxRetries + 1)-th dispatch parks terminal with a named remedy and zero checkout mutation", async () => {

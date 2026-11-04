@@ -429,6 +429,19 @@ export async function handleBranchConflict(
   }
 
   if (decision.action === "pause") {
+    /*
+    FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+    The hold is the suppression's own domain, and this arm writes it. A card already parked at
+    `branch-conflict-recovery-exhausted` that walks into this arm would have its `pausedReason`
+    overwritten with `branch-conflict-unrecoverable` — the exact key every suppression predicate reads,
+    so the refusal would erase the evidence that it is being suppressed and the next pass would count
+    again. The verdict is unchanged (`sticky`: the dispatcher's release door already ran and declined to
+    rescue), only the write is withheld, which is also what RUFU-432 asked for: a re-encounter of an
+    applied park authors nothing.
+    */
+    if (parkAlreadyApplied) {
+      return "sticky";
+    }
     await deps.store.updateTask(task.id, {
       status: "failed",
       error: conflictMessage,
@@ -450,7 +463,7 @@ export async function handleBranchConflict(
       branchWriteOrigin: classifyTaskBranchOrigin(task, error.branchName) === "operator-supplied" ? "operator" : "engine",
       paused: true,
       pausedReason: "branch-conflict-unrecoverable",
-      ...branchConflictRecoveryCounterPatch(recoveryPass),
+      ...branchConflictRecoveryCounterPatch(recoveryPass, "executor-conflict"),
     });
     await deps.persistTokenUsage(task.id);
     executorLog.warn(
@@ -491,10 +504,27 @@ export async function handleBranchConflict(
   The shared write guard, not `recoveryPass.counted`: a pass whose counter value does not change must
   not reach `updateTask` at all, because the write itself re-stamps `updated_at` — the row clock the
   heartbeat reads as recovery liveness.
+
+  FNXC:BranchConflictRecovery 2026-11-04-13:55 (RUFU-395):
+  Beside it, the park-hold check. The terminal arm above already returns "sticky" without authoring
+  anything when the card carries its own park; this arm is the NON-terminal path to the same card, and
+  once RUFU-395 gave the family a register of its own, advancing that register here would be a write
+  on a pass that is supposed to be silent. `parkAlreadyApplied` reads the live row for exactly that
+  reason.
   */
-  if (branchConflictRecoveryCounterShouldWrite(recoveryPass)) {
-    await deps.store.updateTask(task.id, branchConflictRecoveryCounterPatch(recoveryPass));
+  if (branchConflictRecoveryCounterShouldWrite(recoveryPass) && !parkAlreadyApplied) {
+    await deps.store.updateTask(task.id, branchConflictRecoveryCounterPatch(recoveryPass, "executor-conflict"));
   }
 
-  return "retry";
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-13:03 (RUFU-395):
+  The verdict for a card carrying its own exhausted park is `sticky`, not `retry`, even though THIS
+  family's register has not reached the ceiling. The two facts are different: the register says this
+  family has budget left, the row says a lane already decided this card is done trying. Returning
+  `retry` here would hand an exhausted, parked card back to the dispatcher as if a slot would help,
+  which is the same "looks alive while it can never move" shape the card was filed for. RUFU-432
+  pinned this return for the borrowed-`recoveryRetryCount` shape; RUFU-395 keeps it reachable now that
+  the ceiling reads the family's own register.
+  */
+  return parkAlreadyApplied ? "sticky" : "retry";
 }

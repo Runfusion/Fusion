@@ -1,4 +1,4 @@
-import { PLAN_ADMISSION_STALL_METADATA_KEY, PLAN_PREMISE_REJECTION_METADATA_KEY, type Task } from "../types.js";
+import { BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY, PLAN_ADMISSION_STALL_METADATA_KEY, PLAN_PREMISE_REJECTION_METADATA_KEY, type Task } from "../types.js";
 import type { TaskStore } from "../store.js";
 
 export const IN_REVIEW_STALL_DEADLOCK_PAUSE_REASON = "in-review-stall-deadlock";
@@ -120,7 +120,24 @@ export function buildManualRetryResetPatch(options?: { resetMergeRetries?: boole
     "waiting for a planner slot" after the run had already been restarted. Cleared in the same patch
     so both episodes lift together and unrelated provenance keys still survive.
     */
-    sourceMetadataPatch: { [PLAN_PREMISE_REJECTION_METADATA_KEY]: null, [PLAN_ADMISSION_STALL_METADATA_KEY]: null },
+    /*
+    FNXC:BranchConflictRecovery 2026-11-04-13:44 (RUFU-395):
+    And to this family's own refusal register. RUFU-395 made `refusalCount` the sole authority for the
+    terminal park, so a Retry that cleared the pause without clearing the register would be a no-op:
+    the next refusal would recompute `ownAttempt = 4 > 3` from the surviving register and re-park the
+    card the operator just released. This is the third key in the same patch, so all three lifts land
+    in one statement — the acceptance requirement is that after ONE Retry a real conflict can consume
+    the full budget again, and that only holds if every number the park reads is reset together.
+    `WIP_ADMISSION_STALL_METADATA_KEY` is deliberately NOT cleared here: RUFU-393's episode is a
+    state record whose release owner is the hold/release sweep, not the operator (architecture.md §
+    Withheld hold→WIP crossing invariant), and RUFU-273's precedent does not generalise to an episode
+    whose writer is a capacity gate rather than a refusal the operator is overruling.
+    */
+    sourceMetadataPatch: {
+      [PLAN_PREMISE_REJECTION_METADATA_KEY]: null,
+      [PLAN_ADMISSION_STALL_METADATA_KEY]: null,
+      [BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY]: null,
+    },
     nextRecoveryAt: null as unknown as Task["nextRecoveryAt"],
     sessionContentionWaitReason: null as unknown as Task["sessionContentionWaitReason"],
     executorEscalationAttempted: false,

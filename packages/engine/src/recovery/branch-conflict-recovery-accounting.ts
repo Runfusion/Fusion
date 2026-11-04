@@ -54,23 +54,61 @@ pass. `recoveryRetryCount` semantics: persisted = counted non-terminal passes; r
 min(persisted + 1, maxRetries + 1). A manual Retry zeroes the counter
 (`MANUAL_RETRY_RESET_COUNTER_KEYS`) and now lifts this pause too (`buildAutoPauseClearPatch`), so
 the predicate below is invalidated by the door the remedy sentence names.
+
+/*
+FNXC:BranchConflictRecovery 2026-11-04-13:08 (RUFU-395) — the authority split, and why this module
+no longer reads the shared counter to decide exhaustion:
+RUFU-432 bounded how a saturated `recoveryRetryCount` is REPORTED but left it as the DECIDER of
+`terminal` and as the number printed in the park sentence. That field is the dispatcher's shared disk
+budget: `executor/run-implementation.ts`, `executor/non-continuable-session.ts` and `triage.ts` all
+write it, and every operator Retry zeroes it through `MANUAL_RETRY_RESET_COUNTER_KEYS`. Two failures
+follow, both measured live (RUFU-378 at 32, RUFU-391 at 25, against `maxRetries: 3`):
+
+1. A card whose shared counter another layer had inflated reached the terminal park on THIS family's
+   first refusal — it was called exhausted for refusals it never made.
+2. The sentence "after N bounded passes (budget 3)" printed an N that was partly another layer's, and
+   RUFU-432's clamp put it at `maxRetries + 1` — still above the declared budget.
+
+The fix is a register this family owns: `sourceMetadata.branchConflictRecoveryEpisode.refusalCount`,
+written ONLY by `branchConflictRecoveryCounterPatch` in the same statement as the refusal it describes
+(register == marker count by construction), and it is the sole authority for `terminal` and for the
+printed number. It is clamped structurally, not by arithmetic: the pass that would exceed the budget
+takes the park branch and the park never advances the register, so the count can never read above
+`maxRetries` from any of the six park sources or the counter-only handler.
+
+Why not `Task.branchConflictRecoveryCount`: `recordRetry` (`errors/retry-burned-logger.ts`, category
+`branchConflict`) owns that field, writes `current + 1`, and bounds it by a DIFFERENT ceiling
+(`maxBranchConflictRecoveries`); sharing it would reintroduce borrowed numbers under a new name. Why a
+`sourceMetadata` episode rather than a column: the RUFU-246/273/393 precedent — key-level writes, no
+migration, and the column is in the slim row projection the sweeps read candidates with.
+
+`recoveryRetryCount` itself keeps its value and its dispatcher meaning untouched (the RUFU-231
+assertions on it stay green on purpose); it simply stops being a ceiling claim anywhere in this
+module's prose or audit rows. `attempt` remains on the pass object for that reason, deprecated as a
+claim. Manual Retry remains the only exit, and now clears the register too
+(`buildManualRetryResetPatch`).
 */
-import type { AutoRecoverySettings, Task, TaskStore } from "@fusion/core";
+import type { AutoRecoverySettings, Task, TaskStore, TaskBranchConflictRecoveryEpisode } from "@fusion/core";
 /*
 FNXC:BranchConflictRecovery 2026-11-02-22:15 (RUFU-432):
 The pause reason has ONE spelling, owned by core next to the sibling reasons its Retry allowlist
 consumes. Re-exported here so every engine park site and the applied-park predicate read the same
 constant a `fn task retry` clears — a rename on either side is a compile error, not a park that
 silently stops lifting.
+
+FNXC:BranchConflictRecovery 2026-11-04-13:09 (RUFU-395):
+The family's own register key joins it for the same cross-package reason: the writer is this module's
+counter patch and the lifter is core's `buildManualRetryResetPatch`. One renamed literal on either
+side would be a park whose register never clears.
 */
-import { BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON } from "@fusion/core";
+import { BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON, BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY } from "@fusion/core";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { reportBranchAttribution } from "../execution/branch-conflicts.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("recovery");
 
-export { BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON };
+export { BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON, BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY };
 
 /*
 FNXC:BranchConflictRecovery 2026-09-13-02:05:
@@ -124,22 +162,85 @@ export type BranchConflictRecoverySource =
   | "pr-reclaim"
   | "executor-conflict"
   | "dirty-checkout-hold"
-  | "foreign-tip-reject";
+  | "foreign-tip-reject"
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-13:12 (RUFU-395):
+  The auto-recovery dispatcher's irreducible pause advanced the register but never reached a park, so
+  no suppression predicate could ever name its cards. When RUFU-395 gave that writer a terminal
+  disposition it needed its OWN source: reusing `executor-conflict` or `self-owned-reclaim` would
+  attribute a dispatcher-authored park to whichever lane happened to dispatch it, and the dispatcher
+  is shared by both. Additive on the existing park event type — no new mutation type.
+  */
+  | "dispatcher-irreducible-pause";
 
 export interface BranchConflictRecoveryPass {
-  /** Counter value persisted on the task BEFORE this pass. */
+  /** Counter value persisted on the task BEFORE this pass. Dispatcher input ONLY: never a ceiling claim. */
   persisted: number;
   /**
    * The pass number this site REPORTS (remedy sentence, audit `attempt`, History line):
    * `min(persisted + 1, maxRetries + 1)`. Clamped, because a row an older build inflated to 26
    * must not keep announcing "after 26 bounded passes (budget 3)" (RUFU-432).
+   *
+   * DEPRECATED AS A CEILING CLAIM (RUFU-395): this number derives from the SHARED dispatcher
+   * counter, so it can be borrowed from another layer. Every operator-facing sentence and every
+   * repeated-park log line interpolates `boundedPassCount` instead. `attempt` survives only as the
+   * audit `attempt` key and as the value the shared counter is written with, because the dispatcher
+   * budget must keep its RUFU-231 meaning.
    */
   attempt: number;
   maxRetries: number;
-  /** True when `attempt > maxRetries`: this pass must park terminal instead of re-offering the transient pause. */
+  /**
+   * RUFU-395: this family's OWN persisted refusals, read from
+   * `sourceMetadata.branchConflictRecoveryEpisode.refusalCount`. Zero when no episode exists, which
+   * is the state after a card is created or an operator Retry cleared the register.
+   */
+  ownPersisted: number;
+  /**
+   * RUFU-395: the number this family reports for itself — `min(ownPersisted + 1, maxRetries)`.
+   * Clamped at `maxRetries` (not `maxRetries + 1`) because the pass that would exceed the budget
+   * parks instead of counting: the register never advances past the budget, so the number in the
+   * sentence always EQUALS the register and is always within what the settings declare.
+   */
+  boundedPassCount: number;
+  /**
+   * RUFU-395: what the SHARED dispatcher field becomes after this counted pass —
+   * `min(persisted + 1, maxRetries + 1)`. The patch builder writes it only when it is strictly
+   * greater than `persisted`, so a borrowed-high or legacy-inflated value is neither lowered nor
+   * raised and an unchanged value costs no write.
+   */
+  sharedNext: number;
+  /**
+   * RUFU-395: when this family's episode first refused, or null when no episode exists yet. The
+   * counter patch preserves it, so an episode that restarted its clock every pass could never tell
+   * the operator how long the exhaustion has been running (RUFU-350's moving-base lesson).
+   */
+  ownFirstAt: string | null;
+  /** True when this pass is counted AND this family's own attempt exceeds `maxRetries`. */
   terminal: boolean;
   /** False when auto-recovery `mode: "off"` — no counter writes, no terminal park. */
   counted: boolean;
+}
+
+/**
+ * Read this family's own refusal register off the row. Defensive by construction: a missing,
+ * non-object, or malformed episode reads as zero refusals, because the register gates a terminal
+ * decision and a corrupt value must never park a card that this layer never refused.
+ */
+export function readBranchConflictRecoveryEpisode(
+  task: Pick<Task, "sourceMetadata">,
+): TaskBranchConflictRecoveryEpisode | null {
+  const raw = task.sourceMetadata?.[BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY];
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as Partial<TaskBranchConflictRecoveryEpisode>;
+  if (typeof candidate.refusalCount !== "number" || !Number.isFinite(candidate.refusalCount)) return null;
+  return {
+    refusalCount: Math.max(0, Math.floor(candidate.refusalCount)),
+    firstAt: typeof candidate.firstAt === "string" ? candidate.firstAt : "",
+    lastAt: typeof candidate.lastAt === "string" ? candidate.lastAt : "",
+    lastSource: typeof candidate.lastSource === "string"
+      ? candidate.lastSource as TaskBranchConflictRecoveryEpisode["lastSource"]
+      : "executor-conflict",
+  };
 }
 
 /**
@@ -148,35 +249,112 @@ export interface BranchConflictRecoveryPass {
  *
  * FNXC:BranchConflictRecovery 2026-11-02-22:20 (RUFU-432): the reported attempt is clamped, so a
  * saturated counter always decides `terminal` and can never raise the number the operator reads
- * above `maxRetries + 1`. `terminal` keeps its old meaning (`attempt > maxRetries`), which for a
- * non-inflated counter is the same boundary as before: `persisted >= maxRetries`.
+ * above `maxRetries + 1`.
+ *
+ * FNXC:BranchConflictRecovery 2026-11-04-12:50 (RUFU-395): `terminal` no longer reads that shared
+ * counter at all. It reads this family's OWN register. RUFU-432 bounded how a saturated counter is
+ * REPORTED but left it as the DECIDER, and the shared field is written by planning
+ * (`triage.ts`), by `executor/run-implementation.ts`, and by `non-continuable-session.ts`. Measured
+ * live: `recoveryRetryCount` 10 written by a planning layer with ZERO own refusals parked the card
+ * on this family's first refusal, and the sentence still read "after 4 bounded passes (budget 3)".
+ * One field cannot be both another layer's budget and this layer's ceiling claim.
  */
 export function planBranchConflictRecoveryPass(
-  task: Pick<Task, "recoveryRetryCount">,
+  task: Pick<Task, "recoveryRetryCount" | "sourceMetadata">,
   autoRecovery: AutoRecoverySettings | undefined,
 ): BranchConflictRecoveryPass {
   const maxRetries = autoRecovery?.maxRetries ?? 3;
   const counted = autoRecovery?.mode !== "off";
   const persisted = task.recoveryRetryCount ?? 0;
-  const attempt = counted ? Math.min(persisted + 1, maxRetries + 1) : persisted;
-  return { persisted, attempt, maxRetries, terminal: counted && attempt > maxRetries, counted };
+  const episode = readBranchConflictRecoveryEpisode(task);
+  const ownPersisted = episode?.refusalCount ?? 0;
+  const ownAttempt = ownPersisted + 1;
+  const sharedCeiling = counted ? Math.min(persisted + 1, maxRetries + 1) : persisted;
+  return {
+    persisted,
+    attempt: sharedCeiling,
+    maxRetries,
+    ownPersisted,
+    ownFirstAt: episode?.firstAt || null,
+    sharedNext: sharedCeiling,
+    boundedPassCount: counted ? Math.min(ownAttempt, maxRetries) : ownPersisted,
+    terminal: counted && ownAttempt > maxRetries,
+    counted,
+  };
 }
 
 /**
- * The ONE write guard for the recovery counter. Exported so "no counter change" cannot be
+ * The ONE write guard for the recovery registers. Exported so "no counter change" cannot be
  * expressed as a store call: routing an empty patch through `updateTask` is exactly what
  * re-stamps `updated_at`, and a re-stamped `updated_at` is what makes a dead card look alive.
  *
  * A terminal park is not a counted recovery pass, and `mode: "off"` is the operator's opt-out
- * from accounting; neither may touch the counter.
+ * from accounting; neither may touch either register.
+ *
+ * FNXC:BranchConflictRecovery 2026-11-04-12:55 (RUFU-395): the verdict is now about the FAMILY's
+ * register, not the shared field. RUFU-432 returned false here once the SHARED counter saturated,
+ * which was correct while the shared field also decided `terminal`; now that another layer can hold
+ * the shared counter at 10, that rule would silently stop this family from recording its own
+ * refusals. The shared field keeps its own clamp inside the patch builder instead.
  */
 export function branchConflictRecoveryCounterShouldWrite(pass: BranchConflictRecoveryPass): boolean {
   return pass.counted && !pass.terminal;
 }
 
+/**
+ * What the SHARED `recoveryRetryCount` may be written to by a counted pass, or `null` when it must
+ * not be written at all. RUFU-395 clamp, stated separately so the rule is testable on its own:
+ * advance by exactly one, never past `maxRetries + 1`, and NEVER downward — a row whose shared
+ * counter another layer inflated to 10 keeps its 10, because this layer has no authority to hand the
+ * dispatcher back a budget another layer decided it had spent. Omitting the field when the value
+ * would not change is what keeps a no-op pass from re-stamping the row clock.
+ */
+export function branchConflictSharedCounterWrite(pass: BranchConflictRecoveryPass): number | null {
+  if (!pass.counted || pass.terminal) return null;
+  const next = Math.min(pass.persisted + 1, pass.maxRetries + 1);
+  return next > pass.persisted ? next : null;
+}
+
 /** Patch merged into a non-terminal transient pause/persist so the budget advances in the same write. */
-export function branchConflictRecoveryCounterPatch(pass: BranchConflictRecoveryPass): Pick<Task, "recoveryRetryCount"> | Record<string, never> {
-  return branchConflictRecoveryCounterShouldWrite(pass) ? { recoveryRetryCount: pass.attempt } : {};
+export function branchConflictRecoveryCounterPatch(
+  pass: BranchConflictRecoveryPass,
+  source: BranchConflictRecoverySource,
+): Partial<Pick<Task, "recoveryRetryCount">> & { sourceMetadataPatch?: Record<string, unknown> } {
+  if (!branchConflictRecoveryCounterShouldWrite(pass)) return {};
+  /*
+  FNXC:BranchConflictRecovery 2026-11-04-12:52 (RUFU-395):
+  One counted non-terminal pass writes BOTH registers in the SAME statement, so the family's own
+  count and the History marker announcing it cannot disagree — the addendum's demand was "the count
+  of this family's own refusals read from its own markers", and writing them together is what makes
+  that equality structural instead of something a later refactor can break. The episode goes through
+  the key-level `sourceMetadataPatch` channel so `duplicateOfTaskIds`/`handoffFrom`/the two planning
+  episodes survive.
+
+  The SHARED field is written with its own clamp and is NEVER lowered. A borrowed-high row (planning
+  left `recoveryRetryCount` at 10) must keep its 10 — this layer has no authority to hand the
+  dispatcher back a bigger budget than another layer decided — and must not be re-raised either
+  (RUFU-432's legacy-inflation rule). When the clamped value equals what is already stored, the
+  field is omitted entirely rather than written back unchanged, because the write itself re-stamps
+  the row clock.
+
+  `firstAt` is preserved from the existing episode: an episode that restarted its clock every pass
+  could never tell the operator how long the exhaustion has been running (RUFU-350's lesson about a
+  base that moves under you).
+  */
+  const now = new Date().toISOString();
+  const patch: Partial<Pick<Task, "recoveryRetryCount">> & { sourceMetadataPatch?: Record<string, unknown> } = {
+    sourceMetadataPatch: {
+      [BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY]: {
+        refusalCount: pass.boundedPassCount,
+        firstAt: pass.ownFirstAt ?? now,
+        lastAt: now,
+        lastSource: source,
+      } satisfies TaskBranchConflictRecoveryEpisode,
+    },
+  };
+  const sharedWrite = branchConflictSharedCounterWrite(pass);
+  if (sharedWrite !== null) patch.recoveryRetryCount = sharedWrite;
+  return patch;
 }
 
 /*
@@ -260,25 +438,75 @@ export async function recordBranchConflictRefusalHistory(
  * parked card would stay unsuppressed-forever-proof even after the operator pressed Retry, and it
  * would keep `branch`/`worktree` retained — a dormant file-scope lease on every peer.
  */
+/*
+FNXC:BranchConflictRecovery 2026-11-04-13:02 (RUFU-395):
+`branchConflictRecoveryParkAlreadyApplied` used to ask the SHARED dispatcher counter whether the
+budget was still spent, which made this family's suppression revocable by a write this family did not
+make — and, after RUFU-395 moved the terminal decision onto the family register, would have made the
+predicate and the decision disagree: a card parked by four OWN refusals whose shared counter some other
+lane later zeroed would have been re-admitted and re-parked by a layer that had refused it nothing.
+
+The park hold is now the whole predicate, and it is revocable by exactly one door: `paused` is written
+false by `buildAutoPauseClearPatch`, which every operator Retry surface already calls for this reason
+(RUFU-432). `error` is deliberately NOT part of it — a retry clears `error`, so a prefix test would
+re-admit a retried card while its park reason was still being lifted elsewhere. `userPaused` is
+deliberately NOT part of it either: an operator pause is a different disposition with a different exit,
+and conflating them would suppress a card this recovery never parked.
+*/
+export function hasBranchConflictRecoveryParkHold(
+  task: Pick<Task, "paused" | "pausedReason">,
+): boolean {
+  return task.paused === true && task.pausedReason === BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON;
+}
+
 export function branchConflictRecoveryParkAlreadyApplied(
-  task: Pick<Task, "paused" | "pausedReason" | "recoveryRetryCount">,
+  task: Pick<Task, "paused" | "pausedReason" | "recoveryRetryCount" | "sourceMetadata">,
   autoRecovery: AutoRecoverySettings | undefined,
 ): boolean {
-  if (task.paused !== true || task.pausedReason !== BRANCH_CONFLICT_RECOVERY_EXHAUSTED_PAUSE_REASON) return false;
-  // Budget still spent == the next counted pass would itself decide terminal. A zeroed counter
-  // (operator Retry) reports not-spent, which is exactly the intended invalidation.
-  return planBranchConflictRecoveryPass(task, autoRecovery).terminal;
+  void autoRecovery;
+  return hasBranchConflictRecoveryParkHold(task);
+}
+
+/**
+ * The Step 2 suppression verdict: this pass must neither mutate the card, announce itself, nor
+ * advance the counter, because the card already carries this family's terminal park and git still
+ * says the conflict stands.
+ *
+ * `released` is the caller's re-inspection verdict — true when `inspectBranchConflict` answered
+ * anything other than a live conflict. The release check ALWAYS wins, before the hold is even
+ * consulted (RUFU-432's preserved contract: a park must never strand a card whose conflict has since
+ * resolved on its own, which is why the guard cannot be an admission-level skip of the inspection).
+ *
+ * FNXC:BranchConflictRecovery 2026-11-04-13:18 (RUFU-395):
+ * Before this, the same verdict was spelled three separate times at three arms of ONE sweep, and only
+ * that sweep owned it — the executor lane and the auto-recovery dispatcher had no equivalent, so a
+ * card parked by the executor re-announced itself on every session start. One predicate, four writers.
+ */
+export function branchConflictRecoverySuppressed(input: {
+  task: Pick<Task, "paused" | "pausedReason" | "recoveryRetryCount" | "sourceMetadata">;
+  autoRecovery: AutoRecoverySettings | undefined;
+  released: boolean;
+}): boolean {
+  if (input.released) return false;
+  return hasBranchConflictRecoveryParkHold(input.task);
 }
 
 /**
  * Operator-facing remedy. Contract (pinned by the RUFU-231 regression suite): names the
  * integration branch and at least one recovery door (retry / reset to todo) so the park is
  * actionable, not just terminal.
+ *
+ * FNXC:BranchConflictRecovery 2026-11-04-13:04 (RUFU-395): the template bytes and both contract
+ * clauses are unchanged; only the NUMBER's source moved, onto `boundedPassCount` — this family's own
+ * register. `attempt` was the shared dispatcher counter clamped at `maxRetries + 1`, which is still
+ * a number above the declared budget ("after 4 bounded passes (budget 3)") and is still partly
+ * another layer's. The park pass never advances the register, so what it prints equals the register
+ * and is always within the budget the settings declare.
  */
 export function branchConflictRecoveryRemedy(pass: BranchConflictRecoveryPass, integrationBranch: string | undefined, detail: string): string {
   const ref = integrationBranch?.trim() || "main";
   return (
-    `Branch-conflict recovery exhausted after ${pass.attempt} bounded passes (budget ${pass.maxRetries}): ${detail} ` +
+    `Branch-conflict recovery exhausted after ${pass.boundedPassCount} bounded passes (budget ${pass.maxRetries}): ${detail} ` +
     `Inspect this card's branch against the integration branch (${ref}), then retry the task or reset it to todo. ` +
     `The card stays checked out and is re-inspected on every automatic pass, so a release verdict can still free it; ` +
     `while this park stands, re-authoring it stays quiet until a retry resets the recovery budget.`
@@ -329,6 +557,14 @@ export async function emitBranchConflictRecoveryParkAudit(input: {
       taskId: input.task.id,
       attempt: input.pass.attempt,
       maxRetries: input.pass.maxRetries,
+      /*
+      FNXC:BranchConflictRecovery 2026-11-04-13:06 (RUFU-395):
+      `boundedPasses` is this family's own count and is the only number on this row that describes
+      this family's work. `attempt` stays (dispatcher budget, possibly borrowed) so an existing
+      reader keeps its contract; the pair is what stops a reader from conflating the two budgets.
+      Same event type, one additive key — no new mutation type is introduced.
+      */
+      boundedPasses: input.pass.boundedPassCount,
       source: input.source,
       terminal: true,
     },

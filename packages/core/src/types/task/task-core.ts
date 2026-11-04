@@ -830,6 +830,51 @@ export interface TaskWipAdmissionStallEpisode {
   oldestHolderAgeMs?: number;
 }
 
+/*
+FNXC:BranchConflictRecovery 2026-11-04-12:45 (RUFU-395):
+The branch-conflict reclaim family declared a card "recovery exhausted" from a number it did not own.
+`planBranchConflictRecoveryPass` derived both the terminal decision and the pass count printed in the
+park sentence from `Task.recoveryRetryCount`, which is the DISPATCHER's shared disk budget: it is also
+written by `executor/run-implementation.ts`, `executor/non-continuable-session.ts` and `triage.ts`, and
+reset by every operator Retry through `MANUAL_RETRY_RESET_COUNTER_KEYS`. Consequences measured live: a
+card whose counter planning had already inflated reached the terminal park on this family's FIRST
+refusal, and the sentence "after N bounded passes (budget 3)" printed an N this layer had never earned.
+
+This key is that family's own register. It counts only refusals this layer authored, is written only by
+the accounting module's counter patch, and is therefore the sole authority for (a) whether this pass is
+terminal and (b) the number printed to the operator. It is a `sourceMetadata` episode rather than a new
+`tasks` column for the reasons RUFU-246/RUFU-273/RUFU-393 already established: key-level writes through
+`updateTask`'s `sourceMetadataPatch` leave the other provenance keys alone, no migration is needed, and
+the column is in the slim row projection the self-healing sweeps read candidates with.
+
+It is deliberately NOT `Task.branchConflictRecoveryCount`: that field belongs to `recordRetry`
+(`errors/retry-burned-logger.ts`, category `branchConflict`), which writes `current + 1` under a
+different ceiling (`maxBranchConflictRecoveries`). Sharing it would reintroduce borrowed numbers under a
+new name.
+
+The register is a COUNT, not a diagnostic: unlike the planning/WIP episodes it DOES gate a decision
+(exhaustion), which is exactly why it must be family-owned. Timestamps are for the operator's read of
+how long the episode has run. Cleared at key level by `buildManualRetryResetPatch`, so an operator Retry
+returns the family a full budget.
+*/
+export const BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY = "branchConflictRecoveryEpisode" as const;
+
+/**
+ * Durable per-family branch-conflict refusal episode (RUFU-395). Absent or `null` means "this family
+ * has refused this card zero times", which is the state a freshly created or Retry-ed card returns to.
+ * Ids, counts and ISO instants only — never a refusal sentence, a branch name or a commit SHA.
+ */
+export interface TaskBranchConflictRecoveryEpisode {
+  /** How many counted refusals THIS family has persisted. Clamped by the writer at `autoRecovery.maxRetries`: the pass that would exceed the budget parks instead of counting, so the number an operator reads can never outgrow the number the settings declare. */
+  refusalCount: number;
+  /** ISO timestamp of the first counted refusal in this episode. Preserved across refreshes so the operator sees how long the episode has run, not just when it was last seen. */
+  firstAt: string;
+  /** ISO timestamp of the most recent counted refusal. */
+  lastAt: string;
+  /** Which park source advanced the register last. Fixed enum, mirroring the park audit's `source`. */
+  lastSource: "self-owned-reclaim" | "pr-reclaim" | "executor-conflict" | "dirty-checkout-hold" | "foreign-tip-reject" | "dispatcher-irreducible-pause";
+}
+
 /** One cross-project handoff pointer record (see the FNXC block above). */
 export interface TaskHandoffPointer {
   /** Registry id of the project the pointer references. */

@@ -1621,9 +1621,10 @@ The write-side helpers (`planAdmissionStallWrite`, `clearPlanAdmissionStallPatch
 sweep are separate writers of one key, and the refresh/firstAt/stallCount discipline must be decided in
 one place or the two lanes will disagree about what a sustained stall looks like.
 */
-export { PLAN_ADMISSION_STALL_METADATA_KEY, WIP_ADMISSION_STALL_METADATA_KEY } from "./types.js";
+export { PLAN_ADMISSION_STALL_METADATA_KEY, WIP_ADMISSION_STALL_METADATA_KEY, BRANCH_CONFLICT_RECOVERY_EPISODE_METADATA_KEY } from "./types.js";
 export type { TaskPlanAdmissionStallCode, TaskPlanAdmissionStallEpisode } from "./types.js";
 export type { TaskWipAdmissionStallCode, TaskWipAdmissionStallEpisode } from "./types.js";
+export type { TaskBranchConflictRecoveryEpisode } from "./types.js";
 export {
   getStalePausedReviewSignal,
   DEFAULT_STALE_PAUSED_REVIEW_THRESHOLD_MS,
