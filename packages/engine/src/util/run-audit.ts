@@ -619,6 +619,15 @@ export type DatabaseMutationType =
   checkout does contain. Ids and fixed outcomes only: paths, diffs, and summaries stay in the receipt.
   */
   | "task:overlap-delivery-reconciled"
+  /*
+  FNXC:OverlapAcquisitionPark 2026-11-04-01:25 (RUFU-373):
+  Metadata: { taskId, nodeId?, reason, missingEvidence, episodeIds[], blockerTaskIds[], repositories[],
+  episodeCount, strikeBudgetConsumed, registrationRelease } — one bounded record that worktree acquisition
+  refused to start execution because a file-scope predecessor had not delivered, and the proof-gated verdict
+  on releasing the registration that refusal used to leak. Ids, counts and fixed enums only: the refusal
+  sentence, delivered paths, diffs and reviewer prose never enter run-audit.
+  */
+  | "task:overlap-acquisition-parked"
   /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
   | "task:required-artifact-missing"
   /*

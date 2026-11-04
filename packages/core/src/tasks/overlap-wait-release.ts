@@ -11,9 +11,27 @@ Explicit task.dependencies remain operator intent; only stale scheduling indicat
 export const OVERLAP_DELIVERY_UNAVAILABLE_ERROR = "Delivered file evidence is not yet available for overlap synchronization";
 export type OverlapPredecessorRelease = "reset" | "deleted" | "complete" | "missing";
 
+/*
+FNXC:OverlapWaitRelease 2026-11-04-02:10 (RUFU-373):
+Both sentences that mean "this card is waiting on a file-scope predecessor" are recoverable, and they stay
+recoverable AFTER the heartbeat acquisition cap has wrapped one of them. SANE-436's live row read
+`Worktree acquisition failed after 3 heartbeat attempts for branch "fusion/sane-436": Delivered file evidence
+is not yet available for overlap synchronization`; the exact-match version of this predicate could not see
+it, so neither the released-overlap-waits sweep nor the heartbeat retry-cap gate could resume a card whose
+wait had already composed out — permanently, even after its predecessor landed.
+
+The wrapper is stripped by SHAPE, not by matching the message body, and only a worktree-acquisition wrapper
+is stripped: a non-overlap exhaustion message ("fatal: not a git repository") must stay unrecoverable so an
+ordinary broken checkout still gets its bounded retries. The inner sentence is then compared exactly, keeping
+the predicate's existing no-substring semantics.
+*/
+const WORKTREE_ACQUISITION_WRAPPER = /^Worktree acquisition failed after \d+ heartbeat attempts for branch "[^"]*":\s*(.+)$/;
+
 export function isRecoverableOverlapWaitFailure(error: string | null | undefined): boolean {
-  return error === OVERLAP_DELIVERY_UNAVAILABLE_ERROR
-    || /^Overlap synchronization episode [\w-]+ changed before (claim|publication)$/.test(error ?? "");
+  if (typeof error !== "string") return false;
+  const unwrapped = WORKTREE_ACQUISITION_WRAPPER.exec(error)?.[1] ?? error;
+  return unwrapped === OVERLAP_DELIVERY_UNAVAILABLE_ERROR
+    || /^Overlap synchronization episode [\w-]+ changed before (claim|publication)$/.test(unwrapped);
 }
 
 export function overlapDeliverySnapshots(task: Pick<Task, "id" | "lineageId" | "mergeDetails" | "summary">): OverlapWaitDeliverySnapshot[] {

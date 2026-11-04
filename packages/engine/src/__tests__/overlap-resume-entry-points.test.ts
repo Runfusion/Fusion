@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,7 +18,8 @@ import { runCliAgentNode } from "../executor/run-cli-agent-node.js";
 import { dispatchHeartbeatTransportWithOverlapAck } from "../agent-heartbeat.js";
 import { finalizeImplementationTransportWithOverlapAck } from "../executor/run-implementation.js";
 import { acquireTaskWorktree } from "../worktree/worktree-acquisition.js";
-import { __resetOverlapReconciliationDiagnosticDedup } from "../executor/overlap-resume-gate.js";
+import { __resetOverlapReconciliationDiagnosticDedup, synchronizeOverlapWaitBeforeExecution, OverlapResumeSynchronizationError } from "../executor/overlap-resume-gate.js";
+import { OVERLAP_DELIVERY_UNAVAILABLE_ERROR } from "@fusion/core";
 
 const context = `${OVERLAP_RESUME_CONTEXT_MARKER}\nDuring this task's wait, FN-A delivered changes.\n- src/shared.ts`;
 const task = { id: "FN-B", title: "Waiting task", description: "Implement", prompt: "## Mission\nImplement.\n\n## File Scope\n- `src/shared.ts`\n\n## Steps\n\n### Step 0: Work\nDo it.", steps: [{ name: "Work", status: "pending" }], currentStep: 0, dependencies: [], attachments: [], steeringComments: [] } as any;
@@ -253,5 +254,157 @@ describe("overlap resume reconciliation at each acquisition surface (FN-429)", (
       h.live.branch = acquisition.branch;
       h.rearm();
     }
+  });
+});
+
+/*
+FNXC:OverlapAcquisitionPark 2026-11-04-02:05 (RUFU-373):
+The producer half of the refusal payload and the restricted-seam lane. The heartbeat can only forward
+whatever the gate produced, so the payload's CONTENT is pinned here: a delivery-unavailable refusal must
+name the episode, the predecessor task, and the repository it is missing evidence for. SANE-436's operator
+saw only `Delivered file evidence is not yet available for overlap synchronization` — the ids existed in
+the store and reached nobody.
+
+The second case is the workspace shape: the per-repository acquisition callback holds the task's
+non-reentrant advisory lock, so its store hands out `undefined` for the overlap persistence methods. The
+gate must then run the SAME analysis and raise the SAME refusal without any write, so deferring can never
+become silently resuming an unmet obligation.
+*/
+describe("overlap gate refusal payload and restricted-seam persistence", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
+  });
+  __resetOverlapReconciliationDiagnosticDedup();
+
+  function checkout() {
+    const path = mkdtempSync(join(tmpdir(), "rufu373-gate-"));
+    roots.push(path);
+    git(path, "init", "-b", "main");
+    git(path, "config", "user.email", "test@example.com");
+    git(path, "config", "user.name", "Test");
+    writeFileSync(join(path, "src.ts"), "v1\n");
+    git(path, "add", ".");
+    git(path, "commit", "-m", "seed");
+    return path;
+  }
+
+  /** A pending episode whose predecessor published nothing: the SANE-436 / ROZV-197 state. */
+  const waitingEpisode = {
+    episodeId: "ep-9", revision: 1, owner: null, taskId: "FN-B", blockerTaskId: "FN-A",
+    phase: "pending", receipt: null,
+    // `evidence: "unavailable"` with no landed SHA is exactly what a not-yet-merged predecessor produces.
+    observation: { deliveries: [{ blockerTaskId: "FN-A", repository: "repo-a", evidence: "unavailable" }] },
+  };
+
+  function storeWithoutDelivery(persistence: "present" | "absent") {
+    const writes = {
+      reconcileTaskOverlapWaits: vi.fn(async () => []),
+      claimTaskOverlapWait: vi.fn(async () => ({ ...waitingEpisode, revision: 2, owner: "run-1", phase: "analyzing" })),
+      completeTaskOverlapWait: vi.fn(async () => ({ ...waitingEpisode, phase: "freshness-pending" })),
+    };
+    return {
+      store: {
+        listTaskOverlapWaits: vi.fn(async () => [waitingEpisode]),
+        getTask: vi.fn(async () => ({ id: "FN-A", title: "Blocker", mergeDetails: null })),
+        logEntry: vi.fn(async () => undefined),
+        ...(persistence === "present" ? writes : {}),
+      } as any,
+      writes,
+    };
+  }
+
+  it("names the episode, the predecessor, and the repository in a delivery-unavailable refusal", async () => {
+    const worktreePath = checkout();
+    const { store } = storeWithoutDelivery("present");
+
+    const error = await synchronizeOverlapWaitBeforeExecution({
+      task: { id: "FN-B", title: "Waiter", column: "in-progress" } as any,
+      store, worktreePath, owner: "run-1", repository: "repo-a",
+    }).then(() => null, (caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(OverlapResumeSynchronizationError);
+    expect((error as OverlapResumeSynchronizationError).reason).toBe("delivery-unavailable");
+    expect((error as OverlapResumeSynchronizationError).message).toBe(OVERLAP_DELIVERY_UNAVAILABLE_ERROR);
+    expect((error as OverlapResumeSynchronizationError).artifacts).toEqual({
+      episodeIds: ["ep-9"],
+      blockerTaskIds: ["FN-A"],
+      repositories: ["repo-a"],
+      missingEvidence: "delivery-evidence-unavailable",
+    });
+  });
+
+  it("raises the identical refusal from a restricted seam that cannot persist, writing nothing", async () => {
+    const worktreePath = checkout();
+    const { store, writes } = storeWithoutDelivery("absent");
+
+    const error = await synchronizeOverlapWaitBeforeExecution({
+      task: { id: "FN-B", title: "Waiter", column: "in-progress" } as any,
+      store, worktreePath, owner: "run-1", repository: "repo-a",
+      deferPersistence: typeof store.claimTaskOverlapWait !== "function",
+    }).then(() => null, (caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(OverlapResumeSynchronizationError);
+    expect((error as OverlapResumeSynchronizationError).message).toBe(OVERLAP_DELIVERY_UNAVAILABLE_ERROR);
+    expect((error as OverlapResumeSynchronizationError).artifacts.missingEvidence).toBe("delivery-evidence-unavailable");
+    // Deferral is a persistence policy, never an analysis change: no lock-taking write was attempted.
+    expect(writes.claimTaskOverlapWait).not.toHaveBeenCalled();
+    expect(writes.completeTaskOverlapWait).not.toHaveBeenCalled();
+    expect(writes.reconcileTaskOverlapWaits).not.toHaveBeenCalled();
+  });
+
+  it("never resolves successfully for a restricted seam just because it cannot persist", async () => {
+    const worktreePath = checkout();
+    const { store, writes } = storeWithoutDelivery("absent");
+    // A pending episode with CONCRETE delivery evidence whose SHA the checkout does not contain must also
+    // refuse; an absent persistence lane may not turn a refusal into a green result.
+    store.listTaskOverlapWaits.mockResolvedValue([{
+      ...waitingEpisode,
+      observation: { deliveries: [{ blockerTaskId: "FN-A", repository: "repo-a", landedSha: "0".repeat(40), paths: [{ repository: "repo-a", path: "src.ts", status: "modified" }] }] },
+    }]);
+
+    const error = await synchronizeOverlapWaitBeforeExecution({
+      task: { id: "FN-B", title: "Waiter", column: "in-progress" } as any,
+      store, worktreePath, owner: "run-1", repository: "repo-a",
+      deferPersistence: true,
+    }).then(() => null, (caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(OverlapResumeSynchronizationError);
+    expect((error as OverlapResumeSynchronizationError).reason).toBe("freshness-unproven");
+    expect((error as OverlapResumeSynchronizationError).artifacts.missingEvidence).toBe("checkout-freshness-unproven");
+    expect(writes.claimTaskOverlapWait).not.toHaveBeenCalled();
+    expect(writes.completeTaskOverlapWait).not.toHaveBeenCalled();
+  });
+});
+
+/*
+FNXC:WorkspaceWorktree 2026-11-04-02:20 (RUFU-373):
+Structural guard for the restricted-seam signal, not a comment assertion: the per-repository acquisition
+callback holds the same non-reentrant task advisory lock the three overlap-wait PERSISTENCE methods take,
+so handing them out is a self-deadlock and handing out a THROWING stub was the original defect — a
+workspace card with any pending episode died before the gate could analyse it. The gate chooses deferred
+persistence by `typeof store.claimTaskOverlapWait !== "function"`, so `undefined` is load-bearing.
+Everything else stays fail-closed: a newly added TaskStore method must be classified before acquisition
+may call it, which is FN-9295's rule and this guard keeps honest.
+*/
+describe("workspace acquisition restricted store seam", () => {
+  const acquisitionSource = readFileSync(
+    new URL("../worktree/worktree-acquisition.ts", import.meta.url),
+    "utf8",
+  );
+
+  it("hands out undefined for the three lock-taking overlap persistence methods", () => {
+    const restricted = /property === "reconcileTaskOverlapWaits"\s*\|\|\s*property === "claimTaskOverlapWait"\s*\|\|\s*property === "completeTaskOverlapWait"\s*\)\s*\{\s*return undefined;/;
+    expect(restricted.test(acquisitionSource), "the restricted proxy must return undefined for the overlap persistence methods").toBe(true);
+  });
+
+  it("keeps every other unclassified TaskStore method fail-closed", () => {
+    // The fall-through throw is what makes the absence signal specific rather than a blanket passthrough.
+    expect(acquisitionSource).toContain("Workspace acquisition cannot call unsupported TaskStore method");
+    expect(acquisitionSource).toMatch(/if \(property === "listTaskOverlapWaits"\) return value\.bind\(target\);/);
+  });
+
+  it("tells the acquisition seam to defer gate persistence when the claim method is absent", () => {
+    expect(acquisitionSource).toMatch(/deferPersistence: typeof store\.claimTaskOverlapWait !== "function"/);
   });
 });

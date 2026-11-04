@@ -1163,6 +1163,13 @@ export const RemovalReason = {
   WorkspaceAcquireRollback: "workspace-acquire-rollback",
   CompletionLandedCleanup: "completion-landed-cleanup",
   TaskDeletion: "task-deletion",
+  /*
+  FNXC:OverlapAcquisitionPark 2026-11-04-01:25 (RUFU-373):
+  Worktree acquisition refused to START execution (a file-scope predecessor had not delivered yet), so the
+  checkout it had just registered holds no execution session and no task-authored content by construction.
+  It is released with the same proof-gated authority the other no-owner reasons use, never with force.
+  */
+  AcquisitionRefused: "acquisition-refused",
 } as const;
 
 export type RemovalReason = typeof RemovalReason[keyof typeof RemovalReason];
@@ -1191,6 +1198,8 @@ const DEFENSIVE_REMOVAL_REASONS = new Set<RemovalReason>([
   RemovalReason.SelfHealingStaleActiveBranch,
   RemovalReason.StepSessionCleanup,
   RemovalReason.CompletionLandedCleanup,
+  // FNXC:OverlapAcquisitionPark 2026-11-04-01:25 (RUFU-373): a refusal-before-execution leaks nothing; see the reason's declaration.
+  RemovalReason.AcquisitionRefused,
 ]);
 
 const POST_LANDING_PROOF_REASONS = new Set<RemovalReason>([

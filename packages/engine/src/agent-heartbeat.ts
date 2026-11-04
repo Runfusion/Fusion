@@ -166,6 +166,8 @@ heartbeat-model-unavailable parks from assignment/on-demand runs were terminal u
 */
 import { acquireTaskWorktree, acquireWorkspaceTaskWorktrees, WorktreeBaseRefreshError } from "./worktree/worktree-acquisition.js";
 import { isTaskBranchBaseDivergedError } from "./worktree/task-base-resolution.js";
+import { OverlapResumeSynchronizationError } from "./executor/overlap-resume-gate.js";
+import { recordOverlapAcquisitionPark } from "./executor/overlap-acquisition-park.js";
 /* RUFU-200: the phantom re-arm guard reuses the scheduler's dependency-satisfaction verdict rather
    than writing a second one — `getUnmetSchedulingDependencies` is the authority the scheduler, the
    dispatch gate, and self-healing all use to answer "is this card still blocked?". */
@@ -4784,6 +4786,55 @@ export class HeartbeatMonitor {
               await this.completeRun(agentId, run.id, {
                 status: "completed",
                 resultJson: { reason: "task_base_diverged", detail },
+                stderrExcerpt: detail,
+                skipStateTransition: true,
+              });
+              return (await this.store.getRunDetail(agentId, run.id))!;
+            }
+
+            /*
+             * FNXC:OverlapAcquisitionPark 2026-11-04-01:40 (RUFU-373):
+             * A file-scope episode whose predecessor has not LANDED yet is a deterministic WAIT, not a broken
+             * checkout. SANE-436 and ROZV-197 prove what happened while this arm was missing: the refusal fell
+             * into the three-strike budget below, so 7 856 / 7 855 todo<->in-progress bounces were produced by
+             * charging a wait against a budget meant for a defect; the cap's composed wrapper
+             * (`Worktree acquisition failed after N heartbeat attempts for branch "…": …`) is a sentence
+             * `isRecoverableOverlapWaitFailure` could not match, so no sweep could resume it; and the
+             * registration acquisition had already persisted survived the failure, leaving a dormant file-scope
+             * lease that `reconcile-dependency-blocking-lease` (RUFU-200) rebounds the HOLDER for — the waiter
+             * blocking the very predecessor it waits on.
+             *
+             * So: no strike is touched (neither incremented nor cleared — the budget must stay reserved for its
+             * real purpose), `onTaskAcquisitionExhausted` is not called (it files a deterministic wait as a
+             * broken-checkout flake in CentralCore stats), the operator-visible reason is the BARE recoverable
+             * sentence, the leaked registration is released through the proof-gated defensive path, and exactly
+             * one bounded audit row names the missing artifact and its owner. The cap-exhausted
+             * `preserveStatus` move is reused for the same FN-7721 reason as the arm above.
+             */
+            if (worktreeErr instanceof OverlapResumeSynchronizationError) {
+              const liveTask = await taskStore.getTask(taskDetail.id).catch(() => null) ?? taskDetail;
+              const park = await recordOverlapAcquisitionPark({ store: taskStore, rootDir, task: liveTask, agentId, error: worktreeErr });
+              if (!(await isTaskInTerminalLane(taskStore, taskDetail))) {
+                await taskStore.updateTask(taskDetail.id, {
+                  status: "failed",
+                  error: detail,
+                });
+                await taskStore.moveTask(
+                  taskDetail.id,
+                  await resolveHeartbeatReboundColumn(taskStore, taskDetail.id),
+                  { preserveProgress: true, preserveStatus: true },
+                );
+              }
+              await this.completeRun(agentId, run.id, {
+                status: "completed",
+                resultJson: {
+                  reason: "overlap_acquisition_parked",
+                  detail,
+                  missingEvidence: worktreeErr.artifacts.missingEvidence,
+                  blockerTaskIds: worktreeErr.artifacts.blockerTaskIds,
+                  registrationRelease: park.registrationRelease,
+                  strikeBudgetConsumed: 0,
+                },
                 stderrExcerpt: detail,
                 skipStateTransition: true,
               });

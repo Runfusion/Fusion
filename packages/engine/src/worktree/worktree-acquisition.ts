@@ -492,6 +492,17 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     return refresh;
   };
   const synchronizePreparedWorktree = async (path: string): Promise<OverlapResumeContextDelivery> => {
+    /*
+    FNXC:WorkspaceWorktree 2026-11-04-01:55 (RUFU-373):
+    A workspace sub-repo acquisition runs inside the per-repository callback that already holds the task's
+    non-reentrant advisory lock, and that restricted store hands out `undefined` for the three overlap
+    persistence methods rather than dead-locking. Absence IS the signal: deferring persistence keeps the
+    analysis and every refusal identical (the gate still throws on unmet delivered evidence, so it can never
+    silently resume), and the durable receipt is written by the enforcement point outside the lock — the
+    executor gate in `run-implementation.ts`. Before this, a workspace card with ANY pending episode failed
+    with `Workspace acquisition cannot call unsupported TaskStore method reconcileTaskOverlapWaits` and never
+    reached an analysis at all.
+    */
     await synchronizeOverlapWaitBeforeExecution({
       task,
       store,
@@ -499,6 +510,7 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       owner: runContext?.runId ?? `worktree-acquire:${process.pid}:${task.id}`,
       checkoutEpoch: task.checkoutLeaseEpoch == null ? undefined : String(task.checkoutLeaseEpoch),
       repository: workspaceContext?.repoRelPath ?? ".",
+      deferPersistence: typeof store.claimTaskOverlapWait !== "function",
       refresh: async () => refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings, audit, logger }),
     });
     return readOverlapResumeContextDelivery(store, task.id);
@@ -1973,6 +1985,17 @@ export async function acquireWorkspaceRepoWorktree(
               // context during worktree acquisition. It does not mutate state, so it is safe to
               // forward while the task lock is held.
               if (property === "listTaskOverlapWaits") return value.bind(target);
+              /*
+              FNXC:WorkspaceWorktree 2026-11-04-01:55 (RUFU-373):
+              The three overlap-wait PERSISTENCE methods are the restricted seam's known-unsupported set: each
+              takes the same-task advisory lock this callback already holds. Handing out `undefined` instead of a
+              throwing stub is deliberate — it is the honest absence signal the overlap gate reads to choose
+              deferred persistence, so the per-repository analysis and its refusals run exactly as the singular
+              lane's do. A throwing stub made the workspace lane fail before it could analyse anything.
+              */
+              if (property === "reconcileTaskOverlapWaits" || property === "claimTaskOverlapWait" || property === "completeTaskOverlapWait") {
+                return undefined;
+              }
               /*
               FNXC:WorkspaceWorktree 2026-08-20-07:02:
               The acquisition callback holds a non-reentrant task lock. Forwarding a newly added
