@@ -14941,6 +14941,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           */
           const requeueLifecycle = await resolveTaskLifecycleColumns(this.store, task.id);
           const requeueTarget = requeueLifecycle?.hold ?? requeueLifecycle?.intake ?? "todo";
+          /*
+           * F5 containment: self-healing-session-recovery has no authority
+           * to move WIP -> hold. Preserve the parked task, failure evidence,
+           * progress and worktree for explicit same-node/operator recovery.
+           * Check BEFORE clearing status: a rejected move must not leave
+           * the task partially unparked.
+           */
+          if (route.kind === "node-requeue" && fresh.column !== requeueTarget) {
+            await this.store.logEntry(task.id,
+              `Pause-abort recovery retained in '${fresh.column}' â€” self-healing-session-recovery cannot move to '${requeueTarget}' (F5)`);
+            continue;
+          }
           await this.store.updateTask(task.id, {
             status: null,
             error: null,
@@ -14948,16 +14960,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               ? { workflowTransitionNotification }
               : {}),
           });
-          if (route.kind === "node-requeue" && fresh.column !== requeueTarget) {
-            await this.store.moveTask(task.id, requeueTarget, {
-              preserveProgress: true,
-              preserveWorktree: true,
-              moveSource: "engine",
-              lifecycleReason: "self-healing-session-recovery",
-              recoveryRehome: true,
-            });
-            await this.store.updateTask(task.id, { workflowTransitionNotification });
-          }
+
           /*
           FNXC:NodeWorktreeIsolation 2026-07-29-06:05 (FN-6756 — ordering, PR #2531 review):
           Release worktree ownership only AFTER the fallible writes have committed.

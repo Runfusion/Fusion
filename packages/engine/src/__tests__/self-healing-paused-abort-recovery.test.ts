@@ -120,7 +120,7 @@ describe("recoverPausedAbortFailures", () => {
     );
   });
 
-  it("rehomes an in-progress pause-abort park back to todo", async () => {
+  it("keeps an in-progress pause-abort park intact; F5 forbids re-home to todo", async () => {
     const store = createMockStore([parkTask({ id: "FN-7001", column: "in-progress" })]);
     const manager = new SelfHealingManager(store, {
       rootDir: "/tmp/test-project",
@@ -129,28 +129,12 @@ describe("recoverPausedAbortFailures", () => {
 
     const recovered = await manager.recoverPausedAbortFailures();
 
-    expect(recovered).toBe(1);
-    expect(store.updateTask).toHaveBeenNthCalledWith(1, "FN-7001", { status: null, error: null });
-    expect(store.moveTask).toHaveBeenCalledWith(
-      "FN-7001",
-      "todo",
-      { preserveProgress: true, preserveWorktree: true, moveSource: "engine", lifecycleReason: "self-healing-session-recovery", recoveryRehome: true },
-    );
-    expect(store.updateTask).toHaveBeenNthCalledWith(2, "FN-7001", {
-      workflowTransitionNotification: {
-        kind: "recovery-requeue",
-        column: "todo",
-        transitionId: "recovery-requeue:FN-7001:pause-abort-active-work",
-        nodeId: "pause-abort-recovery-router",
-        reason: "pause-abort-active-work",
-        createdAt: "2026-06-20T02:30:00.000Z",
-      },
-    });
-    expect((store.updateTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
-      .toBeLessThan((store.moveTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]);
-    expect((store.moveTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
-      .toBeLessThan((store.updateTask as ReturnType<typeof vi.fn>).mock.invocationCallOrder[1]);
+    expect(recovered).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith("FN-7001", expect.stringContaining("cannot move to 'todo' (F5)"));
   });
+
 
   it("clears a completed in-review pause-abort park without moving it backward", async () => {
     const store = createMockStore([parkTask({
