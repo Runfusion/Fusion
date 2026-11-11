@@ -137,6 +137,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   researchGlobalSearxngUrl: "researchGlobal.searXNGURLHint",
   researchGlobalGoogleSearchApiKey: "researchGlobal.googleSearchCXHint",
   researchGlobalGoogleSearchCx: "researchGlobal.googleSearchCXHint",
+  researchGlobalGoogleSearchBaseUrl: "researchGlobal.googleSearchBaseURLHint",
   researchGlobalMaxConcurrentRuns: "researchGlobal.maxConcurrentRunsHint",
   researchGlobalMaxSourcesPerRun: "researchGlobal.maxSourcesPerRunHint",
   researchGlobalDefaultTimeout: "researchGlobal.defaultMaxDurationMsHint",

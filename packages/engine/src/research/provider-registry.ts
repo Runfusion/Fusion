@@ -74,6 +74,7 @@ export class ResearchProviderRegistry {
           braveApiKey: this.settings.researchGlobalBraveApiKey,
           googleApiKey: this.settings.researchGlobalGoogleSearchApiKey,
           googleCx: this.settings.researchGlobalGoogleSearchCx,
+          googleBaseUrl: this.settings.researchGlobalGoogleSearchBaseUrl,
           tavilyApiKey: this.settings.researchGlobalTavilyApiKey,
           maxResults,
           timeoutMs: fetchTimeoutMs,

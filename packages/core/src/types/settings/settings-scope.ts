@@ -917,6 +917,8 @@ export interface GlobalSettings {
   researchGlobalGoogleSearchApiKey?: string;
   /** Google Custom Search engine ID (required when researchGlobalWebSearchProvider is "google"). */
   researchGlobalGoogleSearchCx?: string;
+  /** Google Custom Search JSON endpoint. Unset uses https://www.googleapis.com/customsearch/v1. */
+  researchGlobalGoogleSearchBaseUrl?: string;
   /** Tavily API key (required when researchGlobalWebSearchProvider is "tavily"). */
   researchGlobalTavilyApiKey?: string;
   /** Enable GitHub repository/issue search provider. Default: false. */

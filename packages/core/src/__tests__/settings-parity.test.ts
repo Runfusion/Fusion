@@ -596,6 +596,7 @@ describe("research global key parity regression (FN-3313)", () => {
     "researchGlobalBraveApiKey",
     "researchGlobalGoogleSearchApiKey",
     "researchGlobalGoogleSearchCx",
+    "researchGlobalGoogleSearchBaseUrl",
     "researchGlobalTavilyApiKey",
     "researchGlobalGitHubEnabled",
     "researchGlobalLocalDocsEnabled",

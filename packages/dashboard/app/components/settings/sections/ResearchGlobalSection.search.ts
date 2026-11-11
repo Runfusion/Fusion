@@ -38,4 +38,13 @@ export const researchGlobalSearchEntries: SettingsSearchEntry[] = [
     helpFallback: "No default — unset.",
     keywords: ["custom search engine id", "programmable search"],
   },
+  {
+    sectionId: "research-global",
+    key: "researchGlobalGoogleSearchBaseUrl",
+    labelKey: "settings.researchGlobal.googleSearchBaseURL",
+    labelFallback: "Google Search Endpoint",
+    helpKey: "settings.researchGlobal.googleSearchBaseURLHint",
+    helpFallback: "Unset by default, which calls https://www.googleapis.com/customsearch/v1.",
+    keywords: ["custom search", "endpoint", "base url"],
+  },
 ];

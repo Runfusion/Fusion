@@ -12,6 +12,8 @@ export interface WebSearchProviderOptions {
   braveApiKey?: string;
   googleApiKey?: string;
   googleCx?: string;
+  /** Custom Search JSON endpoint; unset uses Google's own. */
+  googleBaseUrl?: string;
   tavilyApiKey?: string;
   maxResults?: number;
   timeoutMs?: number;
@@ -22,6 +24,7 @@ export interface WebSearchProviderOptions {
 }
 
 const DEFAULT_MAX_RESULTS = 10;
+export const DEFAULT_GOOGLE_SEARCH_URL = "https://www.googleapis.com/customsearch/v1";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 10_000;
@@ -204,7 +207,7 @@ export class WebSearchProvider implements ResearchProvider {
   }
 
   private async searchGoogle(query: string, maxResults: number, signal: AbortSignal) {
-    const url = new URL("https://www.googleapis.com/customsearch/v1");
+    const url = new URL(this.options.googleBaseUrl || DEFAULT_GOOGLE_SEARCH_URL);
     url.searchParams.set("q", query);
     url.searchParams.set("num", String(maxResults));
     url.searchParams.set("key", this.options.googleApiKey ?? "");

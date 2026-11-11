@@ -323,6 +323,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "researchGlobalBraveApiKey",
     "researchGlobalGoogleSearchApiKey",
     "researchGlobalGoogleSearchCx",
+    "researchGlobalGoogleSearchBaseUrl",
     "researchGlobalTavilyApiKey",
     "researchGlobalGitHubEnabled",
     "researchGlobalLocalDocsEnabled",

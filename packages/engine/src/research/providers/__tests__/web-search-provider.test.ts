@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WebSearchProvider } from "../web-search-provider.js";
+import { DEFAULT_GOOGLE_SEARCH_URL, WebSearchProvider } from "../web-search-provider.js";
 
 const { createFnAgentMock, promptWithFallbackMock } = vi.hoisted(() => ({
   createFnAgentMock: vi.fn(),
@@ -97,5 +97,45 @@ describe("WebSearchProvider", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ metadata: { backend: "searxng", rank: 1 } });
+  });
+
+  it("calls Google's Custom Search endpoint when no base URL is set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [{ link: "https://a", title: "A", snippet: "Snippet" }] }),
+    } as Response);
+    global.fetch = fetchMock;
+
+    const provider = new WebSearchProvider({ backend: "google", googleApiKey: "k", googleCx: "cx" });
+    const results = await provider.search("fusion", {});
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(DEFAULT_GOOGLE_SEARCH_URL).toBe("https://www.googleapis.com/customsearch/v1");
+    expect(url.origin + url.pathname).toBe(DEFAULT_GOOGLE_SEARCH_URL);
+    expect(url.searchParams.get("cx")).toBe("cx");
+    expect(results[0]).toMatchObject({ reference: "https://a", metadata: { backend: "google", rank: 1 } });
+  });
+
+  it("calls the configured Google base URL with the same parameters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [{ link: "https://a", title: "A", snippet: "Snippet" }] }),
+    } as Response);
+    global.fetch = fetchMock;
+
+    const provider = new WebSearchProvider({
+      backend: "google",
+      googleApiKey: "k",
+      googleCx: "cx",
+      googleBaseUrl: "http://127.0.0.1:8080/customsearch/v1",
+    });
+    await provider.search("fusion", { maxResults: 3 });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.origin + url.pathname).toBe("http://127.0.0.1:8080/customsearch/v1");
+    expect(url.searchParams.get("key")).toBe("k");
+    expect(url.searchParams.get("cx")).toBe("cx");
+    expect(url.searchParams.get("q")).toBe("fusion");
+    expect(url.searchParams.get("num")).toBe("3");
   });
 });
