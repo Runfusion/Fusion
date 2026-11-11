@@ -12,7 +12,11 @@ export interface WebSearchProviderOptions {
   braveApiKey?: string;
   googleApiKey?: string;
   googleCx?: string;
-  /** Custom Search JSON endpoint; unset uses Google's own. */
+  /**
+   * FNXC:ResearchWebSearch 2026-11-11-09:43:
+   * Google closed the Custom Search JSON API to new customers and ends it for existing ones on January 1, 2027, so the endpoint the google backend calls is a setting.
+   * Unset or empty uses DEFAULT_GOOGLE_SEARCH_URL; the query parameters and response mapping stay the same for any endpoint.
+   */
   googleBaseUrl?: string;
   tavilyApiKey?: string;
   maxResults?: number;
