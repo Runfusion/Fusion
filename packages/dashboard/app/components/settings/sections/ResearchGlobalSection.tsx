@@ -109,6 +109,20 @@ export function ResearchGlobalSection({ form, setForm, authProviders, onNavigate
             researchGlobalGoogleSearchCx: v || undefined,
         }))}
             />
+            <SettingsTextRow
+              descriptor={{
+                key: "researchGlobalGoogleSearchBaseUrl",
+                label: t("settings.researchGlobal.googleSearchBaseURL", "Google Search Endpoint"),
+                help: t("settings.researchGlobal.googleSearchBaseURLHint", "Unset by default, which calls https://www.googleapis.com/customsearch/v1."),
+                scope: "global",
+                placeholder: t("settings.researchGlobal.googleSearchBaseURLPlaceholder", "https://www.googleapis.com/customsearch/v1"),
+              }}
+              value={form.researchGlobalGoogleSearchBaseUrl ?? null}
+              onChange={(v) => setForm((current) => ({
+            ...current,
+            researchGlobalGoogleSearchBaseUrl: v || undefined,
+        }))}
+            />
             <div className="settings-empty-state settings-research-empty-state" role="note">{t("settings.researchGlobal.configureBraveTavilyAndGoogleAPIKeysIn", " Configure Brave, Tavily, and Google API keys in Authentication. ")}<button type="button" className="btn btn-sm" onClick={() => onNavigateToSection("authentication")}>{t("settings.researchGlobal.openAuthenticationSettings", " Open Authentication Settings ")}</button>
             </div>
           </div>

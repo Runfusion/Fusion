@@ -412,6 +412,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   researchGlobalBraveApiKey: undefined,
   researchGlobalGoogleSearchApiKey: undefined,
   researchGlobalGoogleSearchCx: undefined,
+  researchGlobalGoogleSearchBaseUrl: undefined,
   researchGlobalTavilyApiKey: undefined,
   researchGlobalGitHubEnabled: false,
   researchGlobalLocalDocsEnabled: true,

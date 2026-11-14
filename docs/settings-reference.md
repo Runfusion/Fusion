@@ -219,6 +219,7 @@ Fusion automatically falls back to ntfy's JSON publish format when a notificatio
 | `researchGlobalBraveApiKey` | `string` | `undefined` | Brave Search API key (required when provider is `"brave"`). |
 | `researchGlobalGoogleSearchApiKey` | `string` | `undefined` | Google Custom Search API key (required when provider is `"google"`). |
 | `researchGlobalGoogleSearchCx` | `string` | `undefined` | Google Custom Search engine ID (required when provider is `"google"`). |
+| `researchGlobalGoogleSearchBaseUrl` | `string` | `undefined` | Custom Search JSON endpoint used when provider is `"google"`. Unset uses `https://www.googleapis.com/customsearch/v1`. |
 | `researchGlobalTavilyApiKey` | `string` | `undefined` | Tavily API key (required when provider is `"tavily"`). |
 | `researchGlobalGitHubEnabled` | `boolean` | `undefined` | Enable GitHub as a research source. |
 | `researchGlobalLocalDocsEnabled` | `boolean` | `undefined` | Enable local docs as a research source. |

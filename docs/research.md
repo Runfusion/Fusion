@@ -76,7 +76,7 @@ You can opt into external providers in global settings:
 | `"builtin"` | No API key required (default) |
 | `"searxng"` | `researchGlobalSearxngUrl` — URL of your SearXNG instance |
 | `"brave"` | `researchGlobalBraveApiKey` — Brave Search API key |
-| `"google"` | `researchGlobalGoogleSearchApiKey` + `researchGlobalGoogleSearchCx` — Google Custom Search credentials |
+| `"google"` | `researchGlobalGoogleSearchApiKey` + `researchGlobalGoogleSearchCx` — Google Custom Search credentials (optional `researchGlobalGoogleSearchBaseUrl` for another endpoint in the same format) |
 | `"tavily"` | `researchGlobalTavilyApiKey` — Tavily API key |
 
 API keys are stored through Fusion's auth credential pipeline (`/api/auth/api-key`), not in settings JSON directly.

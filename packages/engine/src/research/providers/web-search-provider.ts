@@ -12,6 +12,12 @@ export interface WebSearchProviderOptions {
   braveApiKey?: string;
   googleApiKey?: string;
   googleCx?: string;
+  /**
+   * FNXC:ResearchWebSearch 2026-11-11-09:43:
+   * Google closed the Custom Search JSON API to new customers and ends it for existing ones on January 1, 2027, so the endpoint the google backend calls is a setting.
+   * Unset or empty uses DEFAULT_GOOGLE_SEARCH_URL; the query parameters and response mapping stay the same for any endpoint.
+   */
+  googleBaseUrl?: string;
   tavilyApiKey?: string;
   maxResults?: number;
   timeoutMs?: number;
@@ -22,6 +28,7 @@ export interface WebSearchProviderOptions {
 }
 
 const DEFAULT_MAX_RESULTS = 10;
+export const DEFAULT_GOOGLE_SEARCH_URL = "https://www.googleapis.com/customsearch/v1";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 10_000;
@@ -204,7 +211,22 @@ export class WebSearchProvider implements ResearchProvider {
   }
 
   private async searchGoogle(query: string, maxResults: number, signal: AbortSignal) {
-    const url = new URL("https://www.googleapis.com/customsearch/v1");
+    const endpoint = this.options.googleBaseUrl || DEFAULT_GOOGLE_SEARCH_URL;
+    let url: URL;
+    try {
+      url = new URL(endpoint);
+    } catch (cause) {
+      /*
+      FNXC:ResearchWebSearch 2026-11-14-06:42:
+      The endpoint is free text in settings, so a value that is not a URL must say which setting to fix instead of surfacing as a bare "Invalid URL".
+      */
+      throw new ResearchProviderError({
+        providerType: "web-search",
+        code: "provider-unavailable",
+        message: `researchGlobalGoogleSearchBaseUrl is not a valid URL: ${endpoint}`,
+        cause,
+      });
+    }
     url.searchParams.set("q", query);
     url.searchParams.set("num", String(maxResults));
     url.searchParams.set("key", this.options.googleApiKey ?? "");

@@ -917,6 +917,12 @@ export interface GlobalSettings {
   researchGlobalGoogleSearchApiKey?: string;
   /** Google Custom Search engine ID (required when researchGlobalWebSearchProvider is "google"). */
   researchGlobalGoogleSearchCx?: string;
+  /**
+   * FNXC:ResearchWebSearch 2026-11-11-09:43:
+   * Google Custom Search JSON endpoint for the google backend, configurable because Google ends the Custom Search JSON API for existing customers on January 1, 2027.
+   * Global only, like the Google key and CX. Unset uses https://www.googleapis.com/customsearch/v1.
+   */
+  researchGlobalGoogleSearchBaseUrl?: string;
   /** Tavily API key (required when researchGlobalWebSearchProvider is "tavily"). */
   researchGlobalTavilyApiKey?: string;
   /** Enable GitHub repository/issue search provider. Default: false. */
