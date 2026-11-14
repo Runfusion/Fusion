@@ -211,7 +211,22 @@ export class WebSearchProvider implements ResearchProvider {
   }
 
   private async searchGoogle(query: string, maxResults: number, signal: AbortSignal) {
-    const url = new URL(this.options.googleBaseUrl || DEFAULT_GOOGLE_SEARCH_URL);
+    const endpoint = this.options.googleBaseUrl || DEFAULT_GOOGLE_SEARCH_URL;
+    let url: URL;
+    try {
+      url = new URL(endpoint);
+    } catch (cause) {
+      /*
+      FNXC:ResearchWebSearch 2026-11-14-06:42:
+      The endpoint is free text in settings, so a value that is not a URL must say which setting to fix instead of surfacing as a bare "Invalid URL".
+      */
+      throw new ResearchProviderError({
+        providerType: "web-search",
+        code: "provider-unavailable",
+        message: `researchGlobalGoogleSearchBaseUrl is not a valid URL: ${endpoint}`,
+        cause,
+      });
+    }
     url.searchParams.set("q", query);
     url.searchParams.set("num", String(maxResults));
     url.searchParams.set("key", this.options.googleApiKey ?? "");

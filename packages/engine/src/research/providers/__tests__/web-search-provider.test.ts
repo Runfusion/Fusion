@@ -138,4 +138,22 @@ describe("WebSearchProvider", () => {
     expect(url.searchParams.get("q")).toBe("fusion");
     expect(url.searchParams.get("num")).toBe("3");
   });
+
+  it("names the setting when the Google base URL is not a URL", async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock;
+
+    const provider = new WebSearchProvider({
+      backend: "google",
+      googleApiKey: "k",
+      googleCx: "cx",
+      googleBaseUrl: "not-a-url",
+    });
+
+    await expect(provider.search("fusion", {})).rejects.toMatchObject({
+      code: "provider-unavailable",
+      message: "researchGlobalGoogleSearchBaseUrl is not a valid URL: not-a-url",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
