@@ -100,6 +100,14 @@ const MAILBOX_SIDEBAR_MAX_RATIO = 0.65;
 const MAILBOX_SIDEBAR_KEYBOARD_STEP = 16;
 const MAILBOX_SIDEBAR_DEFAULT_WIDTH = 220;
 
+/**
+ * FNXC:MailboxPagination 2026-11-15-08:55:
+ * The inbox and sent lists used to stop at a hard-coded 50 messages with no way to see older mail.
+ * They now load in pages of this size; "Load more" grows the window by one page.
+ * Every refresh (SSE update, archive, delete, manual refresh) refetches the whole loaded window from offset 0, so pages already loaded stay visible and read-state changes never shift an offset.
+ */
+const MAILBOX_PAGE_SIZE = 50;
+
 function getMailboxSidebarMaxWidth(containerWidth: number): number {
   return Math.max(MAILBOX_SIDEBAR_MIN_WIDTH, containerWidth * MAILBOX_SIDEBAR_MAX_RATIO);
 }
@@ -256,6 +264,16 @@ export function MailboxView({
   const [activeComposePrefill, setActiveComposePrefill] = useState<(ChatReportHandoff & { nonce: number }) | null>(null);
   const consumedComposePrefillNonceRef = useRef<number | null>(null);
   const [structuralFilter, setStructuralFilter] = useState<"all" | "structural">("all");
+  /*
+  FNXC:MailboxPagination 2026-11-15-08:55:
+  Operators can restrict the inbox to unread messages. The filter is applied by the server (`unreadOnly`) so pagination counts only unread mail.
+  A message opened while the filter is on stays listed (shown as read) until the next refresh, so the list does not jump under the cursor.
+  */
+  const [inboxUnreadOnly, setInboxUnreadOnly] = useState(false);
+  const inboxLimitRef = useRef(MAILBOX_PAGE_SIZE);
+  const outboxLimitRef = useRef(MAILBOX_PAGE_SIZE);
+  const [inboxHasMore, setInboxHasMore] = useState(false);
+  const [outboxHasMore, setOutboxHasMore] = useState(false);
   const [outbox, setOutbox] = useState<OutboxResponse | null>(null);
   const [archivedInbox, setArchivedInbox] = useState<InboxResponse | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -464,8 +482,10 @@ export function MailboxView({
     captureMailboxScroll();
     setIsLoading(true);
     try {
-      const data = await fetchInbox({ limit: 50 }, projectId);
+      const limit = inboxLimitRef.current;
+      const data = await fetchInbox({ limit, ...(inboxUnreadOnly ? { unreadOnly: true } : {}) }, projectId);
       setInbox(data);
+      setInboxHasMore(data.messages.length >= limit);
       setUnreadCount(data.unreadCount);
       onUnreadCountChange?.(data.unreadCount);
     } catch {
@@ -473,7 +493,7 @@ export function MailboxView({
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, onUnreadCountChange, captureMailboxScroll]);
+  }, [projectId, onUnreadCountChange, captureMailboxScroll, inboxUnreadOnly]);
 
   const loadArchivedInbox = useCallback(async () => {
     captureMailboxScroll();
@@ -501,14 +521,31 @@ export function MailboxView({
     captureMailboxScroll();
     setIsLoading(true);
     try {
-      const data = await fetchOutbox({ limit: 50 }, projectId);
+      const limit = outboxLimitRef.current;
+      const data = await fetchOutbox({ limit }, projectId);
       setOutbox(data);
+      setOutboxHasMore(data.messages.length >= limit);
     } catch {
       // Silently fail
     } finally {
       setIsLoading(false);
     }
   }, [projectId, captureMailboxScroll]);
+
+  const loadMoreInbox = useCallback(() => {
+    inboxLimitRef.current += MAILBOX_PAGE_SIZE;
+    void loadInbox();
+  }, [loadInbox]);
+
+  const loadMoreOutbox = useCallback(() => {
+    outboxLimitRef.current += MAILBOX_PAGE_SIZE;
+    void loadOutbox();
+  }, [loadOutbox]);
+
+  const toggleInboxUnreadOnly = useCallback(() => {
+    inboxLimitRef.current = MAILBOX_PAGE_SIZE;
+    setInboxUnreadOnly((current) => !current);
+  }, []);
 
   const loadAgentMailbox = useCallback(async (agentId: string) => {
     captureMailboxScroll();
@@ -1166,12 +1203,13 @@ export function MailboxView({
           <div className="mailbox-structural-filter" role="group" aria-label={t("mailbox.inboxFilter", "Inbox filter")}>
             <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "all"} data-testid="mailbox-structural-filter-all" onClick={() => setStructuralFilter("all")}>{t("mailbox.all", "All")}</button>
             <button type="button" className="btn btn-sm btn-secondary" aria-pressed={structuralFilter === "structural"} data-testid="mailbox-structural-filter-structural" onClick={() => setStructuralFilter("structural")}>{t("mailbox.reportsApprovals", "Reports & approvals")}</button>
+            <button type="button" className="btn btn-sm btn-secondary" aria-pressed={inboxUnreadOnly} data-testid="mailbox-unread-filter" onClick={toggleInboxUnreadOnly}>{t("mailbox.unreadOnly", "Unread only")}</button>
           </div>
           {isLoading && !inbox && <MailboxSkeleton />}
           {inbox && inbox.messages.length === 0 && (
             <div className="mailbox-empty" data-testid="mailbox-inbox-empty">
               <InboxIcon size={32} />
-              <p>{t("mailbox.noMessagesInbox", "No messages in your inbox")}</p>
+              <p>{inboxUnreadOnly ? t("mailbox.noUnreadMessages", "No unread messages") : t("mailbox.noMessagesInbox", "No messages in your inbox")}</p>
             </div>
           )}
           {inbox && inbox.messages.length > 0 && filteredInboxMessages.length === 0 && (
@@ -1204,6 +1242,9 @@ export function MailboxView({
               {!msg.read && <div className="mailbox-item-unread-dot" data-testid={`mailbox-unread-dot-${msg.id}`} />}
             </div>
           ))}
+          {inbox && inboxHasMore && (
+            <button type="button" className="btn btn-sm btn-secondary mailbox-load-more" data-testid="mailbox-inbox-load-more" disabled={isLoading} onClick={loadMoreInbox}>{t("mailbox.loadMore", "Load more")}</button>
+          )}
         </div>
       )}
 
@@ -1238,6 +1279,9 @@ export function MailboxView({
               </div>
             </div>
           ))}
+          {outbox && outboxHasMore && (
+            <button type="button" className="btn btn-sm btn-secondary mailbox-load-more" data-testid="mailbox-outbox-load-more" disabled={isLoading} onClick={loadMoreOutbox}>{t("mailbox.loadMore", "Load more")}</button>
+          )}
         </div>
       )}
 

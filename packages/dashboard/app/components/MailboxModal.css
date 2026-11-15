@@ -120,6 +120,15 @@ badged Inbox tab was the first overflowing tab to collapse its icon to a dot.
   gap: var(--btn-border-width);
 }
 
+/*
+FNXC:MailboxPagination 2026-11-15-08:55:
+"Load more" closes the inbox and sent lists when the server returned a full page, so older mail stays reachable.
+*/
+.mailbox-load-more {
+  align-self: center;
+  margin-top: var(--space-md);
+}
+
 .mailbox-empty {
   display: flex;
   flex-direction: column;

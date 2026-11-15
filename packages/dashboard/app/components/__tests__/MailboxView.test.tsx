@@ -2360,6 +2360,132 @@ describe("MailboxView", () => {
     });
   });
 
+  /*
+  FNXC:MailboxPagination 2026-11-15-08:55:
+  The inbox and sent lists must reach mail older than the first page, and the inbox can be restricted to unread mail on the server.
+  */
+  describe("pagination and unread filter", () => {
+    /** In-memory mailbox that honours `limit`, `offset`, and `unreadOnly` like the server route. */
+    function serveMailbox(inboxMessages: Message[], outboxMessages: Message[] = []) {
+      mockFetchInbox.mockReset();
+      mockFetchOutbox.mockReset();
+      mockFetchInbox.mockImplementation(async (options) => {
+        const source = options?.unreadOnly ? inboxMessages.filter((message) => !message.read) : inboxMessages;
+        const offset = options?.offset ?? 0;
+        const page = source.slice(offset, offset + (options?.limit ?? 20));
+        return makeInboxResponse(page, inboxMessages.filter((message) => !message.read).length);
+      });
+      mockFetchOutbox.mockImplementation(async (options) => {
+        const offset = options?.offset ?? 0;
+        return makeOutboxResponse(outboxMessages.slice(offset, offset + (options?.limit ?? 20)));
+      });
+    }
+
+    function makePage(prefix: string, count: number, base: Message): Message[] {
+      return Array.from({ length: count }, (_, index) => ({ ...base, id: `${prefix}-${index}` }));
+    }
+
+    it("offers Load more on a full inbox page and shows older mail after it", async () => {
+      serveMailbox([...makePage("new", 50, mockMessage), ...makePage("old", 7, mockReadMessage)]);
+
+      render(<MailboxView {...defaultProps} />);
+
+      await screen.findByTestId("mailbox-item-new-49");
+      expect(screen.queryByTestId("mailbox-item-old-0")).toBeNull();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("mailbox-inbox-load-more"));
+      });
+
+      await screen.findByTestId("mailbox-item-old-6");
+      expect(screen.getByTestId("mailbox-item-new-0")).toBeDefined();
+      expect(mockFetchInbox).toHaveBeenLastCalledWith({ limit: 100 }, undefined);
+      expect(screen.queryByTestId("mailbox-inbox-load-more")).toBeNull();
+    });
+
+    it("keeps loaded pages when the inbox is refreshed", async () => {
+      serveMailbox(makePage("in", 120, mockMessage));
+
+      render(<MailboxView {...defaultProps} />);
+      const loadMore = await screen.findByTestId("mailbox-inbox-load-more");
+      await act(async () => {
+        fireEvent.click(loadMore);
+      });
+      await screen.findByTestId("mailbox-item-in-99");
+
+      await act(async () => {
+        fireEvent.click(screen.getByTitle("Refresh"));
+      });
+
+      expect(mockFetchInbox).toHaveBeenLastCalledWith({ limit: 100 }, undefined);
+      expect(screen.getByTestId("mailbox-item-in-99")).toBeDefined();
+      expect(screen.getByTestId("mailbox-inbox-load-more")).toBeDefined();
+    });
+
+    it("hides Load more when everything fits in one page", async () => {
+      serveMailbox(makePage("in", 49, mockMessage));
+
+      render(<MailboxView {...defaultProps} />);
+
+      await screen.findByTestId("mailbox-item-in-48");
+      expect(screen.queryByTestId("mailbox-inbox-load-more")).toBeNull();
+    });
+
+    it("filters the inbox to unread mail on the server and restarts from the first page", async () => {
+      serveMailbox([...makePage("read", 60, mockReadMessage), mockMessage]);
+
+      render(<MailboxView {...defaultProps} />);
+      const loadMore = await screen.findByTestId("mailbox-inbox-load-more");
+      await act(async () => {
+        fireEvent.click(loadMore);
+      });
+      const toggle = screen.getByTestId("mailbox-unread-filter");
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
+
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("mailbox-item-read-0")).toBeNull();
+      });
+      expect(mockFetchInbox).toHaveBeenLastCalledWith({ limit: 50, unreadOnly: true }, undefined);
+      expect(screen.getByTestId(`mailbox-item-${mockMessage.id}`)).toBeDefined();
+      expect(screen.getByTestId("mailbox-unread-filter").getAttribute("aria-pressed")).toBe("true");
+      expect(screen.queryByTestId("mailbox-inbox-load-more")).toBeNull();
+    });
+
+    it("says there is no unread mail when the unread filter matches nothing", async () => {
+      serveMailbox(makePage("read", 3, mockReadMessage));
+
+      render(<MailboxView {...defaultProps} />);
+      await screen.findByTestId("mailbox-item-read-2");
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("mailbox-unread-filter"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mailbox-inbox-empty").textContent).toContain("No unread messages");
+      });
+    });
+
+    it("offers Load more on a full sent page", async () => {
+      serveMailbox([], makePage("out", 60, mockOutboxMessage));
+
+      render(<MailboxView {...defaultProps} />);
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("mailbox-tab-outbox"));
+      });
+      const loadMore = await screen.findByTestId("mailbox-outbox-load-more");
+      await act(async () => {
+        fireEvent.click(loadMore);
+      });
+
+      await screen.findByTestId("mailbox-item-out-59");
+      expect(mockFetchOutbox).toHaveBeenLastCalledWith({ limit: 100 }, undefined);
+      expect(screen.queryByTestId("mailbox-outbox-load-more")).toBeNull();
+    });
+  });
+
   describe("resizable split pane", () => {
     it("renders a desktop resize handle with separator aria semantics", async () => {
       mockUseViewportMode.mockReturnValue("desktop");
