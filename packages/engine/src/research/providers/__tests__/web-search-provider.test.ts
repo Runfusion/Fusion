@@ -141,4 +141,18 @@ describe("WebSearchProvider", () => {
     expect(init.headers["X-API-Key"]).toBe("key-123");
     expect(JSON.parse(init.body)).toEqual({ query: "fusion", max_results: 10 });
   });
+
+  it("sends Keenable an integer max_results when the limit is fractional", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ url: "https://a" }, { url: "https://b" }, { url: "https://c" }, { url: "https://d" }] }),
+    } as Response);
+    global.fetch = fetchMock;
+
+    const provider = new WebSearchProvider({ backend: "keenable" });
+    const results = await provider.search("fusion", { maxResults: 3.7 });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ query: "fusion", max_results: 3 });
+    expect(results).toHaveLength(3);
+  });
 });

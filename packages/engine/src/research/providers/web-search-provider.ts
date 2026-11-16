@@ -263,6 +263,8 @@ export class WebSearchProvider implements ResearchProvider {
 
   private async searchKeenable(query: string, maxResults: number, signal: AbortSignal) {
     const apiKey = this.options.keenableApiKey?.trim();
+    // Keenable wants an integer max_results, so drop any fraction and fall back on non-finite input
+    const limit = Number.isFinite(maxResults) ? Math.min(Math.max(1, Math.trunc(maxResults)), 50) : DEFAULT_MAX_RESULTS;
     const response = await this.requestJson<{
       results?: Array<{ url: string; title?: string; description?: string; snippet?: string }>;
     }>(
@@ -275,13 +277,13 @@ export class WebSearchProvider implements ResearchProvider {
           "X-Keenable-Title": "Fusion",
           ...(apiKey ? { "X-API-Key": apiKey } : {}),
         },
-        body: JSON.stringify({ query, max_results: Math.min(Math.max(1, maxResults), 50) }),
+        body: JSON.stringify({ query, max_results: limit }),
         signal,
       },
       "keenable",
     );
 
-    return (response.results ?? []).filter((item) => item.url).slice(0, maxResults).map((item) => {
+    return (response.results ?? []).filter((item) => item.url).slice(0, limit).map((item) => {
       const snippet = item.snippet ?? "";
       return {
         url: item.url,
