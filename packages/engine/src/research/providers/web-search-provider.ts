@@ -263,7 +263,7 @@ export class WebSearchProvider implements ResearchProvider {
 
   private async searchKeenable(query: string, maxResults: number, signal: AbortSignal) {
     const apiKey = this.options.keenableApiKey?.trim();
-    // Keenable wants an integer max_results, so drop any fraction and fall back on non-finite input
+    // FNXC:ResearchWebSearch 2026-11-17-14:40: Keenable wants an integer max_results (1-50), so drop any fraction and fall back to the default on non-finite input.
     const limit = Number.isFinite(maxResults) ? Math.min(Math.max(1, Math.trunc(maxResults)), 50) : DEFAULT_MAX_RESULTS;
     const response = await this.requestJson<{
       results?: Array<{ url: string; title?: string; description?: string; snippet?: string }>;
