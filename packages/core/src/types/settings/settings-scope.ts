@@ -93,7 +93,7 @@ export interface DaemonTokenSettings {
  * The dashboard UI shows these under a "Global" section.
  */
 /** Web search backend for auto-research provider. */
-export type WebSearchBackend = "builtin" | "searxng" | "brave" | "google" | "tavily";
+export type WebSearchBackend = "builtin" | "searxng" | "brave" | "google" | "tavily" | "keenable";
 
 export interface ResearchEnabledSources {
   webSearch: boolean;
