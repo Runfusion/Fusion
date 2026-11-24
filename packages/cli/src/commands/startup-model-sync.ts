@@ -8,6 +8,8 @@ const ORCAROUTER_MODELS_URL = "https://api.orcarouter.ai/v1/models";
 const ORCAROUTER_DEFAULT_BASE_URL = "https://api.orcarouter.ai/v1";
 const ATLASCLOUD_MODELS_URL = "https://api.atlascloud.ai/v1/models";
 const ATLASCLOUD_DEFAULT_BASE_URL = "https://api.atlascloud.ai/v1";
+// FNXC:AtlasCloudProvider 2026-11-25-08:00: The catalog fetch runs before the opencode-go refresh, so a stalled Atlas Cloud server must not hold up startup.
+const ATLASCLOUD_SYNC_TIMEOUT_MS = 10_000;
 const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
 
 type ModelConfig = {
@@ -90,7 +92,7 @@ function toOpenRouterModels(json: {
     top_provider?: { max_completion_tokens?: number };
     pricing?: Record<string, string>;
     architecture?: { modality?: string; input_modalities?: string[] };
-    // Atlas Cloud reports these at the top level of each catalog entry.
+    // FNXC:AtlasCloudProvider 2026-11-25-08:00: Atlas Cloud reports these at the top level of each catalog entry.
     input_modalities?: string[];
     max_output_length?: number;
     supported_features?: string[];
@@ -284,7 +286,10 @@ async function syncAtlasCloudModels(options: StartupSyncOptions): Promise<void> 
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
-  const response = await fetch(ATLASCLOUD_MODELS_URL, { headers });
+  const response = await fetch(ATLASCLOUD_MODELS_URL, {
+    headers,
+    signal: AbortSignal.timeout(ATLASCLOUD_SYNC_TIMEOUT_MS),
+  });
 
   if (!response.ok) {
     log("atlascloud", `Failed to sync models: HTTP ${response.status}`);

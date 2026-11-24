@@ -52,6 +52,7 @@ describe("startup-model-sync", () => {
   }
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -191,7 +192,8 @@ describe("startup-model-sync", () => {
     expect(getApiKey).toHaveBeenCalledWith("atlascloud");
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
     expect(calls[0]?.[0]).toBe("https://api.atlascloud.ai/v1/models");
-    expect(calls[0]?.[1]).toEqual({ headers: { Authorization: "Bearer test-key" } });
+    expect(calls[0]?.[1]).toMatchObject({ headers: { Authorization: "Bearer test-key" } });
+    expect(calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     const atlasCall = registerProvider.mock.calls.find(([name]) => name === "atlascloud");
     expect(atlasCall?.[1]).toMatchObject({
       baseUrl: "https://api.atlascloud.ai/v1",
@@ -206,6 +208,33 @@ describe("startup-model-sync", () => {
       maxTokens: 65536,
     });
     expect(log).toHaveBeenCalledWith("atlascloud", expect.stringContaining("Synced 1 models"));
+  });
+
+  it("does not let a stalled Atlas Cloud catalog block the remaining startup sync", async () => {
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(AbortSignal.abort());
+    const fetchMock = vi.fn((_url: string, init?: { signal?: AbortSignal }) =>
+      init?.signal?.aborted
+        ? Promise.reject(new Error("The operation was aborted due to timeout"))
+        : new Promise(() => {}),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const log = vi.fn();
+    const registerProvider = vi.fn();
+    await syncStartupModels({
+      getSettings: vi.fn().mockResolvedValue({
+        openrouterModelSync: false,
+        orcarouterModelSync: false,
+        atlascloudModelSync: true,
+        opencodeGoModelSync: false,
+      }),
+      authStorage: { getApiKey: vi.fn().mockResolvedValue(undefined) },
+      modelRegistry: { registerProvider },
+      log,
+    });
+
+    expect(log).toHaveBeenCalledWith("atlascloud", expect.stringContaining("Failed to sync models"));
+    expect(registerProvider).not.toHaveBeenCalled();
   });
 
   it("sends default OpenRouter attribution headers", async () => {
