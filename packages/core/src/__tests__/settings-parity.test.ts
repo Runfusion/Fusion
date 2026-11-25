@@ -437,6 +437,12 @@ describe("settings key parity", () => {
     expect(isProjectSettingsKey("openrouterProviderPreferences")).toBe(false);
   });
 
+  it("keeps Atlas Cloud model sync global with an enabled default", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.atlascloudModelSync).toBe(true);
+    expect(isGlobalSettingsKey("atlascloudModelSync")).toBe(true);
+    expect(isProjectSettingsKey("atlascloudModelSync")).toBe(false);
+  });
+
   it("keeps OrcaRouter model sync global with an enabled default", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.orcarouterModelSync).toBe(true);
     expect(isGlobalSettingsKey("orcarouterModelSync")).toBe(true);

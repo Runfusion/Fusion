@@ -90,6 +90,7 @@ export const BUILT_IN_API_KEY_PROVIDERS: ReadonlyArray<{ id: string; name: strin
   { id: "minimax", name: "Minimax" },
   { id: "openrouter", name: "OpenRouter" },
   { id: "orcarouter", name: "OrcaRouter" },
+  { id: "atlascloud", name: "Atlas Cloud" },
   { id: "opencode-go", name: "Opencode (Go)" },
   { id: "tavily", name: "Tavily" },
   { id: "zai", name: "Zai" },

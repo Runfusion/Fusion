@@ -35,6 +35,16 @@ export const globalModelsSearchEntries: SettingsSearchEntry[] = [
   },
   {
     sectionId: "global-models",
+    key: "atlascloudModelSync",
+    labelKey: "settings.globalModels.syncAtlasCloudModelListAtStartup",
+    labelFallback: " Sync Atlas Cloud model list at startup ",
+    helpKey: "settings.globalModels.whenEnabledStartupFetchesTheLatestAtlasCloudModels",
+    helpFallback:
+      " When enabled, startup fetches the latest available models from the Atlas Cloud API so model pickers include the Atlas Cloud catalog. Default: enabled. ",
+    keywords: ["refresh", "boot"],
+  },
+  {
+    sectionId: "global-models",
     key: "orcarouterModelSync",
     labelKey: "settings.globalModels.syncOrcaRouterModelListAtStartup",
     labelFallback: " Sync OrcaRouter model list at startup ",

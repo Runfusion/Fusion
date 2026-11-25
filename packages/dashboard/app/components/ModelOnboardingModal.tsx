@@ -193,6 +193,16 @@ function getProviderInfoMap(t: (key: string, defaultValue: string) => string): R
         usageDescription: t("setup.apiKeyUsage.orcarouter", "Routes to multiple AI model providers through a single key"),
       },
     },
+    atlascloud: {
+      description: t("setup.providerDesc.atlascloud", "Atlas Cloud — one OpenAI-compatible gateway for LLM, image, and video models"),
+      apiKeyInfo: {
+        fieldLabel: t("setup.apiKeyLabel.atlascloud", "Atlas Cloud API Key"),
+        setupInstructions: t("setup.apiKeySetup.atlascloud", "Create an API key from the Atlas Cloud console."),
+        dashboardUrl: "https://console.atlascloud.ai/api-keys",
+        inputPlaceholder: "apikey-...",
+        usageDescription: t("setup.apiKeyUsage.atlascloud", "Routes to multiple AI model providers through a single key"),
+      },
+    },
   };
 }
 
@@ -231,6 +241,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "openai-codex": "OpenAI Codex",
   openrouter: "OpenRouter",
   orcarouter: "OrcaRouter",
+  atlascloud: "Atlas Cloud",
   google: "Google",
   gemini: "Gemini",
   minimax: "MiniMax",
@@ -298,6 +309,7 @@ const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "openai-codex",
   "openrouter",
   "orcarouter",
+  "atlascloud",
   "gemini",
   "minimax",
   "kimi",
